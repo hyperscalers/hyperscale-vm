@@ -79,6 +79,10 @@ fn a_sealed_declaration_mints_at_the_address_its_rules_derive() {
         })
         .expect_completed();
 
+    // The helper the declaration generates, and the same address built
+    // out of the protocol's own types — two derivations rather than one
+    // restated, which is the whole of what agreement means here.
+    let helper = instance.issued_token(&TestHasher);
     let sealed = sealed_issued_resource(
         &TestHasher,
         instance,
@@ -87,6 +91,11 @@ fn a_sealed_declaration_mints_at_the_address_its_rules_derive() {
         mill::TOKEN,
     );
     let unsealed = issued_resource(&TestHasher, instance, ResourceKind::Fungible, mill::TOKEN);
+
+    assert_eq!(
+        helper, sealed,
+        "the handle's own helper folds the rules its declaration seals",
+    );
 
     assert_ne!(
         sealed, unsealed,

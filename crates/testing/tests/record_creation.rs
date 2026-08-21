@@ -8,8 +8,8 @@
 //! genesis-seeded one have to be the same object.
 
 use hyperscale_vm_effects::{
-    PACKAGE_SLOT_BASE, ResourceKind, ResourceRecord, SlotId, TestHasher, child_key,
-    instance_data_key, issued_resource, resource_record_key,
+    PACKAGE_SLOT_BASE, ResourceRecord, SlotId, TestHasher, child_key, instance_data_key,
+    resource_record_key,
 };
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::hbor::to_vec;
@@ -101,28 +101,24 @@ fn founded() -> (Chain, issuer::client::Issuer) {
 fn instantiation_writes_the_canonical_record_of_every_mark() {
     let (chain, instance) = founded();
 
-    for (kind, mark, record) in [
+    for (resource, record) in [
         (
-            ResourceKind::NonFungible,
-            issuer::OWNER_BADGE,
+            instance.issued_owner_badge(&TestHasher),
             ResourceRecord::NonFungible,
         ),
         (
-            ResourceKind::NonFungible,
-            issuer::SEAT,
+            instance.issued_seat(&TestHasher),
             ResourceRecord::NonFungible,
         ),
         (
-            ResourceKind::Fungible,
-            issuer::COUPON,
+            instance.issued_coupon(&TestHasher),
             ResourceRecord::Fungible { divisibility: 6 },
         ),
     ] {
-        let resource = issued_resource(&TestHasher, instance, kind, mark);
         assert_eq!(
             chain.cell(resource_record_key(&TestHasher, instance, resource)),
             Some(record.to_cell().expect("a record encodes")),
-            "{mark:?}",
+            "{resource:?}",
         );
     }
 }
@@ -163,12 +159,7 @@ fn a_second_instantiation_is_refused_where_the_leaves_live() {
 fn a_mint_files_the_instance_cell_at_its_id() {
     let (chain, instance) = founded();
 
-    let badge = issued_resource(
-        &TestHasher,
-        instance,
-        ResourceKind::NonFungible,
-        issuer::OWNER_BADGE,
-    );
+    let badge = instance.issued_owner_badge(&TestHasher);
     assert_eq!(
         chain.cell(instance_data_key(&TestHasher, instance, badge, 0)),
         Some(vec![1]),
@@ -198,12 +189,7 @@ fn a_fielded_mint_files_the_record_its_mark_declares() {
         })
         .expect_completed();
 
-    let seat = issued_resource(
-        &TestHasher,
-        instance,
-        ResourceKind::NonFungible,
-        issuer::SEAT,
-    );
+    let seat = instance.issued_seat(&TestHasher);
     let filed = chain
         .cell(instance_data_key(&TestHasher, instance, seat, 7))
         .expect("the instance's data cell");
@@ -230,12 +216,7 @@ fn an_unminted_id_has_no_data_cell() {
         })
         .expect_completed();
 
-    let seat = issued_resource(
-        &TestHasher,
-        instance,
-        ResourceKind::NonFungible,
-        issuer::SEAT,
-    );
+    let seat = instance.issued_seat(&TestHasher);
     assert_eq!(
         chain.cell(instance_data_key(&TestHasher, instance, seat, 8)),
         None,

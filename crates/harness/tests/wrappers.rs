@@ -21,7 +21,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
-use hyperscale_vm_types::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -247,12 +247,7 @@ fn the_staking_wrappers_match_their_signatures() {
 /// The resource a pool issues, which its `stake` output derives from the
 /// pool's own address.
 fn staking_units(pool: staking::Staking) -> ResourceAddr {
-    issued_resource(
-        &TestHasher,
-        Address::from(pool),
-        ResourceKind::Fungible,
-        staking::STAKE_UNIT,
-    )
+    pool.issued_stake_unit(&TestHasher)
 }
 
 #[test]

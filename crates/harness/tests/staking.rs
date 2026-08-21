@@ -20,9 +20,8 @@ use std::sync::LazyLock;
 use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
     AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, IntentDecl, ManifestGraph,
-    PackageHash, PrefixShardResolver, Records, ResourceKind, ResourceRecord, TestHasher, Value,
-    admit_tree, child_key, holdings_collection, instance_data_key, issued_resource,
-    resource_record_key, route_tree,
+    PackageHash, PrefixShardResolver, Records, ResourceRecord, TestHasher, Value, admit_tree,
+    child_key, holdings_collection, instance_data_key, resource_record_key, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
@@ -43,22 +42,12 @@ const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// pool, not configured, which is what the signature's `SelfResource`
 /// evaluates to.
 fn unit() -> ResourceAddr {
-    issued_resource(
-        &TestHasher,
-        pool(),
-        ResourceKind::Fungible,
-        staking::STAKE_UNIT,
-    )
+    pool().issued_stake_unit(&TestHasher)
 }
 /// The pool's owner badge — the same derivation the operator gate
 /// evaluates.
 fn badge() -> ResourceAddr {
-    issued_resource(
-        &TestHasher,
-        pool(),
-        ResourceKind::NonFungible,
-        staking::OWNER_BADGE,
-    )
+    pool().issued_owner_badge(&TestHasher)
 }
 /// The badge instance the operator holds in these tests.
 const BADGE_ID: u64 = 0;

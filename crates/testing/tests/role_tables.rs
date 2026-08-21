@@ -8,10 +8,10 @@
 //! timelocked proposal the protocol table uses.
 
 use hyperscale_vm_effects::{
-    Presented, RoleBytes, RoleTable, StoredRule, TestHasher, issued_resource, package_role,
+    Presented, RoleBytes, RoleTable, StoredRule, TestHasher, package_role,
 };
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_testing::{Chain, PrincipalAddr, ResourceKind, account, package, principal};
+use hyperscale_vm_testing::{Chain, PrincipalAddr, account, package, principal};
 use hyperscale_vm_types::{Outcome, Presence, ResourceAddr, UnmetCondition};
 
 const FOUNDER: PrincipalAddr = principal(0x51);
@@ -109,12 +109,7 @@ fn setup() -> (Chain, registry::client::Registry) {
 
 /// The registry's own admin badge.
 fn badge(instance: registry::client::Registry) -> ResourceAddr {
-    issued_resource(
-        &TestHasher,
-        instance,
-        ResourceKind::NonFungible,
-        registry::ADMIN_BADGE,
-    )
+    instance.issued_admin_badge(&TestHasher)
 }
 
 /// A one-role table: `Admin` admits whoever satisfies `rule`.

@@ -11,10 +11,10 @@
 //! the wrappers are gated out of it, which is what makes emitting them
 //! move no package hash and no blob.
 
-use hyperscale_vm_effects::Value;
 pub use hyperscale_vm_effects::{
-    PackageMetadata, RoleTable, SlotId, StoredRule, Value as ManifestValue,
+    Hasher, PackageMetadata, RoleTable, SlotId, StoredRule, Value as ManifestValue,
 };
+use hyperscale_vm_effects::{ResourceKind, SealedRulesExpr, Value, sealed_issued_resource};
 pub use hyperscale_vm_manifest_builder::{
     AddressArg, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,
 };
@@ -24,6 +24,37 @@ pub use hyperscale_vm_types::{
 
 use crate::num::{Quantity, UnitFixed};
 use crate::state::Table;
+
+/// The address a component issues a resource at, under one mark.
+///
+/// The derivation the routed grant lowers through, reached from a
+/// handle rather than restated: the hasher is the protocol's, the
+/// instance is the handle's, and the kind, the mark and the rules the
+/// address folds are the declaration's. A call site that restated any
+/// of them and got one wrong would name a vacant sibling address —
+/// nothing is minted there, so nothing fails, and a gate reading it
+/// reads an empty vault.
+///
+/// # Panics
+///
+/// If the declared rules do not resolve against `config` — which the
+/// generated helper's own signature is what prevents, since it asks for
+/// the configuration exactly where the rules name one.
+#[must_use]
+pub fn issued_at(
+    hasher: &dyn Hasher,
+    instance: impl Into<Address>,
+    kind: ResourceKind,
+    mark: &[u8],
+    seals: &SealedRulesExpr,
+    config: &[Value],
+) -> ResourceAddr {
+    let instance = instance.into();
+    let rules = seals
+        .resolve(hasher, instance, config)
+        .expect("a declared sealed set resolves against its own configuration");
+    sealed_issued_resource(hasher, instance, kind, &rules, mark)
+}
 
 /// A component known to run one package.
 ///

@@ -15,10 +15,11 @@
 
 use std::collections::BTreeMap;
 
-use proc_macro2::TokenStream as TokenStream2;
+use hyperscale_vm_effects::ResourceKind;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 
-use crate::{Gate, is_named};
+use crate::{Gate, Resource, is_named, kebab};
 
 /// Which addresses a package's instances sit at, and so how it is
 /// called.
@@ -377,6 +378,68 @@ fn slots(fields: &BTreeMap<String, u16>) -> Vec<TokenStream2> {
         .collect()
 }
 
+/// One address helper per declared resource: what the instance issues
+/// under that mark, at the address its own declaration derives.
+///
+/// Generated because every call site otherwise restates four facts the
+/// declaration already carries — the hasher, the instance, the kind and
+/// the mark — and a fifth it cannot state at all: the rules the address
+/// folds. A site that got any of them wrong would name a vacant sibling
+/// address rather than fail.
+///
+/// A resource whose rules name configuration takes it, because an
+/// address is a hash and a handle cannot be read backwards to recover
+/// what it commits.
+fn issued(resources: &[Resource], config: Option<&syn::Ident>) -> Vec<TokenStream2> {
+    let resource_addr = sdk("ResourceAddr");
+    let kind_ty = quote!(::hyperscale_vm_sdk::ResourceKind);
+    resources
+        .iter()
+        .map(|resource| {
+            // Prefixed the way a gate names one — `issued(Seat)` — so
+            // the helper cannot collide with the wrapper for a method
+            // the package happens to name after its own resource, and a
+            // call site reads which of the two it is.
+            let name = format_ident!("issued_{}", kebab(&resource.name).replace('-', "_"));
+            let mark = syn::LitByteStr::new(&resource.mark, Span::call_site());
+            let kind = match resource.kind {
+                ResourceKind::Fungible => quote!(#kind_ty::Fungible),
+                ResourceKind::NonFungible => quote!(#kind_ty::NonFungible),
+            };
+            let seals = &resource.seals;
+            let doc = format!(
+                "The address of the `{}` this instance issues.",
+                resource.name
+            );
+            let (param, config_values) = match (resource.seals_config, config) {
+                (true, Some(config)) => (
+                    quote!(config: &super::#config,),
+                    quote!(&::hyperscale_vm_sdk::client::ConfigValues::values(config)),
+                ),
+                _ => (quote!(), quote!(&[])),
+            };
+            quote!(
+                #[doc = #doc]
+                #[must_use]
+                pub fn #name(
+                    self,
+                    hasher: &dyn ::hyperscale_vm_sdk::client::Hasher,
+                    #param
+                ) -> #resource_addr {
+                    ::hyperscale_vm_sdk::client::issued_at(
+                        hasher,
+                        self.0,
+                        #kind,
+                        #mark,
+                        &#seals,
+                        #config_values,
+                    )
+                }
+            )
+        })
+        .collect()
+}
+
 /// The package's calling surface.
 pub fn module(
     handle: &syn::Ident,
@@ -385,8 +448,10 @@ pub fn module(
     fields: &BTreeMap<String, u16>,
     serves: Serves,
     methods: &[&Method],
+    resources: &[Resource],
 ) -> TokenStream2 {
     let slots = slots(fields);
+    let issued = issued(resources, config);
     let calls: Vec<_> = methods
         .iter()
         .flat_map(|method| wrappers(method, serves))
@@ -481,6 +546,8 @@ pub fn module(
                 }
 
                 #(#calls)*
+
+                #(#issued)*
             }
         ),
     };

@@ -192,12 +192,7 @@ pub fn shares_vault() -> shares::Shares {
 
 /// The share the vault issues against deposits.
 pub fn shares_unit() -> ResourceAddr {
-    issued_resource(
-        &TestHasher,
-        Address::from(shares_vault()),
-        ResourceKind::Fungible,
-        shares::UNIT,
-    )
+    shares_vault().issued_unit(&TestHasher)
 }
 
 pub fn book_meta() -> InstanceMeta {

@@ -11,7 +11,7 @@
 //! could differ silently, the loop would be a comfort rather than a
 //! check.
 
-use hyperscale_vm_effects::{ResourceKind, TestHasher, instance_data_key, issued_resource};
+use hyperscale_vm_effects::{TestHasher, instance_data_key};
 use hyperscale_vm_fixtures::amm::{self, Settings};
 use hyperscale_vm_fixtures::grammar;
 use hyperscale_vm_harness::fixtures::repo_root;
@@ -163,12 +163,7 @@ fn a_fielded_instance_reads_the_same_in_both_lanes() {
             account::deposit_nf(b, ALICE, seat)
         });
         let receipt = outcome.receipt().clone();
-        let seat = issued_resource(
-            &TestHasher,
-            shapes,
-            ResourceKind::NonFungible,
-            grammar::SEAT,
-        );
+        let seat = shapes.issued_seat(&TestHasher);
         let filed = chain.cell(instance_data_key(&TestHasher, shapes, seat, 3));
         (receipt, filed)
     };

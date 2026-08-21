@@ -1989,11 +1989,11 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
         .iter()
         .map(|(ident, kind, _, _, seals, _)| (*ident, *kind, seals.is_some()))
         .collect();
-    let rendered: Vec<TokenStream2> = structs
+    let rendered: Vec<(TokenStream2, bool)> = structs
         .iter()
         .map(|(_, _, _, _, seals, _)| {
             seals.as_ref().map_or_else(
-                || Ok(quote!(::hyperscale_vm_sdk::SealedRulesExpr::new())),
+                || Ok((quote!(::hyperscale_vm_sdk::SealedRulesExpr::new()), false)),
                 |list| sealed_rules(list, &named, config_fields),
             )
         })
@@ -2004,14 +2004,17 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
         .zip(marks)
         .zip(rendered)
         .map(
-            |(((ident, kind, divisibility, initial, _, schema), mark), seals)| Resource {
-                name: ident.to_string(),
-                mark: mark.into_bytes(),
-                kind,
-                divisibility,
-                initial,
-                seals,
-                schema,
+            |(((ident, kind, divisibility, initial, _, schema), mark), (seals, seals_config))| {
+                Resource {
+                    name: ident.to_string(),
+                    mark: mark.into_bytes(),
+                    kind,
+                    divisibility,
+                    initial,
+                    seals,
+                    seals_config,
+                    schema,
+                }
             },
         )
         .collect();
@@ -2072,12 +2075,15 @@ fn sealed_rules(
     attr: &syn::MetaList,
     resources: &[(&syn::Ident, ResourceKind, bool)],
     config_fields: &[String],
-) -> syn::Result<TokenStream2> {
+) -> syn::Result<(TokenStream2, bool)> {
     let entries = attr.parse_args_with(
         syn::punctuated::Punctuated::<syn::MetaNameValue, syn::Token![,]>::parse_terminated,
     )?;
     let mut sealed = Vec::new();
     let mut named: Vec<String> = Vec::new();
+    // Whether any leaf names configuration, which is what decides
+    // whether the address is derivable from the handle alone.
+    let mut reads_config = false;
     for entry in &entries {
         let behaviour = match entry.path.get_ident().map(ToString::to_string).as_deref() {
             Some("recall") => quote!(Recall),
@@ -2105,15 +2111,41 @@ fn sealed_rules(
         }
         named.push(name);
         let rule = sealed_rule(&entry.value, resources, config_fields, 0)?;
+        reads_config |= names_config(&entry.value, config_fields);
         sealed.push(quote!(
             __seals.set(::hyperscale_vm_sdk::SealedBehaviour::#behaviour, #rule);
         ));
     }
-    Ok(quote!({
+    let rendered = quote!({
         let mut __seals = ::hyperscale_vm_sdk::SealedRulesExpr::new();
         #(#sealed)*
         __seals
-    }))
+    });
+    Ok((rendered, reads_config))
+}
+
+/// Whether a sealed rule names a configuration field anywhere in it.
+///
+/// What it decides is a signature: a resource whose rules name
+/// configuration has an address that is a function of the instance's
+/// own, and the handle alone cannot recover it — an address is a hash.
+/// So the helper that derives one asks for the configuration, and the
+/// helper that does not, does not.
+fn names_config(expr: &syn::Expr, config_fields: &[String]) -> bool {
+    match expr {
+        syn::Expr::Paren(inner) => names_config(&inner.expr, config_fields),
+        syn::Expr::Binary(binary) => {
+            names_config(&binary.left, config_fields) || names_config(&binary.right, config_fields)
+        }
+        syn::Expr::Call(call) if calls(&call.func, "n_of") => {
+            call.args.iter().any(|arg| names_config(arg, config_fields))
+        }
+        syn::Expr::Path(path) if !path.path.is_ident("self") => path
+            .path
+            .get_ident()
+            .is_some_and(|ident| config_fields.contains(&ident.to_string())),
+        _ => false,
+    }
 }
 
 fn sealed_rule(
@@ -2313,6 +2345,9 @@ struct Resource {
     /// naming the resource, a term over it, and the grant that mints it
     /// — and an address they disagreed about would be three resources.
     seals: TokenStream2,
+    /// Whether those rules name configuration, which decides whether the
+    /// address is derivable from a handle alone.
+    seals_config: bool,
     /// Whether the struct has fields, which is what makes it an
     /// instance's data schema and not only a bare mark.
     schema: bool,
@@ -2864,6 +2899,7 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
         &slots,
         serves,
         &calls,
+        &declared_resources,
     );
 
     let declarations = methods.iter().map(|m| &m.declaration);
