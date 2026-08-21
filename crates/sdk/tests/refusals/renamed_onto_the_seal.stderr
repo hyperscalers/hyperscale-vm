@@ -1,0 +1,5 @@
+error: `instantiate` is the generated seal: the macro derives it for every instance-serving package, so an authored method cannot publish under the name
+  --> tests/refusals/renamed_onto_the_seal.rs:11:9
+   |
+11 |         #[name("instantiate")]
+   |         ^

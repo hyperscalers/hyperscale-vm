@@ -1631,13 +1631,23 @@ fn lower_methods(
                 continue;
             };
             if matches!(method.vis, syn::Visibility::Public(_)) {
-                if matches!(serves, client::Serves::Instances) && method.sig.ident == "instantiate"
+                // The published name, not the Rust one: `#[name(..)]`
+                // reaches the same collision, and the builder would
+                // catch it as a panic from inside a generated
+                // `blueprint()` rather than at the line that wrote it.
+                if matches!(serves, client::Serves::Instances)
+                    && method_name(method)? == INSTANTIATE
                 {
+                    let at = method
+                        .attrs
+                        .iter()
+                        .find(|attr| attr.path().is_ident("name"))
+                        .map_or_else(|| method.sig.ident.span(), Spanned::span);
                     return Err(syn::Error::new(
-                        method.sig.ident.span(),
+                        at,
                         "`instantiate` is the generated seal: the macro derives it for \
                          every instance-serving package, so an authored method cannot \
-                         take the name",
+                         publish under the name",
                     ));
                 }
                 lowered.push(lower_method(method, declared, serves)?);
@@ -1653,6 +1663,13 @@ fn lower_methods(
     }
     Ok(lowered)
 }
+
+/// The name a package's generated seal publishes under.
+///
+/// One declaration because two sites read it: the refusal that keeps an
+/// authored method off the name, and the method the macro synthesizes to
+/// take it.
+const INSTANTIATE: &str = "instantiate";
 
 /// The generated `instantiate` — the seal that makes a component actual,
 /// beside the record of every resource it declares.
@@ -1697,13 +1714,14 @@ fn instantiate_method(resources: &[Resource], gate: Option<&syn::Attribute>) -> 
         }
         None => (quote!(), quote!()),
     };
+    let name = syn::Ident::new(INSTANTIATE, Span::call_site());
     syn::parse_quote!(
         /// Makes this component actual: seals its creation-fixed record
         /// into the configuration leaf, writes the record of every
         /// resource it issues, and issues the supply it comes up
         /// holding — each write refused where its leaf is already there.
         #gate
-        pub fn instantiate(&mut self) #returns {
+        pub fn #name(&mut self) #returns {
             self.__seal();
             #(#records)*
             #supply
