@@ -181,7 +181,9 @@ fn judge_seal(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), 
         return Ok(());
     }
     Err(GateError(
-        "the package declares no way to make a component of it actual: one method must          write the component's own configuration leaf, which is the cell every call to it          is judged against"
+        "the package declares no way to make a component of it actual: one method must \
+         write the component's own configuration leaf, which is the cell every call to \
+         it is judged against"
             .into(),
     ))
 }
