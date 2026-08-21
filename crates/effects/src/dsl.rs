@@ -91,6 +91,13 @@ pub enum Expr {
     Binding(u32),
     /// The target instance's own address.
     SelfAddr,
+    /// The target instance's whole creation-fixed record, as the
+    /// canonical bytes the configuration leaf stores.
+    ///
+    /// Evaluated from the record admission resolved the target with, so
+    /// a caller never chooses the bytes: what instantiation writes is
+    /// what the address commits, or the transaction does not admit.
+    SelfRecord,
     /// Tuple field projection.
     Field(Box<Self>, u32),
     /// The static resource type of a bucket edge.
@@ -244,13 +251,6 @@ pub enum Expr {
         /// Evaluated when it does not.
         otherwise: Box<Self>,
     },
-    /// The target instance's whole creation-fixed record, as the
-    /// canonical bytes the configuration leaf stores.
-    ///
-    /// Evaluated from the record admission resolved the target with, so
-    /// a caller never chooses the bytes: what instantiation writes is
-    /// what the address commits, or the transaction does not admit.
-    SelfRecord,
 }
 
 impl Expr {
@@ -1835,6 +1835,9 @@ mod tests {
         }
     }
 
+    // Leaked so the borrow outlives the call: a record is owned, and
+    // every case here wants one built from its own configuration rather
+    // than threaded in from the caller. Bounded by the number of tests.
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
         let record: &'a InstanceMeta = Box::leak(Box::new(InstanceMeta {
             package: PackageHash(Hash32([1; 32])),
