@@ -49,6 +49,7 @@ fn terms() -> grammar::Terms {
         tiers: Table::new(vec![(1, 10), (2, 20)]),
         fallback: 7,
         sides: vec![principal(0x51).into(), principal(0x52).into()],
+        assets: vec![X, Y],
     }
 }
 
@@ -502,6 +503,46 @@ fn a_for_each_executes_through_its_run_in_both_lanes() {
     );
 }
 
+/// A run over denominated leaves, in both lanes.
+///
+/// The mode a run carries is the site's, so a loop over a family of
+/// vaults walks amount reads where the loop beside it walks plain
+/// cells — same width, same indices, a different resource type at the
+/// boundary. Which is the property nine run kinds exist for.
+#[test]
+fn a_run_over_vaults_reads_at_its_own_mode_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
+        for (asset, held) in [(X, 700u128), (Y, 30)] {
+            chain.credit(ALICE, asset, held);
+            chain
+                .transact(ALICE, |b| {
+                    let signed_in = account::authorize(b, ALICE)?;
+                    let funds = account::withdraw(b, signed_in, asset, held)?;
+                    shapes.fund(b, funds)
+                })
+                .expect_completed();
+        }
+        chain
+            .transact(ALICE, |b| shapes.surveyed(b))
+            .expect_completed();
+        chain
+            .cell(child_key(&TestHasher, shapes, grammar::NOTED, &[]))
+            .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"))
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    assert_eq!(
+        native,
+        Some(730),
+        "every configured asset's vault reached the read"
+    );
+}
+
 /// A loop over a list of one and a list of none, in both lanes.
 ///
 /// The width is the instance's, so the two edges of it are two
@@ -517,6 +558,7 @@ fn a_run_covers_a_list_of_one_and_a_list_of_none_in_both_lanes() {
                 tiers: Table::new(vec![(1, 10)]),
                 fallback: 7,
                 sides: vec![principal(0x51).into()],
+                assets: vec![X],
             },
         );
         let none = chain.instantiate::<grammar::Grammar>(
@@ -525,6 +567,7 @@ fn a_run_covers_a_list_of_one_and_a_list_of_none_in_both_lanes() {
                 tiers: Table::new(vec![(1, 10)]),
                 fallback: 7,
                 sides: Vec::new(),
+                assets: Vec::new(),
             },
         );
         chain

@@ -37,6 +37,12 @@ pub mod grammar {
         /// The parties a schedule is written for, which is the list a
         /// `for-each` maps over.
         sides: Vec<Address>,
+        /// The resources a survey of this instance's vaults walks.
+        ///
+        /// A second list, because a vault is keyed by what it holds: a
+        /// loop over it declares a read on a *denominated* leaf, which
+        /// is the mode `sides` cannot reach.
+        assets: Vec<ResourceAddr>,
     }
 
     /// A mark carrying a schema: what one of its instances holds, in the
@@ -246,6 +252,31 @@ pub mod grammar {
                     self.owed.at(side).set(owed);
                 }
             }
+        }
+
+        /// Value into the vault its own resource keys.
+        ///
+        /// What a survey needs there to be something to read: the
+        /// denomination is the edge's, so the body names no resource and
+        /// the leaf is the one the payment was in.
+        pub fn fund(&mut self, funds: Bucket) {
+            self.vault(funds.resource()).put(funds);
+        }
+
+        /// What every configured asset's vault holds, summed into the
+        /// cell.
+        ///
+        /// A read per element on a leaf that states what it holds, which
+        /// materialises the amount read `spread`'s plain cells do not —
+        /// so the run walked here carries a different mode from the one
+        /// beside it, at the same width and the same indices.
+        pub fn surveyed(&mut self) {
+            let mut total = Quantity::ZERO;
+            for &asset in &self.config().assets {
+                total += self.vault(asset).balance();
+            }
+            self.noted
+                .set(u64::try_from(total.subunits()).unwrap_or(u64::MAX));
         }
 
         /// A method that hands back an ordinary value.
