@@ -1,0 +1,11 @@
+error[E0382]: use of moved value: `draw`
+  --> tests/refusals/reused_draw.rs:22:44
+   |
+17 |             let draw = randomness();
+   |                 ---- move occurs because `draw` has type `Draw`, which does not implement the `Copy` trait
+18 |             let window = self.entrants.sweep(0, cap);
+19 |             if let Some(who) = window.pick(draw) {
+   |                                            ---- value moved here
+...
+22 |             if let Some(who) = window.pick(draw) {
+   |                                            ^^^^ value used here after move

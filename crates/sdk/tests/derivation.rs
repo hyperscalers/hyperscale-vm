@@ -209,7 +209,7 @@ mod environment {
 
     impl Environment {
         pub fn stamp(&mut self, holder: Address) {
-            let digest = hash(&randomness());
+            let digest = hash(randomness().word().as_bytes());
             let drawn = u128::from(digest[0]);
             let _ = drawn;
             self.vault(holder).declared();

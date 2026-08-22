@@ -31,7 +31,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod lottery {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Unordered, randomness};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Unordered, Word, randomness};
 
     /// Somebody took a ticket.
     #[event]
@@ -59,12 +59,9 @@ pub mod lottery {
     #[record]
     #[derive(Clone)]
     struct Outcome {
-        draw: [u8; DRAW_BYTES],
+        draw: Word,
         winner: Option<Address>,
     }
-
-    /// The width the deterministic environment draws in.
-    const DRAW_BYTES: usize = 32;
 
     #[state]
     struct Lottery {
@@ -103,13 +100,9 @@ pub mod lottery {
             // A round nobody entered still drew: the draw is recorded and
             // no winner follows it. Refusing here would leave a round that
             // nobody can settle and nobody can abandon.
-            let winner = window.pick(&draw);
-            // The width is the environment's, and the record states it:
-            // a draw that is not thirty-two bytes is a defect in the
-            // kernel rather than in this round.
             let settled = Outcome {
-                draw: draw.try_into().expect("the draw is a thirty-two byte word"),
-                winner,
+                draw: draw.word(),
+                winner: window.pick(draw),
             };
             self.outcome.create(settled.clone());
             Drawn(settled).emit();

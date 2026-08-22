@@ -8,6 +8,7 @@ use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_kernel::{MemoryStore, Substates};
 use hyperscale_vm_sdk::hbor::from_slice;
+use hyperscale_vm_sdk::state::Word;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     CollectionId, EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition,
@@ -87,7 +88,7 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
     assert_eq!(
         settled_round(&empty_store),
         Some(lottery::Outcome {
-            draw: env().randomness,
+            draw: Word::from_protocol(&env().randomness),
             winner: None,
         }),
         "an unentered round records its draw and no winner"
@@ -135,7 +136,7 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
     assert_eq!(
         settled_round(&store),
         Some(lottery::Outcome {
-            draw: env().randomness,
+            draw: Word::from_protocol(&env().randomness),
             winner: Some(expected.address()),
         }),
         "the round settles on the draw and the entrant it selects"
@@ -246,7 +247,7 @@ fn a_draw_buys_a_page_past_any_ceiling() {
     assert_eq!(
         settled_round(&store),
         Some(lottery::Outcome {
-            draw: env().randomness,
+            draw: Word::from_protocol(&env().randomness),
             winner: Some(ALICE.address()),
         }),
         "one entrant under a five-thousand-entry page still wins their own round"

@@ -263,7 +263,7 @@ fn the_environment_is_the_transactions_own() {
     });
 
     assert_eq!(clock, CLOCK_MS);
-    assert_eq!(randomness, vec![3; 32]);
+    assert_eq!(randomness.word().as_bytes(), &[3; 32]);
     assert_eq!(digest, hash(b"abc").to_vec());
 }
 

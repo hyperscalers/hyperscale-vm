@@ -49,7 +49,7 @@
 //! clause follows from calling one.
 
 use hyperscale_hbor::{
-    DEFAULT_MAX_DEPTH, HborDecode, HborEncode, from_slice_with_depth, to_vec_with_depth,
+    DEFAULT_MAX_DEPTH, Hbor, HborDecode, HborEncode, from_slice_with_depth, to_vec_with_depth,
 };
 /// The record a resource's cell holds, in the shape a client reads.
 ///
@@ -334,6 +334,90 @@ impl Cellular for Vec<u8> {
 
     fn to_cell(&self) -> Vec<u8> {
         self.clone()
+    }
+}
+
+/// The width every value the protocol draws or digests carries.
+pub const WORD_BYTES: usize = 32;
+
+/// A protocol word: the fixed width a draw and a digest both come back
+/// at.
+///
+/// A type rather than the bytes it is, on the same terms the kernel's
+/// amount is a type rather than sixteen: the width is the protocol's, so
+/// a package carrying it as a byte list would be restating a fact it was
+/// never told and checking it at runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+#[hbor(transparent, infallible)]
+pub struct Word([u8; WORD_BYTES]);
+
+impl Word {
+    /// The word's bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; WORD_BYTES] {
+        &self.0
+    }
+
+    /// A word from bytes the protocol produced.
+    ///
+    /// # Panics
+    ///
+    /// On any other width, which is the environment handing out a value
+    /// narrower or wider than the one it fixes.
+    #[must_use]
+    pub fn from_protocol(bytes: &[u8]) -> Self {
+        Self(bytes.try_into().expect("the protocol's own word"))
+    }
+}
+
+impl Cellular for Word {
+    /// # Panics
+    ///
+    /// On a cell that is not a word. Only the package owning the cell
+    /// writes it, so bytes of another width are a defect in state rather
+    /// than in the call that found them.
+    fn from_cell(cell: &[u8]) -> Self {
+        Self::from_protocol(cell)
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+}
+
+/// The draw a selection is made with.
+///
+/// Distinct from the [`Word`] it carries, and the distinction is the
+/// point. A word is a value: storable, publishable, decodable from
+/// anything that holds thirty-two bytes. A draw is a capability — the
+/// environment is the only thing that makes one, it has no encoding, and
+/// nothing reconstructs it from a cell or an argument. So a selection
+/// made with one was made with the environment's own value, and a
+/// package cannot pick a winner with bytes a caller supplied by
+/// accident.
+///
+/// Not `Copy`, and every selection consumes it: two picks off one draw
+/// are perfectly correlated, and a body that means two independent
+/// selections needs two draws rather than one used twice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Draw(Word);
+
+impl Draw {
+    /// The draw as the value it is — what a package publishes beside
+    /// what it decided, so a reader can check the one against the other.
+    ///
+    /// The one-way door: a word never becomes a draw again.
+    #[must_use]
+    pub const fn word(&self) -> Word {
+        self.0
+    }
+
+    /// The draw the environment produced, from the bytes it produced it
+    /// as. Called by the vocabulary, never by a package.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn from_protocol(bytes: &[u8]) -> Self {
+        Self(Word::from_protocol(bytes))
     }
 }
 
@@ -1276,12 +1360,12 @@ impl<T> Interval<T> {
     /// sizes itself by reading state.
     ///
     /// The selection reasoning, once, because it is the protocol's
-    /// rather than a package's. The draw is the kernel's 32-byte word
-    /// and an index needs far fewer, so the low 128 bits are taken and
-    /// reduced: the modulo's bias is over a space no entry count
-    /// approaches, and the remainder is below a count that is a `u32` to
-    /// begin with, so the narrowing cannot fail. A package reasoning
-    /// about either would be reasoning about widths it was never told.
+    /// rather than a package's. A draw is a whole word and an index
+    /// needs far fewer bits, so the low 128 are taken and reduced: the
+    /// modulo's bias is over a space no entry count approaches, and the
+    /// remainder is below a count that is a `u32` to begin with, so the
+    /// narrowing cannot fail. A package reasoning about either would be
+    /// reasoning about widths it was never told.
     ///
     /// **Rejected: rejection sampling.** Removing the bias entirely
     /// costs an unbounded retry, and a declaration prices the work it
@@ -1291,19 +1375,25 @@ impl<T> Interval<T> {
     ///
     /// # Panics
     ///
-    /// On a draw narrower than the sixteen bytes it reduces, which is
-    /// the kernel handing out a word narrower than the one it fixes.
+    /// Never reachably: the remainder is below an entry count that is a
+    /// `u32` to begin with, so the narrowing has nothing to refuse.
     #[must_use]
     #[inline(always)]
-    pub fn picked(&self, draw: &[u8]) -> Option<u32> {
+    pub fn picked(&self, draw: &Draw) -> Option<u32> {
         let entries = self.count();
         if entries == 0 {
             return None;
         }
-        let word: [u8; 16] = draw[..16]
-            .try_into()
-            .expect("the draw is the kernel's own word");
-        let index = u128::from_le_bytes(word) % u128::from(entries);
+        // Half a word is sixteen bytes whatever it holds, so the
+        // fallback stands for a case the width rules out — written as
+        // one rather than as an unwrap, because an unwrap is a panic in
+        // a body that has nothing to panic about.
+        let low = *draw
+            .word()
+            .as_bytes()
+            .first_chunk::<16>()
+            .unwrap_or(&[0; 16]);
+        let index = u128::from_le_bytes(low) % u128::from(entries);
         Some(u32::try_from(index).expect("a remainder below a `u32` count is one"))
     }
 
@@ -1338,8 +1428,9 @@ impl<T: Cellular> Interval<T> {
     /// read, because a body that picks wants what was picked.
     #[must_use]
     #[inline(always)]
-    pub fn pick(&self, draw: &[u8]) -> Option<T> {
-        self.picked(draw).map(|index| self.entry(index))
+    #[allow(clippy::needless_pass_by_value)] // one draw, one selection
+    pub fn pick(&self, draw: Draw) -> Option<T> {
+        self.picked(&draw).map(|index| self.entry(index))
     }
 
     /// Replace the value at `index`.
@@ -1525,14 +1616,13 @@ pub fn clock_ms() -> u64 {
     return host::clock_ms();
 }
 
-/// The transaction's randomness draw: 32 bytes, domain-separated per
-/// transaction.
+/// The transaction's randomness draw.
 #[must_use]
-pub fn randomness() -> Vec<u8> {
+pub fn randomness() -> Draw {
     #[cfg(component)]
-    return crate::guest::randomness();
+    return Draw::from_protocol(&crate::guest::randomness());
     #[cfg(not(component))]
-    return host::randomness();
+    return Draw::from_protocol(&host::randomness());
 }
 
 /// The protocol hash function: a 32-byte digest.

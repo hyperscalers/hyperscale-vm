@@ -37,6 +37,17 @@ fn the_tracer_offers_a_presence_only_where_a_leaf_is_named() {
     refuse.compile_fail("tests/refusals/interval_presence.rs");
 }
 
+/// One draw, one selection. Two picks off a single draw are perfectly
+/// correlated — a winner and a prize tier reduced from the same word
+/// land together — and the draw is consumed so the second one has
+/// nothing to reach for. A body meaning two independent selections says
+/// so with two draws.
+#[test]
+fn a_draw_selects_once() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/reused_draw.rs");
+}
+
 #[test]
 fn the_lowering_refuses_what_it_would_declare_wrongly() {
     let refuse = TestCases::new();

@@ -28,6 +28,7 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_ref::{CVal, HandleKind};
 use hyperscale_vm_runtime::validate_component;
 use hyperscale_vm_sdk::hbor::to_vec;
+use hyperscale_vm_sdk::state::Word;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Movement,
@@ -437,7 +438,7 @@ fn lottery_session() -> KernelSession {
 /// package's own type rather than spliced here.
 fn settled() -> Vec<u8> {
     to_vec(&lottery::Outcome {
-        draw: RANDOMNESS,
+        draw: Word::from_protocol(&RANDOMNESS),
         winner: Some(ENTRANT),
     })
     .expect("an outcome encodes")
