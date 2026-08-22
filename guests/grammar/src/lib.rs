@@ -198,6 +198,19 @@ pub mod grammar {
             self.noted.set(pair.1);
         }
 
+        /// A macro whose arguments are expressions, walked like any
+        /// others.
+        ///
+        /// `vec!` carries no syntax of its own, so each element is
+        /// walked and re-emitted — a configured lookup and a state read
+        /// inside one declare exactly as they would beside it, and an
+        /// element holding neither comes out as itself.
+        pub fn tallied(&mut self, tier: u64) {
+            let mut fees = vec![self.config().tiers.get(tier), self.noted.get()];
+            fees.push(1);
+            self.noted.set(fees.iter().sum());
+        }
+
         /// A method that hands back an ordinary value.
         ///
         /// It produces no edge, so the declaration says it produces

@@ -2238,23 +2238,17 @@ impl<'a> Lowerer<'a> {
 
     /// Walk a macro invocation's arguments for accesses, or refuse it.
     ///
-    /// The assert and panic family take ordinary expressions, so an access
-    /// inside one declares like an access outside it. Any other macro is
-    /// opaque tokens — walking past it would silently drop whatever it
-    /// contains, so it is refused instead.
+    /// The judgment is the parse rather than a list of names: a body that
+    /// reads as a comma-separated expression list is one every argument
+    /// can be walked and re-emitted through, so an access inside it
+    /// declares like an access outside it. A body carrying its own syntax
+    /// parses as nothing, and walking is the only thing keeping an access
+    /// inside it out of nowhere — so that is where the refusal is.
+    ///
+    /// An argument holding no access is rewritten to itself, so admitting
+    /// a macro costs nothing at the sites that were only ever passing
+    /// values through.
     fn macro_call(&mut self, mac: &syn::Macro) -> TokenStream {
-        let known = ["assert", "assert_eq", "assert_ne", "panic"]
-            .iter()
-            .any(|name| mac.path.is_ident(name));
-        if !known {
-            self.error(
-                mac.span(),
-                "`#[blueprint]` cannot see into this macro, so an access inside it would \
-                 be silently dropped from the declaration — only the assert and panic \
-                 family are admitted",
-            );
-            return quote!();
-        }
         let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
         #[allow(clippy::single_match_else)] // two returns over one refusal
         match mac.parse_body_with(parser) {

@@ -1,7 +1,7 @@
 use hyperscale_vm_sdk::blueprint;
 
 macro_rules! credit {
-    ($contract:expr, $addr:expr) => {
+    ($contract:expr => $addr:expr) => {
         $contract.vaults.at($addr).add(0)
     };
 }
@@ -17,7 +17,7 @@ mod contract {
 
     impl Contract {
         pub fn wrapped(&mut self, a: Address) {
-            credit!(self, a);
+            credit!(self => a);
         }
     }
 }

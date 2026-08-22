@@ -329,8 +329,16 @@ fn a_configured_table_is_read_the_same_in_both_lanes() {
             .expect_completed();
         let projected = noted(&chain);
 
+        // `tallied` reads the cell inside a `vec!` and writes it after,
+        // so what it lands on is the fee, what `later` left, and the
+        // literal beside them.
+        chain
+            .transact(ALICE, |b| shapes.tallied(b, 1))
+            .expect_completed();
+        let tallied = noted(&chain);
+
         (
-            scheduled, missed, defaulted, guarded, known, unknown, projected,
+            scheduled, missed, defaulted, guarded, known, unknown, projected, tallied,
         )
     };
 
@@ -338,7 +346,7 @@ fn a_configured_table_is_read_the_same_in_both_lanes() {
     let blessed = run(Chain::wasm());
 
     assert_eq!(native, blessed, "lanes diverged");
-    let (scheduled, missed, defaulted, guarded, known, unknown, projected) = native;
+    let (scheduled, missed, defaulted, guarded, known, unknown, projected, tallied) = native;
     assert_eq!(scheduled, Some(20), "the fee the schedule names");
     assert!(missed, "an unscheduled tier never admits");
     assert_eq!(defaulted, Some(7), "the fee the package chose");
@@ -346,6 +354,11 @@ fn a_configured_table_is_read_the_same_in_both_lanes() {
     assert_eq!(known, Some(1), "the schedule names this tier");
     assert_eq!(unknown, Some(0), "and does not name that one");
     assert_eq!(projected, Some(8), "the second component of the pair");
+    assert_eq!(
+        tallied,
+        Some(10 + 8 + 1),
+        "the read inside the macro is the cell the write left",
+    );
 }
 
 /// The configuration record passed on whole, in both lanes.

@@ -50,9 +50,9 @@
 //! The walk is exhaustive: an expression form the lowering does not model
 //! is a compile error, never a skip, because a skipped form is a
 //! declaration missing whatever the body did inside it. Concretely that
-//! refuses closures, macros outside the assert and panic family (whose
-//! arguments are walked like any expression), calls that pass the
-//! component on — including `self.other_method(…)` — and an early `return`
+//! refuses closures, macros whose body does not parse as an expression
+//! list (one that does is walked argument by argument, like any other
+//! expression), calls that pass the component on — including `self.other_method(…)` — and an early `return`
 //! carrying a produced value edge, which the tail's exact output list
 //! cannot absorb. Reassigning a local forgets what it held, so a key used
 //! after a conditional reassignment is refused at the use site. One handle
