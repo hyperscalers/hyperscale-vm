@@ -379,6 +379,18 @@ pub mod grammar {
             )
         }
 
+        /// A configured sequence read as the value it is, rather than
+        /// mapped over.
+        ///
+        /// The list crosses as the numbers it holds, at the type the
+        /// declaration named it — so a body may consult the very list a
+        /// loop beside it maps over, and the two agree because they read
+        /// one evaluation. Through a free function, because a `for` over
+        /// a term is the declaration's loop rather than the guest's.
+        pub fn widest(&mut self) {
+            self.noted.set(largest(&self.config().windows));
+        }
+
         /// A method that hands back an ordinary value.
         ///
         /// It produces no edge, so the declaration says it produces
@@ -435,5 +447,10 @@ pub mod grammar {
             }
             seat
         }
+    }
+
+    /// The largest of a configured sequence, over the list itself.
+    fn largest(windows: &[u64]) -> u64 {
+        windows.iter().copied().max().unwrap_or(0)
     }
 }

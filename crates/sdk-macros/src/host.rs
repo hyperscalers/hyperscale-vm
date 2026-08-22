@@ -103,8 +103,8 @@ pub fn arm(
                         ::hyperscale_vm_sdk::host::cell(__args, #position),
                     );
                 ),
-                Shape::Ids => quote!(
-                    let #ident = ::hyperscale_vm_sdk::state::Ids(
+                Shape::Ids(ty) => quote!(
+                    let #ident: #ty = ::core::convert::Into::into(
                         ::hyperscale_vm_sdk::host::ids(__args, #position).to_vec(),
                     );
                 ),

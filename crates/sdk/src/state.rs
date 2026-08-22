@@ -1557,6 +1557,14 @@ pub fn hash(data: &[u8]) -> Vec<u8> {
 #[derive(Clone, Debug, Default)]
 pub struct Ids(pub Vec<u64>);
 
+/// The wire form a list of ids crosses in, under the name a body reads
+/// it at.
+impl From<Vec<u64>> for Ids {
+    fn from(ids: Vec<u64>) -> Self {
+        Self(ids)
+    }
+}
+
 impl Ids {
     /// The ids themselves, which is all a body may do with one: what
     /// they mean was settled at admission.

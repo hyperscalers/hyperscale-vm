@@ -140,10 +140,10 @@ pub fn method(
                             ::hyperscale_vm_sdk::state::Cellular::from_cell(&#ident);
                     ));
                 }
-                Shape::Ids => {
+                Shape::Ids(ty) => {
                     signature.push(quote!(#ident: ::std::vec::Vec<u64>));
                     prologue.push(quote!(
-                        let #ident = ::hyperscale_vm_sdk::state::Ids(#ident);
+                        let #ident: #ty = ::core::convert::Into::into(#ident);
                     ));
                 }
                 Shape::Handle(_) | Shape::Run(_) | Shape::Bucket | Shape::Issuer => {

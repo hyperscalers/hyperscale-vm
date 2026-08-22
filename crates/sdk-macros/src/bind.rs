@@ -130,14 +130,30 @@ pub fn derived_shape(
 ) -> Option<Shape> {
     let scalar = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.is_ident("u64"));
     let address = is_address;
-    let id_set = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Ids"));
+    // A sequence of scalars and an instance set are one wire shape: the
+    // numbers as they stand. What differs is the type the body reads
+    // them at, which travels with the shape.
+    let scalars = |ty: &syn::Type| {
+        let syn::Type::Path(path) = ty else {
+            return false;
+        };
+        let last = path.path.segments.last();
+        last.is_some_and(|s| s.ident == "Ids")
+            || last
+                .filter(|s| s.ident == "Vec")
+                .and_then(|s| match &s.arguments {
+                    syn::PathArguments::AngleBracketed(args) => args.args.first(),
+                    _ => None,
+                })
+                .is_some_and(|arg| matches!(arg, syn::GenericArgument::Type(ty) if scalar(ty)))
+    };
     let named = |ty: &syn::Type| {
         if scalar(ty) {
             Shape::Scalar
         } else if address(ty) {
             Shape::Address
-        } else if id_set(ty) {
-            Shape::Ids
+        } else if scalars(ty) {
+            Shape::Ids(Box::new(ty.clone()))
         } else {
             Shape::Cell(Box::new(ty.clone()))
         }
@@ -240,7 +256,7 @@ fn same_shape(a: &Shape, b: &Shape) -> bool {
     match (a, b) {
         (Shape::Scalar, Shape::Scalar)
         | (Shape::Address, Shape::Address)
-        | (Shape::Ids, Shape::Ids)
+        | (Shape::Ids(_), Shape::Ids(_))
         | (Shape::Flag, Shape::Flag)
         | (Shape::Bucket, Shape::Bucket)
         | (Shape::Issuer, Shape::Issuer) => true,

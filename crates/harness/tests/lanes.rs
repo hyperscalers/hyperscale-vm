@@ -736,6 +736,59 @@ fn two_interval_runs_walk_one_loop_in_both_lanes() {
     );
 }
 
+/// A configured sequence read as a value, in both lanes.
+///
+/// The list crosses as the numbers it holds rather than as a framing the
+/// guest decodes, which is the shape admission already builds for one —
+/// so what a body consults and what a loop beside it maps over are one
+/// evaluation, at one width.
+#[test]
+fn a_configured_sequence_crosses_as_its_numbers_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
+        chain
+            .transact(ALICE, |b| shapes.widest(b))
+            .expect_completed();
+        let widest = chain
+            .cell(child_key(&TestHasher, shapes, grammar::NOTED, &[]))
+            .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"));
+        // And a sequence of none, whose largest is the package's own
+        // answer rather than a walk over nothing.
+        let empty = chain.instantiate::<grammar::Grammar>(
+            ALICE,
+            grammar::Terms {
+                tiers: Table::new(vec![(1, 10)]),
+                fallback: 7,
+                sides: Vec::new(),
+                windows: Vec::new(),
+                assets: Vec::new(),
+            },
+        );
+        chain
+            .transact(ALICE, |b| empty.widest(b))
+            .expect_completed();
+        (
+            widest,
+            chain
+                .cell(child_key(&TestHasher, empty, grammar::NOTED, &[]))
+                .map(|bytes| {
+                    from_slice::<u64>(&bytes).expect("the cell holds what the field does")
+                }),
+        )
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    assert_eq!(
+        native,
+        (Some(2), Some(0)),
+        "the configured windows, and none"
+    );
+}
+
 /// A loop over a list of one and a list of none, in both lanes.
 ///
 /// The width is the instance's, so the two edges of it are two
