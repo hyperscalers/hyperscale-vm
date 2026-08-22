@@ -7,14 +7,16 @@
 //! what an edge goes back as. Everything between is the author's text,
 //! unchanged, which is the whole reason this is worth having.
 //!
-//! Emitted under `cfg(not(target_arch = "wasm32"))` alone: the guest
-//! build has an engine to be called by and needs no dispatch of its own.
+//! Emitted for every crate that reads this package, and for a publisher
+//! on every build but the one that emits its artifact: a component has an
+//! engine to be called by and needs no dispatch of its own.
 
 use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::bind::{Binding, Carries, bindings};
 use crate::lower::Lowered;
+use crate::role::Role;
 use crate::wit::Shape;
 
 /// One method's arm of the package's dispatch.
@@ -145,14 +147,15 @@ pub fn arm(
 /// no session to name — an embedder brings its own host and gets the
 /// same one back, which is what lets this sit behind the kernel's own
 /// backend seam without the package crate depending on the kernel.
-pub fn dispatch(arms: &[TokenStream]) -> TokenStream {
+pub fn dispatch(arms: &[TokenStream], role: Role) -> TokenStream {
+    let reading = role.reading();
     quote!(
         /// Invoke one of this package's exports against `kernel`.
         ///
         /// Called by a test harness through the kernel's backend seam,
         /// never by an author: what the arguments are is the manifest's
         /// answer, and what they mean is the declaration's.
-        #[cfg(not(target_arch = "wasm32"))]
+        #reading
         #[must_use]
         // A rewritten body is not the author's text: a binding the
         // lowering resolved away is unused here and used there, and a

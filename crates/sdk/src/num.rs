@@ -41,9 +41,9 @@ use hyperscale_hbor::Hbor;
 // One alias rather than a branch per call site: the two modules expose
 // the same five functions under the same names, because they stand for
 // one implementation reached two ways.
-#[cfg(target_arch = "wasm32")]
+#[cfg(component)]
 use crate::guest as arith;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(component))]
 use crate::host as arith;
 
 /// The scale a stored rate is quantized to: `10^36`.

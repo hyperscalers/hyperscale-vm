@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 wit-bindgen = "=0.60.0"
 # The contract SDK. `#[blueprint]` is what authors this package: the
 # declaration on a host build, the component on a guest one.
-hyperscale-vm-sdk = { path = "../../crates/sdk" }
+hyperscale-vm-sdk = { path = "../../crates/sdk", features = ["guest"] }
 
 [dev-dependencies]
 # The author's chain: publish, seed, call, assert.

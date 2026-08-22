@@ -213,9 +213,23 @@ targets = [\"wasm32-unknown-unknown\"]
 /// writes: a manifest pointing somewhere the crate cannot build from is
 /// a broken scaffold however well the rest of it reads, and a test can
 /// only judge that if it can reach the same line the command emits.
+///
+/// The `guest` feature is what says this crate publishes the package it
+/// authors, which is what a scaffolded crate is for: it earns the
+/// executing component beside the declaration every consumer reads.
 #[must_use]
 pub fn sdk_dependency(dir: &Path) -> String {
-    crate_dependency(dir, "sdk", "\"0.1\"")
+    publisher(&crate_dependency(dir, "sdk", "\"0.1\""))
+}
+
+/// One dependency line with the publishing feature added.
+fn publisher(dependency: &str) -> String {
+    let features = "features = [\"guest\"]";
+    dependency.strip_suffix('}').map_or_else(
+        // A bare version, which has no field list to extend.
+        || format!("{{ version = {dependency}, {features} }}"),
+        |fields| format!("{}, {features} }}", fields.trim_end()),
+    )
 }
 
 /// The test harness as a scaffolded package reaches it, on the terms

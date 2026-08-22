@@ -11,28 +11,31 @@ default = ["macros"]
 # usable on its own, and a build that only consumes metadata should not
 # compile a proc macro to get it.
 macros = ["dep:hyperscale-vm-sdk-macros"]
+# This crate is a package's own, and so may be compiled as the component
+# it publishes. What that costs is the executing half and the kernel
+# imports under it, which only a wasm32 build of such a crate has any use
+# for — a host build of one still reads the declaration, and every other
+# consumer only ever reads it. So the feature says *who is compiling*,
+# and the target says *as what*: the guest half needs both.
+guest = ["dep:wit-bindgen"]
 
 [dependencies]
 hyperscale-hbor.workspace = true
+# The trait an engine implements, and the types a generated `client`
+# wrapper names. Carried on every target: the declaration and the call
+# surface are what a package is read through, and a consumer reading one
+# may itself be compiled to wasm. The component build drops both as dead
+# code, so the artifact is the same bytes either way.
+hyperscale-vm-embed.workspace = true
 hyperscale-vm-effects.workspace = true
+hyperscale-vm-manifest-builder.workspace = true
 hyperscale-vm-sdk-macros = { workspace = true, optional = true }
 hyperscale-vm-types.workspace = true
 
 # The kernel bindings a contract body executes against, on the target
 # that has a kernel to call: the imports, and the generator for them.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wit-bindgen.workspace = true
-
-# The same surface from the other side. A host build is the kernel's
-# caller rather than its guest, so what it needs is the trait an engine
-# implements — never the artifact a package publishes, which is why this
-# mirrors `wit-bindgen` being the wasm32-only one.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-hyperscale-vm-embed.workspace = true
-# The types a generated `client` wrapper names. Off the guest build,
-# where nothing composes a manifest — which is what keeps the wasm
-# artifact byte-identical whether or not the wrappers were emitted.
-hyperscale-vm-manifest-builder.workspace = true
+wit-bindgen = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The tests build declarations by hand, which is the testing surface.

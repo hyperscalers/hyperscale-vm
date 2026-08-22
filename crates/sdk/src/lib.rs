@@ -1,15 +1,21 @@
 //! The contract SDK: blueprint declarations traced into package metadata.
 //!
-//! Two halves of one vocabulary. On the host, [`state`] is read rather
-//! than run: `#[blueprint]` traces a body written in it and gets back
-//! exactly the [`hyperscale_vm_effects::MethodSignature`] routing needs,
-//! against the real evaluator rather than a model of it. On the guest the
-//! same types are the calls — [`guest`] binds `hyperscale:kernel` once,
-//! and each accessor is the import its mode names.
+//! Two halves of one vocabulary. Read rather than run, [`state`] is what
+//! `#[blueprint]` traces a body through to get back exactly the
+//! [`hyperscale_vm_effects::MethodSignature`] routing needs, against the
+//! real evaluator rather than a model of it. Compiled as the component a
+//! package publishes, the same types are the calls — [`guest`] binds
+//! `hyperscale:kernel` once, and each accessor is the import its mode
+//! names.
+//!
+//! Which of the two a build gets is the compiling crate's own answer: the
+//! `guest` feature says this crate publishes the package, and only then
+//! does the wasm32 target mean the artifact rather than a consumer that
+//! happens to run in a browser.
 //!
 //! One vocabulary rather than two is the whole of it: a body cannot reach
-//! state except through these types, so the declaration a host build
-//! derives and the calls a guest build makes are read off the same text.
+//! state except through these types, so the declaration a reader derives
+//! and the calls the component makes are read off the same text.
 //!
 //! # The shape
 //!
@@ -136,12 +142,12 @@
 pub use hyperscale_hbor as hbor;
 
 pub mod blueprint;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(component))]
 pub mod client;
-#[cfg(target_arch = "wasm32")]
+#[cfg(component)]
 pub mod guest;
 pub mod handle;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(component))]
 pub mod host;
 pub mod num;
 pub mod state;
@@ -157,8 +163,17 @@ pub use hyperscale_vm_effects::{
     PRIMARY, ParamType, Proposal, RECOVERY, ResourceKind, RoleId, SlotId, encode_metadata,
     package_role,
 };
-#[cfg(feature = "macros")]
+/// Author a package from one module.
+///
+/// Which halves this yields is the compiling crate's own: a crate that
+/// publishes the package says so with the `guest` feature and gets the
+/// executing component beside the declaration, and every other consumer
+/// gets the declaration and the call surface on whatever target it is
+/// built for.
+#[cfg(all(feature = "macros", not(feature = "guest")))]
 pub use hyperscale_vm_sdk_macros::blueprint;
+#[cfg(all(feature = "macros", feature = "guest"))]
+pub use hyperscale_vm_sdk_macros::blueprint_publisher as blueprint;
 pub use hyperscale_vm_types::{
     Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
@@ -183,9 +198,9 @@ pub use trace::{Access, Interval, Leaf, Requirement, Trace};
 #[must_use]
 pub fn narrowed<T: TryFrom<Address>>(address: Address) -> T {
     T::try_from(address).unwrap_or_else(|_| {
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(component)]
         ::core::arch::wasm32::unreachable();
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(component))]
         panic!("a wrong-class address reached a narrowed binding")
     })
 }

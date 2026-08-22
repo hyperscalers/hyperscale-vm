@@ -99,6 +99,7 @@ mod emit;
 mod guest;
 mod host;
 mod lower;
+mod role;
 mod syntax;
 mod term;
 mod wit;
@@ -117,6 +118,7 @@ use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 
 use crate::lower::{Field, FieldKind, Lowerer, Target};
+use crate::role::Role;
 use crate::term::{Op, emit_kind};
 
 /// Derive a contract's package from its module: the declaration routing
@@ -129,9 +131,23 @@ use crate::term::{Op, emit_kind};
 /// Never; every rejection is a `compile_error!` on the offending span.
 #[proc_macro_attribute]
 pub fn blueprint(attr: TokenStream, item: TokenStream) -> TokenStream {
+    author(attr, item, Role::Reader)
+}
+
+/// The same, for the crate that publishes this package as a component.
+///
+/// Reached through the SDK's `guest` feature rather than named by an
+/// author: which crate publishes a package is a fact about the manifest,
+/// and spelling it twice would let the two disagree.
+#[proc_macro_attribute]
+pub fn blueprint_publisher(attr: TokenStream, item: TokenStream) -> TokenStream {
+    author(attr, item, Role::Publisher)
+}
+
+fn author(attr: TokenStream, item: TokenStream, role: Role) -> TokenStream {
     let module = syn::parse_macro_input!(item as syn::ItemMod);
     let attr = TokenStream2::from(attr);
-    match serves(&attr).and_then(|serves| expand(module, serves)) {
+    match serves(&attr).and_then(|serves| expand(module, serves, role)) {
         Ok(tokens) => tokens.into(),
         Err(error) => error.to_compile_error().into(),
     }
@@ -1756,9 +1772,10 @@ fn instantiation_gate(items: &[syn::Item]) -> Option<&syn::Attribute> {
 /// read on every target and run on none — and compiling them on a guest
 /// build would ask for the authoring half of a vocabulary that has only
 /// its executing half there.
-fn strip_macro_attrs(items: &mut [syn::Item], state_name: &syn::Ident) {
+fn strip_macro_attrs(items: &mut [syn::Item], state_name: &syn::Ident, role: Role) {
     for item in items {
-        if let syn::Item::Impl(block) = item
+        if role.publishes()
+            && let syn::Item::Impl(block) = item
             && matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name))
         {
             block
@@ -1820,7 +1837,11 @@ fn strip_macro_attrs(items: &mut [syn::Item], state_name: &syn::Ident) {
 /// type-checked because the field was there; an accessor needs the method
 /// to be, and these are it — the same off-host stubs the state vocabulary
 /// is made of, at the types each accessor's field spelling had.
-fn authoring_accessors(state: &syn::Ident, config: Option<&syn::Ident>) -> TokenStream2 {
+fn authoring_accessors(
+    state: &syn::Ident,
+    config: Option<&syn::Ident>,
+    role: Role,
+) -> TokenStream2 {
     let configured = config.map(|config| {
         quote!(
             /// The instance's creation-fixed configuration.
@@ -1829,8 +1850,9 @@ fn authoring_accessors(state: &syn::Ident, config: Option<&syn::Ident>) -> Token
             }
         )
     });
+    let reading = role.reading();
     quote!(
-        #[cfg(not(target_arch = "wasm32"))]
+        #reading
         #[allow(dead_code, clippy::unused_self)] // authoring stubs, run nowhere
         impl #state {
             #configured
@@ -1899,12 +1921,25 @@ fn publish_config(items: &mut [syn::Item], config: &syn::Ident) {
 /// table is the one thing in the old four-document shape that nothing
 /// checked. What crosses is the event's own encoding, so the payload's
 /// shape and the type declaring it cannot drift.
-fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
+fn event_emitters(events: &[(syn::Ident, String)], role: Role) -> Vec<syn::Item> {
     events
         .iter()
         .enumerate()
         .map(|(index, (ident, _))| {
             let index = u32::try_from(index).unwrap_or(u32::MAX);
+            // The one kernel call an author reaches without an accessor.
+            // A publisher carries both routings and the target picks;
+            // everybody else has only the session to emit into.
+            let emit = if role.publishes() {
+                quote!(
+                    #[cfg(target_arch = "wasm32")]
+                    ::hyperscale_vm_sdk::guest::emit(#index, payload);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ::hyperscale_vm_sdk::host::emit(#index, payload);
+                )
+            } else {
+                quote!(::hyperscale_vm_sdk::host::emit(#index, payload);)
+            };
             syn::parse_quote!(
                 impl #ident {
                     /// Record that this happened.
@@ -1930,10 +1965,7 @@ fn event_emitters(events: &[(syn::Ident, String)]) -> Vec<syn::Item> {
                             ::MAX_ENCODED_LEN];
                         let payload =
                             ::hyperscale_vm_sdk::hbor::to_slice_infallible(self, &mut buf);
-                        #[cfg(target_arch = "wasm32")]
-                        ::hyperscale_vm_sdk::guest::emit(#index, payload);
-                        #[cfg(not(target_arch = "wasm32"))]
-                        ::hyperscale_vm_sdk::host::emit(#index, payload);
+                        #emit
                     }
                 }
             )
@@ -2489,7 +2521,7 @@ fn unknown_resource_term(at: &impl Spanned) -> syn::Error {
 /// package that has to derive the same address — so the mark a gate
 /// evaluates and the mark a host names are one declaration rather than
 /// two that agree by inspection.
-fn resource_marks(declared: &[Resource]) -> Vec<syn::Item> {
+fn resource_marks(declared: &[Resource], role: Role) -> Vec<syn::Item> {
     declared
         .iter()
         .flat_map(
@@ -2509,7 +2541,10 @@ fn resource_marks(declared: &[Resource]) -> Vec<syn::Item> {
                     pub const #ident: &[u8] = #bytes;
                 );
                 let struct_ident = syn::Ident::new(name, Span::call_site());
-                [mark_const, issuance(name, *kind, *schema, &struct_ident)]
+                [
+                    mark_const,
+                    issuance(name, *kind, *schema, &struct_ident, role),
+                ]
             },
         )
         .collect()
@@ -2535,7 +2570,13 @@ fn resource_marks(declared: &[Resource]) -> Vec<syn::Item> {
 /// rewritten by the lowering before either half of the emission sees one,
 /// so what a guest build would compile here is an unreachable panic and
 /// whatever that drags in.
-fn issuance(name: &str, kind: ResourceKind, schema: bool, mark: &syn::Ident) -> syn::Item {
+fn issuance(
+    name: &str,
+    kind: ResourceKind,
+    schema: bool,
+    mark: &syn::Ident,
+    role: Role,
+) -> syn::Item {
     let stub = quote!(::core::unimplemented!("a contract body runs on the guest"));
     let create_doc = format!("Bring `{name}` itself into existence, by writing its record.");
     let mint_doc = format!("Bring `{name}` into existence, as an edge.");
@@ -2617,8 +2658,9 @@ fn issuance(name: &str, kind: ResourceKind, schema: bool, mark: &syn::Ident) -> 
         }
     }
 
+    let reading = role.reading();
     syn::parse_quote!(
-        #[cfg(not(target_arch = "wasm32"))]
+        #reading
         impl #mark {
             #(#methods)*
         }
@@ -2853,7 +2895,7 @@ fn stub_allows(attrs: &mut Vec<syn::Attribute>) {
 
 /// The lints an expanded module carries, each about the emission rather
 /// than about anything an author wrote.
-fn module_allows(attrs: &mut Vec<syn::Attribute>) {
+fn module_allows(attrs: &mut Vec<syn::Attribute>, role: Role) {
     // Nothing in a package constructs its own state: the struct names
     // the slots the kernel materializes storage under, and the
     // configuration record is an instance's, not the code's. On a guest
@@ -2874,12 +2916,57 @@ fn module_allows(attrs: &mut Vec<syn::Attribute>) {
     // others.
     attrs.push(syn::parse_quote!(#[allow(clippy::redundant_field_names)]));
     stub_allows(attrs);
-    attrs.push(syn::parse_quote!(
-        #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
-    ));
+    if role.publishes() {
+        attrs.push(syn::parse_quote!(
+            #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
+        ));
+    }
 }
 
-fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<TokenStream2> {
+/// The component this package publishes, and its native dispatch.
+///
+/// Both executing halves stand or fall together: what the emission
+/// refuses is a body it cannot rewrite, and a package written the long
+/// way brings its own component and its own way of being called. A
+/// reader builds neither — the declaration the same text yields is what
+/// it came for — so a refusal costs it nothing.
+fn executing(world: &str, methods: &[Lowered], role: Role) -> (TokenStream2, TokenStream2) {
+    let (exports, refusals): (Vec<_>, Vec<_>) =
+        methods
+            .iter()
+            .fold((Vec::new(), Vec::new()), |(mut ok, mut no), method| {
+                match &method.guest {
+                    Ok(built) => ok.push(built),
+                    Err(refusal) => no.push(refusal),
+                }
+                (ok, no)
+            });
+    if !refusals.is_empty() {
+        // The refusal lands on the crate that would have published the
+        // component; a reader is simply not offered a dispatch.
+        let refused = if role.publishes() {
+            quote!(#(#refusals)*)
+        } else {
+            quote!()
+        };
+        return (refused, quote!());
+    }
+    let arms: Vec<_> = methods.iter().map(|method| method.host.clone()).collect();
+    let component = if role.publishes() {
+        let shapes: Vec<_> = exports.iter().map(|m| m.export.clone()).collect();
+        let document = wit::document(world, &shapes);
+        guest::component(world, &document, &exports)
+    } else {
+        quote!()
+    };
+    (component, host::dispatch(&arms, role))
+}
+
+fn expand(
+    mut module: syn::ItemMod,
+    serves: client::Serves,
+    role: Role,
+) -> syn::Result<TokenStream2> {
     let span = module.span();
     let world = kebab(&module.ident.to_string());
     let Some((_, items)) = &mut module.content else {
@@ -2916,6 +3003,7 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
         .iter()
         .map(|(name, field)| (name.clone(), field.slot))
         .collect();
+    let reading = role.reading();
     let client = client::module(
         &state_name,
         config_name.as_ref(),
@@ -2931,35 +3019,12 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     let error_table = errors.iter().map(|name| quote!(.error(#name)));
     let role_table = declared_roles.iter().map(|name| quote!(.role(#name)));
 
-    let (exports, refusals): (Vec<_>, Vec<_>) =
-        methods
-            .iter()
-            .fold((Vec::new(), Vec::new()), |(mut ok, mut no), method| {
-                match &method.guest {
-                    Ok(built) => ok.push(built),
-                    Err(refusal) => no.push(refusal),
-                }
-                (ok, no)
-            });
-    // Both executing halves stand or fall together: what the emission
-    // refuses is a body it cannot rewrite, and a package written the long
-    // way brings its own component and its own way of being called.
-    let (component, dispatch) = if refusals.is_empty() {
-        let shapes: Vec<_> = exports.iter().map(|m| m.export.clone()).collect();
-        let document = wit::document(&world, &shapes);
-        let arms: Vec<_> = methods.iter().map(|method| method.host.clone()).collect();
-        (
-            guest::component(&world, &document, &exports),
-            host::dispatch(&arms),
-        )
-    } else {
-        (quote!(#(#refusals)*), quote!())
-    };
+    let (component, dispatch) = executing(&world, &methods, role);
 
     // Before the markers are stripped: `encode_declared` reads them, and
     // what it pushes has to survive the strip that follows.
     let records = encode_declared(items);
-    strip_macro_attrs(items, &state_name);
+    strip_macro_attrs(items, &state_name, role);
     items.extend(records);
     // A configuration is by definition what a creator supplies, so a
     // private one is unfillable rather than deliberately closed. The
@@ -2968,15 +3033,15 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     if let Some(config) = &config_name {
         publish_config(items, config);
     }
-    module_allows(&mut module.attrs);
-    items.extend(resource_marks(&declared_resources));
-    items.extend(event_emitters(&events));
+    module_allows(&mut module.attrs, role);
+    items.extend(resource_marks(&declared_resources, role));
+    items.extend(event_emitters(&events, role));
     items.push(syn::parse_quote!(
         /// This package's metadata, as routing consumes it.
         ///
         /// Derived from the method bodies above; see the `#[blueprint]`
         /// docs for the grammar the derivation admits.
-        #[cfg(not(target_arch = "wasm32"))]
+        #reading
         #[must_use]
         pub fn blueprint() -> ::hyperscale_vm_sdk::Blueprint {
             ::hyperscale_vm_sdk::Blueprint::builder()
@@ -2990,10 +3055,11 @@ fn expand(mut module: syn::ItemMod, serves: client::Serves) -> syn::Result<Token
     items.push(syn::Item::Verbatim(authoring_accessors(
         &state_name,
         config_name.as_ref(),
+        role,
     )));
     items.push(syn::Item::Verbatim(component));
     items.push(syn::Item::Verbatim(dispatch));
-    items.push(syn::Item::Verbatim(client));
+    items.push(syn::Item::Verbatim(quote!(#reading #client)));
 
     Ok(quote!(#module))
 }

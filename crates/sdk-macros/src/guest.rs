@@ -201,9 +201,10 @@ pub fn method(
 /// The guest half of a package: its bindings, its exports, and the
 /// component registration.
 ///
-/// Emitted under `cfg(target_arch = "wasm32")` alone. A host build reads
+/// Emitted only for the crate that publishes this package, and there
+/// only on the build that produces the artifact. Every other build reads
 /// the same bodies to derive the declaration and never runs them, so
-/// generating the imports there would be asking for a kernel that is not
+/// generating the imports would be asking for a kernel that is not
 /// present.
 pub fn component(world: &str, document: &str, methods: &[&Method]) -> TokenStream {
     let functions = methods.iter().map(|m| &m.function);

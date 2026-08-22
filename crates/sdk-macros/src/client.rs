@@ -565,7 +565,6 @@ pub fn module(
         /// published name, the parameter kinds, the output count and the
         /// gate are all facts the declaration already carries — and one
         /// constant per state field, at the slot the numbering gave it.
-        #[cfg(not(target_arch = "wasm32"))]
         pub mod client {
             #(#slots)*
 
