@@ -345,6 +345,14 @@ pub enum AbortReason {
     /// standing a wrong-arity return has.
     #[hbor(discriminant = 60)]
     WrongMintedIds,
+    /// An answer past [`MAX_ANSWER_BYTES`].
+    ///
+    /// A receipt carries what a method answered with, so the width one
+    /// may carry is the vocabulary's rather than the guest's — the same
+    /// standing an oversized event payload has, refused where the value
+    /// comes back instead of at the encoding that could not hold it.
+    #[hbor(discriminant = 61)]
+    AnswerTooLarge,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -570,6 +578,7 @@ mod tests {
             (58, AbortReason::CodeUnavailable),
             (59, AbortReason::WrongIssuanceKind),
             (60, AbortReason::WrongMintedIds),
+            (61, AbortReason::AnswerTooLarge),
         ];
         for (byte, reason) in classes {
             assert_eq!(

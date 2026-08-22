@@ -18,7 +18,8 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, Answer, MAX_ERROR_CODES, Outcome, SubstateKey, UnmetCondition,
+    ABSENT_REP, AbortReason, Address, Answer, MAX_ANSWER_BYTES, MAX_ERROR_CODES, Outcome,
+    SubstateKey, UnmetCondition,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult, Unavailable};
@@ -253,6 +254,24 @@ fn settled(
                         invoked.fuel,
                     ));
                 }
+            }
+            // What a method answered with rides the receipt, so the
+            // width one may carry is the vocabulary's rather than the
+            // guest's. Refused here, where the value comes back, so an
+            // oversized answer is a deterministic verdict every node
+            // reaches alike instead of an encoding nothing downstream
+            // could hold.
+            if answer
+                .as_ref()
+                .is_some_and(|value| value.len() > MAX_ANSWER_BYTES)
+            {
+                return Err(fail(
+                    session,
+                    Outcome::UserError {
+                        reason: AbortReason::AnswerTooLarge,
+                    },
+                    invoked.fuel,
+                ));
             }
             Ok((session, reps, answer, invoked.fuel))
         }
