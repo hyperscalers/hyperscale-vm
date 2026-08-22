@@ -31,6 +31,16 @@ fn refused<T>(answer: Result<T, SessionTrap>) -> Result<T, AbortReason> {
 }
 
 impl KernelHost for KernelSession {
+    fn run_len(&mut self, rep: u32) -> Result<u32, AbortReason> {
+        refused(Self::run_len(self, rep))
+    }
+    fn run_declared(&mut self, rep: u32, index: u32) -> Result<bool, AbortReason> {
+        refused(Self::run_declared(self, rep, index))
+    }
+    fn run_at(&mut self, rep: u32, index: u32) -> Result<u32, AbortReason> {
+        refused(Self::run_at(self, rep, index))
+    }
+
     fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason> {
         refused(Self::read_cell(self, rep))
     }

@@ -293,6 +293,16 @@ pub struct KernelSession {
     /// is visible in the export's own type and a body that was granted
     /// nothing has nothing to name.
     issuance: Option<(ResourceAddr, ResourceKind)>,
+    /// The runs this invocation has been lent, in the order the walk
+    /// bound them; a run handle's rep is its index here.
+    ///
+    /// A rep space of its own beside the capability table's, because a
+    /// run is not one capability — it is one site's whole expansion, and
+    /// which capability an index reaches is the run's answer rather than
+    /// the table's. The resource type a run is lent as is what tells the
+    /// two spaces apart, on the same terms a bucket's rep is told from a
+    /// cell's.
+    runs: Vec<Vec<Option<u32>>>,
     /// Reservations already taken, by capability rep.
     ///
     /// A grant answers once. The read this replaces answered every time
@@ -362,6 +372,74 @@ impl KernelSession {
             .and_then(|index| self.table.get(index))
             .copied()
             .ok_or(SessionTrap::UnknownHandle(rep))
+    }
+
+    /// Lend one `for-each` site's expansion, answering the rep the run
+    /// is reached at.
+    ///
+    /// Bound per invocation as the walk assembles the call's arguments,
+    /// which is where the entries were resolved.
+    pub fn bind_run(&mut self, entries: Vec<Option<u32>>) -> u32 {
+        let rep = u32::try_from(self.runs.len()).unwrap_or(ABSENT_REP);
+        self.runs.push(entries);
+        rep
+    }
+
+    /// The run at `rep`.
+    fn run(&self, rep: u32) -> Result<&[Option<u32>], SessionTrap> {
+        usize::try_from(rep)
+            .ok()
+            .and_then(|index| self.runs.get(index))
+            .map(Vec::as_slice)
+            .ok_or(SessionTrap::UnknownHandle(rep))
+    }
+
+    /// How many elements the site's loop mapped over.
+    ///
+    /// The element count rather than the count of expansions that fired,
+    /// so two sites in one body agree on what an index means and a
+    /// guarded one reads absent rather than shortening the walk.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::UnknownHandle`] on a rep no run occupies.
+    pub fn run_len(&self, rep: u32) -> Result<u32, SessionTrap> {
+        Ok(u32::try_from(self.run(rep)?.len()).unwrap_or(u32::MAX))
+    }
+
+    /// Whether the site declared anything for the element at `index`.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn run_declared(&self, rep: u32, index: u32) -> Result<bool, SessionTrap> {
+        Ok(self.run_entry(rep, index)?.is_some())
+    }
+
+    /// The capability the site declared for the element at `index`.
+    ///
+    /// An expansion whose guard did not fire answers [`ABSENT_REP`],
+    /// which the operation it is handed to traps on by its own name —
+    /// the same answer a guarded clause at top level already gives.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn run_at(&self, rep: u32, index: u32) -> Result<u32, SessionTrap> {
+        Ok(self.run_entry(rep, index)?.unwrap_or(ABSENT_REP))
+    }
+
+    /// One entry of a run, refusing an index past its elements.
+    fn run_entry(&self, rep: u32, index: u32) -> Result<Option<u32>, SessionTrap> {
+        let entries = self.run(rep)?;
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| entries.get(index))
+            .copied()
+            .ok_or(SessionTrap::IndexOutOfBounds {
+                index,
+                count: entries.len(),
+            })
     }
 
     /// The current value of a declared cell, for the kernel's own gate

@@ -947,6 +947,26 @@ pub struct Declaration {
     ///
     /// [`AbiParam::Guard`]: crate::metadata::AbiParam::Guard
     pub clause_taken: Vec<bool>,
+    /// Where each expansion of a top-level `for-each` landed, keyed by
+    /// that clause's index: a row per clause of the body, an entry per
+    /// element.
+    ///
+    /// An entry names the position in [`Declaration::ordered`] the
+    /// expansion produced, and is absent where it produced none — the
+    /// site's guard did not fire, or the body clause declares no access
+    /// of its own. Recorded rather than computed from
+    /// [`Declaration::clause_spans`]: the flattened order alone cannot
+    /// say which element or which site produced an entry, and a stride
+    /// over it would be wrong the moment two sites are guarded
+    /// differently.
+    ///
+    /// This is what an [`AbiParam::Run`] binding resolves through, so
+    /// the index a body walks is the *element* — every run in one body
+    /// counts the same elements, and a site that did not fire reads
+    /// absent rather than shortening the walk.
+    ///
+    /// [`AbiParam::Run`]: crate::metadata::AbiParam::Run
+    pub expansions: BTreeMap<u32, Vec<Vec<Option<u32>>>>,
 }
 
 impl Declaration {
@@ -981,7 +1001,24 @@ impl Declaration {
             set,
             ordered,
             clause_spans,
+            expansions: BTreeMap::new(),
         }
+    }
+
+    /// The entries a run over `site` of top-level `for-each` clause
+    /// `clause` covers: one per element of the list it mapped, at the
+    /// position in [`Declaration::ordered`] that expansion produced, or
+    /// absent where it produced none.
+    ///
+    /// `None` where the clause is not a top-level `for-each` or the site
+    /// is past its body — both of which the publish gate has already
+    /// refused, so reaching one here is a defect rather than a package.
+    #[must_use]
+    pub fn run(&self, clause: u32, site: u32) -> Option<&[Option<u32>]> {
+        self.expansions
+            .get(&clause)?
+            .get(usize::try_from(site).ok()?)
+            .map(Vec::as_slice)
     }
 
     /// The same declaration, with what each entry of
@@ -1020,8 +1057,11 @@ pub fn evaluate_declaration(
     let mut budget = Budget::default();
     // One clause at a time, so each one's contribution to the flattened
     // order is bracketed as it is produced.
-    for clause in clauses {
+    for (index, clause) in clauses.iter().enumerate() {
         let start = out.ordered.len();
+        // The clause's own index, so a `for-each` files its expansion
+        // map under the number an ABI binding names it by.
+        budget.clause = u32::try_from(index).map_err(|_| EvalError::TooManyEffects)?;
         eval_clauses(
             std::slice::from_ref(clause),
             inputs,
@@ -1054,6 +1094,9 @@ pub fn evaluate_declaration(
 struct Budget {
     clause_depth: usize,
     work: usize,
+    /// The top-level clause being evaluated, which is the index a
+    /// `for-each`'s expansion map is filed under.
+    clause: u32,
 }
 
 impl Budget {
@@ -1066,6 +1109,46 @@ impl Budget {
         }
         Ok(())
     }
+}
+
+/// One element's pass over a `for-each` body, noting where each of the
+/// body's clauses landed in the flattened order.
+///
+/// The body is walked clause by clause rather than in one call, because
+/// what a run needs is which *site* produced an entry — and the
+/// flattened order on its own cannot say. A clause that declares no
+/// access of its own records nothing: a condition, a nested loop, or an
+/// effect whose guard did not fire, all of which read absent at this
+/// element.
+fn eval_expansion(
+    body: &[Clause],
+    inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    bindings: &mut Vec<Value>,
+    out: &mut Declaration,
+    budget: &mut Budget,
+    mut rows: Option<&mut Vec<Vec<Option<u32>>>>,
+) -> Result<(), EvalError> {
+    for (site, clause) in body.iter().enumerate() {
+        let before = out.ordered.len();
+        eval_clauses(
+            std::slice::from_ref(clause),
+            inputs,
+            hasher,
+            bindings,
+            out,
+            budget,
+        )?;
+        let Some(rows) = rows.as_deref_mut() else {
+            continue;
+        };
+        let landed = match clause {
+            Clause::Effect { .. } if out.ordered.len() == before + 1 => u32::try_from(before).ok(),
+            _ => None,
+        };
+        rows[site].push(landed);
+    }
+    Ok(())
 }
 
 /// Evaluate one expression with no enclosing `for-each` bindings.
@@ -1180,6 +1263,11 @@ fn eval_clauses(
                 if items.len() > MAX_FOREACH_ELEMENTS {
                     return Err(EvalError::ForEachTooLong { len: items.len() });
                 }
+                // Only a top-level loop is one an ABI binding can name, so
+                // only that one records where its expansions landed.
+                let mut rows = (budget.clause_depth == 0)
+                    .then(|| vec![Vec::with_capacity(items.len()); body.len()]);
+                let clause = budget.clause;
                 budget.clause_depth += 1;
                 for item in items {
                     // The iteration is work whether or not the body declares
@@ -1187,11 +1275,15 @@ fn eval_clauses(
                     // rather than running the product of its levels' widths.
                     budget.charge()?;
                     bindings.push(item);
-                    let result = eval_clauses(body, inputs, hasher, bindings, out, budget);
+                    let result =
+                        eval_expansion(body, inputs, hasher, bindings, out, budget, rows.as_mut());
                     bindings.pop();
                     result?;
                 }
                 budget.clause_depth -= 1;
+                if let Some(rows) = rows {
+                    out.expansions.insert(clause, rows);
+                }
             }
         }
     }
@@ -2231,6 +2323,105 @@ mod tests {
                 mode: Mode::Delta,
             }));
         }
+    }
+
+    #[test]
+    fn a_foreach_records_where_each_expansion_landed() {
+        // Three elements over a body of two sites, the second guarded on
+        // the element itself: what a run over site 1 covers is three
+        // entries, two of them absent, aligned with site 0's three.
+        let args = [Value::List(vec![
+            Value::U64(0),
+            Value::U64(1),
+            Value::U64(0),
+        ])];
+        let ins = inputs(&args, &[]);
+        let vault = |material: Vec<Expr>| {
+            TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: SlotId(1),
+                material,
+            })
+        };
+        let clauses = [Clause::ForEach {
+            guard: None,
+            list: Expr::Arg(0),
+            body: vec![
+                Clause::Effect {
+                    guard: None,
+                    target: vault(vec![Expr::Binding(0)]),
+                    mode: ModeExpr::Write,
+                    denomination: None,
+                },
+                Clause::Effect {
+                    guard: Some(Box::new(Expr::Eq(
+                        Box::new(Expr::Binding(0)),
+                        Box::new(Expr::Literal(Value::U64(1))),
+                    ))),
+                    target: vault(vec![Expr::Binding(0), Expr::Literal(Value::U64(7))]),
+                    mode: ModeExpr::Delta,
+                    denomination: None,
+                },
+            ],
+        }];
+        let declaration = evaluate_declaration(&clauses, &ins, &TestHasher).unwrap();
+
+        // Elements 0 and 2 name one key, so the *set* folds them; the
+        // ordered view keeps one entry per expansion that landed.
+        assert_eq!(declaration.ordered.len(), 4);
+        assert_eq!(declaration.clause_spans, vec![(0, 4)]);
+        // The bare site fired every time; the guarded one only for the
+        // element that is not zero.
+        assert_eq!(
+            declaration.run(0, 0),
+            Some([Some(0), Some(1), Some(3)].as_slice())
+        );
+        assert_eq!(
+            declaration.run(0, 1),
+            Some([None, Some(2), None].as_slice())
+        );
+        // A site the body does not have, and a clause that is not a loop.
+        assert_eq!(declaration.run(0, 2), None);
+        assert_eq!(declaration.run(1, 0), None);
+    }
+
+    #[test]
+    fn a_nested_foreach_records_nothing_of_its_own() {
+        // Only a top-level loop is one an ABI binding names, and a body
+        // clause that is itself a loop declares no access of its own —
+        // so the outer run's row for it is absent whatever the inner one
+        // did.
+        let args = [
+            Value::List(vec![Value::U64(1), Value::U64(2)]),
+            Value::List(vec![Value::U64(9)]),
+        ];
+        let ins = inputs(&args, &[]);
+        let clauses = [Clause::ForEach {
+            guard: None,
+            list: Expr::Arg(0),
+            body: vec![Clause::ForEach {
+                guard: None,
+                list: Expr::Arg(1),
+                body: vec![Clause::Effect {
+                    guard: None,
+                    target: TargetExpr::Point(Expr::ChildKey {
+                        owner: Box::new(Expr::SelfAddr),
+                        slot: SlotId(1),
+                        material: vec![Expr::Binding(1), Expr::Binding(0)],
+                    }),
+                    mode: ModeExpr::Write,
+                    denomination: None,
+                }],
+            }],
+        }];
+        let declaration = evaluate_declaration(&clauses, &ins, &TestHasher).unwrap();
+
+        assert_eq!(declaration.ordered.len(), 2);
+        assert_eq!(declaration.run(0, 0), Some([None, None].as_slice()));
+        assert!(
+            declaration.expansions.len() == 1,
+            "only the outer loop files a map"
+        );
     }
 
     /// A left-nested projection chain `Field(Field(…Arg(0)…))`.

@@ -86,6 +86,40 @@ interface state {
     /// The same, over entries that are instances of one resource.
     resource instance-range;
 
+    /// A declared `for-each` site's whole expansion, borrowed once and
+    /// walked by the index of the element that declared each entry.
+    ///
+    /// One resource per handle type rather than one shared run: a run
+    /// carries exactly the operations its mode carries, so an undeclared
+    /// mode is as unreachable through a run as through a single cell.
+    /// The width is the instance's rather than the signature's — a list
+    /// a loop maps over is configuration's business — which is why one
+    /// parameter covers the whole site instead of a run of them.
+    ///
+    /// Every run answers `len` at the *element* count, so two sites in
+    /// one body agree on what an index means, and `declared` at whether
+    /// this site's guard fired for that element. Operating through an
+    /// index that did not is a body whose control flow disagrees with
+    /// its own declaration, and traps on the same terms reaching a
+    /// guarded-out handle does.
+    resource read-cell-run;
+    /// A run of write cells; see `read-cell-run`.
+    resource write-cell-run;
+    /// A run of amount cells; see `read-cell-run`.
+    resource amount-cell-run;
+    /// A run of amount reads; see `read-cell-run`.
+    resource amount-read-run;
+    /// A run of delta cells; see `read-cell-run`.
+    resource delta-cell-run;
+    /// A run of reserve cells; see `read-cell-run`.
+    resource reserve-cell-run;
+    /// A run of read intervals; see `read-cell-run`.
+    resource range-read-run;
+    /// A run of write intervals; see `read-cell-run`.
+    resource range-write-run;
+    /// A run of instance intervals; see `read-cell-run`.
+    resource instance-range-run;
+
     /// The substate's current bytes; empty if absent.
     read-cell-get: func(c: borrow<read-cell>) -> list<u8>;
 
@@ -288,6 +322,146 @@ interface state {
     /// File every instance the bucket carries as an entry at the order it
     /// was taken under, consuming it.
     instance-range-put: func(r: borrow<instance-range>, funds: own<bucket>, value: list<u8>);
+
+    /// How many elements the site's loop mapped over.
+    read-cell-run-len: func(r: borrow<read-cell-run>) -> u32;
+
+    /// Whether this site declared anything for the element at `index`.
+    read-cell-run-declared: func(r: borrow<read-cell-run>, index: u32) -> bool;
+
+    /// The substate's current bytes; empty if absent.
+    read-cell-run-get: func(r: borrow<read-cell-run>, index: u32) -> list<u8>;
+
+    /// How many elements the site's loop mapped over.
+    write-cell-run-len: func(r: borrow<write-cell-run>) -> u32;
+
+    /// Whether this site declared anything for the element at `index`.
+    write-cell-run-declared: func(r: borrow<write-cell-run>, index: u32) -> bool;
+
+    /// The substate's current bytes; empty if absent.
+    write-cell-run-get: func(r: borrow<write-cell-run>, index: u32) -> list<u8>;
+
+    /// Replace the substate's bytes.
+    write-cell-run-set: func(r: borrow<write-cell-run>, index: u32, value: list<u8>);
+
+    /// Remove the substate, so nothing is there.
+    write-cell-run-clear: func(r: borrow<write-cell-run>, index: u32);
+
+    /// How many elements the site's loop mapped over.
+    amount-cell-run-len: func(r: borrow<amount-cell-run>) -> u32;
+
+    /// Whether this site declared anything for the element at `index`.
+    amount-cell-run-declared: func(r: borrow<amount-cell-run>, index: u32) -> bool;
+
+    /// What the amount cell holds.
+    amount-cell-run-balance: func(r: borrow<amount-cell-run>, index: u32) -> amount;
+
+    /// Debit the cell into a bucket.
+    amount-cell-run-take: func(r: borrow<amount-cell-run>, index: u32, amount: amount) -> own<bucket>;
+
+    /// Credit the cell, consuming the bucket.
+    amount-cell-run-put: func(r: borrow<amount-cell-run>, index: u32, funds: own<bucket>);
+
+    /// How many elements the site's loop mapped over.
+    amount-read-run-len: func(r: borrow<amount-read-run>) -> u32;
+
+    /// Whether this site declared anything for the element at `index`.
+    amount-read-run-declared: func(r: borrow<amount-read-run>, index: u32) -> bool;
+
+    /// What the cell holds, without the exclusivity moving it needs.
+    amount-read-run-balance: func(r: borrow<amount-read-run>, index: u32) -> amount;
+
+    /// How many elements the site's loop mapped over.
+    delta-cell-run-len: func(r: borrow<delta-cell-run>) -> u32;
+
+    /// Whether this site declared anything for the element at `index`.
+    delta-cell-run-declared: func(r: borrow<delta-cell-run>, index: u32) -> bool;
+
+    /// Credit the cell commutatively, consuming the bucket.
+    delta-cell-run-put: func(r: borrow<delta-cell-run>, index: u32, funds: own<bucket>);
+
+    /// Debit the cell commutatively into a bucket.
+    delta-cell-run-take: func(r: borrow<delta-cell-run>, index: u32, amount: amount) -> own<bucket>;
+
+    /// How many elements the site's loop mapped over.
+    reserve-cell-run-len: func(r: borrow<reserve-cell-run>) -> u32;
+
+    /// Whether this site declared anything for the element at `index`.
+    reserve-cell-run-declared: func(r: borrow<reserve-cell-run>, index: u32) -> bool;
+
+    /// Take the reservation this clause declared and held.
+    reserve-cell-run-take: func(r: borrow<reserve-cell-run>, index: u32) -> own<bucket>;
+
+    /// How many elements the site's loop mapped over.
+    range-read-run-len: func(r: borrow<range-read-run>) -> u32;
+
+    /// Whether this site declared anything for the element at `index`.
+    range-read-run-declared: func(r: borrow<range-read-run>, index: u32) -> bool;
+
+    /// Entries currently in the interval, bounded by the declared cap.
+    range-read-run-count: func(r: borrow<range-read-run>, index: u32) -> u32;
+
+    /// Whether the page holds every entry the interval does.
+    range-read-run-covered: func(r: borrow<range-read-run>, index: u32) -> bool;
+
+    /// The order key of the entry at `entry`, ascending.
+    range-read-run-order: func(r: borrow<range-read-run>, index: u32, entry: u32) -> amount;
+
+    /// The value of the entry at `entry`, ascending.
+    range-read-run-entry: func(r: borrow<range-read-run>, index: u32, entry: u32) -> list<u8>;
+
+    /// How many elements the site's loop mapped over.
+    range-write-run-len: func(r: borrow<range-write-run>) -> u32;
+
+    /// Whether this site declared anything for the element at `index`.
+    range-write-run-declared: func(r: borrow<range-write-run>, index: u32) -> bool;
+
+    /// Entries currently in the interval, bounded by the declared cap.
+    range-write-run-count: func(r: borrow<range-write-run>, index: u32) -> u32;
+
+    /// Whether the page holds every entry the interval does.
+    range-write-run-covered: func(r: borrow<range-write-run>, index: u32) -> bool;
+
+    /// The order key of the entry at `entry`, ascending.
+    range-write-run-order: func(r: borrow<range-write-run>, index: u32, entry: u32) -> amount;
+
+    /// The value of the entry at `entry`, ascending.
+    range-write-run-entry: func(r: borrow<range-write-run>, index: u32, entry: u32) -> list<u8>;
+
+    /// Replace the value of the entry at `entry`.
+    range-write-run-set: func(r: borrow<range-write-run>, index: u32, entry: u32, value: list<u8>);
+
+    /// Insert (or replace) the entry at `order`, which must lie inside
+    /// the declared interval.
+    range-write-run-insert: func(r: borrow<range-write-run>, index: u32, order: amount, value: list<u8>);
+
+    /// Remove the entry at `entry`.
+    range-write-run-remove: func(r: borrow<range-write-run>, index: u32, entry: u32);
+
+    /// How many elements the site's loop mapped over.
+    instance-range-run-len: func(r: borrow<instance-range-run>) -> u32;
+
+    /// Whether this site declared anything for the element at `index`.
+    instance-range-run-declared: func(r: borrow<instance-range-run>, index: u32) -> bool;
+
+    /// Entries currently in the interval, bounded by the declared cap.
+    instance-range-run-count: func(r: borrow<instance-range-run>, index: u32) -> u32;
+
+    /// Whether the page holds every entry the interval does.
+    instance-range-run-covered: func(r: borrow<instance-range-run>, index: u32) -> bool;
+
+    /// The order key of the entry at `entry`, ascending.
+    instance-range-run-order: func(r: borrow<instance-range-run>, index: u32, entry: u32) -> amount;
+
+    /// The value of the entry at `entry`, ascending.
+    instance-range-run-entry: func(r: borrow<instance-range-run>, index: u32, entry: u32) -> list<u8>;
+
+    /// Take the named instances out of the interval as a bucket.
+    instance-range-run-take: func(r: borrow<instance-range-run>, index: u32, ids: list<u64>) -> own<bucket>;
+
+    /// File every instance the bucket carries as an entry at the order it
+    /// was taken under, consuming it.
+    instance-range-run-put: func(r: borrow<instance-range-run>, index: u32, funds: own<bucket>, value: list<u8>);
 }
 
 /// Wide arithmetic: the operations a contract cannot write itself without

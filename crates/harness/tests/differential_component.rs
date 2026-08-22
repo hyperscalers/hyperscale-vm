@@ -309,14 +309,23 @@ fn run_blessed(
             HandleKind::ReserveCell => call1::<ReserveCell>(&mut store, &instance, export, *rep),
             HandleKind::RangeRead => call1::<RangeRead>(&mut store, &instance, export, *rep),
             HandleKind::RangeWrite => call1::<RangeWrite>(&mut store, &instance, export, *rep),
-            // Nothing this fixture exports takes value or issues any;
-            // the bucket lane drives both, and the two value handles with
-            // it.
+            // Nothing this fixture exports takes value, issues any, or
+            // runs a `for-each` site; the bucket lane drives the first
+            // two, and the corpus drives the third.
             HandleKind::Bucket
             | HandleKind::Issuer
             | HandleKind::AmountCell
             | HandleKind::AmountRead
-            | HandleKind::InstanceRange => {
+            | HandleKind::InstanceRange
+            | HandleKind::ReadCellRun
+            | HandleKind::WriteCellRun
+            | HandleKind::AmountCellRun
+            | HandleKind::AmountReadRun
+            | HandleKind::DeltaCellRun
+            | HandleKind::ReserveCellRun
+            | HandleKind::RangeReadRun
+            | HandleKind::RangeWriteRun
+            | HandleKind::InstanceRangeRun => {
                 return Err(format_err!("{export} takes no value handle"));
             }
         },

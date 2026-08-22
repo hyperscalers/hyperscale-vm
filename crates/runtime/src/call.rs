@@ -18,8 +18,9 @@ use wasmtime::{AsContextMut, Error, Result, Store};
 
 use crate::abort::{CallError, classify, exhausted};
 use crate::world::{
-    AmountCell, AmountRead, Bucket, DeltaCell, InstanceRange, Issuer, RangeRead, RangeWrite,
-    ReadCell, ReserveCell, WriteCell,
+    AmountCell, AmountCellRun, AmountRead, AmountReadRun, Bucket, DeltaCell, DeltaCellRun,
+    InstanceRange, InstanceRangeRun, Issuer, RangeRead, RangeReadRun, RangeWrite, RangeWriteRun,
+    ReadCell, ReadCellRun, ReserveCell, ReserveCellRun, WriteCell, WriteCellRun,
 };
 
 /// An address as the world's `record address`: four little-endian words.
@@ -83,6 +84,44 @@ fn handle(kind: CellKind, rep: u32, store: impl AsContextMut) -> Result<Resource
     }
 }
 
+/// The run resource one `for-each` site's expansion is lent as.
+///
+/// The kind's own run type, on the same terms [`handle`] constructs the
+/// single form: the rep is a position in the session's run table rather
+/// than in its capability table, and which capability an index reaches is
+/// the run's answer.
+fn run(kind: CellKind, rep: u32, store: impl AsContextMut) -> Result<ResourceAny> {
+    match kind {
+        CellKind::Read => {
+            ResourceAny::try_from_resource(Resource::<ReadCellRun>::new_own(rep), store)
+        }
+        CellKind::Write => {
+            ResourceAny::try_from_resource(Resource::<WriteCellRun>::new_own(rep), store)
+        }
+        CellKind::Amount => {
+            ResourceAny::try_from_resource(Resource::<AmountCellRun>::new_own(rep), store)
+        }
+        CellKind::AmountRead => {
+            ResourceAny::try_from_resource(Resource::<AmountReadRun>::new_own(rep), store)
+        }
+        CellKind::Delta => {
+            ResourceAny::try_from_resource(Resource::<DeltaCellRun>::new_own(rep), store)
+        }
+        CellKind::Reserve => {
+            ResourceAny::try_from_resource(Resource::<ReserveCellRun>::new_own(rep), store)
+        }
+        CellKind::RangeRead => {
+            ResourceAny::try_from_resource(Resource::<RangeReadRun>::new_own(rep), store)
+        }
+        CellKind::InstanceRange => {
+            ResourceAny::try_from_resource(Resource::<InstanceRangeRun>::new_own(rep), store)
+        }
+        CellKind::RangeWrite => {
+            ResourceAny::try_from_resource(Resource::<RangeWriteRun>::new_own(rep), store)
+        }
+    }
+}
+
 /// How an invocation ended, as the artifact's own result type says it can.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Returned {
@@ -131,6 +170,7 @@ pub fn call_export<T: 'static>(
             GuestArg::Handle { rep, kind } => {
                 Val::Resource(handle(*kind, *rep, store.as_context_mut())?)
             }
+            GuestArg::Run { rep, kind } => Val::Resource(run(*kind, *rep, store.as_context_mut())?),
             GuestArg::Bool(taken) => Val::Bool(*taken),
             GuestArg::U64(scalar) => Val::U64(*scalar),
             GuestArg::Address(address) => address_val(*address),

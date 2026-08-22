@@ -43,8 +43,10 @@ pub use {
     engine::{blessed_config, blessed_engine},
     fuel::blessed_operator_cost,
     world::{
-        Amount, AmountCell, AmountRead, Bucket, DeltaCell, HostRefusal, InstanceRange, Issuer,
-        RangeRead, RangeWrite, ReadCell, ReserveCell, Wide, WitOrdering, WitRounding, WriteCell,
+        Amount, AmountCell, AmountCellRun, AmountRead, AmountReadRun, Bucket, DeltaCell,
+        DeltaCellRun, HostRefusal, InstanceRange, InstanceRangeRun, Issuer, RangeRead,
+        RangeReadRun, RangeWrite, RangeWriteRun, ReadCell, ReadCellRun, ReserveCell,
+        ReserveCellRun, Wide, WitOrdering, WitRounding, WriteCell, WriteCellRun,
         add_kernel_to_linker,
     },
 };

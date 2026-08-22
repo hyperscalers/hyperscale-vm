@@ -135,6 +135,32 @@ pub enum AbiError {
         /// The clause it names.
         clause: u32,
     },
+    /// A run binding naming a clause that is not a `for-each`.
+    ///
+    /// A run covers a site's expansions, and a clause that does not
+    /// expand has none — its capability is the single handle a
+    /// [`AbiParam::Handle`] binding names.
+    #[error("ABI parameter {position} runs clause {clause}, which is not a `for-each`")]
+    NotALoop {
+        /// The ABI parameter position.
+        position: u32,
+        /// The clause it names.
+        clause: u32,
+    },
+    /// A run binding naming a body position that declares no access.
+    ///
+    /// A condition declares no capability, and a nested loop's own
+    /// expansions are not addressable by an index over the outer one's
+    /// elements — so neither backs a run.
+    #[error("ABI parameter {position} runs site {site} of clause {clause}, which is not an access")]
+    NotALoopedAccess {
+        /// The ABI parameter position.
+        position: u32,
+        /// The `for-each` clause it names.
+        clause: u32,
+        /// The body position it names.
+        site: u32,
+    },
     /// A bucket binding naming a parameter the signature does not declare.
     #[error("ABI parameter {position} names parameter {param}, past the {declared} declared")]
     NoSuchParam {
@@ -172,6 +198,36 @@ pub enum AbiError {
         /// How many ABI parameters name it.
         carried: u32,
     },
+}
+
+/// Judge one run binding: a run names a site inside a loop, so both
+/// halves of the name are checked.
+///
+/// Anything else is a binding nothing could resolve — a condition
+/// declares no capability, and a nested loop's own expansions are not
+/// addressable by an index over the outer one's elements.
+fn check_run(
+    signature: &MethodSignature,
+    position: u32,
+    clause: u32,
+    site: u32,
+) -> Result<(), AbiError> {
+    let declared = usize::try_from(clause)
+        .ok()
+        .and_then(|index| signature.effects.get(index));
+    let Some(Clause::ForEach { body, .. }) = declared else {
+        return Err(AbiError::NotALoop { position, clause });
+    };
+    let inside = usize::try_from(site).ok().and_then(|index| body.get(index));
+    if matches!(inside, Some(Clause::Effect { .. })) {
+        Ok(())
+    } else {
+        Err(AbiError::NotALoopedAccess {
+            position,
+            clause,
+            site,
+        })
+    }
 }
 
 /// Judge a signature's ABI binding against the declaration it is a
@@ -230,6 +286,9 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
                         clause: *clause,
                     });
                 }
+            }
+            AbiParam::Run { clause, site } => {
+                check_run(signature, position, *clause, *site)?;
             }
             // The grant is the method's own declaration, so a binding
             // that names one where nothing is issued asks for a handle

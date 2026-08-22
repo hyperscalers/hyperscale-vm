@@ -19,8 +19,9 @@
 
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
-    AbiParam, MethodSignature, PackageMetadata, Totality, attach_metadata as attach_canonical,
-    check_signature, materialized_kind, metadata_section, seals,
+    AbiParam, Clause, MethodSignature, PackageMetadata, Totality,
+    attach_metadata as attach_canonical, check_signature, materialized_kind, metadata_section,
+    seals,
 };
 use hyperscale_vm_runtime::{
     ExportParam, ExportShape, check_method, classify_exports, validated_component,
@@ -344,6 +345,35 @@ fn check_abi_against_export(
                     return Err(GateError(format!(
                         "method {method:?}: ABI parameter {position} is an issuance \
                          grant, but the export takes {param:?}"
+                    )));
+                }
+            }
+            AbiParam::Run { clause, site } => {
+                let ExportParam::Run(resource) = param else {
+                    return Err(GateError(format!(
+                        "method {method:?}: ABI parameter {position} is a run over a \
+                         `for-each` site, but the export takes {param:?}"
+                    )));
+                };
+                let expected = usize::try_from(*clause)
+                    .ok()
+                    .and_then(|index| signature.effects.get(index))
+                    .and_then(|clause| match clause {
+                        Clause::ForEach { body, .. } => usize::try_from(*site)
+                            .ok()
+                            .and_then(|index| body.get(index)),
+                        _ => None,
+                    })
+                    .and_then(materialized_kind);
+                if let Some(expected) = expected
+                    && *resource != expected
+                {
+                    return Err(GateError(format!(
+                        "method {method:?}: ABI parameter {position} runs \
+                         `{}`, but site {site} of clause {clause}'s mode materialises a \
+                         `{}`",
+                        resource.run_type(),
+                        expected.run_type()
                     )));
                 }
             }

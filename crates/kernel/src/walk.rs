@@ -166,6 +166,13 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
                     rep: ABSENT_REP,
                     kind: *kind,
                 }),
+                // A run's entries were resolved where the declaration was
+                // evaluated, so the session is handed what the site
+                // covers rather than a rule for finding it.
+                CallArg::Run { kind, entries } => {
+                    let rep = session.bind_run(entries.clone());
+                    args.push(GuestArg::Run { rep, kind: *kind });
+                }
                 CallArg::Bool(taken) => args.push(GuestArg::Bool(*taken)),
                 CallArg::Issuer => args.push(GuestArg::Issuer),
                 CallArg::U64(scalar) => args.push(GuestArg::U64(*scalar)),

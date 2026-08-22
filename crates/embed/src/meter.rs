@@ -102,6 +102,37 @@ fn charge_scan<P: HostAccess + FuelSink>(port: &mut P) -> Result<(), MeterError>
     charge(port, lifted)
 }
 
+/// `len`, on any of the nine run resources.
+///
+/// Nothing crosses the boundary but the count itself, which every host
+/// call already carries the cost of.
+pub fn run_len<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<u32, MeterError> {
+    refused(port.host().run_len(rep))
+}
+
+/// `declared`, on any of the nine run resources.
+pub fn run_declared<P: HostAccess + FuelSink>(
+    port: &mut P,
+    rep: u32,
+    index: u32,
+) -> Result<bool, MeterError> {
+    refused(port.host().run_declared(rep, index))
+}
+
+/// The capability one run entry names, which every run operation
+/// resolves before performing the operation its mode carries.
+///
+/// Priced as the operation it precedes rather than beside it: the
+/// resolution reads the session's own table and crosses nothing, so a
+/// run operation costs what the single form costs.
+pub fn run_at<P: HostAccess + FuelSink>(
+    port: &mut P,
+    rep: u32,
+    index: u32,
+) -> Result<u32, MeterError> {
+    refused(port.host().run_at(rep, index))
+}
+
 /// `read-cell.get`.
 pub fn read_cell_get<P: HostAccess + FuelSink>(
     port: &mut P,

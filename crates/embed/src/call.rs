@@ -13,6 +13,19 @@ pub enum GuestArg<'a> {
         /// The handle type.
         kind: CellKind,
     },
+    /// A borrowed run over one `for-each` site's expansion: its rep in
+    /// the session's run table and the kind each entry is lent at, which
+    /// is also the run resource the engine constructs it as.
+    ///
+    /// A rep space of its own beside the capability table's — a run is
+    /// one site's whole expansion rather than one capability, and which
+    /// capability an index reaches is the run's answer.
+    Run {
+        /// The position the session assigned in its run table.
+        rep: u32,
+        /// The handle type each entry is lent at.
+        kind: CellKind,
+    },
     /// A clause's own guard verdict.
     Bool(bool),
     /// A 64-bit scalar.

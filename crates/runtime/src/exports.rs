@@ -28,6 +28,10 @@ pub enum ExportParam {
     /// `hyperscale:kernel/state` interface exports it as — one
     /// correspondence, [`CellKind::world_type`]'s own.
     Handle(CellKind),
+    /// `borrow<R-run>` of one `for-each` site's whole expansion, at the
+    /// kind whose run type the `hyperscale:kernel/state` interface
+    /// exports it as — [`CellKind::run_type`]'s own correspondence.
+    Run(CellKind),
     /// `borrow<issuer>`: this invocation's authority to create value.
     Issuer,
     /// `own<bucket>`: a value edge the call transfers into the guest.
@@ -258,7 +262,9 @@ fn param_shape(
                 .map_or(ExportParam::Other, |name| match name.as_str() {
                     "issuer" => ExportParam::Issuer,
                     named => CellKind::from_world_type(named)
-                        .map_or(ExportParam::Other, ExportParam::Handle),
+                        .map(ExportParam::Handle)
+                        .or_else(|| CellKind::from_run_type(named).map(ExportParam::Run))
+                        .unwrap_or(ExportParam::Other),
                 }),
             // An owned handle is a value edge: the world owns one such
             // resource, and a body that holds one holds value.

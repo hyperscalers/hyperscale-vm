@@ -23,8 +23,8 @@ use hyperscale_vm_types::{
 };
 
 use crate::dsl::{
-    Declaration, DeclaredAccess, EvalError, EvalInputs, PresentedGrants, evaluate_declaration,
-    evaluate_expr, materialized_kind,
+    Clause, Declaration, DeclaredAccess, EvalError, EvalInputs, PresentedGrants,
+    evaluate_declaration, evaluate_expr, materialized_kind,
 };
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
@@ -1467,6 +1467,48 @@ struct Lowering<'a> {
     hasher: &'a dyn Hasher,
 }
 
+/// The argument a run binding lowers to: what one `for-each` site
+/// declared, one entry per element of the list its loop mapped over.
+///
+/// Every entry resolves through the map the evaluation recorded, so
+/// nothing here computes a position — what the walk did is what the run
+/// covers, and an expansion the site's guard did not fire for is an
+/// absence rather than a gap.
+fn bind_run(
+    signature: &MethodSignature,
+    declaration: &Declaration,
+    clause: u32,
+    site: u32,
+    offset: u32,
+) -> Result<CallArg, String> {
+    let entries = declaration
+        .run(clause, site)
+        .ok_or_else(|| format!("clause {clause} has no site {site} to run"))?;
+    let kind = usize::try_from(clause)
+        .ok()
+        .and_then(|index| signature.effects.get(index))
+        .and_then(|clause| match clause {
+            Clause::ForEach { body, .. } => {
+                usize::try_from(site).ok().and_then(|index| body.get(index))
+            }
+            _ => None,
+        })
+        .and_then(materialized_kind)
+        .ok_or_else(|| format!("site {site} of clause {clause} materializes nothing"))?;
+    let entries = entries
+        .iter()
+        .map(|entry| {
+            entry.map_or(Ok(None), |position| {
+                position
+                    .checked_add(offset)
+                    .map(Some)
+                    .ok_or_else(|| "the capability table overflowed".to_owned())
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CallArg::Run { kind, entries })
+}
+
 /// The argument a handle binding lowers to: the capability at the
 /// clause's position, or the absence the guest is told about.
 ///
@@ -1537,6 +1579,9 @@ fn lower_call(
         args.push(match binding {
             AbiParam::Handle(clause) => bind_handle(signature, declaration, *clause, offset)
                 .ok_or_else(|| unbindable(format!("clause {clause} binds no handle")))?,
+            AbiParam::Run { clause, site } => {
+                bind_run(signature, declaration, *clause, *site, offset).map_err(&unbindable)?
+            }
             AbiParam::Guard(clause) => {
                 let taken = usize::try_from(*clause)
                     .ok()

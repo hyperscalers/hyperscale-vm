@@ -151,6 +151,18 @@ struct TestHost {
 }
 
 impl KernelHost for TestHost {
+    fn run_len(&mut self, _rep: u32) -> std::result::Result<u32, AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+
+    fn run_declared(&mut self, _rep: u32, _index: u32) -> std::result::Result<bool, AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+
+    fn run_at(&mut self, _rep: u32, _index: u32) -> std::result::Result<u32, AbortReason> {
+        Err(AbortReason::HandleUnknown)
+    }
+
     fn read_cell(&mut self, rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
         Ok(self.values[rep as usize].clone())
     }

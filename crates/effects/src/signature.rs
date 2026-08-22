@@ -189,6 +189,23 @@ pub enum AbiParam {
     ///
     /// [`Declaration::clause_taken`]: crate::dsl::Declaration::clause_taken
     Guard(u32),
+    /// The run covering one site of a `for-each` clause: every
+    /// expansion of that site, walked by the index of the element that
+    /// declared it.
+    ///
+    /// The width is the instance's rather than the signature's, which is
+    /// why it is one parameter and not a run of them — a body's arity
+    /// stays a function of what it declares, and the list a loop maps
+    /// over stays the configuration's business. An expansion the site's
+    /// guard did not fire for reads absent at its index rather than
+    /// shortening the walk, so two sites in one body agree on what an
+    /// index means.
+    Run {
+        /// The top-level `for-each` clause.
+        clause: u32,
+        /// The site's position in that clause's body.
+        site: u32,
+    },
     /// A value evaluated over the method's bound inputs.
     ///
     /// The same evaluation the effect clauses run, against the same

@@ -18,6 +18,37 @@ use hyperscale_vm_types::math::U256;
 /// across a call boundary that requires it, and because a conflict group
 /// executes on its own thread.
 pub trait KernelHost: Send {
+    /// How many elements a run's site mapped over.
+    ///
+    /// The element count rather than the count of expansions that fired,
+    /// so two sites in one body agree on what an index means.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn run_len(&mut self, rep: u32) -> Result<u32, AbortReason>;
+
+    /// Whether a run's site declared anything for the element at
+    /// `index`.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn run_declared(&mut self, rep: u32, index: u32) -> Result<bool, AbortReason>;
+
+    /// The capability a run's site declared for the element at `index`,
+    /// as the rep every other operation here takes.
+    ///
+    /// An expansion whose guard did not fire answers a rep no capability
+    /// occupies, so the operation it is handed to refuses by its own
+    /// name — a body reaching one disagrees with its own declaration,
+    /// exactly as one reaching a guarded-out handle does.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn run_at(&mut self, rep: u32, index: u32) -> Result<u32, AbortReason>;
+
     /// The cell's current bytes; empty if absent.
     ///
     /// # Errors

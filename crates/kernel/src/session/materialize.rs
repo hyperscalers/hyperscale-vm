@@ -297,6 +297,7 @@ impl KernelSession {
             cell_resources: ordered.iter().map(|access| access.holds).collect(),
             buckets: Buckets::default(),
             issuance: None,
+            runs: Vec::new(),
             taken: BTreeSet::new(),
         })
     }

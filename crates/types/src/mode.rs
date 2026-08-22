@@ -104,20 +104,51 @@ impl CellKind {
     /// in both directions.
     #[must_use]
     pub fn from_world_type(name: &str) -> Option<Self> {
-        [
-            Self::Read,
-            Self::Write,
-            Self::Amount,
-            Self::AmountRead,
-            Self::Delta,
-            Self::Reserve,
-            Self::RangeRead,
-            Self::RangeWrite,
-            Self::InstanceRange,
-        ]
-        .into_iter()
-        .find(|kind| kind.world_type() == name)
+        Self::ALL.into_iter().find(|kind| kind.world_type() == name)
     }
+
+    /// The world's name for a *run* of this handle type: the capability
+    /// covering one `for-each` site's whole expansion, walked by the
+    /// index of the element that declared each entry.
+    ///
+    /// One per kind rather than one shared resource, so a run carries
+    /// exactly the operations its mode carries and an undeclared mode is
+    /// as unreachable through a run as through a single cell.
+    #[must_use]
+    pub const fn run_type(self) -> &'static str {
+        match self {
+            Self::Read => "read-cell-run",
+            Self::Write => "write-cell-run",
+            Self::Amount => "amount-cell-run",
+            Self::AmountRead => "amount-read-run",
+            Self::Delta => "delta-cell-run",
+            Self::Reserve => "reserve-cell-run",
+            Self::RangeRead => "range-read-run",
+            Self::RangeWrite => "range-write-run",
+            Self::InstanceRange => "instance-range-run",
+        }
+    }
+
+    /// The kind a run resource's name runs over — [`Self::run_type`]'s
+    /// inverse, on the same terms [`Self::from_world_type`] is
+    /// [`Self::world_type`]'s.
+    #[must_use]
+    pub fn from_run_type(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.run_type() == name)
+    }
+
+    /// Every kind, which is what both name lookups walk.
+    const ALL: [Self; 9] = [
+        Self::Read,
+        Self::Write,
+        Self::Amount,
+        Self::AmountRead,
+        Self::Delta,
+        Self::Reserve,
+        Self::RangeRead,
+        Self::RangeWrite,
+        Self::InstanceRange,
+    ];
 }
 
 /// What a write requires of the leaf it lands on.

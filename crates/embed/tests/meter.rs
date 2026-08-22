@@ -48,6 +48,15 @@ impl StubHost {
 }
 
 impl KernelHost for StubHost {
+    fn run_len(&mut self, _rep: u32) -> Result<u32, AbortReason> {
+        self.op("run-len", 0)
+    }
+    fn run_declared(&mut self, _rep: u32, _index: u32) -> Result<bool, AbortReason> {
+        self.op("run-declared", true)
+    }
+    fn run_at(&mut self, _rep: u32, index: u32) -> Result<u32, AbortReason> {
+        self.op("run-at", index)
+    }
     fn read_cell(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
         self.op("read-cell", vec![0; 5])
     }

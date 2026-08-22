@@ -55,6 +55,15 @@ pub mod fixtures {
 
     #[allow(clippy::missing_errors_doc)] // unreachable: the guest imports nothing
     impl KernelHost for NoHost {
+        fn run_len(&mut self, _rep: u32) -> Result<u32, AbortReason> {
+            Err(AbortReason::HandleUnknown)
+        }
+        fn run_declared(&mut self, _rep: u32, _index: u32) -> Result<bool, AbortReason> {
+            Err(AbortReason::HandleUnknown)
+        }
+        fn run_at(&mut self, _rep: u32, _index: u32) -> Result<u32, AbortReason> {
+            Err(AbortReason::HandleUnknown)
+        }
         fn read_cell(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }

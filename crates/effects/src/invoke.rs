@@ -83,6 +83,24 @@ pub enum CallArg {
     AbsentHandle(CellKind),
     /// A clause's own guard verdict, as the export's `bool`.
     Bool(bool),
+    /// The whole expansion of one `for-each` site: the capability each
+    /// element declared, at that element's index, and an absence where
+    /// the site's guard did not fire.
+    ///
+    /// The absences are the reason this is a list rather than a span. Two
+    /// sites in one body may be guarded differently, and a run that
+    /// dropped what did not fire would answer at a length the site beside
+    /// it does not share — so the index is the element's throughout, and
+    /// a hole reads as a hole. The kind travels for the reason
+    /// [`CallArg::AbsentHandle`] carries one: a run of absences has no
+    /// capability to read a world type off.
+    Run {
+        /// The kind each entry is lent as, and the run's own world type.
+        kind: CellKind,
+        /// One entry per element, at its position in the transaction's
+        /// materialized table.
+        entries: Vec<Option<u32>>,
+    },
     /// A 64-bit scalar the signature derived from the node's inputs.
     U64(u64),
     /// An address the signature derived from the node's inputs.
