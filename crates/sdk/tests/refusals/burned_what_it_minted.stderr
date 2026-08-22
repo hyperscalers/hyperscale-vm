@@ -1,0 +1,5 @@
+error: one access requires the leaf to be absent and to be there — no committed state satisfies both, so the call could never be feasible. Declare the one the body actually needs
+  --> tests/refusals/burned_what_it_minted.rs:20:13
+   |
+20 |             Seat::burn(Seat::mint(1, Seat { holder }));
+   |             ^^^^

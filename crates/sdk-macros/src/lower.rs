@@ -1431,10 +1431,11 @@ impl<'a> Lowerer<'a> {
     /// Lower `Name::held(edge)` — the record of the one instance the
     /// edge carries, read without the caller naming an id.
     ///
-    /// The edge already knows its instances, so the id is the sole
-    /// element of its id list rather than an argument beside it. An edge
-    /// carrying any other number of instances fails that evaluation, and
-    /// the transaction is refused before the body runs.
+    /// The edge already knows its instances, so the id comes off it
+    /// rather than from an argument beside it. Where the edge carries
+    /// the caller's instances that is a question the declaration asks at
+    /// evaluation, and an edge carrying any other number than one is
+    /// refused there, before the body runs.
     fn lower_held(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
         if let Some(refused) = self.instance_record(issued, "read", call.func.span()) {
             return refused;
@@ -1447,10 +1448,12 @@ impl<'a> Lowerer<'a> {
             );
             return Eval::absent(call.args.span(), "an instance read with no edge");
         };
-        let Some(edge) = self.instance_edge(issued, named, "reads", call.span()) else {
+        let Some((edge, _)) = self.instance_edge(issued, named, "reads", call.span()) else {
             return Eval::absent(named.span(), "an underivable edge");
         };
-        let id = Term::Only(Box::new(Term::IdsOf(Box::new(edge))));
+        let Some(id) = self.sole_id(edge, named) else {
+            return Eval::absent(named.span(), "an edge naming no one instance");
+        };
         let site = self.instance_site(issued, id, call.func.span());
         self.record(site, Op::Get, None, call.span());
         let leaf = self.value(Code::Handle {
@@ -1532,7 +1535,7 @@ impl<'a> Lowerer<'a> {
         named: &syn::Expr,
         verb: &str,
         span: Span,
-    ) -> Option<Term> {
+    ) -> Option<(Term, Code)> {
         let eval = self.expr(borrowed(named));
         let carried = Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone());
         let amount = |lowering: &mut Self| {
@@ -1557,7 +1560,7 @@ impl<'a> Lowerer<'a> {
                     return None;
                 }
                 self.denominate(*param, carried, span);
-                Some(edge.clone())
+                Some((edge.clone(), eval.code.clone()))
             }
             (Val::Produced(edge @ Term::NfBucket { resource, .. }), _) => {
                 if **resource != carried {
@@ -1571,7 +1574,7 @@ impl<'a> Lowerer<'a> {
                         ),
                     );
                 }
-                Some(edge.clone())
+                Some((edge.clone(), eval.code.clone()))
             }
             (Val::Produced(_), _) => {
                 amount(self);
@@ -1591,6 +1594,39 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The id of the one instance an edge carries.
+    ///
+    /// An edge the body produced names its instances outright, so the id
+    /// is the one it names and the cell is the same site the mint
+    /// opened — which is what lets a mint and a retirement of the same
+    /// instance meet on one leaf rather than on two spellings of it. An
+    /// edge whose instances are the caller's names them only at
+    /// evaluation, so the id is the sole element of its id list and an
+    /// edge carrying any other number is refused there.
+    fn sole_id(&mut self, edge: Term, named: &syn::Expr) -> Option<Term> {
+        let Term::NfBucket { ids, .. } = &edge else {
+            return Some(Term::Only(Box::new(Term::IdsOf(Box::new(edge)))));
+        };
+        let Term::List(named_ids) = ids.as_ref() else {
+            return Some(Term::Only(Box::new(Term::IdsOf(Box::new(edge)))));
+        };
+        match named_ids.as_slice() {
+            [one] => Some(one.clone()),
+            several => {
+                self.error(
+                    named.span(),
+                    &format!(
+                        "this edge carries {} instances, and an instance is what the \
+                         call is about — one edge, one instance, and a body holding \
+                         several reaches each of them through an edge of its own",
+                        several.len(),
+                    ),
+                );
+                None
+            }
+        }
+    }
+
     /// Lower `Name::burn(edge)` on a non-fungible mark — the instances
     /// the edge carries leave circulation, and the cell each of them
     /// filed ends with them.
@@ -1599,7 +1635,8 @@ impl<'a> Lowerer<'a> {
     /// it: clearing the cells of several would need a run of handles no
     /// export parameter holds. The cell is required present, which is
     /// the mint's own door read the other way round — so a burn of an
-    /// instance nothing minted is refused before the body runs.
+    /// instance nothing minted is refused before the body runs, and a
+    /// burn of one this body minted is refused where it is written.
     fn lower_burn_nf(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
         let Some(named) = call.args.first() else {
             self.error(
@@ -1609,15 +1646,17 @@ impl<'a> Lowerer<'a> {
             );
             return Eval::absent(call.args.span(), "a burn with no edge");
         };
-        let destroyed = self.expr(named);
-        let Some(edge) = self.instance_edge(issued, named, "retires", call.span()) else {
+        let Some((edge, destroyed)) = self.instance_edge(issued, named, "retires", call.span())
+        else {
             return Eval::absent(named.span(), "an underivable edge");
         };
-        let id = Term::Only(Box::new(Term::IdsOf(Box::new(edge))));
+        let Some(id) = self.sole_id(edge, named) else {
+            return Eval::absent(named.span(), "an edge naming no one instance");
+        };
         let site = self.instance_site(issued, id, call.func.span());
         self.record(site, Op::Existing, None, call.span());
         let handle = self.handle(site, call.span());
-        let funds = self.value(destroyed.code);
+        let funds = self.value(destroyed);
         let grant = self.issuer(ResourceKind::NonFungible, &issued.mark);
         Eval::plain(quote!({
             ::hyperscale_vm_sdk::state::clear_instance(#handle);
