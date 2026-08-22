@@ -431,9 +431,10 @@ pub enum Op {
     /// `create()` / `seal()` — the same write, on a leaf that must not
     /// be there. The second writes an epoch the kernel names.
     Create,
-    /// `existing()` / `exclusive()` / `open()` — the same write, on a
-    /// leaf that must be. The second declares it and reads nothing; the
-    /// third reads a seal and resolves the draw it matured into.
+    /// `existing()` / `exclusive()` / `open()` / `reseal()` — the same
+    /// write, on a leaf that must be. The second declares it and reads
+    /// nothing; the third resolves the draw the leaf's seal matured
+    /// into, and the fourth replaces a seal that never will.
     Existing,
     /// `vacant()` — a fresh read requiring the leaf absent, reading
     /// nothing from it.
@@ -455,7 +456,7 @@ impl Op {
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),
             "create" | "seal" => Some(Self::Create),
-            "existing" | "exclusive" | "open" => Some(Self::Existing),
+            "existing" | "exclusive" | "open" | "reseal" => Some(Self::Existing),
             "vacant" => Some(Self::Vacant),
             _ => None,
         }

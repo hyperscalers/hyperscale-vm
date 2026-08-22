@@ -4,6 +4,9 @@
 //! A round runs in two legs. `close` seals the draw that will settle it;
 //! `settle` opens the seal once the protocol has rolled the seed it
 //! commits to, and picks the winner over every ticket the round holds.
+//! A third, `reopen`, is the way back from a round nobody settled while
+//! its seed was still kept — the tickets stay and only the draw is taken
+//! again, and the kernel refuses it over a seal that can still open.
 //!
 //! The two legs are the whole point. A draw a transaction carries is a
 //! draw the proposer of the block committing that transaction knows
@@ -63,9 +66,12 @@ pub mod lottery {
         /// Nothing is wrong; settle again later.
         NotYetDrawn,
         /// The seal will never open. Nobody settled the round inside the
-        /// window its seed is kept in, so the round has to be closed
-        /// again — on a seal whose seed nobody has seen.
+        /// window its seed is kept in, so the round has to be reopened —
+        /// onto a seal whose seed nobody has seen.
         SealLapsed,
+        /// The round's seal can still open, so there is nothing to
+        /// reopen: settle it.
+        RoundStandsOpen,
     }
 
     /// The round settled on a draw.
@@ -118,6 +124,32 @@ pub mod lottery {
         pub fn close(&mut self) {
             self.round.seal();
             Closed.emit();
+        }
+
+        /// Take a second seal, where the round's own will never open.
+        ///
+        /// The way back from [`Error::SealLapsed`], and the reason a
+        /// lapse is worth telling apart from a round that is merely
+        /// early. The tickets stay: what lapsed is the draw that would
+        /// have decided the round, not the round.
+        ///
+        /// Nothing here judges whether the seal may be replaced — the
+        /// kernel refuses a reseal over one that can still open, so a
+        /// caller waiting for a word they liked better cannot get one.
+        /// The branch below is what turns that refusal into an error a
+        /// caller can read.
+        pub fn reopen(&mut self) -> Result<(), Error> {
+            // A settled round is over, and resealing one would leave a
+            // seal nothing will ever open again.
+            self.outcome.vacant();
+            // Early or matured, a seal that can still answer is a round
+            // to settle rather than one to take again.
+            let Drawn::Expired = self.round.open() else {
+                return Err(Error::RoundStandsOpen);
+            };
+            self.round.reseal();
+            Closed.emit();
+            Ok(())
         }
 
         /// Settle the round over every ticket it holds.

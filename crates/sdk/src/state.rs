@@ -1084,6 +1084,22 @@ impl Cell<Option<Seal>> {
         unimplemented!("{OFF_HOST}")
     }
 
+    /// Take a second seal, where this cell already holds one.
+    ///
+    /// The only thing a package can do about [`Drawn::Expired`], and the
+    /// reason that state is worth telling apart from [`Drawn::Pending`]:
+    /// a round nobody settled inside the window has a seal that will
+    /// never open, and without this it would have no way back.
+    ///
+    /// Declares what [`Cell::existing`] declares — the leaf held and
+    /// there. The kernel refuses it over a seal that has not lapsed, so
+    /// this cannot re-roll a draw: a matured seed is public, and so is
+    /// the word it produces.
+    #[inline(always)]
+    pub fn reseal(&mut self) {
+        unimplemented!("{OFF_HOST}")
+    }
+
     /// The draw this cell's seal matured into.
     #[must_use]
     #[inline(always)]
@@ -1106,6 +1122,15 @@ impl Slot<Option<Seal>> {
     /// Seal this cell on the epoch now running.
     #[inline(always)]
     pub fn seal(&mut self) {
+        #[cfg(component)]
+        crate::guest::cell_seal(self.handle);
+        #[cfg(not(component))]
+        host::cell_seal(self.handle);
+    }
+
+    /// Take a second seal, where this cell already holds one.
+    #[inline(always)]
+    pub fn reseal(&mut self) {
         #[cfg(component)]
         crate::guest::cell_seal(self.handle);
         #[cfg(not(component))]

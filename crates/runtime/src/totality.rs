@@ -113,10 +113,8 @@ const DISCHARGED: &[(&str, &str)] = &[
     ("state", "read-cell-get"),
     ("state", "write-cell-get"),
     // A set stores the bytes it is handed with no judgment at the call;
-    // what a receipt may carry is judged at its own boundary. A seal is
-    // the same store of a value the kernel names rather than the body.
+    // what a receipt may carry is judged at its own boundary.
     ("state", "write-cell-set"),
-    ("state", "write-cell-seal"),
     // A clear ends a leaf the handle already holds exclusively; there
     // is nothing to judge that materialization did not.
     ("state", "write-cell-clear"),

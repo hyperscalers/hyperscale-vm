@@ -133,6 +133,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("lottery", "close", open(), vec![]),
         ("lottery", "enter", open(), vec![]),
         ("lottery", "instantiate", open(), vec![]),
+        ("lottery", "reopen", open(), vec![]),
         ("lottery", "settle", open(), vec![]),
         ("nf", "burn", open(), vec![]),
         ("nf", "deposit", open(), vec![]),

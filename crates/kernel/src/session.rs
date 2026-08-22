@@ -60,6 +60,14 @@ pub enum SessionTrap {
     /// through the typed world surface, kept as an honest error.
     #[error("handle {0} does not grant this operation")]
     WrongMode(u32),
+    /// A cell resealed while its standing seal can still open.
+    ///
+    /// A seed is public the moment it rolls, and so is the word derived
+    /// from it — so replacing a seal that has matured, or one that is
+    /// merely early, is a re-roll of a draw somebody can already read.
+    /// Only a seal that will never open may be replaced.
+    #[error("handle {0} names a cell whose seal has not lapsed")]
+    SealStanding(u32),
     /// A cell opened as a seal that holds something else.
     ///
     /// Only the kernel writes a seal, so the bytes under one are its own
@@ -207,6 +215,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::UnknownHandle(_) => Self::HandleUnknown,
             SessionTrap::WrongMode(_) => Self::HandleWrongMode,
             SessionTrap::NotASeal(_) => Self::MalformedSeal,
+            SessionTrap::SealStanding(_) => Self::SealStanding,
             SessionTrap::UndeclaredBranch => Self::UndeclaredBranch,
             SessionTrap::IndexOutOfBounds { .. } => Self::EntryIndexOutOfBounds,
             SessionTrap::OrderOutsideInterval => Self::OrderOutsideInterval,
@@ -250,6 +259,17 @@ use hyperscale_vm_types::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_E
 /// of anything a package could also ask for: a body that could compute
 /// its own draw from parts it holds would not need the seal.
 pub const DOMAIN_SEALED_DRAW: &[u8] = b"hyperscale/vm/sealed-draw";
+
+/// The epoch a seal cell's bytes record.
+///
+/// Eight little-endian bytes and nothing else, because the kernel is the
+/// only writer: anything of another width is a package that wrote over
+/// its own seal through the same handle it opens with.
+fn sealed_epoch(rep: u32, held: &[u8]) -> Result<u64, SessionTrap> {
+    held.try_into()
+        .map(u64::from_le_bytes)
+        .map_err(|_| SessionTrap::NotASeal(rep))
+}
 
 /// The deterministic environment a transaction executes under.
 #[derive(Clone, Debug)]
@@ -561,6 +581,20 @@ impl KernelSession {
         let Capability::Write(key) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
+        // A leaf already under a seal takes another only where the
+        // standing one will never open. A matured seed is public, and so
+        // is the word it produces, so replacing a seal that can still
+        // open is a re-roll of a draw somebody has already read — and a
+        // package left to enforce that itself would be a package one
+        // careless method away from offering the re-roll.
+        if let Some(held) = self.store.read(key)?
+            && !matches!(
+                self.matured_seed(sealed_epoch(rep, &held)?),
+                Seeded::Expired
+            )
+        {
+            return Err(SessionTrap::SealStanding(rep));
+        }
         Ok(self
             .store
             .write(key, self.env.epoch.to_le_bytes().to_vec())?)
@@ -589,11 +623,7 @@ impl KernelSession {
             return Err(SessionTrap::WrongMode(rep));
         };
         let held = self.store.read(key)?.unwrap_or_default();
-        let epoch = held
-            .as_slice()
-            .try_into()
-            .map(u64::from_le_bytes)
-            .map_err(|_| SessionTrap::NotASeal(rep))?;
+        let epoch = sealed_epoch(rep, &held)?;
         Ok(match self.matured_seed(epoch) {
             Seeded::Pending => Drawn::Pending,
             Seeded::Expired => Drawn::Expired,
@@ -1184,6 +1214,51 @@ mod tests {
             .write_cell_set(0, vec![0xFF; 3])
             .expect("a write handle sets");
         assert_eq!(session.open_seal(0), Err(SessionTrap::NotASeal(0)));
+    }
+
+    /// A lapsed seal is the one a package may replace, and the only
+    /// one.
+    ///
+    /// The word a matured seal opens onto is public the moment its seed
+    /// rolls, so a package that could take a second seal over one that
+    /// still answers would be offering a re-roll of a draw somebody has
+    /// already read. A seal that will never open is the case where
+    /// there is nothing to re-roll.
+    #[test]
+    fn only_a_lapsed_seal_gives_way_to_another() {
+        let set = writing(key(1));
+
+        // Standing, and matured: the word is there to be read, so the
+        // cell keeps the seal that answers it.
+        let mut ready = sealed_session(&set, sealed_env(9), tx(1));
+        assert_eq!(ready.seal(0), Err(SessionTrap::SealStanding(0)));
+        assert!(matches!(ready.open_seal(0), Ok(Drawn::Ready(_))));
+
+        // Standing, and early: nothing to read yet, and nothing to gain
+        // by waiting for a different one.
+        let mut early = sealed_session(
+            &set,
+            EnvInputs {
+                epoch: 10,
+                ..sealed_env(9)
+            },
+            tx(1),
+        );
+        assert_eq!(early.seal(0), Err(SessionTrap::SealStanding(0)));
+
+        // Lapsed: the seal will never open, so the round takes another
+        // and the cell records the epoch running now.
+        let mut lapsed = sealed_session(
+            &set,
+            EnvInputs {
+                epoch: 8,
+                ..sealed_env(9)
+            },
+            tx(1),
+        );
+        assert_eq!(lapsed.open_seal(0), Ok(Drawn::Expired));
+        assert_eq!(lapsed.seal(0), Ok(()));
+        assert_eq!(lapsed.write_cell_get(0), Ok(8u64.to_le_bytes().to_vec()));
     }
 
     /// A seal is opened through the handle that holds it, so a

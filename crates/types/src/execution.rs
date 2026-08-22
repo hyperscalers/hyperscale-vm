@@ -360,6 +360,13 @@ pub enum AbortReason {
     /// package wrote over them through the same handle it opens with.
     #[hbor(discriminant = 62)]
     MalformedSeal,
+    /// A cell resealed while its standing seal can still open.
+    ///
+    /// Only a seal that will never open may be replaced: a matured
+    /// seed is public, so taking a second seal over one that can still
+    /// answer is a re-roll of a draw somebody has already read.
+    #[hbor(discriminant = 63)]
+    SealStanding,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -587,6 +594,7 @@ mod tests {
             (60, AbortReason::WrongMintedIds),
             (61, AbortReason::AnswerTooLarge),
             (62, AbortReason::MalformedSeal),
+            (63, AbortReason::SealStanding),
         ];
         for (byte, reason) in classes {
             assert_eq!(

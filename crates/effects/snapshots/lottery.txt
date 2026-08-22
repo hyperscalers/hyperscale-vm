@@ -214,6 +214,82 @@ PackageMetadata {
                 ),
             ],
         },
+        "reopen": MethodSignature {
+            totality: Fallible,
+            issues: None,
+            params: [],
+            outputs: [],
+            answers: false,
+            denominations: [],
+            effects: [
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    18,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                18,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Read,
+                    denomination: None,
+                },
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    17,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Present,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                17,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                    denomination: None,
+                },
+            ],
+            abi: [
+                Handle(
+                    1,
+                ),
+                Handle(
+                    3,
+                ),
+            ],
+        },
         "settle": MethodSignature {
             totality: Fallible,
             issues: None,
@@ -330,6 +406,7 @@ PackageMetadata {
         "round-truncated",
         "not-yet-drawn",
         "seal-lapsed",
+        "round-stands-open",
     ],
     roles: [],
 }
