@@ -135,9 +135,6 @@ impl KernelHost for KernelSession {
     fn epoch(&self) -> u64 {
         Self::epoch(self)
     }
-    fn randomness(&self) -> [u8; 32] {
-        Self::randomness(self)
-    }
     fn hash(&self, data: &[u8]) -> [u8; 32] {
         Self::hash(self, data)
     }

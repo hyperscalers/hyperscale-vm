@@ -30,7 +30,7 @@ fn session() -> KernelSession {
         OverlayStore::new(Arc::new(MemoryStore::new())),
         &Declaration::from_set(EffectSet::new()),
         TxHash(Hash32([0x44; 32])),
-        EnvInputs::unsealed(7, [11; 32]),
+        EnvInputs::unsealed(7),
         test_hash,
     )
     .expect("an empty declaration materializes")

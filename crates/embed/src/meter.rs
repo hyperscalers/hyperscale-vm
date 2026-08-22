@@ -457,13 +457,6 @@ pub fn fixed_pow(
     math::fixed_pow(base, exp, rounding).map_err(|error| MeterError::Refused(error.into()))
 }
 
-/// `env.randomness`.
-pub fn randomness<P: HostAccess + FuelSink>(port: &mut P) -> Result<[u8; 32], MeterError> {
-    let draw = port.host().randomness();
-    charge(port, draw.len())?;
-    Ok(draw)
-}
-
 /// `state.write-cell-open-seal`.
 ///
 /// Priced as the word it answers: the resolve is a lookup and a digest

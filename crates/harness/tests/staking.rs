@@ -99,7 +99,7 @@ const PUBKEY: [u8; 48] = [0xC1; 48];
 const POSSESSION_PROOF: [u8; 96] = [0xC2; 96];
 
 const fn env() -> EnvInputs {
-    EnvInputs::unsealed(3_000, [6; 32])
+    EnvInputs::unsealed(3_000)
 }
 
 fn account_pkg() -> PackageHash {

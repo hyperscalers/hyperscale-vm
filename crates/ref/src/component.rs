@@ -244,7 +244,6 @@ enum HostFn {
     /// into.
     OpenSeal,
     Clock,
-    Randomness,
     Hash,
     Emit,
     MulDiv,
@@ -272,7 +271,6 @@ const fn host_params(op: HostFn) -> usize {
         | HostFn::RangeReadCovered
         | HostFn::RangeWriteCovered
         | HostFn::InstanceCovered
-        | HostFn::Randomness
         | HostFn::ReserveTake
         | HostFn::WriteCellClear
         // A run's own two questions name the run and, for the second,
@@ -881,7 +879,6 @@ impl RefComponent {
             ("state", "write-cell-open-seal") => Ok((HostFn::OpenSeal, None)),
             ("env", "clock") => Ok((HostFn::Clock, None)),
             ("env", "epoch") => Ok((HostFn::Epoch, None)),
-            ("env", "randomness") => Ok((HostFn::Randomness, None)),
             ("crypto", "hash") => Ok((HostFn::Hash, None)),
             ("events", "emit") => Ok((HostFn::Emit, None)),
             ("state", "read-cell-run-len") => Ok((HostFn::RunLen(HandleKind::ReadCellRun), None)),
@@ -2704,16 +2701,6 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         let mem = self.mem_opt(id)?;
                         Self::write_drawn(store, mem, args[2], drawn)?;
-                        Ok(Vec::new())
-                    }
-                    HostFn::Randomness => {
-                        let draw = meter::randomness(&mut MeterPort {
-                            host: &mut self.host,
-                            store,
-                        })
-                        .map_err(meter_fault)?;
-                        let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
-                        self.lower_list(modules, store, mem, realloc, &draw, args[0])?;
                         Ok(Vec::new())
                     }
                     HostFn::Hash => {

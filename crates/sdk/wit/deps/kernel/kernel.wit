@@ -621,9 +621,6 @@ interface env {
     /// the protocol's, so a guest that writes one needs this and nothing
     /// else about epochs.
     epoch: func() -> u64;
-
-    /// Beacon randomness, domain-separated per transaction. 32 bytes.
-    randomness: func() -> list<u8>;
 }
 
 /// Host-side cryptography; guests never carry their own.

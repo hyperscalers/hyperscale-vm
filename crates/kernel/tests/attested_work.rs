@@ -182,7 +182,7 @@ where
     let batch = [BatchTx::new(
         tx(1),
         moving(declared),
-        EnvInputs::unsealed(1_000, [1; 32]),
+        EnvInputs::unsealed(1_000),
     )];
     let outcome = run_batch(funded_store(1_000), &batch, runner, locality);
     (
@@ -270,7 +270,7 @@ fn one_receipt_two_shares() {
     let batch = [BatchTx::new(
         tx(1),
         moving(declared.clone()),
-        EnvInputs::unsealed(1_000, [1; 32]),
+        EnvInputs::unsealed(1_000),
     )];
 
     let payer = run_batch(
@@ -376,12 +376,10 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
     let mut store = MemoryStore::default();
     store.write(payer, encode_amount(1_000).to_vec());
     store.write(nullifier, vec![1]);
-    let batch = [BatchTx::new(
-        tx(1),
-        moving(declared.clone()),
-        EnvInputs::unsealed(1_000, [1; 32]),
-    )
-    .with_nullifiers(vec![nullifier])];
+    let batch = [
+        BatchTx::new(tx(1), moving(declared.clone()), EnvInputs::unsealed(1_000))
+            .with_nullifiers(vec![nullifier]),
+    ];
     let outcome = run_batch(Arc::new(store), &batch, &transfer_guest, &Locality::All);
     let spent = &outcome.receipts[&tx(1)];
     let spent_work = outcome.work[&tx(1)];
@@ -403,13 +401,9 @@ fn a_completion_flipped_at_apply_drops_its_fuel_but_keeps_its_declaration() {
         BatchTx::new(
             tx(1),
             moving(transfer_declared(600)),
-            EnvInputs::unsealed(1_000, [1; 32]),
+            EnvInputs::unsealed(1_000),
         ),
-        BatchTx::new(
-            tx(2),
-            moving(declared.clone()),
-            EnvInputs::unsealed(1_000, [1; 32]),
-        ),
+        BatchTx::new(tx(2), moving(declared.clone()), EnvInputs::unsealed(1_000)),
     ];
     let mut store = MemoryStore::default();
     store.write(cell(PAYER_BYTE), encode_amount(1_000).to_vec());
@@ -445,12 +439,12 @@ fn work_is_a_function_of_the_batch_alone() {
         BatchTx::new(
             tx(1),
             moving(transfer_declared(100)),
-            EnvInputs::unsealed(1_000, [1; 32]),
+            EnvInputs::unsealed(1_000),
         ),
         BatchTx::new(
             tx(2),
             moving(transfer_declared(50)),
-            EnvInputs::unsealed(1_000, [1; 32]),
+            EnvInputs::unsealed(1_000),
         ),
     ];
     let run = |mode| {
@@ -477,17 +471,17 @@ fn every_receipt_is_priced() {
         BatchTx::new(
             tx(1),
             moving(transfer_declared(100)),
-            EnvInputs::unsealed(1_000, [1; 32]),
+            EnvInputs::unsealed(1_000),
         ),
         BatchTx::new(
             tx(2),
             moving(transfer_declared(10_000)),
-            EnvInputs::unsealed(1_000, [1; 32]),
+            EnvInputs::unsealed(1_000),
         ),
         BatchTx::new(
             tx(3),
             moving(transfer_declared(50)),
-            EnvInputs::unsealed(1_000, [1; 32]),
+            EnvInputs::unsealed(1_000),
         ),
     ];
     let outcome = run_batch(funded_store(1_000), &batch, &transfer_guest, &Locality::All);

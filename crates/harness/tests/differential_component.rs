@@ -45,7 +45,7 @@ const fn tx() -> TxHash {
 }
 
 const fn env() -> EnvInputs {
-    EnvInputs::unsealed(CLOCK_MS, [11; 32])
+    EnvInputs::unsealed(CLOCK_MS)
 }
 
 struct Fixture {

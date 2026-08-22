@@ -200,7 +200,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
 #[blueprint]
 mod environment {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Cell, clock_ms, hash, randomness};
+    use hyperscale_vm_sdk::state::{Cell, clock_ms, epoch, hash};
 
     #[state]
     struct Environment {
@@ -209,7 +209,7 @@ mod environment {
 
     impl Environment {
         pub fn stamp(&mut self, holder: Address) {
-            let digest = hash(randomness().word().as_bytes());
+            let digest = hash(&epoch().to_le_bytes());
             let drawn = u128::from(digest[0]);
             let _ = drawn;
             self.vault(holder).declared();

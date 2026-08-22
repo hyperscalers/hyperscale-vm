@@ -92,25 +92,27 @@ fn through_a_shim_table(chain_len: usize, entry: &str) -> Vec<u8> {
 /// cycle is a host frame, which the walk terminates on.
 fn through_the_canonical_boundary(reaching: bool) -> Vec<u8> {
     let reach = if reaching {
-        "i32.const 16 call $stub"
+        "i32.const 0 i32.const 0 i32.const 16 call $stub"
     } else {
         ""
     };
     parse_str(format!(
         r#"(component
-             (import "hyperscale:kernel/env" (instance $h
-               (export "randomness" (func (result (list u8))))))
-             (alias export $h "randomness" (func $draw))
+             (import "hyperscale:kernel/crypto" (instance $h
+               (export "hash" (func (param "data" (list u8)) (result (list u8))))))
+             (alias export $h "hash" (func $draw))
              (core module $shim
-               (type $sig (func (param i32)))
+               (type $sig (func (param i32 i32 i32)))
                (table (export "t") 1 1 funcref)
-               (func (export "stub") (param i32)
+               (func (export "stub") (param i32 i32 i32)
                  local.get 0
+                 local.get 1
+                 local.get 2
                  i32.const 0
                  call_indirect (type $sig)))
              (core instance $is (instantiate $shim))
              (core module $alloc
-               (import "shim" "stub" (func $stub (param i32)))
+               (import "shim" "stub" (func $stub (param i32 i32 i32)))
                (memory (export "mem") 1 1)
                (func (export "realloc") (param i32 i32 i32 i32) (result i32)
                  {reach}
@@ -120,7 +122,7 @@ fn through_the_canonical_boundary(reaching: bool) -> Vec<u8> {
                (memory $a "mem") (realloc (func $a "realloc"))))
              (core module $fixups
                (import "shim" "t" (table $t 1 1 funcref))
-               (import "k" "draw" (func $target (param i32)))
+               (import "k" "draw" (func $target (param i32 i32 i32)))
                (elem (table $t) (i32.const 0) func $target))
              (core instance (instantiate $fixups
                (with "shim" (instance $is))

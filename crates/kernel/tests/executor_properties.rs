@@ -211,7 +211,7 @@ fn batch_of(specs: &[TxSpec]) -> (Vec<BatchTx>, BTreeSet<TxHash>) {
             BatchTx::new(
                 identity(index),
                 moving(declared_of(spec)),
-                EnvInputs::unsealed(1_000, [7; 32]),
+                EnvInputs::unsealed(1_000),
             )
         })
         .collect();
@@ -525,7 +525,7 @@ proptest! {
                     mode: Mode::Delta,
                 })
                 .expect("one mode per key");
-            batch.push(BatchTx::new(tx(index), moving(declared), EnvInputs::unsealed(1_000, [7; 32])));
+            batch.push(BatchTx::new(tx(index), moving(declared), EnvInputs::unsealed(1_000)));
         }
         // Reading every cell conflicts with every delta over one, so the
         // whole batch lands in a single conflict group.
@@ -538,7 +538,7 @@ proptest! {
                 })
                 .expect("one mode per key");
         }
-        batch.push(BatchTx::new(READER, moving(reading), EnvInputs::unsealed(1_000, [7; 32])));
+        batch.push(BatchTx::new(READER, moving(reading), EnvInputs::unsealed(1_000)));
 
         let outcome = execute_batch(
             Arc::new(funded()),
@@ -662,7 +662,7 @@ proptest! {
                 BatchTx::new(
                     tx(u8::try_from(index).expect("small batch")),
                     moving(portable_declared(claims)),
-                    EnvInputs::unsealed(1_000, [7; 32]),
+                    EnvInputs::unsealed(1_000),
                 )
             })
             .collect();

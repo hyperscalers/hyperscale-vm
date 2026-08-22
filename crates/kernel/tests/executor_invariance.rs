@@ -46,7 +46,7 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
 }
 
 const fn env() -> EnvInputs {
-    EnvInputs::unsealed(1_000, [1; 32])
+    EnvInputs::unsealed(1_000)
 }
 
 const fn tx(byte: u8) -> TxHash {
@@ -365,12 +365,12 @@ fn each_transaction_sees_its_own_clock() {
     let early = BatchTx::new(
         tx(0x01),
         moving(point(cell(0xE), Mode::Write)),
-        EnvInputs::unsealed(1_000, env().randomness),
+        EnvInputs::unsealed(1_000),
     );
     let late = BatchTx::new(
         tx(0x02),
         moving(point(cell(0xF), Mode::Write)),
-        EnvInputs::unsealed(2_000, env().randomness),
+        EnvInputs::unsealed(2_000),
     );
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
@@ -403,28 +403,24 @@ fn each_transaction_sees_its_own_clock() {
 }
 
 #[test]
-fn each_transaction_sees_its_own_draw() {
-    // Randomness is guest-observable, so it reaches the receipt. The two
-    // shards of a cross-shard transaction execute it in different batches
-    // of different composition, which is why the draw anchors to the
-    // transaction and not to the batch.
+fn each_transaction_sees_its_own_epoch() {
+    // The epoch is guest-observable — it is what a seal records — so it
+    // reaches the receipt. The two shards of a cross-shard transaction
+    // execute it in different batches of different composition, which is
+    // why the environment anchors to the transaction and not the batch.
     let mut store = MemoryStore::new();
     store.write(cell(0xE), vec![10]);
     store.write(cell(0xF), vec![10]);
 
-    let first = BatchTx::new(
-        tx(0x01),
-        moving(point(cell(0xE), Mode::Write)),
-        EnvInputs::unsealed(env().clock_ms, [7; 32]),
-    );
-    let second = BatchTx::new(
-        tx(0x02),
-        moving(point(cell(0xF), Mode::Write)),
-        EnvInputs::unsealed(env().clock_ms, [9; 32]),
-    );
+    let at = |epoch| EnvInputs {
+        epoch,
+        ..EnvInputs::unsealed(env().clock_ms)
+    };
+    let first = BatchTx::new(tx(0x01), moving(point(cell(0xE), Mode::Write)), at(7));
+    let second = BatchTx::new(tx(0x02), moving(point(cell(0xF), Mode::Write)), at(9));
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
-        answers: answered(u64::from(session.randomness()[0])),
+        answers: answered(session.epoch()),
         fuel: u64::from(entry.tx.0.0[0]),
         session,
     };

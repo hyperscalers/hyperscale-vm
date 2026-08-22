@@ -91,9 +91,6 @@ pub struct WrongPackage {
 /// every run.
 pub const CLOCK_MS: u64 = 1_000_000;
 
-/// The randomness draw every transaction sees.
-const RANDOMNESS: [u8; 32] = [7; 32];
-
 fn hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
 }
@@ -468,12 +465,8 @@ impl Chain {
 
         self.sequence += 1;
         let tx = TxHash(salt(self.sequence));
-        let entry = BatchTx::new(
-            tx,
-            declaration,
-            EnvInputs::unsealed(self.clock_ms, RANDOMNESS),
-        )
-        .with_calls(routing.calls);
+        let entry = BatchTx::new(tx, declaration, EnvInputs::unsealed(self.clock_ms))
+            .with_calls(routing.calls);
 
         // Execution replaces the chain's store, so it moves out rather
         // than being copied and dropped. Two owned copies are still

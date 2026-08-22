@@ -48,7 +48,7 @@ fn session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &Declaration::from_set(declared.clone()),
         TxHash(Hash32([9; 32])),
-        EnvInputs::unsealed(CLOCK_MS, [3; 32]),
+        EnvInputs::unsealed(CLOCK_MS),
         hash,
     )
     .expect("the declaration materializes")
@@ -69,7 +69,7 @@ fn value_session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &declaration,
         TxHash(Hash32([9; 32])),
-        EnvInputs::unsealed(CLOCK_MS, [3; 32]),
+        EnvInputs::unsealed(CLOCK_MS),
         hash,
     )
     .expect("the declaration materializes")
@@ -252,12 +252,12 @@ fn an_entry_writes_at_the_order_it_names() {
 fn the_environment_is_the_transactions_own() {
     let session = session(MemoryStore::new(), Vec::new());
 
-    let (_, (clock, randomness, digest)) = with_kernel(session, || {
-        (state::clock_ms(), state::randomness(), state::hash(b"abc"))
+    let (_, (clock, epoch, digest)) = with_kernel(session, || {
+        (state::clock_ms(), state::epoch(), state::hash(b"abc"))
     });
 
     assert_eq!(clock, CLOCK_MS);
-    assert_eq!(randomness.word().as_bytes(), &[3; 32]);
+    assert_eq!(epoch, 0);
     assert_eq!(digest, hash(b"abc").to_vec());
 }
 

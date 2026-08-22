@@ -274,9 +274,6 @@ pub trait KernelHost: Send {
     /// The epoch this transaction executes in.
     fn epoch(&self) -> u64;
 
-    /// The transaction's randomness draw.
-    fn randomness(&self) -> [u8; 32];
-
     /// The protocol hash function.
     fn hash(&self, data: &[u8]) -> [u8; 32];
 

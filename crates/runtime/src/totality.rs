@@ -150,7 +150,6 @@ const DISCHARGED: &[(&str, &str)] = &[
     // Environment reads with no failure mode at all.
     ("env", "clock"),
     ("env", "epoch"),
-    ("env", "randomness"),
     ("crypto", "hash"),
     // The one admission that rests on the mark's envelope rather than on
     // a kernel discharge: the caps — type, count, payload — can refuse

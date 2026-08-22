@@ -103,7 +103,7 @@ fn session() -> KernelSession {
             ..Declaration::default()
         },
         TxHash(Hash32([0x55; 32])),
-        EnvInputs::unsealed(1, [3; 32]),
+        EnvInputs::unsealed(1),
         test_hash,
     )
     .expect("the declaration materializes")

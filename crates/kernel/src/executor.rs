@@ -1210,7 +1210,7 @@ mod tests {
                     BatchTx::new(
                         TxHash(Hash32([u8::try_from(index).expect("small batch"); 32])),
                         Declaration::from_set(declared),
-                        EnvInputs::unsealed(0, [0; 32]),
+                        EnvInputs::unsealed(0),
                     )
                 })
                 .collect();

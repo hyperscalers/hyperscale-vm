@@ -53,7 +53,7 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
 }
 
 const fn env() -> EnvInputs {
-    EnvInputs::unsealed(1_000, [1; 32])
+    EnvInputs::unsealed(1_000)
 }
 
 fn cell(byte: u8) -> SubstateKey {
@@ -254,18 +254,22 @@ fn a_committed_nullifier_reads_the_same_on_both_shards() {
 }
 
 #[test]
-fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
+fn an_environment_reading_guest_derives_one_receipt_on_both_shards() {
     // The two shards batch this transaction with different neighbours, so
-    // a draw taken from the batch or from the executing block would put
-    // them on different receipts. Anchored to the transaction, it cannot.
-    let draw = [0x5A; 32];
+    // an environment taken from the batch or from the executing block
+    // would put them on different receipts. Anchored to the transaction,
+    // it cannot.
+    const EPOCH: u64 = 0x5A;
     let batch = vec![BatchTx::new(
         TxHash(Hash32([0x44; 32])),
         moving(transfer_declared(50)),
-        EnvInputs::unsealed(env().clock_ms, draw),
+        EnvInputs {
+            epoch: EPOCH,
+            ..EnvInputs::unsealed(env().clock_ms)
+        },
     )];
     let reading_guest = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
-        answers: answered(u64::from(session.randomness()[0])),
+        answers: answered(session.epoch()),
         session,
         fuel: FUEL,
     };
@@ -295,17 +299,17 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     assert_eq!(
         payer.receipts[&batch[0].tx].outcome,
         Outcome::Completed {
-            answers: answered(0x5A)
+            answers: answered(EPOCH)
         }
     );
 
-    // And the draw is receipt-affecting, which is what makes carrying it
-    // on the transaction load-bearing rather than tidy: hand one shard a
-    // different one and the two stop agreeing.
+    // And the environment is receipt-affecting, which is what makes
+    // carrying it on the transaction load-bearing rather than tidy: hand
+    // one shard a different one and the two stop agreeing.
     let divergent = vec![BatchTx::new(
         batch[0].tx,
         moving(transfer_declared(50)),
-        EnvInputs::unsealed(env().clock_ms, [0x5B; 32]),
+        EnvInputs::unsealed(env().clock_ms),
     )];
     let elsewhere = execute_batch(
         Arc::new(MemoryStore::new()),

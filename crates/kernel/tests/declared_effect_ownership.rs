@@ -133,7 +133,7 @@ fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
             ..Declaration::from_set(declaration.set)
         },
         TxHash(Hash32([0x01; 32])),
-        EnvInputs::unsealed(0, [0; 32]),
+        EnvInputs::unsealed(0),
         test_hash,
     ) else {
         return; // Refused at materialization: the gap is closed there.
@@ -177,7 +177,7 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
             ..Declaration::from_set(declaration.set)
         },
         TxHash(Hash32([0x01; 32])),
-        EnvInputs::unsealed(0, [0; 32]),
+        EnvInputs::unsealed(0),
         test_hash,
     ) else {
         return;

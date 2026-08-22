@@ -59,7 +59,6 @@ pub fn env() -> EnvInputs {
     EnvInputs {
         clock_ms: 5_000,
         epoch: EPOCH,
-        randomness: [2; 32],
         seeds: SeedWindow::new(
             BTreeMap::from([(EPOCH + SEAL_MATURITY_EPOCHS, MATURED_SEED)]),
             Some(EPOCH + SEAL_MATURITY_EPOCHS),

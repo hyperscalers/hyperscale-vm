@@ -145,10 +145,6 @@ impl KernelHost for StubHost {
     fn clock_ms(&self) -> u64 {
         0
     }
-    fn randomness(&self) -> [u8; 32] {
-        self.log.lock().unwrap().push(Host("randomness"));
-        [0; 32]
-    }
     fn epoch(&self) -> u64 {
         0
     }
@@ -494,13 +490,6 @@ fn every_function_charges_its_pinned_sequence() {
                 let _ = meter::fixed_pow(p, U256::from(1u128), 2, Rounding::Down);
             },
             vec![Charge(WIDE * 2)],
-        ),
-        (
-            "randomness",
-            |p| {
-                let _ = meter::randomness(p);
-            },
-            vec![Host("randomness"), Charge(32)],
         ),
         (
             "hash",

@@ -37,7 +37,7 @@ const fn tx() -> TxHash {
 }
 
 const fn env() -> EnvInputs {
-    EnvInputs::unsealed(909_090, [3; 32])
+    EnvInputs::unsealed(909_090)
 }
 
 /// What a reserve clause grants, and what the vault behind it holds.

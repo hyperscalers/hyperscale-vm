@@ -1742,15 +1742,6 @@ pub fn epoch() -> u64 {
     return host::epoch();
 }
 
-/// The transaction's randomness draw.
-#[must_use]
-pub fn randomness() -> Draw {
-    #[cfg(component)]
-    return Draw::from_protocol(&crate::guest::randomness());
-    #[cfg(not(component))]
-    return Draw::from_protocol(&host::randomness());
-}
-
 /// The protocol hash function: a 32-byte digest.
 ///
 /// The host's, never a guest's own — a package carrying its own

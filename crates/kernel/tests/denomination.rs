@@ -49,7 +49,7 @@ fn hash(data: &[u8]) -> [u8; 32] {
 }
 
 const fn env() -> EnvInputs {
-    EnvInputs::unsealed(0, [0; 32])
+    EnvInputs::unsealed(0)
 }
 
 /// A session over the pool's two vaults, denominated as the declaration

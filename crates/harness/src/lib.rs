@@ -167,9 +167,6 @@ pub mod fixtures {
         fn clock_ms(&self) -> u64 {
             0
         }
-        fn randomness(&self) -> [u8; 32] {
-            [0; 32]
-        }
         fn hash(&self, _data: &[u8]) -> [u8; 32] {
             [0; 32]
         }

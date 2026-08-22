@@ -565,12 +565,6 @@ pub fn epoch() -> u64 {
     kernel(|k| k.epoch())
 }
 
-/// The transaction's randomness draw.
-#[must_use]
-pub fn randomness() -> Vec<u8> {
-    kernel(|k| k.randomness()).to_vec()
-}
-
 /// The protocol hash function.
 #[must_use]
 pub fn hash(data: &[u8]) -> Vec<u8> {

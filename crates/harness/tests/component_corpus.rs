@@ -27,13 +27,17 @@ use wat::parse_str;
 
 const FUEL: u64 = 1_000_000_000;
 
-/// The import the generated component lowers. One per shape the canonical
-/// ABI has to move: a scalar result, a list result, and a list in both
-/// directions — the last two are the ones that call the guest's realloc.
+/// The import the generated component lowers: a scalar result, and a
+/// list in both directions — the second is the one that calls the
+/// guest's realloc.
+///
+/// A list result with no list argument is a third shape, and no import
+/// in the world has it without also taking a handle — which a generated
+/// component has no capability to pass. The guests in
+/// [`crate::differential_fuzz`] reach it through the real thing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Import {
     Clock,
-    Randomness,
     Hash,
 }
 
@@ -94,11 +98,6 @@ impl Import {
                      (export "clock" (func (result u64)))))
                    (alias export $i "clock" (func $imp))"#
             }
-            Self::Randomness => {
-                r#"(import "hyperscale:kernel/env" (instance $i
-                     (export "randomness" (func (result (list u8))))))
-                   (alias export $i "randomness" (func $imp))"#
-            }
             Self::Hash => {
                 r#"(import "hyperscale:kernel/crypto" (instance $i
                      (export "hash" (func (param "data" (list u8)) (result (list u8))))))
@@ -111,7 +110,6 @@ impl Import {
     const fn core_type(self) -> &'static str {
         match self {
             Self::Clock => "(result i64)",
-            Self::Randomness => "(param i32)",
             Self::Hash => "(param i32 i32 i32)",
         }
     }
@@ -121,7 +119,6 @@ impl Import {
     const fn args(self) -> &'static str {
         match self {
             Self::Clock => "",
-            Self::Randomness => "i32.const 32",
             Self::Hash => "i32.const 0 i32.const 4 i32.const 32",
         }
     }
@@ -130,7 +127,6 @@ impl Import {
     const fn forward(self) -> &'static str {
         match self {
             Self::Clock => "",
-            Self::Randomness => "local.get 0",
             Self::Hash => "local.get 0 local.get 1 local.get 2",
         }
     }
@@ -140,7 +136,7 @@ impl Import {
     const fn discard(self) -> &'static str {
         match self {
             Self::Clock => "drop",
-            _ => "",
+            Self::Hash => "",
         }
     }
 
@@ -149,7 +145,7 @@ impl Import {
     const fn result(self) -> &'static str {
         match self {
             Self::Clock => "",
-            _ => "i32.const 32 i32.load i32.load8_u i64.extend_i32_u",
+            Self::Hash => "i32.const 32 i32.load i32.load8_u i64.extend_i32_u",
         }
     }
 
@@ -173,7 +169,7 @@ impl Spec {
     /// Every wiring, over every import, over every option set.
     fn corpus() -> Vec<Self> {
         let mut specs = Vec::new();
-        for import in [Import::Clock, Import::Randomness, Import::Hash] {
+        for import in [Import::Clock, Import::Hash] {
             for options in [Options::Both, Options::MemoryOnly, Options::Neither] {
                 for wiring in [
                     Wiring::Plain,
@@ -327,7 +323,7 @@ impl Spec {
             },
             noop_body = match self.import {
                 Import::Clock => "i64.const 0",
-                _ => "",
+                Import::Hash => "",
             },
             body_drop = if self.wiring == Wiring::BodyDrop {
                 "i32.const 0 call $dropc"
@@ -387,7 +383,7 @@ fn session() -> KernelSession {
         OverlayStore::new(Arc::new(MemoryStore::new())),
         &Declaration::from_set(EffectSet::new()),
         TxHash(Hash32([0x55; 32])),
-        EnvInputs::unsealed(424_242, [11; 32]),
+        EnvInputs::unsealed(424_242),
         test_hash,
     )
     .expect("an empty declaration materializes")

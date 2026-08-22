@@ -39,7 +39,6 @@ use wasmtime::Result;
 use wasmtime::error::Context;
 
 const CLOCK_MS: u64 = 77;
-const RANDOMNESS: [u8; 32] = [3; 32];
 const FUEL: u64 = 10_000_000;
 const AMOUNT: u128 = 100;
 /// What the vaults in these fixtures hold.
@@ -101,7 +100,7 @@ fn session() -> KernelSession {
             ..Declaration::default()
         },
         TxHash(Hash32([0x77; 32])),
-        EnvInputs::unsealed(CLOCK_MS, RANDOMNESS),
+        EnvInputs::unsealed(CLOCK_MS),
         test_hash,
     )
     .expect("feasible")
@@ -448,7 +447,6 @@ fn lottery_session() -> KernelSession {
         EnvInputs {
             clock_ms: CLOCK_MS,
             epoch: SEALED_AT,
-            randomness: RANDOMNESS,
             seeds: SeedWindow::new(
                 BTreeMap::from([(SEALED_AT + SEAL_MATURITY_EPOCHS, MATURED_SEED)]),
                 Some(SEALED_AT + SEAL_MATURITY_EPOCHS),

@@ -42,7 +42,7 @@ pub(super) fn hash(data: &[u8]) -> [u8; 32] {
 }
 
 pub(super) const fn env() -> EnvInputs {
-    EnvInputs::unsealed(5, [3; 32])
+    EnvInputs::unsealed(5)
 }
 
 pub(super) fn declared(effects: &[Effect]) -> EffectSet {

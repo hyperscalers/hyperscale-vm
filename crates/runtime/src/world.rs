@@ -1054,10 +1054,6 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     env.func_wrap("epoch", |store: StoreContextMut<'_, T>, (): ()| {
         Ok((store.data().epoch(),))
     })?;
-    env.func_wrap("randomness", |mut store: StoreContextMut<'_, T>, (): ()| {
-        let draw = meter::randomness(&mut Port(&mut store)).map_err(fault)?;
-        Ok((draw.to_vec(),))
-    })?;
 
     let mut crypto = linker.instance("hyperscale:kernel/crypto")?;
     crypto.func_wrap(

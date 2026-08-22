@@ -1,7 +1,7 @@
 (component
-  (import "hyperscale:kernel/env" (instance $env
-    (export "randomness" (func (result (list u8))))))
-  (alias export $env "randomness" (func $randomness))
+  (import "hyperscale:kernel/crypto" (instance $crypto
+    (export "hash" (func (param "data" (list u8)) (result (list u8))))))
+  (alias export $crypto "hash" (func $hash))
   (import "hyperscale:kernel/state" (instance $state
     (export "read-cell" (type $rc (sub resource)))))
   (alias export $state "read-cell" (type $rcell))
@@ -26,20 +26,22 @@
   (core instance $a (instantiate $alloc
     (with "k" (instance (export "drop" (func $drop))))))
 
-  (core func $randomness_l (canon lower (func $randomness)
+  (core func $hash_l (canon lower (func $hash)
     (memory $a "mem") (realloc (func $a "realloc"))))
 
   (core module $main
     (import "env" "mem" (memory 4 4))
-    (import "k" "randomness" (func $randomness (param i32)))
+    (import "k" "hash" (func $hash (param i32 i32 i32)))
     (func (export "draw") (result i64)
+      i32.const 0
+      i32.const 0
       i32.const 8
-      call $randomness
+      call $hash
       i32.const 8
       i32.load
       i64.extend_i32_u))
   (core instance $m (instantiate $main
     (with "env" (instance $a))
-    (with "k" (instance (export "randomness" (func $randomness_l))))))
+    (with "k" (instance (export "hash" (func $hash_l))))))
 
   (func (export "draw") (result u64) (canon lift (core func $m "draw"))))

@@ -249,8 +249,6 @@ pub struct EnvInputs {
     pub clock_ms: u64,
     /// The epoch this transaction executes in — what a seal records.
     pub epoch: u64,
-    /// The transaction's randomness draw.
-    pub randomness: [u8; 32],
     /// The epochs a sealed draw can resolve against, and the frontier
     /// separating one that has not happened from one that happened
     /// unusably.
@@ -258,19 +256,18 @@ pub struct EnvInputs {
 }
 
 impl EnvInputs {
-    /// An environment no seal can open: the clock and the draw, over a
-    /// window nothing has folded into.
+    /// An environment no seal can open: a clock, over a window nothing
+    /// has folded into.
     ///
     /// For callers with no seal in sight. A consensus path states its
     /// window, on the same terms it states its clock — what a seal
     /// resolves to is an execution input, and one that defaulted would
     /// be a wrong answer nothing would catch.
     #[must_use]
-    pub const fn unsealed(clock_ms: u64, randomness: [u8; 32]) -> Self {
+    pub const fn unsealed(clock_ms: u64) -> Self {
         Self {
             clock_ms,
             epoch: 0,
-            randomness,
             seeds: SeedWindow::unfolded(),
         }
     }
@@ -852,12 +849,6 @@ impl KernelSession {
         self.env.clock_ms
     }
 
-    /// The transaction's randomness draw.
-    #[must_use]
-    pub const fn randomness(&self) -> [u8; 32] {
-        self.env.randomness
-    }
-
     /// The epoch this transaction executes in.
     #[must_use]
     pub const fn epoch(&self) -> u64 {
@@ -1024,7 +1015,6 @@ mod tests {
     fn the_environment_reaches_the_guest_unchanged() {
         let session = session_over(MemoryStore::new(), &declared(&[]));
         assert_eq!(session.clock_ms(), env().clock_ms);
-        assert_eq!(session.randomness(), env().randomness);
         assert_eq!(session.hash(&[1, 2, 3])[0], 3);
         assert!(session.capabilities().is_empty());
     }
