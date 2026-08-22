@@ -24,6 +24,7 @@ use crate::wit::Shape;
 /// The prologue reads each parameter out of the assembled arguments at
 /// the position the binding walk fixed, so what the body sees is what a
 /// guest export's own prologue would have bound.
+#[allow(clippy::too_many_lines)] // one prologue arm per parameter shape
 pub fn arm(
     published: &str,
     lowered: &Lowered,
@@ -53,6 +54,19 @@ pub fn arm(
                         __args,
                         #position,
                         ::hyperscale_vm_sdk::host::CellKind::#kind,
+                    );
+                )
+            }
+            Carries::Run(resource) => {
+                let kind = resource.cell_kind();
+                quote!(
+                    let #ident = ::hyperscale_vm_sdk::state::Run::at(
+                        ::hyperscale_vm_sdk::host::CellKind::#kind,
+                        ::hyperscale_vm_sdk::host::run(
+                            __args,
+                            #position,
+                            ::hyperscale_vm_sdk::host::CellKind::#kind,
+                        ),
                     );
                 )
             }
@@ -94,7 +108,7 @@ pub fn arm(
                         ::hyperscale_vm_sdk::host::ids(__args, #position).to_vec(),
                     );
                 ),
-                Shape::Handle(_) | Shape::Bucket | Shape::Issuer => {
+                Shape::Handle(_) | Shape::Run(_) | Shape::Bucket | Shape::Issuer => {
                     unreachable!("a value binding is never a handle")
                 }
             },

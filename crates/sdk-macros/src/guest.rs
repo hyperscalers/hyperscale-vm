@@ -81,6 +81,20 @@ pub fn method(
                     let #ident = ::hyperscale_vm_sdk::guest::Handle::#variant(#ident.handle());
                 ));
             }
+            // A run arrives as one borrow and is walked by index, so what
+            // the body holds is the run rather than a handle — the entry
+            // an index names is asked for where the access is written.
+            Carries::Run(resource) => {
+                let ty = resource.run_type();
+                let kind = resource.cell_kind();
+                signature.push(quote!(#ident: &#ty));
+                prologue.push(quote!(
+                    let #ident = ::hyperscale_vm_sdk::state::Run::at(
+                        ::hyperscale_vm_sdk::CellKind::#kind,
+                        #ident.handle(),
+                    );
+                ));
+            }
             // A value edge is rebuilt under the name and the kind the
             // author gave it, so the body reads it as written. Mutable
             // because a body may split it, and whether one does is not
@@ -132,7 +146,7 @@ pub fn method(
                         let #ident = ::hyperscale_vm_sdk::state::Ids(#ident);
                     ));
                 }
-                Shape::Handle(_) | Shape::Bucket | Shape::Issuer => {
+                Shape::Handle(_) | Shape::Run(_) | Shape::Bucket | Shape::Issuer => {
                     unreachable!("a value binding is never a handle")
                 }
             },

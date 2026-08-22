@@ -2964,6 +2964,11 @@ fn module_allows(attrs: &mut Vec<syn::Attribute>, role: Role) {
     // into the emitter is a carve-out for one case in a walk that has no
     // others.
     attrs.push(syn::parse_quote!(#[allow(clippy::redundant_field_names)]));
+    // Key material is a list of symbolic values whatever its length, and
+    // each is cloned into it because a term may key more than one
+    // clause. A one-element list is a borrow of the single term wearing
+    // that shape, which reads as a clone that a slice would not need.
+    attrs.push(syn::parse_quote!(#[allow(clippy::cloned_ref_to_slice_refs)]));
     stub_allows(attrs);
     if role.publishes() {
         attrs.push(syn::parse_quote!(

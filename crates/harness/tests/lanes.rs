@@ -11,7 +11,9 @@
 //! could differ silently, the loop would be a comfort rather than a
 //! check.
 
-use hyperscale_vm_effects::{AdmissionError, EvalError, TestHasher, child_key, instance_data_key};
+use hyperscale_vm_effects::{
+    AdmissionError, EvalError, TestHasher, Value, child_key, instance_data_key,
+};
 use hyperscale_vm_fixtures::amm::{self, Settings};
 use hyperscale_vm_fixtures::grammar;
 use hyperscale_vm_harness::fixtures::repo_root;
@@ -40,11 +42,13 @@ fn amm() -> Package {
 }
 
 /// The schedule every shapes instance is created under: two named
-/// tiers, and a fee for everything the schedule does not name.
+/// tiers, a fee for everything the schedule does not name, and the two
+/// parties a `for-each` writes a clause each for.
 fn terms() -> grammar::Terms {
     grammar::Terms {
         tiers: Table::new(vec![(1, 10), (2, 20)]),
         fallback: 7,
+        sides: vec![principal(0x51).into(), principal(0x52).into()],
     }
 }
 
@@ -358,6 +362,46 @@ fn a_configured_table_is_read_the_same_in_both_lanes() {
         tallied,
         Some(10 + 8 + 1),
         "the read inside the macro is the cell the write left",
+    );
+}
+
+/// A `for-each` executed through its run, in both lanes.
+///
+/// The declaration writes one clause per configured party and the guest
+/// walks the run those expansions materialised — so what the body
+/// touches is what the declaration said, at a width neither the
+/// signature nor the guest chose.
+#[test]
+fn a_for_each_executes_through_its_run_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
+        chain
+            .transact(ALICE, |b| shapes.spread(b, 5))
+            .expect_completed();
+        let owed = |party: PrincipalAddr| {
+            chain
+                .cell(child_key(
+                    &TestHasher,
+                    shapes,
+                    grammar::OWED,
+                    &[Value::Address(party.into()).canonical_bytes()],
+                ))
+                .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"))
+        };
+        (owed(principal(0x51)), owed(principal(0x52)), owed(ALICE))
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    let (first, second, unnamed) = native;
+    assert_eq!(first, Some(5), "the first configured party");
+    assert_eq!(second, Some(5), "and the second");
+    assert_eq!(
+        unnamed, None,
+        "a party the configuration does not name is a clause the loop never declared",
     );
 }
 

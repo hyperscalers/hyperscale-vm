@@ -17,8 +17,10 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod grammar {
-    use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Ids, NfBucket, Ordered, Quantity, Table, pack};
+    use hyperscale_vm_sdk::state::{
+        Bucket, Cell, Ids, Keyed, NfBucket, Ordered, Quantity, Table, pack,
+    };
+    use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     /// The schedule an instance was created under.
     ///
@@ -32,6 +34,9 @@ pub mod grammar {
         tiers: Table<u64, u64>,
         /// What a tier the schedule does not name is charged.
         fallback: u64,
+        /// The parties a schedule is written for, which is the list a
+        /// `for-each` maps over.
+        sides: Vec<Address>,
     }
 
     /// A mark carrying a schema: what one of its instances holds, in the
@@ -45,6 +50,9 @@ pub mod grammar {
     struct Grammar {
         entries: Ordered<Quantity>,
         noted: Cell<u64>,
+        /// What each configured party is owed: one leaf per party, which
+        /// is what a `for-each` declares a clause each of.
+        owed: Keyed<u64>,
     }
 
     impl Grammar {
@@ -209,6 +217,20 @@ pub mod grammar {
             let mut fees = vec![self.config().tiers.get(tier), self.noted.get()];
             fees.push(1);
             self.noted.set(fees.iter().sum());
+        }
+
+        /// One clause per configured party, executed through the run
+        /// its expansion materialises.
+        ///
+        /// What varies per element is the cell the clause names, which
+        /// the declaration computed — so the body reaches the element as
+        /// a key and never as a value, and what it writes is the amount
+        /// it was called with. The loop the guest runs is the run's, and
+        /// its width is the list the declaration mapped over.
+        pub fn spread(&mut self, owed: u64) {
+            for &side in &self.config().sides {
+                self.owed.at(side).set(owed);
+            }
         }
 
         /// A method that hands back an ordinary value.

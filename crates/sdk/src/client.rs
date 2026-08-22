@@ -205,6 +205,14 @@ impl<K: IntoSlot, V: IntoSlot> IntoSlot for Table<K, V> {
     }
 }
 
+/// A sequence fills a slot as the list it is — one slot, whatever the
+/// element count, and the shape a `for-each` maps over.
+impl<T: IntoSlot> IntoSlot for Vec<T> {
+    fn into_slot(self) -> Value {
+        Value::List(self.into_iter().map(IntoSlot::into_slot).collect())
+    }
+}
+
 /// A bounded fraction fills a slot as the scaled integer it carries,
 /// which is the form the leaf holds and a body reads back.
 impl IntoSlot for UnitFixed {

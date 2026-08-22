@@ -140,6 +140,55 @@ pub enum Term {
 }
 
 impl Term {
+    /// Whether a `for-each` element is read anywhere inside this.
+    ///
+    /// What separates a term the export can take from one only the
+    /// declaration can evaluate. A binding is bound while its loop is
+    /// being walked and an export's arguments are evaluated outside
+    /// every loop, so a term mentioning one has no value at the boundary
+    /// however it is wrapped.
+    pub fn reads_element(&self) -> bool {
+        match self {
+            Self::Binding(_) => true,
+            Self::LitU64(_)
+            | Self::LitU128(_)
+            | Self::Arg(_)
+            | Self::Config(_)
+            | Self::FreshId(_)
+            | Self::SelfResource(..)
+            | Self::SelfRecord => false,
+            Self::ResourceOf(inner)
+            | Self::IdsOf(inner)
+            | Self::Len(inner)
+            | Self::Only(inner)
+            | Self::Field(inner, _)
+            | Self::OrderKey { key: inner, .. }
+            | Self::Not(inner) => inner.reads_element(),
+            Self::Lookup { map, key } | Self::Contains { map, key } => {
+                map.reads_element() || key.reads_element()
+            }
+            Self::Pack {
+                hi: left,
+                lo: right,
+            }
+            | Self::NfBucket {
+                resource: left,
+                ids: right,
+            }
+            | Self::Add(left, right)
+            | Self::And(left, right)
+            | Self::Or(left, right)
+            | Self::Eq(left, right)
+            | Self::Lt(left, right) => left.reads_element() || right.reads_element(),
+            Self::If {
+                cond,
+                then,
+                otherwise,
+            } => cond.reads_element() || then.reads_element() || otherwise.reads_element(),
+            Self::List(terms) | Self::Tuple(terms) => terms.iter().any(Self::reads_element),
+        }
+    }
+
     /// Whether this evaluates to a judgment rather than to a value.
     ///
     /// What the `if`, `!`, `&&` and `||` spellings are recognised

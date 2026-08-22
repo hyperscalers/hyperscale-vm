@@ -37,6 +37,9 @@ const KERNEL: &str = include_str!("../../sdk/wit/deps/kernel/kernel.wit");
 pub enum Shape {
     /// A borrow of the kernel resource the clause's mode materialises.
     Handle(HandleMode),
+    /// A borrow of the run covering one `for-each` site's expansions, at
+    /// the same mode a single access through it would materialise.
+    Run(HandleMode),
     /// A `u64` the guest reads as it stands.
     Scalar,
     /// A `bool`: the verdict of the guard on a branch's clauses, which
@@ -87,6 +90,7 @@ impl Shape {
     fn wit(&self) -> String {
         match self {
             Self::Handle(resource) => format!("borrow<{}>", resource.world_name()),
+            Self::Run(resource) => format!("borrow<{}-run>", resource.world_name()),
             Self::Scalar => "u64".to_owned(),
             Self::Flag => "bool".to_owned(),
             Self::Address => "kernel-address".to_owned(),
@@ -122,6 +126,7 @@ fn imported(exports: &[Export]) -> Vec<&'static str> {
         for param in &export.params {
             let resource = match param.shape {
                 Shape::Handle(resource) => resource.world_name(),
+                Shape::Run(resource) => resource.run_name(),
                 Shape::Bucket => "bucket",
                 Shape::Issuer => "issuer",
                 _ => continue,

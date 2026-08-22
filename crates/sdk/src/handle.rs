@@ -6,6 +6,8 @@
 //! in a table the kernel owns, which is why it is `(kind, rep)` and needs
 //! nothing from either side to say so.
 
+use hyperscale_vm_types::CellKind;
+
 /// A materialized handle: the table index, and which of the kernel's
 /// resource types it names.
 ///
@@ -37,4 +39,36 @@ pub enum Handle {
     RangeWrite(u32),
     /// The same, of entries that are instances of one resource.
     InstanceRange(u32),
+    /// One entry of a run over a `for-each` site's expansions: the run's
+    /// own position, the element the entry belongs to, and the kind each
+    /// entry is lent at.
+    ///
+    /// One variant rather than nine, because what a run changes is where
+    /// the capability comes from and not what the operations are — the
+    /// kind rides it for the same reason a single handle's does.
+    Run(CellKind, u32, u32),
+}
+
+impl Handle {
+    /// The single-cell handle a run entry acts through, once the
+    /// capability the entry names is in hand.
+    ///
+    /// Anything else is already the handle it acts through.
+    #[must_use]
+    pub const fn at(self, rep: u32) -> Self {
+        let Self::Run(kind, _, _) = self else {
+            return self;
+        };
+        match kind {
+            CellKind::Read => Self::Read(rep),
+            CellKind::Write => Self::Write(rep),
+            CellKind::Amount => Self::Amount(rep),
+            CellKind::AmountRead => Self::AmountRead(rep),
+            CellKind::Delta => Self::Delta(rep),
+            CellKind::Reserve => Self::Reserve(rep),
+            CellKind::RangeRead => Self::RangeRead(rep),
+            CellKind::RangeWrite => Self::RangeWrite(rep),
+            CellKind::InstanceRange => Self::InstanceRange(rep),
+        }
+    }
 }

@@ -87,6 +87,9 @@ pub struct Trace {
     /// The top-level clause most recently declared, which is the one
     /// [`Trace::bind_handle`] names.
     last_clause: Option<u32>,
+    /// The position in the open loop's body of the site most recently
+    /// declared there, which is the one [`Trace::bind_run`] names.
+    last_site: Option<u32>,
     /// Whose authority naming this method requires.
     pending_role: Option<RoleId>,
     /// The resource this method may issue: its mark and its kind.
@@ -112,6 +115,7 @@ impl Trace {
             handles: Vec::new(),
             values: Vec::new(),
             last_clause: None,
+            last_site: None,
             pending_role: None,
             issues: None,
             totality: Totality::Infallible,
@@ -199,6 +203,11 @@ impl Trace {
             // only a clause that lands there can back a handle parameter;
             // a `for-each` clears the mark rather than shadowing it.
             self.last_clause = effect.then_some(index);
+        }
+        // `AbiParam::Run` names a site by its position in the body of the
+        // loop directly enclosing it, so only that depth marks one.
+        if self.depth() == 1 {
+            self.last_site = effect.then_some(index);
         }
     }
 
@@ -532,6 +541,37 @@ impl Trace {
             list: list_expr,
             body: inner,
         });
+    }
+
+    /// Bind the run covering the site just declared inside a `for-each`
+    /// as the next of the guest's handle parameters.
+    ///
+    /// One parameter for the whole expansion, so the export's arity is a
+    /// function of the signature whether or not a site sits under a loop
+    /// — the width the loop maps over is the instance's, and the guest
+    /// asks the run for it.
+    ///
+    /// # Panics
+    ///
+    /// If no `for-each` is open, if one is open more than one deep, or if
+    /// the clause just declared inside it is not an access.
+    pub fn bind_run(&mut self) {
+        assert_eq!(
+            self.depth(),
+            1,
+            "a run covers a site declared directly inside one `for-each`"
+        );
+        let clause = u32::try_from(
+            self.scopes
+                .first()
+                .expect("the method scope is never popped")
+                .len(),
+        )
+        .unwrap_or(u32::MAX);
+        let site = self
+            .last_site
+            .expect("a run binding names the site just declared, and none is");
+        self.handles.push(AbiParam::Run { clause, site });
     }
 
     /// Bind the capability materialized for the clause just declared as

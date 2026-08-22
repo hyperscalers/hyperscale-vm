@@ -48,9 +48,11 @@ mod bindings {
 use core::mem::ManuallyDrop;
 
 pub use bindings::hyperscale::kernel;
+use hyperscale_vm_types::CellKind;
 use kernel::state::{
-    AmountCell, AmountRead, DeltaCell, InstanceRange, Issuer, RangeRead, RangeWrite, ReadCell,
-    ReserveCell, WriteCell,
+    AmountCell, AmountCellRun, AmountRead, AmountReadRun, DeltaCell, DeltaCellRun, InstanceRange,
+    InstanceRangeRun, Issuer, RangeRead, RangeReadRun, RangeWrite, RangeWriteRun, ReadCell,
+    ReadCellRun, ReserveCell, ReserveCellRun, WriteCell, WriteCellRun,
 };
 
 use crate::Address;
@@ -224,6 +226,15 @@ borrows! {
     range_read -> RangeRead,
     range_write -> RangeWrite,
     instance_range -> InstanceRange,
+    read_cell_run -> ReadCellRun,
+    write_cell_run -> WriteCellRun,
+    amount_cell_run -> AmountCellRun,
+    amount_read_run -> AmountReadRun,
+    delta_cell_run -> DeltaCellRun,
+    reserve_cell_run -> ReserveCellRun,
+    range_read_run -> RangeReadRun,
+    range_write_run -> RangeWriteRun,
+    instance_range_run -> InstanceRangeRun,
 }
 
 /// The substate this handle reads.
@@ -239,6 +250,12 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
     match handle {
         Handle::Read(rep) => kernel::state::read_cell_get(&read_cell(rep)),
         Handle::Write(rep) => kernel::state::write_cell_get(&write_cell(rep)),
+        Handle::Run(CellKind::Read, rep, at) => {
+            kernel::state::read_cell_run_get(&read_cell_run(rep), at)
+        }
+        Handle::Run(CellKind::Write, rep, at) => {
+            kernel::state::write_cell_run_get(&write_cell_run(rep), at)
+        }
         other => unreachable!("{other:?} reads no point substate"),
     }
 }
@@ -258,6 +275,13 @@ pub fn cell_balance(handle: Handle) -> u128 {
     match handle {
         Handle::Amount(rep) => whole(kernel::state::amount_cell_balance(&amount_cell(rep))),
         Handle::AmountRead(rep) => whole(kernel::state::amount_read_balance(&amount_read(rep))),
+        Handle::Run(CellKind::Amount, rep, at) => whole(kernel::state::amount_cell_run_balance(
+            &amount_cell_run(rep),
+            at,
+        )),
+        Handle::Run(CellKind::AmountRead, rep, at) => whole(
+            kernel::state::amount_read_run_balance(&amount_read_run(rep), at),
+        ),
         other => unreachable!("{other:?} holds no balance"),
     }
 }
@@ -272,6 +296,9 @@ pub fn cell_balance(handle: Handle) -> u128 {
 pub fn cell_set(handle: Handle, value: &[u8]) {
     match handle {
         Handle::Write(rep) => kernel::state::write_cell_set(&write_cell(rep), value),
+        Handle::Run(CellKind::Write, rep, at) => {
+            kernel::state::write_cell_run_set(&write_cell_run(rep), at, value);
+        }
         other => unreachable!("{other:?} does not write absolutes"),
     }
 }
@@ -285,6 +312,9 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
 pub fn cell_clear(handle: Handle) {
     match handle {
         Handle::Write(rep) => kernel::state::write_cell_clear(&write_cell(rep)),
+        Handle::Run(CellKind::Write, rep, at) => {
+            kernel::state::write_cell_run_clear(&write_cell_run(rep), at);
+        }
         other => unreachable!("{other:?} does not write absolutes"),
     }
 }
@@ -299,6 +329,12 @@ pub fn cell_put(handle: Handle, funds: kernel::state::Bucket) {
     match handle {
         Handle::Delta(rep) => kernel::state::delta_cell_put(&delta_cell(rep), funds),
         Handle::Amount(rep) => kernel::state::amount_cell_put(&amount_cell(rep), funds),
+        Handle::Run(CellKind::Delta, rep, at) => {
+            kernel::state::delta_cell_run_put(&delta_cell_run(rep), at, funds);
+        }
+        Handle::Run(CellKind::Amount, rep, at) => {
+            kernel::state::amount_cell_run_put(&amount_cell_run(rep), at, funds);
+        }
         other => unreachable!("{other:?} carries no movement"),
     }
 }
@@ -314,6 +350,12 @@ pub fn cell_take(handle: Handle, value: u128) -> kernel::state::Bucket {
     match handle {
         Handle::Delta(rep) => kernel::state::delta_cell_take(&delta_cell(rep), amount(value)),
         Handle::Amount(rep) => kernel::state::amount_cell_take(&amount_cell(rep), amount(value)),
+        Handle::Run(CellKind::Delta, rep, at) => {
+            kernel::state::delta_cell_run_take(&delta_cell_run(rep), at, amount(value))
+        }
+        Handle::Run(CellKind::Amount, rep, at) => {
+            kernel::state::amount_cell_run_take(&amount_cell_run(rep), at, amount(value))
+        }
         other => unreachable!("{other:?} carries no movement"),
     }
 }
@@ -335,6 +377,9 @@ pub fn cell_take(handle: Handle, value: u128) -> kernel::state::Bucket {
 pub fn reserve_take(handle: Handle) -> kernel::state::Bucket {
     match handle {
         Handle::Reserve(rep) => kernel::state::reserve_cell_take(&reserve_cell(rep)),
+        Handle::Run(CellKind::Reserve, rep, at) => {
+            kernel::state::reserve_cell_run_take(&reserve_cell_run(rep), at)
+        }
         other => unreachable!("{other:?} holds no reservation"),
     }
 }
@@ -378,6 +423,15 @@ pub fn entry_count(handle: Handle) -> u32 {
         Handle::RangeRead(rep) => kernel::state::range_read_count(&range_read(rep)),
         Handle::RangeWrite(rep) => kernel::state::range_write_count(&range_write(rep)),
         Handle::InstanceRange(rep) => kernel::state::instance_range_count(&instance_range(rep)),
+        Handle::Run(CellKind::RangeRead, rep, at) => {
+            kernel::state::range_read_run_count(&range_read_run(rep), at)
+        }
+        Handle::Run(CellKind::RangeWrite, rep, at) => {
+            kernel::state::range_write_run_count(&range_write_run(rep), at)
+        }
+        Handle::Run(CellKind::InstanceRange, rep, at) => {
+            kernel::state::instance_range_run_count(&instance_range_run(rep), at)
+        }
         other => unreachable!("{other:?} is not an interval"),
     }
 }
@@ -394,6 +448,15 @@ pub fn entry_covered(handle: Handle) -> bool {
         Handle::RangeRead(rep) => kernel::state::range_read_covered(&range_read(rep)),
         Handle::RangeWrite(rep) => kernel::state::range_write_covered(&range_write(rep)),
         Handle::InstanceRange(rep) => kernel::state::instance_range_covered(&instance_range(rep)),
+        Handle::Run(CellKind::RangeRead, rep, at) => {
+            kernel::state::range_read_run_covered(&range_read_run(rep), at)
+        }
+        Handle::Run(CellKind::RangeWrite, rep, at) => {
+            kernel::state::range_write_run_covered(&range_write_run(rep), at)
+        }
+        Handle::Run(CellKind::InstanceRange, rep, at) => {
+            kernel::state::instance_range_run_covered(&instance_range_run(rep), at)
+        }
         other => unreachable!("{other:?} is not an interval"),
     }
 }
@@ -417,6 +480,19 @@ pub fn entry_order(handle: Handle, index: u32) -> u128 {
             &instance_range(rep),
             index,
         )),
+        Handle::Run(CellKind::RangeRead, rep, at) => whole(kernel::state::range_read_run_order(
+            &range_read_run(rep),
+            at,
+            index,
+        )),
+        Handle::Run(CellKind::RangeWrite, rep, at) => whole(kernel::state::range_write_run_order(
+            &range_write_run(rep),
+            at,
+            index,
+        )),
+        Handle::Run(CellKind::InstanceRange, rep, at) => whole(
+            kernel::state::instance_range_run_order(&instance_range_run(rep), at, index),
+        ),
         other => unreachable!("{other:?} yields no order keys"),
     }
 }
@@ -434,6 +510,15 @@ pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
         Handle::RangeWrite(rep) => kernel::state::range_write_entry(&range_write(rep), index),
         Handle::InstanceRange(rep) => {
             kernel::state::instance_range_entry(&instance_range(rep), index)
+        }
+        Handle::Run(CellKind::RangeRead, rep, at) => {
+            kernel::state::range_read_run_entry(&range_read_run(rep), at, index)
+        }
+        Handle::Run(CellKind::RangeWrite, rep, at) => {
+            kernel::state::range_write_run_entry(&range_write_run(rep), at, index)
+        }
+        Handle::Run(CellKind::InstanceRange, rep, at) => {
+            kernel::state::instance_range_run_entry(&instance_range_run(rep), at, index)
         }
         other => unreachable!("{other:?} yields no entries"),
     }
@@ -464,6 +549,9 @@ pub fn entry_at(handle: Handle, order: u128) -> Vec<u8> {
 pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
     match handle {
         Handle::RangeWrite(rep) => kernel::state::range_write_set(&range_write(rep), index, value),
+        Handle::Run(CellKind::RangeWrite, rep, at) => {
+            kernel::state::range_write_run_set(&range_write_run(rep), at, index, value);
+        }
         other => unreachable!("{other:?} does not write entries"),
     }
 }
@@ -478,6 +566,9 @@ pub fn entry_insert(handle: Handle, order: u128, value: &[u8]) {
     match handle {
         Handle::RangeWrite(rep) => {
             kernel::state::range_write_insert(&range_write(rep), amount(order), value);
+        }
+        Handle::Run(CellKind::RangeWrite, rep, at) => {
+            kernel::state::range_write_run_insert(&range_write_run(rep), at, amount(order), value);
         }
         other => unreachable!("{other:?} does not write entries"),
     }
@@ -495,6 +586,9 @@ pub fn entry_put(handle: Handle, funds: kernel::state::Bucket, value: &[u8]) {
         Handle::InstanceRange(rep) => {
             kernel::state::instance_range_put(&instance_range(rep), funds, value);
         }
+        Handle::Run(CellKind::InstanceRange, rep, at) => {
+            kernel::state::instance_range_run_put(&instance_range_run(rep), at, funds, value);
+        }
         other => unreachable!("{other:?} carries no movement"),
     }
 }
@@ -509,6 +603,9 @@ pub fn entry_put(handle: Handle, funds: kernel::state::Bucket, value: &[u8]) {
 pub fn entry_take(handle: Handle, ids: &[u64]) -> kernel::state::Bucket {
     match handle {
         Handle::InstanceRange(rep) => kernel::state::instance_range_take(&instance_range(rep), ids),
+        Handle::Run(CellKind::InstanceRange, rep, at) => {
+            kernel::state::instance_range_run_take(&instance_range_run(rep), at, ids)
+        }
         other => unreachable!("{other:?} carries no movement"),
     }
 }
@@ -522,7 +619,57 @@ pub fn entry_take(handle: Handle, ids: &[u64]) -> kernel::state::Bucket {
 pub fn entry_remove(handle: Handle, index: u32) {
     match handle {
         Handle::RangeWrite(rep) => kernel::state::range_write_remove(&range_write(rep), index),
+        Handle::Run(CellKind::RangeWrite, rep, at) => {
+            kernel::state::range_write_run_remove(&range_write_run(rep), at, index);
+        }
         other => unreachable!("{other:?} does not write entries"),
+    }
+}
+
+/// How many elements a run's site mapped over.
+///
+/// The element count rather than the count of expansions that fired, so
+/// a body walks the same indices whichever of its sites it is reading —
+/// and a site that did not fire reads as undeclared rather than
+/// shortening the walk.
+#[must_use]
+#[inline(always)]
+pub fn run_len(kind: CellKind, rep: u32) -> u32 {
+    match kind {
+        CellKind::Read => kernel::state::read_cell_run_len(&read_cell_run(rep)),
+        CellKind::Write => kernel::state::write_cell_run_len(&write_cell_run(rep)),
+        CellKind::Amount => kernel::state::amount_cell_run_len(&amount_cell_run(rep)),
+        CellKind::AmountRead => kernel::state::amount_read_run_len(&amount_read_run(rep)),
+        CellKind::Delta => kernel::state::delta_cell_run_len(&delta_cell_run(rep)),
+        CellKind::Reserve => kernel::state::reserve_cell_run_len(&reserve_cell_run(rep)),
+        CellKind::RangeRead => kernel::state::range_read_run_len(&range_read_run(rep)),
+        CellKind::RangeWrite => kernel::state::range_write_run_len(&range_write_run(rep)),
+        CellKind::InstanceRange => kernel::state::instance_range_run_len(&instance_range_run(rep)),
+    }
+}
+
+/// Whether a run's site declared anything for the element at `index`.
+#[must_use]
+#[inline(always)]
+pub fn run_declared(kind: CellKind, rep: u32, index: u32) -> bool {
+    match kind {
+        CellKind::Read => kernel::state::read_cell_run_declared(&read_cell_run(rep), index),
+        CellKind::Write => kernel::state::write_cell_run_declared(&write_cell_run(rep), index),
+        CellKind::Amount => kernel::state::amount_cell_run_declared(&amount_cell_run(rep), index),
+        CellKind::AmountRead => {
+            kernel::state::amount_read_run_declared(&amount_read_run(rep), index)
+        }
+        CellKind::Delta => kernel::state::delta_cell_run_declared(&delta_cell_run(rep), index),
+        CellKind::Reserve => {
+            kernel::state::reserve_cell_run_declared(&reserve_cell_run(rep), index)
+        }
+        CellKind::RangeRead => kernel::state::range_read_run_declared(&range_read_run(rep), index),
+        CellKind::RangeWrite => {
+            kernel::state::range_write_run_declared(&range_write_run(rep), index)
+        }
+        CellKind::InstanceRange => {
+            kernel::state::instance_range_run_declared(&instance_range_run(rep), index)
+        }
     }
 }
 

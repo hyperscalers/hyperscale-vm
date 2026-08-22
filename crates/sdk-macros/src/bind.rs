@@ -18,6 +18,9 @@ use crate::{is_address, is_named};
 pub enum Carries {
     /// A materialized capability, at the resource its clause declares.
     Handle(HandleMode),
+    /// The run covering one `for-each` site's expansions, at the same
+    /// resource a single access through it would materialise.
+    Run(HandleMode),
     /// A value edge, under the author's own name for it.
     Edge {
         /// The name the method's signature gave the parameter.
@@ -277,13 +280,25 @@ pub fn bindings(
             .get(site)
             .and_then(crate::lower::Site::resource)
             .unwrap_or(HandleMode::ReadCell);
+        // A site a `for-each` body declared is one parameter covering
+        // the whole expansion, so the export's arity stays a function of
+        // the signature whether or not the site sits under a loop.
+        let run = lowered.runs.contains(&site);
         bindings.push(Binding {
             param: Param {
                 name: format!("handle-{position}"),
-                shape: Shape::Handle(resource),
+                shape: if run {
+                    Shape::Run(resource)
+                } else {
+                    Shape::Handle(resource)
+                },
             },
             ident: handle_ident(site),
-            carries: Carries::Handle(resource),
+            carries: if run {
+                Carries::Run(resource)
+            } else {
+                Carries::Handle(resource)
+            },
         });
     }
 

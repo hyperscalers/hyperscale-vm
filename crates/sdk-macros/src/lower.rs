@@ -154,6 +154,13 @@ pub struct Site {
     /// through it produces — one fact, read from the declaration rather
     /// than guessed from the shape of a key.
     pub denomination: Option<Term>,
+    /// How many `for-each` binders enclosed the access that opened this
+    /// site; zero for a clause the method declares directly.
+    ///
+    /// What decides whether the export takes one capability or the whole
+    /// expansion as a run — and, for a run, which loop's index its
+    /// entries are named by.
+    pub binder: usize,
     /// The condition this site's clause is declared under, or `None` for
     /// a clause declared always.
     ///
@@ -374,6 +381,13 @@ pub struct Lowered {
     /// be the clauses' rather than the order the body first reached for
     /// one — a nested access would otherwise number them apart.
     pub handles: BTreeSet<usize>,
+    /// The sites the export takes as runs rather than as single
+    /// capabilities: those a `for-each` body declared, whose width is
+    /// the instance's rather than the signature's.
+    ///
+    /// A subset of [`Lowered::handles`], because a run is a capability
+    /// parameter like any other — what differs is what it covers.
+    pub runs: BTreeSet<usize>,
     /// The values the export takes, in the order the body needs them.
     pub values: Vec<Need>,
     /// How many fresh ids the body draws.
@@ -531,6 +545,9 @@ fn split_tail(block: &syn::Block) -> (&[syn::Stmt], Option<&syn::Expr>) {
 fn unwrap_pat(pat: &syn::Pat) -> &syn::Pat {
     match pat {
         syn::Pat::Type(typed) => unwrap_pat(&typed.pat),
+        // `&name` and `name` bind the same thing: what a pattern takes a
+        // reference apart from is still the value the walk is tracking.
+        syn::Pat::Reference(reference) => unwrap_pat(&reference.pat),
         other => other,
     }
 }
@@ -663,6 +680,12 @@ pub fn flag_ident(index: usize) -> syn::Ident {
 /// The generated name of the handle materialized for `site`.
 pub fn handle_ident(site: usize) -> syn::Ident {
     syn::Ident::new(&format!("__capability_{site}"), Span::call_site())
+}
+
+/// The generated name of the element index a run at binder depth
+/// `depth` is walked by.
+pub fn run_index_ident(depth: usize) -> syn::Ident {
+    syn::Ident::new(&format!("__element_{depth}"), Span::call_site())
 }
 
 /// The lowering pass over one method body.
@@ -1083,12 +1106,14 @@ impl<'a> Lowerer<'a> {
             // narrowing name an entry, never a resource.
             _ => None,
         });
+        let binder = self.depth();
         self.out.sites.push(Site {
             target,
             ops: Vec::new(),
             element,
             denomination,
             guard,
+            binder,
             moved: None,
         });
         self.push_node(Node::Site(index));
@@ -1831,6 +1856,19 @@ impl<'a> Lowerer<'a> {
     /// resources at once — so the second one is refused where the body
     /// wrote it rather than left for a caller to discover.
     fn denominate(&mut self, param: u32, resource: Term, span: Span) {
+        // What an edge carries is one resource, stated once on the
+        // signature — so it cannot be an element of a list the
+        // declaration maps over, which names a different one each time
+        // round and none of them where the signature is read.
+        if resource.reads_element() {
+            self.error(
+                span,
+                "this credits a value edge to a cell a `for-each` element keys, so what \
+                 the edge carries would be a different resource each time round — one \
+                 edge carries one resource, and the signature states it once",
+            );
+            return;
+        }
         // Under a guard the two are the arms of one selection rather
         // than a contradiction, so they fold into one expression — still
         // exactly one, so what a caller reads off the signature stays
@@ -1985,7 +2023,23 @@ impl<'a> Lowerer<'a> {
             | Term::Lookup { .. }
             | Term::Contains { .. }
             | Term::Field(..)
-            | Term::If { .. } => self.need(&Need::Derived(term.clone())),
+            | Term::If { .. } => {
+                // The binding a `for-each` element occupies exists only
+                // while the loop is being evaluated, and an export's
+                // arguments are evaluated outside every loop — so a
+                // parameter that reads one is a parameter nothing could
+                // ever bind.
+                if term.reads_element() {
+                    self.refuse(
+                        Span::call_site(),
+                        "this reads a `for-each` element, which exists only inside the \
+                         evaluation of the loop that binds it — a body reaches an element \
+                         as a key and never as a value",
+                    );
+                    return quote!(::core::unimplemented!());
+                }
+                self.need(&Need::Derived(term.clone()))
+            }
             // A judgment has no guest representation, so what crosses is
             // its operands and the guest does the comparison — which is
             // what a body that branches on one was doing before the
@@ -2109,16 +2163,24 @@ impl<'a> Lowerer<'a> {
     /// Bind the handle for `site` as an export parameter, and answer the
     /// `Handle` the accessors take.
     fn handle(&mut self, site: usize, span: Span) -> TokenStream {
-        if self.depth() != 0 {
-            self.error(
-                span,
-                "a clause under a `for-each` has a configuration-dependent handle \
-                 count, so it cannot occupy a fixed export parameter",
-            );
-        }
         self.out.handles.insert(site);
         let ident = handle_ident(site);
-        quote!(#ident)
+        let binder = self.out.sites[site].binder;
+        if binder == 0 {
+            return quote!(#ident);
+        }
+        // A run's entry is named by the element it was declared for, so
+        // it exists inside the loop that declared it and nowhere else.
+        if self.depth() < binder {
+            self.error(
+                span,
+                "this handle was declared inside a `for-each`, so it names an entry of \
+                 that loop's run — and outside the loop there is no element to name",
+            );
+        }
+        self.out.runs.insert(site);
+        let at = run_index_ident(binder - 1);
+        quote!(#ident.handle(#at))
     }
 
     // ---- statements -----------------------------------------------------
@@ -3979,7 +4041,9 @@ impl<'a> Lowerer<'a> {
     /// the arguments, and that check is what guards the declaration
     /// either way.
     fn for_loop(&mut self, loop_: &syn::ExprForLoop) -> TokenStream {
-        let list = self.expr(&loop_.expr);
+        // Read through the borrow: `&list` and `list` name the same
+        // sequence, and what the declaration maps over is what it names.
+        let list = self.expr(borrowed(&loop_.expr));
         let pat = &loop_.pat;
 
         let Val::Term(list_term) = list.val.clone() else {
@@ -3994,17 +4058,8 @@ impl<'a> Lowerer<'a> {
             return quote!(for #pat in #list { #(#statements)* });
         };
 
-        // A run of handles whose length depends on configuration cannot
-        // occupy a fixed export parameter, so a body that declares a
-        // `for-each` declares and does not execute.
-        self.refuse(
-            loop_.for_token.span,
-            "a `for-each` clause expands over instance configuration, so its handles \
-             occupy no fixed export parameter",
-        );
-        let list = self.value(list.code);
-
         let depth = self.depth();
+        let opened = self.out.sites.len();
         self.scopes.push(Vec::new());
         self.locals.push(BTreeMap::new());
         self.binders += 1;
@@ -4024,7 +4079,24 @@ impl<'a> Lowerer<'a> {
             depth,
             body,
         });
-        quote!(for #pat in #list { #(#statements)* })
+
+        // The loop's own width is the run's, so the guest walks the
+        // expansion the declaration produced rather than a list it does
+        // not hold — the element itself is evaluated where the
+        // declaration is, and the body reaches it only as a key.
+        let Some(run) = (opened..self.out.sites.len())
+            .find(|site| self.out.runs.contains(site))
+            .map(handle_ident)
+        else {
+            self.refuse(
+                loop_.for_token.span,
+                "this `for-each` body declares no access, so there is no run for the \
+                 guest to walk and no element for it to read",
+            );
+            return quote!(::core::unimplemented!());
+        };
+        let at = run_index_ident(depth);
+        quote!(for #at in 0..#run.len() { #(#statements)* })
     }
 }
 

@@ -209,11 +209,16 @@ fn node(node: &Node, lowered: &Lowered) -> TokenStream {
                 .map(|_| quote!(.holding(&__held)));
             // A handle parameter names the clause just declared, so the
             // binding rides beside the declaration rather than being
-            // recomputed from it.
-            let bind = lowered
-                .handles
-                .contains(index)
-                .then(|| quote!(__t.bind_handle();));
+            // recomputed from it. A site inside a loop names the run
+            // covering its expansions instead, which is the one thing
+            // about the binding that a `for-each` changes.
+            let bind = lowered.handles.contains(index).then(|| {
+                if lowered.runs.contains(index) {
+                    quote!(__t.bind_run();)
+                } else {
+                    quote!(__t.bind_handle();)
+                }
+            });
             let declare = quote!({ #prelude #held #target __access #holding #call; #bind });
             // The condition the clause is declared under, where the cell
             // is only ever reached under one. It wraps the declaration

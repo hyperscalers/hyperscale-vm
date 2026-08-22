@@ -51,6 +51,22 @@ impl HandleMode {
         }
     }
 
+    /// The WIT resource name of a run over this mode's expansions.
+    #[must_use]
+    pub const fn run_name(self) -> &'static str {
+        match self {
+            Self::ReadCell => "read-cell-run",
+            Self::WriteCell => "write-cell-run",
+            Self::AmountCell => "amount-cell-run",
+            Self::AmountRead => "amount-read-run",
+            Self::DeltaCell => "delta-cell-run",
+            Self::ReserveCell => "reserve-cell-run",
+            Self::RangeRead => "range-read-run",
+            Self::RangeWrite => "range-write-run",
+            Self::InstanceRange => "instance-range-run",
+        }
+    }
+
     /// The Rust type wit-bindgen derives from the WIT name.
     #[must_use]
     pub fn guest_type(self) -> syn::Ident {
@@ -66,6 +82,13 @@ impl HandleMode {
             Self::InstanceRange => "InstanceRange",
         };
         syn::Ident::new(name, Span::call_site())
+    }
+
+    /// The world type a run over this mode's expansions is borrowed as,
+    /// as the generated bindings name it.
+    #[must_use]
+    pub fn run_type(self) -> syn::Ident {
+        syn::Ident::new(&format!("{}Run", self.guest_type()), Span::call_site())
     }
 
     /// The kernel `CellKind` variant the native dispatch constructs.

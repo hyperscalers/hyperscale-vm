@@ -175,7 +175,7 @@ pub use hyperscale_vm_sdk_macros::blueprint;
 #[cfg(all(feature = "macros", feature = "guest"))]
 pub use hyperscale_vm_sdk_macros::blueprint_publisher as blueprint;
 pub use hyperscale_vm_types::{
-    Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
+    Address, CallTarget, CellKind, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 pub use sym::{Addr, Amount, Blob, Bucket, Flag, Key, Kind, Num, Opaque, Seq, Sym};
 pub use trace::{Access, Interval, Leaf, Requirement, Trace};

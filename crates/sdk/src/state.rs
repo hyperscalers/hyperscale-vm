@@ -65,7 +65,7 @@ pub use hyperscale_vm_effects::ResourceRecord;
 /// where a rule is judged.
 pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, RoleBytes, RoleTable};
 use hyperscale_vm_effects::{MAX_AUTH_CELL_WIRE_DEPTH, RECORD_WIRE_DEPTH};
-use hyperscale_vm_types::{Address, ResourceAddr};
+use hyperscale_vm_types::{Address, CellKind, ResourceAddr};
 
 #[cfg(not(component))]
 use crate::host;
@@ -749,6 +749,66 @@ impl Keyed<Vault> {
     pub fn at(&self, key: impl Into<ResourceAddr>) -> Slot<Vault> {
         let _ = key;
         unimplemented!("{OFF_HOST}")
+    }
+}
+
+/// One `for-each` site's whole expansion, borrowed once and walked by
+/// the index of the element that declared each entry.
+///
+/// Built by generated code, never by an author: what a body writes is
+/// the loop it wrote, and this is what the emission rewrites the loop's
+/// accesses to. The index is the *element's* throughout, so two sites in
+/// one body agree on what it means and a site whose guard did not fire
+/// reads as undeclared rather than shortening the walk.
+#[derive(Clone, Copy, Debug)]
+pub struct Run {
+    kind: CellKind,
+    rep: u32,
+}
+
+#[allow(clippy::inline_always)] // one import behind a dispatch its call site fixes
+impl Run {
+    /// The run at `rep`, whose entries are lent at `kind`.
+    #[must_use]
+    pub const fn at(kind: CellKind, rep: u32) -> Self {
+        Self { kind, rep }
+    }
+
+    /// How many elements the site's loop mapped over.
+    #[must_use]
+    #[inline(always)]
+    pub fn len(&self) -> u32 {
+        #[cfg(component)]
+        return crate::guest::run_len(self.kind, self.rep);
+        #[cfg(not(component))]
+        return host::run_len(self.rep);
+    }
+
+    /// Whether the loop mapped over no elements at all.
+    #[must_use]
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Whether the site declared anything for the element at `index`.
+    ///
+    /// A body branches on this rather than on a second copy of the
+    /// guard, so the two cannot disagree — and reaching an entry it says
+    /// nothing about is a defect that traps by its own name.
+    #[must_use]
+    #[inline(always)]
+    pub fn declared(&self, index: u32) -> bool {
+        #[cfg(component)]
+        return crate::guest::run_declared(self.kind, self.rep, index);
+        #[cfg(not(component))]
+        return host::run_declared(self.rep, index);
+    }
+
+    /// The handle the entry at `index` acts through.
+    #[must_use]
+    pub const fn handle(&self, index: u32) -> Handle {
+        Handle::Run(self.kind, self.rep, index)
     }
 }
 
