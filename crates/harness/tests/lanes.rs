@@ -18,6 +18,7 @@ use hyperscale_vm_fixtures::amm::{self, Settings};
 use hyperscale_vm_fixtures::grammar;
 use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_kernel::Receipt;
+use hyperscale_vm_kernel::modes::decode_amount;
 use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
 use hyperscale_vm_sdk::state::{Table, UnitFixed};
 use hyperscale_vm_testing::{
@@ -541,6 +542,63 @@ fn a_run_over_vaults_reads_at_its_own_mode_in_both_lanes() {
         Some(730),
         "every configured asset's vault reached the read"
     );
+}
+
+/// What one configured asset's fee leaf holds under `shapes`.
+fn accrued(chain: &Chain, shapes: grammar::Grammar, asset: ResourceAddr) -> u128 {
+    chain
+        .cell(child_key(
+            &TestHasher,
+            shapes,
+            grammar::FEES,
+            &[Value::Address(asset.into()).canonical_bytes()],
+        ))
+        .map_or(0, |bytes| {
+            decode_amount(&bytes).expect("a vault cell is an amount")
+        })
+}
+
+/// Two runs of different modes under one loop, in both lanes.
+///
+/// The mode a site materialises is what its body does: the vault is read
+/// and moved out of, so it is lent as an amount cell; the leaf the fee
+/// lands in is only moved into, so it is lent as a delta. Both walk the
+/// same elements at the same indices, which is the property one run per
+/// site exists for.
+#[test]
+fn two_runs_of_different_modes_walk_one_loop_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
+        for (asset, held) in [(X, 700u128), (Y, 30)] {
+            chain.credit(ALICE, asset, held);
+            chain
+                .transact(ALICE, |b| {
+                    let signed_in = account::authorize(b, ALICE)?;
+                    let funds = account::withdraw(b, signed_in, asset, held)?;
+                    shapes.fund(b, funds)
+                })
+                .expect_completed();
+        }
+        // Y holds less than the fee, so what moves is what is there —
+        // the read is what lets the body know, and it is also what makes
+        // the site exclusive rather than commutative.
+        chain
+            .transact(ALICE, |b| shapes.accrue(b, 50))
+            .expect_completed();
+        (
+            chain.balance(shapes, X),
+            chain.balance(shapes, Y),
+            accrued(&chain, shapes, X),
+            accrued(&chain, shapes, Y),
+        )
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    assert_eq!(native, (650, 0, 50, 30), "the fee each vault could pay");
 }
 
 /// A loop over a list of one and a list of none, in both lanes.

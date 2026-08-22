@@ -18,7 +18,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod grammar {
     use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Ids, Keyed, NfBucket, Ordered, Quantity, Table, pack,
+        Bucket, Cell, Ids, Keyed, NfBucket, Ordered, Quantity, Table, Vault, pack,
     };
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
@@ -59,6 +59,13 @@ pub mod grammar {
         /// What each configured party is owed: one leaf per party, which
         /// is what a `for-each` declares a clause each of.
         owed: Keyed<u64>,
+        /// What this instance has accrued of each configured asset,
+        /// beside the vault it was taken from.
+        ///
+        /// A second family of vaults, because a movement wants somewhere
+        /// to land that is not where it came from: one leaf keyed by the
+        /// resource it holds, which is the one type a vault's key has.
+        fees: Keyed<Vault>,
     }
 
     impl Grammar {
@@ -277,6 +284,26 @@ pub mod grammar {
             }
             self.noted
                 .set(u64::try_from(total.subunits()).unwrap_or(u64::MAX));
+        }
+
+        /// A fee out of every configured asset's vault, into the leaf
+        /// beside it.
+        ///
+        /// Two sites under one loop, and the modes they materialise are
+        /// what the bodies do rather than what they are spelled: the
+        /// vault is read and moved, so it is an amount cell; the fee leaf
+        /// is only moved into, so it is a delta. Two runs, two resource
+        /// types at the boundary, and one index meaning one element in
+        /// both.
+        pub fn accrue(&mut self, fee: Quantity) {
+            for &asset in &self.config().assets {
+                let mut held = self.vault(asset);
+                // The read is what makes the site exclusive rather than
+                // commutative: a body that took without looking would be
+                // declaring a delta, which is the leaf beside it.
+                let taken = held.balance().min(fee);
+                self.fees.at(asset).put(held.take(taken));
+            }
         }
 
         /// A method that hands back an ordinary value.
