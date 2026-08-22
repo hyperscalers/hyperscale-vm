@@ -76,10 +76,7 @@ fn session(base: &MemoryStore) -> KernelSession {
         &EffectSet::new(),
         &[],
         TxHash(Hash32([0x55; 32])),
-        EnvInputs {
-            clock_ms: 0,
-            randomness: [0; 32],
-        },
+        EnvInputs::unsealed(0, [0; 32]),
     )
 }
 
@@ -127,10 +124,7 @@ fn transfer_session() -> KernelSession {
         &declared,
         &[Some(RESOURCE), Some(RESOURCE)],
         TxHash(Hash32([0x77; 32])),
-        EnvInputs {
-            clock_ms: 77,
-            randomness: [3; 32],
-        },
+        EnvInputs::unsealed(77, [3; 32]),
     );
     session.enter_invocation(SENDER);
     session

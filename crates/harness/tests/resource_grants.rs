@@ -35,10 +35,7 @@ const STRANGER: PrincipalAddr = PrincipalAddr::new([0x63; 31]);
 const MINTER: Address = Address::new([0x6A; 31], AddressClass::Component);
 
 const fn env() -> EnvInputs {
-    EnvInputs {
-        clock_ms: 5_000,
-        randomness: [8; 32],
-    }
+    EnvInputs::unsealed(5_000, [8; 32])
 }
 
 fn account_pkg() -> PackageHash {

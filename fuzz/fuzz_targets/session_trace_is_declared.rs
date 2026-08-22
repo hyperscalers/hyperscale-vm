@@ -271,10 +271,7 @@ fn session(fx: &Fx) -> Option<KernelSession> {
         OverlayStore::new(Arc::new(fx.store.clone())),
         &declaration,
         TxHash(Hash32([0x33; 32])),
-        EnvInputs {
-            clock_ms: 424_242,
-            randomness: [11; 32],
-        },
+        EnvInputs::unsealed(424_242, [11; 32]),
         test_hash,
     )
     .ok()

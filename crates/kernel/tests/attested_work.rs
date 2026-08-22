@@ -182,10 +182,7 @@ where
     let batch = [BatchTx::new(
         tx(1),
         moving(declared),
-        EnvInputs {
-            clock_ms: 1_000,
-            randomness: [1; 32],
-        },
+        EnvInputs::unsealed(1_000, [1; 32]),
     )];
     let outcome = run_batch(funded_store(1_000), &batch, runner, locality);
     (
@@ -273,10 +270,7 @@ fn one_receipt_two_shares() {
     let batch = [BatchTx::new(
         tx(1),
         moving(declared.clone()),
-        EnvInputs {
-            clock_ms: 1_000,
-            randomness: [1; 32],
-        },
+        EnvInputs::unsealed(1_000, [1; 32]),
     )];
 
     let payer = run_batch(
@@ -385,10 +379,7 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
     let batch = [BatchTx::new(
         tx(1),
         moving(declared.clone()),
-        EnvInputs {
-            clock_ms: 1_000,
-            randomness: [1; 32],
-        },
+        EnvInputs::unsealed(1_000, [1; 32]),
     )
     .with_nullifiers(vec![nullifier])];
     let outcome = run_batch(Arc::new(store), &batch, &transfer_guest, &Locality::All);
@@ -412,18 +403,12 @@ fn a_completion_flipped_at_apply_drops_its_fuel_but_keeps_its_declaration() {
         BatchTx::new(
             tx(1),
             moving(transfer_declared(600)),
-            EnvInputs {
-                clock_ms: 1_000,
-                randomness: [1; 32],
-            },
+            EnvInputs::unsealed(1_000, [1; 32]),
         ),
         BatchTx::new(
             tx(2),
             moving(declared.clone()),
-            EnvInputs {
-                clock_ms: 1_000,
-                randomness: [1; 32],
-            },
+            EnvInputs::unsealed(1_000, [1; 32]),
         ),
     ];
     let mut store = MemoryStore::default();
@@ -460,18 +445,12 @@ fn work_is_a_function_of_the_batch_alone() {
         BatchTx::new(
             tx(1),
             moving(transfer_declared(100)),
-            EnvInputs {
-                clock_ms: 1_000,
-                randomness: [1; 32],
-            },
+            EnvInputs::unsealed(1_000, [1; 32]),
         ),
         BatchTx::new(
             tx(2),
             moving(transfer_declared(50)),
-            EnvInputs {
-                clock_ms: 1_000,
-                randomness: [1; 32],
-            },
+            EnvInputs::unsealed(1_000, [1; 32]),
         ),
     ];
     let run = |mode| {
@@ -498,26 +477,17 @@ fn every_receipt_is_priced() {
         BatchTx::new(
             tx(1),
             moving(transfer_declared(100)),
-            EnvInputs {
-                clock_ms: 1_000,
-                randomness: [1; 32],
-            },
+            EnvInputs::unsealed(1_000, [1; 32]),
         ),
         BatchTx::new(
             tx(2),
             moving(transfer_declared(10_000)),
-            EnvInputs {
-                clock_ms: 1_000,
-                randomness: [1; 32],
-            },
+            EnvInputs::unsealed(1_000, [1; 32]),
         ),
         BatchTx::new(
             tx(3),
             moving(transfer_declared(50)),
-            EnvInputs {
-                clock_ms: 1_000,
-                randomness: [1; 32],
-            },
+            EnvInputs::unsealed(1_000, [1; 32]),
         ),
     ];
     let outcome = run_batch(funded_store(1_000), &batch, &transfer_guest, &Locality::All);

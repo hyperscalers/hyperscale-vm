@@ -37,10 +37,7 @@ const fn tx() -> TxHash {
 }
 
 const fn env() -> EnvInputs {
-    EnvInputs {
-        clock_ms: 909_090,
-        randomness: [3; 32],
-    }
+    EnvInputs::unsealed(909_090, [3; 32])
 }
 
 /// What a reserve clause grants, and what the vault behind it holds.

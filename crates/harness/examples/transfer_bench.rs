@@ -45,10 +45,7 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
 }
 
 const fn env() -> EnvInputs {
-    EnvInputs {
-        clock_ms: 1,
-        randomness: [1; 32],
-    }
+    EnvInputs::unsealed(1, [1; 32])
 }
 
 fn sender(index: u32) -> PrincipalAddr {

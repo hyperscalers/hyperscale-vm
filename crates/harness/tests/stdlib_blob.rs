@@ -100,10 +100,7 @@ fn session() -> KernelSession {
             ..Declaration::default()
         },
         TxHash(Hash32([0x77; 32])),
-        EnvInputs {
-            clock_ms: CLOCK_MS,
-            randomness: RANDOMNESS,
-        },
+        EnvInputs::unsealed(CLOCK_MS, RANDOMNESS),
         test_hash,
     )
     .expect("feasible")
@@ -423,10 +420,7 @@ fn lottery_session() -> KernelSession {
             ..Declaration::default()
         },
         TxHash(Hash32([0x78; 32])),
-        EnvInputs {
-            clock_ms: CLOCK_MS,
-            randomness: RANDOMNESS,
-        },
+        EnvInputs::unsealed(CLOCK_MS, RANDOMNESS),
         test_hash,
     )
     .expect("feasible")

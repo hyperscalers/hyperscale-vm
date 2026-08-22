@@ -48,10 +48,7 @@ fn session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &Declaration::from_set(declared.clone()),
         TxHash(Hash32([9; 32])),
-        EnvInputs {
-            clock_ms: CLOCK_MS,
-            randomness: [3; 32],
-        },
+        EnvInputs::unsealed(CLOCK_MS, [3; 32]),
         hash,
     )
     .expect("the declaration materializes")
@@ -72,10 +69,7 @@ fn value_session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &declaration,
         TxHash(Hash32([9; 32])),
-        EnvInputs {
-            clock_ms: CLOCK_MS,
-            randomness: [3; 32],
-        },
+        EnvInputs::unsealed(CLOCK_MS, [3; 32]),
         hash,
     )
     .expect("the declaration materializes")

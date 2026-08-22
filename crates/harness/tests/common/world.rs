@@ -46,10 +46,7 @@ pub const BASE: ResourceAddr = ResourceAddr::new([0xE3; 31]);
 pub const QUOTE: ResourceAddr = ResourceAddr::new([0xE4; 31]);
 
 pub const fn env() -> EnvInputs {
-    EnvInputs {
-        clock_ms: 5_000,
-        randomness: [2; 32],
-    }
+    EnvInputs::unsealed(5_000, [2; 32])
 }
 
 pub fn pkg(name: &str) -> PackageHash {
@@ -402,10 +399,7 @@ pub fn execute_manifest(
     let entry = BatchTx::new(
         tx,
         declaration,
-        EnvInputs {
-            clock_ms,
-            randomness: env().randomness,
-        },
+        EnvInputs::unsealed(clock_ms, env().randomness),
     )
     .with_calls(routing.calls);
 
@@ -419,10 +413,7 @@ pub fn execute_manifest(
         OverlayStore::new(Arc::new(store)),
         &entry.declaration,
         tx,
-        EnvInputs {
-            clock_ms,
-            randomness: env().randomness,
-        },
+        EnvInputs::unsealed(clock_ms, env().randomness),
         test_hash,
     ) {
         Ok(session) => session,

@@ -46,10 +46,7 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
 }
 
 const fn env() -> EnvInputs {
-    EnvInputs {
-        clock_ms: 1_000,
-        randomness: [1; 32],
-    }
+    EnvInputs::unsealed(1_000, [1; 32])
 }
 
 const fn tx(byte: u8) -> TxHash {
@@ -368,18 +365,12 @@ fn each_transaction_sees_its_own_clock() {
     let early = BatchTx::new(
         tx(0x01),
         moving(point(cell(0xE), Mode::Write)),
-        EnvInputs {
-            clock_ms: 1_000,
-            randomness: env().randomness,
-        },
+        EnvInputs::unsealed(1_000, env().randomness),
     );
     let late = BatchTx::new(
         tx(0x02),
         moving(point(cell(0xF), Mode::Write)),
-        EnvInputs {
-            clock_ms: 2_000,
-            randomness: env().randomness,
-        },
+        EnvInputs::unsealed(2_000, env().randomness),
     );
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
@@ -424,18 +415,12 @@ fn each_transaction_sees_its_own_draw() {
     let first = BatchTx::new(
         tx(0x01),
         moving(point(cell(0xE), Mode::Write)),
-        EnvInputs {
-            clock_ms: env().clock_ms,
-            randomness: [7; 32],
-        },
+        EnvInputs::unsealed(env().clock_ms, [7; 32]),
     );
     let second = BatchTx::new(
         tx(0x02),
         moving(point(cell(0xF), Mode::Write)),
-        EnvInputs {
-            clock_ms: env().clock_ms,
-            randomness: [9; 32],
-        },
+        EnvInputs::unsealed(env().clock_ms, [9; 32]),
     );
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {

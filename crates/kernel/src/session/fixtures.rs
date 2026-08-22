@@ -35,10 +35,7 @@ pub(super) fn hash(data: &[u8]) -> [u8; 32] {
 }
 
 pub(super) const fn env() -> EnvInputs {
-    EnvInputs {
-        clock_ms: 5,
-        randomness: [3; 32],
-    }
+    EnvInputs::unsealed(5, [3; 32])
 }
 
 pub(super) fn declared(effects: &[Effect]) -> EffectSet {
@@ -100,6 +97,12 @@ pub(super) fn session_holding(store: MemoryStore, set: &EffectSet) -> KernelSess
 }
 
 pub(super) fn session_over(store: MemoryStore, set: &EffectSet) -> KernelSession {
+    session_under(store, set, env())
+}
+
+/// The same, under an environment the caller states — how a case puts a
+/// seed window behind a session.
+pub(super) fn session_under(store: MemoryStore, set: &EffectSet, env: EnvInputs) -> KernelSession {
     let declaration = Declaration {
         ordered: holding(&ord(set)),
         ..Declaration::from_set(set.clone())
@@ -108,7 +111,7 @@ pub(super) fn session_over(store: MemoryStore, set: &EffectSet) -> KernelSession
         OverlayStore::new(Arc::new(store)),
         &declaration,
         tx(1),
-        env(),
+        env,
         hash,
     )
     .expect("materializes")

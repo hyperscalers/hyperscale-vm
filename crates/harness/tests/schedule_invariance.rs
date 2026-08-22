@@ -45,10 +45,7 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
 }
 
 const fn env() -> EnvInputs {
-    EnvInputs {
-        clock_ms: 9_000,
-        randomness: [4; 32],
-    }
+    EnvInputs::unsealed(9_000, [4; 32])
 }
 
 const fn tx(byte: u8) -> TxHash {

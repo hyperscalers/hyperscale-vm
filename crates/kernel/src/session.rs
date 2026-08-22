@@ -34,8 +34,8 @@ pub use buckets::Held;
 use hyperscale_vm_effects::{ResourceKind, distinct_ids};
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, EffectSet, ISSUER_REP, ResourceAddr, SubstateKey, TxHash,
-    encode_amount,
+    ABSENT_REP, AbortReason, Address, EffectSet, ISSUER_REP, ResourceAddr, SEAL_MATURITY_EPOCHS,
+    SeedWindow, Seeded, SubstateKey, TxHash, encode_amount,
 };
 pub use materialize::{Capability, Interval, MaterializeError};
 use ranges::Ranges;
@@ -236,12 +236,34 @@ impl From<SessionTrap> for AbortReason {
 use hyperscale_vm_types::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX};
 
 /// The deterministic environment a transaction executes under.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct EnvInputs {
     /// The transaction clock in milliseconds.
     pub clock_ms: u64,
     /// The transaction's randomness draw.
     pub randomness: [u8; 32],
+    /// The epochs a sealed draw can resolve against, and the frontier
+    /// separating one that has not happened from one that happened
+    /// unusably.
+    pub seeds: SeedWindow,
+}
+
+impl EnvInputs {
+    /// An environment no seal can open: the clock and the draw, over a
+    /// window nothing has folded into.
+    ///
+    /// For callers with no seal in sight. A consensus path states its
+    /// window, on the same terms it states its clock — what a seal
+    /// resolves to is an execution input, and one that defaulted would
+    /// be a wrong answer nothing would catch.
+    #[must_use]
+    pub const fn unsealed(clock_ms: u64, randomness: [u8; 32]) -> Self {
+        Self {
+            clock_ms,
+            randomness,
+            seeds: SeedWindow::unfolded(),
+        }
+    }
 }
 
 /// The per-transaction kernel session.
@@ -792,6 +814,19 @@ impl KernelSession {
         self.env.randomness
     }
 
+    /// The seed a seal written in `epoch` matures into.
+    ///
+    /// The offset is the whole of the maturity rule: what a seal
+    /// commits to is a value that did not exist when it was written, and
+    /// [`SEAL_MATURITY_EPOCHS`] is how far past the writing that
+    /// becomes true.
+    #[must_use]
+    pub fn matured_seed(&self, epoch: u64) -> Seeded {
+        self.env
+            .seeds
+            .at(epoch.saturating_add(SEAL_MATURITY_EPOCHS))
+    }
+
     /// The protocol hash function.
     #[must_use]
     pub fn hash(&self, data: &[u8]) -> [u8; 32] {
@@ -865,11 +900,12 @@ mod tests {
 
     use hyperscale_vm_types::{
         ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectTarget,
-        MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode, encode_amount,
+        MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode, SeedWindow, Seeded,
+        encode_amount,
     };
 
-    use super::SessionTrap;
-    use super::fixtures::{declared, env, key, session_holding, session_over, tx};
+    use super::fixtures::{declared, env, key, session_holding, session_over, session_under, tx};
+    use super::{EnvInputs, SessionTrap};
     use crate::ledger::AmountLedger;
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError};
@@ -939,6 +975,39 @@ mod tests {
         assert_eq!(session.randomness(), env().randomness);
         assert_eq!(session.hash(&[1, 2, 3])[0], 3);
         assert!(session.capabilities().is_empty());
+    }
+
+    /// A seal resolves against the epoch two past the one it was
+    /// written in, and the offset is the commitment: a seal cannot open
+    /// onto a value that existed when it was written.
+    #[test]
+    fn a_seal_matures_two_epochs_past_its_own() {
+        let seeds = SeedWindow::new(
+            std::collections::BTreeMap::from([(6, [0x11; 32]), (8, [0x22; 32])]),
+            Some(8),
+        );
+        let session = session_under(
+            MemoryStore::new(),
+            &declared(&[]),
+            EnvInputs { seeds, ..env() },
+        );
+
+        assert_eq!(session.matured_seed(6), Seeded::Ready([0x22; 32]));
+        assert_eq!(
+            session.matured_seed(4),
+            Seeded::Ready([0x11; 32]),
+            "a seal reads the epoch it named, not the newest one folded"
+        );
+        assert_eq!(
+            session.matured_seed(5),
+            Seeded::Expired,
+            "an epoch the host folded and will not stand behind is gone"
+        );
+        assert_eq!(
+            session.matured_seed(7),
+            Seeded::Pending,
+            "a seal whose epoch has not been folded is a wait"
+        );
     }
 
     #[test]

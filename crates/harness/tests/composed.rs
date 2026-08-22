@@ -25,10 +25,7 @@ const RES_X: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const RES_Y: ResourceAddr = ResourceAddr::new([0xE2; 31]);
 
 const fn env() -> EnvInputs {
-    EnvInputs {
-        clock_ms: 3_000,
-        randomness: [6; 32],
-    }
+    EnvInputs::unsealed(3_000, [6; 32])
 }
 
 fn pkg() -> PackageHash {

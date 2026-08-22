@@ -53,10 +53,7 @@ fn test_hash(data: &[u8]) -> [u8; 32] {
 }
 
 const fn env() -> EnvInputs {
-    EnvInputs {
-        clock_ms: 1_000,
-        randomness: [1; 32],
-    }
+    EnvInputs::unsealed(1_000, [1; 32])
 }
 
 fn cell(byte: u8) -> SubstateKey {
@@ -265,10 +262,7 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     let batch = vec![BatchTx::new(
         TxHash(Hash32([0x44; 32])),
         moving(transfer_declared(50)),
-        EnvInputs {
-            clock_ms: env().clock_ms,
-            randomness: draw,
-        },
+        EnvInputs::unsealed(env().clock_ms, draw),
     )];
     let reading_guest = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         answers: answered(u64::from(session.randomness()[0])),
@@ -311,10 +305,7 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     let divergent = vec![BatchTx::new(
         batch[0].tx,
         moving(transfer_declared(50)),
-        EnvInputs {
-            clock_ms: env().clock_ms,
-            randomness: [0x5B; 32],
-        },
+        EnvInputs::unsealed(env().clock_ms, [0x5B; 32]),
     )];
     let elsewhere = execute_batch(
         Arc::new(MemoryStore::new()),

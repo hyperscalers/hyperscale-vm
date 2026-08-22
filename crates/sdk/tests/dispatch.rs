@@ -98,10 +98,7 @@ fn session(mode: Mode, funded: u128) -> KernelSession {
         OverlayStore::new(Arc::new(store)),
         &declaration,
         TxHash(Hash32([4; 32])),
-        EnvInputs {
-            clock_ms: 1_000,
-            randomness: [5; 32],
-        },
+        EnvInputs::unsealed(1_000, [5; 32]),
         hash,
     )
     .expect("the declaration materializes")
@@ -149,10 +146,7 @@ fn two_cells() -> KernelSession {
         OverlayStore::new(Arc::new(MemoryStore::new())),
         &Declaration::from_set(declared),
         TxHash(Hash32([4; 32])),
-        EnvInputs {
-            clock_ms: 1_000,
-            randomness: [5; 32],
-        },
+        EnvInputs::unsealed(1_000, [5; 32]),
         hash,
     )
     .expect("the declaration materializes")

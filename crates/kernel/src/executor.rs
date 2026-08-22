@@ -675,7 +675,7 @@ fn run_group<R: GuestRunner>(
             store,
             &entry.declaration,
             entry.tx,
-            entry.env,
+            entry.env.clone(),
             hash_fn,
         ) {
             Ok(session) => {
@@ -1210,10 +1210,7 @@ mod tests {
                     BatchTx::new(
                         TxHash(Hash32([u8::try_from(index).expect("small batch"); 32])),
                         Declaration::from_set(declared),
-                        EnvInputs {
-                            clock_ms: 0,
-                            randomness: [0; 32],
-                        },
+                        EnvInputs::unsealed(0, [0; 32]),
                     )
                 })
                 .collect();

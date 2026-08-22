@@ -471,10 +471,7 @@ impl Chain {
         let entry = BatchTx::new(
             tx,
             declaration,
-            EnvInputs {
-                clock_ms: self.clock_ms,
-                randomness: RANDOMNESS,
-            },
+            EnvInputs::unsealed(self.clock_ms, RANDOMNESS),
         )
         .with_calls(routing.calls);
 
