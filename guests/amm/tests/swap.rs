@@ -15,7 +15,7 @@ const Y: ResourceAddr = resource(0xE2);
 fn pool() -> (Chain, Amm) {
     let mut chain = Chain::native();
     chain.publish(package!(amm_guest::amm));
-    let pool = chain.instantiate::<Amm>(Settings {
+    let pool = chain.instantiate::<Amm>(ALICE, Settings {
         x: X.into(),
         y: Y.into(),
         fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
@@ -80,7 +80,7 @@ fn a_floor_the_pool_cannot_reach_declines() {
 fn a_reserve_that_once_overflowed_the_curve_now_trades() {
     let mut chain = Chain::native();
     chain.publish(package!(amm_guest::amm));
-    let pool = chain.instantiate::<Amm>(Settings {
+    let pool = chain.instantiate::<Amm>(ALICE, Settings {
         x: X.into(),
         y: Y.into(),
         fee: UnitFixed::bps(30).expect("thirty basis points is under one"),

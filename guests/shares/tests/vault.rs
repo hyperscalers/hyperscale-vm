@@ -13,7 +13,7 @@ const ASSET: ResourceAddr = resource(0xA1);
 fn vault() -> (Chain, Shares) {
     let mut chain = Chain::native();
     chain.publish(package!(shares_guest::shares));
-    let vault = chain.instantiate::<Shares>(Settings {
+    let vault = chain.instantiate::<Shares>(ALICE, Settings {
         asset: ASSET.into(),
     });
     chain.credit(ALICE, ASSET, 10_000);
