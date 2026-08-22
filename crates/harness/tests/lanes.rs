@@ -601,6 +601,64 @@ fn two_runs_of_different_modes_walk_one_loop_in_both_lanes() {
     assert_eq!(native, (650, 0, 50, 30), "the fee each vault could pay");
 }
 
+/// A run of reservations, in both lanes.
+///
+/// A reserve is the one mode with nothing to read and no amount to name:
+/// the hold was judged and taken before the body ran, so what a run
+/// entry answers with is the grant. Per element, which is what makes the
+/// feasibility the whole loop's rather than one clause's.
+#[test]
+fn a_run_of_reservations_grants_per_element_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
+        for (asset, held) in [(X, 700u128), (Y, 400)] {
+            chain.credit(ALICE, asset, held);
+            chain
+                .transact(ALICE, |b| {
+                    let signed_in = account::authorize(b, ALICE)?;
+                    let funds = account::withdraw(b, signed_in, asset, held)?;
+                    shapes.fund(b, funds)
+                })
+                .expect_completed();
+        }
+        chain
+            .transact(ALICE, |b| shapes.escrow(b, 100))
+            .expect_completed();
+        let taken = (
+            chain.balance(shapes, X),
+            chain.balance(shapes, Y),
+            accrued(&chain, shapes, X),
+            accrued(&chain, shapes, Y),
+        );
+        // Feasibility is the loop's: Y cannot cover a hold this size, so
+        // the transaction that would have held it never admits — and X's
+        // vault, whose element could have paid, is untouched with it.
+        // Feasibility is per leaf and judged before the body runs, so a
+        // hold one element cannot cover settles the whole transaction as
+        // infeasible against that element's own cell rather than letting
+        // the loop run part way.
+        let infeasible = chain
+            .transact(ALICE, |b| shapes.escrow(b, 500))
+            .receipt()
+            .outcome
+            .clone();
+        (taken, infeasible, chain.balance(shapes, X))
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    let (taken, infeasible, after) = native;
+    assert_eq!(taken, (600, 300, 100, 100), "one hold granted per element");
+    assert!(
+        matches!(infeasible, Outcome::Infeasible { amount: 500, .. }),
+        "the element that could not cover the hold: {infeasible:?}",
+    );
+    assert_eq!(after, 600, "and nothing moved on the way to it");
+}
+
 /// A loop over a list of one and a list of none, in both lanes.
 ///
 /// The width is the instance's, so the two edges of it are two

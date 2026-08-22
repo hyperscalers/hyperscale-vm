@@ -306,6 +306,22 @@ pub mod grammar {
             }
         }
 
+        /// A hold on every configured asset's vault, taken as the grant
+        /// it is and landed beside it.
+        ///
+        /// The site does nothing but reserve, which is the one shape a
+        /// reservation has: feasibility was judged and the hold taken
+        /// before this body ran, so there is no balance to read and no
+        /// amount to name — the grant is the bucket. What it lands in is
+        /// moved into and nothing else, so that site is a delta as it is
+        /// under [`Grammar::accrue`].
+        pub fn escrow(&mut self, hold: Quantity) {
+            for &asset in &self.config().assets {
+                let granted = self.vault(asset).reserve(hold);
+                self.fees.at(asset).put(granted);
+            }
+        }
+
         /// A method that hands back an ordinary value.
         ///
         /// It produces no edge, so the declaration says it produces
