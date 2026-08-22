@@ -1495,6 +1495,50 @@ impl<'a> Lowerer<'a> {
         Eval::plain(quote!(#leaf.get()))
     }
 
+    /// Lower `Name::each(edge)` — the record of every instance an edge
+    /// carries, read without the caller naming an id.
+    ///
+    /// [`Lowerer::lower_held`]'s general form. What the two cost differs
+    /// with what they read: a singleton is one evaluation and one
+    /// capability, and this is a clause per instance and the run over
+    /// them — so a body that knows it holds one keeps saying so.
+    fn lower_each(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
+        if let Some(refused) = self.instance_record(issued, "read", call.func.span()) {
+            return refused;
+        }
+        let Some(named) = call.args.first() else {
+            self.error(
+                call.args.span(),
+                "the instances are read off the edge carrying them, and the edge is \
+                 part of the declaration",
+            );
+            return Eval::absent(call.args.span(), "an instance read with no edge");
+        };
+        let Some((edge, _)) = self.instance_edge(issued, named, "reads", call.span()) else {
+            return Eval::absent(named.span(), "an underivable edge");
+        };
+        let issued = issued.clone();
+        let span = call.func.span();
+        let walk = self.over_instances(edge, span, |me, id| {
+            let site = me.instance_site(&issued, id, span);
+            me.record(site, Op::Get, None, span);
+            let leaf = me.value(Code::Handle {
+                site,
+                form: Form::Slot,
+                span,
+            });
+            // A live instance's cell holds its record, so the absence a
+            // retired one would leave is the one thing there is nothing
+            // to collect for.
+            quote!(__records.extend(#leaf.get());)
+        });
+        Eval::plain(quote!({
+            let mut __records = ::std::vec::Vec::new();
+            #walk
+            __records
+        }))
+    }
+
     /// Lower `Name::rewrite(id, record)` — the cell the mint filed,
     /// written again.
     ///
@@ -1635,26 +1679,37 @@ impl<'a> Lowerer<'a> {
     /// evaluation, so the id is the sole element of its id list and an
     /// edge carrying any other number is refused there.
     fn sole_id(&mut self, edge: Term, named: &syn::Expr) -> Option<Term> {
-        let Term::NfBucket { ids, .. } = &edge else {
-            return Some(Term::Only(Box::new(Term::IdsOf(Box::new(edge)))));
-        };
-        let Term::List(named_ids) = ids.as_ref() else {
-            return Some(Term::Only(Box::new(Term::IdsOf(Box::new(edge)))));
-        };
-        match named_ids.as_slice() {
-            [one] => Some(one.clone()),
-            several => {
+        match Self::named_ids(&edge) {
+            Some([one]) => Some(one.clone()),
+            Some(several) => {
                 self.error(
                     named.span(),
                     &format!(
-                        "this edge carries {} instances, and an instance is what the \
-                         call is about — one edge, one instance, and a body holding \
-                         several reaches each of them through an edge of its own",
+                        "this edge carries {} instances the body named itself, and an \
+                         instance is what the call is about — the cells are already this \
+                         method's own sites, so each of them is reached at its own id",
                         several.len(),
                     ),
                 );
                 None
             }
+            None => Some(Term::Only(Box::new(Term::IdsOf(Box::new(edge))))),
+        }
+    }
+
+    /// The instances an edge names outright, where it names them.
+    ///
+    /// An edge the body produced knows its own ids, so a call about it
+    /// reaches the very sites the mint opened. An edge whose instances
+    /// are the caller's names them only at evaluation, which is what
+    /// makes its width a run's rather than a signature's.
+    fn named_ids(edge: &Term) -> Option<&[Term]> {
+        let Term::NfBucket { ids, .. } = edge else {
+            return None;
+        };
+        match ids.as_ref() {
+            Term::List(named) => Some(named),
+            _ => None,
         }
     }
 
@@ -1681,16 +1736,34 @@ impl<'a> Lowerer<'a> {
         else {
             return Eval::absent(named.span(), "an underivable edge");
         };
-        let Some(id) = self.sole_id(edge, named) else {
-            return Eval::absent(named.span(), "an edge naming no one instance");
+        // An edge whose ids the body named reaches the very cells its
+        // mints opened, so those stay one clause each. An edge whose
+        // instances are the caller's is as wide as the caller made it,
+        // and every cell it retires is cleared — a retirement that
+        // ended one of three would leave two cells describing instances
+        // that no longer exist.
+        let cleared = if Self::named_ids(&edge).is_some() {
+            let Some(id) = self.sole_id(edge, named) else {
+                return Eval::absent(named.span(), "an edge naming no one instance");
+            };
+            let site = self.instance_site(issued, id, call.func.span());
+            self.record(site, Op::Existing, None, call.span());
+            let handle = self.handle(site, call.span());
+            quote!(::hyperscale_vm_sdk::state::clear_instance(#handle);)
+        } else {
+            let issued = issued.clone();
+            let span = call.func.span();
+            self.over_instances(edge, span, |me, id| {
+                let site = me.instance_site(&issued, id, span);
+                me.record(site, Op::Existing, None, span);
+                let handle = me.handle(site, span);
+                quote!(::hyperscale_vm_sdk::state::clear_instance(#handle);)
+            })
         };
-        let site = self.instance_site(issued, id, call.func.span());
-        self.record(site, Op::Existing, None, call.span());
-        let handle = self.handle(site, call.span());
         let funds = self.value(destroyed);
         let grant = self.issuer(ResourceKind::NonFungible, &issued.mark);
         Eval::plain(quote!({
-            ::hyperscale_vm_sdk::state::clear_instance(#handle);
+            #cleared
             ::hyperscale_vm_sdk::state::burn_nf_granted(#grant, #funds)
         }))
     }
@@ -3129,6 +3202,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // one arm per free call the vocabulary names
     fn free_call(&mut self, call: &syn::ExprCall) -> Eval {
         for arg in &call.args {
             if is_self(arg) {
@@ -3203,6 +3277,14 @@ impl<'a> Lowerer<'a> {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
             return self.lower_held(&issued, call);
+        }
+        // `Resource::each(edge)` — the same record, once per instance the
+        // edge carries rather than once for the one it must carry.
+        if name == "each" {
+            let Some(issued) = self.issuing_mark(call, "each") else {
+                return Eval::absent(call.func.span(), "an undeclared resource");
+            };
+            return self.lower_each(&issued, call);
         }
         // `Resource::burn(funds)` — the inverse, under the same grant.
         // The kind picks the shape the same way the mint's does: an
@@ -4105,23 +4187,69 @@ impl<'a> Lowerer<'a> {
             body,
         });
 
-        // The loop's own width is the run's, so the guest walks the
-        // expansion the declaration produced rather than a list it does
-        // not hold — the element itself is evaluated where the
-        // declaration is, and the body reaches it only as a key.
+        self.run_walk(
+            opened,
+            depth,
+            loop_.for_token.span,
+            &quote!(#(#statements)*),
+        )
+    }
+
+    /// The loop the guest runs over a `for-each`'s expansions.
+    ///
+    /// The width is the run's, so the guest walks what the declaration
+    /// produced rather than a list it does not hold — the element itself
+    /// is evaluated where the declaration is, and the body reaches it
+    /// only as a key. `opened` is the site count before the body was
+    /// walked, which is what tells the loop's own sites from the ones
+    /// around it.
+    fn run_walk(
+        &mut self,
+        opened: usize,
+        depth: usize,
+        span: Span,
+        body: &TokenStream,
+    ) -> TokenStream {
         let Some(run) = (opened..self.out.sites.len())
             .find(|site| self.out.runs.contains(site))
             .map(handle_ident)
         else {
             self.refuse(
-                loop_.for_token.span,
-                "this `for-each` body declares no access, so there is no run for the \
-                 guest to walk and no element for it to read",
+                span,
+                "this loop's body declares no access, so there is no run for the guest \
+                 to walk and no element for it to read",
             );
             return quote!(::core::unimplemented!());
         };
         let at = run_index_ident(depth);
-        quote!(for #at in 0..#run.len() { #(#statements)* })
+        quote!(for #at in 0..#run.len() { #body })
+    }
+
+    /// Declare one clause per instance an edge carries, and emit the
+    /// loop the guest runs over the run those expansions lend.
+    ///
+    /// The `for-each` a general instance call is: the ids are a list the
+    /// declaration evaluates off the edge, and the element is the id
+    /// whose cell each clause names — so the body reaches the instance
+    /// as a key, and the guest walks the width the edge turned out to
+    /// have rather than one the signature fixed.
+    fn over_instances<F>(&mut self, edge: Term, span: Span, body: F) -> TokenStream
+    where
+        F: FnOnce(&mut Self, Term) -> TokenStream,
+    {
+        let depth = self.depth();
+        let opened = self.out.sites.len();
+        self.scopes.push(Vec::new());
+        self.binders += 1;
+        let statements = body(self, Term::Binding(depth));
+        self.binders -= 1;
+        let inner = self.scopes.pop().unwrap_or_default();
+        self.push_node(Node::ForEach {
+            list: Term::IdsOf(Box::new(edge)),
+            depth,
+            body: inner,
+        });
+        self.run_walk(opened, depth, span, &statements)
     }
 }
 

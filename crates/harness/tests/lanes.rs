@@ -377,6 +377,76 @@ fn owed(chain: &Chain, shapes: grammar::Grammar, party: PrincipalAddr) -> Option
         .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"))
 }
 
+/// Three instances on one edge, read and retired together, in both
+/// lanes.
+///
+/// The width is the edge's rather than the method's: a read declares a
+/// clause per instance and answers with all three records, and a
+/// retirement clears every cell it ends rather than the one an edge of
+/// width one would have carried.
+#[test]
+fn an_edge_of_any_width_is_read_and_retired_whole_in_both_lanes() {
+    let ids = [3u64, 4, 5];
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
+        let seat = shapes.issued_seat(&TestHasher);
+        let filed = |chain: &Chain| {
+            ids.map(|id| chain.cell(instance_data_key(&TestHasher, shapes, seat, id)))
+        };
+        let holdings = |chain: &Chain| ids.map(|id| chain.holds(ALICE, seat, id));
+
+        for (id, holder) in ids.into_iter().zip([10u64, 20, 30]) {
+            chain
+                .transact(ALICE, |b| {
+                    let minted = shapes.seat(b, id, holder)?;
+                    account::deposit_nf(b, ALICE, minted)
+                })
+                .expect_completed();
+        }
+
+        // One edge carrying all three: what the read declares is a
+        // clause each, and what it answers is their sum.
+        chain
+            .transact(ALICE, |b| {
+                let signed_in = account::authorize(b, ALICE)?;
+                let edge = account::withdraw_nf(b, signed_in, seat, &ids)?;
+                let back = shapes.survey(b, edge)?;
+                account::deposit_nf(b, ALICE, back)
+            })
+            .expect_completed();
+        let surveyed = chain
+            .cell(child_key(&TestHasher, shapes, grammar::NOTED, &[]))
+            .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"));
+
+        chain
+            .transact(ALICE, |b| {
+                let signed_in = account::authorize(b, ALICE)?;
+                let edge = account::withdraw_nf(b, signed_in, seat, &ids)?;
+                shapes.unseat(b, edge)
+            })
+            .expect_completed();
+        (surveyed, filed(&chain), holdings(&chain))
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    let (surveyed, filed, holdings) = native;
+    assert_eq!(
+        surveyed,
+        Some(60),
+        "every instance's record reached the read"
+    );
+    assert_eq!(filed, [None, None, None], "every data cell the burn ended");
+    assert_eq!(
+        holdings,
+        [false, false, false],
+        "and every holdings entry with it",
+    );
+}
+
 /// A `for-each` executed through its run, in both lanes.
 ///
 /// The declaration writes one clause per configured party and the guest

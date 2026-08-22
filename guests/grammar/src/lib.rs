@@ -269,12 +269,28 @@ pub mod grammar {
             }
         }
 
-        /// The instance retiring: what the edge carries leaves
-        /// circulation, and the cell that described it ends with it —
-        /// so the id is free for a later mint and the issuer's state
+        /// The instances retiring: what the edge carries leaves
+        /// circulation, and every cell that described one ends with it —
+        /// so the ids are free for a later mint and the issuer's state
         /// falls back to what it was.
+        ///
+        /// The width is the edge's rather than this method's: a
+        /// declaration clause per instance, and a guest that walks the
+        /// run those expansions lend.
         pub fn unseat(&mut self, seat: NfBucket) {
             Seat::burn(seat);
+        }
+
+        /// The record of every instance an edge carries, summed into the
+        /// cell — read once per instance, at a width the caller chose
+        /// and the signature does not name.
+        pub fn survey(&mut self, seats: NfBucket) -> NfBucket {
+            let mut total = 0;
+            for held in Seat::each(&seats) {
+                total += held.holder;
+            }
+            self.noted.set(total);
+            seats
         }
 
         /// The same record, read off the edge carrying the instance

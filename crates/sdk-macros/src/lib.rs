@@ -2676,6 +2676,8 @@ fn instance_surface(name: &str, schema: bool, stub: &TokenStream2) -> Vec<syn::I
     let at_doc = format!("The record filed for `{name}` instance `id`, where one was minted.");
     let held_doc = format!("The record filed for the one `{name}` instance `edge` carries.");
     let rewrite_doc = format!("Refile the record `{name}` instance `id` carries.");
+    let each_doc =
+        format!("The records filed for every `{name}` instance `edge` carries, in id order.");
     vec![
         syn::parse_quote!(
             #[doc = #mint_doc]
@@ -2707,6 +2709,16 @@ fn instance_surface(name: &str, schema: bool, stub: &TokenStream2) -> Vec<syn::I
             pub fn held(
                 edge: &::hyperscale_vm_sdk::state::NfBucket,
             ) -> ::core::option::Option<Self> {
+                let _ = edge;
+                #stub
+            }
+        ),
+        syn::parse_quote!(
+            #[doc = #each_doc]
+            #[must_use]
+            pub fn each(
+                edge: &::hyperscale_vm_sdk::state::NfBucket,
+            ) -> ::std::vec::Vec<Self> {
                 let _ = edge;
                 #stub
             }
