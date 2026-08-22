@@ -1322,7 +1322,7 @@ impl<'a> Lowerer<'a> {
     /// package's own type, so there is no spelling for a foreign
     /// instance's data, and reaching one is a call to whoever issues it.
     fn lower_at(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
-        if let Some(refused) = self.instance_readable(issued, call.func.span()) {
+        if let Some(refused) = self.instance_record(issued, "read", call.func.span()) {
             return refused;
         }
         let Some(named) = call.args.first() else {
@@ -1351,13 +1351,13 @@ impl<'a> Lowerer<'a> {
         Eval::plain(quote!(#leaf.get()))
     }
 
-    /// Whether the mark has an instance record for a read to answer
-    /// with, refusing on the mark's own terms where it has none.
+    /// Whether the mark has an instance record at all, refusing on the
+    /// mark's own terms where it has none.
     ///
     /// A fungible mark holds a balance and no instance; a non-fungible
     /// one declaring no fields holds the presence byte, which is nothing
-    /// to hand back.
-    fn instance_readable(&mut self, issued: &Resource, span: Span) -> Option<Eval> {
+    /// to hand back and nothing to change.
+    fn instance_record(&mut self, issued: &Resource, what: &str, span: Span) -> Option<Eval> {
         if issued.kind != ResourceKind::NonFungible {
             self.error(
                 span,
@@ -1367,19 +1367,19 @@ impl<'a> Lowerer<'a> {
                     issued.name
                 ),
             );
-            return Some(Eval::absent(span, "a fungible instance read"));
+            return Some(Eval::absent(span, "a fungible instance record"));
         }
         if !issued.schema {
             self.error(
                 span,
                 &format!(
                     "`{}` declares no fields, so its instance holds the presence byte \
-                     and there is nothing to read — a mark carrying a schema is a \
+                     and there is nothing to {what} — a mark carrying a schema is a \
                      struct with fields",
                     issued.name
                 ),
             );
-            return Some(Eval::absent(span, "a bare instance read"));
+            return Some(Eval::absent(span, "a bare instance record"));
         }
         None
     }
@@ -1392,7 +1392,7 @@ impl<'a> Lowerer<'a> {
     /// carrying any other number of instances fails that evaluation, and
     /// the transaction is refused before the body runs.
     fn lower_held(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
-        if let Some(refused) = self.instance_readable(issued, call.func.span()) {
+        if let Some(refused) = self.instance_record(issued, "read", call.func.span()) {
             return refused;
         }
         let Some(named) = call.args.first() else {
@@ -1415,6 +1415,61 @@ impl<'a> Lowerer<'a> {
             span: call.span(),
         });
         Eval::plain(quote!(#leaf.get()))
+    }
+
+    /// Lower `Name::rewrite(id, record)` — the cell the mint filed,
+    /// written again.
+    ///
+    /// The mint's door read the other way: the leaf is required present
+    /// rather than absent, so a rewrite of an id nothing minted, or of
+    /// one a burn retired, is refused before the body runs. Issuer-side
+    /// by construction, on the terms the read is: the mark is the
+    /// package's own type, and the cell sits under the package's own
+    /// prefix.
+    fn lower_rewrite(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
+        if let Some(refused) = self.instance_record(issued, "change", call.func.span()) {
+            return refused;
+        }
+        let Some(named) = call.args.first() else {
+            self.error(
+                call.args.span(),
+                "an instance is rewritten at its id, and the id is part of the declaration",
+            );
+            return Eval::absent(call.args.span(), "a rewrite with no id");
+        };
+        let eval = self.expr(named);
+        let Val::Term(id) = eval.val else {
+            self.error(
+                named.span(),
+                "this id is not derivable from the method's arguments — routing \
+                 evaluates the declaration before execution and never reads state",
+            );
+            return Eval::absent(named.span(), "an underivable instance id");
+        };
+        let Some(filed) = call.args.iter().nth(1) else {
+            self.error(
+                call.args.span(),
+                &format!(
+                    "a rewrite files the whole record: `{}` is what one of its \
+                     instances holds, and what replaces it is another",
+                    issued.name
+                ),
+            );
+            return Eval::absent(call.args.span(), "a rewrite with no record");
+        };
+        // The record is the cell's content and not its key, so it is
+        // ordinary code the body computes — the declaration is keyed by
+        // the id alone, exactly as the mint's is.
+        let record = self.expr(filed);
+        let record = self.value(record.code);
+        let site = self.instance_site(issued, id, call.func.span());
+        self.record(site, Op::Existing, None, call.span());
+        let leaf = self.value(Code::Handle {
+            site,
+            form: Form::Slot,
+            span: call.span(),
+        });
+        Eval::plain(quote!(#leaf.rewrite(#record)))
     }
 
     /// The edge an instance operation is called on, held to the mark's
@@ -2898,6 +2953,14 @@ impl<'a> Lowerer<'a> {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
             return self.lower_at(&issued, call);
+        }
+        // `Resource::rewrite(id, record)` — the cell the mint filed,
+        // written again under the presence the mint required absent.
+        if name == "rewrite" {
+            let Some(issued) = self.issuing_mark(call, "rewrite") else {
+                return Eval::absent(call.func.span(), "an undeclared resource");
+            };
+            return self.lower_rewrite(&issued, call);
         }
         // `Resource::held(edge)` — the same record, at the id the edge
         // supplies rather than one the caller names.

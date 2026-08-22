@@ -181,6 +181,80 @@ fn a_fielded_instance_reads_the_same_in_both_lanes() {
     );
 }
 
+/// An instance's record changing, between the two ends of its life.
+///
+/// The mint's door read the other way round: a rewrite requires the leaf
+/// present, so the two cases that have no live instance to change — one
+/// nothing minted, and one a burn retired — are the same refusal, and
+/// both land before the body runs.
+#[test]
+fn an_instance_rewrites_only_while_it_is_live_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        let seat = shapes.issued_seat(&TestHasher);
+        let reseat =
+            |chain: &mut Chain, holder: u64| chain.transact(ALICE, |b| shapes.reseat(b, 3, holder));
+
+        let unminted = reseat(&mut chain, 7).refused().cloned();
+        chain
+            .transact(ALICE, |b| {
+                let minted = shapes.seat(b, 3, 42)?;
+                account::deposit_nf(b, ALICE, minted)
+            })
+            .expect_completed();
+
+        reseat(&mut chain, 99).expect_completed();
+        let filed = chain.cell(instance_data_key(&TestHasher, shapes, seat, 3));
+        let noted = chain
+            .cell(child_key(&TestHasher, shapes, grammar::NOTED, &[]))
+            .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"));
+
+        chain
+            .transact(ALICE, |b| {
+                let signed_in = account::authorize(b, ALICE)?;
+                let edge = account::withdraw_nf(b, signed_in, seat, &[3])?;
+                shapes.unseat(b, edge)
+            })
+            .expect_completed();
+        let retired = reseat(&mut chain, 7).refused().cloned();
+        (unminted, filed, noted, retired)
+    };
+
+    let (native_unminted, native_filed, native_noted, native_retired) = run(Chain::native());
+    let (blessed_unminted, blessed_filed, blessed_noted, blessed_retired) = run(Chain::wasm());
+
+    let unmet_presence = |refusal: &Option<Outcome>| {
+        matches!(
+            refusal,
+            Some(Outcome::ConditionUnmet {
+                condition: UnmetCondition::Holds {
+                    required: Presence::Present,
+                    ..
+                },
+            })
+        )
+    };
+    assert!(
+        unmet_presence(&native_unminted) && unmet_presence(&blessed_unminted),
+        "an id nothing minted has no record to change: {native_unminted:?}",
+    );
+    assert!(
+        unmet_presence(&native_retired) && unmet_presence(&blessed_retired),
+        "and neither has one a burn retired: {native_retired:?}",
+    );
+    assert_eq!(
+        (&native_filed, native_noted),
+        (&blessed_filed, blessed_noted)
+    );
+    assert_eq!(
+        native_filed,
+        Some(to_vec(&grammar::Seat { holder: 99 }).expect("the record encodes")),
+        "the cell holds what the rewrite filed",
+    );
+    assert_eq!(native_noted, Some(99), "and the body read it back");
+}
+
 /// An instance retiring, and the id coming free with it.
 ///
 /// The cell and the holding go together — one call, one instance, and

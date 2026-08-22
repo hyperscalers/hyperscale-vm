@@ -2578,113 +2578,11 @@ fn issuance(
     role: Role,
 ) -> syn::Item {
     let stub = quote!(::core::unimplemented!("a contract body runs on the guest"));
-    let create_doc = format!("Bring `{name}` itself into existence, by writing its record.");
-    let mint_doc = format!("Bring `{name}` into existence, as an edge.");
-    let burn_doc = format!("Destroy `{name}`, which is `funds`' own resource.");
-    let burn_nf_doc =
-        format!("Retire the one `{name}` instance `edge` carries, and the record it filed.");
-    let at_doc = format!("The record filed for `{name}` instance `id`, where one was minted.");
-    let held_doc = format!("The record filed for the one `{name}` instance `edge` carries.");
-    let mut methods: Vec<syn::ImplItemFn> = Vec::new();
-
-    // One word for both kinds on the way out as well as in, and the
-    // instance's own data cell ends with it: an issuer's cells sit under
-    // one prefix, so a mark with churn that kept them would grow one
-    // shard's state and never give any of it back.
-    let burn_nf: syn::ImplItemFn = syn::parse_quote!(
-        #[doc = #burn_nf_doc]
-        pub fn burn(edge: ::hyperscale_vm_sdk::state::NfBucket) {
-            let _ = &edge;
-            #stub
-        }
-    );
-
-    // The record states only what the address cannot carry, which for a
-    // fungible resource is its display quantization and for a
-    // non-fungible one is nothing at all.
-    methods.push(match kind {
-        ResourceKind::Fungible => syn::parse_quote!(
-            #[doc = #create_doc]
-            pub fn create(display_digits: u8) {
-                let _ = display_digits;
-                #stub
-            }
-        ),
-        ResourceKind::NonFungible => syn::parse_quote!(
-            #[doc = #create_doc]
-            pub fn create() {
-                #stub
-            }
-        ),
+    let mut methods = vec![record_creation(name, kind, &stub)];
+    methods.extend(match kind {
+        ResourceKind::Fungible => value_surface(name, &stub),
+        ResourceKind::NonFungible => instance_surface(name, schema, &stub),
     });
-
-    match kind {
-        // Value in, and value out under the same authority.
-        ResourceKind::Fungible => {
-            methods.push(syn::parse_quote!(
-                #[doc = #mint_doc]
-                #[must_use]
-                pub fn mint(
-                    quantity: ::hyperscale_vm_sdk::state::Quantity,
-                ) -> ::hyperscale_vm_sdk::state::Bucket {
-                    let _ = quantity;
-                    #stub
-                }
-            ));
-            methods.push(syn::parse_quote!(
-                #[doc = #burn_doc]
-                pub fn burn(funds: ::hyperscale_vm_sdk::state::Bucket) {
-                    let _ = &funds;
-                    #stub
-                }
-            ));
-        }
-        // A fielded mark's instance carries a record, so the mint takes
-        // one and the mark can answer with it. A bare mark's cell holds
-        // the presence byte, which is nothing to hand over and nothing
-        // to read back.
-        ResourceKind::NonFungible if schema => {
-            methods.push(syn::parse_quote!(
-                #[doc = #mint_doc]
-                #[must_use]
-                pub fn mint(id: u64, data: Self) -> ::hyperscale_vm_sdk::state::NfBucket {
-                    let _ = (id, data);
-                    #stub
-                }
-            ));
-            methods.push(burn_nf);
-            methods.push(syn::parse_quote!(
-                #[doc = #at_doc]
-                #[must_use]
-                pub fn at(id: u64) -> ::core::option::Option<Self> {
-                    let _ = id;
-                    #stub
-                }
-            ));
-            methods.push(syn::parse_quote!(
-                #[doc = #held_doc]
-                #[must_use]
-                pub fn held(
-                    edge: &::hyperscale_vm_sdk::state::NfBucket,
-                ) -> ::core::option::Option<Self> {
-                    let _ = edge;
-                    #stub
-                }
-            ));
-        }
-        ResourceKind::NonFungible => {
-            methods.push(syn::parse_quote!(
-                #[doc = #mint_doc]
-                #[must_use]
-                pub fn mint(id: u64) -> ::hyperscale_vm_sdk::state::NfBucket {
-                    let _ = id;
-                    #stub
-                }
-            ));
-            methods.push(burn_nf);
-        }
-    }
-
     let reading = role.reading();
     syn::parse_quote!(
         #reading
@@ -2692,6 +2590,128 @@ fn issuance(
             #(#methods)*
         }
     )
+}
+
+/// Bringing the resource itself into existence.
+///
+/// The record states only what the address cannot carry, which for a
+/// fungible resource is its display quantization and for a non-fungible
+/// one is nothing at all.
+fn record_creation(name: &str, kind: ResourceKind, stub: &TokenStream2) -> syn::ImplItemFn {
+    let doc = format!("Bring `{name}` itself into existence, by writing its record.");
+    match kind {
+        ResourceKind::Fungible => syn::parse_quote!(
+            #[doc = #doc]
+            pub fn create(display_digits: u8) {
+                let _ = display_digits;
+                #stub
+            }
+        ),
+        ResourceKind::NonFungible => syn::parse_quote!(
+            #[doc = #doc]
+            pub fn create() {
+                #stub
+            }
+        ),
+    }
+}
+
+/// A fungible mark's surface: value in, and value out under the same
+/// authority.
+fn value_surface(name: &str, stub: &TokenStream2) -> Vec<syn::ImplItemFn> {
+    let mint_doc = format!("Bring `{name}` into existence, as an edge.");
+    let burn_doc = format!("Destroy `{name}`, which is `funds`' own resource.");
+    vec![
+        syn::parse_quote!(
+            #[doc = #mint_doc]
+            #[must_use]
+            pub fn mint(
+                quantity: ::hyperscale_vm_sdk::state::Quantity,
+            ) -> ::hyperscale_vm_sdk::state::Bucket {
+                let _ = quantity;
+                #stub
+            }
+        ),
+        syn::parse_quote!(
+            #[doc = #burn_doc]
+            pub fn burn(funds: ::hyperscale_vm_sdk::state::Bucket) {
+                let _ = &funds;
+                #stub
+            }
+        ),
+    ]
+}
+
+/// A non-fungible mark's surface: an instance's whole life, and the
+/// record it carries where it carries one.
+///
+/// A fielded mark's instance holds a record, so the mint takes one and
+/// the mark reads, refiles and answers with it. A bare mark's cell holds
+/// the presence byte, which is nothing to hand over and nothing to read
+/// back — so a bare mark has the two ends and nothing between them.
+fn instance_surface(name: &str, schema: bool, stub: &TokenStream2) -> Vec<syn::ImplItemFn> {
+    let burn_doc =
+        format!("Retire the one `{name}` instance `edge` carries, and the record it filed.");
+    let burn: syn::ImplItemFn = syn::parse_quote!(
+        #[doc = #burn_doc]
+        pub fn burn(edge: ::hyperscale_vm_sdk::state::NfBucket) {
+            let _ = &edge;
+            #stub
+        }
+    );
+    let mint_doc = format!("Bring `{name}` into existence, as an edge.");
+    if !schema {
+        return vec![
+            syn::parse_quote!(
+                #[doc = #mint_doc]
+                #[must_use]
+                pub fn mint(id: u64) -> ::hyperscale_vm_sdk::state::NfBucket {
+                    let _ = id;
+                    #stub
+                }
+            ),
+            burn,
+        ];
+    }
+    let at_doc = format!("The record filed for `{name}` instance `id`, where one was minted.");
+    let held_doc = format!("The record filed for the one `{name}` instance `edge` carries.");
+    let rewrite_doc = format!("Refile the record `{name}` instance `id` carries.");
+    vec![
+        syn::parse_quote!(
+            #[doc = #mint_doc]
+            #[must_use]
+            pub fn mint(id: u64, data: Self) -> ::hyperscale_vm_sdk::state::NfBucket {
+                let _ = (id, data);
+                #stub
+            }
+        ),
+        burn,
+        syn::parse_quote!(
+            #[doc = #at_doc]
+            #[must_use]
+            pub fn at(id: u64) -> ::core::option::Option<Self> {
+                let _ = id;
+                #stub
+            }
+        ),
+        syn::parse_quote!(
+            #[doc = #rewrite_doc]
+            pub fn rewrite(id: u64, record: Self) {
+                let _ = (id, record);
+                #stub
+            }
+        ),
+        syn::parse_quote!(
+            #[doc = #held_doc]
+            #[must_use]
+            pub fn held(
+                edge: &::hyperscale_vm_sdk::state::NfBucket,
+            ) -> ::core::option::Option<Self> {
+                let _ = edge;
+                #stub
+            }
+        ),
+    ]
 }
 
 /// Everything a package declares by name, gathered once and read by the

@@ -830,6 +830,16 @@ impl<T: Record> Slot<Option<T>> {
             .expect("materialization required this leaf to be present")
     }
 
+    /// Replace the value in a leaf the declaration required to be there.
+    ///
+    /// [`Slot::create`]'s door read the other way: what a mint filed
+    /// where nothing was, the issuer may refile where something is.
+    #[allow(clippy::needless_pass_by_value)] // the value is consumed into the cell
+    #[inline(always)]
+    pub fn rewrite(&mut self, value: T) {
+        self.set(Some(value));
+    }
+
     /// Declare this leaf held exclusively and present, and read nothing
     /// from it.
     ///

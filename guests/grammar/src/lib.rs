@@ -114,6 +114,17 @@ pub mod grammar {
             seated
         }
 
+        /// The record changing under a live instance: the same cell the
+        /// mint filed, written again where the mint required nothing to
+        /// be. What never moves is the id, which is the instance's
+        /// identity and is not in the record at all.
+        pub fn reseat(&mut self, id: u64, holder: u64) {
+            Seat::rewrite(id, Seat { holder });
+            if let Some(seat) = Seat::at(id) {
+                self.noted.set(seat.holder);
+            }
+        }
+
         /// The instance retiring: what the edge carries leaves
         /// circulation, and the cell that described it ends with it —
         /// so the id is free for a later mint and the issuer's state
