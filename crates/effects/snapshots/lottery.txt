@@ -35,6 +35,21 @@ PackageMetadata {
                     mode: Read,
                     denomination: None,
                 },
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    17,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
                 Effect {
                     guard: None,
                     target: Point(
@@ -55,7 +70,7 @@ PackageMetadata {
                     0,
                 ),
                 Handle(
-                    1,
+                    2,
                 ),
             ],
         },

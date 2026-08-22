@@ -756,11 +756,13 @@ mod tests {
     #[test]
     fn a_protocol_claim_its_artifact_refuses_does_not_admit() {
         // The lottery's draw is public, so it clears the gate rule and
-        // reaches the artifact. The export carries an error arm — a draw
-        // declines a page it cannot prove covered the round — so a Total
-        // claim contradicts the export's own type first. The account no
-        // longer serves as the example: every body it has is a call or
-        // two, and the kernel does the work the loops used to.
+        // reaches the artifact. Two things stand in front of the code: the
+        // draw settles a round once, so its declaration carries a
+        // precondition and a total method admits every state; and the
+        // export carries an error arm, since a draw declines a page it
+        // cannot prove covered the round. The declaration is read first.
+        // The account does not serve as the example: every body it has is
+        // a call or two, and the kernel does the work the loops used to.
         let mut metadata = lottery::metadata();
         metadata
             .methods
@@ -772,12 +774,12 @@ mod tests {
         let error = admit_protocol_package(&artifact)
             .expect_err("a mark the code cannot support is not admissible");
         assert!(
-            error.0.contains("error arm"),
+            error.0.contains("precondition"),
             "refused for the wrong reason: {}",
             error.0,
         );
 
-        // Behind the arm stands the refusal the arm now masks on the
+        // Behind the declaration stands the refusal it masks on the
         // admission path: settling walks the entrants, and a walk has no
         // static fuel ceiling, so the artifact itself refuses the mark
         // whatever the metadata claims.

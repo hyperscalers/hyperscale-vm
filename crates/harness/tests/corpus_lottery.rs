@@ -9,7 +9,10 @@ use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_kernel::{MemoryStore, Substates};
 use hyperscale_vm_sdk::hbor::from_slice;
 use hyperscale_vm_stdlib::account;
-use hyperscale_vm_types::{CollectionId, PrincipalAddr, TxHash, encode_amount};
+use hyperscale_vm_types::{
+    CollectionId, EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition,
+    encode_amount,
+};
 
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
@@ -76,11 +79,11 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
     };
     let draw = graph(|b| lottery_addr().draw(b, u64::from(lottery::ROUND_CAP)));
 
-    // The empty round first: nobody has entered, and the draw still
-    // settles — recording what it drew and naming no winner.
-    let (results, store) = run_both(&world, &store, &[(&draw, TxHash(Hash32([0x60; 32])))]);
+    // The empty round: nobody has entered, and the draw still settles —
+    // recording what it drew and naming no winner. Its own branch of the
+    // store, because a round settles once and a settled one is settled.
+    let (results, empty_store) = run_both(&world, &store, &[(&draw, TxHash(Hash32([0x60; 32])))]);
     assert!(matches!(results[0], TxResult::Completed(_)));
-    let empty_store = store.clone();
     assert_eq!(
         settled_round(&empty_store),
         Some(lottery::Outcome {
@@ -136,6 +139,61 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
             winner: Some(expected.address()),
         }),
         "the round settles on the draw and the entrant it selects"
+    );
+}
+
+/// A settled round is settled. The outcome is written where nothing
+/// was, so a second draw over the same round is infeasible and the
+/// kernel says so before the guest runs.
+///
+/// The property this holds up is not tidiness. Every attempt at a draw
+/// is its own transaction and the draw follows the transaction, so
+/// without the door a loser re-draws until they win, at the price of a
+/// page each time.
+#[test]
+fn a_settled_round_refuses_a_second_draw() {
+    let world = world();
+    let mut store = sealed_store();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+
+    let enter = graph(|b| {
+        let proof = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, proof, RES_X, 100)?;
+        lottery_addr().enter(b, ALICE, funds)
+    });
+    let draw = graph(|b| lottery_addr().draw(b, u64::from(lottery::ROUND_CAP)));
+
+    let (results, store) = run_both(
+        &world,
+        &store,
+        &[
+            (&enter, TxHash(Hash32([0x80; 32]))),
+            (&draw, TxHash(Hash32([0x81; 32]))),
+        ],
+    );
+    assert!(results.iter().all(|r| matches!(r, TxResult::Completed(_))));
+    let settled = settled_round(&store).expect("the round settled");
+
+    let (results, after) = run_both(&world, &store, &[(&draw, TxHash(Hash32([0x82; 32])))]);
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(child_key(
+                    &TestHasher,
+                    lottery_addr(),
+                    lottery::OUTCOME,
+                    &[],
+                )),
+                required: Presence::Absent,
+            },
+        })],
+        "a round that has a winner cannot be drawn again"
+    );
+    assert_eq!(
+        settled_round(&after),
+        Some(settled),
+        "the refused draw left the round it found"
     );
 }
 

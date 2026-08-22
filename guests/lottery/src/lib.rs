@@ -1,11 +1,16 @@
-//! The lottery: entries into a pot, and a winner chosen by the
-//! transaction's randomness draw.
+//! The lottery: entries into a pot, and a winner drawn over the whole
+//! round.
 //!
 //! The draw is the only thing here that could not be written some other
 //! way. A winner picked from the clock, the entrant count, or any value a
-//! signer supplies is a winner somebody could have arranged; the kernel's
-//! randomness is fixed by the block that committed the transaction, so
-//! the first moment anyone learns it is after the round is closed.
+//! signer supplies is a winner somebody could have arranged, so the draw
+//! is the kernel's.
+//!
+//! A round settles once. The outcome is written where nothing was, so a
+//! second settlement is infeasible against a round that already has one
+//! — refused where the declaration is judged, before any of this runs.
+//! Without that door a loser re-draws until they win, since every attempt
+//! is a fresh transaction and the draw follows the transaction.
 //!
 //! The result cell records the draw beside the winner. A lottery that
 //! publishes only its winner asks to be trusted about how it got one —
@@ -95,9 +100,9 @@ pub mod lottery {
             if !window.covered() {
                 return Err(Error::RoundTruncated);
             }
-            // A round nobody entered still drew: the draw is recorded, no
-            // winner follows it, and the pot stands for the next round.
-            // Refusing here would let an empty round wedge the lottery.
+            // A round nobody entered still drew: the draw is recorded and
+            // no winner follows it. Refusing here would leave a round that
+            // nobody can settle and nobody can abandon.
             let winner = window.pick(&draw);
             // The width is the environment's, and the record states it:
             // a draw that is not thirty-two bytes is a defect in the
@@ -106,7 +111,7 @@ pub mod lottery {
                 draw: draw.try_into().expect("the draw is a thirty-two byte word"),
                 winner,
             };
-            self.outcome.set(Some(settled.clone()));
+            self.outcome.create(settled.clone());
             Drawn(settled).emit();
             Ok(())
         }
