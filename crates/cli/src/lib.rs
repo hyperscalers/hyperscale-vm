@@ -123,6 +123,22 @@ pub fn compile(dir: &Path) -> Result<Vec<u8>, BuildError> {
             String::from_utf8_lossy(&built.stderr)
         )));
     }
+    // A linker signature mismatch is a build that succeeded and a module
+    // that is wrong: two definitions claim one symbol, the toolchain's
+    // wins, and the method's export is simply not there. What fails
+    // otherwise is the componentization two steps on, naming a function
+    // the module does not have and saying nothing about why.
+    let stderr = String::from_utf8_lossy(&built.stderr);
+    if let Some(mismatch) = stderr
+        .lines()
+        .find(|line| line.contains("signature mismatch"))
+    {
+        return Err(BuildError::new(format!(
+            "a method's export name is one the toolchain already defines, so the module \
+             carries the toolchain's definition and not the method's — rename it:\n{}",
+            mismatch.trim()
+        )));
+    }
     let core = std::fs::read(built_wasm(dir)?)
         .map_err(|error| BuildError::new(format!("read the core module: {error}")))?;
     // wit-component's API errors with `anyhow::Error`, which has no
