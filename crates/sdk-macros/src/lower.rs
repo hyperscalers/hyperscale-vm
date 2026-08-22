@@ -4170,9 +4170,16 @@ impl<'a> Lowerer<'a> {
         self.scopes.push(Vec::new());
         self.locals.push(BTreeMap::new());
         self.binders += 1;
+        // Deferred, because the loop the guest runs is over the run's
+        // indices and binds no element: the name is the declaration's,
+        // and a body reading it as a value is refused where it does
+        // rather than emitted against a local nothing declares.
         match unwrap_pat(&loop_.pat) {
             syn::Pat::Ident(ident) => {
-                self.bind(ident.ident.to_string(), Slot::Value(Term::Binding(depth)));
+                self.bind(
+                    ident.ident.to_string(),
+                    Slot::Deferred(Term::Binding(depth)),
+                );
             }
             other => self.bind_pattern(other),
         }
@@ -4295,4 +4302,114 @@ fn free_call_mark(call: &syn::ExprCall) -> Option<syn::Ident> {
         return None;
     };
     mark.arguments.is_none().then(|| mark.ident.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{Field, FieldKind, Lowerer};
+    use crate::{Declared, accessors};
+
+    /// The state a refusal fixture is written against: one byte cell,
+    /// and one family of leaves keyed by whatever a body names.
+    fn fields() -> BTreeMap<String, Field> {
+        let cell = |slot, kind| Field {
+            slot,
+            kind,
+            element: Some(syn::parse_quote!(u64)),
+            denomination: None,
+        };
+        BTreeMap::from([
+            ("noted".to_owned(), cell(10, FieldKind::Cell)),
+            ("owed".to_owned(), cell(11, FieldKind::Keyed)),
+        ])
+    }
+
+    /// Why the guest half of `body` cannot be emitted, or `None` where
+    /// it can.
+    ///
+    /// The refusal a wasm build turns into a compile error, read on
+    /// whatever target the test runs on: it is recorded on the lowering
+    /// and only rendered under `cfg(target_arch = "wasm32")`, so this is
+    /// the one place it can be held to what it says.
+    ///
+    /// # Panics
+    ///
+    /// If the body draws a hard error, which is a different refusal —
+    /// one every target sees — and a fixture meaning to reach this one
+    /// has not.
+    fn refusal(body: &str) -> Option<String> {
+        let block: syn::Block = syn::parse_str(body).expect("the fixture parses as a block");
+        let fields = fields();
+        let config = syn::Ident::new("Terms", proc_macro2::Span::call_site());
+        let accessors = accessors(Some(&config));
+        let config_fields = [("sides".to_owned(), syn::parse_quote!(::std::vec::Vec<u64>))];
+        let declared = Declared {
+            fields: &fields,
+            accessors: &accessors,
+            roles: &[],
+            config_record: Some(&config),
+            config_fields: &config_fields,
+            resources: &[],
+        };
+        match Lowerer::new(&declared, &[], false, false).run(&block) {
+            Ok(lowered) => lowered.refusal.map(|(_, why)| why),
+            Err(errors) => panic!(
+                "the fixture drew a hard error: {}",
+                errors
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+        }
+    }
+
+    #[test]
+    fn a_loop_over_a_configured_list_executes() {
+        // The control the refusals below are read against: a body whose
+        // every access sits on a run has a guest half.
+        assert_eq!(
+            refusal("{ for &side in &self.config().sides { self.owed.at(side).set(1); } }"),
+            None,
+        );
+    }
+
+    #[test]
+    fn an_element_in_value_position_is_refused() {
+        let why =
+            refusal("{ for &side in &self.config().sides { self.owed.at(side).set(side); } }")
+                .expect("an element read as a value has no guest half");
+        assert!(
+            why.contains("exists only inside an evaluation"),
+            "unexpected refusal: {why}"
+        );
+    }
+
+    #[test]
+    fn a_derived_value_reading_an_element_is_refused() {
+        // The whole term, not the binding alone: an export's arguments
+        // are evaluated outside every loop, so a parameter mentioning an
+        // element is one nothing could bind however it is wrapped.
+        let why =
+            refusal("{ for &side in &self.config().sides { self.owed.at(side).set(side + 1); } }")
+                .expect("a derived value over an element has no guest half");
+        assert!(
+            why.contains("reads a `for-each` element"),
+            "unexpected refusal: {why}"
+        );
+    }
+
+    #[test]
+    fn a_loop_declaring_nothing_is_refused() {
+        // There is no run to walk, and the width the guest would need is
+        // the declaration's rather than anything the body holds.
+        let why = refusal("{ for &side in &self.config().sides { let _held = side; } }")
+            .expect("a loop with no access has no guest half");
+        assert!(
+            why.contains("declares no access"),
+            "unexpected refusal: {why}"
+        );
+    }
 }
