@@ -192,11 +192,14 @@ fn declinable(types: TypesRef<'_>, result: &ComponentValType) -> bool {
     matches!(types.get(*id), Some(ComponentDefinedType::Result { .. }))
 }
 
-/// Whether a result carries a byte list beside its edges, looking
+/// Whether a result carries a byte list ahead of its edges, looking
 /// through the refusal channel the way the edge count does.
 ///
 /// A byte list is the one non-edge shape the convention admits in a
-/// result, so finding one is the whole of the question.
+/// result, and it leads: the profile admits one nowhere else, and both
+/// engines lift the run behind it as edges without looking at the count.
+/// So the head is the whole of the question, and asking it of any other
+/// position would have the gate admit a shape materialization refuses.
 fn answered(types: TypesRef<'_>, result: &ComponentValType) -> bool {
     let ComponentValType::Type(id) = result else {
         return false;
@@ -206,9 +209,10 @@ fn answered(types: TypesRef<'_>, result: &ComponentValType) -> bool {
             element: ComponentValType::Primitive(PrimitiveValType::U8),
             ..
         }) => true,
-        Some(ComponentDefinedType::Tuple(elements)) => {
-            elements.types.iter().any(|ty| answered(types, ty))
-        }
+        Some(ComponentDefinedType::Tuple(elements)) => elements
+            .types
+            .first()
+            .is_some_and(|head| answered(types, head)),
         Some(ComponentDefinedType::Result { ok: Some(ok), .. }) => answered(types, ok),
         _ => false,
     }

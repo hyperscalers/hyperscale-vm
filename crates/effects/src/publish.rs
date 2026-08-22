@@ -869,6 +869,13 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     // What this write says about the leaf's presence: a `Holds` on the
     // same target, firing whenever the write does. The one-way door a
     // creation carries is the `Absent` case of it.
+    //
+    // The first such clause is the answer, because any two that both
+    // match this write already agree. Matching takes an absent guard or
+    // the write's own, so no two matches are complementary; the presence
+    // fold makes every non-complementary pair on one target meet, and
+    // `Either` — the one presence that meets a disagreeing partner — is
+    // refused outright as a condition nothing can fail.
     let requires = flat.iter().find_map(|beside| match beside {
         Clause::Requires {
             guard: condition_guard,

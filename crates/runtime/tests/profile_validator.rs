@@ -215,6 +215,32 @@ fn rejects_a_tuple_that_is_not_a_run_of_edges() {
 }
 
 #[test]
+fn rejects_an_answer_behind_the_edges_it_travels_with() {
+    // The answer leads, which is what lets the run behind it be read as
+    // edges without looking at the count. A byte list anywhere else is a
+    // tuple element no lift reaches for, so it is refused here rather
+    // than deployed as a method that cannot end.
+    let bytes = parse_str(
+        r#"
+(component
+  (import "hyperscale:kernel/state" (instance $state
+    (export "bucket" (type $bk (sub resource)))))
+  (alias export $state "bucket" (type $bucket))
+  (core module $m
+    (memory (export "mem") 1 1)
+    (func (export "realloc") (param i32 i32 i32 i32) (result i32) (i32.const 0))
+    (func (export "f") (result i32) (i32.const 0)))
+  (core instance $i (instantiate $m))
+  (type $trailing (tuple (own $bucket) (list u8)))
+  (func (export "f") (result $trailing)
+    (canon lift (core func $i "f") (memory $i "mem") (realloc (func $i "realloc")))))
+"#,
+    )
+    .expect("fixture must parse");
+    assert_rejected(&bytes, "owned handles");
+}
+
+#[test]
 fn rejects_oversized_artifacts() {
     let bytes = vec![0u8; MAX_COMPONENT_BYTES + 1];
     assert!(matches!(
