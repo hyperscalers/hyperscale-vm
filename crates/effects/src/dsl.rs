@@ -113,6 +113,15 @@ pub enum Expr {
     /// the count of them — so a move declares exactly the walk it
     /// performs and pays for nothing wider.
     Len(Box<Self>),
+    /// The sole element of a list, refusing where the list is not one
+    /// long.
+    ///
+    /// What lets a declaration reach the instance an edge carries
+    /// without a caller naming its id: the ids are already the edge's,
+    /// and an edge carrying exactly one names it. An edge carrying any
+    /// other number fails here, so the transaction is refused before a
+    /// body reads a cell that would have been a guess.
+    Only(Box<Self>),
     /// A list built element by element — the dual of [`Expr::IdsOf`],
     /// for the producing side: a mint's id set is a list of fresh ids,
     /// each an expression of its own.
@@ -286,6 +295,7 @@ impl Expr {
             | Self::ResourceOf(inner)
             | Self::IdsOf(inner)
             | Self::Len(inner)
+            | Self::Only(inner)
             | Self::Not(inner) => children.push(inner),
             Self::Lookup {
                 map: first,
@@ -672,6 +682,13 @@ pub enum EvalError {
     /// A sum past its operands' width.
     #[error("addition overflows the width of its operands")]
     AddOverflow,
+    /// A list read for its sole element that holds some other number
+    /// of them.
+    #[error("a list of {len} has no sole element")]
+    NotSingleton {
+        /// How many elements the list held.
+        len: usize,
+    },
     /// A lookup key matching no pair.
     #[error("lookup key not present")]
     LookupMiss,
@@ -1366,6 +1383,23 @@ fn edge_ids(content: EdgeContent) -> Result<Value, EvalError> {
     }
 }
 
+/// How many elements a list holds, saturating at the width a count is
+/// read in.
+fn count(elements: &[Value]) -> Value {
+    Value::U64(u64::try_from(elements.len()).unwrap_or(u64::MAX))
+}
+
+/// The one element a list holds, or the refusal naming how many it held
+/// instead.
+fn sole(elements: Vec<Value>) -> Result<Value, EvalError> {
+    match <[Value; 1]>::try_from(elements) {
+        Ok([only]) => Ok(only),
+        Err(elements) => Err(EvalError::NotSingleton {
+            len: elements.len(),
+        }),
+    }
+}
+
 /// A bucket projection's parts, or the type mismatch every edge
 /// projection refuses alike.
 fn bucket_parts(value: Value) -> Result<(ResourceAddr, EdgeContent), EvalError> {
@@ -1431,9 +1465,8 @@ fn eval_expr(
         Expr::Field(tuple, index) => field(&as_tuple(sub(tuple)?)?, *index),
         Expr::ResourceOf(bucket) => Ok(Value::Address(bucket_parts(sub(bucket)?)?.0.into())),
         Expr::IdsOf(bucket) => edge_ids(bucket_parts(sub(bucket)?)?.1),
-        Expr::Len(list) => Ok(Value::U64(
-            u64::try_from(as_list(sub(list)?)?.len()).unwrap_or(u64::MAX),
-        )),
+        Expr::Len(list) => Ok(count(&as_list(sub(list)?)?)),
+        Expr::Only(list) => sole(as_list(sub(list)?)?),
         Expr::Lookup { map, key } => lookup(as_list(sub(map)?)?, &sub(key)?),
         Expr::SelfResource {
             kind,
@@ -2544,6 +2577,39 @@ mod tests {
         // A fungible edge refuses the id read: kind is structural,
         // never an empty answer.
         assert!(evaluate_expr(&Expr::IdsOf(Box::new(Expr::Arg(1))), &ins, &TestHasher).is_err());
+    }
+
+    #[test]
+    fn only_names_the_sole_element_of_a_list() {
+        let one = Value::Bucket {
+            resource: ResourceAddr::new([0xE1; 31]),
+            content: EdgeContent::NonFungible { ids: vec![7] },
+        };
+        let two = Value::Bucket {
+            resource: ResourceAddr::new([0xE1; 31]),
+            content: EdgeContent::NonFungible { ids: vec![7, 9] },
+        };
+        let empty = Value::Bucket {
+            resource: ResourceAddr::new([0xE1; 31]),
+            content: EdgeContent::NonFungible { ids: vec![] },
+        };
+        let args = [one, two, empty];
+        let ins = inputs(&args, &[]);
+        let sole = |arg| Expr::Only(Box::new(Expr::IdsOf(Box::new(Expr::Arg(arg)))));
+        assert_eq!(
+            evaluate_expr(&sole(0), &ins, &TestHasher),
+            Ok(Value::U64(7)),
+        );
+        // Any other count names no one instance, and the number it did
+        // carry is what the refusal says.
+        assert_eq!(
+            evaluate_expr(&sole(1), &ins, &TestHasher),
+            Err(EvalError::NotSingleton { len: 2 }),
+        );
+        assert_eq!(
+            evaluate_expr(&sole(2), &ins, &TestHasher),
+            Err(EvalError::NotSingleton { len: 0 }),
+        );
     }
 
     #[test]

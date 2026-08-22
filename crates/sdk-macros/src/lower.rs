@@ -506,6 +506,18 @@ fn unwrap_pat(pat: &syn::Pat) -> &syn::Pat {
     }
 }
 
+/// Reach the expression a borrow names: `&edge` and `edge` name the
+/// same edge, and a call reading one for its declaration wants what it
+/// names rather than the reference.
+fn borrowed(expr: &syn::Expr) -> &syn::Expr {
+    match expr {
+        syn::Expr::Reference(reference) => borrowed(&reference.expr),
+        syn::Expr::Paren(paren) => borrowed(&paren.expr),
+        syn::Expr::Group(group) => borrowed(&group.expr),
+        other => other,
+    }
+}
+
 /// Whether a binary operator writes its left operand (`+=` and family).
 const fn binary_op_assigns(op: syn::BinOp) -> bool {
     matches!(
@@ -824,6 +836,31 @@ impl<'a> Lowerer<'a> {
         (statements, returned)
     }
 
+    /// The projection of a value edge the method was handed and hands
+    /// on unchanged.
+    ///
+    /// A fungible edge is its resource: the amount is the kernel's, and
+    /// a projection saying anything about it would be the declaration
+    /// guessing. A non-fungible one is its resource and the instances it
+    /// carries, because that is what an edge of one is — a resource
+    /// alone names an edge carrying nothing.
+    fn forwarded(&self, edge: &Term) -> Term {
+        let resource = Term::ResourceOf(Box::new(edge.clone()));
+        let instances = matches!(edge, Term::Arg(index)
+            if self
+                .params
+                .get(*index as usize)
+                .is_some_and(|(_, ty)| is_nf_bucket(ty)));
+        if instances {
+            Term::NfBucket {
+                resource: Box::new(resource),
+                ids: Box::new(Term::IdsOf(Box::new(edge.clone()))),
+            }
+        } else {
+            resource
+        }
+    }
+
     /// Evaluate an expression in return position, collecting the resources
     /// of every value edge it yields beside the guest code for its amount.
     fn returned(&mut self, expr: &syn::Expr) -> (Vec<Term>, Vec<TokenStream>) {
@@ -869,7 +906,7 @@ impl<'a> Lowerer<'a> {
                     // forwarding one is the case `check_abi` already
                     // admits.
                     Val::Term(term) if matches!(eval.code, Code::Bucket(_)) => {
-                        let term = Term::ResourceOf(Box::new(term.clone()));
+                        let term = self.forwarded(term);
                         let code = self.value(eval.code);
                         (vec![term], vec![code])
                     }
@@ -1277,28 +1314,8 @@ impl<'a> Lowerer<'a> {
     /// package's own type, so there is no spelling for a foreign
     /// instance's data, and reaching one is a call to whoever issues it.
     fn lower_at(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
-        if issued.kind != ResourceKind::NonFungible {
-            self.error(
-                call.func.span(),
-                &format!(
-                    "`{}` is fungible, and value carries no record of its own — a \
-                     balance is what it holds and an instance is what has data",
-                    issued.name
-                ),
-            );
-            return Eval::absent(call.func.span(), "a fungible instance read");
-        }
-        if !issued.schema {
-            self.error(
-                call.func.span(),
-                &format!(
-                    "`{}` declares no fields, so its instance holds the presence byte \
-                     and there is nothing to read — a mark carrying a schema is a \
-                     struct with fields",
-                    issued.name
-                ),
-            );
-            return Eval::absent(call.func.span(), "a bare instance read");
+        if let Some(refused) = self.instance_readable(issued, call.func.span()) {
+            return refused;
         }
         let Some(named) = call.args.first() else {
             self.error(
@@ -1316,6 +1333,109 @@ impl<'a> Lowerer<'a> {
             );
             return Eval::absent(named.span(), "an underivable instance id");
         };
+        let site = self.instance_site(issued, id, call.func.span());
+        self.record(site, Op::Get, None, call.span());
+        let leaf = self.value(Code::Handle {
+            site,
+            form: Form::Slot,
+            span: call.span(),
+        });
+        Eval::plain(quote!(#leaf.get()))
+    }
+
+    /// Whether the mark has an instance record for a read to answer
+    /// with, refusing on the mark's own terms where it has none.
+    ///
+    /// A fungible mark holds a balance and no instance; a non-fungible
+    /// one declaring no fields holds the presence byte, which is nothing
+    /// to hand back.
+    fn instance_readable(&mut self, issued: &Resource, span: Span) -> Option<Eval> {
+        if issued.kind != ResourceKind::NonFungible {
+            self.error(
+                span,
+                &format!(
+                    "`{}` is fungible, and value carries no record of its own — a \
+                     balance is what it holds and an instance is what has data",
+                    issued.name
+                ),
+            );
+            return Some(Eval::absent(span, "a fungible instance read"));
+        }
+        if !issued.schema {
+            self.error(
+                span,
+                &format!(
+                    "`{}` declares no fields, so its instance holds the presence byte \
+                     and there is nothing to read — a mark carrying a schema is a \
+                     struct with fields",
+                    issued.name
+                ),
+            );
+            return Some(Eval::absent(span, "a bare instance read"));
+        }
+        None
+    }
+
+    /// Lower `Name::held(edge)` — the record of the one instance the
+    /// edge carries, read without the caller naming an id.
+    ///
+    /// The edge already knows its instances, so the id is the sole
+    /// element of its id list rather than an argument beside it. An edge
+    /// carrying any other number of instances fails that evaluation, and
+    /// the transaction is refused before the body runs.
+    fn lower_held(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
+        if let Some(refused) = self.instance_readable(issued, call.func.span()) {
+            return refused;
+        }
+        let Some(named) = call.args.first() else {
+            self.error(
+                call.args.span(),
+                "an instance is read off the edge carrying it, and the edge is part \
+                 of the declaration",
+            );
+            return Eval::absent(call.args.span(), "an instance read with no edge");
+        };
+        // Only the edge's identity is wanted, so the argument is walked
+        // for the term it names rather than for a value: binding the
+        // edge as an export parameter would hand the guest a handle
+        // nothing reads.
+        let eval = self.expr(borrowed(named));
+        let carried = Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone());
+        // The cell is keyed by the mark's own resource, so an edge
+        // carrying another names an instance of something else. Where
+        // the edge is a parameter that is the caller's to supply, and
+        // the constraint is stated on the parameter; where the body
+        // produced it, the resource is already fixed and a mismatch is
+        // the body reading a mark it did not name.
+        let edge = match (&eval.val, &eval.code) {
+            (Val::Term(edge), Code::Bucket(param)) => {
+                self.denominate(*param, carried, call.span());
+                edge.clone()
+            }
+            (Val::Produced(edge @ Term::NfBucket { resource, .. }), _) => {
+                if **resource != carried {
+                    let (found, wanted) = (self.describe(resource), self.describe(&carried));
+                    self.error(
+                        named.span(),
+                        &format!(
+                            "this reads an instance of {wanted} off an edge carrying \
+                             {found}. An instance's record is filed under the resource \
+                             it is an instance of"
+                        ),
+                    );
+                }
+                edge.clone()
+            }
+            _ => {
+                self.error(
+                    named.span(),
+                    "the lowering cannot see what this edge carries. Read an instance \
+                     off an edge the method was handed or one it minted",
+                );
+                return Eval::absent(named.span(), "an underivable edge");
+            }
+        };
+        let id = Term::Only(Box::new(Term::IdsOf(Box::new(edge))));
         let site = self.instance_site(issued, id, call.func.span());
         self.record(site, Op::Get, None, call.span());
         let leaf = self.value(Code::Handle {
@@ -1628,6 +1748,7 @@ impl<'a> Lowerer<'a> {
             | Term::ResourceOf(_)
             | Term::IdsOf(_)
             | Term::Len(_)
+            | Term::Only(_)
             | Term::OrderKey { .. }
             | Term::SelfResource(..)
             | Term::SelfRecord
@@ -2698,6 +2819,14 @@ impl<'a> Lowerer<'a> {
             };
             return self.lower_at(&issued, call);
         }
+        // `Resource::held(edge)` — the same record, at the id the edge
+        // supplies rather than one the caller names.
+        if name == "held" {
+            let Some(issued) = self.issuing_mark(call, "held") else {
+                return Eval::absent(call.func.span(), "an undeclared resource");
+            };
+            return self.lower_held(&issued, call);
+        }
         // `Resource::burn(funds)` — the inverse, under the same grant.
         // Fungible alone: an instance leaves existence by no vocabulary
         // this has, so the mark's kind is a refusal rather than a branch.
@@ -3615,11 +3744,19 @@ impl<'a> Lowerer<'a> {
     }
 }
 
+/// Whether a declared parameter is a non-fungible value edge, which
+/// carries named instances where a fungible one carries an amount.
+fn is_nf_bucket(ty: &syn::Type) -> bool {
+    matches!(ty, syn::Type::Path(path)
+        if path.path.segments.last().is_some_and(|s| s.ident == "NfBucket"))
+}
+
 /// Whether a declared parameter is a value edge, which is the one kind
 /// the guest holds as a type of its own rather than as a plain value.
 fn is_bucket(ty: &syn::Type) -> bool {
     matches!(ty, syn::Type::Path(path)
-        if path.path.segments.last().is_some_and(|s| s.ident == "Bucket" || s.ident == "NfBucket"))
+        if path.path.segments.last().is_some_and(|s| s.ident == "Bucket"))
+        || is_nf_bucket(ty)
 }
 
 /// The last segment of a free call's path, when it has one.

@@ -771,6 +771,7 @@ fn resolvable(expr: &Expr, known: &[bool], depth: usize) -> bool {
         | Expr::ResourceOf(inner)
         | Expr::IdsOf(inner)
         | Expr::Len(inner)
+        | Expr::Only(inner)
         | Expr::Not(inner) => deeper(inner),
         Expr::Lookup { map, key } | Expr::Contains { map, key } => deeper(map) && deeper(key),
         Expr::Pack { hi, lo } => deeper(hi) && deeper(lo),

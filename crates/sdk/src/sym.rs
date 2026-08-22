@@ -273,6 +273,17 @@ pub fn len(list: &Sym<Seq>) -> Sym<Num> {
     Sym::new(Expr::Len(Box::new(list.expr.clone())))
 }
 
+/// The sole element of a list — the instance an edge carrying exactly
+/// one carries.
+///
+/// A list of any other length fails the evaluation, so an edge that
+/// does not name one instance is refused where the declaration is read
+/// rather than where the body reads a cell.
+#[must_use]
+pub fn only(list: &Sym<Seq>) -> Sym<Num> {
+    Sym::new(Expr::Only(Box::new(list.expr.clone())))
+}
+
 /// A sum, over the two integer widths and refusing overflow — how a cap
 /// covering more than one count is spelled.
 #[must_use]
@@ -408,6 +419,7 @@ pub fn expr_depth(expr: &Expr) -> usize {
         | Expr::ResourceOf(inner)
         | Expr::IdsOf(inner)
         | Expr::Len(inner)
+        | Expr::Only(inner)
         | Expr::Not(inner) => expr_depth(inner),
         Expr::Lookup { map, key } | Expr::Contains { map, key } => {
             expr_depth(map).max(expr_depth(key))

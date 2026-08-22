@@ -1,0 +1,5 @@
+error: this reads an instance of `issued(Seat)` off an edge carrying `issued(Pass)`. An instance's record is filed under the resource it is an instance of
+  --> tests/refusals/held_foreign_edge.rs:25:44
+   |
+25 |             if let Some(seat) = Seat::held(&pass) {
+   |                                            ^

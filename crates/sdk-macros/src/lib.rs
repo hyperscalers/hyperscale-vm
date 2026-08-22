@@ -2582,6 +2582,7 @@ fn issuance(
     let mint_doc = format!("Bring `{name}` into existence, as an edge.");
     let burn_doc = format!("Destroy `{name}`, which is `funds`' own resource.");
     let at_doc = format!("The record filed for `{name}` instance `id`, where one was minted.");
+    let held_doc = format!("The record filed for the one `{name}` instance `edge` carries.");
     let mut methods: Vec<syn::ImplItemFn> = Vec::new();
 
     // The record states only what the address cannot carry, which for a
@@ -2642,6 +2643,16 @@ fn issuance(
                 #[must_use]
                 pub fn at(id: u64) -> ::core::option::Option<Self> {
                     let _ = id;
+                    #stub
+                }
+            ));
+            methods.push(syn::parse_quote!(
+                #[doc = #held_doc]
+                #[must_use]
+                pub fn held(
+                    edge: &::hyperscale_vm_sdk::state::NfBucket,
+                ) -> ::core::option::Option<Self> {
+                    let _ = edge;
                     #stub
                 }
             ));

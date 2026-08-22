@@ -75,6 +75,7 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/supply_of_a_schema.rs");
     refuse.compile_fail("tests/refusals/bare_instance_read.rs");
     refuse.compile_fail("tests/refusals/fungible_instance_read.rs");
+    refuse.compile_fail("tests/refusals/held_foreign_edge.rs");
 }
 
 /// A mark the macro can already tell is unsupportable, refused where the

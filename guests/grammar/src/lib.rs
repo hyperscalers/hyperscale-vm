@@ -113,5 +113,17 @@ pub mod grammar {
             }
             seated
         }
+
+        /// The same record, read off the edge carrying the instance
+        /// rather than at an id the caller named. The edge is handed
+        /// back, so what the reading costs a holder is nothing — and
+        /// what the declaration says about it is that it carries one
+        /// seat, which an edge carrying any other number fails.
+        pub fn seated(&mut self, seat: NfBucket) -> NfBucket {
+            if let Some(held) = Seat::held(&seat) {
+                self.noted.set(held.holder);
+            }
+            seat
+        }
     }
 }

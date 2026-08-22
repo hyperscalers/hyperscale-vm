@@ -11,15 +11,15 @@
 //! could differ silently, the loop would be a comfort rather than a
 //! check.
 
-use hyperscale_vm_effects::{TestHasher, instance_data_key};
+use hyperscale_vm_effects::{AdmissionError, EvalError, TestHasher, child_key, instance_data_key};
 use hyperscale_vm_fixtures::amm::{self, Settings};
 use hyperscale_vm_fixtures::grammar;
 use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_kernel::Receipt;
-use hyperscale_vm_sdk::hbor::to_vec;
+use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
 use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
-    Chain, Package, PrincipalAddr, ResourceAddr, account, principal, resource,
+    Chain, Package, PrincipalAddr, Refused, ResourceAddr, account, principal, resource,
 };
 
 const ALICE: PrincipalAddr = principal(0x41);
@@ -178,4 +178,67 @@ fn a_fielded_instance_reads_the_same_in_both_lanes() {
         Some(to_vec(&grammar::Seat { holder: 42 }).expect("the record encodes")),
         "the cell holds the record the mark declares",
     );
+}
+
+/// The instance an edge carries, read with no id in the call.
+///
+/// The declaration names the sole element of the edge's id list, so
+/// both lanes reach the same cell and neither is told which one by the
+/// caller. The edges that name no one instance are the same question
+/// answered before either body runs: an edge carrying two and an edge
+/// carrying none fail the evaluation, so they are refused rather than
+/// trapped.
+#[test]
+fn the_instance_an_edge_carries_reads_the_same_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        let seat = shapes.issued_seat(&TestHasher);
+        // Two seats, so the last mint's own read leaves `noted` holding
+        // a holder the edge read has to overwrite to be seen.
+        for (id, holder) in [(3u64, 42u64), (4, 43)] {
+            chain
+                .transact(ALICE, |b| {
+                    let minted = shapes.seat(b, id, holder)?;
+                    account::deposit_nf(b, ALICE, minted)
+                })
+                .expect_completed();
+        }
+
+        let read = |chain: &mut Chain, ids: &[u64]| {
+            chain.try_transact(ALICE, |b| {
+                let signed_in = account::authorize(b, ALICE)?;
+                let edge = account::withdraw_nf(b, signed_in, seat, ids)?;
+                let handed_back = shapes.seated(b, edge)?;
+                account::deposit_nf(b, ALICE, handed_back)
+            })
+        };
+
+        let one = read(&mut chain, &[3]).expect("an edge carrying one instance names it");
+        let noted = chain
+            .cell(child_key(&TestHasher, shapes, grammar::NOTED, &[]))
+            .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"));
+        // How many instances the refusal said the edge carried, where
+        // it was refused for carrying the wrong number of them.
+        let counted = |refused: Option<Refused>| match refused {
+            Some(Refused::Admission(AdmissionError::Eval {
+                source: EvalError::NotSingleton { len },
+                ..
+            })) => Some(len),
+            other => panic!("an edge naming no one instance is refused: {other:?}"),
+        };
+        let two = counted(read(&mut chain, &[3, 4]).err());
+        let none = counted(read(&mut chain, &[]).err());
+        (one.receipt().clone(), noted, two, none)
+    };
+
+    let (native, native_noted, native_two, native_none) = run(Chain::native());
+    let (blessed, blessed_noted, blessed_two, blessed_none) = run(Chain::wasm());
+
+    assert_eq!(comparable(&native), comparable(&blessed), "lanes diverged");
+    assert_eq!(native_noted, blessed_noted, "the read record diverged");
+    assert_eq!(native_noted, Some(42), "the edge named the seat it carried");
+    assert_eq!((native_two, native_none), (blessed_two, blessed_none));
+    assert_eq!(native_two, Some(2), "an edge carrying two names neither");
+    assert_eq!(native_none, Some(0), "an edge carrying none names nothing");
 }
