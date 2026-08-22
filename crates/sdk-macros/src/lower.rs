@@ -4181,6 +4181,20 @@ impl<'a> Lowerer<'a> {
             return quote!(for #pat in #list { #(#statements)* });
         };
 
+        // A run covers one site of one loop, walked by that loop's
+        // element — so a loop inside another expands to a width the
+        // outer element decides, and there is no parameter its sites
+        // could occupy. Hard, because a declaration nothing can execute
+        // is not one to publish.
+        if self.depth() > 0 {
+            self.error(
+                loop_.for_token.span,
+                "a `for-each` inside another expands to a width the outer element \
+                 decides, and a run covers one site of one loop — so the clauses this \
+                 declares are ones no export could reach",
+            );
+        }
+
         let depth = self.depth();
         let opened = self.out.sites.len();
         self.scopes.push(Vec::new());
@@ -4260,6 +4274,18 @@ impl<'a> Lowerer<'a> {
     where
         F: FnOnce(&mut Self, Term) -> TokenStream,
     {
+        // The loop this opens is a loop like any other, so it is one a
+        // `for-each` cannot already be open around: a run covers one
+        // site of one loop.
+        if self.depth() > 0 {
+            self.error(
+                span,
+                "this reaches every instance the edge carries, which is a `for-each` of \
+                 its own — and a run covers one site of one loop, so it cannot sit \
+                 inside another",
+            );
+        }
+
         let depth = self.depth();
         let opened = self.out.sites.len();
         self.scopes.push(Vec::new());
@@ -4389,6 +4415,16 @@ mod tests {
         lowered(body).refusal.map(|(_, why)| why)
     }
 
+    /// The hard errors `body` draws, which every target sees.
+    ///
+    /// # Panics
+    ///
+    /// If the body draws none, which a fixture meaning to reach one has
+    /// not.
+    fn errors(body: &str) -> Vec<String> {
+        lower(body).expect_err("the fixture draws a hard error")
+    }
+
     #[test]
     fn a_loop_over_a_configured_list_executes() {
         // The control the refusals below are read against: a body whose
@@ -4453,6 +4489,21 @@ mod tests {
         assert_eq!(lowered.refusal.map(|(_, why)| why), None);
         assert_eq!(lowered.runs.len(), 1);
         assert_eq!(lowered.sites.len(), 1);
+    }
+
+    #[test]
+    fn a_loop_inside_a_loop_is_refused() {
+        // Hard rather than wasm-only: the inner site's width is the outer
+        // element's, so there is no parameter it could occupy and no
+        // declaration worth publishing.
+        let errors = errors(
+            "{ for &side in &self.config().sides { \
+               for &other in &self.config().others { self.owed.at(other).set(1); } } }",
+        );
+        assert!(
+            errors.iter().any(|why| why.contains("inside another")),
+            "unexpected errors: {errors:?}",
+        );
     }
 
     #[test]
