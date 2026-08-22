@@ -1,6 +1,7 @@
 //! The epoch seeds an execution can resolve a sealed draw against.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// The width every seed and every word the protocol carries.
 pub const SEED_BYTES: usize = 32;
@@ -50,7 +51,11 @@ pub enum Drawn {
 /// stand behind — so the vocabulary here is three answers and no policy.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SeedWindow {
-    usable: BTreeMap<u64, [u8; SEED_BYTES]>,
+    /// Shared rather than owned: one window governs a whole batch and
+    /// every transaction in it carries the environment by value.
+    /// `None` is the empty window, which is what lets an unfolded one be
+    /// a constant.
+    usable: Option<Arc<BTreeMap<u64, [u8; SEED_BYTES]>>>,
     newest: Option<u64>,
 }
 
@@ -60,8 +65,11 @@ impl SeedWindow {
     /// behind, which is what separates an epoch that has not happened
     /// from one that happened unusably.
     #[must_use]
-    pub const fn new(usable: BTreeMap<u64, [u8; SEED_BYTES]>, newest: Option<u64>) -> Self {
-        Self { usable, newest }
+    pub fn new(usable: BTreeMap<u64, [u8; SEED_BYTES]>, newest: Option<u64>) -> Self {
+        Self {
+            usable: Some(Arc::new(usable)),
+            newest,
+        }
     }
 
     /// A window nothing can be resolved against — every epoch is ahead
@@ -69,7 +77,7 @@ impl SeedWindow {
     #[must_use]
     pub const fn unfolded() -> Self {
         Self {
-            usable: BTreeMap::new(),
+            usable: None,
             newest: None,
         }
     }
@@ -77,7 +85,7 @@ impl SeedWindow {
     /// The seed at `epoch`, or which way it falls outside.
     #[must_use]
     pub fn at(&self, epoch: u64) -> Seeded {
-        if let Some(seed) = self.usable.get(&epoch) {
+        if let Some(seed) = self.usable.as_ref().and_then(|held| held.get(&epoch)) {
             return Seeded::Ready(*seed);
         }
         match self.newest {
