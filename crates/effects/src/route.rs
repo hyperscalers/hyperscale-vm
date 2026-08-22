@@ -583,6 +583,75 @@ mod tests {
         (chain, one_node(spreader))
     }
 
+    /// The spreading world with a guard on the loop itself, so whether
+    /// it maps over anything is a configured policy rather than the
+    /// list's width.
+    fn guarded_spreading_world(spread: Vec<Value>, taken: bool) -> (Records, ManifestGraph) {
+        let mut package = PackageMetadata::default();
+        package.methods.insert(
+            "m".into(),
+            MethodSignature {
+                totality: Totality::Fallible,
+                abi: vec![AbiParam::Run { clause: 0, site: 0 }],
+                effects: vec![Clause::ForEach {
+                    guard: Some(Box::new(Expr::Config(1))),
+                    list: Expr::Config(0),
+                    body: vec![Clause::Effect {
+                        guard: None,
+                        target: TargetExpr::Point(Expr::ChildKey {
+                            owner: Box::new(Expr::SelfAddr),
+                            slot: package_slot(0),
+                            material: vec![Expr::Binding(0)],
+                        }),
+                        mode: ModeExpr::Write,
+                        denomination: None,
+                    }],
+                }],
+                ..MethodSignature::default()
+            },
+        );
+        let mut chain = Records::new();
+        chain.packages.publish_unchecked(pkg("spread"), package);
+        let spreader = chain.instances.create(
+            &TestHasher,
+            InstanceMeta {
+                package: pkg("spread"),
+                config: vec![Value::List(spread), Value::Bool(taken)],
+                salt: Hash32([16; 32]),
+            },
+        );
+        (chain, one_node(spreader))
+    }
+
+    #[test]
+    fn a_guarded_out_loop_lends_a_run_of_none() {
+        // The absence rides the argument, as it does for a handle on a
+        // clause that was guarded out: the export takes its run either
+        // way, and what a loop that never ran covers is nothing. A
+        // refusal here would make a body that declares a conditional
+        // loop uncallable exactly when the condition does not hold.
+        let spread = vec![Value::U64(1), Value::U64(2)];
+        let (chain, graph) = guarded_spreading_world(spread.clone(), false);
+        let routing = routed(&graph, &chain);
+        assert_eq!(
+            routing.calls[0].args,
+            vec![CallArg::Run {
+                kind: CellKind::Write,
+                entries: Vec::new(),
+            }]
+        );
+
+        let (chain, graph) = guarded_spreading_world(spread, true);
+        let routing = routed(&graph, &chain);
+        assert_eq!(
+            routing.calls[0].args,
+            vec![CallArg::Run {
+                kind: CellKind::Write,
+                entries: vec![Some(0), Some(1)],
+            }]
+        );
+    }
+
     #[test]
     fn a_handle_names_a_clause_rather_than_a_table_position() {
         // The `for-each` ahead of the point clause expands over the

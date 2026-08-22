@@ -954,7 +954,10 @@ pub struct Declaration {
     /// An entry names the position in [`Declaration::ordered`] the
     /// expansion produced, and is absent where it produced none — the
     /// site's guard did not fire, or the body clause declares no access
-    /// of its own. Recorded rather than computed from
+    /// of its own. A top-level `for-each` files its rows whether or not
+    /// its *own* guard fired: one whose did not mapped over no elements,
+    /// so its rows are empty and a run over any of its sites covers
+    /// nothing. Recorded rather than computed from
     /// [`Declaration::clause_spans`]: the flattened order alone cannot
     /// say which element or which site produced an entry, and a stride
     /// over it would be wrong the moment two sites are guarded
@@ -1189,6 +1192,16 @@ fn eval_clauses(
             out.clause_taken.push(taken);
         }
         if !taken {
+            // A loop whose guard did not fire mapped over no elements,
+            // which is the expansion it has: a run of none rather than
+            // no run, so a binding that names it reads what a list of
+            // none leaves rather than refusing the call.
+            if let Clause::ForEach { body, .. } = clause
+                && budget.clause_depth == 0
+            {
+                out.expansions
+                    .insert(budget.clause, vec![Vec::new(); body.len()]);
+            }
             continue;
         }
         match clause {
@@ -2383,6 +2396,37 @@ mod tests {
         // A site the body does not have, and a clause that is not a loop.
         assert_eq!(declaration.run(0, 2), None);
         assert_eq!(declaration.run(1, 0), None);
+    }
+
+    #[test]
+    fn a_guarded_out_foreach_files_a_run_of_none() {
+        // The loop's own guard, not the body's: what it maps over is
+        // nothing, so every site over it covers nothing — a run of none
+        // rather than no run at all, which is what a binding naming it
+        // resolves through.
+        let args = [Value::List(vec![Value::U64(1), Value::U64(2)])];
+        let ins = inputs(&args, &[]);
+        let clauses = [Clause::ForEach {
+            guard: Some(Box::new(Expr::Literal(Value::Bool(false)))),
+            list: Expr::Arg(0),
+            body: vec![Clause::Effect {
+                guard: None,
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: SlotId(1),
+                    material: vec![Expr::Binding(0)],
+                }),
+                mode: ModeExpr::Write,
+                denomination: None,
+            }],
+        }];
+        let declaration = evaluate_declaration(&clauses, &ins, &TestHasher).unwrap();
+
+        assert_eq!(declaration.clause_taken, vec![false]);
+        assert!(declaration.ordered.is_empty());
+        assert_eq!(declaration.run(0, 0), Some([].as_slice()));
+        // And still nothing for a site the body does not have.
+        assert_eq!(declaration.run(0, 1), None);
     }
 
     #[test]
