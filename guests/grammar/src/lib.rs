@@ -40,6 +40,12 @@ pub mod grammar {
         /// The windows a walk over this instance's logs maps over,
         /// each naming a sub-collection of its own.
         windows: Vec<u64>,
+        /// The marks whose instances this instance custodies.
+        ///
+        /// Another instance's, necessarily: a mark derives from the
+        /// address of whoever issues it, and this record is sealed
+        /// before this instance has one.
+        marks: Vec<ResourceAddr>,
         /// The resources a survey of this instance's vaults walks.
         ///
         /// A second list, because a vault is keyed by what it holds: a
@@ -389,6 +395,27 @@ pub mod grammar {
         /// a term is the declaration's loop rather than the guest's.
         pub fn widest(&mut self) {
             self.noted.set(largest(&self.config().windows));
+        }
+
+        /// File the instances an edge carries into this instance's own
+        /// holdings.
+        pub fn stow(&mut self, instances: NfBucket) {
+            self.holdings(instances.resource()).all().file(instances);
+        }
+
+        /// Every configured mark's instances, taken out of custody and
+        /// filed back into it.
+        ///
+        /// The one interval mode that moves value: a holdings interval
+        /// is narrowed by the resource whose instances it holds, so a
+        /// walk over the configured marks is a family of them. The take
+        /// and the file at one site are one clause, and the cap the
+        /// declaration derives is the walk those moves perform.
+        pub fn restow(&mut self, ids: Ids) {
+            for &mark in &self.config().marks {
+                let held = self.holdings(mark).all().take(ids.clone());
+                self.holdings(mark).all().file(held);
+            }
         }
 
         /// A method that hands back an ordinary value.

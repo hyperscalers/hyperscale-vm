@@ -3756,6 +3756,17 @@ impl<'a> Lowerer<'a> {
                         code: Code::Term(counted),
                     }
                 }
+                // A clone is the value it was taken from: what a term
+                // names does not change by being copied, and value —
+                // which could not be copied and still be value — is not
+                // `Clone`, so nothing linear reaches here. The emission
+                // writes this expression from the term either way, so
+                // the copy the author needed to satisfy the borrow
+                // checker is not one the guest half repeats.
+                "clone" if evals.is_empty() => Eval {
+                    val: Val::Term(term.clone()),
+                    code: Code::Term(term),
+                },
                 "lookup" | "get" | "contains" if matches!(args.first(), Some(Val::Term(_))) => {
                     let Some(Val::Term(key)) = args.first() else {
                         return Eval::absent(call.span(), "a lookup with no key");

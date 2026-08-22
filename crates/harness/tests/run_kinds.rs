@@ -1,4 +1,4 @@
-//! Which run kinds the corpus reaches, held to a list.
+//! Which run kinds the corpus lends, held to a list.
 //!
 //! Nine resources were built and a missed one is a runtime refusal
 //! rather than a build failure: the world names every kind whether or
@@ -9,7 +9,8 @@
 //!
 //! The list is a floor and a ceiling both. A kind that drops off it is
 //! coverage lost; a kind that appears on it is a fixture nobody wrote
-//! down here.
+//! down here. It is every kind there is, so the floor is the whole
+//! world.
 
 use std::collections::BTreeSet;
 
@@ -46,7 +47,7 @@ fn reached() -> BTreeSet<&'static str> {
 }
 
 #[test]
-fn the_corpus_lends_every_run_kind_a_body_can_reach() {
+fn the_corpus_lends_every_run_kind_there_is() {
     let reached = reached();
     let expected = BTreeSet::from([
         CellKind::Read.run_type(),
@@ -57,26 +58,7 @@ fn the_corpus_lends_every_run_kind_a_body_can_reach() {
         CellKind::Reserve.run_type(),
         CellKind::RangeRead.run_type(),
         CellKind::RangeWrite.run_type(),
+        CellKind::InstanceRange.run_type(),
     ]);
     assert_eq!(reached, expected, "the run kinds the corpus lends moved");
-}
-
-#[test]
-fn a_holdings_interval_is_the_one_kind_no_body_reaches() {
-    // Not an omission. `InstanceRange` is an interval that moves value,
-    // and the only one is `holdings(resource)` — a package cannot
-    // declare a collection of instances of its own. So a run over one
-    // needs a value-moving clause per element, and both directions are
-    // closed: a take names ids that must be derivable from the method's
-    // arguments, and a file carries an edge the interval's cap is
-    // derived from, which a body-produced bucket is not. A method has a
-    // fixed argument list, so one edge cannot serve every element.
-    //
-    // What would open it is narrow: letting a file derive its cap from a
-    // take of the same derivable ids at the same site. That is a change
-    // to how the cap is derived, not a fixture nobody has written.
-    assert!(
-        !reached().contains(CellKind::InstanceRange.run_type()),
-        "a body reaches the holdings interval now — the reasoning above is stale",
-    );
 }

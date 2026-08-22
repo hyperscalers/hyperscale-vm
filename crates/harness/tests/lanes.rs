@@ -52,6 +52,7 @@ fn terms() -> grammar::Terms {
         sides: vec![principal(0x51).into(), principal(0x52).into()],
         windows: vec![1, 2],
         assets: vec![X, Y],
+        marks: Vec::new(),
     }
 }
 
@@ -763,6 +764,7 @@ fn a_configured_sequence_crosses_as_its_numbers_in_both_lanes() {
                 sides: Vec::new(),
                 windows: Vec::new(),
                 assets: Vec::new(),
+                marks: Vec::new(),
             },
         );
         chain
@@ -789,6 +791,81 @@ fn a_configured_sequence_crosses_as_its_numbers_in_both_lanes() {
     );
 }
 
+/// A run over holdings intervals, in both lanes.
+///
+/// The one interval mode that moves value, and the only interval that
+/// wears it: a holder's instances per resource. A walk over the marks a
+/// custodian was configured with is a family of those, so what the take
+/// and the file at one site declare is a clause per mark — and the cap
+/// is the walk the moves themselves perform.
+#[test]
+fn a_run_over_holdings_moves_instances_in_both_lanes() {
+    let ids = [3u64, 4];
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        // Two issuers, because a mark derives from the address of
+        // whoever issues it: a custodian's configured marks are always
+        // somebody else's.
+        let issuers = [0x61u8, 0x62].map(|salt| {
+            let mut terms = terms();
+            terms.fallback = u64::from(salt);
+            chain.instantiate::<grammar::Grammar>(ALICE, terms)
+        });
+        let marks: Vec<_> = issuers
+            .iter()
+            .map(|issuer| issuer.issued_seat(&TestHasher))
+            .collect();
+        let custodian = chain.instantiate::<grammar::Grammar>(
+            ALICE,
+            grammar::Terms {
+                marks: marks.clone(),
+                ..terms()
+            },
+        );
+
+        for (issuer, mark) in issuers.iter().zip(&marks) {
+            for id in ids {
+                chain
+                    .transact(ALICE, |b| {
+                        let minted = issuer.seat(b, id, 1)?;
+                        account::deposit_nf(b, ALICE, minted)
+                    })
+                    .expect_completed();
+            }
+            chain
+                .transact(ALICE, |b| {
+                    let signed_in = account::authorize(b, ALICE)?;
+                    let edge = account::withdraw_nf(b, signed_in, *mark, &ids)?;
+                    custodian.stow(b, edge)
+                })
+                .expect_completed();
+        }
+        let held = |chain: &Chain| {
+            marks
+                .iter()
+                .flat_map(|mark| ids.map(|id| chain.holds(custodian, *mark, id)))
+                .collect::<Vec<_>>()
+        };
+        let stowed = held(&chain);
+        chain
+            .transact(ALICE, |b| custodian.restow(b, &ids))
+            .expect_completed();
+        (stowed, held(&chain))
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    let (stowed, restowed) = native;
+    assert_eq!(stowed, vec![true; 4], "every instance filed into custody");
+    assert_eq!(
+        restowed,
+        vec![true; 4],
+        "and every one filed back by its own mark"
+    );
+}
+
 /// A loop over a list of one and a list of none, in both lanes.
 ///
 /// The width is the instance's, so the two edges of it are two
@@ -806,6 +883,7 @@ fn a_run_covers_a_list_of_one_and_a_list_of_none_in_both_lanes() {
                 sides: vec![principal(0x51).into()],
                 windows: vec![1],
                 assets: vec![X],
+                marks: Vec::new(),
             },
         );
         let none = chain.instantiate::<grammar::Grammar>(
@@ -816,6 +894,7 @@ fn a_run_covers_a_list_of_one_and_a_list_of_none_in_both_lanes() {
                 sides: Vec::new(),
                 windows: Vec::new(),
                 assets: Vec::new(),
+                marks: Vec::new(),
             },
         );
         chain
