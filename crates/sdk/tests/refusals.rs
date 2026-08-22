@@ -20,6 +20,8 @@ fn the_lowering_refuses_what_it_cannot_see_into() {
     refuse.compile_fail("tests/refusals/self_escape.rs");
     refuse.compile_fail("tests/refusals/closure.rs");
     refuse.compile_fail("tests/refusals/unwalkable_macro.rs");
+    refuse.compile_fail("tests/refusals/nested_loop.rs");
+    refuse.compile_fail("tests/refusals/looped_instance_walk.rs");
     refuse.compile_fail("tests/refusals/untyped_credit.rs");
 }
 

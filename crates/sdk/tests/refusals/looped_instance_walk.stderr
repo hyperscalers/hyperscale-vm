@@ -1,0 +1,5 @@
+error: this reaches every instance the edge carries, which is a `for-each` of its own — and a run covers one site of one loop, so it cannot sit inside another
+  --> tests/refusals/looped_instance_walk.rs:25:29
+   |
+25 |                 for held in Seat::each(&seats) {
+   |                             ^^^^

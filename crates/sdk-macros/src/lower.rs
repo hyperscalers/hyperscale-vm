@@ -4492,6 +4492,31 @@ mod tests {
     }
 
     #[test]
+    fn a_leaf_escaping_one_loop_leaves_its_sibling_guarded() {
+        // A cell reached under two conditions is declared always, and
+        // that is a fact about the leaf rather than about the way a body
+        // spells it: the first loop reaches its element's leaf both under
+        // a guard and outside one, so its clause is unconditional — and
+        // the second loop, whose element is spelled the same and whose
+        // leaf is not the same, keeps the guard it was written under.
+        let lowered = lowered(
+            "{ for &side in &self.config().sides { \
+               if side == 1 { self.owed.at(side).set(1); } self.owed.at(side).set(2); } \
+               for &other in &self.config().others { \
+               if other == 1 { self.owed.at(other).set(3); } } }",
+        );
+        assert_eq!(lowered.sites.len(), 2, "one site per loop");
+        assert!(
+            lowered.sites[0].guard.is_none(),
+            "the leaf the first loop reaches twice is declared always",
+        );
+        assert!(
+            lowered.sites[1].guard.is_some(),
+            "and the second loop's is declared under its own condition",
+        );
+    }
+
+    #[test]
     fn a_loop_inside_a_loop_is_refused() {
         // Hard rather than wasm-only: the inner site's width is the outer
         // element's, so there is no parameter it could occupy and no
