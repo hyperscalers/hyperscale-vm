@@ -15,7 +15,7 @@ Start with the overview; it tells the whole story in three pages and links down.
 | [01-effects-and-routing.md](01-effects-and-routing.md) | Effect signatures, the access DSL, the mode lattice, locked reads, range effects, capability enforcement, `route()`, the transaction envelope, and where a declaration comes from — authoring, and the one publish gate |
 | [02-manifests-and-intents.md](02-manifests-and-intents.md) | The typed dataflow manifest: nodes, edges, linearity, constraints — and subintents as separately-signed sub-graphs |
 | [03-objects-and-state.md](03-objects-and-state.md) | Structural ownership, canonical addresses, substate layout, the storage bond, onboarding, the no-singleton rule, and value linearity and conservation |
-| [04-execution-semantics.md](04-execution-semantics.md) | Deterministic parallel execution: conflict groups, canonical order, the transaction clock and randomness, the abort taxonomy, and the fee quantities |
+| [04-execution-semantics.md](04-execution-semantics.md) | Deterministic parallel execution: conflict groups, canonical order, the transaction clock and the sealed draw, the abort taxonomy, and the fee quantities |
 | [05-runtime.md](05-runtime.md) | The Component Model host: the frozen deterministic profile, the blessed engine and the reference interpreter, the host surface, authentication, and the encodings |
 | [06-authority.md](06-authority.md) | What a proof carries, thresholds over claims, the five method gates, presence at admission versus satisfaction at execution, and choosing between a badge and a stored rule |
 | [07-stdlib-and-upgrades.md](07-stdlib-and-upgrades.md) | The two-tier package rule, the migration pattern, co-location, and the stdlib inventory |

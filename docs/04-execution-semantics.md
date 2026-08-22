@@ -10,15 +10,23 @@ With verified effect sets, parallelism needs no speculation. The kernel's batch 
 
 ## 2. No execution-position observability
 
-The schedule's soundness rests on one closure property: the only order-sensitive channels are declared effects, which the compatibility relation forces into conflicts that canonical order then resolves identically everywhere. The environment therefore never leaks schedule position — no intra-block index, no "transactions before me," no per-execution entropy beyond the transaction-hash-derived draw. Every environment addition is checked against this rule first. ID generation already respects it: fresh object IDs hash the signed envelope and the call site's position, with no allocation counter, so uniqueness needs no coordination and no sequencing.
+The schedule's soundness rests on one closure property: the only order-sensitive channels are declared effects, which the compatibility relation forces into conflicts that canonical order then resolves identically everywhere. The environment therefore never leaks schedule position — no intra-block index, no "transactions before me," no per-execution entropy at all — a draw is a function of a commitment the package made earlier. Every environment addition is checked against this rule first. ID generation already respects it: fresh object IDs hash the signed envelope and the call site's position, with no allocation counter, so uniqueness needs no coordination and no sequencing.
 
-## 3. The transaction clock and randomness
+## 3. The transaction clock and the sealed draw
 
 Replicated execution forces a single clock value per transaction: every participant computes the same receipt, so a component can never read "its own shard's" time. The clock is **the canonical weighted-time anchor of the payer-shard block that committed the transaction** — available at exactly the right moment on both sides: locally the anchor exists at the instant of commit, and remotely it rides the commit proof every non-payer participant already requires before engaging ([08-host-integration.md](08-host-integration.md) §2). Single-shard transactions degenerate cleanly, and application-visible time is coherent with the finalization deadline, which anchors on the same instant.
 
 The monotonicity contract is explicit: exact along one payer chain, approximate globally — successive transactions at one component may carry clocks from different payer chains, with regression bounded by the Byzantine skew envelope plus commit lag. Stdlib time arithmetic saturates ([07-stdlib-and-upgrades.md](07-stdlib-and-upgrades.md)), so applications never see negative elapsed time.
 
-Randomness is the same shape: the payer block's attested randomness, domain-separated per transaction with the draw keyed on the transaction hash — per-transaction committed content, identical on every participant, revealing nothing about schedule position.
+Randomness is not the same shape, and the difference is the point. A clock a transaction carries is a fact about that transaction; a *draw* a transaction carries is a value the proposer of its committing block chooses. A shard reveal is a deterministic VRF over `(shard, height)`, so a validator holds every reveal it will ever produce; the block's chain folds its own, and the transaction hash is the only other input. That leaves a proposer free to grind hashes against a reveal it already holds and include the variant it likes. There is no execution-side fix for that, because the value exists before the ordering does.
+
+A draw is therefore **sealed rather than carried**. A package writes a seal into a cell of its own, recording the epoch it was written in; the draw that seal opens onto is `H(domain ‖ the beacon's seed for that epoch plus the protocol's maturity ‖ the cell's own key)`. Every input is committed state or a value the beacon rolled after the sealing committed. Nothing about the attempt that reads it enters — not its hash, not its sender, not the block that carries it — so two attempts at one seal answer alike, and abandoning one, running it out of fuel, or resubmitting it gains nothing.
+
+The seed is the beacon's own, the same value that samples committees: a network whose randomness is not good enough to pick a winner is a network whose randomness is not good enough to pick the committee securing the shard. What an adversary can still do to it is the window edge priced in the committee-security analysis — a blind reroll at the cost of a missed proposal. That sets the bound a package should be read against: **a draw is worth biasing when what it decides exceeds the cost of a missed proposal.**
+
+Maturity is two epochs, so no part of the seed exists when the seal is written. A settlement before then declines and settles later; one past the retained window declines for good and the round closes again. Both are the package's own refusals rather than traps.
+
+Nothing reads the current epoch's seed. A seed is public the moment it rolls, and so is every word derived from it, so a body that could read one would be reading a value anyone could grind their own inputs against for the length of an epoch.
 
 ## 4. Abort taxonomy
 
@@ -48,7 +56,7 @@ Five priced quantities, all deterministic:
 
 ## 6. Static gas bounds
 
-Block budgeting runs on declared limits because determinism gives replay exactness and certificate-attested actuals, never proposal-time exactness: static access fixes which keys are touched, not value-dependent control flow, and a cross-shard transaction cannot be pre-executed at proposal — its provisions do not exist yet. Where cost *is* decidable, it is verified rather than declared: a method whose control flow is independent of **state values** carries a deploy-verified static gas bound in its effect metadata. Environment inputs — the transaction clock, attested randomness — count as exact-class inputs, so vesting-style time arithmetic stays in the exact tier. For that class the declared limit is the computed bound: no estimation, no slack, no griefing surface. The pipeline-occupancy price disciplines only the residual value-dependent class.
+Block budgeting runs on declared limits because determinism gives replay exactness and certificate-attested actuals, never proposal-time exactness: static access fixes which keys are touched, not value-dependent control flow, and a cross-shard transaction cannot be pre-executed at proposal — its provisions do not exist yet. Where cost *is* decidable, it is verified rather than declared: a method whose control flow is independent of **state values** carries a deploy-verified static gas bound in its effect metadata. Environment inputs — the transaction clock, the epoch, a matured seal's draw — count as exact-class inputs, so vesting-style time arithmetic stays in the exact tier. For that class the declared limit is the computed bound: no estimation, no slack, no griefing surface. The pipeline-occupancy price disciplines only the residual value-dependent class.
 
 ## 7. MEV posture
 
