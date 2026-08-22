@@ -434,6 +434,14 @@ pub enum Op {
     /// leaf that must be. The second declares it and reads nothing; the
     /// third reads a seal and resolves the draw it matured into.
     Existing,
+    /// `vacant()` — a fresh read requiring the leaf absent, reading
+    /// nothing from it.
+    ///
+    /// The read-side presence. A body gating a commutative operation on
+    /// a fact needs one: a presence carried by the exclusive mode would
+    /// make every caller queue behind every other, which is a different
+    /// operation from the one being gated.
+    Vacant,
 }
 
 impl Op {
@@ -447,6 +455,7 @@ impl Op {
             "set" | "insert" | "remove" => Some(Self::Set),
             "create" => Some(Self::Create),
             "existing" | "exclusive" | "open" => Some(Self::Existing),
+            "vacant" => Some(Self::Vacant),
             _ => None,
         }
     }

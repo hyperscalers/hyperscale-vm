@@ -1102,7 +1102,26 @@ impl Access<'_, Leaf> {
         self.require(Presence::Present);
     }
 
-    fn require(self, presence: Presence) {
+    /// A fresh read, feasible only where the leaf is absent — and
+    /// reading nothing from it.
+    ///
+    /// The read-side presence, and the reason it exists is contention: a
+    /// requirement carried by the exclusive mode makes every caller
+    /// queue behind every other, so a body gating a commutative
+    /// operation on a fact would stop being commutative by saying so.
+    /// A fresh read excludes nobody and still cannot be admitted where
+    /// the leaf is there.
+    pub fn vacant(mut self) {
+        self.presence(Presence::Absent);
+        self.declare(ModeExpr::Read);
+    }
+
+    fn require(mut self, presence: Presence) {
+        self.presence(presence);
+        self.declare(ModeExpr::Write);
+    }
+
+    fn presence(&mut self, presence: Presence) {
         self.trace.emit(Clause::Requires {
             guard: None,
             condition: ConditionExpr::Holds {
@@ -1110,7 +1129,6 @@ impl Access<'_, Leaf> {
                 presence,
             },
         });
-        self.declare(ModeExpr::Write);
     }
 }
 

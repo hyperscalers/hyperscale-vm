@@ -240,7 +240,7 @@ use hyperscale_vm_types::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_E
 /// Its own tag because the digest it produces is not the protocol hash
 /// of anything a package could also ask for: a body that could compute
 /// its own draw from parts it holds would not need the seal.
-const DOMAIN_SEALED_DRAW: &[u8] = b"hyperscale/vm/sealed-draw";
+pub const DOMAIN_SEALED_DRAW: &[u8] = b"hyperscale/vm/sealed-draw";
 
 /// The deterministic environment a transaction executes under.
 #[derive(Clone, Debug)]

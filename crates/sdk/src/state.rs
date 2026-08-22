@@ -824,6 +824,19 @@ impl<T: Record> Cell<Option<T>> {
         unimplemented!("{OFF_HOST}")
     }
 
+    /// Declare this leaf read and required absent, and read nothing
+    /// from it.
+    ///
+    /// What gates an operation on something not having happened yet.
+    /// [`Cell::exclusive`] would say the same about presence and hold
+    /// the leaf while it did — so every caller of a commutative method
+    /// would queue behind every other, which is a different method from
+    /// the one being gated. A fresh read excludes nobody.
+    #[inline(always)]
+    pub fn vacant(&self) {
+        unimplemented!("{OFF_HOST}")
+    }
+
     /// Declare this leaf held exclusively and present, and read nothing
     /// from it.
     ///
@@ -1049,6 +1062,13 @@ impl<T: Record> Slot<Option<T>> {
     #[inline(always)]
     #[allow(clippy::unused_self)] // the clause is the whole of it
     pub const fn exclusive(&self) {}
+
+    /// Declare this leaf read and required absent, on the terms
+    /// [`Cell::vacant`] states — and, like the clause above, run
+    /// nowhere.
+    #[inline(always)]
+    #[allow(clippy::unused_self)] // the clause is the whole of it
+    pub const fn vacant(&self) {}
 }
 
 /// What a cell holding a seal offers beyond an ordinary record's cell.

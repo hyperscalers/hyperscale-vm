@@ -1,18 +1,18 @@
-//! The lottery end to end on both runtimes: the draw settles on the
-//! entrant the transaction's randomness picks.
+//! The lottery end to end on both runtimes: a round closes on a seal
+//! and settles on the entrant the sealed draw picks.
 
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{Hash32, TestHasher, Value, child_key, collection_id, order_key};
 use hyperscale_vm_fixtures::lottery;
-use hyperscale_vm_harness::driver::{amount_of, vault};
-use hyperscale_vm_kernel::{MemoryStore, Substates};
+use hyperscale_vm_harness::driver::{amount_of, test_hash, vault};
+use hyperscale_vm_kernel::{DOMAIN_SEALED_DRAW, MemoryStore, Substates};
 use hyperscale_vm_sdk::hbor::from_slice;
 use hyperscale_vm_sdk::state::Word;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    CollectionId, EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition,
-    encode_amount,
+    CollectionId, EffectTarget, Outcome, Presence, PrincipalAddr, SubstateKey, TxHash,
+    UnmetCondition, encode_amount,
 };
 
 mod common;
@@ -34,6 +34,23 @@ fn ticket_order(who: PrincipalAddr) -> u128 {
     )
 }
 
+/// The cell holding the round's seal.
+fn round_cell() -> SubstateKey {
+    child_key(&TestHasher, lottery_addr(), lottery::ROUND, &[])
+}
+
+/// The word a round sealed in this lane's epoch opens onto, built here
+/// from the preimage the kernel states rather than read back from what
+/// the guest wrote — so a change to the derivation fails here rather
+/// than agreeing with itself.
+fn sealed_word() -> Word {
+    let mut preimage = Vec::new();
+    preimage.extend_from_slice(DOMAIN_SEALED_DRAW);
+    preimage.extend_from_slice(&MATURED_SEED);
+    preimage.extend_from_slice(&round_cell().to_bytes());
+    Word::from_protocol(&test_hash(&preimage))
+}
+
 /// The lottery's settled-round cell.
 /// The settled round, decoded through the package's own type — so what
 /// this reads back is what that package says it wrote, rather than a
@@ -52,20 +69,20 @@ fn draw_cell(store: &MemoryStore) -> Option<Vec<u8>> {
     ))
 }
 
-/// Randomness reaching a guest, on both runtimes: two entries and a
-/// draw that settles on one of them.
+/// A sealed draw reaching a guest, on both runtimes: two entries, a
+/// close, and a settlement on one of them.
 ///
 /// What the result cell holds is the draw itself beside the winner, and
-/// the draw is asserted to be the environment's — the whole property the
-/// package exists to witness, since a winner is only as unchosen as the
-/// value that picked it.
+/// the draw is asserted to be the one the round's seal commits to — the
+/// whole property the package exists to witness, since a winner is only
+/// as unchosen as the value that picked it.
 ///
 /// The winning index is re-derived here from the entrants' hash order
 /// rather than read back from the guest, so the assertion is an
 /// independent computation of who should have won and not a restatement
 /// of what did.
 #[test]
-fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
+fn the_round_settles_on_the_entrant_its_sealed_draw_picks() {
     let world = world();
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
@@ -78,17 +95,25 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
             lottery_addr().enter(b, who, funds)
         })
     };
-    let draw = graph(|b| lottery_addr().draw(b, u64::from(lottery::ROUND_CAP)));
+    let close = graph(|b| lottery_addr().close(b));
+    let settle = graph(|b| lottery_addr().settle(b, u64::from(lottery::ROUND_CAP)));
 
-    // The empty round: nobody has entered, and the draw still settles —
+    // The empty round: nobody has entered, and it still settles —
     // recording what it drew and naming no winner. Its own branch of the
     // store, because a round settles once and a settled one is settled.
-    let (results, empty_store) = run_both(&world, &store, &[(&draw, TxHash(Hash32([0x60; 32])))]);
-    assert!(matches!(results[0], TxResult::Completed(_)));
+    let (results, empty_store) = run_both(
+        &world,
+        &store,
+        &[
+            (&close, TxHash(Hash32([0x5F; 32]))),
+            (&settle, TxHash(Hash32([0x60; 32]))),
+        ],
+    );
+    assert!(results.iter().all(|r| matches!(r, TxResult::Completed(_))));
     assert_eq!(
         settled_round(&empty_store),
         Some(lottery::Outcome {
-            draw: Word::from_protocol(&env().randomness),
+            draw: sealed_word(),
             winner: None,
         }),
         "an unentered round records its draw and no winner"
@@ -100,7 +125,8 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
         &[
             (&enter(ALICE, 100), TxHash(Hash32([0x61; 32]))),
             (&enter(BOB, 40), TxHash(Hash32([0x62; 32]))),
-            (&draw, TxHash(Hash32([0x63; 32]))),
+            (&close, TxHash(Hash32([0x63; 32]))),
+            (&settle, TxHash(Hash32([0x64; 32]))),
         ],
     );
     assert!(results.iter().all(|r| matches!(r, TxResult::Completed(_))));
@@ -130,13 +156,13 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
         both.sort_by_key(|who| ticket_order(*who));
         both.to_vec()
     };
-    let seed = u128::from_le_bytes(env().randomness[..16].try_into().unwrap());
-    let expected = ascending[(seed % 2) as usize];
+    let reduced = u128::from_le_bytes(sealed_word().as_bytes()[..16].try_into().unwrap());
+    let expected = ascending[(reduced % 2) as usize];
 
     assert_eq!(
         settled_round(&store),
         Some(lottery::Outcome {
-            draw: Word::from_protocol(&env().randomness),
+            draw: sealed_word(),
             winner: Some(expected.address()),
         }),
         "the round settles on the draw and the entrant it selects"
@@ -144,15 +170,14 @@ fn the_draw_settles_on_the_entrant_the_transactions_randomness_picks() {
 }
 
 /// A settled round is settled. The outcome is written where nothing
-/// was, so a second draw over the same round is infeasible and the
-/// kernel says so before the guest runs.
+/// was, so a second settlement is infeasible and the kernel says so
+/// before the guest runs.
 ///
-/// The property this holds up is not tidiness. Every attempt at a draw
-/// is its own transaction and the draw follows the transaction, so
-/// without the door a loser re-draws until they win, at the price of a
-/// page each time.
+/// The seal already makes re-settling pointless — every attempt opens
+/// the same word — so this is the second half of the same argument: not
+/// only does a loser gain nothing by trying again, they cannot try.
 #[test]
-fn a_settled_round_refuses_a_second_draw() {
+fn a_settled_round_refuses_a_second_settlement() {
     let world = world();
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
@@ -162,20 +187,22 @@ fn a_settled_round_refuses_a_second_draw() {
         let funds = account::withdraw(b, proof, RES_X, 100)?;
         lottery_addr().enter(b, ALICE, funds)
     });
-    let draw = graph(|b| lottery_addr().draw(b, u64::from(lottery::ROUND_CAP)));
+    let close = graph(|b| lottery_addr().close(b));
+    let settle = graph(|b| lottery_addr().settle(b, u64::from(lottery::ROUND_CAP)));
 
     let (results, store) = run_both(
         &world,
         &store,
         &[
             (&enter, TxHash(Hash32([0x80; 32]))),
-            (&draw, TxHash(Hash32([0x81; 32]))),
+            (&close, TxHash(Hash32([0x81; 32]))),
+            (&settle, TxHash(Hash32([0x82; 32]))),
         ],
     );
     assert!(results.iter().all(|r| matches!(r, TxResult::Completed(_))));
     let settled = settled_round(&store).expect("the round settled");
 
-    let (results, after) = run_both(&world, &store, &[(&draw, TxHash(Hash32([0x82; 32])))]);
+    let (results, after) = run_both(&world, &store, &[(&settle, TxHash(Hash32([0x83; 32])))]);
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
@@ -189,25 +216,25 @@ fn a_settled_round_refuses_a_second_draw() {
                 required: Presence::Absent,
             },
         })],
-        "a round that has a winner cannot be drawn again"
+        "a round that has a winner cannot be settled again"
     );
     assert_eq!(
         settled_round(&after),
         Some(settled),
-        "the refused draw left the round it found"
+        "the refused settlement left the round it found"
     );
 }
 
-/// The page a draw reads is the caller's choice, and the caller's bill:
-/// one method, two calls, two caps — priced apart by exactly the entries
-/// the larger page may walk.
+/// The page a settlement reads is the caller's choice, and the caller's
+/// bill: one method, two calls, two caps — priced apart by exactly the
+/// entries the larger page may walk.
 #[test]
-fn the_same_draw_at_two_caps_is_priced_apart() {
+fn the_same_settlement_at_two_caps_is_priced_apart() {
     use hyperscale_vm_effects::{DEPTH_UNITS, footprint};
 
     let world = world();
     let declared = |cap: u64| {
-        let graph = graph_in(&world, |b| lottery_addr().draw(b, cap));
+        let graph = graph_in(&world, |b| lottery_addr().settle(b, cap));
         sharded_routing(&world, &graph)
             .per_shard
             .values()
@@ -218,12 +245,13 @@ fn the_same_draw_at_two_caps_is_priced_apart() {
     assert_eq!(larger - page, DEPTH_UNITS * (640 - 64));
 }
 
-/// No constant stands between a caller and the page a draw reads: a cap
-/// past the old publish-time ceiling admits, executes on both runtimes,
-/// and settles on the same entrant a page-sized draw would have —
-/// bounded by what the caller paid for, not by a number nobody chose.
+/// No constant stands between a caller and the page a settlement reads:
+/// a cap past the old publish-time ceiling admits, executes on both
+/// runtimes, and settles on the same entrant a page-sized walk would
+/// have — bounded by what the caller paid for, not by a number nobody
+/// chose.
 #[test]
-fn a_draw_buys_a_page_past_any_ceiling() {
+fn a_settlement_buys_a_page_past_any_ceiling() {
     let world = world();
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
@@ -233,21 +261,23 @@ fn a_draw_buys_a_page_past_any_ceiling() {
         let funds = account::withdraw(b, proof, RES_X, 100)?;
         lottery_addr().enter(b, ALICE, funds)
     });
-    let draw = graph(|b| lottery_addr().draw(b, 5_000));
+    let close = graph(|b| lottery_addr().close(b));
+    let settle = graph(|b| lottery_addr().settle(b, 5_000));
 
     let (results, store) = run_both(
         &world,
         &store,
         &[
             (&enter, TxHash(Hash32([0x70; 32]))),
-            (&draw, TxHash(Hash32([0x71; 32]))),
+            (&close, TxHash(Hash32([0x71; 32]))),
+            (&settle, TxHash(Hash32([0x72; 32]))),
         ],
     );
     assert!(results.iter().all(|r| matches!(r, TxResult::Completed(_))));
     assert_eq!(
         settled_round(&store),
         Some(lottery::Outcome {
-            draw: Word::from_protocol(&env().randomness),
+            draw: sealed_word(),
             winner: Some(ALICE.address()),
         }),
         "one entrant under a five-thousand-entry page still wins their own round"
@@ -260,7 +290,7 @@ fn a_draw_buys_a_page_past_any_ceiling() {
 /// to prove the walk complete. Every settled winner was therefore drawn
 /// over every ticket, at a cost that rises with the round.
 #[test]
-fn a_draw_declines_a_page_that_did_not_cover_the_round() {
+fn a_settlement_declines_a_page_that_did_not_cover_the_round() {
     let world = world();
     let mut store = sealed_store();
     for who in [ALICE, BOB] {
@@ -274,7 +304,8 @@ fn a_draw_declines_a_page_that_did_not_cover_the_round() {
             lottery_addr().enter(b, who, funds)
         })
     };
-    let draw_at = |cap: u64| graph(move |b| lottery_addr().draw(b, cap));
+    let close = graph(|b| lottery_addr().close(b));
+    let settle_at = |cap: u64| graph(move |b| lottery_addr().settle(b, cap));
 
     let (results, store) = run_both(
         &world,
@@ -282,18 +313,20 @@ fn a_draw_declines_a_page_that_did_not_cover_the_round() {
         &[
             (&enter(ALICE), TxHash(Hash32([0x80; 32]))),
             (&enter(BOB), TxHash(Hash32([0x81; 32]))),
+            (&close, TxHash(Hash32([0x82; 32]))),
             // A one-entry page over a two-ticket round leaves a ticket
             // unwalked, and the round declines.
-            (&draw_at(1), TxHash(Hash32([0x82; 32]))),
+            (&settle_at(1), TxHash(Hash32([0x83; 32]))),
             // A page exactly the round's size covers it: the kernel
             // probes past the page's last entry and finds nothing.
-            (&draw_at(2), TxHash(Hash32([0x83; 32]))),
+            (&settle_at(2), TxHash(Hash32([0x84; 32]))),
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));
     assert!(matches!(results[1], TxResult::Completed(_)));
-    assert_eq!(results[2], TxResult::Declined(lottery::ROUND_TRUNCATED));
-    assert!(matches!(results[3], TxResult::Completed(_)));
+    assert!(matches!(results[2], TxResult::Completed(_)));
+    assert_eq!(results[3], TxResult::Declined(lottery::ROUND_TRUNCATED));
+    assert!(matches!(results[4], TxResult::Completed(_)));
     assert!(
         settled_round(&store).is_some_and(|outcome| outcome.winner.is_some()),
         "the whole round settled on a winner"

@@ -686,7 +686,7 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
     // record is honest and derives the address it claims.
     let draw = || {
         calling(
-            "draw",
+            "settle",
             vec![GraphArg::Literal(Value::U64(8))],
             vec![meta.clone()],
         )
@@ -705,7 +705,7 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
     // admits carrying nothing at all.
     let mut sealed = chain.clone();
     sealed.instances.create(&TestHasher, meta.clone());
-    let bare = calling("draw", vec![GraphArg::Literal(Value::U64(8))], Vec::new());
+    let bare = calling("settle", vec![GraphArg::Literal(Value::U64(8))], Vec::new());
     assert!(admit_with(&bare, &sealed).is_ok());
 
     // A record presented beside a component the chain already holds is

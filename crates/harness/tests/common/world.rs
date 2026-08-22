@@ -22,7 +22,8 @@ use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     AbortReason, Address, CollectionId, ComponentAddr, Effect, EffectSet, EffectTarget, EntryKey,
-    Mode, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash,
+    Mode, Outcome, PrincipalAddr, ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey,
+    TxHash,
 };
 use wasmtime::Result;
 use wasmtime::error::{Context, ensure};
@@ -45,8 +46,25 @@ pub const BASE: ResourceAddr = ResourceAddr::new([0xE3; 31]);
 
 pub const QUOTE: ResourceAddr = ResourceAddr::new([0xE4; 31]);
 
-pub const fn env() -> EnvInputs {
-    EnvInputs::unsealed(5_000, [2; 32])
+/// The epoch every corpus transaction executes in, and therefore the
+/// epoch a seal written by one records.
+pub const EPOCH: u64 = 10;
+
+/// The seed a round sealed in [`EPOCH`] matures into.
+pub const MATURED_SEED: [u8; 32] = [0x5E; 32];
+
+/// The environment the corpus lane runs under: a clock, a draw, and one
+/// usable seed — the one a seal written now opens onto.
+pub fn env() -> EnvInputs {
+    EnvInputs {
+        clock_ms: 5_000,
+        epoch: EPOCH,
+        randomness: [2; 32],
+        seeds: SeedWindow::new(
+            BTreeMap::from([(EPOCH + SEAL_MATURITY_EPOCHS, MATURED_SEED)]),
+            Some(EPOCH + SEAL_MATURITY_EPOCHS),
+        ),
+    }
 }
 
 pub fn pkg(name: &str) -> PackageHash {
@@ -396,12 +414,8 @@ pub fn execute_manifest(
         "the null resolver routes to one shard"
     );
     let declaration = routing.declaration().clone();
-    let entry = BatchTx::new(
-        tx,
-        declaration,
-        EnvInputs::unsealed(clock_ms, env().randomness),
-    )
-    .with_calls(routing.calls);
+    let entry =
+        BatchTx::new(tx, declaration, EnvInputs { clock_ms, ..env() }).with_calls(routing.calls);
 
     let before = store.clone();
     // A presence requirement and a reservation are both judged here,
@@ -413,7 +427,7 @@ pub fn execute_manifest(
         OverlayStore::new(Arc::new(store)),
         &entry.declaration,
         tx,
-        EnvInputs::unsealed(clock_ms, env().randomness),
+        EnvInputs { clock_ms, ..env() },
         test_hash,
     ) {
         Ok(session) => session,

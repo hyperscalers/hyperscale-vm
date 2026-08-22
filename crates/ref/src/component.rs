@@ -2691,7 +2691,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::OpenSeal => {
-                        let rep = args[0].as_i32().cast_unsigned();
+                        let rep = self.resolve_handle(args[0], HandleKind::WriteCell)?;
                         let epoch = args[1].as_i64().cast_unsigned();
                         let drawn = meter::open_seal(
                             &mut MeterPort {

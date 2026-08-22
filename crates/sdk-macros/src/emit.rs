@@ -64,6 +64,9 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     if has(Op::Existing).is_some() {
         return Some((nothing, quote!(.existing())));
     }
+    if has(Op::Vacant).is_some() {
+        return Some((nothing, quote!(.vacant())));
+    }
 
     // The same order the resource derivation reads: an assignment or a
     // read makes the mode exclusive, and a movement without either

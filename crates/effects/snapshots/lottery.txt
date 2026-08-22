@@ -1,40 +1,13 @@
 PackageMetadata {
     methods: {
-        "draw": MethodSignature {
-            totality: Fallible,
+        "close": MethodSignature {
+            totality: Infallible,
             issues: None,
-            params: [
-                U64,
-            ],
+            params: [],
             outputs: [],
             answers: false,
             denominations: [],
             effects: [
-                Effect {
-                    guard: None,
-                    target: Range {
-                        owner: SelfAddr,
-                        collection: SlotId(
-                            16,
-                        ),
-                        material: [],
-                        lo: Literal(
-                            U64(
-                                0,
-                            ),
-                        ),
-                        hi: Literal(
-                            U128(
-                                340282366920938463463374607431768211455,
-                            ),
-                        ),
-                        cap: Arg(
-                            0,
-                        ),
-                    },
-                    mode: Read,
-                    denomination: None,
-                },
                 Requires {
                     guard: None,
                     condition: Holds {
@@ -67,10 +40,7 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    0,
-                ),
-                Handle(
-                    2,
+                    1,
                 ),
             ],
         },
@@ -85,6 +55,35 @@ PackageMetadata {
             answers: false,
             denominations: [],
             effects: [
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    17,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                17,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Read,
+                    denomination: None,
+                },
                 Effect {
                     guard: None,
                     target: Entry {
@@ -137,10 +136,13 @@ PackageMetadata {
             ],
             abi: [
                 Handle(
-                    0,
+                    1,
                 ),
                 Handle(
-                    1,
+                    2,
+                ),
+                Handle(
+                    3,
                 ),
                 Derived(
                     OrderKey {
@@ -212,13 +214,122 @@ PackageMetadata {
                 ),
             ],
         },
+        "settle": MethodSignature {
+            totality: Fallible,
+            issues: None,
+            params: [
+                U64,
+            ],
+            outputs: [],
+            answers: false,
+            denominations: [],
+            effects: [
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    17,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Present,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                17,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                    denomination: None,
+                },
+                Effect {
+                    guard: None,
+                    target: Range {
+                        owner: SelfAddr,
+                        collection: SlotId(
+                            16,
+                        ),
+                        material: [],
+                        lo: Literal(
+                            U64(
+                                0,
+                            ),
+                        ),
+                        hi: Literal(
+                            U128(
+                                340282366920938463463374607431768211455,
+                            ),
+                        ),
+                        cap: Arg(
+                            0,
+                        ),
+                    },
+                    mode: Read,
+                    denomination: None,
+                },
+                Requires {
+                    guard: None,
+                    condition: Holds {
+                        target: Point(
+                            ChildKey {
+                                owner: SelfAddr,
+                                slot: SlotId(
+                                    18,
+                                ),
+                                material: [],
+                            },
+                        ),
+                        presence: Absent,
+                    },
+                },
+                Effect {
+                    guard: None,
+                    target: Point(
+                        ChildKey {
+                            owner: SelfAddr,
+                            slot: SlotId(
+                                18,
+                            ),
+                            material: [],
+                        },
+                    ),
+                    mode: Write,
+                    denomination: None,
+                },
+            ],
+            abi: [
+                Handle(
+                    1,
+                ),
+                Handle(
+                    2,
+                ),
+                Handle(
+                    4,
+                ),
+            ],
+        },
     },
     events: [
         "entered",
-        "drawn",
+        "closed",
+        "settled",
     ],
     errors: [
         "round-truncated",
+        "not-yet-drawn",
+        "seal-lapsed",
     ],
     roles: [],
 }

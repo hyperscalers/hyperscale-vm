@@ -11,9 +11,9 @@
 //! bytes are what the sources build, which is what makes the sources
 //! trustworthy as documentation of the blobs.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
-use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, Value, child_key,
     collection_id, order_key,
@@ -23,16 +23,17 @@ use hyperscale_vm_harness::dual::DualGuest;
 #[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
-    Capability, EnvInputs, Held, Interval, KernelSession, MemoryStore, OverlayStore, Receipt,
+    Capability, DOMAIN_SEALED_DRAW, EnvInputs, Interval, KernelSession, MemoryStore, OverlayStore,
+    Receipt,
 };
 use hyperscale_vm_ref::{CVal, HandleKind};
 use hyperscale_vm_runtime::validate_component;
 use hyperscale_vm_sdk::hbor::to_vec;
-use hyperscale_vm_sdk::state::Word;
+use hyperscale_vm_sdk::state::{Seal, Word};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Movement,
-    ResourceAddr, SubstateKey, TxHash, encode_amount,
+    ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::Context;
@@ -350,9 +351,28 @@ const LOTTERY: Address = Address::new([4; 31], AddressClass::Component);
 /// The entrant whose ticket the round holds.
 const ENTRANT: Address = Address::new([5; 31], AddressClass::Component);
 
-/// The lottery's settled-round cell and its entrants collection.
+/// The lottery's settled-round cell, the cell holding its seal, and its
+/// entrants collection.
 fn draw_key() -> SubstateKey {
     child_key(&TestHasher, LOTTERY, lottery::OUTCOME, &[])
+}
+
+fn round_key() -> SubstateKey {
+    child_key(&TestHasher, LOTTERY, lottery::ROUND, &[])
+}
+
+/// The epoch the round below was sealed in, and the seed it opens onto.
+const SEALED_AT: u64 = 40;
+const MATURED_SEED: [u8; 32] = [0x5E; 32];
+
+/// The word that seal opens to, built from the preimage the kernel
+/// states rather than read back from what the guest wrote.
+fn sealed_word() -> Word {
+    let mut preimage = Vec::new();
+    preimage.extend_from_slice(DOMAIN_SEALED_DRAW);
+    preimage.extend_from_slice(&MATURED_SEED);
+    preimage.extend_from_slice(&round_key().to_bytes());
+    Word::from_protocol(&test_hash(&preimage))
 }
 
 fn ticket_collection() -> CollectionId {
@@ -368,22 +388,31 @@ fn ticket_order() -> u128 {
     )
 }
 
-/// A session over one entered round: the ticket entry, the pot, the
-/// result cell, and the interval a draw reads.
+/// A store holding a closed round: the seal the settlement opens, and
+/// one entrant's ticket for it to select.
+fn closed_round() -> MemoryStore {
+    let mut store = MemoryStore::new();
+    store.write(
+        round_key(),
+        to_vec(&Seal { epoch: SEALED_AT }).expect("a seal encodes"),
+    );
+    store.entry_write(
+        LOTTERY,
+        ticket_collection(),
+        ticket_order(),
+        ENTRANT.to_bytes().to_vec(),
+    );
+    store
+}
+
+/// A session over one closed round: the seal, the result cell, and the
+/// interval a settlement reads.
 fn lottery_session() -> KernelSession {
     let mut declared = EffectSet::new();
     for effect in [
         Effect {
-            target: EffectTarget::Entry {
-                owner: LOTTERY,
-                collection: ticket_collection(),
-                order: ticket_order(),
-            },
+            target: EffectTarget::Point(round_key()),
             mode: Mode::Write,
-        },
-        Effect {
-            target: EffectTarget::Point(child_key(&TestHasher, LOTTERY, VAULT, &[])),
-            mode: Mode::Delta,
         },
         Effect {
             target: EffectTarget::Point(draw_key()),
@@ -402,37 +431,41 @@ fn lottery_session() -> KernelSession {
     ] {
         declared.insert(effect).unwrap();
     }
-    // The pot is the one cell here that holds value; the ticket entries
-    // and the settled draw are records the round writes.
-    let denominations: Vec<_> = declared
-        .iter()
-        .map(|effect| matches!(effect.mode, Mode::Delta).then_some(RESOURCE))
-        .collect();
     KernelSession::materialize(
-        OverlayStore::new(Arc::new(MemoryStore::new())),
+        OverlayStore::new(Arc::new(closed_round())),
         &Declaration {
             set: declared.clone(),
             ordered: declared
                 .iter()
-                .zip(denominations)
-                .map(|(effect, holds)| DeclaredAccess { effect, holds })
+                .map(|effect| DeclaredAccess {
+                    effect,
+                    holds: None,
+                })
                 .collect(),
             ..Declaration::default()
         },
         TxHash(Hash32([0x78; 32])),
-        EnvInputs::unsealed(CLOCK_MS, RANDOMNESS),
+        EnvInputs {
+            clock_ms: CLOCK_MS,
+            epoch: SEALED_AT,
+            randomness: RANDOMNESS,
+            seeds: SeedWindow::new(
+                BTreeMap::from([(SEALED_AT + SEAL_MATURITY_EPOCHS, MATURED_SEED)]),
+                Some(SEALED_AT + SEAL_MATURITY_EPOCHS),
+            ),
+        },
         test_hash,
     )
     .expect("feasible")
 }
 
-/// What the round settles to: the draw the environment fixed, then the
+/// What the round settles to: the draw its seal opens onto, then the
 /// one entrant it can select.
 /// The settled round as the package encodes it, built through that
 /// package's own type rather than spliced here.
 fn settled() -> Vec<u8> {
     to_vec(&lottery::Outcome {
-        draw: Word::from_protocol(&RANDOMNESS),
+        draw: sealed_word(),
         winner: Some(ENTRANT),
     })
     .expect("an outcome encodes")
@@ -443,50 +476,13 @@ static LOTTERY_GUEST: LazyLock<DualGuest> = LazyLock::new(|| {
     DualGuest::compile(LOTTERY_COMPONENT).expect("the committed lottery blob compiles")
 });
 
-/// Enter, then draw — the session threaded through, on both runtimes at
-/// once. The entrant crosses as the world's own address record, which the
-/// dual lowering spells for both engines.
+/// Settle a closed round, on both runtimes at once.
 fn dual_round() -> Result<(Receipt, u64)> {
-    let entered = || {
-        let mut host = entering(lottery_session(), LOTTERY);
-        host.open_bucket(Held::Amount(AMOUNT), RESOURCE);
-        host
-    };
-    let mut probe = entering(lottery_session(), LOTTERY);
-    let funds = probe.open_bucket(Held::Amount(AMOUNT), RESOURCE);
-    let entry_rep = rep_of(
+    let probe = entering(lottery_session(), LOTTERY);
+    let seal_rep = rep_of(&probe, &Capability::Write(round_key()));
+    let outcome_rep = rep_of(&probe, &Capability::Write(draw_key()));
+    let tickets_rep = rep_of(
         &probe,
-        &Capability::RangeWrite(Interval {
-            owner: LOTTERY,
-            collection: ticket_collection(),
-            lo: ticket_order(),
-            hi: ticket_order(),
-            cap: 1,
-        }),
-    );
-    let pot_rep = rep_of(
-        &probe,
-        &Capability::Delta(child_key(&TestHasher, LOTTERY, VAULT, &[])),
-    );
-    let mut dual = LOTTERY_GUEST.instantiate(FUEL, entered)?;
-    dual.invoke_both(
-        "enter",
-        &[
-            CVal::Borrow(entry_rep, HandleKind::RangeWrite),
-            CVal::Borrow(pot_rep, HandleKind::DeltaCell),
-            CVal::Bytes(ticket_order().to_le_bytes().to_vec()),
-            CVal::Address(ENTRANT.to_bytes()),
-            CVal::Own(funds),
-        ],
-    )?;
-    let (blessed, reference) = dual.finish()?;
-    let enter_fuel = blessed.fuel;
-
-    let blessed_host = entering(blessed.session, LOTTERY);
-    let reference_host = entering(reference.session, LOTTERY);
-    let outcome_rep = rep_of(&blessed_host, &Capability::Write(draw_key()));
-    let round_rep = rep_of(
-        &blessed_host,
         &Capability::RangeRead(Interval {
             owner: LOTTERY,
             collection: ticket_collection(),
@@ -495,16 +491,18 @@ fn dual_round() -> Result<(Receipt, u64)> {
             cap: lottery::ROUND_CAP,
         }),
     );
-    let mut dual = LOTTERY_GUEST.instantiate_pair(FUEL, blessed_host, reference_host)?;
+
+    let mut dual = LOTTERY_GUEST.instantiate(FUEL, || entering(lottery_session(), LOTTERY))?;
     dual.invoke_both(
-        "draw",
+        "settle",
         &[
-            CVal::Borrow(round_rep, HandleKind::RangeRead),
+            CVal::Borrow(seal_rep, HandleKind::WriteCell),
+            CVal::Borrow(tickets_rep, HandleKind::RangeRead),
             CVal::Borrow(outcome_rep, HandleKind::WriteCell),
         ],
     )?;
     let (blessed, reference) = dual.finish()?;
-    let fuel = enter_fuel + blessed.fuel;
+    let fuel = blessed.fuel;
 
     let receipt = finish(blessed.session, fuel);
     assert_eq!(
@@ -515,13 +513,14 @@ fn dual_round() -> Result<(Receipt, u64)> {
     Ok((receipt, fuel))
 }
 
-/// Randomness reaching the committed bytes, identically on both
+/// A sealed draw reaching the committed bytes, identically on both
 /// runtimes.
 ///
-/// The draw is the one input no signer supplies and no store holds, so
-/// it is the one an implementation could plausibly disagree about. The
-/// round settles to the environment's own draw beside the entrant it
-/// selects, byte-identical across the two, at identical fuel.
+/// The draw is the one input no signer supplies and no store holds — it
+/// is derived at the boundary from a seed and a key — so it is the one
+/// an implementation could plausibly disagree about. The round settles
+/// to the word its seal opens onto beside the entrant it selects,
+/// byte-identical across the two, at identical fuel.
 #[test]
 fn the_committed_lottery_settles_a_round_identically_on_both_runtimes() -> Result<()> {
     validate_component(LOTTERY_COMPONENT).context("profile validation of the committed blob")?;
@@ -530,7 +529,7 @@ fn the_committed_lottery_settles_a_round_identically_on_both_runtimes() -> Resul
     assert_eq!(
         blessed_receipt.delta.cells.get(&draw_key()),
         Some(&Some(settled())),
-        "the round records the draw the environment fixed"
+        "the round records the draw its seal opened onto"
     );
     Ok(())
 }

@@ -217,7 +217,7 @@ impl Site {
         let (moves, writes, reads) = (
             has(Op::Move),
             has(Op::Set) || has(Op::Create) || has(Op::Existing),
-            has(Op::Get),
+            has(Op::Get) || has(Op::Vacant),
         );
         Some(match (interval, writes || moves, reads) {
             (true, true, _) if holds_value => HandleMode::InstanceRange,
@@ -1137,15 +1137,19 @@ impl<'a> Lowerer<'a> {
         let Some(entry) = self.out.sites.get_mut(site) else {
             return;
         };
-        let exclusive =
-            |op: &Op| matches!(op, Op::Get | Op::Set | Op::Move | Op::Create | Op::Existing);
+        let exclusive = |op: &Op| {
+            matches!(
+                op,
+                Op::Get | Op::Set | Op::Move | Op::Create | Op::Existing | Op::Vacant
+            )
+        };
         let compatible = match op {
             // A movement sits beside a read: together they are the
             // exclusive mode, which is what the site resolves to. A
             // presence requirement rides that same mode, so it sits
             // beside any of them — the one pair that does not is a
             // requirement against its own opposite, refused below.
-            Op::Get | Op::Set | Op::Move | Op::Create | Op::Existing => {
+            Op::Get | Op::Set | Op::Move | Op::Create | Op::Existing | Op::Vacant => {
                 entry.ops.iter().all(|(prior, _)| exclusive(prior))
             }
             // A reservation folds with nothing, itself included, so it
@@ -1157,7 +1161,18 @@ impl<'a> Lowerer<'a> {
             Op::Existing => Some(Op::Create),
             _ => None,
         };
-        if opposite.is_some_and(|other| entry.ops.iter().any(|(prior, _)| *prior == other)) {
+        // A read requiring absence beside a write of any kind is a body
+        // asking for a leaf it also touches; the presence the write
+        // carries is the one that governs, and two answers is one too
+        // many.
+        let clashes = matches!(op, Op::Vacant)
+            && entry
+                .ops
+                .iter()
+                .any(|(prior, _)| matches!(prior, Op::Set | Op::Create | Op::Existing));
+        if clashes
+            || opposite.is_some_and(|other| entry.ops.iter().any(|(prior, _)| *prior == other))
+        {
             self.error(
                 span,
                 "one access requires the leaf to be absent and to be there — no \

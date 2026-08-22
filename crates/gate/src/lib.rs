@@ -755,18 +755,19 @@ mod tests {
     /// and audited somewhere else.
     #[test]
     fn a_protocol_claim_its_artifact_refuses_does_not_admit() {
-        // The lottery's draw is public, so it clears the gate rule and
-        // reaches the artifact. Two things stand in front of the code: the
-        // draw settles a round once, so its declaration carries a
+        // The lottery's settlement is public, so it clears the gate rule
+        // and reaches the artifact. Two things stand in front of the
+        // code: a round settles once, so its declaration carries a
         // precondition and a total method admits every state; and the
-        // export carries an error arm, since a draw declines a page it
-        // cannot prove covered the round. The declaration is read first.
-        // The account does not serve as the example: every body it has is
-        // a call or two, and the kernel does the work the loops used to.
+        // export carries an error arm, since a settlement declines a page
+        // it cannot prove covered the round. The declaration is read
+        // first. The account does not serve as the example: every body it
+        // has is a call or two, and the kernel does the work the loops
+        // used to.
         let mut metadata = lottery::metadata();
         metadata
             .methods
-            .get_mut("draw")
+            .get_mut("settle")
             .expect("the lottery settles a round")
             .totality = Totality::Total;
         let artifact = attach_metadata(LOTTERY_COMPONENT, &metadata).expect("attaches");
@@ -784,7 +785,7 @@ mod tests {
         // static fuel ceiling, so the artifact itself refuses the mark
         // whatever the metadata claims.
         let honest = attach_metadata(LOTTERY_COMPONENT, &lottery::metadata()).expect("attaches");
-        check_method(&honest, "draw").expect_err("a walk has no static ceiling");
+        check_method(&honest, "settle").expect_err("a walk has no static ceiling");
     }
 
     /// A component whose one export takes a `u64`, for bindings to
