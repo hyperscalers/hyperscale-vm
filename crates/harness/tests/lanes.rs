@@ -181,6 +181,43 @@ fn a_fielded_instance_reads_the_same_in_both_lanes() {
     );
 }
 
+/// A closure the lowering can see through declares what the same
+/// arithmetic declares without one.
+///
+/// The rule is about the effect rather than the syntax: a closure that
+/// opens no site and produces no edge has nothing to attribute, so the
+/// declaration is the one the long way round produces — checked by
+/// comparing the two rather than by reading either.
+#[test]
+fn a_closure_over_a_value_in_hand_declares_what_the_long_way_does() {
+    let methods = &grammar::metadata().methods;
+    let folded = &methods["tally"];
+    let spelled = &methods["tally-plainly"];
+
+    assert_eq!(folded.effects, spelled.effects, "the clauses diverged");
+    assert_eq!(folded.abi, spelled.abi, "the binding diverged");
+    assert_eq!(folded.params, spelled.params);
+    assert_eq!(folded.outputs, spelled.outputs);
+
+    // And both halves run it: the fold is the guest's own arithmetic,
+    // so the cell it writes is what the closure computed.
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        chain
+            .transact(ALICE, |b| shapes.tally(b, 41))
+            .expect_completed();
+        chain
+            .cell(child_key(&TestHasher, shapes, grammar::NOTED, &[]))
+            .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"))
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+    assert_eq!(native, blessed, "lanes diverged");
+    assert_eq!(native, Some(42), "the closure folded what it was handed");
+}
+
 /// A method handing back an ordinary value.
 ///
 /// The value is not an edge, so it is not an output: a manifest naming

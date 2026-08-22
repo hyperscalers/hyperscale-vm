@@ -981,6 +981,28 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// How much of a declaration the walk has built: the sites it
+    /// opened, the operations it recorded against them, the clauses it
+    /// pushed, the parameters it fixed a resource on, the grant it took
+    /// and the fresh ids it drew.
+    ///
+    /// One number, because what reads it wants one question answered —
+    /// did this stretch of body declare anything — and a stretch that
+    /// declared nothing left every part of it alone.
+    fn declared(&self) -> usize {
+        self.out.sites.len()
+            + self
+                .out
+                .sites
+                .iter()
+                .map(|site| site.ops.len())
+                .sum::<usize>()
+            + self.scopes.iter().map(Vec::len).sum::<usize>()
+            + self.out.denominations.len()
+            + self.out.fresh
+            + usize::from(self.out.issues.is_some())
+    }
+
     fn bind(&mut self, name: String, slot: Slot) {
         if let Some(scope) = self.locals.last_mut() {
             scope.insert(name, slot);
@@ -2694,15 +2716,42 @@ impl<'a> Lowerer<'a> {
                 Eval::plain(code)
             }
 
-            // A closure could capture the component and carry accesses the
-            // walk cannot attribute to any declaration site.
+            // A closure whose body reaches nothing is arithmetic, and
+            // arithmetic is ordinary code: `Option::map` over a value in
+            // hand declares what the line before it declared. What the
+            // rule is about is the access inside one, which no
+            // declaration site could be attributed — so the walk asks
+            // the body rather than the syntax.
             syn::Expr::Closure(closure) => {
-                self.error(
-                    closure.span(),
-                    "`#[blueprint]` does not model closures — an access inside one \
-                     cannot be attributed to a declaration",
-                );
-                Eval::absent(closure.span(), "a closure")
+                let before = self.declared();
+                self.locals.push(BTreeMap::new());
+                for input in &closure.inputs {
+                    self.bind_pattern(input);
+                }
+                let body = self.expr(&closure.body);
+                let produced = matches!(body.val, Val::Produced(_) | Val::Edges(_));
+                let code = self.value(body.code);
+                self.locals.pop();
+                if self.declared() != before || produced {
+                    self.error(
+                        closure.span(),
+                        "`#[blueprint]` does not model closures — an access inside one \
+                         cannot be attributed to a declaration",
+                    );
+                    return Eval::absent(closure.span(), "a closure");
+                }
+                let capture = &closure.capture;
+                let inputs = &closure.inputs;
+                let output = &closure.output;
+                // A closure with a declared return type has a block for
+                // a body, which the rewritten expression is not — so the
+                // type comes back over a block wrapping it.
+                match output {
+                    syn::ReturnType::Default => Eval::plain(quote!(#capture |#inputs| #code)),
+                    ty @ syn::ReturnType::Type(..) => {
+                        Eval::plain(quote!(#capture |#inputs| #ty { #code }))
+                    }
+                }
             }
 
             // Anything not modelled above would be walked past silently,

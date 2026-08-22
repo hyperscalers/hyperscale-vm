@@ -114,6 +114,31 @@ pub mod grammar {
             seated
         }
 
+        /// Arithmetic behind a closure, and the same arithmetic
+        /// without one.
+        ///
+        /// A closure that opens no site and produces no edge is
+        /// ordinary code: the value it folds is already in hand, so
+        /// there is no access for a declaration to be missing. The two
+        /// bodies are here together because what has to hold is that
+        /// they declare the same thing.
+        pub fn tally(&mut self, seed: u64) {
+            let bumped = Some(seed).map(|held| held + 1);
+            self.noted
+                .set(bumped.unwrap_or_else(|| seed.wrapping_mul(3)));
+        }
+
+        /// [`Grammar::tally`] written the long way.
+        #[allow(clippy::option_if_let_else)] // the long way is what the comparison is over
+        pub fn tally_plainly(&mut self, seed: u64) {
+            let bumped = Some(seed);
+            let folded = match bumped {
+                Some(held) => held + 1,
+                None => seed.wrapping_mul(3),
+            };
+            self.noted.set(folded);
+        }
+
         /// A method that hands back an ordinary value.
         ///
         /// It produces no edge, so the declaration says it produces
