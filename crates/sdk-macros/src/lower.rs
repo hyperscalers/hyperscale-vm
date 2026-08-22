@@ -709,14 +709,25 @@ pub struct Lowerer<'a> {
     out: Lowered,
     /// The clause scopes being built, innermost last.
     scopes: Vec<Vec<Node>>,
-    /// How many `for-each` binders enclose the walk.
-    binders: usize,
+    /// The `for-each` binders enclosing the walk, innermost last, each
+    /// holding the site count when it opened.
+    ///
+    /// A depth on its own would not separate two loops that sit side by
+    /// side: their elements are both binding zero, so a body writing the
+    /// same cell in each spells one target twice. The floor is what tells
+    /// the sites one loop opened from the sites around it.
+    binders: Vec<usize>,
     /// The conditions the walk is under, innermost last, each already
     /// conjoined with the ones enclosing it.
     guards: Vec<Term>,
-    /// The cells the survey found touched under more than one condition,
+    /// The sites the survey found touched under more than one condition,
     /// whose clauses are therefore declared always.
-    escaping: Vec<Target>,
+    ///
+    /// By site rather than by target, because the two walks number sites
+    /// identically and a spelling is not an identity: two loops side by
+    /// side name their elements the same way, so a guard one of them is
+    /// under is no fact about the other's leaf.
+    escaping: Vec<usize>,
     /// Every condition a site was reached under, in the order the walk
     /// reached them. Filled by the survey and read by nothing else.
     reached: Vec<(usize, Option<Term>)>,
@@ -739,7 +750,7 @@ impl<'a> Lowerer<'a> {
             locals: vec![BTreeMap::new()],
             out: Lowered::default(),
             scopes: vec![Vec::new()],
-            binders: 0,
+            binders: Vec::new(),
             guards: Vec::new(),
             escaping: Vec::new(),
             reached: Vec::new(),
@@ -813,7 +824,7 @@ impl<'a> Lowerer<'a> {
     ///
     /// Errors and refusals are the emitting walk's to report: this one
     /// takes the same path and would only say the same things twice.
-    fn survey(mut self, block: &syn::Block) -> Vec<Target> {
+    fn survey(mut self, block: &syn::Block) -> Vec<usize> {
         let _ = self.walk(block);
         let mut escaping = Vec::new();
         for (index, cond) in &self.reached {
@@ -822,11 +833,8 @@ impl<'a> Lowerer<'a> {
                 .iter()
                 .find(|(seen, _)| seen == index)
                 .map(|(_, cond)| cond);
-            if first != Some(cond)
-                && let Some(site) = self.out.sites.get(*index)
-                && !escaping.contains(&site.target)
-            {
-                escaping.push(site.target.clone());
+            if first != Some(cond) && !escaping.contains(index) {
+                escaping.push(*index);
             }
         }
         escaping
@@ -995,7 +1003,7 @@ impl<'a> Lowerer<'a> {
     /// clause inside one still names a fixed export parameter and still
     /// reads the enclosing loop's element.
     const fn depth(&self) -> usize {
-        self.binders
+        self.binders.len()
     }
 
     fn error(&mut self, span: Span, message: &str) {
@@ -1069,7 +1077,15 @@ impl<'a> Lowerer<'a> {
         element: Option<syn::Type>,
         declared: Option<Term>,
     ) -> usize {
-        if let Some(index) = self.out.sites.iter().position(|s| s.target == target) {
+        // Only among the sites this loop opened: a clause belongs to the
+        // scope that declared it, and two loops side by side spell their
+        // elements the same way while naming different leaves.
+        let floor = self.binders.last().copied().unwrap_or(0);
+        if let Some(index) = self.out.sites[floor..]
+            .iter()
+            .position(|s| s.target == target)
+            .map(|index| index + floor)
+        {
             self.reached.push((index, self.guards.last().cloned()));
             return index;
         }
@@ -1078,7 +1094,7 @@ impl<'a> Lowerer<'a> {
         // A cell reached from more than one place is reached
         // unconditionally by the weakest of them, and the survey has
         // already found which those are.
-        let guard = if self.escaping.contains(&target) {
+        let guard = if self.escaping.contains(&index) {
             None
         } else {
             self.guards.last().cloned()
@@ -2601,14 +2617,14 @@ impl<'a> Lowerer<'a> {
         // A verdict crosses as a parameter only where the loop it sits in
         // is none: inside one it is the run's answer, which is already
         // beside the capability the arm declares.
-        if flag == Some(Polarity::Taken) && self.binders == 0 {
+        if flag == Some(Polarity::Taken) && self.binders.is_empty() {
             self.push_node(Node::BindGuard);
         }
         if let Some((_, else_nodes, _)) = &otherwise {
             for node in else_nodes.clone() {
                 self.push_node(node);
             }
-            if flag == Some(Polarity::Untaken) && self.binders == 0 {
+            if flag == Some(Polarity::Untaken) && self.binders.is_empty() {
                 self.push_node(Node::BindGuard);
             }
         }
@@ -2618,7 +2634,7 @@ impl<'a> Lowerer<'a> {
             // run that reports it: a site's entry is declared exactly
             // where this arm's guard fired, which is the same question
             // the flag answers at top level.
-            Some(polarity) if self.binders > 0 => {
+            Some(polarity) if !self.binders.is_empty() => {
                 let verdict = guarded
                     .filter(|site| self.out.runs.contains(site))
                     .map(|site| {
@@ -4169,7 +4185,7 @@ impl<'a> Lowerer<'a> {
         let opened = self.out.sites.len();
         self.scopes.push(Vec::new());
         self.locals.push(BTreeMap::new());
-        self.binders += 1;
+        self.binders.push(opened);
         // Deferred, because the loop the guest runs is over the run's
         // indices and binds no element: the name is the declaration's,
         // and a body reading it as a value is refused where it does
@@ -4184,7 +4200,7 @@ impl<'a> Lowerer<'a> {
             other => self.bind_pattern(other),
         }
         let statements: Vec<_> = loop_.body.stmts.iter().map(|s| self.stmt(s)).collect();
-        self.binders -= 1;
+        self.binders.pop();
         self.locals.pop();
         let body = self.scopes.pop().unwrap_or_default();
 
@@ -4247,9 +4263,9 @@ impl<'a> Lowerer<'a> {
         let depth = self.depth();
         let opened = self.out.sites.len();
         self.scopes.push(Vec::new());
-        self.binders += 1;
+        self.binders.push(opened);
         let statements = body(self, Term::Binding(depth));
-        self.binders -= 1;
+        self.binders.pop();
         let inner = self.scopes.pop().unwrap_or_default();
         self.push_node(Node::ForEach {
             list: Term::IdsOf(Box::new(edge)),
@@ -4308,11 +4324,11 @@ fn free_call_mark(call: &syn::ExprCall) -> Option<syn::Ident> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{Field, FieldKind, Lowerer};
+    use super::{Field, FieldKind, Lowered, Lowerer};
     use crate::{Declared, accessors};
 
     /// The state a refusal fixture is written against: one byte cell,
-    /// and one family of leaves keyed by whatever a body names.
+    /// and two families of leaves keyed by whatever a body names.
     fn fields() -> BTreeMap<String, Field> {
         let cell = |slot, kind| Field {
             slot,
@@ -4323,7 +4339,43 @@ mod tests {
         BTreeMap::from([
             ("noted".to_owned(), cell(10, FieldKind::Cell)),
             ("owed".to_owned(), cell(11, FieldKind::Keyed)),
+            ("paid".to_owned(), cell(12, FieldKind::Keyed)),
         ])
+    }
+
+    /// One pass over `body`, against a package with two configured lists
+    /// and a schedule.
+    fn lower(body: &str) -> Result<Lowered, Vec<String>> {
+        let block: syn::Block = syn::parse_str(body).expect("the fixture parses as a block");
+        let fields = fields();
+        let config = syn::Ident::new("Terms", proc_macro2::Span::call_site());
+        let accessors = accessors(Some(&config));
+        let config_fields = [
+            ("sides".to_owned(), syn::parse_quote!(::std::vec::Vec<u64>)),
+            ("others".to_owned(), syn::parse_quote!(::std::vec::Vec<u64>)),
+        ];
+        let declared = Declared {
+            fields: &fields,
+            accessors: &accessors,
+            roles: &[],
+            config_record: Some(&config),
+            config_fields: &config_fields,
+            resources: &[],
+        };
+        Lowerer::new(&declared, &[], false, false)
+            .run(&block)
+            .map_err(|errors| errors.iter().map(ToString::to_string).collect())
+    }
+
+    /// The lowering of `body`.
+    ///
+    /// # Panics
+    ///
+    /// If the body draws a hard error, which is a refusal every target
+    /// sees — and a fixture meaning to reach the wasm-only one has not.
+    fn lowered(body: &str) -> Lowered {
+        lower(body)
+            .unwrap_or_else(|errors| panic!("the fixture drew a hard error: {}", errors.join("; ")))
     }
 
     /// Why the guest half of `body` cannot be emitted, or `None` where
@@ -4333,37 +4385,8 @@ mod tests {
     /// whatever target the test runs on: it is recorded on the lowering
     /// and only rendered under `cfg(target_arch = "wasm32")`, so this is
     /// the one place it can be held to what it says.
-    ///
-    /// # Panics
-    ///
-    /// If the body draws a hard error, which is a different refusal —
-    /// one every target sees — and a fixture meaning to reach this one
-    /// has not.
     fn refusal(body: &str) -> Option<String> {
-        let block: syn::Block = syn::parse_str(body).expect("the fixture parses as a block");
-        let fields = fields();
-        let config = syn::Ident::new("Terms", proc_macro2::Span::call_site());
-        let accessors = accessors(Some(&config));
-        let config_fields = [("sides".to_owned(), syn::parse_quote!(::std::vec::Vec<u64>))];
-        let declared = Declared {
-            fields: &fields,
-            accessors: &accessors,
-            roles: &[],
-            config_record: Some(&config),
-            config_fields: &config_fields,
-            resources: &[],
-        };
-        match Lowerer::new(&declared, &[], false, false).run(&block) {
-            Ok(lowered) => lowered.refusal.map(|(_, why)| why),
-            Err(errors) => panic!(
-                "the fixture drew a hard error: {}",
-                errors
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            ),
-        }
+        lowered(body).refusal.map(|(_, why)| why)
     }
 
     #[test]
@@ -4399,6 +4422,37 @@ mod tests {
             why.contains("reads a `for-each` element"),
             "unexpected refusal: {why}"
         );
+    }
+
+    #[test]
+    fn two_loops_over_one_field_run_apart() {
+        // Their elements are both binding zero, so the two bodies spell
+        // one target — and the leaves they name are the two lists', which
+        // are not the same leaves. One run each.
+        let lowered = lowered(
+            "{ for &side in &self.config().sides { self.owed.at(side).set(1); } \
+               for &other in &self.config().others { self.owed.at(other).set(2); } }",
+        );
+        assert_eq!(
+            lowered.refusal.map(|(_, why)| why),
+            None,
+            "both loops have a guest half",
+        );
+        assert_eq!(lowered.runs.len(), 2, "one run per loop");
+        assert_eq!(lowered.sites.len(), 2, "and one site per run");
+    }
+
+    #[test]
+    fn one_leaf_reached_twice_in_a_loop_is_one_site() {
+        // The dedup a loop keeps: two reaches of one leaf inside one body
+        // are one clause, and therefore one entry of one run.
+        let lowered = lowered(
+            "{ for &side in &self.config().sides { \
+               self.owed.at(side).set(1); self.owed.at(side).set(2); } }",
+        );
+        assert_eq!(lowered.refusal.map(|(_, why)| why), None);
+        assert_eq!(lowered.runs.len(), 1);
+        assert_eq!(lowered.sites.len(), 1);
     }
 
     #[test]
