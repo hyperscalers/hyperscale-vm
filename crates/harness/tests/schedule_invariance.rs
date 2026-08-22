@@ -20,10 +20,19 @@ use hyperscale_vm_runtime::{
     DeltaCell, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome,
+    AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Outcome,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Linker, Resource};
+
+/// The one answer a fixture guest hands back, so a receipt depends on
+/// what the body computed.
+fn answered(value: u64) -> Vec<Answer> {
+    vec![Answer {
+        node: 0,
+        value: value.to_le_bytes().to_vec(),
+    }]
+}
 use wasmtime::{Engine, Result, Store};
 use wat::parse_str;
 
@@ -220,7 +229,7 @@ impl GuestRunner for BlessedRunner {
         Ok(match result {
             Ok(value) => RunResult::Completed {
                 session,
-                value: Some(value),
+                answers: answered(value),
                 fuel,
             },
             Err(_) => RunResult::Aborted {
@@ -302,7 +311,7 @@ impl GuestRunner for RefRunner {
         Ok(match answer.as_deref() {
             Ok([CVal::U64(v)]) => RunResult::Completed {
                 session,
-                value: Some(*v),
+                answers: answered(*v),
                 fuel,
             },
             Ok(_) => RunResult::Aborted {
@@ -406,7 +415,7 @@ fn six_schedules_one_outcome() -> Result<()> {
         assert_eq!(
             baseline.receipts[&tx(id)].outcome,
             Outcome::Completed {
-                value: Some(amount)
+                answers: answered(amount)
             }
         );
     }

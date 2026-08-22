@@ -161,7 +161,7 @@ fn one_transfer(
         }],
         FUEL,
     );
-    let Invoked::Produced(reps) = withdraw.result else {
+    let Invoked::Produced { edges: reps, .. } = withdraw.result else {
         panic!("withdraw did not produce: {:?}", withdraw.result);
     };
     let funds = reps[0];
@@ -186,14 +186,14 @@ fn one_transfer(
         FUEL,
     );
     assert!(
-        matches!(deposit.result, Invoked::Produced(_)),
+        matches!(deposit.result, Invoked::Produced { .. }),
         "deposit did not produce: {:?}",
         deposit.result
     );
 
     let (receipt, _) = store
         .into_data()
-        .finish(None, withdraw.fuel + deposit.fuel)
+        .finish(vec![], withdraw.fuel + deposit.fuel)
         .expect("oracle clean");
     Ok(receipt)
 }

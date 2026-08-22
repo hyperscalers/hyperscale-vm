@@ -40,8 +40,9 @@ pub use envelope::{
     TransactionEnvelope, TxHash,
 };
 pub use execution::{
-    ABSENT_REP, AbortReason, Event, ISSUER_REP, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES,
-    MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, UnmetCondition,
+    ABSENT_REP, AbortReason, Answer, Event, ISSUER_REP, MAX_ANSWER_BYTES, MAX_ERROR_CODES,
+    MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MAX_MANIFEST_NODES, Outcome,
+    UnmetCondition,
 };
 pub use mode::{CellKind, ConflictClass, Mode, ModeKind, Presence, compatible};
 pub use scheme::{

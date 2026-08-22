@@ -86,10 +86,16 @@ fn handle(kind: CellKind, rep: u32, store: impl AsContextMut) -> Result<Resource
 /// How an invocation ended, as the artifact's own result type says it can.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Returned {
-    /// The export returned the value edges it produced, as the buckets
+    /// The export returned: the value edges it produced, as the buckets
     /// the kernel now holds again, in the order the signature declares
-    /// its outputs.
-    Edges(Vec<u32>),
+    /// its outputs, and the value it answered with beside them.
+    Produced {
+        /// The buckets, in output order.
+        edges: Vec<u32>,
+        /// What the method handed back that is not an edge. `None`
+        /// where the method answers nothing.
+        answer: Option<Vec<u8>>,
+    },
 
     /// The export declined, with an index into its package's error table.
     ///
@@ -146,8 +152,12 @@ pub fn call_export<T: 'static>(
     // The shape decides, not the caller: how a method ends is a fact
     // about the artifact, and an edge is told from a payload by what came
     // back rather than by what a manifest expected.
+    let nothing = Returned::Produced {
+        edges: Vec::new(),
+        answer: None,
+    };
     let returned = match results.first() {
-        None | Some(Val::Result(Ok(None))) => return Ok(Returned::Edges(Vec::new())),
+        None | Some(Val::Result(Ok(None))) => return Ok(nothing),
         Some(Val::Result(Err(Some(code)))) => {
             return match **code {
                 Val::U32(code) => Ok(Returned::Declined(code)),
@@ -157,28 +167,48 @@ pub fn call_export<T: 'static>(
         Some(Val::Result(Ok(Some(value)))) => value.as_ref(),
         Some(value) => value,
     };
-    match returned {
-        Val::Resource(handle) => Ok(Returned::Edges(vec![
+    // An answer leads where a method has one, so a lone byte list is an
+    // answer and a tuple's first element may be. Everything after it is
+    // an edge either way.
+    let (answer, edges) = match returned {
+        Val::List(bytes) => {
+            return answered(export, bytes).map(|answer| Returned::Produced {
+                edges: Vec::new(),
+                answer: Some(answer),
+            });
+        }
+        Val::Tuple(values) => match values.split_first() {
+            Some((Val::List(bytes), rest)) => (Some(answered(export, bytes)?), rest),
+            _ => (None, values.as_slice()),
+        },
+        edge => (None, std::slice::from_ref(edge)),
+    };
+    let mut reps = Vec::with_capacity(edges.len());
+    for edge in edges {
+        let Val::Resource(handle) = edge else {
+            return Err(shape(export, &format!("an edge tuple of {edge:?}")));
+        };
+        reps.push(
             handle
                 .try_into_resource::<Bucket>(store.as_context_mut())?
                 .rep(),
-        ])),
-        Val::Tuple(edges) => {
-            let mut reps = Vec::with_capacity(edges.len());
-            for edge in edges {
-                let Val::Resource(handle) = edge else {
-                    return Err(shape(export, &format!("an edge tuple of {edge:?}")));
-                };
-                reps.push(
-                    handle
-                        .try_into_resource::<Bucket>(store.as_context_mut())?
-                        .rep(),
-                );
-            }
-            Ok(Returned::Edges(reps))
-        }
-        value => Err(shape(export, &format!("{value:?}"))),
+        );
     }
+    Ok(Returned::Produced {
+        edges: reps,
+        answer,
+    })
+}
+
+/// A byte-list result as the bytes it is.
+fn answered(export: &str, bytes: &[Val]) -> Result<Vec<u8>> {
+    bytes
+        .iter()
+        .map(|byte| match byte {
+            Val::U8(byte) => Ok(*byte),
+            other => Err(shape(export, &format!("an answer of {other:?}"))),
+        })
+        .collect()
 }
 
 fn shape(export: &str, found: &str) -> Error {
@@ -212,7 +242,7 @@ pub fn invoke_export<T: 'static>(
     let outcome = call_export(&mut *store, instance, export, args);
     let exhausted = outcome.as_ref().err().is_some_and(exhausted);
     let result = match outcome {
-        Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
+        Ok(Returned::Produced { edges, answer }) => Invoked::Produced { edges, answer },
         Ok(Returned::Declined(code)) => Invoked::Declined(code),
         Err(error) => Invoked::Aborted(classify(&error)),
     };

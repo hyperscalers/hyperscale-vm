@@ -296,6 +296,7 @@ pub fn declaration(
         quote!(__t.bind_issuer(#kind, #bytes);)
     });
     let fallible = declines.then(|| quote!(__t.fallible();));
+    let answers = lowered.answer.is_some().then(|| quote!(__t.answers();));
     let total = total.then(|| quote!(__t.total();));
     quote!(
         |__t: &mut ::hyperscale_vm_sdk::Trace| {
@@ -304,6 +305,7 @@ pub fn declaration(
             #gate
             #fallible
             #total
+            #answers
             #(#nodes)*
             #(#outputs)*
             #(#denominations)*

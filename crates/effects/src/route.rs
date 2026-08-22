@@ -137,14 +137,6 @@ impl Routing {
     }
 }
 
-/// The bound on manifest nodes admission or routing will address.
-///
-/// A bound on pre-payment work: admission's single walk is linear in
-/// the nodes and runs before any fee is assured, so what stands here is
-/// a ceiling sized against the admission budget — the declared work the
-/// walk produces is what carries a charge.
-pub const MAX_MANIFEST_NODES: usize = 4096;
-
 /// Route an admitted transaction: project its evaluated declaration
 /// onto the shard topology.
 ///
@@ -184,7 +176,7 @@ mod tests {
 
     use hyperscale_vm_types::{
         Address, AddressClass, CallTarget, CellKind, Effect, EffectConflict, EffectSet,
-        EffectTarget, Mode, PrincipalAddr,
+        EffectTarget, MAX_MANIFEST_NODES, Mode, PrincipalAddr,
     };
 
     use super::{PrefixShardResolver, Routing, ShardResolver, route};
@@ -198,7 +190,6 @@ mod tests {
     use crate::metadata::{MetadataCache, PackageMetadata};
     use crate::publish::{AbiError, SignatureError};
     use crate::records::{ChainRecords, Records};
-    use crate::route::MAX_MANIFEST_NODES;
     use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
     use crate::test_worlds::{
         addr, instance_of, meta_of, method, payer_payee_world, pkg, resolver, resource, self_point,

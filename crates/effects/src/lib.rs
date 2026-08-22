@@ -72,11 +72,11 @@ pub use graph::{
 };
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
-    ABSENT_REP, ADDRESS_WORDS, AUTH_BYTE_WEIGHT, AbortReason, EntryKey, EntryLeaf, Event,
-    FOOTPRINT_WEIGHT, FUEL_WEIGHT, ISSUER_REP, MAX_CELL_VALUE_LEN, MAX_ERROR_CODES,
-    MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Outcome, SettledWrites,
-    StateWrites, TX_UNITS, TxHash, VERIFY_WEIGHT, declared_work, entry_leaf_key, signature_work,
-    work_units,
+    ABSENT_REP, ADDRESS_WORDS, AUTH_BYTE_WEIGHT, AbortReason, Answer, EntryKey, EntryLeaf, Event,
+    FOOTPRINT_WEIGHT, FUEL_WEIGHT, ISSUER_REP, MAX_ANSWER_BYTES, MAX_CELL_VALUE_LEN,
+    MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
+    MAX_MANIFEST_NODES, Outcome, SettledWrites, StateWrites, TX_UNITS, TxHash, VERIFY_WEIGHT,
+    declared_work, entry_leaf_key, signature_work, work_units,
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, NodeCall, distinct_ids};
@@ -98,9 +98,7 @@ pub use resource::{
     granting_issued_resource, holdings_collection, holdings_entry, holdings_range,
     instance_data_key, issued_resource, resource_record_key, xrd,
 };
-pub use route::{
-    FrameDeclaration, MAX_MANIFEST_NODES, PrefixShardResolver, Routing, ShardResolver, route,
-};
+pub use route::{FrameDeclaration, PrefixShardResolver, Routing, ShardResolver, route};
 pub use rule::{
     GrantClaim, GrantRuleExpr, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_WIRE_DEPTH, Rule,
     RuleExpr, RuleLeaf, StoredRule, well_formed,

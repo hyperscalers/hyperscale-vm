@@ -18,7 +18,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, MAX_ERROR_CODES, Outcome, SubstateKey, UnmetCondition,
+    ABSENT_REP, AbortReason, Address, Answer, MAX_ERROR_CODES, Outcome, SubstateKey, UnmetCondition,
 };
 
 use crate::executor::{BatchTx, GuestRunner, RunResult, Unavailable};
@@ -102,9 +102,9 @@ enum NodeFailure {
     Unavailable(AbortReason),
 }
 
-/// A node's invocation succeeded: the session, the edges it produced, and
-/// the fuel it consumed.
-type NodeSuccess = (KernelSession, Vec<u32>, u64);
+/// A node's invocation succeeded: the session, the edges it produced,
+/// whatever it answered with, and the fuel it consumed.
+type NodeSuccess = (KernelSession, Vec<u32>, Option<Vec<u8>>, u64);
 
 fn fail(session: KernelSession, outcome: Outcome, fuel: u64) -> NodeFailure {
     NodeFailure::Abort(Box::new((session, outcome, fuel)))
@@ -215,7 +215,10 @@ fn settled(
         // non-fungible edge carrying ids other than the declaration's,
         // which are what admission keyed the instance cells by and what
         // a consumer routed on.
-        Invoked::Produced(reps) if reps.len() == call.outputs.len() => {
+        Invoked::Produced {
+            edges: reps,
+            answer,
+        } if reps.len() == call.outputs.len() => {
             for (rep, expected) in reps.iter().zip(&call.outputs) {
                 let carried = session.bucket(*rep);
                 let (declared_ids, carried_ids) = match (expected, carried) {
@@ -251,9 +254,9 @@ fn settled(
                     ));
                 }
             }
-            Ok((session, reps, invoked.fuel))
+            Ok((session, reps, answer, invoked.fuel))
         }
-        Invoked::Produced(_) => Err(fail(
+        Invoked::Produced { .. } => Err(fail(
             session,
             Outcome::UserError {
                 reason: AbortReason::BadReturnShape,
@@ -419,6 +422,7 @@ fn satisfies(
 impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
     fn run(&self, entry: &BatchTx, mut session: KernelSession) -> Result<RunResult, Unavailable> {
         let mut outputs: Vec<Vec<u32>> = Vec::with_capacity(entry.calls.len());
+        let mut answers: Vec<Answer> = Vec::new();
         let mut fuel = 0u64;
         for (index, call) in entry.calls.iter().enumerate() {
             let node = u32::try_from(index).unwrap_or(u32::MAX);
@@ -426,11 +430,14 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
             // against what its predecessors left.
             let remaining = entry.gas_limit.saturating_sub(fuel);
             match self.invoke_node(node, call, &outputs, remaining, session) {
-                Ok((returned, produced, consumed)) => {
+                Ok((returned, produced, answered, consumed)) => {
                     session = returned;
                     session.leave_invocation();
                     fuel = fuel.saturating_add(consumed);
                     outputs.push(produced);
+                    if let Some(value) = answered {
+                        answers.push(Answer { node, value });
+                    }
                 }
                 Err(NodeFailure::Abort(failure)) => {
                     let (returned, outcome, consumed) = *failure;
@@ -445,7 +452,7 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
         }
         Ok(RunResult::Completed {
             session,
-            value: None,
+            answers,
             fuel,
         })
     }

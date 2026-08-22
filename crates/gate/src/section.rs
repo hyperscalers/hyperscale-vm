@@ -181,6 +181,7 @@ mod tests {
                 ParamType::Address,
                 ParamType::Bucket,
             ],
+            answers: true,
             outputs: vec![
                 Expr::Config(2),
                 Expr::ResourceOf(Box::new(Expr::Arg(4))),

@@ -27,8 +27,8 @@ use hyperscale_vm_runtime::{
     add_kernel_to_linker, blessed_engine,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode,
-    ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
+    Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use libfuzzer_sys::fuzz_target;
 use wasmtime::component::{Component, Instance, Linker, Resource};
@@ -504,12 +504,21 @@ fuzz_target!(|data: &[u8]| {
 
     // The oracle: every recorded access inside the declared set, whatever
     // the sequence did.
-    let value = blessed.last().and_then(LaneOutcome::value);
+    let answers: Vec<Answer> = blessed
+        .last()
+        .and_then(LaneOutcome::value)
+        .map(|value| {
+            vec![Answer {
+                node: 0,
+                value: value.to_le_bytes().to_vec(),
+            }]
+        })
+        .unwrap_or_default();
     let (blessed_receipt, _) = blessed_host
-        .finish(value, blessed_fuel)
+        .finish(answers.clone(), blessed_fuel)
         .expect("oracle clean on the blessed side");
     let (ref_receipt, _) = ref_host
-        .finish(value, ref_fuel)
+        .finish(answers, ref_fuel)
         .expect("oracle clean on the reference side");
     assert_eq!(blessed_receipt, ref_receipt, "receipts diverged");
 });

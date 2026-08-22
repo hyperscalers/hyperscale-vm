@@ -41,6 +41,21 @@ pub const MAX_EVENTS_PER_TX: usize = 256;
 /// the retention rate, and this bounds what one decode allocates.
 pub const MAX_EVENT_PAYLOAD_BYTES: usize = 4096;
 
+/// The bound on manifest nodes admission or routing will address.
+///
+/// A bound on pre-payment work: admission's single walk is linear in
+/// the nodes and runs before any fee is assured, so what stands here is
+/// a ceiling sized against the admission budget — the declared work the
+/// walk produces is what carries a charge.
+pub const MAX_MANIFEST_NODES: usize = 4096;
+
+/// The bytes one node's answer may carry.
+///
+/// An answer is receipt payload whose size a guest chose, which is what
+/// an event payload is — so it is bounded by that figure rather than by
+/// one of its own.
+pub const MAX_ANSWER_BYTES: usize = MAX_EVENT_PAYLOAD_BYTES;
+
 /// The event types one package may declare — the bound on an emitted
 /// index, checked without resolving it. A wire bound on the index.
 pub const MAX_EVENT_TYPES: u32 = 1024;
@@ -332,14 +347,32 @@ pub enum AbortReason {
     WrongMintedIds,
 }
 
+/// What one node answered with: the value its method handed back, in the
+/// encoding the method's own return type gives it.
+///
+/// Beside the edges rather than among them. An edge is value the kernel
+/// takes ownership of and a later node can consume; an answer is bytes,
+/// and the only thing that reads one is whoever reads the receipt.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub struct Answer {
+    /// The node whose call answered.
+    pub node: u32,
+    /// The value, as the method encoded it.
+    #[hbor(max = MAX_ANSWER_BYTES)]
+    pub value: Vec<u8>,
+}
+
 /// How execution ended: the abort taxonomy as the receipt records it.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum Outcome {
-    /// The export returned; its scalar result if it had one.
+    /// The export returned, with whatever its nodes answered.
     #[hbor(discriminant = 0)]
     Completed {
-        /// The export's return value, when the signature has one.
-        value: Option<u64>,
+        /// What each answering node handed back, in node order. Empty
+        /// where no method the transaction called returns a value, and
+        /// at most one per node, which is what bounds it.
+        #[hbor(max = MAX_MANIFEST_NODES)]
+        answers: Vec<Answer>,
     },
     /// A guest defect: a trap, a panic, a kernel refusal of bad guest
     /// arguments, a declaration defect. The sender's fault; priced at the
@@ -464,7 +497,8 @@ mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
 
     use super::{
-        AbortReason, Address, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey, UnmetCondition,
+        AbortReason, Address, Answer, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey,
+        UnmetCondition,
     };
     use crate::address::{AddressClass, EffectTarget, LocalKey};
     use crate::mode::Presence;
@@ -554,7 +588,7 @@ mod tests {
             local: LocalKey([3; 16]),
         };
         let outcomes = [
-            (0, Outcome::Completed { value: None }),
+            (0, Outcome::Completed { answers: vec![] }),
             (
                 1,
                 Outcome::UserError {
@@ -601,7 +635,12 @@ mod tests {
             event_type: 3,
             payload: vec![9, 9],
         });
-        assert_canonical(&Outcome::Completed { value: Some(7) });
+        assert_canonical(&Outcome::Completed {
+            answers: vec![Answer {
+                node: 1,
+                value: vec![7],
+            }],
+        });
         assert_canonical(&Outcome::Infeasible {
             key: SubstateKey {
                 owner: Address::new([2; 31], AddressClass::Component),

@@ -378,7 +378,7 @@ fn each_take_yields_the_value_it_debits() -> Result<()> {
 
     let (delta, host) = both(&fx, Take::Delta(30))?;
     assert_eq!(delta, Took::Value(30));
-    let (receipt, _) = host.finish(None, 0).expect("the oracle is clean");
+    let (receipt, _) = host.finish(vec![], 0).expect("the oracle is clean");
     assert_eq!(
         receipt.delta.movements.get(&fx.ledger).map(|m| m.debit),
         Some(30),
@@ -389,7 +389,7 @@ fn each_take_yields_the_value_it_debits() -> Result<()> {
     // down by what the body is holding.
     let (vault, host) = both(&fx, Take::Vault(30))?;
     assert_eq!(vault, Took::Value(30));
-    let (receipt, _) = host.finish(None, 0).expect("the oracle is clean");
+    let (receipt, _) = host.finish(vec![], 0).expect("the oracle is clean");
     assert_eq!(
         receipt.delta.cells.get(&fx.vault),
         Some(&Some(encode_amount(BALANCE - 30).to_vec()))
@@ -415,7 +415,7 @@ fn an_over_take_refuses_in_each_modes_own_terms() -> Result<()> {
     // leaves.
     let (delta, host) = both(&fx, Take::Delta(500))?;
     assert_eq!(delta, Took::Value(500));
-    let (receipt, _) = host.finish(None, 0).expect("the oracle is clean");
+    let (receipt, _) = host.finish(vec![], 0).expect("the oracle is clean");
     assert_eq!(
         receipt.outcome,
         Outcome::Infeasible {
@@ -456,7 +456,7 @@ fn settled(
     refusal: Option<AbortReason>,
 ) -> Credited {
     let funds_survive = host.bucket(funds).is_ok();
-    let (receipt, _) = host.finish(None, 0).expect("the oracle is clean");
+    let (receipt, _) = host.finish(vec![], 0).expect("the oracle is clean");
     Credited {
         cell: receipt.delta.cells.get(&key).cloned().flatten(),
         credit: receipt.delta.movements.get(&key).map(|m| m.credit),
@@ -657,7 +657,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
         reference.take_bucket(came_off)?.quantity(),
         "the split diverged"
     );
-    let (receipt, _) = blessed.finish(None, 0).expect("the oracle is clean");
+    let (receipt, _) = blessed.finish(vec![], 0).expect("the oracle is clean");
     let left = receipt
         .delta
         .movements

@@ -151,14 +151,14 @@ enum ValueSlot {
     /// `own<R>` of a state resource: a handle the guest holds rather than
     /// one lent to it for a call, so one it can keep, return, or discard.
     Owned,
-    /// A tuple whose every element is an owned handle.
+    /// A tuple of what a method hands back: its edges as owned handles,
+    /// behind the byte list it answers with where it answers one.
     ///
-    /// A method's edges are its results, and a signature carries one
-    /// result — so a method producing more than one edge produces them
-    /// together. Admitted on the same property the flat records are: a
-    /// tuple of handles is a run of `i32`s, so it costs the return area
-    /// its own width and reaches linear memory for nothing else.
-    OwnedTuple,
+    /// A signature carries one result, so a method with more than one
+    /// thing to hand back hands them back together. The answer leads,
+    /// which is what lets the run behind it be read as edges without
+    /// looking at the count.
+    Handed,
     /// `result<_, u32>`: the declared refusal channel, over the edges
     /// the method produces or over nothing.
     Declinable,
@@ -203,18 +203,24 @@ fn admits_param_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> boo
 
 /// Whether a value type may occupy an export's result position.
 ///
-/// How a method ends is what this admits: its edges — one own, or the
-/// tuple a multi-edge method returns — with or without the refusal
-/// channel over them. The call convention folds nothing else into a
-/// receipt. Scalars are the one shape past that: both engines lift one
-/// identically and the convention aborts it deterministically, and it is
-/// what the differential lanes observe an execution through — a
-/// byte-shaped or record result has no such consumer, so it refuses
-/// here rather than deploying as a method that cannot end.
+/// What a method hands back is what this admits: its edges — one own, or
+/// the tuple more than one returns in — the byte list it answers with
+/// where it answers one, and either behind the refusal channel. A record
+/// result has no consumer in the call convention, so it refuses here
+/// rather than deploying as a method that cannot end. Scalars are the
+/// one shape past that: both engines lift one identically and the
+/// convention aborts it deterministically, and it is what the
+/// differential lanes observe an execution through.
 fn admits_result_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bool {
     matches!(
         resolve(defined, vt),
-        Some(ValueSlot::Scalar | ValueSlot::Owned | ValueSlot::OwnedTuple | ValueSlot::Declinable)
+        Some(
+            ValueSlot::Scalar
+                | ValueSlot::Bytes
+                | ValueSlot::Owned
+                | ValueSlot::Handed
+                | ValueSlot::Declinable
+        )
     )
 }
 
@@ -268,16 +274,24 @@ fn record_component_type(
         ComponentType::Defined(ComponentDefinedType::Borrow(_)) => Some(ValueSlot::Handle),
         ComponentType::Defined(ComponentDefinedType::Own(_)) => Some(ValueSlot::Owned),
         ComponentType::Defined(ComponentDefinedType::Tuple(elements)) => {
-            for element in &**elements {
+            // The answer leads and the edges follow, so the walk admits
+            // a byte list at the head and owned handles everywhere else.
+            let edges = match elements.split_first() {
+                Some((head, rest)) if matches!(resolve(defined, *head), Some(ValueSlot::Bytes)) => {
+                    rest
+                }
+                _ => elements,
+            };
+            for element in edges {
                 if !matches!(resolve(defined, *element), Some(ValueSlot::Owned)) {
                     return Err(ProfileError::Structural(
-                        "only a tuple of owned handles is within the profile: it is how a \
-                         method with more than one edge returns them"
+                        "a tuple result is a method's edges as owned handles, behind the \
+                         byte list it answers with where it answers one"
                             .to_string(),
                     ));
                 }
             }
-            Some(ValueSlot::OwnedTuple)
+            Some(ValueSlot::Handed)
         }
         // The refusal channel, pinned to one shape. A code rather than a
         // payload, and the same code width whatever the method returns,
@@ -296,13 +310,13 @@ fn record_component_type(
             // have returned: its edges, or nothing. An error arm says how
             // a method ends, and says nothing about what it produces.
             match ok.map(|vt| resolve(defined, vt)) {
-                None | Some(Some(ValueSlot::Owned | ValueSlot::OwnedTuple)) => {
+                None | Some(Some(ValueSlot::Owned | ValueSlot::Handed | ValueSlot::Bytes)) => {
                     Some(ValueSlot::Declinable)
                 }
                 _ => {
                     return Err(ProfileError::Structural(
-                        "a result's ok arm carries what the method produces: its edges, \
-                         or nothing"
+                        "a result's ok arm carries what the method hands back: its edges, \
+                         the value it answers with, or nothing"
                             .to_string(),
                     ));
                 }

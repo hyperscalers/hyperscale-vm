@@ -47,9 +47,17 @@ pub enum GuestArg<'a> {
 /// everywhere downstream — the outcome it records, and the fee it pays.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Invoked {
-    /// The export returned the value edges it produced, as the buckets
-    /// the kernel holds again — none, where its signature declares none.
-    Produced(Vec<u32>),
+    /// The export returned: the value edges it produced, as the buckets
+    /// the kernel holds again — none, where its signature declares none
+    /// — and the value it answered with beside them.
+    Produced {
+        /// The buckets, in the order the signature declares its outputs.
+        edges: Vec<u32>,
+        /// What the method handed back that is not an edge, encoded as
+        /// its own return type gives it. `None` where the method
+        /// answers nothing, which is most of them.
+        answer: Option<Vec<u8>>,
+    },
     /// The export declined, with an index into its package's error table.
     Declined(u32),
     /// The invocation failed, in the class the engine classified it as.

@@ -161,7 +161,7 @@ impl GuestBackend for Bench {
         let outcome = call_export(&mut store, &instance, call.export, call.args);
         let exhausted = outcome.as_ref().err().is_some_and(exhausted);
         let result = match outcome {
-            Ok(Returned::Edges(reps)) => Invoked::Produced(reps),
+            Ok(Returned::Produced { edges, answer }) => Invoked::Produced { edges, answer },
             Ok(Returned::Declined(code)) => Invoked::Declined(code),
             Err(error) => Invoked::Aborted(classify(&error)),
         };
@@ -231,13 +231,13 @@ fn main() -> Result<()> {
                     .expect("feasible");
             let RunResult::Completed {
                 session,
-                value,
+                answers,
                 fuel,
             } = walk.run(entry, session).expect("the engine is available")
             else {
                 panic!("the bench transfer completes");
             };
-            let (_receipt, threaded) = session.finish(value, fuel).expect("oracle");
+            let (_receipt, threaded) = session.finish(answers, fuel).expect("oracle");
             store = threaded;
         }
         println!(

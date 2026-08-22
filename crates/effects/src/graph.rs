@@ -14,11 +14,10 @@
 use std::collections::BTreeSet;
 
 use hyperscale_hbor::{Hbor, to_vec};
-use hyperscale_vm_types::{CallTarget, ResourceAddr};
+use hyperscale_vm_types::{CallTarget, MAX_MANIFEST_NODES, ResourceAddr};
 
 use crate::hash::Hasher;
 use crate::manifest::ManifestHash;
-use crate::route::MAX_MANIFEST_NODES;
 use crate::types::Value;
 
 /// One produced value edge: the `output`-th edge of the `producer` node.

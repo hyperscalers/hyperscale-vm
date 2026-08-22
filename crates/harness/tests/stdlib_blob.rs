@@ -120,7 +120,7 @@ fn rep_of(session: &KernelSession, wanted: &Capability) -> u32 {
 }
 
 fn finish(session: KernelSession, fuel: u64) -> Receipt {
-    session.finish(None, fuel).expect("oracle clean").0
+    session.finish(vec![], fuel).expect("oracle clean").0
 }
 
 /// The account blob in both engines' forms, compiled once per binary.

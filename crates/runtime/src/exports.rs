@@ -56,6 +56,13 @@ pub struct ExportShape {
     /// package cannot describe itself as yielding edges its code does not
     /// hand back.
     pub edges: usize,
+    /// Whether the result carries a value beside its edges — the method
+    /// answers with something a caller reads off the receipt.
+    ///
+    /// Judged against what the signature declares, so a package cannot
+    /// describe itself as answering when its code hands nothing back, or
+    /// stay silent about one it does.
+    pub answers: bool,
     /// Whether the result carries an error arm — the method can decline
     /// on its own terms rather than only by trapping.
     ///
@@ -112,11 +119,13 @@ pub fn classify_exports(
             .collect();
         let declines = ty.result.is_some_and(|result| declinable(types, &result));
         let edges = ty.result.map_or(0, |result| edge_count(types, &result));
+        let answers = ty.result.is_some_and(|result| answered(types, &result));
         out.insert(
             name,
             ExportShape {
                 params,
                 edges,
+                answers,
                 declines,
             },
         );
@@ -181,6 +190,28 @@ fn declinable(types: TypesRef<'_>, result: &ComponentValType) -> bool {
         return false;
     };
     matches!(types.get(*id), Some(ComponentDefinedType::Result { .. }))
+}
+
+/// Whether a result carries a byte list beside its edges, looking
+/// through the refusal channel the way the edge count does.
+///
+/// A byte list is the one non-edge shape the convention admits in a
+/// result, so finding one is the whole of the question.
+fn answered(types: TypesRef<'_>, result: &ComponentValType) -> bool {
+    let ComponentValType::Type(id) = result else {
+        return false;
+    };
+    match types.get(*id) {
+        Some(ComponentDefinedType::List {
+            element: ComponentValType::Primitive(PrimitiveValType::U8),
+            ..
+        }) => true,
+        Some(ComponentDefinedType::Tuple(elements)) => {
+            elements.types.iter().any(|ty| answered(types, ty))
+        }
+        Some(ComponentDefinedType::Result { ok: Some(ok), .. }) => answered(types, ok),
+        _ => false,
+    }
 }
 
 /// How many owned edges a result carries, looking through the refusal

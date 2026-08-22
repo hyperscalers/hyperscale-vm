@@ -50,6 +50,7 @@ pub fn method(
         name: published.to_owned(),
         params: Vec::new(),
         outputs: lowered.outputs.len(),
+        answers: lowered.answer.is_some(),
         declines,
     };
     let mut signature = Vec::new();
@@ -140,30 +141,33 @@ pub fn method(
 
     let name = rust_name(published);
     let body = &lowered.body;
-    // A guest hands each edge back as the handle the kernel lends it:
-    // one on its own, more than one as the tuple the profile admits for
-    // exactly this, so an edge's slot is the order the body produced it.
-    let edges = &lowered.edges;
-    let tail = match edges.as_slice() {
-        [] => quote!(),
-        [one] => quote!((#one).into_handle()),
-        many => quote!((#((#many).into_handle()),*)),
+    // A guest hands each edge back as the handle the kernel lends it,
+    // and its answer as the bytes it encoded to. The answer leads, so an
+    // edge's slot is the order the body produced it either way; one
+    // thing goes back on its own and any other count as the tuple the
+    // profile admits for exactly this.
+    let mut handed: Vec<TokenStream> = Vec::new();
+    let mut types: Vec<TokenStream> = Vec::new();
+    if let Some(answer) = &lowered.answer {
+        handed.push(quote!(#answer));
+        types.push(quote!(::std::vec::Vec<u8>));
+    }
+    for edge in &lowered.edges {
+        handed.push(quote!((#edge).into_handle()));
+        types.push(quote!(KernelBucket));
+    }
+    let (tail, handed_type) = match (handed.as_slice(), types.as_slice()) {
+        ([], _) => (quote!(), quote!(())),
+        ([one], [ty]) => (quote!(#one), quote!(#ty)),
+        (many, tys) => (quote!((#(#many),*)), quote!((#(#tys),*))),
     };
-    let outputs = lowered.outputs.len();
-    let edge_type = match outputs {
-        0 => quote!(()),
-        1 => quote!(KernelBucket),
-        n => {
-            let each = std::iter::repeat_n(quote!(KernelBucket), n);
-            quote!((#(#each),*))
-        }
-    };
-    let (result, outcome) = match (outputs > 0, declines) {
+    let hands_back = !handed.is_empty();
+    let (result, outcome) = match (hands_back, declines) {
         (true, true) => (
-            quote!(::core::result::Result<#edge_type, u32>),
+            quote!(::core::result::Result<#handed_type, u32>),
             quote!(::core::result::Result::Ok(#tail)),
         ),
-        (true, false) => (edge_type, quote!(#tail)),
+        (true, false) => (handed_type, quote!(#tail)),
         (false, true) => (
             quote!(::core::result::Result<(), u32>),
             quote!(::core::result::Result::Ok(())),

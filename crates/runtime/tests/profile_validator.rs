@@ -194,9 +194,10 @@ fn rejects_excessive_blocks() {
 
 #[test]
 fn rejects_a_tuple_that_is_not_a_run_of_edges() {
-    // A tuple is admitted for one reason — it is how a method with more
-    // than one edge returns them — so a tuple of anything else is a shape
-    // with no meaning in the world rather than a value type to model.
+    // A tuple is admitted for one reason — it is what a method hands
+    // back where that is more than one thing, its edges behind the value
+    // it answers with — so a tuple of anything else is a shape with no
+    // meaning in the world rather than a value type to model.
     let bytes = parse_str(
         r#"
 (component
@@ -210,7 +211,7 @@ fn rejects_a_tuple_that_is_not_a_run_of_edges() {
 "#,
     )
     .expect("fixture must parse");
-    assert_rejected(&bytes, "tuple of owned handles");
+    assert_rejected(&bytes, "owned handles");
 }
 
 #[test]

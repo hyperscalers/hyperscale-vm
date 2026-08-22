@@ -108,7 +108,7 @@ fn transfer_declared(amount: u128) -> EffectSet {
 fn quiet_guest(fuel: u64) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
     move |_entry: &BatchTx, session| RunResult::Completed {
         session,
-        value: None,
+        answers: vec![],
         fuel,
     }
 }
@@ -143,7 +143,7 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
     }
     RunResult::Completed {
         session,
-        value: None,
+        answers: vec![],
         fuel: 7,
     }
 }

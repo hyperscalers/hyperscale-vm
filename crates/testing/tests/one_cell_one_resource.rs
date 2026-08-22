@@ -84,7 +84,13 @@ fn mixer_body(
                 panic!("a handle and an edge: {args:?}");
             };
             match session.delta_put(*rep, *funds) {
-                Ok(()) => (session, Invoked::Produced(vec![])),
+                Ok(()) => (
+                    session,
+                    Invoked::Produced {
+                        edges: vec![],
+                        answer: None,
+                    },
+                ),
                 Err(trap) => (session, Invoked::Aborted(trap.into())),
             }
         }
@@ -93,7 +99,13 @@ fn mixer_body(
                 panic!("a handle and an amount: {args:?}");
             };
             match session.write_take(*rep, u128::from(*amount)) {
-                Ok(bucket) => (session, Invoked::Produced(vec![bucket])),
+                Ok(bucket) => (
+                    session,
+                    Invoked::Produced {
+                        edges: vec![bucket],
+                        answer: None,
+                    },
+                ),
                 Err(trap) => (session, Invoked::Aborted(trap.into())),
             }
         }

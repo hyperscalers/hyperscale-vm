@@ -9,6 +9,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -86,6 +87,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -150,6 +152,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -294,6 +297,7 @@ PackageMetadata {
                     ),
                 },
             ],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -617,6 +621,7 @@ PackageMetadata {
                 Bytes,
             ],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -763,6 +768,7 @@ PackageMetadata {
                     ),
                 },
             ],
+            answers: false,
             denominations: [
                 Some(
                     Config(
@@ -811,6 +817,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -919,6 +926,7 @@ PackageMetadata {
                 Bucket,
             ],
             outputs: [],
+            answers: false,
             denominations: [
                 Some(
                     SelfResource {

@@ -31,8 +31,8 @@ use std::thread;
 
 use hyperscale_vm_effects::{Declaration, NodeCall};
 use hyperscale_vm_types::{
-    AbortReason, Address, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget, Mode,
-    ModeKind, Outcome, SubstateKey, TxHash, UnmetCondition,
+    AbortReason, Address, Answer, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget,
+    Mode, ModeKind, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
 use crate::ledger::AmountLedger;
@@ -191,8 +191,8 @@ pub enum RunResult {
     Completed {
         /// The session back from the engine.
         session: KernelSession,
-        /// The value the export completed with, if its signature has one.
-        value: Option<u64>,
+        /// What each answering node handed back, in node order.
+        answers: Vec<Answer>,
         /// Fuel consumed: engine schedule plus boundary supplement.
         fuel: u64,
     },
@@ -700,12 +700,12 @@ fn run_group<R: GuestRunner>(
         match result {
             RunResult::Completed {
                 session,
-                value,
+                answers,
                 fuel,
             } => {
                 let (mut receipt, mut threaded) =
                     session
-                        .finish(value, fuel)
+                        .finish(answers, fuel)
                         .map_err(|source| BatchError::Finish {
                             tx: entry.tx,
                             source,

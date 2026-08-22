@@ -21,7 +21,7 @@ use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
     Chain, Package, PrincipalAddr, Refused, ResourceAddr, account, principal, resource,
 };
-use hyperscale_vm_types::{Outcome, Presence, UnmetCondition};
+use hyperscale_vm_types::{Answer, Outcome, Presence, UnmetCondition};
 
 const ALICE: PrincipalAddr = principal(0x41);
 const X: ResourceAddr = resource(0xE1);
@@ -178,6 +178,56 @@ fn a_fielded_instance_reads_the_same_in_both_lanes() {
         native_filed,
         Some(to_vec(&grammar::Seat { holder: 42 }).expect("the record encodes")),
         "the cell holds the record the mark declares",
+    );
+}
+
+/// A method handing back an ordinary value.
+///
+/// The value is not an edge, so it is not an output: a manifest naming
+/// this node's output has none to name, and the value rides the receipt
+/// instead — which is where the caller reads it, in both lanes.
+#[test]
+fn a_view_method_answers_off_the_receipt_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        // `seat` notes the holder it filed, so there is something to read
+        // back that the transaction itself put there.
+        chain
+            .transact(ALICE, |b| {
+                let minted = shapes.seat(b, 3, 42)?;
+                account::deposit_nf(b, ALICE, minted)
+            })
+            .expect_completed();
+        let outcome = chain.transact(ALICE, |b| shapes.noted(b));
+        // And the value is not an output: a node naming one has none.
+        let routed = chain
+            .try_transact(ALICE, |b| {
+                let value = b.call(shapes, "noted", ())?.one()?;
+                account::deposit(b, ALICE, value)
+            })
+            .err();
+        (outcome.receipt().outcome.clone(), routed.is_some())
+    };
+
+    let (native, native_routed) = run(Chain::native());
+    let (blessed, blessed_routed) = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    assert!(
+        native_routed && blessed_routed,
+        "an answer is not an output a manifest can consume",
+    );
+    let Outcome::Completed { answers } = &native else {
+        panic!("the view method completes: {native:?}");
+    };
+    assert_eq!(
+        answers.as_slice(),
+        [Answer {
+            node: 0,
+            value: to_vec(&42u64).expect("a scalar encodes"),
+        }],
+        "the receipt carries what the method answered",
     );
 }
 

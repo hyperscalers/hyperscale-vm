@@ -133,7 +133,7 @@ mod through_the_session {
     }
 
     fn completed(session: KernelSession) -> SupplyDelta {
-        let (receipt, _) = session.finish(None, 0).expect("the oracle stands");
+        let (receipt, _) = session.finish(vec![], 0).expect("the oracle stands");
         receipt.supply
     }
 
@@ -210,7 +210,7 @@ mod through_the_session {
         let _ = minted;
 
         let (receipt, _) = session
-            .finish(None, 0)
+            .finish(vec![], 0)
             .expect("the flip still produces a receipt");
         assert!(matches!(
             receipt.outcome,

@@ -291,6 +291,13 @@ pub struct MethodSignature {
     /// The static resource type of each value edge the method produces, as
     /// an expression over the method's bound inputs.
     pub outputs: Vec<Expr>,
+    /// Whether the method hands back a value beside its edges.
+    ///
+    /// A caller reads it off the receipt rather than routing it, so what
+    /// a manifest needs from this is only that such a result is not an
+    /// output slot. The gate holds it against what the export's own type
+    /// hands back, as it does the edges and the error arm.
+    pub answers: bool,
     /// The resource each value edge the method *consumes* must carry, as
     /// an expression over the method's bound inputs; `None` at a position
     /// that takes any resource.

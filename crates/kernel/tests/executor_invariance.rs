@@ -13,9 +13,18 @@ use hyperscale_vm_kernel::{
     MemoryStore, RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Movement, Outcome,
-    ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement,
+    Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
+
+/// The one answer a fixture guest hands back, so a receipt depends on
+/// something the run can vary.
+fn answered(value: u64) -> Vec<Answer> {
+    vec![Answer {
+        node: 0,
+        value: value.to_le_bytes().to_vec(),
+    }]
+}
 
 /// What every cell these fixtures move value through holds.
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
@@ -110,7 +119,7 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
         let amount = session.reserve_amount(reserve).unwrap();
         session.delta_add(delta, amount).unwrap();
         Outcome::Completed {
-            value: Some(u64::try_from(amount).unwrap()),
+            answers: answered(u64::try_from(amount).unwrap()),
         }
     } else if let Some(write) = write {
         let mut value = session.write_cell_get(write).unwrap();
@@ -123,17 +132,17 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
             }
         } else {
             Outcome::Completed {
-                value: Some(u64::from(value[0])),
+                answers: answered(u64::from(value[0])),
             }
         }
     } else {
-        Outcome::Completed { value: None }
+        Outcome::Completed { answers: vec![] }
     };
     let fuel = 10 + u64::from(tx_id.0.0[0]);
     match outcome {
-        Outcome::Completed { value } => RunResult::Completed {
+        Outcome::Completed { answers } => RunResult::Completed {
             session,
-            value,
+            answers,
             fuel,
         },
         outcome => RunResult::Aborted {
@@ -374,7 +383,7 @@ fn each_transaction_sees_its_own_clock() {
     );
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
-        value: Some(session.clock_ms()),
+        answers: answered(session.clock_ms()),
         fuel: u64::from(entry.tx.0.0[0]),
         session,
     };
@@ -390,11 +399,15 @@ fn each_transaction_sees_its_own_clock() {
 
     assert_eq!(
         outcome.receipts[&tx(0x01)].outcome,
-        Outcome::Completed { value: Some(1_000) }
+        Outcome::Completed {
+            answers: answered(1_000)
+        }
     );
     assert_eq!(
         outcome.receipts[&tx(0x02)].outcome,
-        Outcome::Completed { value: Some(2_000) }
+        Outcome::Completed {
+            answers: answered(2_000)
+        }
     );
 }
 
@@ -426,7 +439,7 @@ fn each_transaction_sees_its_own_draw() {
     );
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
-        value: Some(u64::from(session.randomness()[0])),
+        answers: answered(u64::from(session.randomness()[0])),
         fuel: u64::from(entry.tx.0.0[0]),
         session,
     };
@@ -442,10 +455,14 @@ fn each_transaction_sees_its_own_draw() {
 
     assert_eq!(
         outcome.receipts[&tx(0x01)].outcome,
-        Outcome::Completed { value: Some(7) }
+        Outcome::Completed {
+            answers: answered(7)
+        }
     );
     assert_eq!(
         outcome.receipts[&tx(0x02)].outcome,
-        Outcome::Completed { value: Some(9) }
+        Outcome::Completed {
+            answers: answered(9)
+        }
     );
 }

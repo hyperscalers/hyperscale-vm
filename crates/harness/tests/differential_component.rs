@@ -17,9 +17,18 @@ use hyperscale_vm_runtime::{
     add_kernel_to_linker, blessed_engine, validate_component,
 };
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget,
-    EntryKey, Mode, Movement, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    ABSENT_REP, AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet,
+    EffectTarget, EntryKey, Mode, Movement, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
+
+/// The one answer a fixture guest hands back, so a receipt depends on
+/// what the body computed.
+fn answered(value: u64) -> Vec<Answer> {
+    vec![Answer {
+        node: 0,
+        value: value.to_le_bytes().to_vec(),
+    }]
+}
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::error::{Context, format_err};
 use wasmtime::{Error, Result, Store};
@@ -392,10 +401,10 @@ fn receipts_agree(fx: &Fixture, export: &str) -> Result<Receipt> {
         panic!("{export} did not complete: {blessed:?}");
     };
     let (blessed_receipt, _) = blessed_host
-        .finish(Some(value), blessed_fuel)
+        .finish(answered(value), blessed_fuel)
         .expect("oracle clean on the blessed side");
     let (ref_receipt, _) = ref_host
-        .finish(Some(value), ref_fuel)
+        .finish(answered(value), ref_fuel)
         .expect("oracle clean on the reference side");
     assert_eq!(blessed_receipt, ref_receipt, "{export} receipts diverged");
     Ok(blessed_receipt)

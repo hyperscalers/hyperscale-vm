@@ -18,6 +18,7 @@ PackageMetadata {
                     ),
                 ),
             ],
+            answers: false,
             denominations: [
                 None,
                 None,
@@ -130,6 +131,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -179,6 +181,7 @@ PackageMetadata {
                 Bucket,
             ],
             outputs: [],
+            answers: false,
             denominations: [
                 None,
                 Some(

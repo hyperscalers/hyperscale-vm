@@ -18,8 +18,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use hyperscale_vm_types::{
-    Address, CallTarget, Effect, EffectConflict, EffectTarget, Mode, Presence, PrincipalAddr,
-    ResourceAddr,
+    Address, CallTarget, Effect, EffectConflict, EffectTarget, MAX_MANIFEST_NODES, Mode, Presence,
+    PrincipalAddr, ResourceAddr,
 };
 
 use crate::dsl::{
@@ -37,7 +37,7 @@ use crate::presented::Presented;
 use crate::publish::{CheckedSignature, seals};
 use crate::records::ChainRecords;
 use crate::resource::{ResourceKind, granting_issued_resource};
-use crate::route::{FrameDeclaration, MAX_MANIFEST_NODES};
+use crate::route::FrameDeclaration;
 use crate::rule::Rule;
 use crate::signature::{AbiParam, MethodSignature, ParamType};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};

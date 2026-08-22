@@ -16,9 +16,18 @@ use hyperscale_vm_kernel::{
     WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Movement, Outcome, ResourceAddr,
-    SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement, Outcome,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
+
+/// The one answer a fixture guest hands back, so a receipt depends on
+/// something the run can vary.
+fn answered(value: u64) -> Vec<Answer> {
+    vec![Answer {
+        node: 0,
+        value: value.to_le_bytes().to_vec(),
+    }]
+}
 
 /// What every cell these fixtures move value through holds.
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
@@ -91,7 +100,7 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
     }
     RunResult::Completed {
         session,
-        value: None,
+        answers: vec![],
         fuel: FUEL,
     }
 }
@@ -262,7 +271,7 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
         },
     )];
     let reading_guest = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
-        value: Some(u64::from(session.randomness()[0])),
+        answers: answered(u64::from(session.randomness()[0])),
         session,
         fuel: FUEL,
     };
@@ -291,7 +300,9 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
     assert_eq!(payer.receipts, recipient.receipts);
     assert_eq!(
         payer.receipts[&batch[0].tx].outcome,
-        Outcome::Completed { value: Some(0x5A) }
+        Outcome::Completed {
+            answers: answered(0x5A)
+        }
     );
 
     // And the draw is receipt-affecting, which is what makes carrying it
@@ -324,7 +335,7 @@ fn a_randomness_reading_guest_derives_one_receipt_on_both_shards() {
 fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
     move |_entry: &BatchTx, mut session: KernelSession| {
         let caps: Vec<Capability> = session.capabilities().to_vec();
-        let mut value = None;
+        let mut answers = Vec::new();
         for (rep, capability) in caps.iter().enumerate() {
             let rep = u32::try_from(rep).unwrap();
             match capability {
@@ -339,14 +350,14 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
                     } else {
                         decode_amount(&cell).unwrap()
                     };
-                    value = Some(u64::try_from(amount).unwrap());
+                    answers = answered(u64::try_from(amount).unwrap());
                 }
                 _ => {}
             }
         }
         RunResult::Completed {
             session,
-            value,
+            answers,
             fuel: FUEL,
         }
     }
@@ -433,7 +444,9 @@ fn a_remote_credit_never_becomes_a_local_balance() {
 
     assert_eq!(
         outcome.receipts[&batch[1].tx].outcome,
-        Outcome::Completed { value: Some(0) }
+        Outcome::Completed {
+            answers: answered(0)
+        }
     );
     let mut state = outcome.store;
     assert_eq!(state.read(cell(PAYER_BYTE)).unwrap(), None);

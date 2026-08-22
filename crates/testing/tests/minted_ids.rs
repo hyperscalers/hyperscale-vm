@@ -91,7 +91,13 @@ fn body<const MINTED: u64>(
         panic!("the grant alone: {args:?}");
     };
     match session.mint_instances(ISSUER_REP, &[MINTED]) {
-        Ok(rep) => (session, Invoked::Produced(vec![rep])),
+        Ok(rep) => (
+            session,
+            Invoked::Produced {
+                edges: vec![rep],
+                answer: None,
+            },
+        ),
         Err(trap) => (session, Invoked::Aborted(trap.into())),
     }
 }

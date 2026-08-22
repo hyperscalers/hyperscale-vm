@@ -24,7 +24,8 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
-    Address, Effect, EffectTarget, Mode, PrincipalAddr, ResourceAddr, SubstateKey,
+    Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, PrincipalAddr, ResourceAddr,
+    SubstateKey,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -39,7 +40,7 @@ use crate::instance::InstanceMeta;
 use crate::manifest::ManifestHash;
 use crate::records::{ChainRecords, Composed};
 use crate::resource::ResourceMeta;
-use crate::route::{MAX_MANIFEST_NODES, Routing, ShardResolver, route};
+use crate::route::{Routing, ShardResolver, route};
 use crate::types::{SlotId, child_key};
 
 /// The kernel-reserved role of subintent nullifier substates under a

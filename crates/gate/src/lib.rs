@@ -188,24 +188,41 @@ fn judge_seal(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), 
     ))
 }
 
-/// Judge a method's declared outputs against what its export hands back.
+/// Judge what a method declares it hands back against what its export
+/// hands back.
 ///
 /// Every edge crosses as a bucket the kernel takes ownership of, so an
-/// export's result carries one own per declared output and nothing else.
+/// export's result carries one own per declared output; a method that
+/// answers carries a byte list beside them. Both are functions of the
+/// artifact, so a signature disagreeing with either describes a package
+/// that is not the one being published.
 fn check_outputs_against_export(
     method: &str,
     signature: &MethodSignature,
     export: &ExportShape,
 ) -> Result<(), GateError> {
     let declared = signature.outputs.len();
-    if declared == export.edges {
-        return Ok(());
+    if declared != export.edges {
+        return Err(GateError(format!(
+            "method {method:?}: the signature produces {declared} value edges, the export \
+             hands back {}",
+            export.edges
+        )));
     }
-    Err(GateError(format!(
-        "method {method:?}: the signature produces {declared} value edges, the export \
-         hands back {}",
-        export.edges
-    )))
+    if signature.answers != export.answers {
+        return Err(GateError(if export.answers {
+            format!(
+                "method {method:?}: the export hands back a value beside its edges, and \
+                 the signature says it answers with nothing"
+            )
+        } else {
+            format!(
+                "method {method:?}: the signature says the method answers with a value, \
+                 and the export hands back none"
+            )
+        }));
+    }
+    Ok(())
 }
 
 /// Judge a claim to totality: refused outright from a publisher, and read

@@ -129,8 +129,9 @@ fn every_shape_the_gate_can_demand_deploys_and_decodes() {
 }
 
 /// A component whose exports end every way the call convention folds: a
-/// scalar observation, one edge, a run of edges, and the refusal channel
-/// over each of the three.
+/// scalar observation, one edge, a run of edges, the value a method
+/// answers with — alone and ahead of an edge — and the refusal channel
+/// over each of them.
 fn result_component() -> Vec<u8> {
     parse_str(
         r#"(component
@@ -138,6 +139,8 @@ fn result_component() -> Vec<u8> {
                (export "bucket" (type $bk (sub resource)))))
              (alias export $state "bucket" (type $bucket))
              (type $pair (tuple (own $bucket) (own $bucket)))
+             (type $answer (list u8))
+             (type $answered (tuple $answer (own $bucket)))
 
              (core module $m
                (memory (export "mem") 1 1)
@@ -148,7 +151,10 @@ fn result_component() -> Vec<u8> {
                (func (export "produce-two") (result i32) i32.const 0)
                (func (export "settle") (result i32) i32.const 0)
                (func (export "yield") (result i32) i32.const 0)
-               (func (export "yield-two") (result i32) i32.const 0))
+               (func (export "yield-two") (result i32) i32.const 0)
+               (func (export "answer") (result i32) i32.const 0)
+               (func (export "answer-and-edge") (result i32) i32.const 0)
+               (func (export "answer-or-decline") (result i32) i32.const 0))
              (core instance $i (instantiate $m))
 
              (func (export "count") (result u64)
@@ -166,14 +172,24 @@ fn result_component() -> Vec<u8> {
                  (memory $i "mem") (realloc (func $i "realloc"))))
              (func (export "yield-two") (result (result $pair (error u32)))
                (canon lift (core func $i "yield-two")
+                 (memory $i "mem") (realloc (func $i "realloc"))))
+             (func (export "answer") (result $answer)
+               (canon lift (core func $i "answer")
+                 (memory $i "mem") (realloc (func $i "realloc"))))
+             (func (export "answer-and-edge") (result $answered)
+               (canon lift (core func $i "answer-and-edge")
+                 (memory $i "mem") (realloc (func $i "realloc"))))
+             (func (export "answer-or-decline") (result (result $answer (error u32)))
+               (canon lift (core func $i "answer-or-decline")
                  (memory $i "mem") (realloc (func $i "realloc")))))"#,
     )
     .expect("the result fixture parses")
 }
 
 /// Every way a method can end deploys, decodes, and classifies as
-/// itself: the edges it produces and whether it can decline, read off
-/// the same artifact by all three layers.
+/// itself: the edges it produces, the value it answers with, and
+/// whether it can decline, read off the same artifact by all three
+/// layers.
 #[test]
 fn every_ending_the_convention_folds_deploys_and_decodes() {
     let bytes = result_component();
@@ -181,33 +197,36 @@ fn every_ending_the_convention_folds_deploys_and_decodes() {
     RefComponent::decode(&bytes).expect("the executable spec models every admitted ending");
 
     let exports = component_exports(&bytes).expect("the exports classify");
-    for (name, edges, declines) in [
-        ("count", 0, false),
-        ("produce", 1, false),
-        ("produce-two", 2, false),
-        ("settle", 0, true),
-        ("yield", 1, true),
-        ("yield-two", 2, true),
+    for (name, edges, answers, declines) in [
+        ("count", 0, false, false),
+        ("produce", 1, false, false),
+        ("produce-two", 2, false, false),
+        ("settle", 0, false, true),
+        ("yield", 1, false, true),
+        ("yield-two", 2, false, true),
+        ("answer", 0, true, false),
+        ("answer-and-edge", 1, true, false),
+        ("answer-or-decline", 0, true, true),
     ] {
         assert_eq!(exports[name].edges, edges, "{name} edges");
+        assert_eq!(exports[name].answers, answers, "{name} answers");
         assert_eq!(exports[name].declines, declines, "{name} declines");
     }
 }
 
-/// The endings the convention cannot fold refuse at deploy: a byte or id
-/// list, a declinable byte list, and a verdict are results no receipt
-/// has a reading of, so no such method deploys to abort per call.
+/// The endings the convention cannot fold refuse at deploy: an id list
+/// and a verdict are results no receipt has a reading of, so no such
+/// method deploys to abort per call.
 #[test]
 fn a_result_the_convention_cannot_fold_refuses_at_deploy() {
     for (label, ty, result) in [
-        ("bytes", "(type $t (list u8))", "(result $t)"),
         ("ids", "(type $t (list u64))", "(result $t)"),
-        (
-            "declinable bytes",
-            "(type $t (list u8))",
-            "(result (result $t (error u32)))",
-        ),
         ("verdict", "(type $t (list u8))", "(result bool)"),
+        (
+            "an answer behind an edge",
+            "(type $t (list u8))",
+            "(result (tuple $t $t))",
+        ),
     ] {
         let text = format!(
             r#"(component

@@ -114,6 +114,16 @@ pub mod grammar {
             seated
         }
 
+        /// A method that hands back an ordinary value.
+        ///
+        /// It produces no edge, so the declaration says it produces
+        /// none; what it answers with rides the receipt, where whoever
+        /// sent the transaction reads it. A manifest has nowhere to put
+        /// one, which is what keeps a view function a view function.
+        pub fn noted(&self) -> u64 {
+            self.noted.get()
+        }
+
         /// The record changing under a live instance: the same cell the
         /// mint filed, written again where the mint required nothing to
         /// be. What never moves is the id, which is the instance's

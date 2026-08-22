@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_types::{AbortReason, EntryKey, Event, Movement, Outcome, SubstateKey};
+use hyperscale_vm_types::{AbortReason, Answer, EntryKey, Event, Movement, Outcome, SubstateKey};
 
 use super::{Capability, KernelSession};
 use crate::ledger::AmountLedger;
@@ -246,8 +246,8 @@ impl KernelSession {
     /// (the input for the next transaction in a conflict group).
     ///
     /// The outcome is this function's to produce, never its caller's to
-    /// assert: [`Outcome::Completed`] with `value` when the account
-    /// balances, or the flip the judgement forces — value dropped, a
+    /// assert: [`Outcome::Completed`] with what the nodes answered when
+    /// the account balances, or the flip the judgement forces — value dropped, a
     /// movement past its floor, a reservation lost — as an abort receipt
     /// over the untouched store. An abort that happened *before*
     /// completion never reaches here; it goes to [`Self::discard`].
@@ -268,7 +268,7 @@ impl KernelSession {
     /// scan without charging for it.
     pub fn finish(
         mut self,
-        value: Option<u64>,
+        answers: Vec<Answer>,
         fuel: u64,
     ) -> Result<(Receipt, OverlayStore), FinishError> {
         assert_eq!(
@@ -383,7 +383,7 @@ impl KernelSession {
         self.store.merge_active();
         Ok((
             Receipt {
-                outcome: Outcome::Completed { value },
+                outcome: Outcome::Completed { answers },
                 delta,
                 events: self.events,
                 // Value exists because the transaction committed it;
@@ -465,7 +465,7 @@ mod tests {
         session.enter_invocation(second);
         session.emit(4, b"two".to_vec()).unwrap();
 
-        let (receipt, _) = session.finish(None, 0).unwrap();
+        let (receipt, _) = session.finish(vec![], 0).unwrap();
         assert_eq!(
             receipt.events,
             vec![
@@ -498,7 +498,7 @@ mod tests {
         session.emit(1, b"paid".to_vec()).unwrap();
         session.delta_sub(0, 1).unwrap();
 
-        let (receipt, _) = session.finish(None, 7).unwrap();
+        let (receipt, _) = session.finish(vec![], 7).unwrap();
         assert!(
             matches!(receipt.outcome, Outcome::Infeasible { .. }),
             "a debit past the floor is the transaction's own loss",
@@ -523,7 +523,7 @@ mod tests {
         let mut session = session_holding(store, &set);
 
         let funds = session.write_take(0, 40).expect("the cell covers it");
-        let (receipt, mut threaded) = session.finish(None, 7).expect("finishes");
+        let (receipt, mut threaded) = session.finish(vec![], 7).expect("finishes");
         assert_eq!(
             receipt.outcome,
             Outcome::UserError {
@@ -560,8 +560,8 @@ mod tests {
         let split = session.bucket_take(funds, 40).expect("the whole of it");
         session.write_put(0, split).expect("the credit lands");
 
-        let (receipt, _) = session.finish(None, 7).expect("finishes");
-        assert_eq!(receipt.outcome, Outcome::Completed { value: None });
+        let (receipt, _) = session.finish(vec![], 7).expect("finishes");
+        assert_eq!(receipt.outcome, Outcome::Completed { answers: vec![] });
     }
 
     #[test]
@@ -580,6 +580,6 @@ mod tests {
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
         session.range_count(0).unwrap();
-        let _ = session.finish(None, 0);
+        let _ = session.finish(vec![], 0);
     }
 }

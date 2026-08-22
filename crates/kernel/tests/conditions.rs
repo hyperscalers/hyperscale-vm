@@ -93,7 +93,10 @@ impl GuestBackend for Inert {
         InvokeResult {
             session,
             fuel: 0,
-            result: Invoked::Produced(Vec::new()),
+            result: Invoked::Produced {
+                edges: Vec::new(),
+                answer: None,
+            },
             exhausted: false,
         }
     }

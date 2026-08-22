@@ -389,6 +389,14 @@ pub struct Lowered {
     /// position it holds — which is the one place the two tails differ,
     /// and the reason this is the edges rather than the tail.
     pub edges: Vec<TokenStream>,
+    /// The value the body ends with beside its edges, as the expression
+    /// that computed it.
+    ///
+    /// Encoded into the receipt rather than routed: a manifest consumes
+    /// edges, and a value has no shape a later node could take. Both
+    /// halves compose it the same way, so unlike the edges this is the
+    /// expression itself.
+    pub answer: Option<TokenStream>,
     /// Whether the method yields a value at all.
     pub returns: bool,
     /// Why the guest half cannot be emitted, if it cannot, and where the
@@ -396,6 +404,22 @@ pub struct Lowered {
     /// publish gate judges artifacts, so a package the SDK cannot
     /// execute is one whose guest is written the long way.
     pub refusal: Option<(Span, String)>,
+}
+
+/// What a method's tail hands back.
+///
+/// The edges are two lists rather than one because the halves compose
+/// them differently — a guest hands the kernel the handle it owns, a
+/// host the table position it holds — where the answer is one
+/// expression both halves encode the same way.
+#[derive(Default)]
+struct Returned {
+    /// The resource of each value edge, in output order.
+    outputs: Vec<Term>,
+    /// The guest code for each edge, in the same order.
+    edges: Vec<TokenStream>,
+    /// The value beside them, where the method answers with one.
+    answer: Option<TokenStream>,
 }
 
 impl Lowered {
@@ -808,18 +832,20 @@ impl<'a> Lowerer<'a> {
         if self.errors.is_empty() {
             self.out.nodes = self.scopes.pop().unwrap_or_default();
             self.out.body = quote!(#(#statements)*);
-            self.out.returns = !returned.is_empty();
-            self.out.edges = returned;
+            self.out.returns = !returned.edges.is_empty() || returned.answer.is_some();
+            self.out.outputs = returned.outputs;
+            self.out.edges = returned.edges;
+            self.out.answer = returned.answer;
             Ok(self.out)
         } else {
             Err(self.errors)
         }
     }
 
-    /// The walk itself: the body's statements and the edges its tail
-    /// yields. Shared with [`Lowerer::survey`], so the two passes see the
+    /// The walk itself: the body's statements and what its tail hands
+    /// back. Shared with [`Lowerer::survey`], so the two passes see the
     /// same body the same way.
-    fn walk(&mut self, block: &syn::Block) -> (Vec<TokenStream>, Vec<TokenStream>) {
+    fn walk(&mut self, block: &syn::Block) -> (Vec<TokenStream>, Returned) {
         self.locals.push(BTreeMap::new());
         // A method yielding nothing has no tail expression worth the
         // name: whatever sits last is a statement, and reading it as a
@@ -833,15 +859,46 @@ impl<'a> Lowerer<'a> {
         for stmt in body {
             statements.push(self.stmt(stmt));
         }
-        let returned = if let Some(tail) = tail {
-            let (outputs, codes) = self.returned(tail);
-            self.out.outputs = outputs;
-            codes
-        } else {
-            Vec::new()
-        };
+        let returned = tail.map_or_else(Returned::default, |tail| self.returned(tail));
         self.locals.pop();
         (statements, returned)
+    }
+
+    /// Fold one thing a tail hands back into what the method returns: a
+    /// value edge, or the value it answers with.
+    ///
+    /// An edge is value the kernel takes ownership of and a later node
+    /// may consume. Anything else is an answer — it rides the receipt,
+    /// where whoever sent the transaction reads it, and a manifest has
+    /// nowhere else to put it. One answer per method, because one result
+    /// is one value however many edges travel beside it.
+    fn hands_back(&mut self, expr: &syn::Expr, eval: Eval, returned: &mut Returned) {
+        let produced = match &eval.val {
+            Val::Produced(term) => Some(term.clone()),
+            // An edge the method was handed and hands on: it carries the
+            // resource the manifest routed it as, and forwarding one is
+            // the case `check_abi` already admits.
+            Val::Term(term) if matches!(eval.code, Code::Bucket(_)) => Some(self.forwarded(term)),
+            _ => None,
+        };
+        let code = self.value(eval.code);
+        if let Some(term) = produced {
+            returned.outputs.push(term);
+            returned.edges.push(code);
+            return;
+        }
+        if returned.answer.is_some() {
+            self.error(
+                expr.span(),
+                "a method answers with one value: several are a record with a field for \
+                 each, which is one value and decodes as what it is",
+            );
+            return;
+        }
+        returned.answer = Some(quote!(
+            ::hyperscale_vm_sdk::hbor::to_vec(&#code)
+                .expect("a method's answer encodes within the vocabulary's caps")
+        ));
     }
 
     /// The projection of a value edge the method was handed and hands
@@ -869,22 +926,18 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Evaluate an expression in return position, collecting the resources
-    /// of every value edge it yields beside the guest code for its amount.
-    fn returned(&mut self, expr: &syn::Expr) -> (Vec<Term>, Vec<TokenStream>) {
+    /// Evaluate an expression in return position: the value edges it
+    /// yields, the guest code for each, and the one value it answers
+    /// with beside them.
+    fn returned(&mut self, expr: &syn::Expr) -> Returned {
+        let mut returned = Returned::default();
         match expr {
             syn::Expr::Tuple(tuple) => {
-                let mut outputs = Vec::new();
-                let mut codes = Vec::new();
                 for element in &tuple.elems {
                     let eval = self.expr(element);
-                    if let Val::Produced(term) = &eval.val {
-                        outputs.push(term.clone());
-                        let code = self.value(eval.code);
-                        codes.push(code);
-                    }
+                    self.hands_back(element, eval, &mut returned);
                 }
-                (outputs, codes)
+                returned
             }
             syn::Expr::Paren(paren) => self.returned(&paren.expr),
             // An error arm's success side is where the edges are: the arm
@@ -893,46 +946,15 @@ impl<'a> Lowerer<'a> {
             syn::Expr::Call(call) if free_call_name(call).as_deref() == Some("Ok") => call
                 .args
                 .first()
-                .map_or_else(|| (vec![], vec![]), |inner| self.returned(inner)),
+                .map_or(returned, |inner| self.returned(inner)),
             // The refusal itself, which produces nothing. Reached from an
             // early `return Err(..)` as well as from a tail, and neither
             // carries an edge.
-            syn::Expr::Call(call) if free_call_name(call).as_deref() == Some("Err") => {
-                (vec![], vec![])
-            }
+            syn::Expr::Call(call) if free_call_name(call).as_deref() == Some("Err") => returned,
             other => {
                 let eval = self.expr(other);
-                #[allow(clippy::single_match_else)] // the arms are two different returns
-                match &eval.val {
-                    Val::Produced(term) => {
-                        let term = term.clone();
-                        let code = self.value(eval.code);
-                        (vec![term], vec![code])
-                    }
-                    // An edge the method was handed and hands on: it
-                    // carries the resource the manifest routed it as, and
-                    // forwarding one is the case `check_abi` already
-                    // admits.
-                    Val::Term(term) if matches!(eval.code, Code::Bucket(_)) => {
-                        let term = self.forwarded(term);
-                        let code = self.value(eval.code);
-                        (vec![term], vec![code])
-                    }
-                    _ => {
-                        // A method's results are its edges: what an export
-                        // hands back is value the kernel takes ownership
-                        // of, and an ordinary value has no shape there.
-                        // The declaration still stands — it produces no
-                        // edge, which is the truth — so this refuses the
-                        // guest half and not the package.
-                        let code = self.value(eval.code);
-                        self.refuse(
-                            other.span(),
-                            "a method returning a value that is not a value edge",
-                        );
-                        (vec![], vec![code])
-                    }
-                }
+                self.hands_back(other, eval, &mut returned);
+                returned
             }
         }
     }
@@ -2498,13 +2520,14 @@ impl<'a> Lowerer<'a> {
             }
             syn::Expr::Return(ret) => {
                 let value = ret.expr.as_ref().map(|value| {
-                    let (produced, _) = self.returned(value);
-                    if !produced.is_empty() {
+                    let produced = self.returned(value);
+                    if !produced.outputs.is_empty() || produced.answer.is_some() {
                         self.error(
                             ret.span(),
-                            "a produced value edge must leave through the method's tail \
-                             expression — the declared outputs are exact, so an early \
-                             return's edges cannot be reconciled with the tail's",
+                            "what a method hands back must leave through its tail \
+                             expression — the declared outputs are exact and the answer \
+                             is one value, so an early return's cannot be reconciled with \
+                             the tail's",
                         );
                     }
                     self.code(value)

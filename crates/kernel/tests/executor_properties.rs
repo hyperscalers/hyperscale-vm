@@ -25,9 +25,18 @@ use hyperscale_vm_kernel::{
     MemoryStore, RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey,
-    Mode, Movement, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
+    EntryKey, Mode, Movement, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
+
+/// The one answer a fixture guest hands back, so a receipt depends on
+/// something the run can vary.
+fn answered(value: u64) -> Vec<Answer> {
+    vec![Answer {
+        node: 0,
+        value: value.to_le_bytes().to_vec(),
+    }]
+}
 
 /// What every cell these fixtures move value through holds.
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
@@ -274,13 +283,13 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 reason: AbortReason::Unreachable,
             }
         } else {
-            Outcome::Completed { value: None }
+            Outcome::Completed { answers: vec![] }
         };
         let fuel = 3 + u64::from(id.0.0[0]);
         match outcome {
-            Outcome::Completed { value } => RunResult::Completed {
+            Outcome::Completed { answers } => RunResult::Completed {
                 session,
-                value,
+                answers,
                 fuel,
             },
             outcome => RunResult::Aborted {
@@ -446,7 +455,7 @@ fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
         }
         RunResult::Completed {
             session,
-            value: Some(observed),
+            answers: answered(observed),
             fuel: 3 + u64::from(id.0.0[0]),
         }
     }
@@ -488,7 +497,7 @@ fn outbound_runner(
         }
         RunResult::Completed {
             session,
-            value: Some(observed),
+            answers: answered(observed),
             fuel: 1,
         }
     }
@@ -561,7 +570,7 @@ proptest! {
         assert_eq!(
             outcome.receipts[&READER].outcome,
             Outcome::Completed {
-                value: Some(u64::try_from(FUNDING).expect("fits") * u64::from(CELLS)),
+                answers: answered(u64::try_from(FUNDING).expect("fits") * u64::from(CELLS)),
             },
             "the reader saw a cell this shard does not own move"
         );

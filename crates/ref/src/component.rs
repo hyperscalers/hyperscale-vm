@@ -265,6 +265,10 @@ const RESULT_PAYLOAD: usize = 4;
 /// A handle's width in a spilled result: the core `i32` it is.
 const HANDLE_BYTES: usize = 4;
 
+/// A list's width in a spilled result: the `(pointer, length)` pair of
+/// `i32`s it lowers to.
+const LIST_BYTES: usize = 8;
+
 /// One instance id's width, which is also what a `list<u64>` is aligned
 /// to.
 const ID_BYTES: usize = 8;
@@ -359,17 +363,26 @@ enum CTy {
     Borrow,
     /// `own<R>`: a handle the call transfers rather than lends.
     Own,
-    /// `tuple<own<R>, …>`: how a method with more than one edge returns
-    /// them, carrying the arity because that is what the lift walks.
-    OwnTuple(u32),
-    /// `result<_, u32>`: the refusal channel over a method that produces
-    /// nothing.
-    DeclinableUnit,
-    /// The refusal channel over a method that produces edges, carrying
-    /// how many. An error arm says how a method ends and nothing about
-    /// what it produces, so the ok arm is the same shape it would have
-    /// been without one.
-    DeclinableOwn(u32),
+    /// `tuple<…>`: what a method hands back where it is more than one
+    /// thing — the byte list it answers with, where it answers one,
+    /// ahead of one `own` per edge. Both counts, because that is what
+    /// the lift walks.
+    Handed {
+        /// Whether a byte list leads.
+        answer: bool,
+        /// How many owned handles follow it.
+        edges: u32,
+    },
+    /// `result<_, u32>`: the refusal channel over what a method hands
+    /// back. An error arm says how a method ends and nothing about what
+    /// it produces, so the ok arm is the shape it would have been
+    /// without one.
+    Declinable {
+        /// Whether the ok arm's byte list leads.
+        answer: bool,
+        /// How many owned handles follow it.
+        edges: u32,
+    },
 }
 
 /// A decoded component.
@@ -558,15 +571,24 @@ impl RefComponent {
                 ComponentDefinedType::Borrow(_) => CTypeEntry::Defined(CTy::Borrow),
                 ComponentDefinedType::Own(_) => CTypeEntry::Defined(CTy::Own),
                 ComponentDefinedType::Tuple(elements) => {
-                    for element in &**elements {
-                        if self.value_type(*element)? != CTy::Own {
-                            return Err(DecodeError::Unsupported("tuple element".to_string()));
-                        }
+                    let held: Vec<CTy> = elements
+                        .iter()
+                        .map(|element| self.value_type(*element))
+                        .collect::<Result<_, _>>()?;
+                    // The answer leads, so what follows it is edges
+                    // whether or not one is there.
+                    let (answer, edges) = match held.split_first() {
+                        Some((CTy::List8, rest)) => (true, rest),
+                        _ => (false, held.as_slice()),
+                    };
+                    if edges.iter().any(|ty| *ty != CTy::Own) {
+                        return Err(DecodeError::Unsupported("tuple element".to_string()));
                     }
-                    CTypeEntry::Defined(CTy::OwnTuple(
-                        u32::try_from(elements.len())
+                    CTypeEntry::Defined(CTy::Handed {
+                        answer,
+                        edges: u32::try_from(edges.len())
                             .map_err(|_| DecodeError::Unsupported("tuple arity".to_string()))?,
-                    ))
+                    })
                 }
                 // The profile pins the refusal channel to two shapes; a
                 // component carrying anything else never reaches here,
@@ -580,10 +602,20 @@ impl RefComponent {
                         return Err(DecodeError::Unsupported("result error arm".to_string()));
                     }
                     match ok.map(|vt| self.value_type(vt)).transpose()? {
-                        None => CTypeEntry::Defined(CTy::DeclinableUnit),
-                        Some(CTy::Own) => CTypeEntry::Defined(CTy::DeclinableOwn(1)),
-                        Some(CTy::OwnTuple(arity)) => {
-                            CTypeEntry::Defined(CTy::DeclinableOwn(arity))
+                        None => CTypeEntry::Defined(CTy::Declinable {
+                            answer: false,
+                            edges: 0,
+                        }),
+                        Some(CTy::Own) => CTypeEntry::Defined(CTy::Declinable {
+                            answer: false,
+                            edges: 1,
+                        }),
+                        Some(CTy::List8) => CTypeEntry::Defined(CTy::Declinable {
+                            answer: true,
+                            edges: 0,
+                        }),
+                        Some(CTy::Handed { answer, edges }) => {
+                            CTypeEntry::Defined(CTy::Declinable { answer, edges })
                         }
                         Some(_) => {
                             return Err(DecodeError::Unsupported("result ok arm".to_string()));
@@ -1349,26 +1381,27 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
         let area = || values.first().map_or(0, |v| v.as_i32().cast_unsigned()) as usize;
         match ctype.results.as_slice() {
             [] => Ok(Vec::new()),
-            [CTy::Own] => Ok(vec![CVal::Own(self.lift_own(area())?)]),
+
             // One own per element, flattened into the result list: a
             // tuple of handles is what a method's edges are, and nothing
             // downstream wants them re-wrapped. One element fits the flat
             // limit and arrives as the handle itself; anything wider
             // spills, and the elements sit at their own alignment in the
             // area the single returned pointer names.
-            [CTy::OwnTuple(arity)] => {
-                let mut owned = Vec::with_capacity(*arity as usize);
-                if *arity == 1 {
-                    owned.push(CVal::Own(self.lift_own(area())?));
-                } else {
-                    for index in 0..*arity {
-                        let at = area() + (index as usize) * HANDLE_BYTES;
-                        let handle = self.lift_u32(mem_idx, at)? as usize;
-                        owned.push(CVal::Own(self.lift_own(handle)?));
-                    }
-                }
-                Ok(owned)
-            }
+            // One own per edge, flattened into the result list behind
+            // the answer where a method has one: nothing downstream
+            // wants them re-wrapped. A lone handle fits the flat limit
+            // and arrives as itself; anything wider spills, and each
+            // piece sits at its own alignment in the area the single
+            // returned pointer names.
+            [
+                CTy::Own
+                | CTy::Handed {
+                    answer: false,
+                    edges: 1,
+                },
+            ] => Ok(vec![CVal::Own(self.lift_own(area())?)]),
+            [CTy::Handed { answer, edges }] => self.lift_handed(mem_idx, area(), *answer, *edges),
             [CTy::U32] => Ok(vec![CVal::U32(
                 values.first().map_or(0, |v| v.as_i32().cast_unsigned()),
             )]),
@@ -1381,31 +1414,40 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
             // arm's payload at the offset the wider arm's alignment
             // fixes. Both shapes share that layout and differ only in
             // what the ok arm carries.
-            [CTy::DeclinableUnit] => {
-                if self.discriminant(mem_idx, area())? == 0 {
-                    Ok(Vec::new())
-                } else {
-                    Ok(vec![CVal::Declined(
-                        self.lift_u32(mem_idx, area() + RESULT_PAYLOAD)?,
-                    )])
-                }
-            }
-            [CTy::DeclinableOwn(arity)] => {
+            [CTy::Declinable { answer, edges }] => {
                 if self.discriminant(mem_idx, area())? != 0 {
                     return Ok(vec![CVal::Declined(
                         self.lift_u32(mem_idx, area() + RESULT_PAYLOAD)?,
                     )]);
                 }
-                let mut owned = Vec::with_capacity(*arity as usize);
-                for index in 0..*arity {
-                    let at = area() + RESULT_PAYLOAD + (index as usize) * HANDLE_BYTES;
-                    let handle = self.lift_u32(mem_idx, at)? as usize;
-                    owned.push(CVal::Own(self.lift_own(handle)?));
-                }
-                Ok(owned)
+                self.lift_handed(mem_idx, area() + RESULT_PAYLOAD, *answer, *edges)
             }
             _ => Err(ExecError::Canon(CanonError::Internal("result shape"))),
         }
+    }
+
+    /// Lift what a method handed back out of a spilled result: the byte
+    /// list it answered with, where it answered one, then one own per
+    /// edge behind it, each at its own width.
+    fn lift_handed(
+        &mut self,
+        mem_idx: Option<u32>,
+        at: usize,
+        answer: bool,
+        edges: u32,
+    ) -> Result<Vec<CVal>, ExecError> {
+        let mut handed = Vec::with_capacity(usize::from(answer) + edges as usize);
+        let mut at = at;
+        if answer {
+            handed.push(CVal::Bytes(self.lift_list(mem_idx, at)?));
+            at += LIST_BYTES;
+        }
+        for _ in 0..edges {
+            let handle = self.lift_u32(mem_idx, at)? as usize;
+            handed.push(CVal::Own(self.lift_own(handle)?));
+            at += HANDLE_BYTES;
+        }
+        Ok(handed)
     }
 
     /// Lifts an owned handle out of the table: the guest gives up the
@@ -1477,28 +1519,36 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
     /// vocabulary: the verdict, total fuel consumed — instantiation
     /// included — and whether the budget exhausted.
     ///
-    /// The empty result, the declined code, and the all-edges run are
-    /// the only shapes the call convention fixes; anything else aborts
-    /// as [`AbortReason::BadReturnShape`]. A name outside the export
-    /// table aborts as [`AbortReason::ExportMissing`], the class the
-    /// blessed engine's dynamic lookup reports.
+    /// The empty result, the declined code, and a run of edges behind an
+    /// optional answer are the only shapes the call convention fixes;
+    /// anything else aborts as [`AbortReason::BadReturnShape`]. A name
+    /// outside the export table aborts as [`AbortReason::ExportMissing`],
+    /// the class the blessed engine's dynamic lookup reports.
     pub fn invoke_kernel(&mut self, export: &str, args: &[CVal]) -> Invocation {
         let outcome = self.invoke(export, args);
         let exhausted = matches!(outcome, Ok(Err(ExecError::Trap(Trap::OutOfFuel))));
         let result = match outcome {
             Ok(Ok(values)) => match values.as_slice() {
-                [] => Invoked::Produced(Vec::new()),
                 [CVal::Declined(code)] => Invoked::Declined(*code),
-                edges if edges.iter().all(|v| matches!(v, CVal::Own(_))) => Invoked::Produced(
+                // An answer leads, because the convention puts it first
+                // where a method has one — so what follows is edges
+                // whether or not one is there.
+                values => {
+                    let (answer, edges) = match values {
+                        [CVal::Bytes(answer), edges @ ..] => (Some(answer.clone()), edges),
+                        edges => (None, edges),
+                    };
                     edges
                         .iter()
-                        .map(|v| match v {
-                            CVal::Own(rep) => *rep,
-                            _ => unreachable!("every value is an owned edge"),
+                        .map(|value| match value {
+                            CVal::Own(rep) => Ok(*rep),
+                            _ => Err(()),
                         })
-                        .collect(),
-                ),
-                _ => Invoked::Aborted(AbortReason::BadReturnShape),
+                        .collect::<Result<Vec<u32>, ()>>()
+                        .map_or(Invoked::Aborted(AbortReason::BadReturnShape), |edges| {
+                            Invoked::Produced { edges, answer }
+                        })
+                }
             },
             Ok(Err(error)) => Invoked::Aborted(error.abort_reason()),
             // The export is not in the component's table, which the

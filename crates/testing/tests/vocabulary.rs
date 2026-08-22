@@ -129,7 +129,7 @@ fn a_write_cell_reads_back_what_it_was_set_to() {
     });
 
     let (receipt, _) = session
-        .finish(None, 0)
+        .finish(vec![], 0)
         .expect("nothing outside the declared set was touched");
     assert_eq!(
         receipt.delta.cells.get(&cell),
@@ -196,7 +196,7 @@ fn an_interval_reads_and_writes_the_entries_it_covers() {
     assert_eq!(orders, vec![1, 2, 3]);
     assert_eq!(second, 20);
     let (receipt, _) = session
-        .finish(None, 0)
+        .finish(vec![], 0)
         .expect("nothing outside the declared set was touched");
     assert_eq!(receipt.delta.entries.len(), 1, "one entry was rewritten");
 }
@@ -219,7 +219,7 @@ fn an_interval_removes_the_entry_it_names() {
     assert_eq!(left, 2);
     assert_eq!(orders, vec![1, 3]);
     let (receipt, _) = session
-        .finish(None, 0)
+        .finish(vec![], 0)
         .expect("nothing outside the declared set was touched");
     assert_eq!(receipt.delta.entries.len(), 1);
     assert_eq!(
@@ -247,7 +247,7 @@ fn an_entry_writes_at_the_order_it_names() {
 
     assert_eq!(read, 1234);
     let (receipt, _) = session
-        .finish(None, 0)
+        .finish(vec![], 0)
         .expect("nothing outside the declared set was touched");
     assert_eq!(receipt.delta.entries.len(), 1);
 }

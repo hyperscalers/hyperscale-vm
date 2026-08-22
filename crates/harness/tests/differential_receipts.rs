@@ -155,14 +155,16 @@ fn both_engines_classify_exhaustion_as_exhaustion() -> Result<()> {
     Ok(())
 }
 
-/// A guest that declines: the refusal channel's two shapes, each
-/// answering both ways.
+/// A guest that ends every way a method can that carries no edge: the
+/// refusal channel's two shapes each answering both ways, and the value
+/// a method answers with, alone and behind the channel.
 ///
 /// Hand-written rather than compiled so the memory representation is
 /// visible — a one-byte discriminant, the payload at the alignment the
-/// wider arm fixes — which is exactly what the reference interpreter
-/// reads and what nothing but this comparison holds it to.
-const DECLINING_GUEST: &str = r#"
+/// wider arm fixes, a byte list as the pointer and length it lowers to
+/// — which is exactly what the reference interpreter reads and what
+/// nothing but this comparison holds it to.
+const ENDING_GUEST: &str = r#"
 (component
   (core module $m
     (memory (export "mem") 1 1)
@@ -185,22 +187,61 @@ const DECLINING_GUEST: &str = r#"
     (func (export "unit-no") (result i32)
       (i32.store8 (i32.const 128) (i32.const 1))
       (i32.store (i32.const 132) (i32.const 9))
-      i32.const 128))
+      i32.const 128)
+    (func (export "answer") (result i32)
+      (i32.store (i32.const 256) (i32.const 320))
+      (i32.store (i32.const 260) (i32.const 3))
+      (i32.store8 (i32.const 320) (i32.const 4))
+      (i32.store8 (i32.const 321) (i32.const 5))
+      (i32.store8 (i32.const 322) (i32.const 6))
+      i32.const 256)
+    (func (export "answer-or-decline") (result i32)
+      (i32.store8 (i32.const 384) (i32.const 0))
+      (i32.store (i32.const 388) (i32.const 448))
+      (i32.store (i32.const 392) (i32.const 2))
+      (i32.store8 (i32.const 448) (i32.const 1))
+      (i32.store8 (i32.const 449) (i32.const 2))
+      i32.const 384))
   (core instance $i (instantiate $m))
   (func (export "unit-yes") (result (result (error u32)))
     (canon lift (core func $i "unit-yes") (memory $i "mem") (realloc (func $i "realloc"))))
   (func (export "unit-no") (result (result (error u32)))
-    (canon lift (core func $i "unit-no") (memory $i "mem") (realloc (func $i "realloc")))))
+    (canon lift (core func $i "unit-no") (memory $i "mem") (realloc (func $i "realloc"))))
+  (func (export "answer") (result (list u8))
+    (canon lift (core func $i "answer") (memory $i "mem") (realloc (func $i "realloc"))))
+  (func (export "answer-or-decline") (result (result (list u8) (error u32)))
+    (canon lift (core func $i "answer-or-decline")
+      (memory $i "mem") (realloc (func $i "realloc")))))
 "#;
 
 #[test]
-fn both_engines_read_the_refusal_channel_the_same_way() -> Result<()> {
-    let bytes = parse_str(DECLINING_GUEST)?;
+fn both_engines_read_what_a_method_hands_back_the_same_way() -> Result<()> {
+    let bytes = parse_str(ENDING_GUEST)?;
     validate_component(&bytes).expect("the refusal channel is inside the profile");
 
     for (export, expected) in [
-        ("unit-yes", Returned::Edges(Vec::new())),
+        (
+            "unit-yes",
+            Returned::Produced {
+                edges: Vec::new(),
+                answer: None,
+            },
+        ),
         ("unit-no", Returned::Declined(9)),
+        (
+            "answer",
+            Returned::Produced {
+                edges: Vec::new(),
+                answer: Some(vec![4, 5, 6]),
+            },
+        ),
+        (
+            "answer-or-decline",
+            Returned::Produced {
+                edges: Vec::new(),
+                answer: Some(vec![1, 2]),
+            },
+        ),
     ] {
         let engine = blessed_engine()?;
         let component = Component::new(&engine, &bytes)?;
@@ -232,8 +273,15 @@ fn both_engines_read_the_refusal_channel_the_same_way() -> Result<()> {
 /// the two lanes compare in one vocabulary.
 fn lifted(values: &[CVal]) -> Returned {
     match values {
-        [] => Returned::Edges(Vec::new()),
+        [] => Returned::Produced {
+            edges: Vec::new(),
+            answer: None,
+        },
         [CVal::Declined(code)] => Returned::Declined(*code),
+        [CVal::Bytes(answer)] => Returned::Produced {
+            edges: Vec::new(),
+            answer: Some(answer.clone()),
+        },
         other => panic!("off-convention result {other:?}"),
     }
 }

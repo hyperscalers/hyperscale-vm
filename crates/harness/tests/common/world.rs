@@ -440,7 +440,7 @@ pub fn execute_manifest(
     match run {
         RunResult::Completed { session, fuel, .. } => {
             let (receipt, threaded) = session
-                .finish(None, fuel)
+                .finish(vec![], fuel)
                 .expect("the oracle stands on every corpus receipt");
             Ok((TxResult::Completed(receipt), threaded.collapse_onto(before)))
         }

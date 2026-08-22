@@ -76,6 +76,8 @@ pub struct Export {
     pub params: Vec<Param>,
     /// How many value edges the method hands back, in output order.
     pub outputs: usize,
+    /// Whether the method answers with a value beside its edges.
+    pub answers: bool,
     /// Whether the method carries an error arm.
     pub declines: bool,
 }
@@ -193,19 +195,28 @@ pub fn document(world: &str, exports: &[Export]) -> String {
             .map(|p| format!("{}: {}", p.name, p.shape.wit()))
             .collect::<Vec<_>>()
             .join(", ");
-        // A method's edges are its results: one own, the tuple the
-        // profile admits for more than one, and nothing where a method
-        // produces none.
-        let edges = match export.outputs {
-            0 => String::new(),
-            1 => format!("own<{BUCKET}>"),
-            n => format!("tuple<{}>", vec![format!("own<{BUCKET}>"); n].join(", ")),
+        // A method's results are its answer and its edges: one of
+        // either on its own, and the tuple the profile admits for any
+        // other count. The answer leads, so what follows is edges
+        // whether or not one is there.
+        let mut returns: Vec<String> = Vec::new();
+        if export.answers {
+            returns.push("list<u8>".to_owned());
+        }
+        returns.extend(std::iter::repeat_n(
+            format!("own<{BUCKET}>"),
+            export.outputs,
+        ));
+        let handed = match returns.as_slice() {
+            [] => String::new(),
+            [one] => one.clone(),
+            several => format!("tuple<{}>", several.join(", ")),
         };
-        let result = match (export.outputs, export.declines) {
-            (0, false) => String::new(),
-            (0, true) => " -> result<_, u32>".to_owned(),
-            (_, false) => format!(" -> {edges}"),
-            (_, true) => format!(" -> result<{edges}, u32>"),
+        let result = match (handed.is_empty(), export.declines) {
+            (true, false) => String::new(),
+            (true, true) => " -> result<_, u32>".to_owned(),
+            (false, false) => format!(" -> {handed}"),
+            (false, true) => format!(" -> result<{handed}, u32>"),
         };
         let _ = writeln!(out, "    export {}: func({params}){result};", export.name);
     }

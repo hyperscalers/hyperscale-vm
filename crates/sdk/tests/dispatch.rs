@@ -180,9 +180,9 @@ fn a_body_branches_on_the_verdict_it_was_handed() {
             GuestArg::Bool(true),
         ],
     );
-    assert!(matches!(invoked, Invoked::Produced(ref edges) if edges.is_empty()));
+    assert!(matches!(invoked, Invoked::Produced { ref edges, .. } if edges.is_empty()));
     session
-        .finish(None, 0)
+        .finish(vec![], 0)
         .expect("nothing outside the declared set was touched");
 
     // Handed the other verdict, it reaches the other handle — and the
@@ -202,9 +202,9 @@ fn a_body_branches_on_the_verdict_it_was_handed() {
             GuestArg::Bool(false),
         ],
     );
-    assert!(matches!(invoked, Invoked::Produced(ref edges) if edges.is_empty()));
+    assert!(matches!(invoked, Invoked::Produced { ref edges, .. } if edges.is_empty()));
     session
-        .finish(None, 0)
+        .finish(vec![], 0)
         .expect("nothing outside the declared set was touched");
 }
 
@@ -257,9 +257,9 @@ fn an_edge_the_body_credits_lands_in_the_declared_cell() {
         &[cell(CellKind::Delta), GuestArg::Bucket(funds)],
     );
 
-    assert!(matches!(invoked, Invoked::Produced(ref edges) if edges.is_empty()));
+    assert!(matches!(invoked, Invoked::Produced { ref edges, .. } if edges.is_empty()));
     let (receipt, _) = session
-        .finish(None, 0)
+        .finish(vec![], 0)
         .expect("nothing outside the declared set was touched");
     // A commutative credit is a movement rather than an absolute: what
     // the receipt carries is what to add, not what the cell became.
@@ -279,7 +279,7 @@ fn an_edge_the_body_produces_comes_back_as_the_kernels_own() {
         &[cell(CellKind::Amount), GuestArg::Bytes(&wide(30))],
     );
 
-    let Invoked::Produced(edges) = invoked else {
+    let Invoked::Produced { edges, .. } = invoked else {
         panic!("a covered withdrawal produces its edge");
     };
     assert_eq!(edges.len(), 1, "one declared output, one edge");
@@ -336,7 +336,13 @@ fn a_read_of_a_vault_answers_a_quantity_and_not_bytes() {
 
     // The body reads the balance through it and gets the figure.
     let (_, invoked) = till::invoke("weigh", held, &[cell(CellKind::AmountRead)]);
-    assert_eq!(invoked, Invoked::Produced(vec![]));
+    assert_eq!(
+        invoked,
+        Invoked::Produced {
+            edges: vec![],
+            answer: None,
+        }
+    );
 
     // And the byte handle is not what a vault read materialises, so an
     // export borrowing one is handed a mode it never declared.

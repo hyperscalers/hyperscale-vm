@@ -104,35 +104,39 @@ pub fn arm(
     let body = &lowered.body;
     // A host hands each edge back as the table position the kernel holds
     // it at, which is what the walk's `Produced` carries — the one thing
-    // in the tail that is not the guest's.
+    // in the tail that is not the guest's. The answer is the guest's
+    // own expression, encoded the same way on both halves.
     let edges = &lowered.edges;
-    let produced = quote!(::std::vec![#((#edges).rep()),*]);
+    let answer = lowered.answer.as_ref().map_or_else(
+        || quote!(::core::option::Option::None),
+        |answer| quote!(::core::option::Option::Some(#answer)),
+    );
+    let produced = quote!(::hyperscale_vm_sdk::host::Invoked::Produced {
+        edges: ::std::vec![#((#edges).rep()),*],
+        answer: #answer,
+    });
     // The author's body runs in a closure so an early `return` on the
     // error arm is the method's own refusal rather than the dispatch's.
     let outcome = if declines {
         quote!(
             match (|| { #body ::core::result::Result::Ok(#produced) })() {
-                ::core::result::Result::Ok(__edges) => {
-                    ::hyperscale_vm_sdk::host::Invoked::Produced(__edges)
-                }
+                ::core::result::Result::Ok(__produced) => __produced,
                 ::core::result::Result::Err(__code) => {
                     ::hyperscale_vm_sdk::host::Invoked::Declined(__code as u32)
                 }
             }
         )
-    } else if edges.is_empty() {
+    } else if edges.is_empty() && lowered.answer.is_none() {
         // A body that yields nothing still runs in a closure of its own,
         // so a bare `return` leaves the method rather than the dispatch —
         // which is what it does in the guest, where each export is its
         // own function.
         quote!({
             (|| { #body })();
-            ::hyperscale_vm_sdk::host::Invoked::Produced(::std::vec![])
+            #produced
         })
     } else {
-        quote!(::hyperscale_vm_sdk::host::Invoked::Produced(
-            (|| { #body #produced })()
-        ))
+        quote!((|| { #body #produced })())
     };
 
     quote!(#published => {

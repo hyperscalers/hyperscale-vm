@@ -113,7 +113,13 @@ fn forge(
         return (session, Invoked::Aborted(trap.into()));
     }
     match session.write_take(rep, amount) {
-        Ok(bucket) => (session, Invoked::Produced(vec![bucket])),
+        Ok(bucket) => (
+            session,
+            Invoked::Produced {
+                edges: vec![bucket],
+                answer: None,
+            },
+        ),
         Err(trap) => (session, Invoked::Aborted(trap.into())),
     }
 }
@@ -197,7 +203,13 @@ fn alias_body(
         return (session, Invoked::Aborted(trap.into()));
     }
     match session.write_take(value, amount) {
-        Ok(bucket) => (session, Invoked::Produced(vec![bucket])),
+        Ok(bucket) => (
+            session,
+            Invoked::Produced {
+                edges: vec![bucket],
+                answer: None,
+            },
+        ),
         Err(trap) => (session, Invoked::Aborted(trap.into())),
     }
 }
@@ -302,9 +314,21 @@ fn impostor_body(
             if let Err(trap) = session.write_cell_set(*vault, encode_amount(1).to_vec()) {
                 return (session, Invoked::Aborted(trap.into()));
             }
-            (session, Invoked::Produced(vec![]))
+            (
+                session,
+                Invoked::Produced {
+                    edges: vec![],
+                    answer: None,
+                },
+            )
         }
-        "present" => (session, Invoked::Produced(vec![])),
+        "present" => (
+            session,
+            Invoked::Produced {
+                edges: vec![],
+                answer: None,
+            },
+        ),
         other => panic!("no such export: {other}"),
     }
 }
@@ -348,7 +372,13 @@ fn treasury_body(
         panic!("a handle and an amount: {args:?}");
     };
     match session.write_take(*rep, u128::from(*amount)) {
-        Ok(bucket) => (session, Invoked::Produced(vec![bucket])),
+        Ok(bucket) => (
+            session,
+            Invoked::Produced {
+                edges: vec![bucket],
+                answer: None,
+            },
+        ),
         Err(trap) => (session, Invoked::Aborted(trap.into())),
     }
 }
@@ -434,7 +464,13 @@ fn silent_body(
         panic!("a handle and an edge: {args:?}");
     };
     match session.write_put(*rep, *funds) {
-        Ok(()) => (session, Invoked::Produced(vec![])),
+        Ok(()) => (
+            session,
+            Invoked::Produced {
+                edges: vec![],
+                answer: None,
+            },
+        ),
         Err(trap) => (session, Invoked::Aborted(trap.into())),
     }
 }

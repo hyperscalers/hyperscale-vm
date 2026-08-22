@@ -5,6 +5,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -73,6 +74,7 @@ PackageMetadata {
                     ),
                 },
             ],
+            answers: false,
             denominations: [
                 Some(
                     If {

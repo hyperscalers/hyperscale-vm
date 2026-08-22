@@ -5,6 +5,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Effect {
@@ -52,6 +53,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -114,6 +116,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -178,6 +181,7 @@ PackageMetadata {
                 Bucket,
             ],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Effect {
@@ -249,6 +253,7 @@ PackageMetadata {
                 NfBucket,
             ],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Effect {
@@ -307,6 +312,7 @@ PackageMetadata {
             issues: None,
             params: [],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -371,6 +377,7 @@ PackageMetadata {
                 Address,
             ],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Effect {
@@ -464,6 +471,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Effect {
@@ -566,6 +574,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -645,6 +654,7 @@ PackageMetadata {
                     0,
                 ),
             ],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -702,6 +712,7 @@ PackageMetadata {
                 U64,
             ],
             outputs: [],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -772,6 +783,7 @@ PackageMetadata {
                     0,
                 ),
             ],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {
@@ -834,6 +846,7 @@ PackageMetadata {
                     ),
                 },
             ],
+            answers: false,
             denominations: [],
             effects: [
                 Requires {

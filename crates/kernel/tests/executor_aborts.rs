@@ -105,7 +105,7 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
         }
         RunResult::Completed {
             session,
-            value: None,
+            answers: vec![],
             fuel: FUEL,
         }
     }
@@ -319,7 +319,7 @@ fn racing_nullifier_writers_commit_exactly_once() {
     // order picks the winner; the loser aborts before running.
     let noop = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         session,
-        value: None,
+        answers: vec![],
         fuel: FUEL,
     };
     let batch = vec![nullifier_tx(0x02), nullifier_tx(0x01)];
@@ -435,7 +435,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
     // The batch refuses rather than run.
     let noop = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         session,
-        value: None,
+        answers: vec![],
         fuel: FUEL,
     };
     // A read is not the write the conflict relation needs.
@@ -474,7 +474,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
     // capabilities for another. The batch refuses rather than run.
     let noop = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         session,
-        value: None,
+        answers: vec![],
         fuel: FUEL,
     };
     let mismatched = BatchTx {
@@ -527,7 +527,7 @@ fn an_aborted_transaction_spends_no_nullifier() {
         } else {
             RunResult::Completed {
                 session,
-                value: None,
+                answers: vec![],
                 fuel: FUEL,
             }
         }
@@ -584,7 +584,7 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
         }
         RunResult::Completed {
             session,
-            value: None,
+            answers: vec![],
             fuel: FUEL,
         }
     };
@@ -642,7 +642,7 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
         }
         RunResult::Completed {
             session,
-            value: None,
+            answers: vec![],
             fuel: FUEL,
         }
     };
@@ -700,7 +700,7 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
         }
         RunResult::Completed {
             session,
-            value: None,
+            answers: vec![],
             fuel: FUEL,
         }
     };

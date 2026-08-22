@@ -93,6 +93,8 @@ pub struct Trace {
     issues: Option<Issuance>,
     /// Whether the method carries an error arm.
     totality: Totality,
+    /// Whether the method hands back a value beside its edges.
+    answers: bool,
 }
 
 impl Trace {
@@ -113,6 +115,7 @@ impl Trace {
             pending_role: None,
             issues: None,
             totality: Totality::Infallible,
+            answers: false,
         }
     }
 
@@ -609,6 +612,11 @@ impl Trace {
         self.totality = Totality::Fallible;
     }
 
+    /// Record that this method hands back a value beside its edges.
+    pub const fn answers(&mut self) {
+        self.answers = true;
+    }
+
     /// Record the total mark: no refusal, and no partial operation
     /// anywhere the body reaches.
     ///
@@ -938,6 +946,7 @@ impl Trace {
             clauses,
             denominations,
             outputs: self.outputs,
+            answers: self.answers,
             worst_case: self.worst_case,
             abi,
             issues: self.issues,
@@ -1069,6 +1078,7 @@ impl Access<'_, Leaf> {
 pub(crate) struct Recorded {
     pub(crate) clauses: Vec<Clause>,
     pub(crate) outputs: Vec<Expr>,
+    pub(crate) answers: bool,
     pub(crate) denominations: Vec<Option<Expr>>,
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,
