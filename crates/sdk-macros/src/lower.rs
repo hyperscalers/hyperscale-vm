@@ -2199,6 +2199,23 @@ impl<'a> Lowerer<'a> {
     /// The export parameter carrying `need`, binding one if the body has
     /// not needed it before.
     fn need(&mut self, need: &Need) -> TokenStream {
+        // A value with no shape is one no export parameter can carry.
+        // Refused here rather than at the emission, where it would land
+        // on the macro as a missing trait impl instead of on the line
+        // that read it. Only where nothing else has been said: a
+        // selection whose arms disagree is already refused where it was
+        // written, and naming it twice names one mistake twice.
+        if let Need::Derived(term) = need
+            && crate::bind::derived_shape(term, self.params, self.declared.config_fields).is_none()
+            && self.errors.is_empty()
+        {
+            self.error(
+                Span::call_site(),
+                "this value crosses the call boundary as nothing an export parameter can \
+                 carry — a sequence crosses as the numbers it holds, and only a byte \
+                 string crosses as the bytes a guest decodes",
+            );
+        }
         let index = self
             .out
             .values

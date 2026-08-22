@@ -130,32 +130,52 @@ pub fn derived_shape(
 ) -> Option<Shape> {
     let scalar = |ty: &syn::Type| matches!(ty, syn::Type::Path(p) if p.path.is_ident("u64"));
     let address = is_address;
+    // What a `Vec<_>` holds, where the type is one. Everything below
+    // that turns on a sequence turns on this.
+    let element = |ty: &syn::Type| {
+        let syn::Type::Path(path) = ty else {
+            return None;
+        };
+        path.path
+            .segments
+            .last()
+            .filter(|segment| segment.ident == "Vec")
+            .and_then(|segment| match &segment.arguments {
+                syn::PathArguments::AngleBracketed(args) => args.args.first(),
+                _ => None,
+            })
+            .and_then(|arg| match arg {
+                syn::GenericArgument::Type(held) => Some(held.clone()),
+                _ => None,
+            })
+    };
     // A sequence of scalars and an instance set are one wire shape: the
     // numbers as they stand. What differs is the type the body reads
     // them at, which travels with the shape.
     let scalars = |ty: &syn::Type| {
-        let syn::Type::Path(path) = ty else {
-            return false;
-        };
-        let last = path.path.segments.last();
-        last.is_some_and(|s| s.ident == "Ids")
-            || last
-                .filter(|s| s.ident == "Vec")
-                .and_then(|s| match &s.arguments {
-                    syn::PathArguments::AngleBracketed(args) => args.args.first(),
-                    _ => None,
-                })
-                .is_some_and(|arg| matches!(arg, syn::GenericArgument::Type(ty) if scalar(ty)))
+        matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "Ids"))
+            || element(ty).is_some_and(|held| scalar(&held))
+    };
+    // Every other sequence crosses as nothing. The cell form is bytes a
+    // guest decodes and only a byte string is those, so answering `Cell`
+    // here would hand the emission a type no `Cellular` impl covers —
+    // which fails on the macro rather than on the line that read it.
+    let uncrossable = |ty: &syn::Type| {
+        element(ty).is_some_and(|held| {
+            !scalar(&held) && !matches!(&held, syn::Type::Path(p) if p.path.is_ident("u8"))
+        })
     };
     let named = |ty: &syn::Type| {
         if scalar(ty) {
-            Shape::Scalar
+            Some(Shape::Scalar)
         } else if address(ty) {
-            Shape::Address
+            Some(Shape::Address)
         } else if scalars(ty) {
-            Shape::Ids(Box::new(ty.clone()))
+            Some(Shape::Ids(Box::new(ty.clone())))
+        } else if uncrossable(ty) {
+            None
         } else {
-            Shape::Cell(Box::new(ty.clone()))
+            Some(Shape::Cell(Box::new(ty.clone())))
         }
     };
     Some(match term {
@@ -174,14 +194,20 @@ pub fn derived_shape(
         // field, on the table such a field holds, or on a component of
         // any of those.
         Term::Arg(_) | Term::Config(_) | Term::Lookup { .. } => {
-            term_type(term, params, config).map_or(Shape::Scalar, |ty| named(&ty))
+            match term_type(term, params, config) {
+                Some(ty) => named(&ty)?,
+                None => Shape::Scalar,
+            }
         }
         // A projection of a product spelled inline reads at its
         // component's own shape; one of a product the declaration named a
         // type for reads at that type's component.
         Term::Field(inner, index) => match &**inner {
             Term::Tuple(fields) => derived_shape(fields.get(*index as usize)?, params, config)?,
-            _ => term_type(term, params, config).map_or(Shape::Scalar, |ty| named(&ty)),
+            _ => match term_type(term, params, config) {
+                Some(ty) => named(&ty)?,
+                None => Shape::Scalar,
+            },
         },
         // A judgment crosses as the verdict it is, which is the shape a
         // declared branch's own verdict crosses as.
