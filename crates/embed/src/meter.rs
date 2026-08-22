@@ -457,6 +457,19 @@ pub fn fixed_pow(
     math::fixed_pow(base, exp, rounding).map_err(|error| MeterError::Refused(error.into()))
 }
 
+/// `state.write-cell-seal`.
+///
+/// Priced as the epoch it stores, on the same terms as the set it is:
+/// the leaf is eight bytes whatever epoch it names.
+///
+/// # Errors
+///
+/// A deterministic refusal (a handle that names no write).
+pub fn seal<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<(), MeterError> {
+    refused(port.host().seal(rep))?;
+    charge(port, size_of::<u64>())
+}
+
 /// `state.write-cell-open-seal`.
 ///
 /// Priced as the word it answers: the resolve is a lookup and a digest
@@ -465,13 +478,10 @@ pub fn fixed_pow(
 ///
 /// # Errors
 ///
-/// A deterministic refusal (a handle that names no write).
-pub fn open_seal<P: HostAccess + FuelSink>(
-    port: &mut P,
-    rep: u32,
-    epoch: u64,
-) -> Result<Drawn, MeterError> {
-    let drawn = refused(port.host().open_seal(rep, epoch))?;
+/// A deterministic refusal (a handle that names no write, or a cell
+/// holding something that is not a seal).
+pub fn open_seal<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<Drawn, MeterError> {
+    let drawn = refused(port.host().open_seal(rep))?;
     charge(port, SEED_BYTES)?;
     Ok(drawn)
 }

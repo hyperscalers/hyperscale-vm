@@ -38,7 +38,7 @@ This register owns the `INV-VM-*` family. The host protocol's families — `INV-
 
 | ID | Class | Property |
 |---|---|---|
-| **INV-VM-14** | Determinism | **Schedule invariance.** A committed batch's receipts are a pure function of committed content: byte-identical across serial, parallel, and adversarially permuted execution schedules. No environment input reveals schedule position — no intra-block index, no per-execution entropy at all, since a draw is a function of a commitment the package made in an earlier transaction. The kernel takes the clock, the epoch and the seed window opaquely per transaction; that all three are committed content, identical on every participant, is the host's obligation, on the same terms as INV-VM-9 through 11. |
+| **INV-VM-14** | Determinism | **Schedule invariance.** A committed batch's receipts are a pure function of committed content: byte-identical across serial, parallel, and adversarially permuted execution schedules. No environment input reveals schedule position — no intra-block index, no per-execution entropy at all, since a draw is a function of a commitment the kernel stamped in an earlier transaction. The kernel takes the clock, the epoch and the seed window opaquely per transaction; that all three are committed content, identical on every participant — the seed window resolved from the snapshot governing the block rather than from a node's own fold frontier — is the host's obligation, on the same terms as INV-VM-9 through 11. |
 
 ## Encoding — [05 §5](05-runtime.md)
 

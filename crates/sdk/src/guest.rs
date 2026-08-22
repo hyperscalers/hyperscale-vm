@@ -327,6 +327,19 @@ impl From<kernel::state::Drawn> for Drawn {
     }
 }
 
+/// Seal this handle's cell on the epoch now running.
+///
+/// # Panics
+///
+/// On a handle that holds no exclusive write, which the declaration a
+/// seal is written through rules out.
+pub fn cell_seal(handle: Handle) {
+    match handle {
+        Handle::Write(rep) => kernel::state::write_cell_seal(&write_cell(rep)),
+        other => unreachable!("{other:?} takes no seal"),
+    }
+}
+
 /// The draw the seal in this handle's cell matured into.
 ///
 /// # Panics
@@ -334,9 +347,9 @@ impl From<kernel::state::Drawn> for Drawn {
 /// On a handle that holds no exclusive write, which the declaration a
 /// seal is read through rules out.
 #[must_use]
-pub fn cell_open_seal(handle: Handle, epoch: u64) -> Drawn {
+pub fn cell_open_seal(handle: Handle) -> Drawn {
     match handle {
-        Handle::Write(rep) => kernel::state::write_cell_open_seal(&write_cell(rep), epoch).into(),
+        Handle::Write(rep) => kernel::state::write_cell_open_seal(&write_cell(rep)).into(),
         other => unreachable!("{other:?} holds no seal"),
     }
 }
@@ -715,12 +728,6 @@ pub fn run_declared(kind: CellKind, rep: u32, index: u32) -> bool {
 #[must_use]
 pub fn clock_ms() -> u64 {
     kernel::env::clock()
-}
-
-/// The epoch this transaction executes in.
-#[must_use]
-pub fn epoch() -> u64 {
-    kernel::env::epoch()
 }
 
 /// The protocol hash function.

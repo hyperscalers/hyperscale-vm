@@ -353,6 +353,13 @@ pub enum AbortReason {
     /// comes back instead of at the encoding that could not hold it.
     #[hbor(discriminant = 61)]
     AnswerTooLarge,
+    /// A cell opened as a seal that holds something else.
+    ///
+    /// A defect in a package rather than in a call: only the kernel
+    /// writes a seal, so the bytes under one are its own — unless the
+    /// package wrote over them through the same handle it opens with.
+    #[hbor(discriminant = 62)]
+    MalformedSeal,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -579,6 +586,7 @@ mod tests {
             (59, AbortReason::WrongIssuanceKind),
             (60, AbortReason::WrongMintedIds),
             (61, AbortReason::AnswerTooLarge),
+            (62, AbortReason::MalformedSeal),
         ];
         for (byte, reason) in classes {
             assert_eq!(

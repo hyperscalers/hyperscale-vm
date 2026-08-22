@@ -20,7 +20,9 @@ The monotonicity contract is explicit: exact along one payer chain, approximate 
 
 Randomness is not the same shape, and the difference is the point. A clock a transaction carries is a fact about that transaction; a *draw* a transaction carries is a value the proposer of its committing block chooses. A shard reveal is a deterministic VRF over `(shard, height)`, so a validator holds every reveal it will ever produce; the block's chain folds its own, and the transaction hash is the only other input. That leaves a proposer free to grind hashes against a reveal it already holds and include the variant it likes. There is no execution-side fix for that, because the value exists before the ordering does.
 
-A draw is therefore **sealed rather than carried**. A package writes a seal into a cell of its own, recording the epoch it was written in; the draw that seal opens onto is `H(domain ‖ the beacon's seed for that epoch plus the protocol's maturity ‖ the cell's own key)`. Every input is committed state or a value the beacon rolled after the sealing committed. Nothing about the attempt that reads it enters — not its hash, not its sender, not the block that carries it — so two attempts at one seal answer alike, and abandoning one, running it out of fuel, or resubmitting it gains nothing.
+A draw is therefore **sealed rather than carried**. A package seals a cell of its own; the kernel stamps the epoch the transaction is running in, and the draw that seal opens onto is `H(domain ‖ the beacon's seed for that epoch plus the protocol's maturity ‖ the cell's own key)`. Every input is committed state or a value the beacon rolled after the sealing committed. Nothing about the attempt that reads it enters — not its hash, not its sender, not the block that carries it — so two attempts at one seal answer alike, and abandoning one, running it out of fuel, or resubmitting it gains nothing.
+
+The epoch is the kernel's and not a parameter, which is what makes the seal a commitment rather than a claim about one. A body that named its own would name an epoch already rolled — public seed, public word — and open onto a value it had computed before deciding to seal at all. So the seal cell holds what the kernel put there and nothing else: no package writes one, reads one back, or reaches its content.
 
 The seed is the beacon's own, the same value that samples committees: a network whose randomness is not good enough to pick a winner is a network whose randomness is not good enough to pick the committee securing the shard. What an adversary can still do to it is the window edge priced in the committee-security analysis — holding a cut slot lifts their odds by a constant factor, about 1.23× at the design point.
 
@@ -28,7 +30,7 @@ That factor is what a package should be read against, and the bound it implies i
 
 Maturity is two epochs, so no part of the seed exists when the seal is written. A settlement before then declines and settles later; one past the retained window declines for good and the round closes again. Both are the package's own refusals rather than traps.
 
-Nothing reads the current epoch's seed. A seed is public the moment it rolls, and so is every word derived from it, so a body that could read one would be reading a value anyone could grind their own inputs against for the length of an epoch.
+Nothing reads the current epoch's seed, and nothing reads the current epoch. A seed is public the moment it rolls, and so is every word derived from it, so a body that could read one would be reading a value anyone could grind their own inputs against for the length of an epoch — and a body that could read the epoch would be reading the one input the seal exists to keep out of its hands.
 
 ## 4. Abort taxonomy
 
@@ -58,7 +60,7 @@ Five priced quantities, all deterministic:
 
 ## 6. Static gas bounds
 
-Block budgeting runs on declared limits because determinism gives replay exactness and certificate-attested actuals, never proposal-time exactness: static access fixes which keys are touched, not value-dependent control flow, and a cross-shard transaction cannot be pre-executed at proposal — its provisions do not exist yet. Where cost *is* decidable, it is verified rather than declared: a method whose control flow is independent of **state values** carries a deploy-verified static gas bound in its effect metadata. Environment inputs — the transaction clock, the epoch, a matured seal's draw — count as exact-class inputs, so vesting-style time arithmetic stays in the exact tier. For that class the declared limit is the computed bound: no estimation, no slack, no griefing surface. The pipeline-occupancy price disciplines only the residual value-dependent class.
+Block budgeting runs on declared limits because determinism gives replay exactness and certificate-attested actuals, never proposal-time exactness: static access fixes which keys are touched, not value-dependent control flow, and a cross-shard transaction cannot be pre-executed at proposal — its provisions do not exist yet. Where cost *is* decidable, it is verified rather than declared: a method whose control flow is independent of **state values** carries a deploy-verified static gas bound in its effect metadata. Environment inputs — the transaction clock, a matured seal's draw — count as exact-class inputs, so vesting-style time arithmetic stays in the exact tier. For that class the declared limit is the computed bound: no estimation, no slack, no griefing surface. The pipeline-occupancy price disciplines only the residual value-dependent class.
 
 ## 7. MEV posture
 

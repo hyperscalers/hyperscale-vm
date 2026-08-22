@@ -238,8 +238,8 @@ enum HostFn {
     RangeWriteSet,
     RangeWriteInsert,
     RangeWriteRemove,
-    /// `epoch`, on the environment: the epoch a seal records.
-    Epoch,
+    /// `seal`, on a write cell: the kernel stamps the epoch now running.
+    Seal,
     /// `open-seal`, on a write cell: the draw the cell's seal matures
     /// into.
     OpenSeal,
@@ -273,6 +273,7 @@ const fn host_params(op: HostFn) -> usize {
         | HostFn::InstanceCovered
         | HostFn::ReserveTake
         | HostFn::WriteCellClear
+        | HostFn::Seal
         // A run's own two questions name the run and, for the second,
         // the element beside it: neither is an operation with a single
         // form to count from.
@@ -287,6 +288,7 @@ const fn host_params(op: HostFn) -> usize {
         | HostFn::BucketAmount
         | HostFn::BucketPut
         | HostFn::IssuerPut
+        | HostFn::OpenSeal
         | HostFn::RunDeclared(_) => 2,
         HostFn::WriteCellSet
         | HostFn::AmountTake
@@ -302,7 +304,6 @@ const fn host_params(op: HostFn) -> usize {
         | HostFn::Hash
         | HostFn::Emit
         | HostFn::InstanceTake
-        | HostFn::OpenSeal
         | HostFn::IssuerMint => 3,
         HostFn::InstancePut | HostFn::RangeWriteSet => 4,
         HostFn::RangeWriteInsert => 5,
@@ -315,7 +316,7 @@ const fn host_params(op: HostFn) -> usize {
         HostFn::MulDiv => 14,
         HostFn::FractionCmp => 16,
         HostFn::FractionCompose => 17,
-        HostFn::Clock | HostFn::Epoch => 0,
+        HostFn::Clock => 0,
     }
 }
 
@@ -876,9 +877,9 @@ impl RefComponent {
             ("math", "fraction-compose") => Ok((HostFn::FractionCompose, None)),
             ("math", "fraction-cmp") => Ok((HostFn::FractionCmp, None)),
             ("math", "fixed-pow") => Ok((HostFn::FixedPow, None)),
+            ("state", "write-cell-seal") => Ok((HostFn::Seal, None)),
             ("state", "write-cell-open-seal") => Ok((HostFn::OpenSeal, None)),
             ("env", "clock") => Ok((HostFn::Clock, None)),
-            ("env", "epoch") => Ok((HostFn::Epoch, None)),
             ("crypto", "hash") => Ok((HostFn::Hash, None)),
             ("events", "emit") => Ok((HostFn::Emit, None)),
             ("state", "read-cell-run-len") => Ok((HostFn::RunLen(HandleKind::ReadCellRun), None)),
@@ -2185,7 +2186,6 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                 let after = 1 + usize::from(run.is_some());
                 match host_fn {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
-                    HostFn::Epoch => Ok(vec![Value::I64(self.host.epoch().cast_signed())]),
                     // A run's own two questions, which name the run
                     // rather than one of its entries.
                     HostFn::RunLen(kind) => {
@@ -2687,20 +2687,30 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
+                    HostFn::Seal => {
+                        let rep = self.acting(run, &args, HandleKind::WriteCell, store)?;
+                        meter::seal(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                        )
+                        .map_err(meter_fault)?;
+                        Ok(Vec::new())
+                    }
                     HostFn::OpenSeal => {
                         let rep = self.resolve_handle(args[0], HandleKind::WriteCell)?;
-                        let epoch = args[1].as_i64().cast_unsigned();
                         let drawn = meter::open_seal(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
                             },
                             rep,
-                            epoch,
                         )
                         .map_err(meter_fault)?;
                         let mem = self.mem_opt(id)?;
-                        Self::write_drawn(store, mem, args[2], drawn)?;
+                        Self::write_drawn(store, mem, args[1], drawn)?;
                         Ok(Vec::new())
                     }
                     HostFn::Hash => {

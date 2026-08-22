@@ -14,9 +14,9 @@ use wasmtime::{Engine, Result, Store, Trap};
 use wat::parse_str;
 
 /// A guest that reads cell `a` through a read capability, writes those
-/// bytes to cell `b` through a write capability, then folds clock,
-/// epoch, and a hash into its return value:
-/// `clock + epoch + len(a) + len(hash) + hash[0]`.
+/// bytes to cell `b` through a write capability, then folds the clock
+/// and a hash into its return value:
+/// `clock + len(a) + len(hash) + hash[0]`.
 ///
 /// List-returning imports lower through a separate allocator module
 /// instantiated first, so the canon lower options can name its memory and
@@ -29,8 +29,7 @@ const GUEST_WAT: &str = r#"
     (export "read-cell-get" (func (param "c" (borrow $rc)) (result (list u8))))
     (export "write-cell-set" (func (param "c" (borrow $wc)) (param "value" (list u8))))))
   (import "hyperscale:kernel/env" (instance $env
-    (export "clock" (func (result u64)))
-    (export "epoch" (func (result u64)))))
+    (export "clock" (func (result u64)))))
   (import "hyperscale:kernel/crypto" (instance $crypto
     (export "hash" (func (param "data" (list u8)) (result (list u8))))))
 
@@ -39,7 +38,6 @@ const GUEST_WAT: &str = r#"
   (alias export $state "read-cell-get" (func $read))
   (alias export $state "write-cell-set" (func $write))
   (alias export $env "clock" (func $clock))
-  (alias export $env "epoch" (func $epoch))
   (alias export $crypto "hash" (func $hash))
 
   (core module $alloc
@@ -61,7 +59,6 @@ const GUEST_WAT: &str = r#"
   (core func $write_l (canon lower (func $write)
     (memory $a "mem")))
   (core func $clock_l (canon lower (func $clock)))
-  (core func $epoch_l (canon lower (func $epoch)))
   (core func $hash_l (canon lower (func $hash)
     (memory $a "mem") (realloc (func $a "realloc"))))
   (core func $drop_r (canon resource.drop $rcell))
@@ -72,7 +69,6 @@ const GUEST_WAT: &str = r#"
     (import "k" "read" (func $read (param i32 i32)))
     (import "k" "write" (func $write (param i32 i32 i32)))
     (import "k" "clock" (func $clock (result i64)))
-    (import "k" "epoch" (func $epoch (result i64)))
     (import "k" "hash" (func $hash (param i32 i32 i32)))
     (import "k" "drop-r" (func $drop_r (param i32)))
     (import "k" "drop-w" (func $drop_w (param i32)))
@@ -93,10 +89,8 @@ const GUEST_WAT: &str = r#"
       local.get $ptr
       local.get $len
       call $write
-      ;; clock + epoch
+      ;; clock
       call $clock
-      call $epoch
-      i64.add
       local.set $now
       ;; hash(a fixed window of the cell's own bytes) -> area at 24.
       ;; Fixed, so the only length-scaled crossings stay the read's
@@ -105,7 +99,7 @@ const GUEST_WAT: &str = r#"
       i32.const 32
       i32.const 24
       call $hash
-      ;; result = clock + epoch + len(a) + len(hash) + hash[0]
+      ;; result = clock + len(a) + len(hash) + hash[0]
       local.get $now
       local.get $len
       i64.extend_i32_u
@@ -131,7 +125,6 @@ const GUEST_WAT: &str = r#"
       (export "read" (func $read_l))
       (export "write" (func $write_l))
       (export "clock" (func $clock_l))
-      (export "epoch" (func $epoch_l))
       (export "hash" (func $hash_l))
       (export "drop-r" (func $drop_r))
       (export "drop-w" (func $drop_w))))))
@@ -141,7 +134,6 @@ const GUEST_WAT: &str = r#"
     (canon lift (core func $i "run"))))
 "#;
 
-const EPOCH: u64 = 12;
 const CLOCK_MS: u64 = 111_222;
 
 struct TestHost {
@@ -300,11 +292,11 @@ impl KernelHost for TestHost {
         CLOCK_MS
     }
 
-    fn epoch(&self) -> u64 {
-        EPOCH
+    fn seal(&mut self, _rep: u32) -> Result<(), AbortReason> {
+        unreachable!("this world holds no seal")
     }
 
-    fn open_seal(&self, _rep: u32, _epoch: u64) -> Result<Drawn, AbortReason> {
+    fn open_seal(&mut self, _rep: u32) -> Result<Drawn, AbortReason> {
         Ok(Drawn::Ready([9; 32]))
     }
 
@@ -354,7 +346,7 @@ fn kernel_world_round_trips_state_env_and_crypto() -> Result<()> {
 
     // The hash input is a fixed thirty-two-byte window of 3s.
     let hash_first = 3u8.wrapping_mul(32);
-    let expected = CLOCK_MS + EPOCH + len as u64 + 32 + u64::from(hash_first);
+    let expected = CLOCK_MS + len as u64 + 32 + u64::from(hash_first);
     assert_eq!(out, expected);
 
     // The write leg copied cell 0's bytes into cell 1.

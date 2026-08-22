@@ -41,7 +41,7 @@
 //!
 //! # The deterministic environment
 //!
-//! [`clock_ms`], [`randomness`] and [`hash`] are here for the same reason
+//! [`clock_ms`] and [`hash`] are here for the same reason
 //! the accessors are: a body is read on one target and run on another, so
 //! everything it can name has to exist on both. They declare nothing —
 //! each is identical on every replica by construction rather than by
@@ -387,30 +387,24 @@ impl Cellular for Word {
 
 /// A draw committed to now and readable later.
 ///
-/// What a package stores when it closes whatever the draw will settle.
-/// The epoch is the commitment: the word it opens onto comes from a seed
-/// the protocol had not rolled when this was written, so nothing about
-/// the transaction that wrote it, or the one that opens it, can reach
-/// the answer.
+/// What a cell holds once a package closes whatever the draw will
+/// settle. The commitment is the epoch the kernel stamped into it: the
+/// word it opens onto comes from a seed the protocol had not rolled when
+/// it was written, so nothing about the transaction that wrote it, or
+/// the one that opens it, can reach the answer.
+///
+/// A type with no content a package can reach, and that is the whole of
+/// it. `Seal` is not a [`Record`], so nothing on [`Cell`] writes one and
+/// nothing reads one back — the leaf is the kernel's, written by
+/// [`Cell::seal`] and read by [`Cell::open`] alone. A package that could
+/// name the epoch could name one already rolled, whose seed is public,
+/// and open onto a word it had computed before deciding to seal.
 ///
 /// One seal per cell. What separates two of a package's draws is which
 /// cell holds each, so a package wanting two says so with two cells —
 /// and a package cannot mint itself candidate draws to choose among.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub struct Seal {
-    /// The epoch this was written in.
-    pub epoch: u64,
-}
-
-impl Seal {
-    /// A seal on the epoch now running.
-    #[must_use]
-    pub fn now() -> Self {
-        Self { epoch: epoch() }
-    }
-}
-
-impl Record for Seal {}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Seal(());
 
 /// What a sealed cell answers when asked for its draw.
 ///
@@ -1071,43 +1065,77 @@ impl<T: Record> Slot<Option<T>> {
     pub const fn vacant(&self) {}
 }
 
-/// What a cell holding a seal offers beyond an ordinary record's cell.
+/// The whole of what a body does with a sealed cell.
 ///
-/// The authoring half. [`Cell::create`] writes the seal and
-/// [`Cell::existing`] reads it back; this is the third thing a body does
-/// with one, and it declares exactly what `existing` does — the leaf
-/// held and there — because resolving a draw reads the seal it resolves.
+/// The authoring half. Two operations and no others: nothing on
+/// [`Cell`] reaches this leaf, because [`Seal`] is not a [`Record`], so
+/// what the leaf holds is what the kernel put there.
 #[allow(clippy::inline_always)] // one import behind a dispatch its call site fixes
 impl Cell<Option<Seal>> {
+    /// Seal this cell on the epoch now running, where nothing is
+    /// sealed yet.
+    ///
+    /// Declares what [`Cell::create`] declares — the leaf held and not
+    /// there — because a seal is a write onto an empty leaf. What it
+    /// does not take is the epoch: that is the kernel's, and a body
+    /// naming its own could name one already rolled.
+    #[inline(always)]
+    pub fn seal(&mut self) {
+        unimplemented!("{OFF_HOST}")
+    }
+
     /// The draw this cell's seal matured into.
     #[must_use]
     #[inline(always)]
     pub fn open(&self) -> Drawn {
         unimplemented!("{OFF_HOST}")
     }
+
+    /// Declare this leaf read and required absent, on the terms
+    /// [`Cell::vacant`] states — what gates an operation on a round not
+    /// having closed yet.
+    #[inline(always)]
+    pub fn vacant(&self) {
+        unimplemented!("{OFF_HOST}")
+    }
 }
 
-/// The executing half of a sealed cell's resolve.
+/// The executing half of a sealed cell.
 #[allow(clippy::inline_always)] // one import behind a dispatch its call site fixes
 impl Slot<Option<Seal>> {
+    /// Seal this cell on the epoch now running.
+    #[inline(always)]
+    pub fn seal(&mut self) {
+        #[cfg(component)]
+        crate::guest::cell_seal(self.handle);
+        #[cfg(not(component))]
+        host::cell_seal(self.handle);
+    }
+
     /// The draw this cell's seal matured into.
     ///
-    /// The word is derived from the cell's own key, so the handle is the
-    /// whole of what identifies it and no body names a nonce.
+    /// The word is derived from the cell's own key and from the epoch
+    /// the cell's own seal records, so the handle is the whole of what
+    /// identifies it and no body names either.
     #[must_use]
     #[inline(always)]
     pub fn open(&self) -> Drawn {
-        let seal = self.existing();
         #[cfg(component)]
-        let drawn = crate::guest::cell_open_seal(self.handle, seal.epoch);
+        let drawn = crate::guest::cell_open_seal(self.handle);
         #[cfg(not(component))]
-        let drawn = host::cell_open_seal(self.handle, seal.epoch);
+        let drawn = host::cell_open_seal(self.handle);
         match drawn {
             WireDrawn::Pending => Drawn::Pending,
             WireDrawn::Expired => Drawn::Expired,
             WireDrawn::Ready(word) => Drawn::Ready(Draw::from_protocol(&word)),
         }
     }
+
+    /// Declare this leaf read and required absent, and — like the
+    /// clause it is — run nowhere.
+    #[inline(always)]
+    #[allow(clippy::unused_self)] // the clause is the whole of it
+    pub const fn vacant(&self) {}
 }
 
 /// A cell that holds value.
@@ -1728,18 +1756,6 @@ pub fn clock_ms() -> u64 {
     return crate::guest::clock_ms();
     #[cfg(not(component))]
     return host::clock_ms();
-}
-
-/// The epoch this transaction executes in.
-///
-/// What a seal records, and the only thing a body needs to know about
-/// epochs: the protocol decides how far past one a seal matures.
-#[must_use]
-pub fn epoch() -> u64 {
-    #[cfg(component)]
-    return crate::guest::epoch();
-    #[cfg(not(component))]
-    return host::epoch();
 }
 
 /// The protocol hash function: a 32-byte digest.

@@ -87,11 +87,12 @@ pub struct BatchTx {
     /// at any of them aborts the transaction before it runs; completing
     /// writes them all — once-only by creation conflict.
     pub nullifiers: Vec<SubstateKey>,
-    /// The deterministic environment: the transaction clock and the
-    /// randomness draw. Per transaction, not per batch — every replica
-    /// executing this transaction must pass the same values, and one
-    /// batch may mix transactions with different clocks. A guest can read
-    /// both, so they can reach the receipt — and the two shards of a
+    /// The deterministic environment: the transaction clock, the epoch
+    /// it falls in, and the seeds a matured seal opens against. Per
+    /// transaction, not per batch — every replica executing this
+    /// transaction must pass the same values, and one batch may mix
+    /// transactions with different clocks. All three can reach a
+    /// receipt — and the two shards of a
     /// cross-shard transaction execute it in different batches of
     /// different composition, so anything derived from the batch or from
     /// the executing block would put them on different receipts. The

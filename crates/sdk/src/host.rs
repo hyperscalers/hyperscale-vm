@@ -231,6 +231,20 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
     }));
 }
 
+/// Seal this handle's cell on the epoch now running.
+///
+/// # Panics
+///
+/// On a handle that holds no exclusive write, which the declaration a
+/// seal is written through rules out.
+pub fn cell_seal(handle: Handle) {
+    let handle = acting(handle);
+    settled(kernel(|k| match handle {
+        Handle::Write(rep) => k.seal(rep),
+        other => unreachable!("{other:?} takes no seal"),
+    }));
+}
+
 /// The draw the seal in this handle's cell matured into.
 ///
 /// # Panics
@@ -238,10 +252,10 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
 /// On a handle that holds no exclusive write, which the declaration a
 /// seal is read through rules out.
 #[must_use]
-pub fn cell_open_seal(handle: Handle, epoch: u64) -> Drawn {
+pub fn cell_open_seal(handle: Handle) -> Drawn {
     let handle = acting(handle);
     settled(kernel(|k| match handle {
-        Handle::Write(rep) => k.open_seal(rep, epoch),
+        Handle::Write(rep) => k.open_seal(rep),
         other => unreachable!("{other:?} holds no seal"),
     }))
 }
@@ -557,12 +571,6 @@ pub fn entry_remove(handle: Handle, index: u32) {
 #[must_use]
 pub fn clock_ms() -> u64 {
     kernel(|k| k.clock_ms())
-}
-
-/// The epoch this transaction executes in.
-#[must_use]
-pub fn epoch() -> u64 {
-    kernel(|k| k.epoch())
 }
 
 /// The protocol hash function.

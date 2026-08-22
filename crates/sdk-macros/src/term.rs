@@ -428,7 +428,8 @@ pub enum Op {
     Reserve,
     /// `set()` / `insert()` / `remove()` — an exclusive read-modify-write.
     Set,
-    /// `create()` — the same write, on a leaf that must not be there.
+    /// `create()` / `seal()` — the same write, on a leaf that must not
+    /// be there. The second writes an epoch the kernel names.
     Create,
     /// `existing()` / `exclusive()` / `open()` — the same write, on a
     /// leaf that must be. The second declares it and reads nothing; the
@@ -453,7 +454,7 @@ impl Op {
             "put" | "take" | "declared" | "file" => Some(Self::Move),
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),
-            "create" => Some(Self::Create),
+            "create" | "seal" => Some(Self::Create),
             "existing" | "exclusive" | "open" => Some(Self::Existing),
             "vacant" => Some(Self::Vacant),
             _ => None,

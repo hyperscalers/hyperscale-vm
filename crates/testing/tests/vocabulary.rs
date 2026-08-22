@@ -252,12 +252,9 @@ fn an_entry_writes_at_the_order_it_names() {
 fn the_environment_is_the_transactions_own() {
     let session = session(MemoryStore::new(), Vec::new());
 
-    let (_, (clock, epoch, digest)) = with_kernel(session, || {
-        (state::clock_ms(), state::epoch(), state::hash(b"abc"))
-    });
+    let (_, (clock, digest)) = with_kernel(session, || (state::clock_ms(), state::hash(b"abc")));
 
     assert_eq!(clock, CLOCK_MS);
-    assert_eq!(epoch, 0);
     assert_eq!(digest, hash(b"abc").to_vec());
 }
 

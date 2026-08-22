@@ -158,10 +158,10 @@ pub mod fixtures {
         fn bucket_drop(&mut self, _rep: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn epoch(&self) -> u64 {
-            0
+        fn seal(&mut self, _rep: u32) -> Result<(), AbortReason> {
+            Err(AbortReason::HandleUnknown)
         }
-        fn open_seal(&self, _rep: u32, _epoch: u64) -> Result<Drawn, AbortReason> {
+        fn open_seal(&mut self, _rep: u32) -> Result<Drawn, AbortReason> {
             Ok(Drawn::Pending)
         }
         fn clock_ms(&self) -> u64 {
@@ -265,8 +265,8 @@ pub mod fixtures {
     /// A component whose `realloc` calls a lowered import, closing a call
     /// cycle through the canonical-ABI boundary.
     ///
-    /// `draw` calls `randomness`, whose lowering calls the guest's realloc
-    /// to allocate the result — and that realloc calls `randomness` again,
+    /// `draw` calls `hash`, whose lowering calls the guest's realloc to
+    /// allocate the result — and that realloc calls `hash` again,
     /// through a trampoline a third module's element segment filled. Every
     /// edge is ordinary: core instantiation is acyclic, and the only cycle
     /// runs through a host frame, so the deploy-time call graph is acyclic

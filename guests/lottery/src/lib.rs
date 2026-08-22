@@ -112,11 +112,11 @@ pub mod lottery {
         /// Close the round on a seal, ending entry.
         ///
         /// Public, and there is nothing an operator would be trusted
-        /// with: the seal names the epoch it was written in and nothing
-        /// else, so whoever closes the round chooses when it closes and
-        /// not what it draws.
+        /// with: the seal takes no argument at all — the kernel stamps
+        /// the epoch — so whoever closes the round chooses when it
+        /// closes and not what it draws.
         pub fn close(&mut self) {
-            self.round.create(Seal::now());
+            self.round.seal();
             Closed.emit();
         }
 

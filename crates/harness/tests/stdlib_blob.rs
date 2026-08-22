@@ -29,7 +29,7 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_ref::{CVal, HandleKind};
 use hyperscale_vm_runtime::validate_component;
 use hyperscale_vm_sdk::hbor::to_vec;
-use hyperscale_vm_sdk::state::{Seal, Word};
+use hyperscale_vm_sdk::state::Word;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Movement,
@@ -391,10 +391,11 @@ fn ticket_order() -> u128 {
 /// one entrant's ticket for it to select.
 fn closed_round() -> MemoryStore {
     let mut store = MemoryStore::new();
-    store.write(
-        round_key(),
-        to_vec(&Seal { epoch: SEALED_AT }).expect("a seal encodes"),
-    );
+    // The kernel's own leaf: the epoch it stamped, little-endian. Built
+    // here rather than sealed through a session, on the same terms as
+    // the word below — a change to what a seal holds fails here rather
+    // than agreeing with itself.
+    store.write(round_key(), SEALED_AT.to_le_bytes().to_vec());
     store.entry_write(
         LOTTERY,
         ticket_collection(),

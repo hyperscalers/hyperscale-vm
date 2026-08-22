@@ -60,6 +60,14 @@ pub enum SessionTrap {
     /// through the typed world surface, kept as an honest error.
     #[error("handle {0} does not grant this operation")]
     WrongMode(u32),
+    /// A cell opened as a seal that holds something else.
+    ///
+    /// Only the kernel writes a seal, so the bytes under one are its own
+    /// eight — unless a guest wrote over them through the same write
+    /// handle, which is its declaration and its body disagreeing about
+    /// what the leaf is for.
+    #[error("handle {0} names a cell that holds no seal")]
+    NotASeal(u32),
     /// A handle whose clause was guarded out, reached anyway.
     ///
     /// The guest was handed the guard's verdict and branched the other
@@ -198,6 +206,7 @@ impl From<SessionTrap> for AbortReason {
         match trap {
             SessionTrap::UnknownHandle(_) => Self::HandleUnknown,
             SessionTrap::WrongMode(_) => Self::HandleWrongMode,
+            SessionTrap::NotASeal(_) => Self::MalformedSeal,
             SessionTrap::UndeclaredBranch => Self::UndeclaredBranch,
             SessionTrap::IndexOutOfBounds { .. } => Self::EntryIndexOutOfBounds,
             SessionTrap::OrderOutsideInterval => Self::OrderOutsideInterval,
@@ -537,14 +546,35 @@ impl KernelSession {
         }
     }
 
+    /// Seal this cell on the epoch now running.
+    ///
+    /// The kernel writes the epoch rather than taking one, and that is
+    /// the whole of the commitment. A body that named its own would name
+    /// an epoch already rolled, and open onto a word it could have
+    /// computed before deciding to seal — so what a seal commits to
+    /// would be whatever its writer already knew.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn seal(&mut self, rep: u32) -> Result<(), SessionTrap> {
+        let Capability::Write(key) = self.capability(rep)? else {
+            return Err(SessionTrap::WrongMode(rep));
+        };
+        Ok(self
+            .store
+            .write(key, self.env.epoch.to_le_bytes().to_vec())?)
+    }
+
     /// The draw the seal in this cell matures into.
     ///
     /// Everything the word is made of was fixed before the transaction
-    /// that reads it: the seed of an epoch the seal named and the
-    /// protocol's maturity put past it, and the key of the cell the
-    /// handle names. Nothing about the attempt enters — not its hash,
-    /// not its sender, not the block that carries it — so two attempts
-    /// at one seal answer alike and abandoning one buys nothing.
+    /// that reads it: the seed of the epoch the cell's own seal records
+    /// with the protocol's maturity put past it, and the key of the cell
+    /// the handle names. Nothing about the attempt enters — not its
+    /// hash, not its sender, not the block that carries it — so two
+    /// attempts at one seal answer alike and abandoning one buys
+    /// nothing.
     ///
     /// The cell's key is what separates two seals of one package. A
     /// nonce would put that choice in a body, where a package could mint
@@ -552,11 +582,18 @@ impl KernelSession {
     ///
     /// # Errors
     ///
-    /// Any [`SessionTrap`].
-    pub fn open_seal(&self, rep: u32, epoch: u64) -> Result<Drawn, SessionTrap> {
+    /// Any [`SessionTrap`], including [`SessionTrap::NotASeal`] for a
+    /// leaf a guest wrote its own bytes over.
+    pub fn open_seal(&mut self, rep: u32) -> Result<Drawn, SessionTrap> {
         let Capability::Write(key) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
+        let held = self.store.read(key)?.unwrap_or_default();
+        let epoch = held
+            .as_slice()
+            .try_into()
+            .map(u64::from_le_bytes)
+            .map_err(|_| SessionTrap::NotASeal(rep))?;
         Ok(match self.matured_seed(epoch) {
             Seeded::Pending => Drawn::Pending,
             Seeded::Expired => Drawn::Expired,
@@ -948,7 +985,7 @@ mod tests {
     use super::fixtures::{
         declared, env, key, session_for, session_holding, session_over, session_under, tx,
     };
-    use super::{EnvInputs, SessionTrap};
+    use super::{EnvInputs, KernelSession, SessionTrap, TxHash};
     use crate::ledger::AmountLedger;
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError};
@@ -1052,10 +1089,11 @@ mod tests {
         );
     }
 
-    /// A window with one usable seed, so a seal in `epoch` opens and
-    /// nothing else does.
+    /// A window with one usable seed, so a seal written in `epoch`
+    /// opens and nothing else does.
     fn sealed_env(epoch: u64) -> EnvInputs {
         EnvInputs {
+            epoch,
             seeds: SeedWindow::new(
                 std::collections::BTreeMap::from([(
                     epoch + SEAL_MATURITY_EPOCHS,
@@ -1074,6 +1112,14 @@ mod tests {
         }])
     }
 
+    /// A session over one written cell, sealed in the epoch its own
+    /// environment is running.
+    fn sealed_session(set: &EffectSet, env: EnvInputs, tx: TxHash) -> KernelSession {
+        let mut session = session_for(MemoryStore::new(), set, env, tx);
+        session.seal(0).expect("a write handle takes a seal");
+        session
+    }
+
     /// The property the whole seal exists for: what a seal opens onto is
     /// a function of committed state and of a seed rolled after it was
     /// written, and of nothing about the attempt that reads it.
@@ -1088,8 +1134,8 @@ mod tests {
         let words: Vec<_> = [tx(0xA1), tx(0xB2)]
             .into_iter()
             .map(|tx| {
-                session_for(MemoryStore::new(), &set, sealed_env(9), tx)
-                    .open_seal(0, 9)
+                sealed_session(&set, sealed_env(9), tx)
+                    .open_seal(0)
                     .expect("a write handle holds a seal")
             })
             .collect();
@@ -1104,15 +1150,40 @@ mod tests {
     /// by naming a nonce.
     #[test]
     fn two_sealed_cells_of_one_epoch_draw_apart() {
-        let first = session_for(MemoryStore::new(), &writing(key(1)), sealed_env(9), tx(1))
-            .open_seal(0, 9)
+        let first = sealed_session(&writing(key(1)), sealed_env(9), tx(1))
+            .open_seal(0)
             .expect("a write handle holds a seal");
-        let second = session_for(MemoryStore::new(), &writing(key(2)), sealed_env(9), tx(1))
-            .open_seal(0, 9)
+        let second = sealed_session(&writing(key(2)), sealed_env(9), tx(1))
+            .open_seal(0)
             .expect("a write handle holds a seal");
 
         assert!(matches!(first, Drawn::Ready(_)));
         assert_ne!(first, second);
+    }
+
+    /// The epoch a seal records is the kernel's, not a body's.
+    ///
+    /// A body that chose it could name an epoch already rolled — whose
+    /// seed is public, and whose word it could therefore compute before
+    /// deciding to seal at all. What the cell holds is the running
+    /// epoch and nothing a guest handed over.
+    #[test]
+    fn a_seal_records_the_epoch_the_kernel_is_running() {
+        let mut session = sealed_session(&writing(key(1)), sealed_env(9), tx(1));
+        assert_eq!(
+            session.write_cell_get(0),
+            Ok(9u64.to_le_bytes().to_vec()),
+            "the leaf holds the running epoch"
+        );
+
+        // The same cell written over by hand, naming an epoch whose seed
+        // is already rolled: the derivation reads the leaf, so this is
+        // the only way to reach one — and it is a package's declaration
+        // and body disagreeing about what the leaf is for.
+        session
+            .write_cell_set(0, vec![0xFF; 3])
+            .expect("a write handle sets");
+        assert_eq!(session.open_seal(0), Err(SessionTrap::NotASeal(0)));
     }
 
     /// A seal is opened through the handle that holds it, so a
@@ -1123,17 +1194,39 @@ mod tests {
             target: EffectTarget::Point(key(1)),
             mode: Mode::Read,
         }]);
-        let session = session_under(MemoryStore::new(), &set, sealed_env(9));
-        assert_eq!(session.open_seal(0, 9), Err(SessionTrap::WrongMode(0)));
+        let mut session = session_under(MemoryStore::new(), &set, sealed_env(9));
+        assert_eq!(session.seal(0), Err(SessionTrap::WrongMode(0)));
+        assert_eq!(session.open_seal(0), Err(SessionTrap::WrongMode(0)));
     }
 
     /// The two ways a seal fails to open are two answers, because a
     /// package does different things with them: wait, or close again.
+    ///
+    /// Both are reached by moving the window rather than the seal: what
+    /// the cell records is fixed when it is written, so a seal is early
+    /// or lapsed according to what the beacon has rolled since.
     #[test]
     fn an_early_seal_waits_where_a_lapsed_one_is_over() {
-        let session = session_under(MemoryStore::new(), &writing(key(1)), sealed_env(9));
-        assert_eq!(session.open_seal(0, 10), Ok(Drawn::Pending));
-        assert_eq!(session.open_seal(0, 8), Ok(Drawn::Expired));
+        let set = writing(key(1));
+        let mut early = sealed_session(
+            &set,
+            EnvInputs {
+                epoch: 10,
+                ..sealed_env(9)
+            },
+            tx(1),
+        );
+        assert_eq!(early.open_seal(0), Ok(Drawn::Pending));
+
+        let mut lapsed = sealed_session(
+            &set,
+            EnvInputs {
+                epoch: 8,
+                ..sealed_env(9)
+            },
+            tx(1),
+        );
+        assert_eq!(lapsed.open_seal(0), Ok(Drawn::Expired));
     }
 
     #[test]

@@ -170,19 +170,32 @@ interface state {
     /// Replace the substate's bytes.
     write-cell-set: func(c: borrow<write-cell>, value: list<u8>);
 
+    /// Seal this cell on the epoch now running.
+    ///
+    /// The kernel writes the epoch, which is the whole of the
+    /// commitment: what the seal opens onto is derived from a seed
+    /// rolled after the block that wrote it, and a body that named its
+    /// own epoch could name one already rolled and open onto a value it
+    /// could compute before sealing. So the epoch is not a parameter.
+    write-cell-seal: func(c: borrow<write-cell>);
+
     /// The draw the seal in this cell matures into.
     ///
-    /// The word is derived from the seed of `epoch` plus the protocol's
-    /// maturity, mixed with the cell's own key — so what a package gets
-    /// is fixed by a commitment it already made and by a value that did
-    /// not exist when it made one. Nothing here reads the transaction,
-    /// which is the whole property: two attempts at the same seal answer
-    /// the same word, so there is nothing to gain by abandoning one.
+    /// The word is derived from the seed of the epoch the cell's own
+    /// seal records plus the protocol's maturity, mixed with the cell's
+    /// own key — so what a package gets is fixed by a commitment it
+    /// already made and by a value that did not exist when it made one.
+    /// Nothing here reads the transaction, which is the whole property:
+    /// two attempts at the same seal answer the same word, so there is
+    /// nothing to gain by abandoning one.
     ///
     /// On the handle rather than in `env` because the identity is the
     /// cell's. A package that wants two draws holds two cells; one that
     /// passed a nonce would be choosing what the protocol should fix.
-    write-cell-open-seal: func(c: borrow<write-cell>, epoch: u64) -> drawn;
+    ///
+    /// Traps on a cell holding anything but a seal, which only a guest
+    /// that wrote its own bytes over one can reach.
+    write-cell-open-seal: func(c: borrow<write-cell>) -> drawn;
 
     /// Remove the substate, so nothing is there.
     ///
@@ -614,13 +627,6 @@ interface env {
     /// The transaction clock: the canonical weighted-time anchor of the
     /// payer-shard block that committed this transaction, in milliseconds.
     clock: func() -> u64;
-
-    /// The epoch this transaction executes in.
-    ///
-    /// What a seal records. How far past its own epoch a seal matures is
-    /// the protocol's, so a guest that writes one needs this and nothing
-    /// else about epochs.
-    epoch: func() -> u64;
 }
 
 /// Host-side cryptography; guests never carry their own.

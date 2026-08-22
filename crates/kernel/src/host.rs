@@ -126,14 +126,14 @@ impl KernelHost for KernelSession {
     fn bucket_drop(&mut self, rep: u32) -> Result<(), AbortReason> {
         refused(Self::drop_bucket(self, rep))
     }
-    fn open_seal(&self, rep: u32, epoch: u64) -> Result<Drawn, AbortReason> {
-        refused(Self::open_seal(self, rep, epoch))
+    fn seal(&mut self, rep: u32) -> Result<(), AbortReason> {
+        refused(Self::seal(self, rep))
+    }
+    fn open_seal(&mut self, rep: u32) -> Result<Drawn, AbortReason> {
+        refused(Self::open_seal(self, rep))
     }
     fn clock_ms(&self) -> u64 {
         Self::clock_ms(self)
-    }
-    fn epoch(&self) -> u64 {
-        Self::epoch(self)
     }
     fn hash(&self, data: &[u8]) -> [u8; 32] {
         Self::hash(self, data)

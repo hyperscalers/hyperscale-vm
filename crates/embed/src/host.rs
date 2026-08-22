@@ -7,7 +7,7 @@ use hyperscale_vm_types::{AbortReason, Drawn};
 /// The kernel's operations, as reps and bytes.
 ///
 /// Implementations hold per-transaction state: the materialized capability
-/// table, the transaction clock, the randomness draw, and the emission
+/// table, the transaction clock and epoch, and the emission
 /// buffer a completed outcome turns into receipt events. Reps are indexes
 /// the host itself assigned when materializing handles, so lookups are
 /// infallible by construction; fallible operations return a deterministic
@@ -258,6 +258,13 @@ pub trait KernelHost: Send {
     /// A deterministic refusal (index out of bounds).
     fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), AbortReason>;
 
+    /// Seal this cell on the epoch now running.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal (a handle that names no write).
+    fn seal(&mut self, rep: u32) -> Result<(), AbortReason>;
+
     /// The draw the seal in this cell matures into.
     ///
     /// The word mixes the cell's own key, so a package holding two
@@ -265,14 +272,12 @@ pub trait KernelHost: Send {
     ///
     /// # Errors
     ///
-    /// A deterministic refusal (a handle that names no write).
-    fn open_seal(&self, rep: u32, epoch: u64) -> Result<Drawn, AbortReason>;
+    /// A deterministic refusal (a handle that names no write, or a cell
+    /// holding something that is not a seal).
+    fn open_seal(&mut self, rep: u32) -> Result<Drawn, AbortReason>;
 
     /// The transaction clock in milliseconds.
     fn clock_ms(&self) -> u64;
-
-    /// The epoch this transaction executes in.
-    fn epoch(&self) -> u64;
 
     /// The protocol hash function.
     fn hash(&self, data: &[u8]) -> [u8; 32];

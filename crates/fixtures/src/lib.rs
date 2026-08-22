@@ -43,7 +43,8 @@ use std::sync::LazyLock;
 use hyperscale_vm_effects::{Hasher, PackageHash, attach_metadata, package_hash};
 
 /// The componentized lottery guest: `enter` buys a ticket into the pot,
-/// `draw` settles the round on the transaction's randomness.
+/// `close` seals the round, and `settle` opens the seal to pick a
+/// winner.
 pub const LOTTERY_COMPONENT: &[u8] = include_bytes!("../blobs/lottery.component.wasm");
 
 /// The lottery package's content address under `hasher` — the key its

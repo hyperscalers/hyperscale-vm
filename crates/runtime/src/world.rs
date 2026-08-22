@@ -392,9 +392,15 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.func_wrap(
+        "write-cell-seal",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<WriteCell>,)| {
+            meter::seal(&mut Port(&mut store), r.rep()).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
         "write-cell-open-seal",
-        |mut store: StoreContextMut<'_, T>, (r, epoch): (Resource<WriteCell>, u64)| {
-            let drawn = meter::open_seal(&mut Port(&mut store), r.rep(), epoch).map_err(fault)?;
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<WriteCell>,)| {
+            let drawn = meter::open_seal(&mut Port(&mut store), r.rep()).map_err(fault)?;
             Ok((WitDrawn::from(drawn),))
         },
     )?;
@@ -1050,9 +1056,6 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     let mut env = linker.instance("hyperscale:kernel/env")?;
     env.func_wrap("clock", |store: StoreContextMut<'_, T>, (): ()| {
         Ok((store.data().clock_ms(),))
-    })?;
-    env.func_wrap("epoch", |store: StoreContextMut<'_, T>, (): ()| {
-        Ok((store.data().epoch(),))
     })?;
 
     let mut crypto = linker.instance("hyperscale:kernel/crypto")?;

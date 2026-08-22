@@ -37,7 +37,7 @@ One consequence the host relies on elsewhere: the payer shard's fee-binding chec
 ## 4. What the host provides the environment
 
 - **The transaction clock**: the canonical weighted-time anchor of the payer-shard block that committed the transaction, carried by the same commit proof §2 requires — one value per transaction, identical on every participant ([04-execution-semantics.md](04-execution-semantics.md) §3).
-- **Epoch**: the epoch the payer block's clock falls in — what a seal a transaction writes records, and the only thing a body needs to know about epochs.
+- **Epoch**: the epoch the payer block's clock falls in. The kernel stamps it into a cell a transaction seals; no guest reads it, and none names one.
 - **Seeds**: the beacon's rolled seeds for the epochs still inside the retained window, from the reveal fold alone. What a matured seal resolves against; the ceremony's are left out, since a beacon member could have withheld from one.
 - **Nothing else.** No shard-local time, no schedule position, no per-execution entropy (INV-VM-14).
 

@@ -145,10 +145,10 @@ impl KernelHost for StubHost {
     fn clock_ms(&self) -> u64 {
         0
     }
-    fn epoch(&self) -> u64 {
-        0
+    fn seal(&mut self, _rep: u32) -> Result<(), AbortReason> {
+        self.op("seal", ())
     }
-    fn open_seal(&self, _rep: u32, _epoch: u64) -> Result<Drawn, AbortReason> {
+    fn open_seal(&mut self, _rep: u32) -> Result<Drawn, AbortReason> {
         self.log.lock().unwrap().push(Host("open-seal"));
         Ok(Drawn::Ready([0; 32]))
     }
@@ -239,9 +239,16 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Host("write-cell-get"), Charge(5)],
         ),
         (
+            "write-cell-seal",
+            |p| {
+                let _ = meter::seal(p, 0);
+            },
+            vec![Host("seal"), Charge(8)],
+        ),
+        (
             "write-cell-open-seal",
             |p| {
-                let _ = meter::open_seal(p, 0, 0);
+                let _ = meter::open_seal(p, 0);
             },
             vec![Host("open-seal"), Charge(32)],
         ),
