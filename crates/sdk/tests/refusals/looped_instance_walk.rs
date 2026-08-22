@@ -23,7 +23,7 @@ mod contract {
         pub fn survey(&mut self, seats: NfBucket) -> NfBucket {
             for &row in &self.config().rows {
                 for held in Seat::each(&seats) {
-                    self.noted.set(held.holder + row);
+                    self.noted.set(held.holder);
                 }
             }
             seats

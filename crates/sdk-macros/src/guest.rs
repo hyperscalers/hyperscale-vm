@@ -261,23 +261,3 @@ pub fn component(world: &str, document: &str, methods: &[&Method]) -> TokenStrea
         export!(Component);
     )
 }
-
-/// The guest half's refusal: a body the emission cannot execute.
-///
-/// A compile error rather than a silently absent export, and one scoped to
-/// the guest build: the declaration the same body yields is sound, and a
-/// package whose executing half is written the long way publishes exactly
-/// as it does today. The error lands on the line that wrote what the
-/// emission cannot execute, not on the macro invocation.
-pub fn refusal(method: &str, span: Span, why: &str) -> TokenStream {
-    let message = format!(
-        "`#[blueprint]` cannot emit a guest body for `{method}`: {why}. Write this \
-         package's component by hand — the publish gate judges artifacts, not \
-         authorship"
-    );
-    let error = syn::Error::new(span, message).to_compile_error();
-    quote!(
-        #[cfg(target_arch = "wasm32")]
-        const _: () = { #error };
-    )
-}

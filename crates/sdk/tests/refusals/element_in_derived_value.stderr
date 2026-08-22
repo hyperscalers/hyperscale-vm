@@ -1,0 +1,7 @@
+error: this reads a `for-each` element, which exists only inside the evaluation of the loop that binds it — a body reaches an element as a key and never as a value. A package that needs the element itself is written the long way: its own component beside a declaration written out, which the publish gate judges the same
+ --> tests/refusals/element_in_derived_value.rs:3:1
+  |
+3 | #[blueprint]
+  | ^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `blueprint` (in Nightly builds, run with -Z macro-backtrace for more info)

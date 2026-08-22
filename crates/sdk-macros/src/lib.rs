@@ -1319,20 +1319,11 @@ fn declines(method: &syn::ImplItemFn) -> bool {
 struct Lowered {
     /// The `.method(…)` builder call.
     declaration: TokenStream2,
-    /// The export and the `impl Guest` body behind it, or why there is
-    /// none.
-    guest: Result<guest::Method, TokenStream2>,
+    /// The export and the `impl Guest` body behind it.
+    guest: guest::Method,
     /// The arm this method takes in the package's native dispatch.
-    ///
-    /// Emitted whether or not the guest half is, because what the two
-    /// refuse over is the component the emission cannot build — never
-    /// the body, which is the same text either way.
     host: TokenStream2,
     /// What the method contributes to the package's calling surface.
-    ///
-    /// Emitted whether or not the guest half is, for the same reason the
-    /// declaration is: a package written the long way is still called
-    /// through the declaration it publishes.
     client: client::Method,
 }
 
@@ -1419,18 +1410,7 @@ fn lower_method(
     );
     let name = published.clone();
 
-    let guest = lowered.refusal.as_ref().map_or_else(
-        || {
-            Ok(guest::method(
-                &name,
-                &lowered,
-                &params,
-                declared.config_fields,
-                declining,
-            ))
-        },
-        |(span, why)| Err(guest::refusal(&name, *span, why)),
-    );
+    let guest = guest::method(&name, &lowered, &params, declared.config_fields, declining);
     let host = host::arm(&name, &lowered, &params, declared.config_fields, declining);
     let client = client::Method {
         rust: method.sig.ident.clone(),
@@ -2991,36 +2971,18 @@ fn module_allows(attrs: &mut Vec<syn::Attribute>, role: Role) {
 
 /// The component this package publishes, and its native dispatch.
 ///
-/// Both executing halves stand or fall together: what the emission
-/// refuses is a body it cannot rewrite, and a package written the long
-/// way brings its own component and its own way of being called. A
-/// reader builds neither — the declaration the same text yields is what
-/// it came for — so a refusal costs it nothing.
+/// A reader builds no component: the declaration and the calling surface
+/// the same text yields are what it came for, and it runs the bodies
+/// through the dispatch rather than through wasm.
 fn executing(world: &str, methods: &[Lowered], role: Role) -> (TokenStream2, TokenStream2) {
-    let (exports, refusals): (Vec<_>, Vec<_>) =
-        methods
-            .iter()
-            .fold((Vec::new(), Vec::new()), |(mut ok, mut no), method| {
-                match &method.guest {
-                    Ok(built) => ok.push(built),
-                    Err(refusal) => no.push(refusal),
-                }
-                (ok, no)
-            });
-    if !refusals.is_empty() {
-        // The refusal lands on the crate that would have published the
-        // component; a reader is simply not offered a dispatch.
-        let refused = if role.publishes() {
-            quote!(#(#refusals)*)
-        } else {
-            quote!()
-        };
-        return (refused, quote!());
-    }
     let arms: Vec<_> = methods.iter().map(|method| method.host.clone()).collect();
     let component = if role.publishes() {
-        let shapes: Vec<_> = exports.iter().map(|m| m.export.clone()).collect();
+        let shapes: Vec<_> = methods
+            .iter()
+            .map(|method| method.guest.export.clone())
+            .collect();
         let document = wit::document(world, &shapes);
+        let exports: Vec<_> = methods.iter().map(|method| &method.guest).collect();
         guest::component(world, &document, &exports)
     } else {
         quote!()

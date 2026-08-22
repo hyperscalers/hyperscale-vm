@@ -419,11 +419,6 @@ pub struct Lowered {
     pub answer: Option<TokenStream>,
     /// Whether the method yields a value at all.
     pub returns: bool,
-    /// Why the guest half cannot be emitted, if it cannot, and where the
-    /// body wrote what it cannot. The declaration still stands: the
-    /// publish gate judges artifacts, so a package the SDK cannot
-    /// execute is one whose guest is written the long way.
-    pub refusal: Option<(Span, String)>,
 }
 
 /// What a method's tail hands back.
@@ -1008,14 +1003,6 @@ impl<'a> Lowerer<'a> {
 
     fn error(&mut self, span: Span, message: &str) {
         self.errors.push(syn::Error::new(span, message));
-    }
-
-    /// Record why the guest half cannot be emitted, keeping the first
-    /// reason: the rest are usually consequences of it.
-    fn refuse(&mut self, span: Span, why: &str) {
-        if self.out.refusal.is_none() {
-            self.out.refusal = Some((span, why.to_owned()));
-        }
     }
 
     /// How much of a declaration the walk has built: the sites it
@@ -2058,13 +2045,17 @@ impl<'a> Lowerer<'a> {
             Code::Bucket(param) => self.need(&Need::Amount(param)),
             Code::Record(span) => self.config_record(span),
             Code::Absent(span, why) => {
-                self.refuse(
-                    span,
-                    &format!(
-                        "this value is not one a guest can reach: {why}. The declaration \
-                     stands; the executing body has to be written the long way"
-                    ),
-                );
+                // Only where nothing else has been said. Most values
+                // that have no guest form are already the subject of an
+                // error — the walk carries an absence forward so it can
+                // reach whatever else the body got wrong — and reporting
+                // the absence too would name one mistake twice.
+                if self.errors.is_empty() {
+                    self.error(
+                        span,
+                        &format!("this value is not one a guest can reach: {why}"),
+                    );
+                }
                 quote!(::core::unimplemented!())
             }
         }
@@ -2120,11 +2111,13 @@ impl<'a> Lowerer<'a> {
                 // parameter that reads one is a parameter nothing could
                 // ever bind.
                 if term.reads_element() {
-                    self.refuse(
+                    self.error(
                         Span::call_site(),
                         "this reads a `for-each` element, which exists only inside the \
                          evaluation of the loop that binds it — a body reaches an element \
-                         as a key and never as a value",
+                         as a key and never as a value. A package that needs the element \
+                         itself is written the long way: its own component beside a \
+                         declaration written out, which the publish gate judges the same",
                     );
                     return quote!(::core::unimplemented!());
                 }
@@ -2153,11 +2146,13 @@ impl<'a> Lowerer<'a> {
             Term::Binding(_) | Term::NfBucket { .. } => {
                 // A term names no line of its own; the whole invocation
                 // is the nearest anchor.
-                self.refuse(
+                self.error(
                     Span::call_site(),
                     "this term is evaluated where the declaration is: a `for-each` \
                      element exists only inside an evaluation, and an edge is a \
-                     routable summary rather than a value",
+                     routable summary rather than a value. A package that needs one is \
+                     written the long way: its own component beside a declaration \
+                     written out, which the publish gate judges the same",
                 );
                 quote!(::core::unimplemented!())
             }
@@ -2176,7 +2171,7 @@ impl<'a> Lowerer<'a> {
     fn config_record(&mut self, span: Span) -> TokenStream {
         let declared = self.declared;
         let Some(name) = declared.config_record else {
-            self.refuse(span, "this package declares no configuration");
+            self.error(span, "this package declares no configuration");
             return quote!(::core::unimplemented!());
         };
         let fields: Vec<TokenStream> = declared
@@ -4251,7 +4246,7 @@ impl<'a> Lowerer<'a> {
             .find(|site| self.out.runs.contains(site))
             .map(handle_ident)
         else {
-            self.refuse(
+            self.error(
                 span,
                 "this loop's body declares no access, so there is no run for the guest \
                  to walk and no element for it to read",
@@ -4379,6 +4374,7 @@ mod tests {
         let config_fields = [
             ("sides".to_owned(), syn::parse_quote!(::std::vec::Vec<u64>)),
             ("others".to_owned(), syn::parse_quote!(::std::vec::Vec<u64>)),
+            ("fallback".to_owned(), syn::parse_quote!(u64)),
         ];
         let declared = Declared {
             fields: &fields,
@@ -4397,25 +4393,14 @@ mod tests {
     ///
     /// # Panics
     ///
-    /// If the body draws a hard error, which is a refusal every target
-    /// sees — and a fixture meaning to reach the wasm-only one has not.
+    /// If the body draws an error, which is what a fixture written to
+    /// reach one asks for by name instead.
     fn lowered(body: &str) -> Lowered {
         lower(body)
             .unwrap_or_else(|errors| panic!("the fixture drew a hard error: {}", errors.join("; ")))
     }
 
-    /// Why the guest half of `body` cannot be emitted, or `None` where
-    /// it can.
-    ///
-    /// The refusal a wasm build turns into a compile error, read on
-    /// whatever target the test runs on: it is recorded on the lowering
-    /// and only rendered under `cfg(target_arch = "wasm32")`, so this is
-    /// the one place it can be held to what it says.
-    fn refusal(body: &str) -> Option<String> {
-        lowered(body).refusal.map(|(_, why)| why)
-    }
-
-    /// The hard errors `body` draws, which every target sees.
+    /// The errors `body` draws.
     ///
     /// # Panics
     ///
@@ -4427,37 +4412,12 @@ mod tests {
 
     #[test]
     fn a_loop_over_a_configured_list_executes() {
-        // The control the refusals below are read against: a body whose
-        // every access sits on a run has a guest half.
-        assert_eq!(
-            refusal("{ for &side in &self.config().sides { self.owed.at(side).set(1); } }"),
-            None,
-        );
-    }
-
-    #[test]
-    fn an_element_in_value_position_is_refused() {
-        let why =
-            refusal("{ for &side in &self.config().sides { self.owed.at(side).set(side); } }")
-                .expect("an element read as a value has no guest half");
-        assert!(
-            why.contains("exists only inside an evaluation"),
-            "unexpected refusal: {why}"
-        );
-    }
-
-    #[test]
-    fn a_derived_value_reading_an_element_is_refused() {
-        // The whole term, not the binding alone: an export's arguments
-        // are evaluated outside every loop, so a parameter mentioning an
-        // element is one nothing could bind however it is wrapped.
-        let why =
-            refusal("{ for &side in &self.config().sides { self.owed.at(side).set(side + 1); } }")
-                .expect("a derived value over an element has no guest half");
-        assert!(
-            why.contains("reads a `for-each` element"),
-            "unexpected refusal: {why}"
-        );
+        // The control the refusals in `tests/refusals` are read against:
+        // a body whose every access under the loop sits on a run.
+        let lowered =
+            lowered("{ for &side in &self.config().sides { self.owed.at(side).set(1); } }");
+        assert_eq!(lowered.runs.len(), 1);
+        assert_eq!(lowered.sites.len(), 1);
     }
 
     #[test]
@@ -4468,11 +4428,6 @@ mod tests {
         let lowered = lowered(
             "{ for &side in &self.config().sides { self.owed.at(side).set(1); } \
                for &other in &self.config().others { self.owed.at(other).set(2); } }",
-        );
-        assert_eq!(
-            lowered.refusal.map(|(_, why)| why),
-            None,
-            "both loops have a guest half",
         );
         assert_eq!(lowered.runs.len(), 2, "one run per loop");
         assert_eq!(lowered.sites.len(), 2, "and one site per run");
@@ -4486,7 +4441,6 @@ mod tests {
             "{ for &side in &self.config().sides { \
                self.owed.at(side).set(1); self.owed.at(side).set(2); } }",
         );
-        assert_eq!(lowered.refusal.map(|(_, why)| why), None);
         assert_eq!(lowered.runs.len(), 1);
         assert_eq!(lowered.sites.len(), 1);
     }
@@ -4501,9 +4455,10 @@ mod tests {
         // leaf is not the same, keeps the guard it was written under.
         let lowered = lowered(
             "{ for &side in &self.config().sides { \
-               if side == 1 { self.owed.at(side).set(1); } self.owed.at(side).set(2); } \
+               if self.config().fallback == 1 { self.owed.at(side).set(1); } \
+               self.owed.at(side).set(2); } \
                for &other in &self.config().others { \
-               if other == 1 { self.owed.at(other).set(3); } } }",
+               if self.config().fallback == 1 { self.owed.at(other).set(3); } } }",
         );
         assert_eq!(lowered.sites.len(), 2, "one site per loop");
         assert!(
@@ -4528,18 +4483,6 @@ mod tests {
         assert!(
             errors.iter().any(|why| why.contains("inside another")),
             "unexpected errors: {errors:?}",
-        );
-    }
-
-    #[test]
-    fn a_loop_declaring_nothing_is_refused() {
-        // There is no run to walk, and the width the guest would need is
-        // the declaration's rather than anything the body holds.
-        let why = refusal("{ for &side in &self.config().sides { let _held = side; } }")
-            .expect("a loop with no access has no guest half");
-        assert!(
-            why.contains("declares no access"),
-            "unexpected refusal: {why}"
         );
     }
 }

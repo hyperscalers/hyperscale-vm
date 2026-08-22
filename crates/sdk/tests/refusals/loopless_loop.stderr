@@ -1,0 +1,5 @@
+error: this loop's body declares no access, so there is no run for the guest to walk and no element for it to read
+  --> tests/refusals/loopless_loop.rs:19:13
+   |
+19 |             for &row in &self.config().rows {
+   |             ^^^
