@@ -233,6 +233,21 @@ pub mod grammar {
             }
         }
 
+        /// The same loop with a guard inside it.
+        ///
+        /// The clause is declared for the elements the condition holds
+        /// for and for no others, and the guest skips the rest on the
+        /// verdict the run reports — the element it would have compared
+        /// is evaluated where the declaration is, so a second copy of
+        /// the condition is not something the guest could hold.
+        pub fn spread_to(&mut self, owed: u64, only: Address) {
+            for &side in &self.config().sides {
+                if side == only {
+                    self.owed.at(side).set(owed);
+                }
+            }
+        }
+
         /// A method that hands back an ordinary value.
         ///
         /// It produces no edge, so the declaration says it produces

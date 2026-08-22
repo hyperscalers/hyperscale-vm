@@ -365,6 +365,18 @@ fn a_configured_table_is_read_the_same_in_both_lanes() {
     );
 }
 
+/// What one configured party's leaf holds under `shapes`.
+fn owed(chain: &Chain, shapes: grammar::Grammar, party: PrincipalAddr) -> Option<u64> {
+    chain
+        .cell(child_key(
+            &TestHasher,
+            shapes,
+            grammar::OWED,
+            &[Value::Address(party.into()).canonical_bytes()],
+        ))
+        .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"))
+}
+
 /// A `for-each` executed through its run, in both lanes.
 ///
 /// The declaration writes one clause per configured party and the guest
@@ -379,30 +391,91 @@ fn a_for_each_executes_through_its_run_in_both_lanes() {
         chain
             .transact(ALICE, |b| shapes.spread(b, 5))
             .expect_completed();
-        let owed = |party: PrincipalAddr| {
-            chain
-                .cell(child_key(
-                    &TestHasher,
-                    shapes,
-                    grammar::OWED,
-                    &[Value::Address(party.into()).canonical_bytes()],
-                ))
-                .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"))
-        };
-        (owed(principal(0x51)), owed(principal(0x52)), owed(ALICE))
+        let spread = (
+            owed(&chain, shapes, principal(0x51)),
+            owed(&chain, shapes, principal(0x52)),
+        );
+        // The guard holds for the second party alone, so the first keeps
+        // what the unguarded loop left it.
+        chain
+            .transact(ALICE, |b| shapes.spread_to(b, 9, principal(0x52)))
+            .expect_completed();
+        (
+            spread.0,
+            spread.1,
+            owed(&chain, shapes, principal(0x51)),
+            owed(&chain, shapes, principal(0x52)),
+            owed(&chain, shapes, ALICE),
+        )
     };
 
     let native = run(Chain::native());
     let blessed = run(Chain::wasm());
 
     assert_eq!(native, blessed, "lanes diverged");
-    let (first, second, unnamed) = native;
+    let (first, second, skipped, guarded, unnamed) = native;
     assert_eq!(first, Some(5), "the first configured party");
     assert_eq!(second, Some(5), "and the second");
+    assert_eq!(
+        skipped,
+        Some(5),
+        "the guarded row did not fire here, so the leaf holds what the first loop left",
+    );
+    assert_eq!(
+        guarded,
+        Some(9),
+        "and it did fire for the element the condition held for",
+    );
     assert_eq!(
         unnamed, None,
         "a party the configuration does not name is a clause the loop never declared",
     );
+}
+
+/// A loop over a list of one and a list of none, in both lanes.
+///
+/// The width is the instance's, so the two edges of it are two
+/// instances: one whose run covers a single element, and one whose run
+/// covers nothing and whose guest walks no iterations at all.
+#[test]
+fn a_run_covers_a_list_of_one_and_a_list_of_none_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let sole = chain.instantiate::<grammar::Grammar>(
+            ALICE,
+            grammar::Terms {
+                tiers: Table::new(vec![(1, 10)]),
+                fallback: 7,
+                sides: vec![principal(0x51).into()],
+            },
+        );
+        let none = chain.instantiate::<grammar::Grammar>(
+            ALICE,
+            grammar::Terms {
+                tiers: Table::new(vec![(1, 10)]),
+                fallback: 7,
+                sides: Vec::new(),
+            },
+        );
+        chain
+            .transact(ALICE, |b| sole.spread(b, 3))
+            .expect_completed();
+        chain
+            .transact(ALICE, |b| none.spread(b, 3))
+            .expect_completed();
+        (
+            owed(&chain, sole, principal(0x51)),
+            owed(&chain, none, principal(0x51)),
+        )
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    let (one, empty) = native;
+    assert_eq!(one, Some(3), "the single element the run covers");
+    assert_eq!(empty, None, "a run over nothing writes nothing");
 }
 
 /// The configuration record passed on whole, in both lanes.

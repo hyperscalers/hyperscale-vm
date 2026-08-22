@@ -281,18 +281,19 @@ pub enum Polarity {
     Untaken,
 }
 
-/// Whether any clause under these nodes is one `cond` guards.
+/// The first clause under these nodes that `cond` guards.
 ///
 /// The arm's own clauses and no others: a cell the arm shares with the
 /// code around it is declared always, so its verdict is the constant
 /// true and no export needs told.
-fn declares_under(nodes: &[Node], sites: &[Site], cond: &Term) -> bool {
-    nodes.iter().any(|node| match node {
+fn declares_under(nodes: &[Node], sites: &[Site], cond: &Term) -> Option<usize> {
+    nodes.iter().find_map(|node| match node {
         Node::Site(index) => sites
             .get(*index)
-            .is_some_and(|site| site.declares() && site.guard.as_ref() == Some(cond)),
+            .filter(|site| site.declares() && site.guard.as_ref() == Some(cond))
+            .map(|_| *index),
         Node::ForEach { body, .. } => declares_under(body, sites, cond),
-        Node::BindGuard => false,
+        Node::BindGuard => None,
     })
 }
 
@@ -2511,12 +2512,11 @@ impl<'a> Lowerer<'a> {
         let taken = declares_under(&then_nodes, &self.out.sites, &then_path);
         let untaken = otherwise
             .as_ref()
-            .is_some_and(|(path, nodes, _)| declares_under(nodes, &self.out.sites, path));
-        let flag = match (taken, untaken) {
-            _ if self.binders > 0 => None,
-            (true, _) => Some(Polarity::Taken),
-            (false, true) => Some(Polarity::Untaken),
-            (false, false) => None,
+            .and_then(|(path, nodes, _)| declares_under(nodes, &self.out.sites, path));
+        let (flag, guarded) = match (taken, untaken) {
+            (Some(site), _) => (Some(Polarity::Taken), Some(site)),
+            (None, Some(site)) => (Some(Polarity::Untaken), Some(site)),
+            (None, None) => (None, None),
         };
 
         // The arms' clauses land where the branch does. Each carries its
@@ -2525,19 +2525,44 @@ impl<'a> Lowerer<'a> {
         for node in then_nodes {
             self.push_node(node);
         }
-        if flag == Some(Polarity::Taken) {
+        // A verdict crosses as a parameter only where the loop it sits in
+        // is none: inside one it is the run's answer, which is already
+        // beside the capability the arm declares.
+        if flag == Some(Polarity::Taken) && self.binders == 0 {
             self.push_node(Node::BindGuard);
         }
         if let Some((_, else_nodes, _)) = &otherwise {
             for node in else_nodes.clone() {
                 self.push_node(node);
             }
-            if flag == Some(Polarity::Untaken) {
+            if flag == Some(Polarity::Untaken) && self.binders == 0 {
                 self.push_node(Node::BindGuard);
             }
         }
 
         let cond = match flag {
+            // Inside a loop the verdict is the element's, so it is the
+            // run that reports it: a site's entry is declared exactly
+            // where this arm's guard fired, which is the same question
+            // the flag answers at top level.
+            Some(polarity) if self.binders > 0 => {
+                let verdict = guarded
+                    .filter(|site| self.out.runs.contains(site))
+                    .map(|site| {
+                        let run = handle_ident(site);
+                        let at = run_index_ident(self.depth() - 1);
+                        quote!(#run.declared(#at))
+                    });
+                match (verdict, polarity) {
+                    (Some(verdict), Polarity::Taken) => verdict,
+                    (Some(verdict), Polarity::Untaken) => quote!(!#verdict),
+                    // The arm declares a clause the body never operates
+                    // through, so there is no run to read the verdict off
+                    // and the condition is the author's own — which reads
+                    // the element, and is refused where it does.
+                    (None, _) => self.value(cond.code),
+                }
+            }
             Some(polarity) => {
                 let index = self.out.flags.len();
                 self.out.flags.push(polarity);
