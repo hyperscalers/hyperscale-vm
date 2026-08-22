@@ -421,14 +421,23 @@ fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, KernelSession,
                 }
                 HandleKind::RangeRead => call1::<RangeRead>(&mut store, &instance, export, *rep),
                 HandleKind::RangeWrite => call1::<RangeWrite>(&mut store, &instance, export, *rep),
-                // Nothing this fixture exports takes value or issues any;
-                // the bucket lane drives both, and the value handles with
-                // it.
+                // Nothing this fixture exports takes value, issues any,
+                // or runs a `for-each` site; the bucket lane drives the
+                // first two, and the corpus drives the third.
                 HandleKind::Bucket
                 | HandleKind::Issuer
                 | HandleKind::AmountCell
                 | HandleKind::AmountRead
-                | HandleKind::InstanceRange => unreachable!("{export} takes no value handle"),
+                | HandleKind::InstanceRange
+                | HandleKind::ReadCellRun
+                | HandleKind::WriteCellRun
+                | HandleKind::AmountCellRun
+                | HandleKind::AmountReadRun
+                | HandleKind::DeltaCellRun
+                | HandleKind::ReserveCellRun
+                | HandleKind::RangeReadRun
+                | HandleKind::RangeWriteRun
+                | HandleKind::InstanceRangeRun => unreachable!("{export} takes no value handle"),
             },
             _ => unreachable!("unexpected arg shape for {export}"),
         };
