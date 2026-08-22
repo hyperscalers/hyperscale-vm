@@ -386,10 +386,10 @@ fn check_abi_against_export(
                 }
             }
             AbiParam::Derived(_) => {
-                if matches!(param, ExportParam::Handle(_) | ExportParam::Bucket) {
+                if param.is_resource() {
                     return Err(GateError(format!(
                         "method {method:?}: ABI parameter {position} is a derived \
-                         value, but the export takes a resource borrow"
+                         value, but the export takes {param:?}"
                     )));
                 }
             }

@@ -48,6 +48,22 @@ pub enum ExportParam {
     Other,
 }
 
+impl ExportParam {
+    /// Whether the parameter takes a handle on something the kernel
+    /// owns, rather than a value copied across the boundary.
+    ///
+    /// What separates a parameter only a capability binding can fill
+    /// from one a derived value can. Exhaustive on purpose: a shape the
+    /// world gains has to answer this before a binding can name it.
+    #[must_use]
+    pub const fn is_resource(&self) -> bool {
+        match self {
+            Self::Handle(_) | Self::Run(_) | Self::Issuer | Self::Bucket => true,
+            Self::Bytes | Self::U64 | Self::Flag | Self::Address | Self::Other => false,
+        }
+    }
+}
+
 /// One export as the gate reads it: what it takes, and how it ends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportShape {
