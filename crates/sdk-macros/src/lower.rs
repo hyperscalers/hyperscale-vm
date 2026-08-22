@@ -518,6 +518,14 @@ fn borrowed(expr: &syn::Expr) -> &syn::Expr {
     }
 }
 
+/// A verb at the start of a sentence.
+fn capitalized(verb: &str) -> String {
+    let mut chars = verb.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().collect::<String>() + chars.as_str()
+    })
+}
+
 /// Whether a binary operator writes its left operand (`+=` and family).
 const fn binary_op_assigns(op: syn::BinOp) -> bool {
     matches!(
@@ -1395,45 +1403,8 @@ impl<'a> Lowerer<'a> {
             );
             return Eval::absent(call.args.span(), "an instance read with no edge");
         };
-        // Only the edge's identity is wanted, so the argument is walked
-        // for the term it names rather than for a value: binding the
-        // edge as an export parameter would hand the guest a handle
-        // nothing reads.
-        let eval = self.expr(borrowed(named));
-        let carried = Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone());
-        // The cell is keyed by the mark's own resource, so an edge
-        // carrying another names an instance of something else. Where
-        // the edge is a parameter that is the caller's to supply, and
-        // the constraint is stated on the parameter; where the body
-        // produced it, the resource is already fixed and a mismatch is
-        // the body reading a mark it did not name.
-        let edge = match (&eval.val, &eval.code) {
-            (Val::Term(edge), Code::Bucket(param)) => {
-                self.denominate(*param, carried, call.span());
-                edge.clone()
-            }
-            (Val::Produced(edge @ Term::NfBucket { resource, .. }), _) => {
-                if **resource != carried {
-                    let (found, wanted) = (self.describe(resource), self.describe(&carried));
-                    self.error(
-                        named.span(),
-                        &format!(
-                            "this reads an instance of {wanted} off an edge carrying \
-                             {found}. An instance's record is filed under the resource \
-                             it is an instance of"
-                        ),
-                    );
-                }
-                edge.clone()
-            }
-            _ => {
-                self.error(
-                    named.span(),
-                    "the lowering cannot see what this edge carries. Read an instance \
-                     off an edge the method was handed or one it minted",
-                );
-                return Eval::absent(named.span(), "an underivable edge");
-            }
+        let Some(edge) = self.instance_edge(issued, named, "reads", call.span()) else {
+            return Eval::absent(named.span(), "an underivable edge");
         };
         let id = Term::Only(Box::new(Term::IdsOf(Box::new(edge))));
         let site = self.instance_site(issued, id, call.func.span());
@@ -1444,6 +1415,115 @@ impl<'a> Lowerer<'a> {
             span: call.span(),
         });
         Eval::plain(quote!(#leaf.get()))
+    }
+
+    /// The edge an instance operation is called on, held to the mark's
+    /// own resource.
+    ///
+    /// Walked for the term it names rather than for a value: an
+    /// operation keyed by the edge's instances reads nothing off the
+    /// handle, and binding one would hand the guest a parameter nothing
+    /// touches. Where the edge is a parameter, which resource it carries
+    /// is the caller's to supply and the mark's is stated on the
+    /// parameter; where the body produced it, the resource is already
+    /// fixed and a mismatch is the body naming a mark it did not.
+    fn instance_edge(
+        &mut self,
+        issued: &Resource,
+        named: &syn::Expr,
+        verb: &str,
+        span: Span,
+    ) -> Option<Term> {
+        let eval = self.expr(borrowed(named));
+        let carried = Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone());
+        let amount = |lowering: &mut Self| {
+            lowering.error(
+                named.span(),
+                &format!(
+                    "this edge carries an amount, and an instance of `{}` is what the \
+                     call is about — a non-fungible edge is an `NfBucket`, which names \
+                     the instances it moves",
+                    issued.name
+                ),
+            );
+        };
+        match (&eval.val, &eval.code) {
+            (Val::Term(edge), Code::Bucket(param)) => {
+                if !self
+                    .params
+                    .get(*param as usize)
+                    .is_some_and(|(_, ty)| is_nf_bucket(ty))
+                {
+                    amount(self);
+                    return None;
+                }
+                self.denominate(*param, carried, span);
+                Some(edge.clone())
+            }
+            (Val::Produced(edge @ Term::NfBucket { resource, .. }), _) => {
+                if **resource != carried {
+                    let (found, wanted) = (self.describe(resource), self.describe(&carried));
+                    self.error(
+                        named.span(),
+                        &format!(
+                            "this {verb} an instance of {wanted} off an edge carrying \
+                             {found}. An instance's record is filed under the resource it \
+                             is an instance of"
+                        ),
+                    );
+                }
+                Some(edge.clone())
+            }
+            (Val::Produced(_), _) => {
+                amount(self);
+                None
+            }
+            _ => {
+                self.error(
+                    named.span(),
+                    &format!(
+                        "the lowering cannot see what this edge carries. {} an instance \
+                         off an edge the method was handed or one it minted",
+                        capitalized(verb),
+                    ),
+                );
+                None
+            }
+        }
+    }
+
+    /// Lower `Name::burn(edge)` on a non-fungible mark — the instances
+    /// the edge carries leave circulation, and the cell each of them
+    /// filed ends with them.
+    ///
+    /// The one instance the edge carries, on the terms the read takes
+    /// it: clearing the cells of several would need a run of handles no
+    /// export parameter holds. The cell is required present, which is
+    /// the mint's own door read the other way round — so a burn of an
+    /// instance nothing minted is refused before the body runs.
+    fn lower_burn_nf(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
+        let Some(named) = call.args.first() else {
+            self.error(
+                call.args.span(),
+                "a non-fungible burn retires the instances an edge carries, and the \
+                 edge is what it takes",
+            );
+            return Eval::absent(call.args.span(), "a burn with no edge");
+        };
+        let destroyed = self.expr(named);
+        let Some(edge) = self.instance_edge(issued, named, "retires", call.span()) else {
+            return Eval::absent(named.span(), "an underivable edge");
+        };
+        let id = Term::Only(Box::new(Term::IdsOf(Box::new(edge))));
+        let site = self.instance_site(issued, id, call.func.span());
+        self.record(site, Op::Existing, None, call.span());
+        let handle = self.handle(site, call.span());
+        let funds = self.value(destroyed.code);
+        let grant = self.issuer(ResourceKind::NonFungible, &issued.mark);
+        Eval::plain(quote!({
+            ::hyperscale_vm_sdk::state::clear_instance(#handle);
+            ::hyperscale_vm_sdk::state::burn_nf_granted(#grant, #funds)
+        }))
     }
 
     /// The data cell of one instance, as every call that reaches it
@@ -2828,24 +2908,17 @@ impl<'a> Lowerer<'a> {
             return self.lower_held(&issued, call);
         }
         // `Resource::burn(funds)` — the inverse, under the same grant.
-        // Fungible alone: an instance leaves existence by no vocabulary
-        // this has, so the mark's kind is a refusal rather than a branch.
+        // The kind picks the shape the same way the mint's does: an
+        // amount leaves a balance, and an instance leaves existence
+        // along with the cell that described it.
         if name == "burn" {
             let Some(issued) = self.issuing_mark(call, "burn") else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
-            if issued.kind != ResourceKind::Fungible {
-                self.error(
-                    call.func.span(),
-                    &format!(
-                        "`{}` is non-fungible, and an instance has no burn — a \
-                         holding is retired by moving it somewhere nothing spends from",
-                        issued.name
-                    ),
-                );
-                return Eval::absent(call.func.span(), "a non-fungible burn");
-            }
-            return self.lower_burn(&issued.mark, call);
+            return match issued.kind {
+                ResourceKind::NonFungible => self.lower_burn_nf(&issued, call),
+                ResourceKind::Fungible => self.lower_burn(&issued.mark, call),
+            };
         }
         if name == "issued" {
             let Some(term) = self.declared_resource(call) else {

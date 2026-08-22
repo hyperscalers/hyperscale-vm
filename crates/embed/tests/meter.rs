@@ -57,6 +57,9 @@ impl KernelHost for StubHost {
     fn write_cell_set(&mut self, _rep: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
         self.op("write-cell-set", ())
     }
+    fn write_cell_clear(&mut self, _rep: u32) -> Result<(), AbortReason> {
+        self.op("write-cell-clear", ())
+    }
     fn amount_cell_balance(&mut self, _rep: u32) -> Result<u128, AbortReason> {
         self.op("balance", 7)
     }
@@ -229,6 +232,13 @@ fn every_function_charges_its_pinned_sequence() {
                 let _ = meter::write_cell_set(p, 0, vec![0; 5]);
             },
             vec![Charge(5), Host("write-cell-set")],
+        ),
+        (
+            "write-cell-clear",
+            |p| {
+                let _ = meter::write_cell_clear(p, 0);
+            },
+            vec![Host("write-cell-clear")],
         ),
         (
             "mint",

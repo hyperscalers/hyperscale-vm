@@ -430,6 +430,27 @@ impl KernelSession {
         }
     }
 
+    /// The other end of a write capability: the leaf ends rather than
+    /// changing.
+    ///
+    /// What makes a cell's lifetime an ordinary one — created where the
+    /// declaration required it absent, ended where the declaration
+    /// required it present — so state a package stops needing stops
+    /// being state.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn write_cell_clear(&mut self, rep: u32) -> Result<(), SessionTrap> {
+        match self.capability(rep)? {
+            Capability::Write(key) => {
+                self.store.remove(key)?;
+                Ok(())
+            }
+            _ => Err(SessionTrap::WrongMode(rep)),
+        }
+    }
+
     /// Credit through a delta capability.
     ///
     /// # Errors

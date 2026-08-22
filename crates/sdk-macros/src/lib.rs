@@ -2581,9 +2581,23 @@ fn issuance(
     let create_doc = format!("Bring `{name}` itself into existence, by writing its record.");
     let mint_doc = format!("Bring `{name}` into existence, as an edge.");
     let burn_doc = format!("Destroy `{name}`, which is `funds`' own resource.");
+    let burn_nf_doc =
+        format!("Retire the one `{name}` instance `edge` carries, and the record it filed.");
     let at_doc = format!("The record filed for `{name}` instance `id`, where one was minted.");
     let held_doc = format!("The record filed for the one `{name}` instance `edge` carries.");
     let mut methods: Vec<syn::ImplItemFn> = Vec::new();
+
+    // One word for both kinds on the way out as well as in, and the
+    // instance's own data cell ends with it: an issuer's cells sit under
+    // one prefix, so a mark with churn that kept them would grow one
+    // shard's state and never give any of it back.
+    let burn_nf: syn::ImplItemFn = syn::parse_quote!(
+        #[doc = #burn_nf_doc]
+        pub fn burn(edge: ::hyperscale_vm_sdk::state::NfBucket) {
+            let _ = &edge;
+            #stub
+        }
+    );
 
     // The record states only what the address cannot carry, which for a
     // fungible resource is its display quantization and for a
@@ -2638,6 +2652,7 @@ fn issuance(
                     #stub
                 }
             ));
+            methods.push(burn_nf);
             methods.push(syn::parse_quote!(
                 #[doc = #at_doc]
                 #[must_use]
@@ -2666,6 +2681,7 @@ fn issuance(
                     #stub
                 }
             ));
+            methods.push(burn_nf);
         }
     }
 

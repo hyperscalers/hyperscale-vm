@@ -114,6 +114,14 @@ pub mod grammar {
             seated
         }
 
+        /// The instance retiring: what the edge carries leaves
+        /// circulation, and the cell that described it ends with it —
+        /// so the id is free for a later mint and the issuer's state
+        /// falls back to what it was.
+        pub fn unseat(&mut self, seat: NfBucket) {
+            Seat::burn(seat);
+        }
+
         /// The same record, read off the edge carrying the instance
         /// rather than at an id the caller named. The edge is handed
         /// back, so what the reading costs a holder is nothing — and

@@ -44,7 +44,8 @@ pub use hyperscale_vm_effects::ResourceKind;
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, Records,
-    TestHasher, Value, admit, child_key, declaration_hash, issued_resource, route,
+    TestHasher, Value, admit, child_key, declaration_hash, holdings_collection, issued_resource,
+    route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
@@ -403,6 +404,19 @@ impl Chain {
     pub fn balance(&self, owner: impl Into<Address>, resource: impl Into<Address>) -> u128 {
         self.store.cell(vault(owner, resource)).map_or(0, |cell| {
             decode_amount(&cell).expect("a vault cell is an amount")
+        })
+    }
+
+    /// Whether `owner` holds instance `id` of `resource`.
+    ///
+    /// A holdings entry is the whole of holding an instance: the order
+    /// it sits at is the id, and the entry itself carries nothing.
+    #[must_use]
+    pub fn holds(&self, owner: impl Into<Address>, resource: impl Into<Address>, id: u64) -> bool {
+        let owner = owner.into();
+        let collection = holdings_collection(&TestHasher, owner, resource);
+        self.store.collection_entries().any(|(key, _)| {
+            (key.owner, key.collection, key.order) == (owner, collection, u128::from(id))
         })
     }
 

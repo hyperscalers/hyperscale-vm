@@ -1,5 +1,5 @@
-error: `OwnerBadge` is non-fungible, and an instance has no burn — a holding is retired by moving it somewhere nothing spends from
-  --> tests/refusals/burned_wrong_kind.rs:17:13
+error: this edge carries an amount, and an instance of `OwnerBadge` is what the call is about — a non-fungible edge is an `NfBucket`, which names the instances it moves
+  --> tests/refusals/burned_wrong_kind.rs:17:30
    |
-17 |             OwnerBadge::burn(badge);
-   |             ^^^^^^^^^^
+17 |             OwnerBadge::burn(funds);
+   |                              ^^^^^

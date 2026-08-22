@@ -630,7 +630,7 @@ fn protocol_shape(
     target: &TargetExpr,
     mode: &ModeExpr,
     denomination: Option<&Expr>,
-    requires_absent: bool,
+    requires: Option<Presence>,
 ) -> Result<(), DeclarationError> {
     let Some((slot, material)) = slot_of(target) else {
         return Ok(());
@@ -646,7 +646,7 @@ fn protocol_shape(
         return Ok(());
     }
     let Some((shaped, wanted)) =
-        vocabulary_shape(slot, target, material, mode, denomination, requires_absent)
+        vocabulary_shape(slot, target, material, mode, denomination, requires)
     else {
         return Err(reserved());
     };
@@ -674,7 +674,7 @@ fn vocabulary_shape(
     material: &[Expr],
     mode: &ModeExpr,
     denomination: Option<&Expr>,
-    requires_absent: bool,
+    requires: Option<Presence>,
 ) -> Option<(bool, &'static str)> {
     let point = matches!(target, TargetExpr::Point(_));
     // A value cell is keyed by what it holds, so where the declaration
@@ -694,9 +694,18 @@ fn vocabulary_shape(
     let keyed = |terms: usize| material.len() == terms && denomination.is_none();
     // A write that creates carries its one-way door as a condition
     // beside it: a `Holds { .., Absent }` on the same target, firing
-    // whenever the write does — which is what `requires_absent` says.
-    let creates =
-        matches!(mode, ModeExpr::Read) || (matches!(mode, ModeExpr::Write) && requires_absent);
+    // whenever the write does — which is what `requires` says.
+    let writes_where = |presence: Option<Presence>| {
+        matches!(mode, ModeExpr::Read)
+            || (matches!(mode, ModeExpr::Write) && (presence.is_none() || requires == presence))
+    };
+    let creates = writes_where(Some(Presence::Absent));
+    // A cell whose lifetime one owner runs is written at both ends of
+    // it, and which end this is stands beside the write: absent where
+    // the cell begins, present where it changes or ends. Stated either
+    // way, because a write that said neither would be a body reaching a
+    // leaf without knowing whether anything is there.
+    let lifetime = writes_where(None) && (matches!(mode, ModeExpr::Read) || requires.is_some());
 
     let (shaped, wanted) = match slot {
         VAULT => (
@@ -745,9 +754,10 @@ fn vocabulary_shape(
              written where absent",
         ),
         INSTANCE => (
-            point && keyed(2) && creates,
+            point && keyed(2) && lifetime,
             "is an instance's data under its issuer: one leaf, keyed by the resource and \
-             the id, written where absent",
+             the id, written where the leaf's presence is stated — absent at the mint, \
+             present at a rewrite or a retirement",
         ),
         // Below the base and spoken for by nothing: the vocabulary
         // reserves room for a cell it has not defined yet, and a slot
@@ -856,22 +866,25 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     if !targets_own_prefix(target) {
         return Err(DeclarationError::ForeignPrefix { clause });
     }
-    // Whether the one-way door stands beside this write: a `Holds { ..,
-    // Absent }` on the same target, firing whenever the write does.
-    let requires_absent = flat.iter().any(|beside| {
-        matches!(
-            beside,
-            Clause::Requires {
-                guard: condition_guard,
-                condition: ConditionExpr::Holds {
+    // What this write says about the leaf's presence: a `Holds` on the
+    // same target, firing whenever the write does. The one-way door a
+    // creation carries is the `Absent` case of it.
+    let requires = flat.iter().find_map(|beside| match beside {
+        Clause::Requires {
+            guard: condition_guard,
+            condition:
+                ConditionExpr::Holds {
                     target: required,
-                    presence: Presence::Absent,
+                    presence,
                 },
-            } if **required == *target
-                && (condition_guard.is_none() || condition_guard.as_deref() == guard.as_deref())
-        )
+        } if **required == *target
+            && (condition_guard.is_none() || condition_guard.as_deref() == guard.as_deref()) =>
+        {
+            Some(*presence)
+        }
+        _ => None,
     });
-    protocol_shape(clause, target, mode, denomination, requires_absent)?;
+    protocol_shape(clause, target, mode, denomination, requires)?;
     // And whether the world hands out anything for this pairing at all.
     // Asked of the clause through the same function an engine reads a
     // handle's type off, so publish refuses exactly what materialization

@@ -39,6 +39,16 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
 
+    /// Remove the cell, so nothing is there.
+    ///
+    /// A write capability's other end: the same exclusive hold over one
+    /// leaf, ending it rather than restating it.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn write_cell_clear(&mut self, rep: u32) -> Result<(), AbortReason>;
+
     /// What an amount cell holds.
     ///
     /// The read beside the two movements, and the only question about a

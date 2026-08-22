@@ -164,6 +164,11 @@ impl KernelHost for TestHost {
         Ok(())
     }
 
+    fn write_cell_clear(&mut self, rep: u32) -> std::result::Result<(), AbortReason> {
+        self.values[rep as usize].clear();
+        Ok(())
+    }
+
     fn amount_cell_balance(&mut self, _rep: u32) -> std::result::Result<u128, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }

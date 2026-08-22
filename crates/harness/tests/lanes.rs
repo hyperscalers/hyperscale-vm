@@ -21,6 +21,7 @@ use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
     Chain, Package, PrincipalAddr, Refused, ResourceAddr, account, principal, resource,
 };
+use hyperscale_vm_types::{Outcome, Presence, UnmetCondition};
 
 const ALICE: PrincipalAddr = principal(0x41);
 const X: ResourceAddr = resource(0xE1);
@@ -178,6 +179,80 @@ fn a_fielded_instance_reads_the_same_in_both_lanes() {
         Some(to_vec(&grammar::Seat { holder: 42 }).expect("the record encodes")),
         "the cell holds the record the mark declares",
     );
+}
+
+/// An instance retiring, and the id coming free with it.
+///
+/// The cell and the holding go together — one call, one instance, and
+/// the issuer's state back where it started. What the protocol keeps
+/// saying is the narrower thing the mint's door already said: a *live*
+/// instance refuses a second mint at its id, and a retired one does not.
+#[test]
+fn a_burned_instance_frees_its_cell_and_its_id_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        let seat = shapes.issued_seat(&TestHasher);
+        let filed = |chain: &Chain| chain.cell(instance_data_key(&TestHasher, shapes, seat, 3));
+
+        let mint = |chain: &mut Chain, holder: u64| {
+            chain.transact(ALICE, |b| {
+                let minted = shapes.seat(b, 3, holder)?;
+                account::deposit_nf(b, ALICE, minted)
+            })
+        };
+        mint(&mut chain, 42).expect_completed();
+        // A live instance still refuses a second mint at its id.
+        let live = mint(&mut chain, 43).refused().cloned();
+
+        chain
+            .transact(ALICE, |b| {
+                let signed_in = account::authorize(b, ALICE)?;
+                let edge = account::withdraw_nf(b, signed_in, seat, &[3])?;
+                shapes.unseat(b, edge)
+            })
+            .expect_completed();
+        let retired = (filed(&chain), chain.holds(ALICE, seat, 3));
+
+        // And the id is an ordinary free id again.
+        mint(&mut chain, 44).expect_completed();
+        (live, retired, filed(&chain), chain.holds(ALICE, seat, 3))
+    };
+
+    let (native_live, native_retired, native_filed, native_holds) = run(Chain::native());
+    let (blessed_live, blessed_retired, blessed_filed, blessed_holds) = run(Chain::wasm());
+
+    let unmet_absence = |refusal: &Option<Outcome>| {
+        matches!(
+            refusal,
+            Some(Outcome::ConditionUnmet {
+                condition: UnmetCondition::Holds {
+                    required: Presence::Absent,
+                    ..
+                },
+            })
+        )
+    };
+    assert!(
+        unmet_absence(&native_live) && unmet_absence(&blessed_live),
+        "a live instance refuses a second mint: {native_live:?} / {blessed_live:?}",
+    );
+    assert_eq!(native_retired, blessed_retired, "the burn diverged");
+    assert_eq!(
+        native_retired,
+        (None, false),
+        "the burn left neither a data cell nor a holding",
+    );
+    assert_eq!(
+        (&native_filed, native_holds),
+        (&blessed_filed, blessed_holds)
+    );
+    assert_eq!(
+        native_filed,
+        Some(to_vec(&grammar::Seat { holder: 44 }).expect("the record encodes")),
+        "the re-mint filed its own record at the freed id",
+    );
+    assert!(native_holds, "and the holder holds it again");
 }
 
 /// The instance an edge carries, read with no id in the call.

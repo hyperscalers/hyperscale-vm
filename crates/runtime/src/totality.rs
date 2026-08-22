@@ -115,6 +115,9 @@ const DISCHARGED: &[(&str, &str)] = &[
     // A set stores the bytes it is handed with no judgment at the call;
     // what a receipt may carry is judged at its own boundary.
     ("state", "write-cell-set"),
+    // A clear ends a leaf the handle already holds exclusively; there
+    // is nothing to judge that materialization did not.
+    ("state", "write-cell-clear"),
     // A denominated cell holds an amount: value enters one only through
     // movements, so the read cannot meet bytes — a cell that did would
     // be a defect in state, not a refusal the call can reach.

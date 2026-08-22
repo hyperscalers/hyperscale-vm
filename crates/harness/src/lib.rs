@@ -64,6 +64,9 @@ pub mod fixtures {
         fn write_cell_set(&mut self, _rep: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
+        fn write_cell_clear(&mut self, _rep: u32) -> Result<(), AbortReason> {
+            Err(AbortReason::HandleUnknown)
+        }
         fn amount_cell_balance(&mut self, _rep: u32) -> Result<u128, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }

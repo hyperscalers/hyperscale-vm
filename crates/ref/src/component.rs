@@ -161,6 +161,7 @@ enum HostFn {
     ReadCellGet,
     WriteCellGet,
     WriteCellSet,
+    WriteCellClear,
     AmountBalance,
     AmountReadBalance,
     InstanceCount,
@@ -676,6 +677,7 @@ impl RefComponent {
             ("state", "read-cell-get") => Ok(HostFn::ReadCellGet),
             ("state", "write-cell-get") => Ok(HostFn::WriteCellGet),
             ("state", "write-cell-set") => Ok(HostFn::WriteCellSet),
+            ("state", "write-cell-clear") => Ok(HostFn::WriteCellClear),
             ("state", "amount-cell-balance") => Ok(HostFn::AmountBalance),
             ("state", "amount-read-balance") => Ok(HostFn::AmountReadBalance),
             ("state", "amount-cell-take") => Ok(HostFn::AmountTake),
@@ -1760,7 +1762,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     | HostFn::RangeWriteCovered
                     | HostFn::InstanceCovered
                     | HostFn::Randomness
-                    | HostFn::ReserveTake,
+                    | HostFn::ReserveTake
+                    | HostFn::WriteCellClear,
                 ) => 1,
                 CompFunc::Host(
                     HostFn::ReadCellGet
@@ -1909,6 +1912,18 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             },
                             rep,
                             bytes,
+                        )
+                        .map_err(meter_fault)?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::WriteCellClear => {
+                        let rep = self.resolve_handle(args[0], HandleKind::WriteCell)?;
+                        meter::write_cell_clear(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
                         )
                         .map_err(meter_fault)?;
                         Ok(Vec::new())

@@ -1376,6 +1376,26 @@ pub fn file_instance(handle: Handle) {
     return host::cell_set(handle, &[1]);
 }
 
+/// End the instance data cell `handle` names.
+///
+/// Called by generated code, never by an author. The mirror of
+/// [`file_instance`], and it ends the cell whatever the mark filed there
+/// — the presence byte of a bare instance or the record of a fielded
+/// one — because what a burn retires is the instance rather than its
+/// contents. Removing rather than emptying is what lets the id be minted
+/// again and what keeps an issuer's state from growing with churn: the
+/// cells of every instance a component issues sit under its own prefix,
+/// and nothing else knows the instance is gone.
+#[doc(hidden)]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always)]
+pub fn clear_instance(handle: Handle) {
+    #[cfg(component)]
+    return crate::guest::cell_clear(handle);
+    #[cfg(not(component))]
+    return host::cell_clear(handle);
+}
+
 /// Destroy the value at `funds` against the grant at `grant`.
 ///
 /// Called by generated code, never by an author, on the same terms
@@ -1386,6 +1406,23 @@ pub fn file_instance(handle: Handle) {
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always, clippy::needless_pass_by_value)]
 pub fn burn_granted(grant: u32, funds: Bucket) {
+    let _ = &funds;
+    #[cfg(component)]
+    return crate::guest::burn(grant, funds.into_handle());
+    #[cfg(not(component))]
+    return host::burn(grant, funds.rep());
+}
+
+/// Destroy the instances at `funds` against the grant at `grant`.
+///
+/// [`burn_granted`] over a non-fungible edge: the same grant in the same
+/// direction, and what leaves circulation is the instances the edge
+/// carries rather than an amount. The data cell each of them filed is
+/// ended beside this, which is the burn's other half.
+#[doc(hidden)]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always, clippy::needless_pass_by_value)]
+pub fn burn_nf_granted(grant: u32, funds: NfBucket) {
     let _ = &funds;
     #[cfg(component)]
     return crate::guest::burn(grant, funds.into_handle());

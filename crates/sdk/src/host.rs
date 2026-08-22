@@ -214,6 +214,18 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
     }));
 }
 
+/// End the substate this handle holds exclusively.
+///
+/// # Panics
+///
+/// On any mode but [`Handle::Write`].
+pub fn cell_clear(handle: Handle) {
+    settled(kernel(|k| match handle {
+        Handle::Write(rep) => k.write_cell_clear(rep),
+        other => unreachable!("{other:?} does not write absolutes"),
+    }));
+}
+
 /// Move value into this handle's amount cell, consuming the bucket.
 ///
 /// # Panics

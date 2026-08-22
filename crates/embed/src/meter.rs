@@ -132,6 +132,16 @@ pub fn write_cell_set<P: HostAccess + FuelSink>(
     refused(port.host().write_cell_set(rep, value))
 }
 
+/// `write-cell.clear`. Nothing crosses the boundary, so nothing is
+/// charged for crossing it — the leaf's removal is the store's work,
+/// which the write capability was already provisioned for.
+pub fn write_cell_clear<P: HostAccess + FuelSink>(
+    port: &mut P,
+    rep: u32,
+) -> Result<(), MeterError> {
+    refused(port.host().write_cell_clear(rep))
+}
+
 /// `mint`. Charges its amount argument and nothing for the handle it
 /// yields: a bucket crosses as a table index, where the amount it carries
 /// never crosses at all — here and for every take below.

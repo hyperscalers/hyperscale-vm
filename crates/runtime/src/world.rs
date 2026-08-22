@@ -268,6 +268,12 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.func_wrap(
+        "write-cell-clear",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<WriteCell>,)| {
+            meter::write_cell_clear(&mut Port(&mut store), r.rep()).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
         "mint",
         |mut store: StoreContextMut<'_, T>, (i, amount): (Resource<Issuer>, Amount)| {
             let rep = meter::mint(&mut Port(&mut store), i.rep(), amount.into()).map_err(fault)?;

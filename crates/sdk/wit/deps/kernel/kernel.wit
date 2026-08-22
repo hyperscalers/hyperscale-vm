@@ -106,6 +106,17 @@ interface state {
     /// Replace the substate's bytes.
     write-cell-set: func(c: borrow<write-cell>, value: list<u8>);
 
+    /// Remove the substate, so nothing is there.
+    ///
+    /// Its own call rather than a write of no bytes: what a leaf's
+    /// presence is stands in the declaration — a mint requires the leaf
+    /// absent, a rewrite and a retirement require it present — and a
+    /// write whose bytes decided that would make presence a fact about
+    /// an encoding rather than about the operation. A body holding the
+    /// leaf exclusively may end it; the mode is the same write, and only
+    /// the effect on presence is new.
+    write-cell-clear: func(c: borrow<write-cell>);
+
     /// What the amount cell holds.
     ///
     /// A borrow, so asking moves nothing, and an `amount` rather than the

@@ -2,7 +2,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
-    use hyperscale_vm_sdk::state::{Cell, NfBucket, Quantity};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity};
 
     #[resource(non_fungible)]
     struct OwnerBadge;
@@ -13,8 +13,8 @@ mod contract {
     }
 
     impl Contract {
-        pub fn retire(&mut self, badge: NfBucket) {
-            OwnerBadge::burn(badge);
+        pub fn retire(&mut self, funds: Bucket) {
+            OwnerBadge::burn(funds);
         }
     }
 }
