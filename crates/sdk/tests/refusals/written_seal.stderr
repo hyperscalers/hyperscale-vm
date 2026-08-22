@@ -1,0 +1,39 @@
+error[E0599]: the method `create` exists for struct `hyperscale_vm_sdk::state::Cell<Option<Seal>>`, but its trait bounds were not satisfied
+  --> tests/refusals/written_seal.rs:18:24
+   |
+18 |             self.round.create(Seal(()));
+   |                        ^^^^^^ method cannot be called on `hyperscale_vm_sdk::state::Cell<Option<Seal>>` due to unsatisfied trait bounds
+   |
+  ::: src/state.rs
+   |
+   | pub struct Seal(());
+   | --------------- doesn't satisfy `Seal: Record`
+   |
+   = note: the following trait bounds were not satisfied:
+           `Seal: Record`
+
+error[E0423]: cannot initialize a tuple struct which contains private fields
+  --> tests/refusals/written_seal.rs:18:31
+   |
+18 |             self.round.create(Seal(()));
+   |                               ^^^^
+   |
+note: constructor is not visible here due to private fields
+  --> src/state.rs
+   |
+   | pub struct Seal(());
+   |                 ^^ private field
+
+error[E0599]: the method `create` exists for struct `Slot<Option<Seal>>`, but its trait bounds were not satisfied
+  --> tests/refusals/written_seal.rs:18:24
+   |
+18 |             self.round.create(Seal(()));
+   |                        ^^^^^^ method cannot be called on `Slot<Option<Seal>>` due to unsatisfied trait bounds
+   |
+  ::: src/state.rs
+   |
+   | pub struct Seal(());
+   | --------------- doesn't satisfy `Seal: Record`
+   |
+   = note: the following trait bounds were not satisfied:
+           `Seal: Record`
