@@ -358,6 +358,23 @@ impl Word {
         &self.0
     }
 
+    /// The low 128 bits, little-endian — what a selection reduces.
+    ///
+    /// On the word rather than at the reduction, because which bits and
+    /// which order is a fact about the protocol's width: a body reaching
+    /// into the bytes would be restating it, and would need an answer
+    /// for a width that cannot happen.
+    #[must_use]
+    pub const fn low_u128(&self) -> u128 {
+        let mut low = [0u8; 16];
+        let mut at = 0;
+        while at < low.len() {
+            low[at] = self.0[at];
+            at += 1;
+        }
+        u128::from_le_bytes(low)
+    }
+
     /// A word from bytes the protocol produced.
     ///
     /// # Panics
@@ -1528,7 +1545,7 @@ impl<T> Interval<T> {
     ///
     /// The selection reasoning, once, because it is the protocol's
     /// rather than a package's. A draw is a whole word and an index
-    /// needs far fewer bits, so the low 128 are taken and reduced: the
+    /// needs far fewer bits, so [`Word::low_u128`] is reduced: the
     /// modulo's bias is over a space no entry count approaches, and the
     /// remainder is below a count that is a `u32` to begin with, so the
     /// narrowing cannot fail. A package reasoning about either would be
@@ -1551,16 +1568,7 @@ impl<T> Interval<T> {
         if entries == 0 {
             return None;
         }
-        // Half a word is sixteen bytes whatever it holds, so the
-        // fallback stands for a case the width rules out — written as
-        // one rather than as an unwrap, because an unwrap is a panic in
-        // a body that has nothing to panic about.
-        let low = *draw
-            .word()
-            .as_bytes()
-            .first_chunk::<16>()
-            .unwrap_or(&[0; 16]);
-        let index = u128::from_le_bytes(low) % u128::from(entries);
+        let index = draw.word().low_u128() % u128::from(entries);
         Some(u32::try_from(index).expect("a remainder below a `u32` count is one"))
     }
 

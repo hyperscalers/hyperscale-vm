@@ -156,7 +156,7 @@ fn the_round_settles_on_the_entrant_its_sealed_draw_picks() {
         both.sort_by_key(|who| ticket_order(*who));
         both.to_vec()
     };
-    let reduced = u128::from_le_bytes(sealed_word().as_bytes()[..16].try_into().unwrap());
+    let reduced = sealed_word().low_u128();
     let expected = ascending[(reduced % 2) as usize];
 
     assert_eq!(
