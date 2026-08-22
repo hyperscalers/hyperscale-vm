@@ -704,14 +704,16 @@ pub struct Lowerer<'a> {
     out: Lowered,
     /// The clause scopes being built, innermost last.
     scopes: Vec<Vec<Node>>,
-    /// The `for-each` binders enclosing the walk, innermost last, each
-    /// holding the site count when it opened.
+    /// The `for-each` binders enclosing the walk, innermost last: the
+    /// site count when each opened, and the list it maps over.
     ///
-    /// A depth on its own would not separate two loops that sit side by
-    /// side: their elements are both binding zero, so a body writing the
-    /// same cell in each spells one target twice. The floor is what tells
-    /// the sites one loop opened from the sites around it.
-    binders: Vec<usize>,
+    /// The floor separates two loops that sit side by side — their
+    /// elements are both binding zero, so a body writing the same cell
+    /// in each spells one target twice, and the floor tells the sites one
+    /// loop opened from the sites around it. The list is what an element
+    /// read as a value reads out of: the run is walked by the element's
+    /// index, so the same index into the same list is the same element.
+    binders: Vec<(usize, Term)>,
     /// The conditions the walk is under, innermost last, each already
     /// conjoined with the ones enclosing it.
     guards: Vec<Term>,
@@ -1067,7 +1069,7 @@ impl<'a> Lowerer<'a> {
         // Only among the sites this loop opened: a clause belongs to the
         // scope that declared it, and two loops side by side spell their
         // elements the same way while naming different leaves.
-        let floor = self.binders.last().copied().unwrap_or(0);
+        let floor = self.binders.last().map_or(0, |(floor, _)| *floor);
         if let Some(index) = self.out.sites[floor..]
             .iter()
             .position(|s| s.target == target)
@@ -2143,16 +2145,31 @@ impl<'a> Lowerer<'a> {
                 let fields: Vec<_> = fields.iter().map(|f| self.term_value(f)).collect();
                 quote!((#(#fields),*))
             }
-            Term::Binding(_) | Term::NfBucket { .. } => {
+            // An element read as a value is read out of the list its loop
+            // maps over, at the index the run is walked by: the two
+            // indices are the same by construction, so the element the
+            // body reads is the element the clause beside it declared.
+            Term::Binding(depth) => {
+                let depth = *depth;
+                let Some(list) = self.binders.get(depth).map(|(_, list)| list.clone()) else {
+                    self.error(
+                        Span::call_site(),
+                        "this reads a `for-each` element outside the loop that binds it",
+                    );
+                    return quote!(::core::unimplemented!());
+                };
+                let held = self.need(&Need::Derived(list));
+                let at = run_index_ident(depth);
+                quote!(#held[#at as usize])
+            }
+            Term::NfBucket { .. } => {
                 // A term names no line of its own; the whole invocation
                 // is the nearest anchor.
                 self.error(
                     Span::call_site(),
-                    "this term is evaluated where the declaration is: a `for-each` \
-                     element exists only inside an evaluation, and an edge is a \
-                     routable summary rather than a value. A package that needs one is \
-                     written the long way: its own component beside a declaration \
-                     written out, which the publish gate judges the same",
+                    "an edge is a routable summary rather than a value: what it carries \
+                     is the declaration's answer, and a body reaches it through the \
+                     capability the edge justified",
                 );
                 quote!(::core::unimplemented!())
             }
@@ -4222,7 +4239,7 @@ impl<'a> Lowerer<'a> {
         let opened = self.out.sites.len();
         self.scopes.push(Vec::new());
         self.locals.push(BTreeMap::new());
-        self.binders.push(opened);
+        self.binders.push((opened, list_term.clone()));
         // Deferred, because the loop the guest runs is over the run's
         // indices and binds no element: the name is the declaration's,
         // and a body reading it as a value is refused where it does
@@ -4312,7 +4329,8 @@ impl<'a> Lowerer<'a> {
         let depth = self.depth();
         let opened = self.out.sites.len();
         self.scopes.push(Vec::new());
-        self.binders.push(opened);
+        self.binders
+            .push((opened, Term::IdsOf(Box::new(edge.clone()))));
         let statements = body(self, Term::Binding(depth));
         self.binders.pop();
         let inner = self.scopes.pop().unwrap_or_default();

@@ -418,6 +418,19 @@ pub mod grammar {
             }
         }
 
+        /// A per-element amount, which is what a body reaching an
+        /// element as a value is for.
+        ///
+        /// The element is read out of the very list the loop maps over,
+        /// at the index the run is walked by — the two indices are one by
+        /// construction, so the number a body reads and the leaf a clause
+        /// beside it declared belong to the same element.
+        pub fn owe_each(&mut self) {
+            for &side in &self.config().windows {
+                self.owed.at(side).set(side);
+            }
+        }
+
         /// A method that hands back an ordinary value.
         ///
         /// It produces no edge, so the declaration says it produces

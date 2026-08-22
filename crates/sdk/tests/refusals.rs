@@ -22,7 +22,6 @@ fn the_lowering_refuses_what_it_cannot_see_into() {
     refuse.compile_fail("tests/refusals/unwalkable_macro.rs");
     refuse.compile_fail("tests/refusals/nested_loop.rs");
     refuse.compile_fail("tests/refusals/looped_instance_walk.rs");
-    refuse.compile_fail("tests/refusals/element_as_value.rs");
     refuse.compile_fail("tests/refusals/element_in_derived_value.rs");
     refuse.compile_fail("tests/refusals/loopless_loop.rs");
     refuse.compile_fail("tests/refusals/uncrossable_sequence.rs");

@@ -866,6 +866,44 @@ fn a_run_over_holdings_moves_instances_in_both_lanes() {
     );
 }
 
+/// An element read as a value, in both lanes.
+///
+/// What a `for-each` varies per element is the key its clause names, and
+/// a body that also needs the element itself reads it out of the list
+/// the loop maps over — at the index the run is walked by, which is the
+/// same index. So the number written and the leaf written to belong to
+/// one element rather than agreeing by convention.
+#[test]
+fn an_element_read_as_a_value_matches_its_own_clause_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
+        chain
+            .transact(ALICE, |b| shapes.owe_each(b))
+            .expect_completed();
+        [1u64, 2, 3].map(|window| {
+            chain
+                .cell(child_key(
+                    &TestHasher,
+                    shapes,
+                    grammar::OWED,
+                    &[Value::U64(window).canonical_bytes()],
+                ))
+                .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"))
+        })
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    assert_eq!(
+        native,
+        [Some(1), Some(2), None],
+        "each configured window owes itself, and one it does not name owes nothing",
+    );
+}
+
 /// A loop over a list of one and a list of none, in both lanes.
 ///
 /// The width is the instance's, so the two edges of it are two

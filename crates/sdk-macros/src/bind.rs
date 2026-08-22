@@ -212,6 +212,10 @@ pub fn derived_shape(
         // A judgment crosses as the verdict it is, which is the shape a
         // declared branch's own verdict crosses as.
         Term::Contains { .. } => Shape::Flag,
+        // The ids an edge carries are a list of them, whatever the edge
+        // was spelled as — there is no declared Rust type to read the
+        // width off, and the numbers are the whole of what crosses.
+        Term::IdsOf(_) => Shape::Ids(Box::new(syn::parse_quote!(::std::vec::Vec<u64>))),
         // A selection crosses as its arms do, so it has a shape only
         // where they share one.
         Term::If {

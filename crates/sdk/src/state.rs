@@ -1557,6 +1557,16 @@ pub fn hash(data: &[u8]) -> Vec<u8> {
 #[derive(Clone, Debug, Default)]
 pub struct Ids(pub Vec<u64>);
 
+/// The id at one position, which is what a body walking a declared list
+/// by index reads out of it.
+impl core::ops::Index<usize> for Ids {
+    type Output = u64;
+
+    fn index(&self, at: usize) -> &u64 {
+        &self.0[at]
+    }
+}
+
 /// The wire form a list of ids crosses in, under the name a body reads
 /// it at.
 impl From<Vec<u64>> for Ids {
