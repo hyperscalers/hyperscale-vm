@@ -33,6 +33,36 @@ interface state {
         high: u64,
     }
 
+    /// A protocol word, as its four little-endian limbs.
+    ///
+    /// A record rather than the thirty-two bytes it is, on the same
+    /// terms as `amount`: the width is the protocol's, so a boundary
+    /// carrying it as a byte list would ask each side to agree by
+    /// convention on something the type can simply say.
+    record word {
+        /// Bytes 0 to 7.
+        limb0: u64,
+        /// Bytes 8 to 15.
+        limb1: u64,
+        /// Bytes 16 to 23.
+        limb2: u64,
+        /// Bytes 24 to 31.
+        limb3: u64,
+    }
+
+    /// What a sealed cell answers when asked for its draw.
+    variant drawn {
+        /// The epoch the seal matures into is not folded yet. Ask again
+        /// once it is.
+        pending,
+        /// The draw the seal committed to.
+        ready(word),
+        /// The seal will never open: its epoch fell outside the window
+        /// the host keeps, or was rolled by a fallback nobody should
+        /// settle value on. Seal again.
+        expired,
+    }
+
     /// Value in the kernel's own keeping.
     ///
     /// A guest holds the handle and the kernel holds the amount; which
@@ -139,6 +169,20 @@ interface state {
 
     /// Replace the substate's bytes.
     write-cell-set: func(c: borrow<write-cell>, value: list<u8>);
+
+    /// The draw the seal in this cell matures into.
+    ///
+    /// The word is derived from the seed of `epoch` plus the protocol's
+    /// maturity, mixed with the cell's own key — so what a package gets
+    /// is fixed by a commitment it already made and by a value that did
+    /// not exist when it made one. Nothing here reads the transaction,
+    /// which is the whole property: two attempts at the same seal answer
+    /// the same word, so there is nothing to gain by abandoning one.
+    ///
+    /// On the handle rather than in `env` because the identity is the
+    /// cell's. A package that wants two draws holds two cells; one that
+    /// passed a nonce would be choosing what the protocol should fix.
+    write-cell-open-seal: func(c: borrow<write-cell>, epoch: u64) -> drawn;
 
     /// Remove the substate, so nothing is there.
     ///
@@ -570,6 +614,13 @@ interface env {
     /// The transaction clock: the canonical weighted-time anchor of the
     /// payer-shard block that committed this transaction, in milliseconds.
     clock: func() -> u64;
+
+    /// The epoch this transaction executes in.
+    ///
+    /// What a seal records. How far past its own epoch a seal matures is
+    /// the protocol's, so a guest that writes one needs this and nothing
+    /// else about epochs.
+    epoch: func() -> u64;
 
     /// Beacon randomness, domain-separated per transaction. 32 bytes.
     randomness: func() -> list<u8>;

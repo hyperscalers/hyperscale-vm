@@ -25,8 +25,8 @@
 
 use core::cmp::Ordering;
 
-use hyperscale_vm_types::AbortReason;
 use hyperscale_vm_types::math::{self, Rounding, U256};
+use hyperscale_vm_types::{AbortReason, Drawn, SEED_BYTES};
 
 use crate::KernelHost;
 
@@ -462,6 +462,25 @@ pub fn randomness<P: HostAccess + FuelSink>(port: &mut P) -> Result<[u8; 32], Me
     let draw = port.host().randomness();
     charge(port, draw.len())?;
     Ok(draw)
+}
+
+/// `state.write-cell-open-seal`.
+///
+/// Priced as the word it answers: the resolve is a lookup and a digest
+/// over a fixed preimage, so what crosses the boundary is the whole of
+/// what varies.
+///
+/// # Errors
+///
+/// A deterministic refusal (a handle that names no write).
+pub fn open_seal<P: HostAccess + FuelSink>(
+    port: &mut P,
+    rep: u32,
+    epoch: u64,
+) -> Result<Drawn, MeterError> {
+    let drawn = refused(port.host().open_seal(rep, epoch))?;
+    charge(port, SEED_BYTES)?;
+    Ok(drawn)
 }
 
 /// `crypto.hash`.

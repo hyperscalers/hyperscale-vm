@@ -143,8 +143,13 @@ const DISCHARGED: &[(&str, &str)] = &[
     // width stays out, because those are runtime values no declaration
     // speaks about.
     ("math", "geometric-mean"),
+    // A seal resolves from the environment and the handle's own key.
+    // Materialization settled that the handle names a write; what the
+    // seed window holds is an answer, never a refusal.
+    ("state", "write-cell-open-seal"),
     // Environment reads with no failure mode at all.
     ("env", "clock"),
+    ("env", "epoch"),
     ("env", "randomness"),
     ("crypto", "hash"),
     // The one admission that rests on the mark's envelope rather than on

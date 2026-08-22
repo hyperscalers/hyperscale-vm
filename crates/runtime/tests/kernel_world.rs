@@ -7,8 +7,8 @@ use hyperscale_vm_embed::meter::FUEL_PER_BOUNDARY_BYTE;
 use hyperscale_vm_runtime::{
     ReadCell, WriteCell, add_kernel_to_linker, blessed_engine, validate_component,
 };
-use hyperscale_vm_types::AbortReason;
 use hyperscale_vm_types::math::U256;
+use hyperscale_vm_types::{AbortReason, Drawn};
 use wasmtime::component::{Component, Linker, Resource};
 use wasmtime::{Engine, Result, Store, Trap};
 use wat::parse_str;
@@ -143,6 +143,7 @@ const GUEST_WAT: &str = r#"
     (canon lift (core func $i "run"))))
 "#;
 
+const EPOCH: u64 = 12;
 const CLOCK_MS: u64 = 111_222;
 
 struct TestHost {
@@ -299,6 +300,14 @@ impl KernelHost for TestHost {
 
     fn clock_ms(&self) -> u64 {
         CLOCK_MS
+    }
+
+    fn epoch(&self) -> u64 {
+        EPOCH
+    }
+
+    fn open_seal(&self, _rep: u32, _epoch: u64) -> Result<Drawn, AbortReason> {
+        Ok(Drawn::Ready([9; 32]))
     }
 
     fn randomness(&self) -> [u8; 32] {

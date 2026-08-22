@@ -23,7 +23,7 @@ use hyperscale_vm_embed::meter::{
 };
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked, KernelHost};
 use hyperscale_vm_types::math::{Rounding, U256};
-use hyperscale_vm_types::{AbortReason, CellKind, ISSUER_REP};
+use hyperscale_vm_types::{AbortReason, CellKind, Drawn, ISSUER_REP, SEED_BYTES};
 use wasmparser::{
     CanonicalFunction, CanonicalOption, ComponentAlias, ComponentDefinedType,
     ComponentExternalKind, ComponentType, ComponentTypeRef, ComponentValType, ExternalKind,
@@ -238,6 +238,11 @@ enum HostFn {
     RangeWriteSet,
     RangeWriteInsert,
     RangeWriteRemove,
+    /// `epoch`, on the environment: the epoch a seal records.
+    Epoch,
+    /// `open-seal`, on a write cell: the draw the cell's seal matures
+    /// into.
+    OpenSeal,
     Clock,
     Randomness,
     Hash,
@@ -299,6 +304,7 @@ const fn host_params(op: HostFn) -> usize {
         | HostFn::Hash
         | HostFn::Emit
         | HostFn::InstanceTake
+        | HostFn::OpenSeal
         | HostFn::IssuerMint => 3,
         HostFn::InstancePut | HostFn::RangeWriteSet => 4,
         HostFn::RangeWriteInsert => 5,
@@ -311,7 +317,7 @@ const fn host_params(op: HostFn) -> usize {
         HostFn::MulDiv => 14,
         HostFn::FractionCmp => 16,
         HostFn::FractionCompose => 17,
-        HostFn::Clock => 0,
+        HostFn::Clock | HostFn::Epoch => 0,
     }
 }
 
@@ -396,6 +402,10 @@ const BYTE_ALIGN: usize = 1;
 /// What a record of `u64`s is aligned to — an `amount` and a wide word
 /// alike, since a flat record takes the alignment of its widest field.
 const AMOUNT_ALIGN: usize = 8;
+
+/// The bytes a `drawn` occupies in a return area: its case tag padded to
+/// the alignment of the word one case carries, then the word.
+const DRAWN_BOUNDARY_BYTES: usize = AMOUNT_ALIGN + SEED_BYTES;
 
 /// What a list's `(pointer, length)` pair is aligned to: two `i32`s.
 const PAIR_ALIGN: usize = 4;
@@ -868,7 +878,9 @@ impl RefComponent {
             ("math", "fraction-compose") => Ok((HostFn::FractionCompose, None)),
             ("math", "fraction-cmp") => Ok((HostFn::FractionCmp, None)),
             ("math", "fixed-pow") => Ok((HostFn::FixedPow, None)),
+            ("state", "write-cell-open-seal") => Ok((HostFn::OpenSeal, None)),
             ("env", "clock") => Ok((HostFn::Clock, None)),
+            ("env", "epoch") => Ok((HostFn::Epoch, None)),
             ("env", "randomness") => Ok((HostFn::Randomness, None)),
             ("crypto", "hash") => Ok((HostFn::Hash, None)),
             ("events", "emit") => Ok((HostFn::Emit, None)),
@@ -2044,6 +2056,35 @@ impl<H: KernelHost> KernelCanon<'_, H> {
         Ok(())
     }
 
+    /// Lower a `drawn` into the caller's return area.
+    ///
+    /// A variant of three cases over a payload of four `u64`s: a
+    /// one-byte discriminant, the payload aligned to the widest field it
+    /// holds, so the case tag sits at the base and the word at the
+    /// first eight-byte boundary past it.
+    fn write_drawn(
+        store: &mut Store,
+        mem_idx: u32,
+        retptr: Value,
+        drawn: Drawn,
+    ) -> Result<(), ExecError> {
+        let mem = &mut store.memories[mem_idx as usize];
+        let span = guest_span(&mem.data, retptr, DRAWN_BOUNDARY_BYTES, AMOUNT_ALIGN)?;
+        let base = span.start;
+        mem.data[span].fill(0);
+        let (tag, word) = match drawn {
+            Drawn::Pending => (0u8, None),
+            Drawn::Ready(word) => (1, Some(word)),
+            Drawn::Expired => (2, None),
+        };
+        mem.data[base] = tag;
+        if let Some(word) = word {
+            let at = base + AMOUNT_ALIGN..base + DRAWN_BOUNDARY_BYTES;
+            mem.data[at].copy_from_slice(&word);
+        }
+        Ok(())
+    }
+
     /// The ids a guest's `list<u64>` argument names.
     fn read_guest_ids(
         store: &Store,
@@ -2147,6 +2188,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                 let after = 1 + usize::from(run.is_some());
                 match host_fn {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
+                    HostFn::Epoch => Ok(vec![Value::I64(self.host.epoch().cast_signed())]),
                     // A run's own two questions, which name the run
                     // rather than one of its entries.
                     HostFn::RunLen(kind) => {
@@ -2646,6 +2688,22 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             index,
                         )
                         .map_err(meter_fault)?;
+                        Ok(Vec::new())
+                    }
+                    HostFn::OpenSeal => {
+                        let rep = args[0].as_i32().cast_unsigned();
+                        let epoch = args[1].as_i64().cast_unsigned();
+                        let drawn = meter::open_seal(
+                            &mut MeterPort {
+                                host: &mut self.host,
+                                store,
+                            },
+                            rep,
+                            epoch,
+                        )
+                        .map_err(meter_fault)?;
+                        let mem = self.mem_opt(id)?;
+                        Self::write_drawn(store, mem, args[2], drawn)?;
                         Ok(Vec::new())
                     }
                     HostFn::Randomness => {

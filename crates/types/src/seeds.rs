@@ -27,6 +27,22 @@ pub enum Seeded {
     Expired,
 }
 
+/// What a sealed cell answers when asked for its draw.
+///
+/// Three answers rather than an option, because a caller does three
+/// different things with them: wait, seal again, or draw. Collapsing the
+/// first two would leave a package spinning on a seal that will never
+/// open, or abandoning one that is merely early.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Drawn {
+    /// The epoch the seal matures into is not folded yet.
+    Pending,
+    /// The word the seal committed to.
+    Ready([u8; SEED_BYTES]),
+    /// The seal will never open.
+    Expired,
+}
+
 /// The seeds an execution can reach, as the host supplies them.
 ///
 /// Holds only what a draw may settle on. Which epochs those are is the

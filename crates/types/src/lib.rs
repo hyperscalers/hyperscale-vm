@@ -49,7 +49,7 @@ pub use mode::{CellKind, ConflictClass, Mode, ModeKind, Presence, compatible};
 pub use scheme::{
     AccountSigner, MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId, SchemeSpec, SchemeVerifier,
 };
-pub use seeds::{SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded};
+pub use seeds::{Drawn, SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded};
 pub use work::{
     AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, VERIFY_WEIGHT, declared_work,
     signature_work, work_units,

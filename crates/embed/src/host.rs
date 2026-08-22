@@ -1,8 +1,8 @@
 //! The kernel's host surface: what an engine calls, and what the session
 //! answers.
 
-use hyperscale_vm_types::AbortReason;
 use hyperscale_vm_types::math::U256;
+use hyperscale_vm_types::{AbortReason, Drawn};
 
 /// The kernel's operations, as reps and bytes.
 ///
@@ -258,8 +258,21 @@ pub trait KernelHost: Send {
     /// A deterministic refusal (index out of bounds).
     fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), AbortReason>;
 
+    /// The draw the seal in this cell matures into.
+    ///
+    /// The word mixes the cell's own key, so a package holding two
+    /// sealed cells gets two draws and neither names a nonce.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal (a handle that names no write).
+    fn open_seal(&self, rep: u32, epoch: u64) -> Result<Drawn, AbortReason>;
+
     /// The transaction clock in milliseconds.
     fn clock_ms(&self) -> u64;
+
+    /// The epoch this transaction executes in.
+    fn epoch(&self) -> u64;
 
     /// The transaction's randomness draw.
     fn randomness(&self) -> [u8; 32];

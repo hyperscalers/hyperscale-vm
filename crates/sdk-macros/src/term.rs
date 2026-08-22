@@ -430,8 +430,9 @@ pub enum Op {
     Set,
     /// `create()` — the same write, on a leaf that must not be there.
     Create,
-    /// `existing()` / `exclusive()` — the same write, on a leaf that
-    /// must be. The second declares it and reads nothing.
+    /// `existing()` / `exclusive()` / `open()` — the same write, on a
+    /// leaf that must be. The second declares it and reads nothing; the
+    /// third reads a seal and resolves the draw it matured into.
     Existing,
 }
 
@@ -445,7 +446,7 @@ impl Op {
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),
             "create" => Some(Self::Create),
-            "existing" | "exclusive" => Some(Self::Existing),
+            "existing" | "exclusive" | "open" => Some(Self::Existing),
             _ => None,
         }
     }

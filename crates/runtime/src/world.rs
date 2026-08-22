@@ -21,8 +21,8 @@ use core::cmp::Ordering;
 
 use hyperscale_vm_embed::KernelHost;
 use hyperscale_vm_embed::meter::{self, MeterError};
-use hyperscale_vm_types::AbortReason;
 use hyperscale_vm_types::math::{Rounding, U256};
+use hyperscale_vm_types::{AbortReason, Drawn};
 use wasmtime::component::{ComponentType, Lift, Linker, Lower, Resource, ResourceType};
 use wasmtime::{Error, Result, StoreContextMut, Trap};
 
@@ -95,6 +95,66 @@ impl From<U256> for Wide {
 impl From<Wide> for U256 {
     fn from(value: Wide) -> Self {
         Self::from_limbs([value.limb0, value.limb1, value.limb2, value.limb3])
+    }
+}
+
+/// The `state` interface's `word`: a protocol word as four limbs, least
+/// significant first.
+///
+/// Flat for the reason [`Amount`] is: the width is the protocol's, and a
+/// boundary that carried it as a byte list would put the length in a
+/// convention instead of in the type.
+#[derive(Clone, Copy, ComponentType, Lift, Lower)]
+#[component(record)]
+pub struct WitWord {
+    /// Bytes 0 to 7.
+    pub limb0: u64,
+    /// Bytes 8 to 15.
+    pub limb1: u64,
+    /// Bytes 16 to 23.
+    pub limb2: u64,
+    /// Bytes 24 to 31.
+    pub limb3: u64,
+}
+
+impl From<[u8; 32]> for WitWord {
+    fn from(bytes: [u8; 32]) -> Self {
+        let limb = |i: usize| {
+            let mut eight = [0u8; 8];
+            eight.copy_from_slice(&bytes[i * 8..(i + 1) * 8]);
+            u64::from_le_bytes(eight)
+        };
+        Self {
+            limb0: limb(0),
+            limb1: limb(1),
+            limb2: limb(2),
+            limb3: limb(3),
+        }
+    }
+}
+
+/// The `state` interface's `drawn`.
+#[derive(Clone, Copy, ComponentType, Lift, Lower)]
+#[component(variant)]
+pub enum WitDrawn {
+    /// The epoch the seal matures into is not folded yet.
+    #[component(name = "pending")]
+    Pending,
+    /// The word the seal committed to.
+    #[component(name = "ready")]
+    Ready(WitWord),
+    /// The seal will never open.
+    #[component(name = "expired")]
+    Expired,
+}
+
+impl From<Drawn> for WitDrawn {
+    fn from(drawn: Drawn) -> Self {
+        match drawn {
+            Drawn::Pending => Self::Pending,
+            Drawn::Ready(word) => Self::Ready(word.into()),
+            Drawn::Expired => Self::Expired,
+        }
     }
 }
 
@@ -329,6 +389,13 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         "write-cell-set",
         |mut store: StoreContextMut<'_, T>, (r, value): (Resource<WriteCell>, Vec<u8>)| {
             meter::write_cell_set(&mut Port(&mut store), r.rep(), value).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
+        "write-cell-open-seal",
+        |mut store: StoreContextMut<'_, T>, (r, epoch): (Resource<WriteCell>, u64)| {
+            let drawn = meter::open_seal(&mut Port(&mut store), r.rep(), epoch).map_err(fault)?;
+            Ok((WitDrawn::from(drawn),))
         },
     )?;
     state.func_wrap(
@@ -983,6 +1050,9 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     let mut env = linker.instance("hyperscale:kernel/env")?;
     env.func_wrap("clock", |store: StoreContextMut<'_, T>, (): ()| {
         Ok((store.data().clock_ms(),))
+    })?;
+    env.func_wrap("epoch", |store: StoreContextMut<'_, T>, (): ()| {
+        Ok((store.data().epoch(),))
     })?;
     env.func_wrap("randomness", |mut store: StoreContextMut<'_, T>, (): ()| {
         let draw = meter::randomness(&mut Port(&mut store)).map_err(fault)?;

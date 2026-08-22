@@ -34,8 +34,8 @@ pub use buckets::Held;
 use hyperscale_vm_effects::{ResourceKind, distinct_ids};
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, EffectSet, ISSUER_REP, ResourceAddr, SEAL_MATURITY_EPOCHS,
-    SeedWindow, Seeded, SubstateKey, TxHash, encode_amount,
+    ABSENT_REP, AbortReason, Address, Drawn, EffectSet, ISSUER_REP, LEAF_KEY_BYTES, ResourceAddr,
+    SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, TxHash, encode_amount,
 };
 pub use materialize::{Capability, Interval, MaterializeError};
 use ranges::Ranges;
@@ -235,11 +235,20 @@ impl From<SessionTrap> for AbortReason {
 // the consensus workspace, so the two cannot drift.
 use hyperscale_vm_types::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX};
 
+/// Domain tag for a sealed draw.
+///
+/// Its own tag because the digest it produces is not the protocol hash
+/// of anything a package could also ask for: a body that could compute
+/// its own draw from parts it holds would not need the seal.
+const DOMAIN_SEALED_DRAW: &[u8] = b"hyperscale/vm/sealed-draw";
+
 /// The deterministic environment a transaction executes under.
 #[derive(Clone, Debug)]
 pub struct EnvInputs {
     /// The transaction clock in milliseconds.
     pub clock_ms: u64,
+    /// The epoch this transaction executes in — what a seal records.
+    pub epoch: u64,
     /// The transaction's randomness draw.
     pub randomness: [u8; 32],
     /// The epochs a sealed draw can resolve against, and the frontier
@@ -260,6 +269,7 @@ impl EnvInputs {
     pub const fn unsealed(clock_ms: u64, randomness: [u8; 32]) -> Self {
         Self {
             clock_ms,
+            epoch: 0,
             randomness,
             seeds: SeedWindow::unfolded(),
         }
@@ -528,6 +538,40 @@ impl KernelSession {
             Capability::Write(key) => Ok(self.store.write(key, value)?),
             _ => Err(SessionTrap::WrongMode(rep)),
         }
+    }
+
+    /// The draw the seal in this cell matures into.
+    ///
+    /// Everything the word is made of was fixed before the transaction
+    /// that reads it: the seed of an epoch the seal named and the
+    /// protocol's maturity put past it, and the key of the cell the
+    /// handle names. Nothing about the attempt enters — not its hash,
+    /// not its sender, not the block that carries it — so two attempts
+    /// at one seal answer alike and abandoning one buys nothing.
+    ///
+    /// The cell's key is what separates two seals of one package. A
+    /// nonce would put that choice in a body, where a package could mint
+    /// itself as many candidate draws as it liked.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn open_seal(&self, rep: u32, epoch: u64) -> Result<Drawn, SessionTrap> {
+        let Capability::Write(key) = self.capability(rep)? else {
+            return Err(SessionTrap::WrongMode(rep));
+        };
+        Ok(match self.matured_seed(epoch) {
+            Seeded::Pending => Drawn::Pending,
+            Seeded::Expired => Drawn::Expired,
+            Seeded::Ready(seed) => {
+                let mut preimage =
+                    Vec::with_capacity(DOMAIN_SEALED_DRAW.len() + SEED_BYTES + LEAF_KEY_BYTES);
+                preimage.extend_from_slice(DOMAIN_SEALED_DRAW);
+                preimage.extend_from_slice(&seed);
+                preimage.extend_from_slice(&key.to_bytes());
+                Drawn::Ready((self.hash_fn)(&preimage))
+            }
+        })
     }
 
     /// The other end of a write capability: the leaf ends rather than
@@ -814,6 +858,12 @@ impl KernelSession {
         self.env.randomness
     }
 
+    /// The epoch this transaction executes in.
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.env.epoch
+    }
+
     /// The seed a seal written in `epoch` matures into.
     ///
     /// The offset is the whole of the maturity rule: what a seal
@@ -899,12 +949,14 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_types::{
-        ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectTarget,
-        MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode, SeedWindow, Seeded,
-        encode_amount,
+        ABSENT_REP, AbortReason, Address, AddressClass, Drawn, Effect, EffectSet, EffectTarget,
+        MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode, SEAL_MATURITY_EPOCHS,
+        SEED_BYTES, SeedWindow, Seeded, SubstateKey, encode_amount,
     };
 
-    use super::fixtures::{declared, env, key, session_holding, session_over, session_under, tx};
+    use super::fixtures::{
+        declared, env, key, session_for, session_holding, session_over, session_under, tx,
+    };
     use super::{EnvInputs, SessionTrap};
     use crate::ledger::AmountLedger;
     use crate::overlay::OverlayStore;
@@ -1008,6 +1060,90 @@ mod tests {
             Seeded::Pending,
             "a seal whose epoch has not been folded is a wait"
         );
+    }
+
+    /// A window with one usable seed, so a seal in `epoch` opens and
+    /// nothing else does.
+    fn sealed_env(epoch: u64) -> EnvInputs {
+        EnvInputs {
+            seeds: SeedWindow::new(
+                std::collections::BTreeMap::from([(
+                    epoch + SEAL_MATURITY_EPOCHS,
+                    [0x5E; SEED_BYTES],
+                )]),
+                Some(epoch + SEAL_MATURITY_EPOCHS),
+            ),
+            ..env()
+        }
+    }
+
+    fn writing(at: SubstateKey) -> EffectSet {
+        declared(&[Effect {
+            target: EffectTarget::Point(at),
+            mode: Mode::Write,
+        }])
+    }
+
+    /// The property the whole seal exists for: what a seal opens onto is
+    /// a function of committed state and of a seed rolled after it was
+    /// written, and of nothing about the attempt that reads it.
+    ///
+    /// Two transactions, two hashes, one seal — one word. A derivation
+    /// that reached for the transaction would answer twice here, and
+    /// answering twice is what lets a loser abandon an attempt and try
+    /// again for a different outcome.
+    #[test]
+    fn one_seal_answers_one_word_however_many_attempts_ask() {
+        let set = writing(key(1));
+        let words: Vec<_> = [tx(0xA1), tx(0xB2)]
+            .into_iter()
+            .map(|tx| {
+                session_for(MemoryStore::new(), &set, sealed_env(9), tx)
+                    .open_seal(0, 9)
+                    .expect("a write handle holds a seal")
+            })
+            .collect();
+
+        assert!(matches!(words[0], Drawn::Ready(_)));
+        assert_eq!(words[0], words[1], "the attempt is not an input");
+    }
+
+    /// Two cells, one epoch, two words. The cell's key is what separates
+    /// a package's draws, so a package that wants a second one holds a
+    /// second cell — and cannot mint itself candidates to choose among
+    /// by naming a nonce.
+    #[test]
+    fn two_sealed_cells_of_one_epoch_draw_apart() {
+        let first = session_for(MemoryStore::new(), &writing(key(1)), sealed_env(9), tx(1))
+            .open_seal(0, 9)
+            .expect("a write handle holds a seal");
+        let second = session_for(MemoryStore::new(), &writing(key(2)), sealed_env(9), tx(1))
+            .open_seal(0, 9)
+            .expect("a write handle holds a seal");
+
+        assert!(matches!(first, Drawn::Ready(_)));
+        assert_ne!(first, second);
+    }
+
+    /// A seal is opened through the handle that holds it, so a
+    /// capability that is not an exclusive write has no draw to give.
+    #[test]
+    fn a_seal_opens_only_through_the_cell_that_holds_it() {
+        let set = declared(&[Effect {
+            target: EffectTarget::Point(key(1)),
+            mode: Mode::Read,
+        }]);
+        let session = session_under(MemoryStore::new(), &set, sealed_env(9));
+        assert_eq!(session.open_seal(0, 9), Err(SessionTrap::WrongMode(0)));
+    }
+
+    /// The two ways a seal fails to open are two answers, because a
+    /// package does different things with them: wait, or close again.
+    #[test]
+    fn an_early_seal_waits_where_a_lapsed_one_is_over() {
+        let session = session_under(MemoryStore::new(), &writing(key(1)), sealed_env(9));
+        assert_eq!(session.open_seal(0, 10), Ok(Drawn::Pending));
+        assert_eq!(session.open_seal(0, 8), Ok(Drawn::Expired));
     }
 
     #[test]

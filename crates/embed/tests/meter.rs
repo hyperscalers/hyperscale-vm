@@ -13,8 +13,8 @@ use hyperscale_vm_embed::KernelHost;
 use hyperscale_vm_embed::meter::{
     self, AMOUNT_BOUNDARY_BYTES, Exhausted, FuelSink, HostAccess, MeterError, WIDE_BOUNDARY_BYTES,
 };
-use hyperscale_vm_types::AbortReason;
 use hyperscale_vm_types::math::{MathError, Rounding, U256};
+use hyperscale_vm_types::{AbortReason, Drawn};
 
 /// One observed step: a fuel charge, or a host operation by name.
 #[derive(Debug, PartialEq, Eq)]
@@ -149,6 +149,13 @@ impl KernelHost for StubHost {
         self.log.lock().unwrap().push(Host("randomness"));
         [0; 32]
     }
+    fn epoch(&self) -> u64 {
+        0
+    }
+    fn open_seal(&self, _rep: u32, _epoch: u64) -> Result<Drawn, AbortReason> {
+        self.log.lock().unwrap().push(Host("open-seal"));
+        Ok(Drawn::Ready([0; 32]))
+    }
     fn hash(&self, _data: &[u8]) -> [u8; 32] {
         self.log.lock().unwrap().push(Host("hash"));
         [0; 32]
@@ -234,6 +241,13 @@ fn every_function_charges_its_pinned_sequence() {
                 let _ = meter::write_cell_get(p, 0);
             },
             vec![Host("write-cell-get"), Charge(5)],
+        ),
+        (
+            "write-cell-open-seal",
+            |p| {
+                let _ = meter::open_seal(p, 0, 0);
+            },
+            vec![Host("open-seal"), Charge(32)],
         ),
         (
             "write-cell-set",

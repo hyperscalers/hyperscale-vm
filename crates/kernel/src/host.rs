@@ -13,8 +13,8 @@
 //! makes reaching the wrong one fail to compile.
 
 use hyperscale_vm_embed::KernelHost;
-use hyperscale_vm_types::AbortReason;
 use hyperscale_vm_types::math::U256;
+use hyperscale_vm_types::{AbortReason, Drawn};
 
 use crate::session::{KernelSession, SessionTrap};
 
@@ -126,8 +126,14 @@ impl KernelHost for KernelSession {
     fn bucket_drop(&mut self, rep: u32) -> Result<(), AbortReason> {
         refused(Self::drop_bucket(self, rep))
     }
+    fn open_seal(&self, rep: u32, epoch: u64) -> Result<Drawn, AbortReason> {
+        refused(Self::open_seal(self, rep, epoch))
+    }
     fn clock_ms(&self) -> u64 {
         Self::clock_ms(self)
+    }
+    fn epoch(&self) -> u64 {
+        Self::epoch(self)
     }
     fn randomness(&self) -> [u8; 32] {
         Self::randomness(self)

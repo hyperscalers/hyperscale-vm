@@ -36,7 +36,7 @@ use core::cell::RefCell;
 use hyperscale_vm_embed::KernelHost;
 pub use hyperscale_vm_embed::{GuestArg, Invoked};
 pub use hyperscale_vm_types::CellKind;
-use hyperscale_vm_types::{AbortReason, Address, ISSUER_REP, math};
+use hyperscale_vm_types::{AbortReason, Address, Drawn, ISSUER_REP, math};
 
 use crate::handle::Handle;
 use crate::num::{Rounding, Wide};
@@ -229,6 +229,21 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
         Handle::Write(rep) => k.write_cell_set(rep, value.to_vec()),
         other => unreachable!("{other:?} does not write absolutes"),
     }));
+}
+
+/// The draw the seal in this handle's cell matured into.
+///
+/// # Panics
+///
+/// On a handle that holds no exclusive write, which the declaration a
+/// seal is read through rules out.
+#[must_use]
+pub fn cell_open_seal(handle: Handle, epoch: u64) -> Drawn {
+    let handle = acting(handle);
+    settled(kernel(|k| match handle {
+        Handle::Write(rep) => k.open_seal(rep, epoch),
+        other => unreachable!("{other:?} holds no seal"),
+    }))
 }
 
 /// End the substate this handle holds exclusively.
@@ -542,6 +557,12 @@ pub fn entry_remove(handle: Handle, index: u32) {
 #[must_use]
 pub fn clock_ms() -> u64 {
     kernel(|k| k.clock_ms())
+}
+
+/// The epoch this transaction executes in.
+#[must_use]
+pub fn epoch() -> u64 {
+    kernel(|k| k.epoch())
 }
 
 /// The transaction's randomness draw.

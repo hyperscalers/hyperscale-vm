@@ -65,7 +65,7 @@ pub use hyperscale_vm_effects::ResourceRecord;
 /// where a rule is judged.
 pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, RoleBytes, RoleTable};
 use hyperscale_vm_effects::{MAX_AUTH_CELL_WIRE_DEPTH, RECORD_WIRE_DEPTH};
-use hyperscale_vm_types::{Address, CellKind, ResourceAddr};
+use hyperscale_vm_types::{Address, CellKind, Drawn as WireDrawn, ResourceAddr};
 
 #[cfg(not(component))]
 use crate::host;
@@ -382,6 +382,61 @@ impl Cellular for Word {
 
     fn to_cell(&self) -> Vec<u8> {
         self.0.to_vec()
+    }
+}
+
+/// A draw committed to now and readable later.
+///
+/// What a package stores when it closes whatever the draw will settle.
+/// The epoch is the commitment: the word it opens onto comes from a seed
+/// the protocol had not rolled when this was written, so nothing about
+/// the transaction that wrote it, or the one that opens it, can reach
+/// the answer.
+///
+/// One seal per cell. What separates two of a package's draws is which
+/// cell holds each, so a package wanting two says so with two cells —
+/// and a package cannot mint itself candidate draws to choose among.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub struct Seal {
+    /// The epoch this was written in.
+    pub epoch: u64,
+}
+
+impl Seal {
+    /// A seal on the epoch now running.
+    #[must_use]
+    pub fn now() -> Self {
+        Self { epoch: epoch() }
+    }
+}
+
+impl Record for Seal {}
+
+/// What a sealed cell answers when asked for its draw.
+///
+/// Three answers because a package does three things with them. A
+/// pending seal is early and opens later; an expired one never will,
+/// and whatever it was closing must be closed again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Drawn {
+    /// The seed this seal matures into is not rolled yet.
+    Pending,
+    /// The draw the seal committed to.
+    Ready(Draw),
+    /// The seal will never open: its epoch fell outside the window the
+    /// protocol keeps, or was rolled by a fallback nobody should settle
+    /// value on.
+    Expired,
+}
+
+impl Drawn {
+    /// The draw, where there is one.
+    #[must_use]
+    pub const fn ready(self) -> Option<Draw> {
+        match self {
+            Self::Ready(draw) => Some(draw),
+            Self::Pending | Self::Expired => None,
+        }
     }
 }
 
@@ -994,6 +1049,45 @@ impl<T: Record> Slot<Option<T>> {
     #[inline(always)]
     #[allow(clippy::unused_self)] // the clause is the whole of it
     pub const fn exclusive(&self) {}
+}
+
+/// What a cell holding a seal offers beyond an ordinary record's cell.
+///
+/// The authoring half. [`Cell::create`] writes the seal and
+/// [`Cell::existing`] reads it back; this is the third thing a body does
+/// with one, and it declares exactly what `existing` does — the leaf
+/// held and there — because resolving a draw reads the seal it resolves.
+#[allow(clippy::inline_always)] // one import behind a dispatch its call site fixes
+impl Cell<Option<Seal>> {
+    /// The draw this cell's seal matured into.
+    #[must_use]
+    #[inline(always)]
+    pub fn open(&self) -> Drawn {
+        unimplemented!("{OFF_HOST}")
+    }
+}
+
+/// The executing half of a sealed cell's resolve.
+#[allow(clippy::inline_always)] // one import behind a dispatch its call site fixes
+impl Slot<Option<Seal>> {
+    /// The draw this cell's seal matured into.
+    ///
+    /// The word is derived from the cell's own key, so the handle is the
+    /// whole of what identifies it and no body names a nonce.
+    #[must_use]
+    #[inline(always)]
+    pub fn open(&self) -> Drawn {
+        let seal = self.existing();
+        #[cfg(component)]
+        let drawn = crate::guest::cell_open_seal(self.handle, seal.epoch);
+        #[cfg(not(component))]
+        let drawn = host::cell_open_seal(self.handle, seal.epoch);
+        match drawn {
+            WireDrawn::Pending => Drawn::Pending,
+            WireDrawn::Expired => Drawn::Expired,
+            WireDrawn::Ready(word) => Drawn::Ready(Draw::from_protocol(&word)),
+        }
+    }
 }
 
 /// A cell that holds value.
@@ -1614,6 +1708,18 @@ pub fn clock_ms() -> u64 {
     return crate::guest::clock_ms();
     #[cfg(not(component))]
     return host::clock_ms();
+}
+
+/// The epoch this transaction executes in.
+///
+/// What a seal records, and the only thing a body needs to know about
+/// epochs: the protocol decides how far past one a seal matures.
+#[must_use]
+pub fn epoch() -> u64 {
+    #[cfg(component)]
+    return crate::guest::epoch();
+    #[cfg(not(component))]
+    return host::epoch();
 }
 
 /// The transaction's randomness draw.

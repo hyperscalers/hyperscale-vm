@@ -26,11 +26,18 @@ pub(super) const fn tx(byte: u8) -> TxHash {
     TxHash(Hash32([byte; 32]))
 }
 
-/// A stand-in protocol hash: the length in the first byte is enough
-/// to show the seam carries the guest's bytes through.
+/// A stand-in protocol hash: the length in the first byte shows the
+/// seam carries the guest's bytes through, and a rolling mix over the
+/// rest shows *which* bytes — enough to tell two preimages of one
+/// length apart, which is what a derivation mixing a key needs.
 pub(super) fn hash(data: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out[0] = u8::try_from(data.len()).unwrap_or(u8::MAX);
+    let mut mix: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in data {
+        mix = (mix ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    out[1..9].copy_from_slice(&mix.to_le_bytes());
     out
 }
 
@@ -103,6 +110,17 @@ pub(super) fn session_over(store: MemoryStore, set: &EffectSet) -> KernelSession
 /// The same, under an environment the caller states — how a case puts a
 /// seed window behind a session.
 pub(super) fn session_under(store: MemoryStore, set: &EffectSet, env: EnvInputs) -> KernelSession {
+    session_for(store, set, env, tx(1))
+}
+
+/// The same, under a transaction the caller names — how a case asks
+/// whether an answer depends on which attempt asked for it.
+pub(super) fn session_for(
+    store: MemoryStore,
+    set: &EffectSet,
+    env: EnvInputs,
+    tx: TxHash,
+) -> KernelSession {
     let declaration = Declaration {
         ordered: holding(&ord(set)),
         ..Declaration::from_set(set.clone())
@@ -110,7 +128,7 @@ pub(super) fn session_under(store: MemoryStore, set: &EffectSet, env: EnvInputs)
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &declaration,
-        tx(1),
+        tx,
         env,
         hash,
     )

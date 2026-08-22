@@ -48,7 +48,7 @@ mod bindings {
 use core::mem::ManuallyDrop;
 
 pub use bindings::hyperscale::kernel;
-use hyperscale_vm_types::CellKind;
+use hyperscale_vm_types::{CellKind, Drawn, SEED_BYTES};
 use kernel::state::{
     AmountCell, AmountCellRun, AmountRead, AmountReadRun, DeltaCell, DeltaCellRun, InstanceRange,
     InstanceRangeRun, Issuer, RangeRead, RangeReadRun, RangeWrite, RangeWriteRun, ReadCell,
@@ -300,6 +300,44 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
             kernel::state::write_cell_run_set(&write_cell_run(rep), at, value);
         }
         other => unreachable!("{other:?} does not write absolutes"),
+    }
+}
+
+/// The world's `drawn`, as the vocabulary's own.
+///
+/// The limbs are the boundary's shape and the bytes are the word's, so
+/// the conversion is here rather than in a body that would otherwise be
+/// reassembling a width it was never told.
+impl From<kernel::state::Drawn> for Drawn {
+    fn from(drawn: kernel::state::Drawn) -> Self {
+        match drawn {
+            kernel::state::Drawn::Pending => Self::Pending,
+            kernel::state::Drawn::Expired => Self::Expired,
+            kernel::state::Drawn::Ready(word) => {
+                let mut bytes = [0u8; SEED_BYTES];
+                for (chunk, limb) in bytes
+                    .chunks_exact_mut(8)
+                    .zip([word.limb0, word.limb1, word.limb2, word.limb3])
+                {
+                    chunk.copy_from_slice(&limb.to_le_bytes());
+                }
+                Self::Ready(bytes)
+            }
+        }
+    }
+}
+
+/// The draw the seal in this handle's cell matured into.
+///
+/// # Panics
+///
+/// On a handle that holds no exclusive write, which the declaration a
+/// seal is read through rules out.
+#[must_use]
+pub fn cell_open_seal(handle: Handle, epoch: u64) -> Drawn {
+    match handle {
+        Handle::Write(rep) => kernel::state::write_cell_open_seal(&write_cell(rep), epoch).into(),
+        other => unreachable!("{other:?} holds no seal"),
     }
 }
 
@@ -677,6 +715,12 @@ pub fn run_declared(kind: CellKind, rep: u32, index: u32) -> bool {
 #[must_use]
 pub fn clock_ms() -> u64 {
     kernel::env::clock()
+}
+
+/// The epoch this transaction executes in.
+#[must_use]
+pub fn epoch() -> u64 {
+    kernel::env::epoch()
 }
 
 /// The transaction's randomness draw.

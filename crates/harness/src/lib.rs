@@ -40,8 +40,8 @@ pub mod fixtures {
 
     use hyperscale_vm_cli::compile;
     use hyperscale_vm_kernel::KernelHost;
-    use hyperscale_vm_types::AbortReason;
     use hyperscale_vm_types::math::U256;
+    use hyperscale_vm_types::{AbortReason, Drawn};
     use wasmtime::Result;
     use wasmtime::error::format_err;
 
@@ -157,6 +157,12 @@ pub mod fixtures {
         }
         fn bucket_drop(&mut self, _rep: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
+        }
+        fn epoch(&self) -> u64 {
+            0
+        }
+        fn open_seal(&self, _rep: u32, _epoch: u64) -> Result<Drawn, AbortReason> {
+            Ok(Drawn::Pending)
         }
         fn clock_ms(&self) -> u64 {
             0
