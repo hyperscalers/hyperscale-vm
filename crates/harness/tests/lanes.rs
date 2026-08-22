@@ -50,6 +50,7 @@ fn terms() -> grammar::Terms {
         tiers: Table::new(vec![(1, 10), (2, 20)]),
         fallback: 7,
         sides: vec![principal(0x51).into(), principal(0x52).into()],
+        windows: vec![1, 2],
         assets: vec![X, Y],
     }
 }
@@ -659,6 +660,82 @@ fn a_run_of_reservations_grants_per_element_in_both_lanes() {
     assert_eq!(after, 600, "and nothing moved on the way to it");
 }
 
+/// What a view method answered with, as the `u64` it encodes.
+fn answered_u64(outcome: &Outcome) -> u64 {
+    let Outcome::Completed { answers } = outcome else {
+        panic!("the view method completes: {outcome:?}");
+    };
+    let [answer] = answers.as_slice() else {
+        panic!("one answer: {answers:?}");
+    };
+    from_slice::<u64>(&answer.value).expect("the answer is what the method returns")
+}
+
+/// Two interval runs under one loop, in both lanes.
+///
+/// A collection is named by the material folded into it, so a
+/// sub-collection per element is a family of intervals — one read at the
+/// page the body named, one written at the page beside it. The element
+/// varies the collection and never the page, which is what keeps the
+/// bounds evaluable where the declaration is.
+#[test]
+fn two_interval_runs_walk_one_loop_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
+        // Two lines in the first window's log, one in the second, and a
+        // third window the configuration does not name.
+        for (window, at) in [(1u64, 10u64), (1, 11), (2, 20), (3, 30)] {
+            chain
+                .transact(ALICE, |b| shapes.jot(b, window, at))
+                .expect_completed();
+        }
+        chain
+            .transact(ALICE, |b| shapes.windowed(b, 7))
+            .expect_completed();
+        let counted = chain
+            .cell(child_key(&TestHasher, shapes, grammar::NOTED, &[]))
+            .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"));
+        (
+            counted,
+            answered_u64(
+                &chain
+                    .transact(ALICE, |b| shapes.ledgered(b, 1))
+                    .receipt()
+                    .outcome,
+            ),
+            answered_u64(
+                &chain
+                    .transact(ALICE, |b| shapes.ledgered(b, 2))
+                    .receipt()
+                    .outcome,
+            ),
+            answered_u64(
+                &chain
+                    .transact(ALICE, |b| shapes.ledgered(b, 3))
+                    .receipt()
+                    .outcome,
+            ),
+        )
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    let (counted, first, second, unnamed) = native;
+    assert_eq!(
+        counted,
+        Some(3),
+        "every configured window's log reached the read"
+    );
+    assert_eq!((first, second), (1, 1), "a line into each window's ledger");
+    assert_eq!(
+        unnamed, 0,
+        "and none into a window the configuration does not name"
+    );
+}
+
 /// A loop over a list of one and a list of none, in both lanes.
 ///
 /// The width is the instance's, so the two edges of it are two
@@ -674,6 +751,7 @@ fn a_run_covers_a_list_of_one_and_a_list_of_none_in_both_lanes() {
                 tiers: Table::new(vec![(1, 10)]),
                 fallback: 7,
                 sides: vec![principal(0x51).into()],
+                windows: vec![1],
                 assets: vec![X],
             },
         );
@@ -683,6 +761,7 @@ fn a_run_covers_a_list_of_one_and_a_list_of_none_in_both_lanes() {
                 tiers: Table::new(vec![(1, 10)]),
                 fallback: 7,
                 sides: Vec::new(),
+                windows: Vec::new(),
                 assets: Vec::new(),
             },
         );

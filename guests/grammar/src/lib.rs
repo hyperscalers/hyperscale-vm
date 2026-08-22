@@ -37,6 +37,9 @@ pub mod grammar {
         /// The parties a schedule is written for, which is the list a
         /// `for-each` maps over.
         sides: Vec<Address>,
+        /// The windows a walk over this instance's logs maps over,
+        /// each naming a sub-collection of its own.
+        windows: Vec<u64>,
         /// The resources a survey of this instance's vaults walks.
         ///
         /// A second list, because a vault is keyed by what it holds: a
@@ -55,6 +58,13 @@ pub mod grammar {
     #[state]
     struct Grammar {
         entries: Ordered<Quantity>,
+        /// A line per window, beside the log the window is read from.
+        ///
+        /// A second collection rather than a second page of the first,
+        /// because a body that read and wrote one interval would hold it
+        /// once under the mode that subsumes the other — and the two
+        /// modes are the point.
+        ledger: Ordered<u64>,
         noted: Cell<u64>,
         /// What each configured party is owed: one leaf per party, which
         /// is what a `for-each` declares a clause each of.
@@ -320,6 +330,53 @@ pub mod grammar {
                 let granted = self.vault(asset).reserve(hold);
                 self.fees.at(asset).put(granted);
             }
+        }
+
+        /// A line into one window's own log, at the order the caller
+        /// named.
+        ///
+        /// Not a loop: what a run walks has to be there first, and a
+        /// window is named rather than mapped over here.
+        pub fn jot(&mut self, window: u64, at: u64) {
+            self.entries
+                .of(window)
+                .range(pack(0, 0), pack(u64::MAX, u64::MAX), 8)
+                .insert(pack(0, at), Quantity::from_subunits(1));
+        }
+
+        /// What every configured window's log holds, and a line into the
+        /// ledger beside each.
+        ///
+        /// Two interval runs under one loop: a collection is named by
+        /// its owner, its slot and the material folded into it, so a
+        /// sub-collection per element is a family of intervals and not a
+        /// shape of its own. The page is named by literals rather than
+        /// by the element — what varies per element is the collection,
+        /// which the declaration computed.
+        pub fn windowed(&mut self, note: u64) {
+            let mut total = 0;
+            for &window in &self.config().windows {
+                let held = self
+                    .entries
+                    .of(window)
+                    .range(pack(0, 0), pack(u64::MAX, u64::MAX), 8);
+                total += u64::from(held.count());
+                self.ledger
+                    .of(window)
+                    .range(pack(0, 0), pack(u64::MAX, u64::MAX), 8)
+                    .insert(pack(0, note), note);
+            }
+            self.noted.set(total);
+        }
+
+        /// How many lines the ledger holds for one named window.
+        pub fn ledgered(&mut self, window: u64) -> u64 {
+            u64::from(
+                self.ledger
+                    .of(window)
+                    .range(pack(0, 0), pack(u64::MAX, u64::MAX), 8)
+                    .count(),
+            )
         }
 
         /// A method that hands back an ordinary value.
