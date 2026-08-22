@@ -37,6 +37,20 @@ fn the_tracer_offers_a_presence_only_where_a_leaf_is_named() {
     refuse.compile_fail("tests/refusals/interval_presence.rs");
 }
 
+/// A leaf a body reads as absent is not a leaf that body writes, in
+/// either order.
+///
+/// The pair is unordered because the mode a site resolves to is: a
+/// declaration emitted from one of the two would be a declaration the
+/// body's other half contradicts, and which half a hand happened to type
+/// first decides nothing.
+#[test]
+fn the_lowering_refuses_a_fresh_read_beside_a_write_of_one_leaf() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/write_after_vacant.rs");
+    refuse.compile_fail("tests/refusals/vacant_after_write.rs");
+}
+
 /// One draw, one selection. Two picks off a single draw are perfectly
 /// correlated — a winner and a prize tier reduced from the same word
 /// land together — and the draw is consumed so the second one has

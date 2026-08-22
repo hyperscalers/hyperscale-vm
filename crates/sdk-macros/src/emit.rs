@@ -54,10 +54,9 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
 
     // A presence requirement is the exclusive mode carrying what it
     // requires of the leaf, so it answers before the unqualified write
-    // rather than beside it. The two cannot both be recorded — a site
-    // requiring absence and presence is refused where the second is
-    // written — so this order states a precedence rather than resolving
-    // a conflict.
+    // rather than beside it. No two of these can be recorded on one site
+    // — the lowering refuses every pair, in either order — so this
+    // states a precedence rather than resolving a conflict.
     if has(Op::Create).is_some() {
         return Some((nothing, quote!(.create())));
     }

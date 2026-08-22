@@ -1156,29 +1156,32 @@ impl<'a> Lowerer<'a> {
             // is the only op a handle may carry and it may carry it once.
             Op::Reserve => entry.ops.is_empty(),
         };
-        let opposite = match op {
-            Op::Create => Some(Op::Existing),
-            Op::Existing => Some(Op::Create),
-            _ => None,
-        };
-        // A read requiring absence beside a write of any kind is a body
-        // asking for a leaf it also touches; the presence the write
-        // carries is the one that governs, and two answers is one too
-        // many.
-        let clashes = matches!(op, Op::Vacant)
-            && entry
-                .ops
-                .iter()
-                .any(|(prior, _)| matches!(prior, Op::Set | Op::Create | Op::Existing));
-        if clashes
-            || opposite.is_some_and(|other| entry.ops.iter().any(|(prior, _)| *prior == other))
-        {
-            self.error(
-                span,
+        // Two accesses on one leaf that cannot both stand, stated as
+        // unordered pairs: what a body wrote first is not what decides
+        // whether it makes sense, and a rule read one way is a rule with
+        // a way around it.
+        let refusal = |a: Op, b: Op| match (a, b) {
+            // Opposite presences over one leaf: no committed state
+            // satisfies both, so the clause could never be feasible.
+            (Op::Create, Op::Existing) | (Op::Existing, Op::Create) => Some(
                 "one access requires the leaf to be absent and to be there — no \
                  committed state satisfies both, so the call could never be \
                  feasible. Declare the one the body actually needs",
-            );
+            ),
+            // A fresh read requiring absence beside a write: the site
+            // resolves to one mode, and a body that writes a leaf it also
+            // declared read would publish a declaration its own code
+            // contradicts. `create` is the write that requires absence.
+            (Op::Vacant, Op::Set | Op::Create | Op::Existing)
+            | (Op::Set | Op::Create | Op::Existing, Op::Vacant) => Some(
+                "a fresh read requiring the leaf absent sits beside a write of the \
+                 same leaf, so the site has two modes and no way to declare both. \
+                 Use `create` for a write that requires absence",
+            ),
+            _ => None,
+        };
+        if let Some(message) = entry.ops.iter().find_map(|(prior, _)| refusal(*prior, op)) {
+            self.error(span, message);
         } else if compatible {
             entry.ops.push((op, param));
         } else {
