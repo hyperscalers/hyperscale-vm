@@ -95,14 +95,12 @@ fn narrow_type(
         Term::SelfResource(..) | Term::ResourceOf(_) => {
             Some(syn::parse_quote!(::hyperscale_vm_sdk::ResourceAddr))
         }
-        Term::Arg(index) => params.get(*index as usize).and_then(|(_, ty)| named(ty)),
-        Term::Config(index) => config.get(*index as usize).and_then(|(_, ty)| named(ty)),
-        Term::Lookup { map, .. } => match &**map {
-            Term::Config(index) => config
-                .get(*index as usize)
-                .and_then(|(_, ty)| table_value(ty))
-                .and_then(|value| named(&value)),
-            _ => None,
+        Term::Arg(_) | Term::Config(_) | Term::Lookup { .. } => {
+            term_type(term, params, config).as_ref().and_then(named)
+        }
+        Term::Field(inner, index) => match &**inner {
+            Term::Tuple(fields) => narrow_type(fields.get(*index as usize)?, params, config),
+            _ => term_type(term, params, config).as_ref().and_then(named),
         },
         // A selection narrows only where both arms read at one type. The
         // arms may spell it under different paths, so the comparison is
@@ -152,21 +150,23 @@ pub fn derived_shape(
         // The record crosses as the leaf's own bytes, which is the cell
         // representation it is.
         Term::SelfRecord => Shape::Cell(Box::new(syn::parse_quote!(::std::vec::Vec<u8>))),
-        Term::Arg(index) => params
-            .get(*index as usize)
-            .map_or(Shape::Scalar, |(_, ty)| named(ty)),
-        Term::Config(index) => config
-            .get(*index as usize)
-            .map_or(Shape::Scalar, |(_, ty)| named(ty)),
-        // A lookup crosses as the table's value, whose type is written
-        // on the configured field holding the table.
-        Term::Lookup { map, .. } => match &**map {
-            Term::Config(index) => config
-                .get(*index as usize)
-                .and_then(|(_, ty)| table_value(ty))
-                .map_or(Shape::Scalar, |value| named(&value)),
-            _ => Shape::Scalar,
+        // Everything the declaration names a type for crosses at that
+        // type, whether it is written on a parameter, on a configured
+        // field, on the table such a field holds, or on a component of
+        // any of those.
+        Term::Arg(_) | Term::Config(_) | Term::Lookup { .. } => {
+            term_type(term, params, config).map_or(Shape::Scalar, |ty| named(&ty))
+        }
+        // A projection of a product spelled inline reads at its
+        // component's own shape; one of a product the declaration named a
+        // type for reads at that type's component.
+        Term::Field(inner, index) => match &**inner {
+            Term::Tuple(fields) => derived_shape(fields.get(*index as usize)?, params, config)?,
+            _ => term_type(term, params, config).map_or(Shape::Scalar, |ty| named(&ty)),
         },
+        // A judgment crosses as the verdict it is, which is the shape a
+        // declared branch's own verdict crosses as.
+        Term::Contains { .. } => Shape::Flag,
         // A selection crosses as its arms do, so it has a shape only
         // where they share one.
         Term::If {
@@ -184,6 +184,33 @@ pub fn derived_shape(
         // reduces to a scalar.
         _ => Shape::Scalar,
     })
+}
+
+/// The type the declaration reads a term at, where it names one.
+///
+/// The one resolution both the shape walk and the narrowing walk ask
+/// for: a parameter's own type, a configured field's, the value type of
+/// a table such a field holds, or a component of any of those.
+fn term_type(
+    term: &Term,
+    params: &[(String, syn::Type)],
+    config: &[(String, syn::Type)],
+) -> Option<syn::Type> {
+    match term {
+        Term::Arg(index) => params.get(*index as usize).map(|(_, ty)| ty.clone()),
+        Term::Config(index) => config.get(*index as usize).map(|(_, ty)| ty.clone()),
+        Term::Lookup { map, .. } => table_value(&term_type(map, params, config)?),
+        Term::Field(inner, index) => tuple_field(&term_type(inner, params, config)?, *index),
+        _ => None,
+    }
+}
+
+/// The `index`-th component of a tuple type, where `ty` is one.
+fn tuple_field(ty: &syn::Type, index: u32) -> Option<syn::Type> {
+    let syn::Type::Tuple(tuple) = ty else {
+        return None;
+    };
+    tuple.elems.iter().nth(index as usize).cloned()
 }
 
 /// The value type of a configured `Table<K, V>`, where `ty` is one.

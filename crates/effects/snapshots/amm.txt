@@ -226,6 +226,39 @@ PackageMetadata {
                 ),
             ],
         },
+        "trades": MethodSignature {
+            totality: Infallible,
+            issues: None,
+            params: [
+                Resource,
+            ],
+            outputs: [],
+            answers: true,
+            denominations: [],
+            effects: [],
+            abi: [
+                Derived(
+                    Config(
+                        0,
+                    ),
+                ),
+                Derived(
+                    Config(
+                        1,
+                    ),
+                ),
+                Derived(
+                    Config(
+                        2,
+                    ),
+                ),
+                Derived(
+                    Arg(
+                        0,
+                    ),
+                ),
+            ],
+        },
     },
     events: [],
     errors: [

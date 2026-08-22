@@ -126,6 +126,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("account", "withdraw-nf", this(), vec![]),
         ("amm", "instantiate", open(), vec![]),
         ("amm", "swap", open(), vec![]),
+        ("amm", "trades", open(), vec![]),
         ("book", "fill-asks", open(), vec![]),
         ("book", "instantiate", open(), vec![]),
         ("book", "place-ask", open(), vec![]),

@@ -18,7 +18,21 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod grammar {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Ids, NfBucket, Ordered, Quantity, pack};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Ids, NfBucket, Ordered, Quantity, Table, pack};
+
+    /// The schedule an instance was created under.
+    ///
+    /// A table is here because a lookup into one is the term whose whole
+    /// point is that the evaluator reaches it and the guest does not:
+    /// the rows are the creator's, fixed in the address, and no export
+    /// carries them.
+    #[config]
+    struct Terms {
+        /// What each named tier is charged.
+        tiers: Table<u64, u64>,
+        /// What a tier the schedule does not name is charged.
+        fallback: u64,
+    }
 
     /// A mark carrying a schema: what one of its instances holds, in the
     /// encoding the mark itself declares.
@@ -137,6 +151,51 @@ pub mod grammar {
                 None => seed.wrapping_mul(3),
             };
             self.noted.set(folded);
+        }
+
+        /// A configured table read where the declaration evaluates it.
+        ///
+        /// The bare lookup, which is the shape the guarded spelling in
+        /// [`Grammar::charge_or`] exists to protect and which had no way
+        /// to reach the guest of its own. A miss is a routing refusal,
+        /// so a caller naming an unscheduled tier never runs this.
+        pub fn charge(&mut self, tier: u64) {
+            let fee = self.config().tiers.get(tier);
+            self.noted.set(fee);
+        }
+
+        /// The same read, guarded on the question a miss answers.
+        ///
+        /// The selection is one value, so what crosses is the fee the
+        /// declaration chose rather than the table and a comparison —
+        /// and the untaken arm is never evaluated, which is what keeps
+        /// the miss from refusing.
+        pub fn charge_or(&mut self, tier: u64) {
+            let terms = self.config();
+            let fee = if terms.tiers.contains(tier) {
+                terms.tiers.get(tier)
+            } else {
+                terms.fallback
+            };
+            self.noted.set(fee);
+        }
+
+        /// The question itself, in value position rather than as a
+        /// guard: a judgment only the evaluator can answer, crossing as
+        /// the flag a clause's verdict crosses as.
+        pub fn scheduled(&mut self, tier: u64) {
+            self.noted
+                .set(u64::from(self.config().tiers.contains(tier)));
+        }
+
+        /// A projection of a product the body spelled itself.
+        ///
+        /// The pair never reaches the guest — a projection is evaluated
+        /// where the declaration is — so what the export takes is the
+        /// component, and the tuple is a spelling rather than a value.
+        pub fn later(&mut self, first: u64, second: u64) {
+            let pair = (first, second);
+            self.noted.set(pair.1);
         }
 
         /// A method that hands back an ordinary value.

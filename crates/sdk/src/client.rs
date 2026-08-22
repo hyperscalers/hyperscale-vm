@@ -156,9 +156,8 @@ impl IntoSlot for Value {
 /// The kind a configuration slot holds is gated nowhere — the values are
 /// depth-bounded and otherwise the creator's — so a boolean policy fixed
 /// at creation is a slot like any other, and an [`Expr::If`] over it is
-/// how a package reads one. It cannot leak into a body: routing refuses a
-/// derived guest argument that evaluates to a boolean whatever expression
-/// produced it, a configuration slot included.
+/// how a package reads one. A body may also read the judgment itself,
+/// which crosses as the flag a guarded clause's verdict crosses as.
 ///
 /// [`Expr::If`]: hyperscale_vm_effects::Expr::If
 impl IntoSlot for bool {

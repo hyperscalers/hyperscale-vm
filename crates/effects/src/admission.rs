@@ -1666,11 +1666,13 @@ fn guest_arg(value: &Value) -> Option<CallArg> {
                 .collect::<Option<Vec<u64>>>()?;
             Some(CallArg::Ids(ids))
         }
-        // A judgment has no guest representation and no export takes
-        // one: a selection hands over the value it chose, and a body
-        // needing the comparison rebuilds it from operands that do
-        // cross. A derived parameter evaluating to a judgment is refused
-        // here like every other unrepresentable kind.
-        Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) | Value::Bool(_) => None,
+        // A judgment crosses as the flag a guarded clause's verdict
+        // already crosses as. Most comparisons never reach here — a body
+        // needing one rebuilds it from operands that cross, and a
+        // selection hands over the value it chose — but a question only
+        // the evaluator can answer, such as whether a configured table
+        // holds a key, has no operands the guest holds.
+        Value::Bool(judgment) => Some(CallArg::Bool(*judgment)),
+        Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) => None,
     }
 }

@@ -790,27 +790,19 @@ mod tests {
     }
 
     #[test]
-    fn a_derived_judgment_has_no_guest_representation() {
-        // A predicate is evaluated once, by admission, and the guest is
-        // told the answer through a clause's verdict — never by being
-        // handed the judgment as an argument, which would leave two
-        // copies of one condition agreeing by convention.
+    fn a_derived_judgment_crosses_as_a_flag() {
+        // A predicate is evaluated once, by admission, and the guest
+        // reads the answer rather than the comparison — the same flag a
+        // guarded clause's verdict crosses as, so the two copies of one
+        // condition a rebuilt judgment would leave never exist.
         let spread = vec![Value::U64(1)];
         let judgment = AbiParam::Derived(Expr::Eq(
             Box::new(Expr::Config(0)),
             Box::new(Expr::Config(0)),
         ));
         let (chain, graph) = spreading_world(spread, vec![judgment]);
-        let error = admit(&graph, alice(), &chain, &TestHasher)
-            .expect_err("a boolean cannot cross the ABI");
-        assert!(
-            matches!(
-                &error,
-                AdmissionError::UnbindableAbiParam { param: 0, reason, .. }
-                    if reason == "a bool has no guest representation"
-            ),
-            "unexpected refusal: {error:?}"
-        );
+        let routing = admit(&graph, alice(), &chain, &TestHasher).expect("the judgment binds");
+        assert_eq!(routing.calls()[0].args[0], CallArg::Bool(true));
     }
 
     #[test]

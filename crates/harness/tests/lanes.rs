@@ -17,7 +17,7 @@ use hyperscale_vm_fixtures::grammar;
 use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_kernel::Receipt;
 use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
-use hyperscale_vm_sdk::state::UnitFixed;
+use hyperscale_vm_sdk::state::{Table, UnitFixed};
 use hyperscale_vm_testing::{
     Chain, Package, PrincipalAddr, Refused, ResourceAddr, account, principal, resource,
 };
@@ -37,6 +37,15 @@ fn amm() -> Package {
         repo_root().join("guests").join("amm"),
         amm::invoke,
     )
+}
+
+/// The schedule every shapes instance is created under: two named
+/// tiers, and a fee for everything the schedule does not name.
+fn terms() -> grammar::Terms {
+    grammar::Terms {
+        tiers: Table::new(vec![(1, 10), (2, 20)]),
+        fallback: 7,
+    }
 }
 
 /// The shapes package, rooted at the crate its artifact is built from.
@@ -158,7 +167,7 @@ fn a_transfer_reads_the_same_in_both_lanes() {
 fn a_fielded_instance_reads_the_same_in_both_lanes() {
     let run = |mut chain: Chain| {
         chain.publish(grammar());
-        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
         let outcome = chain.transact(ALICE, |b| {
             let seat = shapes.seat(b, 3, 42)?;
             account::deposit_nf(b, ALICE, seat)
@@ -203,7 +212,7 @@ fn a_closure_over_a_value_in_hand_declares_what_the_long_way_does() {
     // so the cell it writes is what the closure computed.
     let run = |mut chain: Chain| {
         chain.publish(grammar());
-        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
         chain
             .transact(ALICE, |b| shapes.tally(b, 41))
             .expect_completed();
@@ -227,7 +236,7 @@ fn a_closure_over_a_value_in_hand_declares_what_the_long_way_does() {
 fn a_view_method_answers_off_the_receipt_in_both_lanes() {
     let run = |mut chain: Chain| {
         chain.publish(grammar());
-        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
         // `seat` notes the holder it filed, so there is something to read
         // back that the transaction itself put there.
         chain
@@ -268,6 +277,118 @@ fn a_view_method_answers_off_the_receipt_in_both_lanes() {
     );
 }
 
+/// A configured table read where the declaration evaluates it, in both
+/// lanes.
+///
+/// The bare lookup and the guarded one over the same table: the first is
+/// the read a body writes when the schedule is total, the second is what
+/// it writes when a miss should answer rather than refuse. What the
+/// guest holds either way is the fee, never the rows.
+#[test]
+fn a_configured_table_is_read_the_same_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
+        let noted = |chain: &Chain| {
+            chain
+                .cell(child_key(&TestHasher, shapes, grammar::NOTED, &[]))
+                .map(|bytes| from_slice::<u64>(&bytes).expect("the cell holds what the field does"))
+        };
+
+        chain
+            .transact(ALICE, |b| shapes.charge(b, 2))
+            .expect_completed();
+        let scheduled = noted(&chain);
+        // A tier the schedule does not name: the lookup misses where the
+        // declaration is evaluated, so the transaction never admits.
+        let missed = chain
+            .try_transact(ALICE, |b| shapes.charge(b, 9))
+            .err()
+            .is_some();
+
+        chain
+            .transact(ALICE, |b| shapes.charge_or(b, 9))
+            .expect_completed();
+        let defaulted = noted(&chain);
+        chain
+            .transact(ALICE, |b| shapes.charge_or(b, 1))
+            .expect_completed();
+        let guarded = noted(&chain);
+
+        chain
+            .transact(ALICE, |b| shapes.scheduled(b, 1))
+            .expect_completed();
+        let known = noted(&chain);
+        chain
+            .transact(ALICE, |b| shapes.scheduled(b, 9))
+            .expect_completed();
+        let unknown = noted(&chain);
+
+        chain
+            .transact(ALICE, |b| shapes.later(b, 5, 8))
+            .expect_completed();
+        let projected = noted(&chain);
+
+        (
+            scheduled, missed, defaulted, guarded, known, unknown, projected,
+        )
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    let (scheduled, missed, defaulted, guarded, known, unknown, projected) = native;
+    assert_eq!(scheduled, Some(20), "the fee the schedule names");
+    assert!(missed, "an unscheduled tier never admits");
+    assert_eq!(defaulted, Some(7), "the fee the package chose");
+    assert_eq!(guarded, Some(10), "the guarded read still finds the row");
+    assert_eq!(known, Some(1), "the schedule names this tier");
+    assert_eq!(unknown, Some(0), "and does not name that one");
+    assert_eq!(projected, Some(8), "the second component of the pair");
+}
+
+/// The configuration record passed on whole, in both lanes.
+///
+/// What crosses is the fields the kernel evaluated, assembled under the
+/// name the package gave them — so a helper over the settings reads what
+/// a projection of them would have read, and nothing decodes the leaf.
+#[test]
+fn a_configuration_record_reaches_a_helper_in_both_lanes() {
+    let run = |chain: Chain| {
+        let (mut chain, pool) = pool(chain);
+        let asked = |chain: &mut Chain, resource: ResourceAddr| {
+            chain
+                .transact(ALICE, |b| pool.trades(b, resource))
+                .receipt()
+                .outcome
+                .clone()
+        };
+        (asked(&mut chain, X), asked(&mut chain, resource(0xE9)))
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+
+    assert_eq!(native, blessed, "lanes diverged");
+    let (side, stranger) = native;
+    let answered = |outcome: &Outcome, judgment: bool| {
+        let Outcome::Completed { answers } = outcome else {
+            panic!("the view method completes: {outcome:?}");
+        };
+        answers.as_slice()
+            == [Answer {
+                node: 0,
+                value: to_vec(&judgment).expect("a judgment encodes"),
+            }]
+    };
+    assert!(answered(&side, true), "the configured side: {side:?}");
+    assert!(
+        answered(&stranger, false),
+        "a resource the pair does not name: {stranger:?}",
+    );
+}
+
 /// An instance's record changing, between the two ends of its life.
 ///
 /// The mint's door read the other way round: a rewrite requires the leaf
@@ -278,7 +399,7 @@ fn a_view_method_answers_off_the_receipt_in_both_lanes() {
 fn an_instance_rewrites_only_while_it_is_live_in_both_lanes() {
     let run = |mut chain: Chain| {
         chain.publish(grammar());
-        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
         let seat = shapes.issued_seat(&TestHasher);
         let reseat =
             |chain: &mut Chain, holder: u64| chain.transact(ALICE, |b| shapes.reseat(b, 3, holder));
@@ -352,7 +473,7 @@ fn an_instance_rewrites_only_while_it_is_live_in_both_lanes() {
 fn a_burned_instance_frees_its_cell_and_its_id_in_both_lanes() {
     let run = |mut chain: Chain| {
         chain.publish(grammar());
-        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
         let seat = shapes.issued_seat(&TestHasher);
         let filed = |chain: &Chain| chain.cell(instance_data_key(&TestHasher, shapes, seat, 3));
 
@@ -428,7 +549,7 @@ fn a_burned_instance_frees_its_cell_and_its_id_in_both_lanes() {
 fn the_instance_an_edge_carries_reads_the_same_in_both_lanes() {
     let run = |mut chain: Chain| {
         chain.publish(grammar());
-        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, ());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
         let seat = shapes.issued_seat(&TestHasher);
         // Two seats, so the last mint's own read leaves `noted` holding
         // a holder the edge read has to overwrite to be seen.

@@ -2723,6 +2723,8 @@ struct Declared<'a> {
     accessors: &'a BTreeMap<String, Field>,
     /// The `#[roles]` enum's names, in band order.
     roles: &'a [String],
+    /// The configuration struct's own name, where the package has one.
+    config_record: Option<&'a syn::Ident>,
     /// The configuration struct's fields, in slot order.
     config_fields: &'a [(String, syn::Type)],
     /// The `#[resource]` structs: name, mark, kind.
@@ -3041,6 +3043,7 @@ fn expand(
         fields: &fields,
         accessors: &accessors,
         roles: &declared_roles,
+        config_record: config_name.as_ref(),
         config_fields: &config_fields,
         resources: &declared_resources,
     };

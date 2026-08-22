@@ -342,6 +342,11 @@ pub enum Code {
     /// forwards is one whose amount its own guest never reads, and
     /// nothing in its ABI carries it.
     Bucket(u32),
+    /// The instance's configuration record, whole. Deferred like a
+    /// term: the record is fields the kernel evaluates one at a time, so
+    /// a body that only projects it binds nothing and one that passes it
+    /// on binds a parameter per field.
+    Record(Span),
     /// Nothing the guest can produce: a resource address, a table lookup,
     /// a handle in value position. Carries where the body named it, so a
     /// refusal can point at the line.
@@ -1923,6 +1928,7 @@ impl<'a> Lowerer<'a> {
             }
             Code::Term(term) => self.term_value(&term),
             Code::Bucket(param) => self.need(&Need::Amount(param)),
+            Code::Record(span) => self.config_record(span),
             Code::Absent(span, why) => {
                 self.refuse(
                     span,
@@ -1960,6 +1966,11 @@ impl<'a> Lowerer<'a> {
             // declaration chose is what leaves the guest nothing to
             // disagree with, where choosing again in wasm would rest on
             // two copies of one condition staying identical.
+            // A lookup, the question a miss answers and a projection
+            // are here for the same reason: the evaluator reaches each
+            // from the call's own inputs, so the declared value is what
+            // crosses rather than a second walk over a table the guest
+            // does not hold.
             Term::Arg(_)
             | Term::Config(_)
             | Term::FreshId(_)
@@ -1971,6 +1982,9 @@ impl<'a> Lowerer<'a> {
             | Term::SelfResource(..)
             | Term::SelfRecord
             | Term::Add(..)
+            | Term::Lookup { .. }
+            | Term::Contains { .. }
+            | Term::Field(..)
             | Term::If { .. } => self.need(&Need::Derived(term.clone())),
             // A judgment has no guest representation, so what crosses is
             // its operands and the guest does the comparison — which is
@@ -1992,21 +2006,48 @@ impl<'a> Lowerer<'a> {
                 let fields: Vec<_> = fields.iter().map(|f| self.term_value(f)).collect();
                 quote!((#(#fields),*))
             }
-            Term::Lookup { .. }
-            | Term::Contains { .. }
-            | Term::Field(..)
-            | Term::Binding(_)
-            | Term::NfBucket { .. } => {
+            Term::Binding(_) | Term::NfBucket { .. } => {
                 // A term names no line of its own; the whole invocation
                 // is the nearest anchor.
                 self.refuse(
                     Span::call_site(),
-                    "this term is evaluated where the declaration is, and the guest \
-                     has no way to ask for it",
+                    "this term is evaluated where the declaration is: a `for-each` \
+                     element exists only inside an evaluation, and an edge is a \
+                     routable summary rather than a value",
                 );
                 quote!(::core::unimplemented!())
             }
         }
+    }
+
+    /// The configuration record rebuilt on the guest, field by field.
+    ///
+    /// Each field crosses as the value the kernel evaluated for its slot,
+    /// which is what a projection of the record already does — so the
+    /// record a body passes on and the field it reads are one evaluation,
+    /// and the sealed leaf is never decoded.
+    ///
+    /// A borrow, because that is what the accessor answers with: the
+    /// record is the instance's and a body consults it.
+    fn config_record(&mut self, span: Span) -> TokenStream {
+        let declared = self.declared;
+        let Some(name) = declared.config_record else {
+            self.refuse(span, "this package declares no configuration");
+            return quote!(::core::unimplemented!());
+        };
+        let fields: Vec<TokenStream> = declared
+            .config_fields
+            .iter()
+            .enumerate()
+            .map(|(index, (field, _))| {
+                let slot =
+                    u32::try_from(index).expect("a configuration record is shorter than u32");
+                let value = self.need(&Need::Derived(Term::Config(slot)));
+                let field = syn::Ident::new(field, span);
+                quote!(#field: #value)
+            })
+            .collect();
+        quote!(&#name { #(#fields),* })
     }
 
     /// One binary judgment, rebuilt over its operands' guest values.
@@ -2159,12 +2200,13 @@ impl<'a> Lowerer<'a> {
                     syn::Pat::Ident(ident) => self.bind(ident.ident.to_string(), slot),
                     other => self.bind_pattern(other),
                 }
-                if matches!(eval.code, Code::Absent(..)) {
-                    // The declaration read something the guest has no
-                    // value for. Whatever the body does with the name is
+                if matches!(eval.code, Code::Absent(..) | Code::Record(..)) {
+                    // The declaration read something the guest holds no
+                    // local for. Whatever the body does with the name is
                     // either evaluated elsewhere — a configuration field
-                    // is a slot the kernel hands over — or refused at the
-                    // line that reads it.
+                    // is a slot the kernel hands over, and the record is
+                    // rebuilt from those wherever it is read whole — or
+                    // refused at the line that reads it.
                     return quote!();
                 }
                 if deferred {
@@ -2878,7 +2920,7 @@ impl<'a> Lowerer<'a> {
             // naming one costs an export parameter only where the guest
             // reads it and nothing where the declaration does.
             let code = match &slot {
-                Slot::Config => Code::Absent(path.span(), "the pinned configuration record"),
+                Slot::Config => Code::Record(path.span()),
                 Slot::Deferred(term) => Code::Term(term.clone()),
                 _ => Code::Rust(quote!(#ident)),
             };
@@ -3631,11 +3673,12 @@ impl<'a> Lowerer<'a> {
             // The configuration record itself. It declares nothing: every
             // method's fence already reads the leaf it was sealed into
             // and holds it present, and after the seal the leaf has no
-            // writer. A field of it is a slot the kernel evaluates, so
-            // the record is never decoded on the guest.
+            // writer. Its fields are slots the kernel evaluates, so a
+            // body reading the record whole is handed those rather than
+            // the leaf's bytes.
             FieldKind::Config => Eval {
                 val: Val::Config,
-                code: Code::Absent(call.span(), "the configuration record"),
+                code: Code::Record(call.span()),
             },
             FieldKind::Unordered => Eval::absent(call.span(), "an unordered protocol cell"),
         }

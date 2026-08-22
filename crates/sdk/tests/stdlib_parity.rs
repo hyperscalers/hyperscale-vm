@@ -167,6 +167,11 @@ fn amm() -> Blueprint {
                 t.output(&bought);
             },
         )
+        .method("trades", &[ParamType::Resource], |t: &mut Trace| {
+            // A view over the configured pair: it consults the record
+            // and touches nothing, so it declares nothing.
+            let _resource: Sym<Addr> = t.arg(0);
+        })
         .method("instantiate", &[], |t: &mut Trace| {
             // The generated seal: the record into the configuration
             // leaf, under the one-way door its absence is, with the

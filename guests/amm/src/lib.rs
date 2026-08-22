@@ -107,5 +107,23 @@ pub mod amm {
             }
             Ok(bought.take(out))
         }
+
+        /// Whether the pool trades `resource` at all.
+        ///
+        /// What a router asks before sending a swap here, and what a
+        /// swap itself never asks: the pair is in the address, so a
+        /// third resource is refused at admission rather than answered.
+        pub fn trades(&self, resource: ResourceAddr) -> bool {
+            is_side(self.config(), resource)
+        }
+    }
+
+    /// Whether `resource` is one of the configured pair.
+    ///
+    /// Over the record whole rather than over its fields, which is what
+    /// a helper is for — and what crosses is the fields the kernel
+    /// evaluated, assembled under the name the package gave them.
+    fn is_side(settings: &Settings, resource: ResourceAddr) -> bool {
+        resource == settings.x || resource == settings.y
     }
 }
