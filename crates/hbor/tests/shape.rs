@@ -8,9 +8,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_hbor::shape::shape_of;
+use hyperscale_hbor::shape::{ShapeFault, shape_of};
 use hyperscale_hbor::{
-    Hbor, HborShape, ShapeField, ShapeTable, ShapeVariant, TypeShape, to_vec, varint,
+    DecodeError, Hbor, HborShape, ReadError, ShapeField, ShapeTable, ShapeValue, ShapeVariant,
+    TypeShape, to_vec,
 };
 
 #[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
@@ -122,9 +123,9 @@ fn the_shape_holds_what_the_wire_holds() {
 }
 
 /// The whole point, end to end: a consumer holding the shape and the
-/// bytes reads the value and nothing is left over.
+/// bytes reads the value, and every field comes back named.
 #[test]
-fn a_value_walks_its_own_shape() {
+fn a_value_reads_back_against_its_own_shape() {
     let value = Everything {
         fixed: [1, 2, 3, 4],
         many: vec![7, 8],
@@ -149,84 +150,106 @@ fn a_value_walks_its_own_shape() {
     };
     let bytes = to_vec(&value).expect("encodes");
     let (shape, types) = shape_of::<Everything>();
-    let mut walk = Walk {
-        bytes: &bytes,
-        types: &types,
+    let ShapeValue::Struct(fields) = shape.read(&bytes, &types).expect("reads") else {
+        panic!("a struct reads as a struct");
     };
-    walk.value(&shape);
-    assert!(walk.bytes.is_empty(), "the shape accounts for every byte");
-}
-
-/// Reads a payload against a shape, taking exactly what the shape claims.
-struct Walk<'b> {
-    bytes: &'b [u8],
-    types: &'b ShapeTable,
-}
-
-impl Walk<'_> {
-    const fn take(&mut self, count: usize) -> &[u8] {
-        let (taken, rest) = self.bytes.split_at(count);
-        self.bytes = rest;
-        taken
-    }
-
-    fn len(&mut self) -> usize {
-        let (len, read) = varint::read(self.bytes).expect("a length");
-        self.bytes = &self.bytes[read..];
-        len
-    }
-
-    fn value(&mut self, shape: &TypeShape) {
-        match shape {
-            TypeShape::Bool | TypeShape::U8 | TypeShape::I8 => drop(self.take(1)),
-            TypeShape::U16 | TypeShape::I16 => drop(self.take(2)),
-            TypeShape::U32 | TypeShape::I32 => drop(self.take(4)),
-            TypeShape::U64 | TypeShape::I64 => drop(self.take(8)),
-            TypeShape::U128 | TypeShape::I128 => drop(self.take(16)),
-            TypeShape::ByteArray(width) => drop(self.take(*width as usize)),
-            TypeShape::Text => {
-                let len = self.len();
-                let text = self.take(len);
-                core::str::from_utf8(text).expect("utf-8");
-            }
-            TypeShape::Seq(element) | TypeShape::Set(element) => {
-                for _ in 0..self.len() {
-                    self.value(element);
-                }
-            }
-            TypeShape::Map { key, value } => {
-                for _ in 0..self.len() {
-                    self.value(key);
-                    self.value(value);
-                }
-            }
-            TypeShape::Option(held) => {
-                if self.take(1)[0] == 1 {
-                    self.value(held);
-                }
-            }
-            TypeShape::Tuple(elements) => {
-                for element in elements {
-                    self.value(element);
-                }
-            }
-            TypeShape::Struct(fields) => {
-                for field in fields {
-                    self.value(&field.shape);
-                }
-            }
-            TypeShape::Enum(variants) => {
-                let discriminant = self.take(1)[0];
-                let variant = variants
-                    .iter()
-                    .find(|variant| variant.discriminant == discriminant)
-                    .expect("a declared variant");
-                self.value(&variant.content);
-            }
-            TypeShape::Ref(name) => {
-                let named = self.types.get(name).expect("a declared type").clone();
-                self.value(&named);
-            }
+    let named: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        named,
+        ["fixed", "many", "distinct", "by_key", "picked", "wrapped"]
+    );
+    assert_eq!(fields[0].1, ShapeValue::ByteArray(vec![1, 2, 3, 4]));
+    assert_eq!(
+        fields[1].1,
+        ShapeValue::Seq(vec![ShapeValue::U16(7), ShapeValue::U16(8)])
+    );
+    // A skipped field is on neither the wire nor the shape, so the
+    // reader accounts for every byte without it.
+    assert_eq!(fields[5].1, ShapeValue::U64(12));
+    assert_eq!(
+        fields[4].1,
+        ShapeValue::Variant {
+            name: "pair".to_owned(),
+            discriminant: 1,
+            content: Box::new(ShapeValue::Tuple(vec![
+                ShapeValue::U32(11),
+                ShapeValue::Bool(true)
+            ])),
         }
-    }
+    );
+}
+
+/// Bytes the shape does not describe are refused rather than half-read.
+#[test]
+fn a_payload_the_shape_does_not_describe_is_refused() {
+    let value = Inner {
+        tag: 3,
+        label: "in".to_owned(),
+    };
+    let bytes = to_vec(&value).expect("encodes");
+    let (shape, types) = shape_of::<Inner>();
+    assert!(shape.read(&bytes, &types).is_ok());
+
+    // A byte too many is a second payload, not a value to ignore.
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(matches!(
+        shape.read(&trailing, &types),
+        Err(ReadError::Malformed(DecodeError::TrailingBytes { .. }))
+    ));
+
+    // A byte too few runs the reader off the end.
+    assert!(matches!(
+        shape.read(&bytes[..bytes.len() - 1], &types),
+        Err(ReadError::Malformed(_))
+    ));
+
+    // A discriminant no variant declares is refused where the typed
+    // decoder refuses one.
+    let (choice, types) = shape_of::<Choice>();
+    assert!(matches!(
+        choice.read(&[200], &types),
+        Err(ReadError::Malformed(DecodeError::InvalidDiscriminant(200)))
+    ));
+}
+
+/// A run over an element that carries no bytes is a claimed length no
+/// input pays for, so the reader refuses the shape rather than
+/// allocating against it.
+///
+/// The codec refuses the same thing at compile time, where a `Vec<()>`
+/// is unwritable; a shape is data, so the refusal happens when it is
+/// read.
+#[test]
+fn a_run_over_nothing_is_refused_before_it_allocates() {
+    let types = ShapeTable::new();
+    let nothing = TypeShape::Seq(Box::new(TypeShape::Tuple(Vec::new())));
+    assert_eq!(
+        nothing.read(&[0xFF, 0xFF, 0xFF, 0x7F], &types),
+        Err(ReadError::Unreadable(ShapeFault::ZeroWidth))
+    );
+    // A zero-width array is the same claim spelled another way.
+    let empty_array = TypeShape::Seq(Box::new(TypeShape::ByteArray(0)));
+    assert_eq!(
+        empty_array.read(&[1], &types),
+        Err(ReadError::Unreadable(ShapeFault::ZeroWidth))
+    );
+    // An element that costs something bounds the claim by the bytes.
+    let counted = TypeShape::Seq(Box::new(TypeShape::U64));
+    assert!(matches!(
+        counted.read(&[9, 0, 0], &types),
+        Err(ReadError::Malformed(DecodeError::LengthExceedsInput { .. }))
+    ));
+}
+
+/// A shape a consumer cannot follow is refused before any byte is read.
+#[test]
+fn an_unfollowable_shape_is_refused_before_the_bytes() {
+    let types = ShapeTable::new();
+    assert_eq!(
+        TypeShape::Ref("absent".into()).read(&[], &types),
+        Err(ReadError::Unreadable(ShapeFault::Unresolved(
+            "absent".into()
+        )))
+    );
 }

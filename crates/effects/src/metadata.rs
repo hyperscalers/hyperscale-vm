@@ -4,10 +4,13 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::sync::{Arc, LazyLock};
 
-use hyperscale_hbor::{Hbor, HborShape, ShapeRegistry, ShapeTable, TypeShape};
+pub use hyperscale_hbor::MAX_SHAPE_DEPTH;
+use hyperscale_hbor::{
+    Hbor, HborShape, ReadError, ShapeRegistry, ShapeTable, ShapeValue, TypeShape,
+};
 use hyperscale_vm_types::{
-    Address, CallTarget, ComponentAddr, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
-    SubstateKey,
+    Address, CallTarget, ComponentAddr, Event, NativeAddr, PackageAddr, PrincipalAddr,
+    ResourceAddr, SubstateKey,
 };
 
 use crate::KERNEL_SLOT_BASE;
@@ -65,14 +68,6 @@ pub struct PublishRefusal {
     #[source]
     pub source: SignatureError,
 }
-
-/// The levels a declared type's shape may nest, resolved.
-///
-/// Generous against what a monomorphic record reaches and finite against
-/// what a hand-written one could claim: the walk that resolves a
-/// reference spends the same budget a nesting level does, so a reference
-/// cycle is refused here rather than by a check of its own.
-pub const MAX_SHAPE_DEPTH: usize = 16;
 
 /// The names the protocol's own types hold, under the shapes those types
 /// give them.
@@ -190,6 +185,16 @@ pub struct PackageMetadata {
     /// Protocol names resolve to the protocol's shapes, which the door
     /// pins: `address` is an address in every package that declares one.
     pub types: ShapeTable,
+    /// The instance configuration's field names, in the order the
+    /// creation-fixed record holds them.
+    ///
+    /// The record is a list of [`Value`](crate::types::Value)s, and a
+    /// value carries its own kind — so what a consumer cannot recover
+    /// from the leaf is the name, and the name is all this adds. The
+    /// same shape as [`events`](Self::events) and for the same reason: a
+    /// signature indexes a field positionally, and immutability is what
+    /// stops a position coming to mean something else.
+    pub config: Vec<String>,
     /// The component's state, by the slot its leaves sit under.
     ///
     /// What gets a consumer from a substate key to a type: a slot
@@ -204,6 +209,76 @@ pub struct PackageMetadata {
 }
 
 impl PackageMetadata {
+    /// Read an event's payload against the shape its type declares.
+    ///
+    /// The whole of what the tables are for: an index becomes a name,
+    /// the name becomes a shape, and the shape turns opaque bytes into
+    /// named fields. `None` where the index names no declared type,
+    /// which a receipt from another package's emitter would.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadError`] for a payload the declared shape does not describe.
+    #[must_use]
+    pub fn read_event(&self, event: &Event) -> Option<Result<(&str, ShapeValue), ReadError>> {
+        let name = self.events.get(usize::try_from(event.event_type).ok()?)?;
+        let shape = self.types.get(name)?;
+        Some(
+            shape
+                .read(&event.payload, &self.types)
+                .map(|value| (name.as_str(), value)),
+        )
+    }
+
+    /// Read a state leaf against the shape its slot declares.
+    ///
+    /// `Ok(None)` for an empty leaf, which is the absence every element
+    /// reads as its own zero. `None` where the slot is not one this
+    /// package declares.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadError`] for bytes the declared shape does not describe.
+    #[must_use]
+    pub fn read_leaf(
+        &self,
+        slot: SlotId,
+        leaf: &[u8],
+    ) -> Option<Result<Option<ShapeValue>, ReadError>> {
+        Some(self.read_form(&self.state.get(&slot)?.element, leaf))
+    }
+
+    /// Read an instance's data cell against the shape its mark declares.
+    ///
+    /// The mark is the material a signature's own claim names, and it is
+    /// the name the mark's schema is declared under — so a consumer that
+    /// found a resource in a signature can read what its instances hold.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadError`] for bytes the declared shape does not describe.
+    #[must_use]
+    pub fn read_instance(
+        &self,
+        mark: &[u8],
+        cell: &[u8],
+    ) -> Option<Result<Option<ShapeValue>, ReadError>> {
+        let name = core::str::from_utf8(mark).ok()?;
+        let shape = self.types.get(name)?;
+        Some(self.read_form(&LeafForm::Value(shape.clone()), cell))
+    }
+
+    /// One leaf, read against the form it holds.
+    fn read_form(&self, form: &LeafForm, leaf: &[u8]) -> Result<Option<ShapeValue>, ReadError> {
+        if leaf.is_empty() {
+            return Ok(None);
+        }
+        match form {
+            LeafForm::Bytes => Ok(Some(ShapeValue::ByteArray(leaf.to_vec()))),
+            LeafForm::Value(shape) => shape.read(leaf, &self.types).map(Some),
+        }
+    }
+
     /// The name `role` renders as: a reserved role's protocol name, or
     /// the package's own entry at the band offset.
     #[must_use]

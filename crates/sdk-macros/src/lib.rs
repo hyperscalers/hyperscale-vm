@@ -3088,6 +3088,7 @@ fn expand(
     let error_table = errors.iter().map(|name| quote!(.error(#name)));
     let role_table = declared_roles.iter().map(|name| quote!(.role(#name)));
     let state_table = state_table(&fields);
+    let config_table = config_fields.iter().map(|(name, _)| quote!(.config(#name)));
 
     let (component, dispatch) = executing(&world, &methods, role);
 
@@ -3124,6 +3125,7 @@ fn expand(
                 #(#role_table)*
                 #(#stored_table)*
                 #(#state_table)*
+                #(#config_table)*
                 .build()
         }
     ));

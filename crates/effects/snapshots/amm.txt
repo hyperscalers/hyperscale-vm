@@ -267,5 +267,10 @@ PackageMetadata {
     ],
     roles: [],
     types: {},
+    config: [
+        "x",
+        "y",
+        "fee",
+    ],
     state: {},
 }

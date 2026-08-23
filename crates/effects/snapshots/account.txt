@@ -931,5 +931,6 @@ PackageMetadata {
             ],
         ),
     },
+    config: [],
     state: {},
 }

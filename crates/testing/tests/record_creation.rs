@@ -12,7 +12,7 @@ use hyperscale_vm_effects::{
     resource_record_key,
 };
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_sdk::hbor::{ShapeField, TypeShape, to_vec, varint};
+use hyperscale_vm_sdk::hbor::{ShapeField, ShapeValue, TypeShape, to_vec};
 use hyperscale_vm_testing::{Chain, PrincipalAddr, account, package, principal};
 use hyperscale_vm_types::{Outcome, Presence, UnmetCondition};
 
@@ -230,37 +230,16 @@ fn an_instance_cell_decodes_from_metadata_alone() {
         .expect("the instance's data cell");
 
     let metadata = issuer::blueprint().metadata();
-    let TypeShape::Struct(fields) = &metadata.types["seat"] else {
-        panic!("the mark declares named fields");
-    };
-    let mut rest = filed.as_slice();
-    let named: Vec<(&str, String)> = fields
-        .iter()
-        .map(|field| {
-            let read = match &field.shape {
-                TypeShape::U64 => {
-                    let (taken, tail) = rest.split_at(8);
-                    rest = tail;
-                    u64::from_le_bytes(taken.try_into().expect("eight bytes")).to_string()
-                }
-                TypeShape::Text => {
-                    let (len, read) = varint::read(rest).expect("a length");
-                    let (taken, tail) = rest[read..].split_at(len);
-                    rest = tail;
-                    String::from_utf8(taken.to_vec()).expect("utf-8")
-                }
-                other => panic!("this mark holds no {other:?}"),
-            };
-            (field.name.as_str(), read)
-        })
-        .collect();
-    assert!(rest.is_empty(), "the shape accounts for every byte");
+    let read = metadata
+        .read_instance(issuer::SEAT, &filed)
+        .expect("the mark names a declared schema")
+        .expect("the cell is what the shape says");
     assert_eq!(
-        named,
-        [
-            ("operator", "42".to_owned()),
-            ("label", "front-row".to_owned())
-        ]
+        read,
+        Some(ShapeValue::Struct(vec![
+            ("operator".to_owned(), ShapeValue::U64(42)),
+            ("label".to_owned(), ShapeValue::Text("front-row".to_owned())),
+        ]))
     );
 }
 

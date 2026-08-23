@@ -336,6 +336,7 @@ mod tests {
             errors: Vec<String>,
             roles: Vec<String>,
             types: ShapeTable,
+            config: Vec<String>,
             state: BTreeMap<SlotId, SlotShape>,
         }
 
@@ -357,6 +358,7 @@ mod tests {
                     errors: Vec::new(),
                     roles: Vec::new(),
                     types: ShapeTable::new(),
+                    config: Vec::new(),
                     state: BTreeMap::new(),
                 },
                 METADATA_WIRE_DEPTH,

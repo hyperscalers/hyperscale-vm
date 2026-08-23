@@ -1,7 +1,9 @@
 //! The pool patterns end to end on both runtimes: swaps with real pool
 //! math, output floors, and the share vault's rounding.
 
-use hyperscale_vm_effects::{AdmissionError, Hash32, ManifestGraph, TestHasher, admit, child_key};
+use hyperscale_vm_effects::{
+    AdmissionError, Hash32, ManifestGraph, TestHasher, Value, admit, child_key,
+};
 use hyperscale_vm_fixtures::{amm, shares};
 use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_kernel::MemoryStore;
@@ -302,4 +304,31 @@ fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() {
     assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 999);
     assert_eq!(amount_of(&end, vault(shares_vault(), RES_X)), 1_001);
     assert_eq!(amount_of(&end, vault(ALICE, shares_unit())), 0);
+}
+
+/// A consumer reads an instance's configuration by name: the record is a
+/// list of values, and the metadata is what says which field each one is.
+///
+/// A value carries its own kind, so what the leaf cannot supply is the
+/// name — and a positional record with no names is three addresses and a
+/// guess about which is which.
+#[test]
+fn a_configuration_reads_by_name_from_metadata() {
+    let metadata = amm::metadata();
+    let instance = pool_meta();
+    // The table names exactly the fields the record holds, so nothing is
+    // paired against a position that is not there.
+    assert_eq!(metadata.config.len(), instance.config.len());
+    let named: Vec<(&str, &Value)> = metadata
+        .config
+        .iter()
+        .map(String::as_str)
+        .zip(instance.config.iter())
+        .collect();
+    assert_eq!(
+        named.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+        ["x", "y", "fee"]
+    );
+    assert_eq!(named[0].1, &Value::Address(RES_X.address()));
+    assert_eq!(named[1].1, &Value::Address(RES_Y.address()));
 }

@@ -75,7 +75,10 @@ pub use error::{DecodeError, EncodeError};
 pub use hash::{Hash32, Hasher};
 pub use hyperscale_hbor_macros::{Hbor, HborMerkle, HborShape};
 pub use merkle::Chunked;
-pub use shape::{HborShape, ShapeField, ShapeRegistry, ShapeTable, ShapeVariant, TypeShape};
+pub use shape::{
+    HborShape, MAX_SHAPE_DEPTH, ReadError, ShapeField, ShapeRegistry, ShapeTable, ShapeValue,
+    ShapeVariant, TypeShape,
+};
 pub use signing::{HborSigned, HborSignedWith};
 pub use varint::MAX_LENGTH;
 

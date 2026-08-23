@@ -26,8 +26,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
 use hyperscale_vm_manifest_builder::{Names, TypedBuilder, TypedError, render};
-use hyperscale_vm_sdk::hbor::{TypeShape, from_slice, to_vec};
-use hyperscale_vm_sdk::{LeafForm, SlotId, SlotKind};
+use hyperscale_vm_sdk::hbor::{ShapeValue, from_slice, to_vec};
+use hyperscale_vm_sdk::{SlotId, SlotKind};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, instantiate, staking};
 use hyperscale_vm_types::{
     Address, Outcome, Presence, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
@@ -436,40 +436,29 @@ fn an_event_decodes_from_metadata_alone() -> Result<()> {
     let world = world();
     let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
     let (outcome, _) = run_both(&operator_store(), std::slice::from_ref(&entry));
-    let (event_type, payload) = pool_event(&outcome, &entry);
+    let raw = outcome.receipts[&entry.tx]
+        .events
+        .iter()
+        .find(|event| event.emitter == Address::from(pool()))
+        .expect("the pool spoke")
+        .clone();
 
     let metadata = staking::metadata();
-    let name = &metadata.events[event_type as usize];
+    let (name, read) = metadata
+        .read_event(&raw)
+        .expect("the index names a declared type")
+        .expect("the payload is what the shape says");
     assert_eq!(name, "validator-registered");
-    let TypeShape::Struct(fields) = &metadata.types[name] else {
-        panic!("the event declares named fields");
-    };
-
-    // Walk the payload against the shape, taking each field at the width
-    // the shape claims.
-    let mut rest = payload.as_slice();
-    let mut read = |shape: &TypeShape| -> Vec<u8> {
-        let width = match shape {
-            TypeShape::U64 => 8,
-            TypeShape::ByteArray(bytes) => *bytes as usize,
-            other => panic!("this event holds no {other:?}"),
-        };
-        let (taken, tail) = rest.split_at(width);
-        rest = tail;
-        taken.to_vec()
-    };
-    let named: Vec<(String, Vec<u8>)> = fields
-        .iter()
-        .map(|field| (field.name.clone(), read(&field.shape)))
-        .collect();
-    assert!(rest.is_empty(), "the shape accounts for every byte");
-
-    assert_eq!(named[0].0, "validator_id");
-    assert_eq!(named[0].1, VALIDATOR.to_le_bytes());
-    assert_eq!(named[1], ("pubkey".to_owned(), PUBKEY.to_vec()));
     assert_eq!(
-        named[2],
-        ("possession_proof".to_owned(), POSSESSION_PROOF.to_vec())
+        read,
+        ShapeValue::Struct(vec![
+            ("validator_id".to_owned(), ShapeValue::U64(VALIDATOR)),
+            ("pubkey".to_owned(), ShapeValue::ByteArray(PUBKEY.to_vec())),
+            (
+                "possession_proof".to_owned(),
+                ShapeValue::ByteArray(POSSESSION_PROOF.to_vec())
+            ),
+        ])
     );
     Ok(())
 }
@@ -488,7 +477,8 @@ fn a_state_cell_decodes_from_its_slot_alone() -> Result<()> {
     let (_, end) = run_both(&operator_store(), std::slice::from_ref(&entry));
 
     let metadata = staking::metadata();
-    let declared = &metadata.state[&SlotId(staking::VALIDATORS.0)];
+    let slot = SlotId(staking::VALIDATORS.0);
+    let declared = &metadata.state[&slot];
     assert_eq!(declared.name, "validators");
     assert_eq!(declared.kind, SlotKind::Keyed);
 
@@ -496,18 +486,21 @@ fn a_state_cell_decodes_from_its_slot_alone() -> Result<()> {
         .get(&validator_leaf(pool(), VALIDATOR))
         .cloned()
         .expect("the pool filed its validator");
-    let LeafForm::Value(TypeShape::Ref(named)) = &declared.element else {
-        panic!("the leaf holds a declared type");
-    };
-    let TypeShape::Struct(fields) = &metadata.types[named] else {
-        panic!("that type has named fields");
-    };
-    let [field] = fields.as_slice() else {
-        panic!("a validator is its key and nothing else");
-    };
-    assert_eq!(field.name, "pubkey");
-    assert_eq!(field.shape, TypeShape::ByteArray(48));
-    assert_eq!(leaf, PUBKEY, "the leaf is what the shape says it is");
+    let read = metadata
+        .read_leaf(slot, &leaf)
+        .expect("the package declares the slot")
+        .expect("the leaf is what the shape says");
+    assert_eq!(
+        read,
+        Some(ShapeValue::Struct(vec![(
+            "pubkey".to_owned(),
+            ShapeValue::ByteArray(PUBKEY.to_vec())
+        )]))
+    );
+
+    // A leaf nothing wrote is the absence every element reads as its
+    // own zero, not a record of no fields.
+    assert_eq!(metadata.read_leaf(slot, &[]).expect("declared"), Ok(None));
     Ok(())
 }
 

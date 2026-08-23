@@ -452,6 +452,7 @@ PackageMetadata {
             ],
         ),
     },
+    config: [],
     state: {
         SlotId(
             16,

@@ -66,6 +66,7 @@ pub struct Blueprint {
     roles: Vec<String>,
     types: ShapeRegistry,
     state: BTreeMap<SlotId, SlotShape>,
+    config: Vec<String>,
 }
 
 impl Blueprint {
@@ -102,6 +103,7 @@ impl Blueprint {
             roles: self.roles.clone(),
             types: self.types.clone().into_types(),
             state: self.state.clone(),
+            config: self.config.clone(),
         }
     }
 }
@@ -174,6 +176,17 @@ impl Builder {
             panic!("an event is a type the package declares, and describes as one");
         };
         self.blueprint.events.push(name);
+        self
+    }
+
+    /// Name the configuration's `index`-th field, in the order the
+    /// creation-fixed record holds them.
+    ///
+    /// A value in that record carries its own kind, so the name is the
+    /// only thing a consumer cannot recover from the leaf.
+    #[must_use]
+    pub fn config(mut self, name: &str) -> Self {
+        self.blueprint.config.push(name.to_owned());
         self
     }
 

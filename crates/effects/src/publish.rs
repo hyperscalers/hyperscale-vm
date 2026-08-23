@@ -16,6 +16,7 @@ use crate::dsl::{
     Clause, ConditionExpr, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH,
     ModeExpr, TargetExpr, materialized_kind,
 };
+use crate::instance::MAX_CONFIG_FIELDS;
 use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
 use crate::resource::{GrantsExpr, holdings_entry};
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
@@ -1401,6 +1402,10 @@ pub enum MetadataBoundsError {
     /// An error table longer than the index a declined code can carry.
     #[error("error table names {0} codes, past the {MAX_ERROR_CODES} a declined code can reach")]
     ErrorTable(usize),
+    /// A configuration table longer than the record it names the fields
+    /// of, which is a name for a field no instance can hold.
+    #[error("configuration table names {0} fields, past the {MAX_CONFIG_FIELDS} a record holds")]
+    ConfigTable(usize),
     /// A method whose signature is past a bound.
     #[error("method {name:?}: {source}")]
     Method {
@@ -1482,6 +1487,9 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
     if metadata.roles.len() > MAX_PACKAGE_ROLES {
         return Err(MetadataBoundsError::RoleTable(metadata.roles.len()));
     }
+    if metadata.config.len() > MAX_CONFIG_FIELDS {
+        return Err(MetadataBoundsError::ConfigTable(metadata.config.len()));
+    }
     for (name, signature) in &metadata.methods {
         check_signature_bounds(signature).map_err(|source| MetadataBoundsError::Method {
             name: name.clone(),
@@ -1494,7 +1502,7 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
             continue;
         };
         shape
-            .resolved_depth(&metadata.types, MAX_SHAPE_DEPTH)
+            .readable(&metadata.types, MAX_SHAPE_DEPTH)
             .map_err(|source| MetadataBoundsError::Slot {
                 slot: *slot,
                 source,
@@ -1514,7 +1522,7 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
 fn check_types(types: &ShapeTable) -> Result<(), MetadataBoundsError> {
     for (name, shape) in types {
         shape
-            .resolved_depth(types, MAX_SHAPE_DEPTH)
+            .readable(types, MAX_SHAPE_DEPTH)
             .map_err(|source| MetadataBoundsError::Type {
                 name: name.clone(),
                 source,

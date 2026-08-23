@@ -1065,6 +1065,10 @@ PackageMetadata {
             ],
         ),
     },
+    config: [
+        "staked_resource",
+        "founder",
+    ],
     state: {
         SlotId(
             17,
