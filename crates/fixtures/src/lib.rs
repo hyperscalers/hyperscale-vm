@@ -32,6 +32,7 @@
 pub mod amm;
 pub mod book;
 pub mod grammar;
+pub mod lending;
 pub mod lottery;
 pub mod nf;
 pub mod payouts;
