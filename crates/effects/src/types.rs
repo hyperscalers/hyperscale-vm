@@ -397,6 +397,49 @@ pub enum Value {
     /// there — so a boolean is never two copies agreeing by convention,
     /// because there is only ever the one.
     Bool(bool),
+    /// An unsigned 256-bit integer, little-endian — the stored rate's
+    /// width.
+    ///
+    /// Appended, like every variant after the first set, because a
+    /// value's variant order is its encoding.
+    ///
+    /// Bytes rather than a named type, because this crate cannot see the
+    /// SDK's and the wire form is the bytes either way. It crosses to a
+    /// guest as the same byte list an amount does, at twice the width, so
+    /// it needs no shape of its own at the boundary — what reads it back
+    /// is the decode the declared type already has.
+    U256([u8; 32]),
+}
+
+/// The decimal a 256-bit literal names.
+///
+/// Rendered rather than hexed wherever a person reads it: a stored rate
+/// is a number somebody chose, and thirty-two bytes of hex says nothing
+/// about which one.
+#[must_use]
+pub fn u256_decimal(scaled: [u8; 32]) -> String {
+    // Long division by ten over a little-endian byte string, which is
+    // the only way to a decimal from a width no integer type holds.
+    let mut digits = [0u32; 78];
+    let mut used = 1;
+    for byte in scaled.iter().rev() {
+        let mut carry = u32::from(*byte);
+        for digit in digits.iter_mut().take(used) {
+            let value = *digit * 256 + carry;
+            *digit = value % 10;
+            carry = value / 10;
+        }
+        while carry > 0 {
+            digits[used] = carry % 10;
+            carry /= 10;
+            used += 1;
+        }
+    }
+    digits[..used]
+        .iter()
+        .rev()
+        .filter_map(|digit| char::from_digit(*digit, 10))
+        .collect()
 }
 
 impl Value {
@@ -413,6 +456,7 @@ impl Value {
             Self::Tuple(_) => "tuple",
             Self::List(_) => "list",
             Self::Bool(_) => "bool",
+            Self::U256(_) => "u256",
         }
     }
 

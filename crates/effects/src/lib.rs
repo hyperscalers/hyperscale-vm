@@ -111,5 +111,5 @@ pub use types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, NativeRole,
     PACKAGE_SLOT_BASE, ShardId, SlotId, Value, child_key, collection_id, component_address,
     config_hash, granting_resource_address, native_address, order_key, package_address,
-    package_slot, principal_address, resource_address,
+    package_slot, principal_address, resource_address, u256_decimal,
 };

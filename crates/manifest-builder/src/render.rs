@@ -32,7 +32,7 @@ use std::fmt::Write as _;
 
 use hyperscale_vm_effects::{
     ChainRecords, Constraint, EdgeContent, EdgeRef, GraphArg, Hasher, ManifestGraph, ParamType,
-    Value,
+    Value, u256_decimal,
 };
 use hyperscale_vm_types::{Address, ResourceAddr, SubstateKey, TextError};
 
@@ -242,6 +242,10 @@ impl Printer<'_> {
             Value::Address(address) => format!("@{}", self.address(*address)?),
             Value::Key(key) => self.key(key)?,
             Value::Bool(flag) => flag.to_string(),
+            // The scaled integer, not its bytes: a person checking what
+            // they are signing can recognise a rate and cannot recognise
+            // thirty-two bytes of it.
+            Value::U256(scaled) => u256_decimal(*scaled),
             // Never a manifest literal — a bucket arrives as an edge — so
             // this is only reachable through the escape hatch that lets a
             // caller write any value.

@@ -23,7 +23,7 @@ pub use hyperscale_vm_types::{
     Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 
-use crate::num::{Quantity, UnitFixed};
+use crate::num::{Fixed, Quantity, UnitFixed};
 use crate::state::Table;
 
 /// The record an instance of `C` derives from, under `config` and
@@ -224,6 +224,20 @@ impl IntoSlot for UnitFixed {
 impl IntoSlot for Quantity {
     fn into_slot(self) -> Value {
         Value::U128(self.subunits())
+    }
+}
+
+/// A stored rate fills a slot as the scaled integer it carries, at the
+/// width that integer has.
+///
+/// The same type a rate is *stored* in, because a rate fixed at creation
+/// and a rate a market carries forward are the same object with
+/// different lifetimes — and a configuration type of its own would be a
+/// second scale, a lift between them, and a choice an author should not
+/// have to make.
+impl<A, B> IntoSlot for Fixed<A, B> {
+    fn into_slot(self) -> Value {
+        Value::U256(self.to_le_bytes())
     }
 }
 

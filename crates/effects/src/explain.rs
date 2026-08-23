@@ -42,7 +42,7 @@ use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotSha
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
 use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleExpr, RuleLeaf};
 use crate::signature::{AbiParam, Issuance, MethodSignature, Totality};
-use crate::types::{EdgeContent, SlotId, Value};
+use crate::types::{EdgeContent, SlotId, Value, u256_decimal};
 use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 
 /// The whole package: its tables, then every method it declares.
@@ -591,6 +591,9 @@ fn value_text(value: &Value) -> String {
         Value::U64(number) => number.to_string(),
         Value::U128(u128::MAX) => "u128::MAX".to_owned(),
         Value::U128(number) => number.to_string(),
+        // A stored rate reads as the scaled integer it is: the scale is
+        // the type's and a reader who knows the type knows it.
+        Value::U256(scaled) => u256_decimal(*scaled),
         Value::Bytes(raw) => bytes(raw),
         Value::Address(address) => address_text(*address),
         Value::Key(SubstateKey { owner, local }) => {

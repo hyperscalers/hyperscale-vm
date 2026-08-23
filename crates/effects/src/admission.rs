@@ -1696,6 +1696,10 @@ fn guest_arg(value: &Value) -> Option<CallArg> {
     match value {
         Value::U64(scalar) => Some(CallArg::U64(*scalar)),
         Value::U128(amount) => Some(CallArg::Bytes(amount.to_le_bytes().to_vec())),
+        // The same framing an amount crosses in, at twice the width: a
+        // stored rate is a number the guest decodes, not a shape the
+        // boundary knows about.
+        Value::U256(scaled) => Some(CallArg::Bytes(scaled.to_vec())),
         Value::Address(address) => Some(CallArg::Address(*address)),
         Value::Bytes(bytes) => Some(CallArg::Bytes(bytes.clone())),
         Value::List(elements) => {
