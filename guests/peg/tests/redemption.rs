@@ -181,3 +181,40 @@ fn a_quote_is_what_a_redemption_pays(chain: Chain) {
     redeem(&mut chain, window, 1_000);
     assert_eq!(chain.balance(HOLDER, RESERVE), 950, "and it was not a guess");
 }
+
+/// And the agreement holds where the answer is a refusal.
+///
+/// A window that quoted a number outside its band would be naming a price
+/// it then declines to honour, which is worse than saying nothing: a
+/// redeemer asks before signing precisely so the signing is not the
+/// surprise.
+#[hyperscale_vm_testing::test]
+fn a_quote_outside_the_band_declines_as_a_redemption_would(chain: Chain) {
+    let (mut chain, window) = window(chain);
+    post(&mut chain, window, ONE / 5, Sign::Positive);
+
+    let quoted = chain.transact(HOLDER, |b| window.quote(b, 1_000u128));
+    assert_eq!(quoted.declined_as(), Some("outside-band"));
+
+    let redeemed = chain.transact(HOLDER, |b| {
+        let signed_in = account::authorize(b, HOLDER)?;
+        let funds = account::withdraw(b, signed_in, STABLE, 1_000)?;
+        let back = window.redeem(b, funds)?;
+        account::deposit(b, HOLDER, back)
+    });
+    assert_eq!(redeemed.declined_as(), quoted.declined_as());
+}
+
+/// A redemption worth no reserve at all is refused, and quoted as
+/// refused.
+///
+/// At parity, which is where the refusal is about the size rather than
+/// the price: within the band there is no deviation that makes a real
+/// amount fetch nothing.
+#[hyperscale_vm_testing::test]
+fn a_redemption_worth_no_reserve_is_refused(chain: Chain) {
+    let (mut chain, window) = window(chain);
+
+    let quoted = chain.transact(HOLDER, |b| window.quote(b, 0u128));
+    assert_eq!(quoted.declined_as(), Some("nothing-redeemed"));
+}

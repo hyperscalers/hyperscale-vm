@@ -21,10 +21,10 @@ post-deviation(u256) — infallible
       1  write self.deviation
   exports  handle for clause 1, arg0
 
-quote(u128) — infallible, answers
+quote(u128) — fallible, answers
   declares
       0  read self.deviation
-  exports  handle for clause 0, arg0
+  exports  handle for clause 0, arg0, config.band
 
 redeem(bucket) — fallible
   takes    arg0 carrying config.stable
@@ -33,4 +33,4 @@ redeem(bucket) — fallible
       1  delta self.vault[config.stable] holding config.stable
       2  delta self.vault[config.reserve] holding config.reserve
   yields   edge 0 = config.reserve
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, config.band, edge arg0
+  exports  handle for clause 0, handle for clause 1, handle for clause 2, edge arg0, config.band

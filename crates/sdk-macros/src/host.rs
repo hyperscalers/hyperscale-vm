@@ -30,7 +30,7 @@ pub fn arm(
     lowered: &Lowered,
     params: &[(String, syn::Type)],
     config: &[(String, syn::Type)],
-    declines: bool,
+    declines: Option<&syn::Type>,
 ) -> TokenStream {
     let mut prologue = Vec::new();
 
@@ -131,16 +131,9 @@ pub fn arm(
     });
     // The author's body runs in a closure so an early `return` on the
     // error arm is the method's own refusal rather than the dispatch's.
-    let outcome = if declines {
-        quote!(
-            match (|| { #body ::core::result::Result::Ok(#produced) })() {
-                ::core::result::Result::Ok(__produced) => __produced,
-                ::core::result::Result::Err(__code) => {
-                    ::hyperscale_vm_sdk::host::Invoked::Declined(__code as u32)
-                }
-            }
-        )
-    } else if edges.is_empty() && lowered.answer.is_none() {
+    // The closure names the arm, because a body that only ever propagates
+    // one — `?` on a helper that made the judgment — never does.
+    let running = if edges.is_empty() && lowered.answer.is_none() {
         // A body that yields nothing still runs in a closure of its own,
         // so a bare `return` leaves the method rather than the dispatch —
         // which is what it does in the guest, where each export is its
@@ -152,6 +145,20 @@ pub fn arm(
     } else {
         quote!((|| { #body #produced })())
     };
+    let outcome = declines.map_or(running, |arm| {
+        quote!({
+            let __declined = || -> ::core::result::Result<_, #arm> {
+                #body
+                ::core::result::Result::Ok(#produced)
+            };
+            match __declined() {
+                ::core::result::Result::Ok(__produced) => __produced,
+                ::core::result::Result::Err(__code) => {
+                    ::hyperscale_vm_sdk::host::Invoked::Declined(__code as u32)
+                }
+            }
+        })
+    });
 
     quote!(#published => {
         #(#prologue)*

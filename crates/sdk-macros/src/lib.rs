@@ -1361,14 +1361,32 @@ fn answered(method: &syn::ImplItemFn, at: usize) -> Option<syn::Type> {
     }
 }
 
-/// Whether a method's return type carries an error arm, which is the whole
-/// of what its totality mark is.
-fn declines(method: &syn::ImplItemFn) -> bool {
+/// The error arm a method's return type carries, which is the whole of
+/// what its totality mark is judged against.
+///
+/// The type rather than the fact of one, because both halves run the
+/// author's body inside a closure and a body that only ever propagates —
+/// `?` on a helper that made the judgment — never names its own error
+/// anywhere the closure's type could be read off. Annotating the closure
+/// is what keeps that a shape an author may write.
+fn declined_with(method: &syn::ImplItemFn) -> Option<syn::Type> {
     let syn::ReturnType::Type(_, ty) = &method.sig.output else {
-        return false;
+        return None;
     };
-    matches!(&**ty, syn::Type::Path(path)
-        if path.path.segments.last().is_some_and(|s| s.ident == "Result"))
+    let syn::Type::Path(path) = &**ty else {
+        return None;
+    };
+    let last = path.path.segments.last()?;
+    if last.ident != "Result" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    match args.args.iter().nth(1)? {
+        syn::GenericArgument::Type(arm) => Some(arm.clone()),
+        _ => None,
+    }
 }
 
 /// One public method, lowered to its declaration and its two executing
@@ -1427,7 +1445,7 @@ fn lower_method(
         })?;
     check_gate_shape(&gate, &lowered, method)?;
 
-    let declining = declines(method);
+    let declining = declined_with(method);
     let claim = total_attr(method);
     // What the mark promises is that a caller committing against this
     // method has nothing to hear back. Three things could break that, and
@@ -1439,7 +1457,7 @@ fn lower_method(
     // an author from meeting them later as a metadata error about a
     // package rather than as a mistake on a line.
     if let Some(claim) = claim {
-        if declining {
+        if declining.is_some() {
             return Err(syn::Error::new_spanned(
                 claim,
                 "a method carrying an error arm can refuse, and a total method cannot: the \
@@ -1458,7 +1476,7 @@ fn lower_method(
     let closure = emit::declaration(
         &lowered,
         &gate_calls(&gate, &lowered),
-        declining,
+        declining.is_some(),
         total,
         &grant_registrations(declared.resources),
     );
@@ -1467,8 +1485,20 @@ fn lower_method(
     );
     let name = published.clone();
 
-    let guest = guest::method(&name, &lowered, &params, declared.config_fields, declining);
-    let host = host::arm(&name, &lowered, &params, declared.config_fields, declining);
+    let guest = guest::method(
+        &name,
+        &lowered,
+        &params,
+        declared.config_fields,
+        declining.as_ref(),
+    );
+    let host = host::arm(
+        &name,
+        &lowered,
+        &params,
+        declared.config_fields,
+        declining.as_ref(),
+    );
     let client = client::Method {
         rust: method.sig.ident.clone(),
         published,

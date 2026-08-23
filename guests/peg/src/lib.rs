@@ -109,17 +109,7 @@ pub mod peg {
         /// Hand in stable, take reserve at parity plus the deviation.
         pub fn redeem(&mut self, funds: Bucket) -> Result<Bucket, Error> {
             let terms = self.config();
-            let (distance, way) = self.deviation.get().split();
-            if distance > band(terms.band) {
-                return Err(Error::OutsideBand);
-            }
-
-            let handed_in = funds.quantity();
-            let payout = payout(handed_in, distance, way);
-            if payout.is_zero() {
-                return Err(Error::NothingRedeemed);
-            }
-
+            let payout = quoted(funds.quantity(), self.deviation.get(), terms.band)?;
             self.vault(terms.stable).put(funds);
             Ok(self.vault(terms.reserve).take(payout))
         }
@@ -131,10 +121,37 @@ pub mod peg {
         /// crossing back out would make every reader agree with this
         /// package about a sign convention — and the number they wanted
         /// is this one.
-        pub fn quote(&self, amount: Quantity) -> Quantity {
-            let (distance, way) = self.deviation.get().split();
-            payout(amount, distance, way)
+        ///
+        /// Fallible on the same terms a redemption is, because it is one:
+        /// a window that quoted a number it would then decline to honour
+        /// would be answering a question nobody asked.
+        pub fn quote(&self, amount: Quantity) -> Result<Quantity, Error> {
+            let payout = quoted(amount, self.deviation.get(), self.config().band)?;
+            Ok(payout)
         }
+    }
+
+    /// What `handed_in` fetches at the posted deviation, or the refusal a
+    /// redemption of it would meet.
+    ///
+    /// The whole of the window's judgment in one place, so the quote and
+    /// the redemption cannot come apart: a quote is a redemption with the
+    /// movement left out, and the two agreeing is then a fact about the
+    /// text rather than a thing each body has to remember.
+    fn quoted(
+        handed_in: Quantity,
+        deviation: SignedFixed<Reserve, Stable>,
+        bound: UnitFixed,
+    ) -> Result<Quantity, Error> {
+        let (distance, way) = deviation.split();
+        if distance > band(bound) {
+            return Err(Error::OutsideBand);
+        }
+        let payout = payout(handed_in, distance, way);
+        if payout.is_zero() {
+            return Err(Error::NothingRedeemed);
+        }
+        Ok(payout)
     }
 
     /// What `handed_in` fetches at a deviation of `distance` in the

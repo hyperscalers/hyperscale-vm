@@ -38,20 +38,22 @@ fn rust_name(published: &str) -> syn::Ident {
 /// is judged against at publish; a body that returns `Err` on it aborts
 /// its transaction as a declared refusal rather than as a defect, so the
 /// arm is threaded out through the code the package's error table names.
+/// It is the arm's type rather than the fact of one because the closure
+/// the body runs in is annotated with it.
 #[allow(clippy::too_many_lines)] // one pass: parameters, prologue, body, result
 pub fn method(
     published: &str,
     lowered: &Lowered,
     params: &[(String, syn::Type)],
     config: &[(String, syn::Type)],
-    declines: bool,
+    declines: Option<&syn::Type>,
 ) -> Method {
     let mut export = Export {
         name: published.to_owned(),
         params: Vec::new(),
         outputs: lowered.outputs.len(),
         answers: lowered.answer.is_some(),
-        declines,
+        declines: declines.is_some(),
     };
     let mut signature = Vec::new();
     let mut prologue = Vec::new();
@@ -176,7 +178,7 @@ pub fn method(
         (many, tys) => (quote!((#(#many),*)), quote!((#(#tys),*))),
     };
     let hands_back = !handed.is_empty();
-    let (result, outcome) = match (hands_back, declines) {
+    let (result, outcome) = match (hands_back, declines.is_some()) {
         (true, true) => (
             quote!(::core::result::Result<#handed_type, u32>),
             quote!(::core::result::Result::Ok(#tail)),
@@ -191,28 +193,33 @@ pub fn method(
     // The author's body runs in a closure so an early `return` on the
     // error arm is the method's own refusal rather than the export's, and
     // the code it carries is mapped to the index the package's error table
-    // names in exactly one place.
-    let function = if declines {
-        quote!(
-            fn #name(#(#signature),*) -> #result {
-                #(#prologue)*
-                match (|| { #body #outcome })() {
-                    ::core::result::Result::Ok(__value) => ::core::result::Result::Ok(__value),
-                    ::core::result::Result::Err(__code) => {
-                        ::core::result::Result::Err(__code as u32)
+    // names in exactly one place. The closure names the arm, because a
+    // body that only ever propagates one never does.
+    let function = declines.map_or_else(
+        || {
+            quote!(
+                fn #name(#(#signature),*) -> #result {
+                    #(#prologue)*
+                    #body
+                    #outcome
+                }
+            )
+        },
+        |arm| {
+            quote!(
+                fn #name(#(#signature),*) -> #result {
+                    #(#prologue)*
+                    let __declined = || -> ::core::result::Result<_, #arm> { #body #outcome };
+                    match __declined() {
+                        ::core::result::Result::Ok(__value) => ::core::result::Result::Ok(__value),
+                        ::core::result::Result::Err(__code) => {
+                            ::core::result::Result::Err(__code as u32)
+                        }
                     }
                 }
-            }
-        )
-    } else {
-        quote!(
-            fn #name(#(#signature),*) -> #result {
-                #(#prologue)*
-                #body
-                #outcome
-            }
-        )
-    };
+            )
+        },
+    );
     Method { export, function }
 }
 
