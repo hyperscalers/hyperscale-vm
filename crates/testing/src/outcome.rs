@@ -1,7 +1,8 @@
 //! What one transaction did, as a test asks about it.
 
 use hyperscale_vm_kernel::Receipt;
-use hyperscale_vm_types::{AbortReason, Outcome as KernelOutcome};
+use hyperscale_vm_sdk::hbor::{HborDecode, from_slice};
+use hyperscale_vm_types::{AbortReason, Answer, Outcome as KernelOutcome};
 
 /// The receipt one [`transact`](crate::Chain::transact) produced.
 ///
@@ -94,6 +95,37 @@ impl Outcome {
             .filter(|event| event.event_type == event_type)
             .map(|event| event.payload.as_slice())
             .collect()
+    }
+
+    /// What the calls that answered handed back, in node order.
+    ///
+    /// A method's answer rides the receipt rather than the graph, because
+    /// a value is not an edge and a manifest has nowhere else to put one.
+    /// Empty where nothing the transaction called returns a value.
+    #[must_use]
+    pub fn answers(&self) -> &[Answer] {
+        match &self.receipt.outcome {
+            KernelOutcome::Completed { answers } => answers,
+            _ => &[],
+        }
+    }
+
+    /// The value one call answered with, decoded as `T`.
+    ///
+    /// `node` is the position of the call in the manifest, which is what
+    /// the builder handed back when the call was made.
+    ///
+    /// # Panics
+    ///
+    /// If no node at that index answered, or its bytes are not a `T`.
+    #[must_use]
+    pub fn answer<T: HborDecode>(&self, node: u32) -> T {
+        let answer = self
+            .answers()
+            .iter()
+            .find(|answer| answer.node == node)
+            .unwrap_or_else(|| panic!("node {node} answered nothing"));
+        from_slice(&answer.value).expect("an answer decodes as what the method returned")
     }
 
     /// Panics with the outcome unless the transaction completed.
