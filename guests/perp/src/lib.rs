@@ -39,7 +39,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod perp {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding, UnitFixed, Wide};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding, UnitFixed};
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     /// What the perpetual tracks.
@@ -119,8 +119,8 @@ pub mod perp {
     impl Perp {
         /// Post what one base unit is worth.
         #[requires(oracle)]
-        pub fn post_mark(&mut self, scaled: u128) {
-            self.mark.set(Fixed::from_scaled(Wide::from_u128(scaled)));
+        pub fn post_mark(&mut self, mark: Fixed<Quote, Base>) {
+            self.mark.set(mark);
         }
 
         /// Add one period's funding, with longs paying it.
@@ -130,11 +130,11 @@ pub mod perp {
         /// binds. The rate cannot carry the sign either, so the sign is
         /// in the name.
         #[requires(oracle)]
-        pub fn charge_longs(&mut self, scaled: u128) {
+        pub fn charge_longs(&mut self, rate: Fixed<Quote, Base>) {
             let (carried, negative) = signed_add(
                 self.funding.get(),
                 is_set(self.funding_negative.get()),
-                Fixed::from_scaled(Wide::from_u128(scaled)),
+                rate,
                 false,
             );
             self.funding.set(carried);
@@ -143,11 +143,11 @@ pub mod perp {
 
         /// Add one period's funding, with shorts paying it.
         #[requires(oracle)]
-        pub fn credit_longs(&mut self, scaled: u128) {
+        pub fn credit_longs(&mut self, rate: Fixed<Quote, Base>) {
             let (carried, negative) = signed_add(
                 self.funding.get(),
                 is_set(self.funding_negative.get()),
-                Fixed::from_scaled(Wide::from_u128(scaled)),
+                rate,
                 true,
             );
             self.funding.set(carried);

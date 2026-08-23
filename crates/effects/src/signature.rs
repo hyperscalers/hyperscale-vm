@@ -37,6 +37,17 @@ pub enum ParamType {
     Package,
     /// A resource's address: what an amount is denominated in.
     Resource,
+    /// An unsigned 256-bit integer, little-endian — the width a stored
+    /// rate has.
+    ///
+    /// The kind a rate crosses at. A configuration slot has held one
+    /// since a rate could be configured; a parameter holds one so that
+    /// the number an oracle posts says what it means where it is written,
+    /// rather than being a scaled integer and a comment agreeing.
+    ///
+    /// Appended, like every kind after the first set, because a
+    /// signature's parameter list is encoded by variant order.
+    U256,
     /// A fungible value edge; its resource type is static, its amount
     /// dynamic.
     ///
@@ -91,6 +102,7 @@ impl ParamType {
         match self {
             Self::U64 => "u64",
             Self::U128 => "u128",
+            Self::U256 => "u256",
             Self::Bytes => "bytes",
             Self::Address => "address",
             Self::CallTarget => "call-target",
@@ -129,6 +141,7 @@ impl ParamType {
         match (self, value) {
             (Self::U64, Value::U64(_))
             | (Self::U128, Value::U128(_))
+            | (Self::U256, Value::U256(_))
             | (Self::Bytes, Value::Bytes(_))
             | (Self::Address, Value::Address(_)) => true,
             (Self::CallTarget, Value::Address(address)) => CallTarget::try_from(*address).is_ok(),
@@ -395,6 +408,22 @@ impl MethodSignature {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two integer widths do not stand in for one another.
+    ///
+    /// What a rate parameter is for is that the scale rides the value, so
+    /// a caller handing over the bare number it was scaled from is the
+    /// mistake the kind exists to refuse — and a `u128` position handed a
+    /// rate is the same mistake read the other way.
+    #[test]
+    fn a_rate_parameter_and_an_amount_do_not_admit_each_others_literals() {
+        let rate = Value::U256([7; 32]);
+        let amount = Value::U128(7);
+        assert!(ParamType::U256.admits(&rate));
+        assert!(ParamType::U128.admits(&amount));
+        assert!(!ParamType::U256.admits(&amount), "a rate is not its scale");
+        assert!(!ParamType::U128.admits(&rate), "and an amount is not one");
+    }
 
     #[test]
     fn an_ids_parameter_admits_only_a_bounded_duplicate_free_id_list() {

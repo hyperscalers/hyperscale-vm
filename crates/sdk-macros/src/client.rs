@@ -184,6 +184,15 @@ fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
     if is_named(ty, "Quantity") || is_named(ty, "OrderKey") {
         return (quote!(#name: u128), quote!(#name));
     }
+    // A stored rate binds as its scaled integer, at the width a rate has,
+    // and the caller writes the rate — so the scale is the type's and
+    // never a number a call site has to agree with.
+    if is_named(ty, "Fixed") {
+        return (
+            quote!(#name: #ty),
+            quote!(#value::U256(#name.to_le_bytes())),
+        );
+    }
     if is_named(ty, "Rule") {
         let rule = sdk("Rule");
         return (quote!(#name: #rule), quote!(#name));
@@ -441,16 +450,44 @@ fn issued(resources: &[Resource], config: Option<&syn::Ident>) -> Vec<TokenStrea
         .collect()
 }
 
+/// Everything the calling surface is derived from, which is everything
+/// the package already declared.
+///
+/// A struct rather than an argument list because these are one package's
+/// facts read from one module, and a caller assembling them positionally
+/// would be restating an order that means nothing.
+pub struct Surface<'a> {
+    /// The state struct's name, which the handle takes.
+    pub handle: &'a syn::Ident,
+    /// The configuration struct, where the package has one.
+    pub config: Option<&'a syn::Ident>,
+    /// Its fields, in the order that fixes their slots.
+    pub config_fields: &'a [(String, syn::Type)],
+    /// Each state field's slot, for the constants a consumer keys by.
+    pub fields: &'a BTreeMap<String, u16>,
+    /// Which addresses the package's instances sit at.
+    pub serves: Serves,
+    /// The methods to wrap.
+    pub methods: &'a [&'a Method],
+    /// The resources the package issues.
+    pub resources: &'a [Resource],
+    /// The module's own imports, so a wrapper can name a parameter's
+    /// type the way the method declaring it does.
+    pub imports: &'a [syn::ItemUse],
+}
+
 /// The package's calling surface.
-pub fn module(
-    handle: &syn::Ident,
-    config: Option<&syn::Ident>,
-    config_fields: &[(String, syn::Type)],
-    fields: &BTreeMap<String, u16>,
-    serves: Serves,
-    methods: &[&Method],
-    resources: &[Resource],
-) -> TokenStream2 {
+pub fn module(surface: &Surface<'_>) -> TokenStream2 {
+    let &Surface {
+        handle,
+        config,
+        config_fields,
+        fields,
+        serves,
+        methods,
+        resources,
+        imports,
+    } = surface;
     let slots = slots(fields);
     let issued = issued(resources, config);
     // The seal is composed rather than called: what a bring-up carries
@@ -567,6 +604,15 @@ pub fn module(
         /// gate are all facts the declaration already carries — and one
         /// constant per state field, at the slot the numbering gave it.
         pub mod client {
+            // The module's own imports, so a wrapper names a parameter's
+            // type the way the method that declared it does. Without
+            // them a signature could only speak in what a manifest binds
+            // — and a rate would arrive as thirty-two bytes rather than
+            // as a rate.
+            #[allow(unused_imports)]
+            use super::*;
+            #(#[allow(unused_imports)] #imports)*
+
             #(#slots)*
 
             #surface

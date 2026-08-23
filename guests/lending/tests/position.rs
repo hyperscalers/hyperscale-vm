@@ -40,12 +40,17 @@ fn market(mut chain: Chain) -> (Chain, Lending) {
     (chain, market)
 }
 
+/// A rate at `scaled`, which is what the slot the price lands in holds.
+fn rate<A, B>(scaled: u128) -> Fixed<A, B> {
+    Fixed::from_scaled(Wide::from_u128(scaled))
+}
+
 /// Post a price for each side: collateral at two, debt at one.
 fn price(chain: &mut Chain, market: Lending, collateral: u128, debt: u128) {
     chain
         .transact(ORACLE, |b| {
             let signed_in = account::authorize(b, ORACLE)?;
-            market.post_price(b, signed_in, collateral, debt)
+            market.post_price(b, signed_in, rate(collateral), rate(debt))
         })
         .expect_completed();
 }
@@ -124,7 +129,7 @@ fn only_the_oracle_may_post_a_price(chain: Chain) {
 
     let outcome = chain.transact(KEEPER, |b| {
         let signed_in = account::authorize(b, KEEPER)?;
-        market.post_price(b, signed_in, ONE, ONE)
+        market.post_price(b, signed_in, rate(ONE), rate(ONE))
     });
 
     assert!(

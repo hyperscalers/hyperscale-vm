@@ -39,7 +39,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod lending {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding, UnitFixed, Wide};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding, UnitFixed};
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     // The dimensions. None of these is a value — they name what a rate
@@ -123,17 +123,19 @@ pub mod lending {
         /// could update one alone would have a window where the pair
         /// disagrees about when it was priced.
         ///
-        /// The prices arrive as scaled integers rather than as the rates
-        /// they become. A configuration slot holds a rate at its own
-        /// width; a *parameter* does not, so the lift is here — which is
-        /// the one place left in this market where a number crosses
-        /// without saying what it means.
+        /// Each price is a rate where it is written, so what the oracle
+        /// signs states what it means: the numeraire a collateral subunit
+        /// is worth, and the numeraire a debt subunit is worth. Neither
+        /// is a scaled integer a caller and this body have to agree about
+        /// the scale of.
         #[requires(oracle)]
-        pub fn post_price(&mut self, collateral: u128, debt: u128) {
-            self.collateral_price
-                .set(Fixed::from_scaled(Wide::from_u128(collateral)));
-            self.debt_price
-                .set(Fixed::from_scaled(Wide::from_u128(debt)));
+        pub fn post_price(
+            &mut self,
+            collateral: Fixed<Numeraire, Collateral>,
+            debt: Fixed<Numeraire, Debt>,
+        ) {
+            self.collateral_price.set(collateral);
+            self.debt_price.set(debt);
         }
 
         /// Carry the debt index forward to `now`.

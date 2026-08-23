@@ -1,6 +1,6 @@
 //! The position's own tests, against the real kernel.
 
-use hyperscale_vm_sdk::state::UnitFixed;
+use hyperscale_vm_sdk::state::{Fixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
     Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
 };
@@ -33,11 +33,16 @@ fn market(mut chain: Chain, long: u64) -> (Chain, Perp) {
     (chain, market)
 }
 
+/// A rate at `scaled`, which is what the cell the mark lands in holds.
+fn rate<A, B>(scaled: u128) -> Fixed<A, B> {
+    Fixed::from_scaled(Wide::from_u128(scaled))
+}
+
 fn mark(chain: &mut Chain, market: Perp, scaled: u128) {
     chain
         .transact(ORACLE, |b| {
             let signed_in = account::authorize(b, ORACLE)?;
-            market.post_mark(b, signed_in, scaled)
+            market.post_mark(b, signed_in, rate(scaled))
         })
         .expect_completed();
 }
@@ -113,9 +118,9 @@ fn funding_that_flips_sign_settles_the_net(chain: Chain) {
     chain
         .transact(ORACLE, |b| {
             let signed_in = account::authorize(b, ORACLE)?;
-            market.charge_longs(b, signed_in, ONE / 10)?;
+            market.charge_longs(b, signed_in, rate(ONE / 10))?;
             let signed_in = account::authorize(b, ORACLE)?;
-            market.credit_longs(b, signed_in, 3 * ONE / 10)
+            market.credit_longs(b, signed_in, rate(3 * ONE / 10))
         })
         .expect_completed();
     close(&mut chain, market);
@@ -130,7 +135,7 @@ fn only_the_oracle_may_mark(chain: Chain) {
 
     let outcome = chain.transact(KEEPER, |b| {
         let signed_in = account::authorize(b, KEEPER)?;
-        market.post_mark(b, signed_in, ONE)
+        market.post_mark(b, signed_in, rate::<perp_guest::perp::Quote, perp_guest::perp::Base>(ONE))
     });
 
     assert!(!outcome.completed(), "a mark nobody may post does not land");

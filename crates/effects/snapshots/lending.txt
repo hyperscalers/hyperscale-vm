@@ -64,7 +64,7 @@ liquidate(u64) — fallible
   yields   edge 0 = config.collateral
   exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, arg0, config.liquidation_threshold
 
-post-price(u128, u128) — infallible
+post-price(u256, u256) — infallible
   declares
       0  requires claim config.oracle
       1  write self.collateral_price

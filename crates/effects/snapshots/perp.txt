@@ -20,7 +20,7 @@ errors
       3  below-maintenance
       4  still-covered
 
-charge-longs(u128) — infallible
+charge-longs(u256) — infallible
   declares
       0  requires claim config.oracle
       1  write self.funding
@@ -41,7 +41,7 @@ close() — fallible
   yields   edge 0 = config.collateral
   exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, handle for clause 6, handle for clause 7, handle for clause 8, config.long
 
-credit-longs(u128) — infallible
+credit-longs(u256) — infallible
   declares
       0  requires claim config.oracle
       1  write self.funding
@@ -82,7 +82,7 @@ open(bucket, u128) — fallible
       8  write self.entry_funding_negative
   exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, handle for clause 6, handle for clause 7, handle for clause 8, edge arg0, arg1, config.maintenance_margin
 
-post-mark(u128) — infallible
+post-mark(u256) — infallible
   declares
       0  requires claim config.oracle
       1  write self.mark

@@ -454,6 +454,10 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         // A quantity is a `u128` at the boundary: the tag is the
         // guest's and erases here, where a manifest binds a number.
         "u128" | "Quantity" | "OrderKey" => quote!(U128),
+        // A stored rate crosses at its own width, carrying the scale the
+        // type fixes — so an oracle posting one writes a rate rather
+        // than an integer whose meaning lives in a doc comment.
+        "Fixed" => quote!(U256),
         "u64" => quote!(U64),
         "Vec" | "Bytes" => quote!(Bytes),
         "Rule" => quote!(Rule),
@@ -462,8 +466,8 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
             return Err(syn::Error::new(
                 ty.span(),
                 "a contract parameter must be one of `Bucket`, `NfBucket`, `Ids`, \
-                 `Quantity`, `OrderKey`, `u128`, `u64`, `Address`, or bytes — these are \
-                 the kinds a manifest can bind",
+                 `Quantity`, `OrderKey`, `Fixed`, `u128`, `u64`, `Address`, or bytes — \
+                 these are the kinds a manifest can bind",
             ));
         }
     };
@@ -3093,15 +3097,23 @@ fn expand(
         .map(|(name, field)| (name.clone(), field.slot))
         .collect();
     let reading = role.reading();
-    let client = client::module(
-        &state_name,
-        config_name.as_ref(),
-        &config_fields,
-        &slots,
+    let imports: Vec<syn::ItemUse> = items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Use(item) => Some(item.clone()),
+            _ => None,
+        })
+        .collect();
+    let client = client::module(&client::Surface {
+        handle: &state_name,
+        config: config_name.as_ref(),
+        config_fields: &config_fields,
+        fields: &slots,
         serves,
-        &calls,
-        &declared_resources,
-    );
+        methods: &calls,
+        resources: &declared_resources,
+        imports: &imports,
+    });
 
     let declarations = methods.iter().map(|m| &m.declaration);
     let event_table = events.iter().map(|(ident, _)| quote!(.event::<#ident>()));
