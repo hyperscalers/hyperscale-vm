@@ -430,6 +430,40 @@ impl Cellular for u64 {
     }
 }
 
+impl LeafShape for bool {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::ByteArray(1))
+    }
+}
+
+/// One byte, and only ever one of two.
+///
+/// A slot has taken a `bool` since a configuration could hold one, and
+/// nothing could read it back — so an author who wrote the boolean their
+/// contract meant met a type error at the body rather than a kind the
+/// vocabulary declined. What was missing was the cell, not the idea.
+///
+/// # Panics
+///
+/// On a cell holding anything but nothing, zero or one. An unwritten
+/// leaf reads as false, which is the value false rather than a state a
+/// body has to tell apart from it; any other byte was never written
+/// through this impl, and is a defect in state on the same terms a
+/// malformed address is.
+impl Cellular for bool {
+    fn from_cell(cell: &[u8]) -> Self {
+        match cell {
+            [] | [0] => false,
+            [1] => true,
+            other => panic!("a boolean cell holds one of two bytes, not {other:?}"),
+        }
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        vec![u8::from(*self)]
+    }
+}
+
 impl LeafShape for Address {
     fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
         LeafForm::Value(Self::shape(types))
@@ -983,6 +1017,23 @@ impl<T: Record> Cell<Option<T>> {
         unimplemented!("{OFF_HOST}")
     }
 
+    /// End the leaf, which must already hold a value.
+    ///
+    /// The way back from [`Cell::create`], and what makes presence
+    /// usable for a fact that starts and then stops being true — a
+    /// position that closes, a lease that ends, an escrow that settles.
+    /// Without it `create` is a one-way door and a body that wanted to
+    /// say "not open" a second time would have to keep a flag beside the
+    /// leaf and stop asking the declaration.
+    ///
+    /// The leaf is removed rather than emptied, because presence is what
+    /// the declaration reasons about: a cell holding zero bytes is a cell
+    /// that is there, and a `create` after it would still be refused.
+    #[inline(always)]
+    pub fn retire(&mut self) {
+        unimplemented!("{OFF_HOST}")
+    }
+
     /// Declare this leaf read and required absent, and read nothing
     /// from it.
     ///
@@ -1185,6 +1236,15 @@ impl<T: Record> Slot<Option<T>> {
     #[inline(always)]
     pub fn create(&mut self, value: T) {
         self.set(Some(value));
+    }
+
+    /// End a leaf the declaration required to be there.
+    #[inline(always)]
+    pub fn retire(&mut self) {
+        #[cfg(component)]
+        return crate::guest::cell_clear(self.handle);
+        #[cfg(not(component))]
+        return host::cell_clear(self.handle);
     }
 
     /// The value in a leaf the declaration required to be there.

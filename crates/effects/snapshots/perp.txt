@@ -1,12 +1,8 @@
 state
      16  mark — one leaf, holding [u8; 32]
-     17  funding — one leaf, holding [u8; 32]
-     18  funding_negative — one leaf, holding u64
-     19  size — one leaf, holding u128
-     20  margin — one leaf, holding u128
-     21  entry — one leaf, holding [u8; 32]
-     22  entry_funding — one leaf, holding [u8; 32]
-     23  entry_funding_negative — one leaf, holding u64
+     17  funding_charged — one leaf, holding [u8; 32]
+     18  funding_credited — one leaf, holding [u8; 32]
+     19  position — one leaf, holding position
 config
       0  collateral
       1  oracle
@@ -15,38 +11,34 @@ config
       4  long
 errors
       0  mark-unset
-      1  already-open
-      2  not-open
-      3  below-maintenance
-      4  still-covered
+      1  empty-position
+      2  below-maintenance
+      3  still-covered
+types
+  position = { size: u128, margin: u128, entry: [u8; 32], entry_charged: [u8; 32], entry_credited: [u8; 32] }
 
 charge-longs(u256) — infallible
   declares
       0  requires claim config.oracle
-      1  write self.funding
-      2  write self.funding_negative
-  exports  handle for clause 1, handle for clause 2, arg0
+      1  write self.funding_charged
+  exports  handle for clause 1, arg0
 
-close() — fallible
+close() — infallible
   declares
       0  write self.vault[config.collateral] holding config.collateral
-      1  write self.margin
-      2  write self.size
+      1  requires self.position is present
+      2  write self.position
       3  read self.mark
-      4  read self.entry
-      5  read self.funding
-      6  read self.funding_negative
-      7  read self.entry_funding
-      8  read self.entry_funding_negative
+      4  read self.funding_charged
+      5  read self.funding_credited
   yields   edge 0 = config.collateral
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, handle for clause 6, handle for clause 7, handle for clause 8, config.long
+  exports  handle for clause 0, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, config.long
 
 credit-longs(u256) — infallible
   declares
       0  requires claim config.oracle
-      1  write self.funding
-      2  write self.funding_negative
-  exports  handle for clause 1, handle for clause 2, arg0
+      1  write self.funding_credited
+  exports  handle for clause 1, arg0
 
 instantiate() — infallible
   declares
@@ -57,30 +49,24 @@ instantiate() — infallible
 liquidate() — fallible
   declares
       0  write self.vault[config.collateral] holding config.collateral
-      1  write self.margin
-      2  write self.size
+      1  requires self.position is present
+      2  write self.position
       3  read self.mark
-      4  read self.entry
-      5  read self.funding
-      6  read self.funding_negative
-      7  read self.entry_funding
-      8  read self.entry_funding_negative
+      4  read self.funding_charged
+      5  read self.funding_credited
   yields   edge 0 = config.collateral
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, handle for clause 6, handle for clause 7, handle for clause 8, config.long, config.maintenance_margin, config.liquidation_bonus
+  exports  handle for clause 0, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, config.long, config.maintenance_margin, config.liquidation_bonus
 
 open(bucket, u128) — fallible
   takes    arg0 carrying config.collateral
   declares
-      0  delta self.vault[config.collateral] holding config.collateral
-      1  write self.size
-      2  read self.mark
-      3  write self.margin
-      4  write self.entry
-      5  read self.funding
-      6  write self.entry_funding
-      7  read self.funding_negative
-      8  write self.entry_funding_negative
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, handle for clause 6, handle for clause 7, handle for clause 8, edge arg0, arg1, config.maintenance_margin
+      0  read self.mark
+      1  read self.funding_charged
+      2  read self.funding_credited
+      3  delta self.vault[config.collateral] holding config.collateral
+      4  requires self.position is absent
+      5  write self.position
+  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 5, edge arg0, arg1, config.maintenance_margin
 
 post-mark(u256) — infallible
   declares

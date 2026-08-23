@@ -1,31 +1,35 @@
 //! A perpetual position: margin posted against a size, marked to an
 //! oracle, and charged funding for as long as it is held.
 //!
-//! # What funding is, and why it is cumulative
+//! # What funding is, and why it is two counters
 //!
 //! A perpetual has no expiry, so nothing drags its price back to the
 //! thing it tracks except a payment between the two sides. When the
 //! perpetual trades above the index, longs pay shorts; when it trades
-//! below, shorts pay longs. The rate flips sign with the basis, and it
-//! does so continually.
+//! below, shorts pay longs. The payment flips direction with the basis,
+//! and it does so continually.
 //!
 //! Charging each position as the rate is posted would be work
-//! proportional to how many positions exist, so the market carries one
-//! cumulative number — quote per base, summed over every period — and a
-//! position records where that number stood when it opened. What it owes
-//! is its size times the distance the number has travelled since. That
-//! distance is signed, because the number moves both ways.
+//! proportional to how many positions exist, so the market carries the
+//! figure forward and a position records where it stood when the position
+//! opened. What it owes is its size times the distance travelled since.
 //!
-//! # The sign is held by hand
+//! That distance is signed, and the market holds it as **two monotone
+//! counters** rather than as one signed figure: everything charged to
+//! longs, and everything credited to them. Each is only ever added to, so
+//! a position's share of either is a counter less a snapshot of itself —
+//! total by construction, with no underflow to guard.
 //!
-//! `Fixed` is unsigned, so every signed quantity here is a magnitude and
-//! a `bool` beside it, and every operation over one is a free function
-//! below rather than an operator. `signed_add` is thirty lines that a
-//! signed stored rate would make disappear.
+//! The reason is rounding, not storage. What a position pays should round
+//! up and what it receives should round down, both in the market's
+//! favour. A single netted figure cannot say that: by the time the two
+//! directions are one number they are indistinguishable, and the one
+//! conversion left has to guess. Two counters keep them apart all the way
+//! to the two conversions that need them apart.
 //!
-//! It is written this way deliberately. The question of whether the
-//! vocabulary should carry a signed rate is answered by writing the
-//! contract that wants one and reading what it cost, not by assuming.
+//! A *signed* rate is the right shape for a value somebody **sets** — see
+//! `guests/peg`, where an oracle posts one. It is the wrong shape for one
+//! that accumulates.
 //!
 //! # What this deliberately is not
 //!
@@ -34,6 +38,12 @@
 //! of every trade, which is a market maker's book rather than an
 //! exchange's — and it is enough to make the arithmetic real, which is
 //! what this is for.
+//!
+//! Nothing comes back to the trader on a liquidation. What the keeper
+//! does not take stays with the market, because there is no insurance
+//! fund for it to reach and no second side to owe it. A real venue
+//! returns the residual, and a reader should not take this one for a
+//! model of how.
 
 use hyperscale_vm_sdk::blueprint;
 
@@ -58,18 +68,12 @@ pub mod perp {
         maintenance_margin: UnitFixed,
         /// What a liquidator takes of what it seizes.
         liquidation_bonus: UnitFixed,
-        /// One where the position this market holds is long.
+        /// Whether the position this market holds is long.
         ///
-        /// Creation-fixed rather than stated per call, because a boolean
-        /// is not a kind a manifest binds — the only one that crosses
-        /// into a guest is a clause's own verdict. And an integer rather
-        /// than a boolean even here, because a configured `bool` reaches
-        /// the *declaration* and never the body: what a slot may hold and
-        /// what a body may read are not the same set.
-        ///
-        /// A side chosen at creation is a market that is one side of the
-        /// trade, which is what a single-position market is anyway.
-        long: u64,
+        /// Creation-fixed rather than stated per call: a side chosen at
+        /// creation is a market that is one side of the trade, which is
+        /// what a single-position market is anyway.
+        long: bool,
     }
 
     /// What an entry point declines with.
@@ -77,43 +81,49 @@ pub mod perp {
     enum Error {
         /// No mark has been posted, so nothing can be valued.
         MarkUnset,
-        /// A position is already open, and this market holds one.
-        AlreadyOpen,
-        /// No position is open.
-        NotOpen,
+        /// A position of no size, which is not a position.
+        EmptyPosition,
         /// The margin posted does not cover the maintenance requirement.
         BelowMaintenance,
         /// The position still covers its requirement.
         StillCovered,
     }
 
-    #[state]
-    struct Perp {
-        /// What one base unit is worth, as the oracle last said.
-        mark: Cell<Fixed<Quote, Base>>,
-        /// Cumulative funding per base since the market opened, as a
-        /// magnitude.
-        funding: Cell<Fixed<Quote, Base>>,
-        /// Whether that cumulative figure is negative: one for yes.
-        ///
-        /// An integer because a sign has nowhere better to go. A stored
-        /// rate cannot carry one, and `bool` is not a kind a cell holds,
-        /// so the flag is a number whose two meaningful values are a
-        /// convention this guest keeps with itself.
-        funding_negative: Cell<u64>,
-        /// The open position's size, in base.
-        size: Cell<Quantity>,
+    /// What one open position is.
+    ///
+    /// One record rather than a leaf per field, so that "is a position
+    /// open" is the leaf's presence rather than a magnitude a body reads.
+    /// A size of zero used to answer that question, which made a position
+    /// of no size indistinguishable from no position — and the margin
+    /// posted beside it unreachable.
+    #[record]
+    struct Position {
+        /// Its size, in base.
+        size: Quantity,
         /// What it posted as margin.
         ///
         /// Recorded rather than read off the vault, because the vault is
         /// also the market's own book — it is the other side of the
         /// trade and holds what it needs to pay a winner with.
-        margin: Cell<Quantity>,
+        margin: Quantity,
         /// The mark it opened at.
-        entry: Cell<Fixed<Quote, Base>>,
-        /// Where cumulative funding stood when it opened, and its sign.
-        entry_funding: Cell<Fixed<Quote, Base>>,
-        entry_funding_negative: Cell<u64>,
+        entry: Fixed<Quote, Base>,
+        /// Where the charged counter stood when it opened.
+        entry_charged: Fixed<Quote, Base>,
+        /// And the credited one.
+        entry_credited: Fixed<Quote, Base>,
+    }
+
+    #[state]
+    struct Perp {
+        /// What one base unit is worth, as the oracle last said.
+        mark: Cell<Fixed<Quote, Base>>,
+        /// Everything charged to longs since the market opened.
+        funding_charged: Cell<Fixed<Quote, Base>>,
+        /// Everything credited to them.
+        funding_credited: Cell<Fixed<Quote, Base>>,
+        /// The open position, where there is one.
+        position: Cell<Option<Position>>,
     }
 
     impl Perp {
@@ -125,51 +135,39 @@ pub mod perp {
 
         /// Add one period's funding, with longs paying it.
         ///
-        /// Two methods rather than one taking a direction, because the
-        /// direction is a boolean and a boolean is not a kind a manifest
-        /// binds. The rate cannot carry the sign either, so the sign is
-        /// in the name.
+        /// Two methods rather than one taking a direction, and now for a
+        /// reason rather than for want of one: they write two different
+        /// counters, which is what keeps the two directions roundable
+        /// apart.
         #[requires(oracle)]
         pub fn charge_longs(&mut self, rate: Fixed<Quote, Base>) {
-            let (carried, negative) = signed_add(
-                self.funding.get(),
-                is_set(self.funding_negative.get()),
-                rate,
-                false,
-            );
-            self.funding.set(carried);
-            self.funding_negative.set(flag(negative));
+            self.funding_charged.set(self.funding_charged.get() + rate);
         }
 
         /// Add one period's funding, with shorts paying it.
         #[requires(oracle)]
         pub fn credit_longs(&mut self, rate: Fixed<Quote, Base>) {
-            let (carried, negative) = signed_add(
-                self.funding.get(),
-                is_set(self.funding_negative.get()),
-                rate,
-                true,
-            );
-            self.funding.set(carried);
-            self.funding_negative.set(flag(negative));
+            self.funding_credited
+                .set(self.funding_credited.get() + rate);
         }
 
         /// Open a position of `size`, posting `funds` as margin.
+        ///
+        /// A market already holding one refuses at admission rather than
+        /// here: the record's leaf must be absent for this to run, which
+        /// is a fact the declaration states and no body has to check.
         pub fn open(&mut self, funds: Bucket, size: Quantity) -> Result<(), Error> {
             let collateral = self.config().collateral;
             let maintenance = self.config().maintenance_margin;
-            let mut vault = self.vault(collateral);
             let posted = funds.quantity();
-            vault.put(funds);
-
-            if !self.size.get().is_zero() {
-                return Err(Error::AlreadyOpen);
-            }
             let mark = self.mark.get();
+
+            if size.is_zero() {
+                return Err(Error::EmptyPosition);
+            }
             if mark.is_zero() {
                 return Err(Error::MarkUnset);
             }
-
             // A position opens covered or it does not open: the margin
             // has to clear the same bar it will later be liquidated
             // against.
@@ -178,69 +176,39 @@ pub mod perp {
                 return Err(Error::BelowMaintenance);
             }
 
-            self.size.set(size);
-            self.margin.set(posted);
-            self.entry.set(mark);
-            self.entry_funding.set(self.funding.get());
-            self.entry_funding_negative.set(self.funding_negative.get());
+            let entry_charged = self.funding_charged.get();
+            let entry_credited = self.funding_credited.get();
+            self.vault(collateral).put(funds);
+            self.position.create(Position {
+                size,
+                margin: posted,
+                entry: mark,
+                entry_charged,
+                entry_credited,
+            });
             Ok(())
         }
 
         /// Close the position and take what it is worth.
-        pub fn close(&mut self) -> Result<Bucket, Error> {
+        pub fn close(&mut self) -> Bucket {
             let collateral = self.config().collateral;
+            let long = self.config().long;
             let mut vault = self.vault(collateral);
             let held = vault.balance();
-            let posted = self.margin.get();
+            let position = self.position.existing();
 
-            let size = self.size.get();
-            if size.is_zero() {
-                return Err(Error::NotOpen);
-            }
-            let mark = self.mark.get();
-            let long = is_set(self.config().long);
-
-            // The profit and the loss, as two unsigned branches rather
-            // than one signed difference: a long gains what the mark rose
-            // and loses what it fell, and a short is the same sentence
-            // the other way round.
-            let now = size.convert(mark.rate(), Rounding::Down);
-            let then = size.convert(self.entry.get().rate(), Rounding::Down);
-            let (profit, loss) = if long {
-                (now.saturating_sub(then), then.saturating_sub(now))
-            } else {
-                (then.saturating_sub(now), now.saturating_sub(then))
-            };
-
-            // What funding has done since the position opened: the
-            // distance the cumulative figure travelled, which is a signed
-            // subtraction spelled as an addition of a flipped sign.
-            let (drift, drift_negative) = signed_add(
-                self.funding.get(),
-                is_set(self.funding_negative.get()),
-                self.entry_funding.get(),
-                !is_set(self.entry_funding_negative.get()),
+            let worth = equity(
+                &position,
+                self.mark.get(),
+                self.funding_charged.get(),
+                self.funding_credited.get(),
+                long,
             );
-            let moved = size.convert(drift.rate(), Rounding::Up);
-            // A long pays when the figure rose and is paid when it
-            // fell; a short is the same sentence reversed.
-            let pays = if drift_negative { !long } else { long };
-            let (paid, received) = if pays {
-                (moved, Quantity::ZERO)
-            } else {
-                (Quantity::ZERO, moved)
-            };
 
-            // Floored at nothing: a position that owes more than it
-            // posted is bad debt this market absorbs, which is what
-            // having no insurance fund means.
-            let equity = (posted + profit + received).saturating_sub(loss + paid);
-
-            self.size.set(Quantity::ZERO);
-            self.margin.set(Quantity::ZERO);
+            self.position.retire();
             // Bounded by what the vault holds: this market is the other
             // side of the trade and cannot pay out more than it has.
-            Ok(vault.take(equity.min(held)))
+            vault.take(worth.min(held))
         }
 
         /// Seize a position that no longer covers its requirement.
@@ -248,103 +216,78 @@ pub mod perp {
             let collateral = self.config().collateral;
             let maintenance = self.config().maintenance_margin;
             let bonus = self.config().liquidation_bonus;
+            let long = self.config().long;
             let mut vault = self.vault(collateral);
             let held = vault.balance();
-            let posted = self.margin.get();
+            let position = self.position.existing();
 
-            let size = self.size.get();
-            if size.is_zero() {
-                return Err(Error::NotOpen);
-            }
             let mark = self.mark.get();
-            let long = is_set(self.config().long);
-
-            // The profit and the loss, as two unsigned branches rather
-            // than one signed difference: a long gains what the mark rose
-            // and loses what it fell, and a short is the same sentence
-            // the other way round.
-            let now = size.convert(mark.rate(), Rounding::Down);
-            let then = size.convert(self.entry.get().rate(), Rounding::Down);
-            let (profit, loss) = if long {
-                (now.saturating_sub(then), then.saturating_sub(now))
-            } else {
-                (then.saturating_sub(now), now.saturating_sub(then))
-            };
-
-            // What funding has done since the position opened: the
-            // distance the cumulative figure travelled, which is a signed
-            // subtraction spelled as an addition of a flipped sign.
-            let (drift, drift_negative) = signed_add(
-                self.funding.get(),
-                is_set(self.funding_negative.get()),
-                self.entry_funding.get(),
-                !is_set(self.entry_funding_negative.get()),
+            let worth = equity(
+                &position,
+                mark,
+                self.funding_charged.get(),
+                self.funding_credited.get(),
+                long,
             );
-            let moved = size.convert(drift.rate(), Rounding::Up);
-            // A long pays when the figure rose and is paid when it
-            // fell; a short is the same sentence reversed.
-            let pays = if drift_negative { !long } else { long };
-            let (paid, received) = if pays {
-                (moved, Quantity::ZERO)
-            } else {
-                (Quantity::ZERO, moved)
-            };
-
-            // Floored at nothing: a position that owes more than it
-            // posted is bad debt this market absorbs, which is what
-            // having no insurance fund means.
-            let equity = (posted + profit + received).saturating_sub(loss + paid);
-
-            let notional = size.convert(mark.rate(), Rounding::Down);
-            if equity >= notional.scale(maintenance.ratio(), Rounding::Down) {
+            let notional = position.size.convert(mark.rate(), Rounding::Down);
+            if worth >= notional.scale(maintenance.ratio(), Rounding::Down) {
                 return Err(Error::StillCovered);
             }
 
-            self.size.set(Quantity::ZERO);
-            self.margin.set(Quantity::ZERO);
+            self.position.retire();
             // The liquidator's cut, and what stays with the market: a
             // division of what was seized rather than two numbers that
             // have to agree.
-            let (cut, _kept) = equity.min(held).divide(bonus.ratio());
+            let (cut, _kept) = worth.min(held).divide(bonus.ratio());
             Ok(vault.take(cut))
         }
     }
 
-    /// Whether a stored two-valued fact is set.
+    /// What a position is worth right now, floored at nothing.
     ///
-    /// Signs and sides both come through here, because neither has a
-    /// type of its own in a cell.
-    fn is_set(flag: u64) -> bool {
-        flag == 1
-    }
-
-    /// The integer a two-valued fact is stored as.
-    fn flag(set: bool) -> u64 {
-        u64::from(set)
-    }
-
-    /// A signed sum of two magnitudes, normalized so zero is never
-    /// negative.
+    /// A free function over values already read, which is how the two
+    /// bodies that settle a position share one calculation: a method
+    /// cannot call another method of its own component, because each
+    /// declares only its own accesses, and lifting the reads to
+    /// parameters is what that refusal points at.
     ///
-    /// Every line of this is what a signed stored rate would carry
-    /// itself. It is here because the vocabulary has no such type, and
-    /// it is written out rather than hidden so that the cost of not
-    /// having one is visible.
-    fn signed_add(
-        magnitude: Fixed<Quote, Base>,
-        negative: bool,
-        delta: Fixed<Quote, Base>,
-        delta_negative: bool,
-    ) -> (Fixed<Quote, Base>, bool) {
-        if negative == delta_negative {
-            let sum = magnitude + delta;
-            return (sum, negative && !sum.is_zero());
-        }
-        if magnitude >= delta {
-            let rest = magnitude - delta;
-            return (rest, negative && !rest.is_zero());
-        }
-        let rest = delta - magnitude;
-        (rest, delta_negative && !rest.is_zero())
+    /// Floored because a position that owes more than it posted is bad
+    /// debt this market absorbs, which is what having no insurance fund
+    /// means.
+    fn equity(
+        position: &Position,
+        mark: Fixed<Quote, Base>,
+        charged: Fixed<Quote, Base>,
+        credited: Fixed<Quote, Base>,
+        long: bool,
+    ) -> Quantity {
+        // The profit and the loss, as two unsigned branches rather than
+        // one signed difference: a long gains what the mark rose and
+        // loses what it fell, and a short is the same sentence the other
+        // way round.
+        let now = position.size.convert(mark.rate(), Rounding::Down);
+        let then = position.size.convert(position.entry.rate(), Rounding::Down);
+        let (profit, loss) = if long {
+            (now.saturating_sub(then), then.saturating_sub(now))
+        } else {
+            (then.saturating_sub(now), now.saturating_sub(then))
+        };
+
+        // What each counter did while the position was open. Both are a
+        // counter less a snapshot of itself, so neither runs below zero.
+        let longs_paid = charged - position.entry_charged;
+        let longs_took = credited - position.entry_credited;
+        let (owed, due) = if long {
+            (longs_paid, longs_took)
+        } else {
+            (longs_took, longs_paid)
+        };
+        // Up on what the position pays and down on what it is paid,
+        // which favours the market at both ends — and is the whole reason
+        // the two directions are kept apart this far.
+        let paid = position.size.convert(owed.rate(), Rounding::Up);
+        let received = position.size.convert(due.rate(), Rounding::Down);
+
+        (position.margin + profit + received).saturating_sub(loss + paid)
     }
 }

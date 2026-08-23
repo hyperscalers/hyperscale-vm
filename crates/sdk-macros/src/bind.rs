@@ -168,6 +168,13 @@ pub fn derived_shape(
     let named = |ty: &syn::Type| {
         if scalar(ty) {
             Some(Shape::Scalar)
+        } else if matches!(ty, syn::Type::Path(p) if p.path.is_ident("bool")) {
+            // A boolean crosses as one. It is the same wire shape a
+            // clause's own verdict has, which is what the evaluator
+            // already hands over for a configured `bool` — so reading one
+            // as a byte list would be the guest decoding a framing
+            // nothing writes.
+            Some(Shape::Flag)
         } else if address(ty) {
             Some(Shape::Address)
         } else if scalars(ty) {

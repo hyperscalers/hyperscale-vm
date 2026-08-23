@@ -16,7 +16,7 @@ const ONE: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;
 
 /// A market holding one position on the named side, at a tenth
 /// maintenance and a fifth liquidation bonus.
-fn market(mut chain: Chain, long: u64) -> (Chain, Perp) {
+fn market(mut chain: Chain, long: bool) -> (Chain, Perp) {
     chain.publish(package!(perp_guest::perp));
     let market = chain.instantiate::<Perp>(
         TRADER,
@@ -69,7 +69,7 @@ fn close(chain: &mut Chain, market: Perp) {
 /// A long that closes where it opened gets its margin back.
 #[hyperscale_vm_testing::test]
 fn a_position_closed_at_its_entry_returns_the_margin(chain: Chain) {
-    let (mut chain, market) = market(chain, 1);
+    let (mut chain, market) = market(chain, true);
     mark(&mut chain, market, 2 * ONE);
     open(&mut chain, market, 1_000, 100);
     close(&mut chain, market);
@@ -81,7 +81,7 @@ fn a_position_closed_at_its_entry_returns_the_margin(chain: Chain) {
 /// is a hundred of quote.
 #[hyperscale_vm_testing::test]
 fn a_long_gains_what_the_mark_rose(chain: Chain) {
-    let (mut chain, market) = market(chain, 1);
+    let (mut chain, market) = market(chain, true);
     mark(&mut chain, market, 2 * ONE);
     open(&mut chain, market, 1_000, 100);
     mark(&mut chain, market, 3 * ONE);
@@ -94,7 +94,7 @@ fn a_long_gains_what_the_mark_rose(chain: Chain) {
 /// other way round.
 #[hyperscale_vm_testing::test]
 fn a_short_loses_what_the_mark_rose(chain: Chain) {
-    let (mut chain, market) = market(chain, 0);
+    let (mut chain, market) = market(chain, false);
     mark(&mut chain, market, 2 * ONE);
     open(&mut chain, market, 1_000, 100);
     mark(&mut chain, market, 3 * ONE);
@@ -111,7 +111,7 @@ fn a_short_loses_what_the_mark_rose(chain: Chain) {
 /// is net paid twenty of quote on a hundred base.
 #[hyperscale_vm_testing::test]
 fn funding_that_flips_sign_settles_the_net(chain: Chain) {
-    let (mut chain, market) = market(chain, 1);
+    let (mut chain, market) = market(chain, true);
     mark(&mut chain, market, 2 * ONE);
     open(&mut chain, market, 1_000, 100);
 
@@ -131,7 +131,7 @@ fn funding_that_flips_sign_settles_the_net(chain: Chain) {
 /// Only the oracle may mark the market.
 #[hyperscale_vm_testing::test]
 fn only_the_oracle_may_mark(chain: Chain) {
-    let (mut chain, market) = market(chain, 1);
+    let (mut chain, market) = market(chain, true);
 
     let outcome = chain.transact(KEEPER, |b| {
         let signed_in = account::authorize(b, KEEPER)?;
@@ -149,7 +149,7 @@ fn only_the_oracle_may_mark(chain: Chain) {
 /// maintenance requirement of eleven.
 #[hyperscale_vm_testing::test]
 fn a_position_under_maintenance_is_liquidated(chain: Chain) {
-    let (mut chain, market) = market(chain, 1);
+    let (mut chain, market) = market(chain, true);
     mark(&mut chain, market, 2 * ONE);
     open(&mut chain, market, 100, 100);
     mark(&mut chain, market, 11 * ONE / 10);
@@ -171,7 +171,7 @@ fn a_position_under_maintenance_is_liquidated(chain: Chain) {
 /// A covered position is not seizable.
 #[hyperscale_vm_testing::test]
 fn a_covered_position_is_not_liquidated(chain: Chain) {
-    let (mut chain, market) = market(chain, 1);
+    let (mut chain, market) = market(chain, true);
     mark(&mut chain, market, 2 * ONE);
     open(&mut chain, market, 1_000, 100);
 
@@ -182,3 +182,93 @@ fn a_covered_position_is_not_liquidated(chain: Chain) {
 
     assert_eq!(outcome.declined_as(), Some("still-covered"));
 }
+
+/// A position of no size is not a position, and the margin beside it does
+/// not vanish into the market.
+///
+/// The bug this refusal names: openness used to be read off the size, so
+/// a size of zero opened nothing, banked the margin, and left `close`
+/// declining against a market that held it.
+#[hyperscale_vm_testing::test]
+fn a_position_of_no_size_is_refused(chain: Chain) {
+    let (mut chain, market) = market(chain, true);
+    mark(&mut chain, market, 2 * ONE);
+
+    let outcome = chain.transact(TRADER, |b| {
+        let signed_in = account::authorize(b, TRADER)?;
+        let funds = account::withdraw(b, signed_in, COLLATERAL, 1_000)?;
+        market.open(b, funds, 0u128)
+    });
+
+    assert_eq!(outcome.declined_as(), Some("empty-position"));
+    assert_eq!(chain.balance(TRADER, COLLATERAL), 10_000, "nothing is banked");
+}
+
+/// A market already holding a position refuses a second one before the
+/// transaction exists.
+///
+/// The record's leaf has to be absent for `open` to run, so this is the
+/// declaration's refusal rather than a check the body performs — which is
+/// why it reads as a refusal and not as a decline.
+#[hyperscale_vm_testing::test]
+fn a_market_holding_a_position_takes_no_other(chain: Chain) {
+    let (mut chain, market) = market(chain, true);
+    mark(&mut chain, market, 2 * ONE);
+    open(&mut chain, market, 1_000, 100);
+
+    let outcome = chain.transact(TRADER, |b| {
+        let signed_in = account::authorize(b, TRADER)?;
+        let funds = account::withdraw(b, signed_in, COLLATERAL, 1_000)?;
+        market.open(b, funds, 100u128)
+    });
+
+    assert!(outcome.declined_as().is_none(), "an unmet presence is not a decline");
+    assert!(!outcome.completed());
+}
+
+/// And a market that closed one takes the next.
+///
+/// What `retire` buys: presence can say a thing stopped being true, so
+/// the same market opens again rather than being a one-way door.
+#[hyperscale_vm_testing::test]
+fn a_closed_market_opens_again(chain: Chain) {
+    let (mut chain, market) = market(chain, true);
+    mark(&mut chain, market, 2 * ONE);
+    open(&mut chain, market, 1_000, 100);
+    close(&mut chain, market);
+    open(&mut chain, market, 1_000, 100);
+    close(&mut chain, market);
+
+    assert_eq!(chain.balance(TRADER, COLLATERAL), 10_000);
+}
+
+/// What a position pays rounds up and what it is paid rounds down, which
+/// a single netted figure could not say.
+///
+/// A third of a subunit per base, charged and credited alike, on a
+/// hundred base: the position owes 34 and is owed 33, so it settles a
+/// subunit down on a wash. Netting first would have made both zero.
+#[hyperscale_vm_testing::test]
+fn the_two_directions_of_funding_round_apart(chain: Chain) {
+    let a_third = ONE / 3;
+    let (mut chain, market) = market(chain, true);
+    mark(&mut chain, market, 2 * ONE);
+    open(&mut chain, market, 1_000, 100);
+
+    chain
+        .transact(ORACLE, |b| {
+            let signed_in = account::authorize(b, ORACLE)?;
+            market.charge_longs(b, signed_in, rate(a_third))?;
+            let signed_in = account::authorize(b, ORACLE)?;
+            market.credit_longs(b, signed_in, rate(a_third))
+        })
+        .expect_completed();
+    close(&mut chain, market);
+
+    assert_eq!(
+        chain.balance(TRADER, COLLATERAL),
+        9_999,
+        "the market keeps the subunit at both ends"
+    );
+}
+

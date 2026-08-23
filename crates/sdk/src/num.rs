@@ -35,7 +35,7 @@
 use core::cmp::Ordering;
 use core::marker::PhantomData;
 
-use hyperscale_hbor::{Hbor, HborShape};
+use hyperscale_hbor::{Hbor, HborDecode, HborEncode, HborShape, HborWidth};
 
 // The arithmetic, from whichever side of the boundary this build is on.
 // One alias rather than a branch per call site: the two modules expose
@@ -1300,6 +1300,48 @@ impl<A, B> Rate<A, B> {
         ))
     }
 }
+
+/// A rate encodes as the thirty-two bytes it is, wherever it travels.
+///
+/// A cell already holds one this way, so a record holding one holds the
+/// same bytes in the same order — which is what lets a rate be a field of
+/// a stored record rather than only a leaf of its own. Fixed width, so a
+/// record carrying one still has a minimum length nothing has to walk to
+/// find.
+macro_rules! rate_hbor {
+    ($ty:ident, $bytes:ident, $from:ident) => {
+        impl<A, B> HborWidth for $ty<A, B> {
+            const MIN_ENCODED_LEN: usize = 32;
+        }
+
+        impl<A, B> HborEncode for $ty<A, B> {
+            fn encode<S: hyperscale_hbor::Sink>(
+                &self,
+                encoder: &mut hyperscale_hbor::Encoder<S>,
+            ) -> Result<(), hyperscale_hbor::EncodeError> {
+                encoder.write_fixed(&self.$bytes());
+                Ok(())
+            }
+        }
+
+        impl<A, B> HborDecode for $ty<A, B> {
+            fn decode(
+                decoder: &mut hyperscale_hbor::Decoder<'_>,
+            ) -> Result<Self, hyperscale_hbor::DecodeError> {
+                Ok(Self::$from(decoder.read_array()?))
+            }
+        }
+
+        impl<A, B> HborShape for $ty<A, B> {
+            fn shape(_: &mut hyperscale_hbor::ShapeRegistry) -> hyperscale_hbor::TypeShape {
+                hyperscale_hbor::TypeShape::ByteArray(32)
+            }
+        }
+    };
+}
+
+rate_hbor!(Fixed, to_le_bytes, from_le_bytes);
+rate_hbor!(SignedFixed, to_le_bytes, from_le_bytes);
 
 /// A bounded configuration number: nothing to one, at `10^18`.
 ///

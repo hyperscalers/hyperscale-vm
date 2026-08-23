@@ -72,6 +72,15 @@ pub mod grammar {
         /// modes are the point.
         ledger: Ordered<u64>,
         noted: Cell<u64>,
+        /// A two-valued fact a body may store and read back.
+        ///
+        /// Here because a `bool` is a cell the vocabulary admits and
+        /// nothing else in the corpus keeps one: a contract with a paused
+        /// bit, a settled marker or a side chosen once wants exactly this
+        /// leaf, and the shape a stored boolean has is a thing the
+        /// grammar should record rather than leave to the first package
+        /// that needs it.
+        flagged: Cell<bool>,
         /// What each configured party is owed: one leaf per party, which
         /// is what a `for-each` declares a clause each of.
         owed: Keyed<u64>,
@@ -439,6 +448,19 @@ pub mod grammar {
         /// one, which is what keeps a view function a view function.
         pub fn noted(&self) -> u64 {
             self.noted.get()
+        }
+
+        /// Raise the flag, and answer whether it was already up.
+        ///
+        /// No `bool` parameter, because a manifest binds none: a
+        /// direction a caller chooses reads as two named methods, which
+        /// is a better surface than an argument nobody can see the
+        /// meaning of at the call site. What crosses *out* is a boolean
+        /// like any other answer.
+        pub fn raise(&mut self) -> bool {
+            let was = self.flagged.get();
+            self.flagged.set(true);
+            was
         }
 
         /// The record changing under a live instance: the same cell the

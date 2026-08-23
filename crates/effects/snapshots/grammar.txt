@@ -2,8 +2,9 @@ state
      16  entries — an ordered collection, holding u128
      17  ledger — an ordered collection, holding u64
      18  noted — one leaf, holding u64
-     19  owed — a leaf per key, holding u64
-     20  fees — a leaf per key, holding u128
+     19  flagged — one leaf, holding [u8; 1]
+     20  owed — a leaf per key, holding u64
+     21  fees — a leaf per key, holding u128
 config
       0  tiers
       1  fallback
@@ -81,6 +82,11 @@ owe-each() — infallible
       0  for each of config.windows
         1  write self.owed[element]
   exports  the run over clause 0 site 0, config.windows
+
+raise() — infallible, answers
+  declares
+      0  write self.flagged
+  exports  handle for clause 0
 
 reseat(u64, u64) — infallible
   declares
