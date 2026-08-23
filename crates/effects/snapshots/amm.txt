@@ -1,3 +1,5 @@
+state
+     16  supply — one leaf, holding u128
 config
       0  x
       1  y
@@ -5,12 +7,37 @@ config
 errors
       0  slippage-exceeded
       1  empty-pool
+      2  nothing-minted
+
+add-liquidity(bucket, bucket) — fallible
+  takes    arg0 carrying config.x
+  takes    arg1 carrying config.y
+  issues   "share" fungible
+  declares
+      0  write self.vault[config.x] holding config.x
+      1  write self.vault[config.y] holding config.y
+      2  write self.supply
+  yields   edge 0 = self-issued(fungible["share"])
+  exports  handle for clause 0, handle for clause 1, handle for clause 2, edge arg0, edge arg1, the issuer
 
 instantiate() — infallible
   declares
       0  requires self.config is absent
       1  write self.config
-  exports  handle for clause 1, self.record
+      2  requires self.resource[self-issued(fungible["share"])] is absent
+      3  write self.resource[self-issued(fungible["share"])]
+  exports  handle for clause 1, handle for clause 3, self.record
+
+remove-liquidity(bucket) — fallible
+  takes    arg0 carrying self-issued(fungible["share"])
+  issues   "share" fungible
+  declares
+      0  write self.vault[config.x] holding config.x
+      1  write self.vault[config.y] holding config.y
+      2  write self.supply
+  yields   edge 0 = config.x
+  yields   edge 1 = config.y
+  exports  handle for clause 0, handle for clause 1, handle for clause 2, edge arg0, the issuer
 
 swap(bucket, u128) — fallible
   takes    arg0 carrying (if resource-of(arg0) == config.x then config.x else config.y)

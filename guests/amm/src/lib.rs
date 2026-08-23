@@ -17,7 +17,15 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod amm {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Quantity, Rounding, UnitFixed};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity, Rounding, UnitFixed};
+
+    /// A claim on the pool, issued against what a provider put in.
+    ///
+    /// The pair sits in the protocol's vault cells, which name no owner
+    /// but the instance — so a provider's stake is a resource they hold
+    /// rather than a row this package keeps about them.
+    #[resource]
+    struct Share;
 
     /// The pool's creation-fixed configuration: the pair it trades and
     /// the fee it takes.
@@ -41,12 +49,27 @@ pub mod amm {
     enum Error {
         SlippageExceeded,
         EmptyPool,
+        /// The deposit is too small to be worth a subunit of the pool.
+        ///
+        /// Refused rather than minted at zero, because a provider who
+        /// funds the pool and receives nothing has made a donation they
+        /// did not offer.
+        NothingMinted,
     }
 
-    /// The pool stores nothing of its own: the pair it trades sits in
-    /// the protocol's own vault cells, which every owner has.
+    /// The pair itself sits in the protocol's own vault cells, which
+    /// every owner has. What the pool keeps of its own is the count of
+    /// claims outstanding against them.
     #[state]
-    struct Amm {}
+    struct Amm {
+        /// Shares in circulation, which is what a provider's stake is
+        /// priced against.
+        ///
+        /// The circulating total rather than the shard's accumulator: a
+        /// contract cannot read the latter, and a burn on redemption
+        /// keeps the two agreeing.
+        supply: Cell<Quantity>,
+    }
 
     impl Amm {
         /// Swap `input` against the pool, returning the bought side.
@@ -106,6 +129,95 @@ pub mod amm {
                 return Err(Error::SlippageExceeded);
             }
             Ok(bought.take(out))
+        }
+
+        /// Fund both sides, take a claim on the pool.
+        ///
+        /// The first provider prices the pool: nothing else can, so the
+        /// mint is the geometric mean of what arrived — the product held
+        /// whole, because for any pool a real market reaches `dx * dy`
+        /// leaves the amount width while its root does not.
+        ///
+        /// Every provider after that is priced against the pool as it
+        /// stands, and against the *lesser* of the two claims they could
+        /// argue for. That is what makes a skewed deposit unprofitable
+        /// rather than dilutive: the side deposited in excess is bought
+        /// at no better a rate than the side deposited short, and the
+        /// remainder stays where it landed, which is with every existing
+        /// provider including the depositor.
+        pub fn add_liquidity(&mut self, x_side: Bucket, y_side: Bucket) -> Result<Bucket, Error> {
+            let settings = self.config();
+            let mut vault_x = self.vault(settings.x);
+            let mut vault_y = self.vault(settings.y);
+
+            // Both reserves are read before either deposit lands: what
+            // a claim is priced against is the pool the provider is
+            // joining, not the one they have already changed.
+            let x = vault_x.balance();
+            let y = vault_y.balance();
+            let dx = x_side.quantity();
+            let dy = y_side.quantity();
+            let supply = self.supply.get();
+
+            let minted = if supply.is_zero() {
+                dx.geometric_mean(dy)
+            } else {
+                // Against an outstanding supply the reserves cannot be
+                // empty, so the two ratios are the pool's own and the
+                // refusal is unreachable rather than tolerated.
+                let Ok(share_x) = dx.ratio_to(x) else {
+                    return Err(Error::EmptyPool);
+                };
+                let Ok(share_y) = dy.ratio_to(y) else {
+                    return Err(Error::EmptyPool);
+                };
+                let claim_x = supply.scale(share_x, Rounding::Down);
+                let claim_y = supply.scale(share_y, Rounding::Down);
+                claim_x.min(claim_y)
+            };
+
+            // The deposits go in on every path the body can leave by,
+            // because a refusal that let them fall out of scope would be
+            // dropping value the kernel refuses to lose. A decline
+            // discards the whole transaction, so nothing is stranded by
+            // crediting before the judgment.
+            vault_x.put(x_side);
+            vault_y.put(y_side);
+            if minted.is_zero() {
+                return Err(Error::NothingMinted);
+            }
+
+            self.supply.set(supply + minted);
+            Ok(Share::mint(minted))
+        }
+
+        /// Hand back a claim, take a share of both sides.
+        ///
+        /// Down on both, so the truncated subunit stays with the pool:
+        /// what a share is worth never falls because somebody left.
+        pub fn remove_liquidity(&mut self, shares: Bucket) -> Result<(Bucket, Bucket), Error> {
+            let settings = self.config();
+            let mut vault_x = self.vault(settings.x);
+            let mut vault_y = self.vault(settings.y);
+
+            let x = vault_x.balance();
+            let y = vault_y.balance();
+            let supply = self.supply.get();
+            let returned = shares.quantity();
+
+            let Ok(part) = returned.ratio_to(supply) else {
+                return Err(Error::EmptyPool);
+            };
+            let out_x = x.scale(part, Rounding::Down);
+            let out_y = y.scale(part, Rounding::Down);
+
+            // Burned rather than parked: the units stop existing and the
+            // shard's supply falls with them, which is what handing a
+            // claim back means. Parking would leave the same arithmetic
+            // over a balance nobody can spend.
+            Share::burn(shares);
+            self.supply.set(supply - returned);
+            Ok((vault_x.take(out_x), vault_y.take(out_y)))
         }
 
         /// Whether the pool trades `resource` at all.

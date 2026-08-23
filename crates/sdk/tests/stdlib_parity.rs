@@ -17,7 +17,7 @@
 //! elsewhere in the workspace means the SDK's output inherits every one of
 //! those tests without restating them.
 
-use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
+use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, RESOURCE, VAULT};
 use hyperscale_vm_effects::{CONFIRMATION, PackageMetadata, ParamType, RECOVERY, SlotId};
 use hyperscale_vm_fixtures::{
     amm as amm_package, book as book_package, splitter as splitter_package,
@@ -25,7 +25,7 @@ use hyperscale_vm_fixtures::{
 use hyperscale_vm_sdk::sym::{
     Addr, Amount, Bucket, Num, Sym, eq, lit_u64, pack, select, self_record,
 };
-use hyperscale_vm_sdk::{Blueprint, GrantedBehaviour, Trace};
+use hyperscale_vm_sdk::{Blueprint, GrantedBehaviour, ResourceKind, Trace};
 use hyperscale_vm_stdlib::account as account_package;
 
 /// The fungible account.
@@ -134,9 +134,57 @@ fn account() -> Blueprint {
         .build()
 }
 
+/// The mark the pool issues its liquidity claims under.
+const SHARE: &[u8] = b"share";
+
 /// The constant-product pool.
 fn amm() -> Blueprint {
     Blueprint::builder()
+        .method(
+            "add-liquidity",
+            &[ParamType::Bucket, ParamType::Bucket],
+            |t: &mut Trace| {
+                // Both sides are named by the configuration rather than
+                // by what arrived, so the pair a pool funds is the pair
+                // it was created over and a third resource is refused
+                // where the parameters are judged.
+                let x: Sym<Addr> = t.config(0);
+                let y: Sym<Addr> = t.config(1);
+                let pool = t.self_addr();
+
+                t.point(&pool.child(VAULT, &[x.clone().cast()]))
+                    .holding(&x)
+                    .write();
+                t.point(&pool.child(VAULT, &[y.clone().cast()]))
+                    .holding(&y)
+                    .write();
+                t.point(&pool.child(amm_package::SUPPLY, &[])).write();
+
+                t.denomination(0, &x);
+                t.denomination(1, &y);
+                t.output(&t.self_resource(ResourceKind::Fungible, SHARE));
+            },
+        )
+        .method("remove-liquidity", &[ParamType::Bucket], |t: &mut Trace| {
+            // What comes back is the pool's own claim, which is the
+            // one resource a redemption can be priced in.
+            let x: Sym<Addr> = t.config(0);
+            let y: Sym<Addr> = t.config(1);
+            let pool = t.self_addr();
+            let share = t.self_resource(ResourceKind::Fungible, SHARE);
+
+            t.point(&pool.child(VAULT, &[x.clone().cast()]))
+                .holding(&x)
+                .write();
+            t.point(&pool.child(VAULT, &[y.clone().cast()]))
+                .holding(&y)
+                .write();
+            t.point(&pool.child(amm_package::SUPPLY, &[])).write();
+
+            t.denomination(0, &share);
+            t.output(&x);
+            t.output(&y);
+        })
         .method(
             "swap",
             &[ParamType::Bucket, ParamType::U128],
@@ -175,9 +223,14 @@ fn amm() -> Blueprint {
         .method("instantiate", &[], |t: &mut Trace| {
             // The generated seal: the record into the configuration
             // leaf, under the one-way door its absence is, with the
-            // bytes evaluated rather than supplied.
-            let leaf = t.self_addr().child(CONFIG, &[]);
-            t.point(&leaf).create();
+            // bytes evaluated rather than supplied. The pool's own mark
+            // is founded in the same call, because a resource a body
+            // mints has to exist before a body runs.
+            let pool = t.self_addr();
+            t.point(&pool.child(CONFIG, &[])).create();
+            t.bind_handle();
+            let share = t.self_resource(ResourceKind::Fungible, SHARE);
+            t.point(&pool.child(RESOURCE, &[share.cast()])).create();
             t.bind_handle();
             t.bind_derived(&self_record());
         })
