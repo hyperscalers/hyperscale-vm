@@ -1,0 +1,160 @@
+//! The fee splitter: revenue in, three configured shares out.
+//!
+//! Two ways to divide, because a splitter that offers one hides what it
+//! does with the part that will not divide. `disburse` keeps the
+//! truncated subunit, which is what a revenue share wants — the parties
+//! are paid, the dust accumulates, and nothing is refused over a subunit.
+//! `settle` refuses instead, which is what a schedule that must add up
+//! wants: a treasury allocation or a drop against a published table is
+//! wrong if it pays out anything other than the whole.
+//!
+//! Both divide the *whole* by each share, so the parts do not depend on
+//! the order they are taken in, and both hand back the remainder rather
+//! than folding it into the last party. Folding would quietly make the
+//! last-named party the residual claimant, which is a policy nobody
+//! wrote down.
+//!
+//! # The dust has to go somewhere
+//!
+//! A part of a payment that no share claimed is still value, and the
+//! kernel refuses a body that drops one. That is the whole reason the
+//! remainder is a named thing here rather than an implementation detail:
+//! the vocabulary makes disposing of it a decision the author states.
+
+use hyperscale_vm_sdk::blueprint;
+
+#[blueprint]
+pub mod payouts {
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Bucket, Quantity, Ratio, Rounding, UnitFixed};
+
+    /// Who takes what, fixed when the splitter is created.
+    ///
+    /// The shares are bounded by their type rather than checked here: a
+    /// splitter created with a share above one is one that should not
+    /// exist, and refusing every payment instead would leave it created
+    /// and holding funds.
+    #[config]
+    struct Terms {
+        /// What this splitter divides. A payment in anything else is
+        /// refused where the parameter is judged, not here.
+        asset: ResourceAddr,
+        /// The share the protocol takes.
+        protocol: UnitFixed,
+        /// The share the treasury takes.
+        treasury: UnitFixed,
+        /// The share the referrer takes.
+        referrer: UnitFixed,
+    }
+
+    /// What a division declines with.
+    #[error]
+    enum Error {
+        /// The shares did not claim the whole payment.
+        ///
+        /// Only `settle` raises it: `disburse` keeps what is left over
+        /// rather than refusing it.
+        ShareUnclaimed,
+        /// The payment is too small to pay a whole lot of.
+        BelowOneLot,
+    }
+
+    /// The splitter keeps only what it could not divide.
+    #[state]
+    struct Payouts {}
+
+    impl Payouts {
+        /// Divide a payment three ways and keep what will not divide.
+        ///
+        /// The dust lands in the splitter's own vault, where it joins the
+        /// next payment: over many payments the parties are paid the
+        /// shares they were promised, and no single payment is refused
+        /// for being indivisible.
+        #[allow(clippy::tuple_array_conversions)] // the lowering follows these names to the edges
+        pub fn disburse(&mut self, pot: Bucket) -> (Bucket, Bucket, Bucket) {
+            let terms = self.config();
+            let mut kept = self.vault(terms.asset);
+
+            // One division against the whole table rather than three
+            // takes in sequence: a second share of what a first share
+            // left is a share of a different number, so taking in order
+            // would quietly make the order part of the policy.
+            let ([protocol, treasury, referrer], dust) = pot.split_n(&[
+                terms.protocol.ratio(),
+                terms.treasury.ratio(),
+                terms.referrer.ratio(),
+            ]);
+            kept.put(dust);
+            (protocol, treasury, referrer)
+        }
+
+        /// Divide a payment three ways, or refuse it.
+        ///
+        /// For a schedule that has to add up: a remainder means the
+        /// payment and the table disagree, and paying out three parts
+        /// that do not sum to what arrived is worse than declining.
+        pub fn settle(&mut self, pot: Bucket) -> Result<(Bucket, Bucket, Bucket), Error> {
+            let terms = self.config();
+            let mut kept = self.vault(terms.asset);
+
+            let ([protocol, treasury, referrer], dust) = pot.split_n(&[
+                terms.protocol.ratio(),
+                terms.treasury.ratio(),
+                terms.referrer.ratio(),
+            ]);
+
+            // Every part is disposed of on the refusing path too, because
+            // a body leaves by no path holding value. The decline
+            // discards the whole transaction, so putting them back is
+            // what makes the refusal a refusal rather than a seizure.
+            if !dust.quantity().is_zero() {
+                kept.put(protocol);
+                kept.put(treasury);
+                kept.put(referrer);
+                kept.put(dust);
+                return Err(Error::ShareUnclaimed);
+            }
+            kept.put(dust);
+            Ok((protocol, treasury, referrer))
+        }
+
+        /// Pay out in whole lots only, and hand back what is short of one.
+        ///
+        /// What a payer wants where the receiving side prices in lots
+        /// rather than subunits: the payment is rounded down to a whole
+        /// multiple of the configured lot and the change goes back,
+        /// rather than being kept as dust nobody agreed to leave.
+        pub fn in_lots(&mut self, pot: Bucket, lot: Quantity) -> Result<(Bucket, Bucket), Error> {
+            let terms = self.config();
+            let mut kept = self.vault(terms.asset);
+
+            let paid = pot.quantity();
+            let whole = paid.round_to_multiple(lot, Rounding::Down);
+            // The payment is disposed of before the judgment, because a
+            // body leaves by no path holding value. A decline discards
+            // the whole transaction, so crediting here is what makes the
+            // refusal cost the payer nothing.
+            if whole.is_zero() {
+                kept.put(pot);
+                return Err(Error::BelowOneLot);
+            }
+
+            // The payable part as a share of what arrived, which is exact
+            // because both terms are subunits of the same payment. Past
+            // the guard the payment is non-zero, so the ratio is there.
+            let share = whole.ratio_to(paid).unwrap_or(Ratio::ONE);
+            // What is left is short of a lot by construction, so the
+            // change is exact rather than approximate.
+            let (payable, change) = pot.split(share);
+            Ok((payable, change))
+        }
+
+        /// Whether a payment divides into whole lots with nothing over.
+        ///
+        /// What a payer asks before sending, and what `in_lots` never has
+        /// to ask, because it rounds either way.
+        pub fn divides(&self, paid: Quantity, lot: Quantity) -> bool {
+            paid.is_multiple_of(lot)
+        }
+    }
+}
