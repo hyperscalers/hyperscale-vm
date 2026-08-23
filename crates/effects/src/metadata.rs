@@ -277,19 +277,29 @@ impl PackageMetadata {
         cell: &[u8],
     ) -> Option<Result<Option<ShapeValue>, ReadError>> {
         let name = core::str::from_utf8(mark).ok()?;
-        let shape = self.types.get(name)?;
-        Some(self.read_form(&LeafForm::Value(shape.clone()), cell))
+        Some(self.read_value(self.types.get(name)?, cell))
     }
 
     /// One leaf, read against the form it holds.
     fn read_form(&self, form: &LeafForm, leaf: &[u8]) -> Result<Option<ShapeValue>, ReadError> {
+        match form {
+            LeafForm::Value(shape) => self.read_value(shape, leaf),
+            // The substate frames these, so what it holds is the whole of
+            // them and an empty one is no bytes at all.
+            LeafForm::Bytes if leaf.is_empty() => Ok(None),
+            LeafForm::Bytes => Ok(Some(ShapeValue::ByteArray(leaf.to_vec()))),
+        }
+    }
+
+    /// One leaf's bytes, read against the shape declared for them.
+    ///
+    /// An empty leaf is the absence every element reads as its own zero:
+    /// nothing stored for a record, and zero for a number.
+    fn read_value(&self, shape: &TypeShape, leaf: &[u8]) -> Result<Option<ShapeValue>, ReadError> {
         if leaf.is_empty() {
             return Ok(None);
         }
-        match form {
-            LeafForm::Bytes => Ok(Some(ShapeValue::ByteArray(leaf.to_vec()))),
-            LeafForm::Value(shape) => shape.read(leaf, &self.types).map(Some),
-        }
+        shape.read(leaf, &self.types).map(Some)
     }
 
     /// The name `role` renders as: a reserved role's protocol name, or
