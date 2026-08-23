@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use hyperscale_vm_cli::{Provenance, artifact, declaration, scaffold};
+use hyperscale_vm_cli::{Provenance, artifact, declaration, explain, explain_method, scaffold};
 use hyperscale_vm_gate::extract_metadata;
 
 /// The packages authored as one module apiece: the corpus's own, and one
@@ -131,4 +131,35 @@ fn a_built_artifact_carries_the_declaration_its_module_derived() {
             .unwrap_or_else(|| panic!("{package}: the artifact declares nothing"));
         assert_eq!(carried, traced, "{package}: the artifact's declaration");
     }
+}
+
+/// A package explains itself in the names its author wrote.
+///
+/// The command's own path end to end: the host build produces the
+/// declaration, and the rendering resolves it through the tables that
+/// same declaration carries. What it proves beyond the rendering's own
+/// corpus test is the wiring — that `explain` is reading a real
+/// package's metadata rather than something assembled for it.
+#[test]
+fn a_package_explains_itself_in_the_names_its_author_wrote() {
+    let dir = guests().join("lottery");
+    let metadata = declaration(&dir).unwrap_or_else(|error| panic!("lottery: {error}"));
+
+    let entered = explain_method(&metadata, "enter").expect("the lottery declares `enter`");
+    assert!(
+        entered.contains("self.tickets"),
+        "the slot is named, not numbered:\n{entered}"
+    );
+    assert!(
+        explain_method(&metadata, "no-such-method").is_none(),
+        "a method the package does not declare explains as nothing"
+    );
+
+    // The whole package carries what one method cannot: the tables the
+    // names come out of.
+    let whole = explain(&metadata);
+    assert!(
+        whole.contains("round-truncated"),
+        "the error table:\n{whole}"
+    );
 }

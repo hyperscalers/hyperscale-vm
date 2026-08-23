@@ -25,6 +25,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use hyperscale_vm_effects::PackageMetadata;
+// The rendering `explain` prints, re-exported so the command reaches one
+// dependency for the whole pipeline it drives.
+pub use hyperscale_vm_effects::{explain, explain_method};
 pub use hyperscale_vm_gate::Provenance;
 use hyperscale_vm_gate::{admit_package, admit_protocol_package, attach_metadata, decode_metadata};
 use hyperscale_vm_runtime::validate_component;
