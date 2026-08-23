@@ -1,0 +1,81 @@
+state
+     16  index — one leaf, holding [u8; 32]
+     17  collateral_price — one leaf, holding [u8; 32]
+     18  debt_price — one leaf, holding [u8; 32]
+     19  shares — one leaf, holding u128
+     20  accrued_at — one leaf, holding u64
+config
+      0  collateral
+      1  debt
+      2  oracle
+      3  ltv
+      4  liquidation_threshold
+      5  growth_per_period
+errors
+      0  price-unset
+      1  index-stale
+      2  over-ltv
+      3  still-covered
+      4  nothing-owed
+
+accrue(u64) — infallible
+  declares
+      0  write self.accrued_at
+      1  write self.index
+  exports  handle for clause 0, handle for clause 1, arg0, config.growth_per_period
+
+deposit(bucket) — infallible, answers
+  takes    arg0 carrying config.collateral
+  declares
+      0  write self.vault[config.collateral] holding config.collateral
+  exports  handle for clause 0, edge arg0
+
+draw(u128, u64) — fallible
+  declares
+      0  read self.accrued_at
+      1  read self.collateral_price
+      2  read self.debt_price
+      3  read self.index
+      4  write self.shares
+      5  read self.vault[config.collateral] holding config.collateral
+      6  delta self.vault[config.debt] holding config.debt
+  yields   edge 0 = config.debt
+  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, handle for clause 6, arg1, arg0, config.ltv
+
+index-scaled() — infallible, answers
+  declares
+      0  read self.index
+  exports  handle for clause 0
+
+instantiate() — infallible
+  declares
+      0  requires self.config is absent
+      1  write self.config
+  exports  handle for clause 1, self.record
+
+liquidate(u64) — fallible
+  declares
+      0  read self.accrued_at
+      1  read self.collateral_price
+      2  read self.debt_price
+      3  read self.index
+      4  write self.shares
+      5  write self.vault[config.collateral] holding config.collateral
+  yields   edge 0 = config.collateral
+  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, arg0, config.liquidation_threshold
+
+post-price(u128, u128) — infallible
+  declares
+      0  requires claim config.oracle
+      1  write self.collateral_price
+      2  write self.debt_price
+  exports  handle for clause 1, handle for clause 2, arg0, arg1
+
+repay(bucket, u64) — fallible
+  takes    arg0 carrying config.debt
+  declares
+      0  delta self.vault[config.debt] holding config.debt
+      1  read self.accrued_at
+      2  read self.index
+      3  write self.shares
+  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, edge arg0, arg1

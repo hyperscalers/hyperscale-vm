@@ -26,7 +26,9 @@
 use std::path::PathBuf;
 
 use hyperscale_vm_effects::{PackageMetadata, explain};
-use hyperscale_vm_fixtures::{amm, book, lottery};
+use hyperscale_vm_fixtures::{
+    amm, book, grammar, lending, lottery, nf, payouts, perp, registry, shares,
+};
 use hyperscale_vm_stdlib::{account, staking};
 
 fn snapshot(name: &str, metadata: &PackageMetadata) {
@@ -79,4 +81,45 @@ fn the_lottery_declares_what_its_snapshot_records() {
 #[test]
 fn the_stake_pool_declares_what_its_snapshot_records() {
     snapshot("staking", &staking::metadata());
+}
+
+#[test]
+fn the_share_vault_declares_what_its_snapshot_records() {
+    snapshot("shares", &shares::metadata());
+}
+
+#[test]
+fn the_splitter_declares_what_its_snapshot_records() {
+    snapshot("payouts", &payouts::metadata());
+}
+
+#[test]
+fn the_lending_market_declares_what_its_snapshot_records() {
+    snapshot("lending", &lending::metadata());
+}
+
+#[test]
+fn the_perpetual_declares_what_its_snapshot_records() {
+    snapshot("perp", &perp::metadata());
+}
+
+/// The shape corpus, which is the one package whose whole purpose is to
+/// hold every form the grammar admits — so its snapshot is the widest
+/// reading of the derivation there is.
+#[test]
+fn the_grammar_declares_what_its_snapshot_records() {
+    snapshot("grammar", &grammar::metadata());
+}
+
+/// The two hand-authored packages.
+///
+/// Nothing derives these, so a diff here is not the derivation moving —
+/// it is somebody editing the declaration, which is the other thing a
+/// reader wants to catch. They are here because a hand-written signature
+/// drifting from the guest it describes is exactly what the corpus
+/// sweeps exist for, and a rendering is how a person checks it.
+#[test]
+fn the_hand_authored_packages_declare_what_their_snapshots_record() {
+    snapshot("nf", &nf::metadata());
+    snapshot("registry", &registry::metadata());
 }

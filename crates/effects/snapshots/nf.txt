@@ -1,0 +1,35 @@
+
+burn(nf-bucket) — infallible
+  issues   "badge" non-fungible
+  exports  edge arg0, the issuer
+
+deposit(nf-bucket) — infallible
+  declares
+      0  write self.nf-vault[resource-of(arg0)] over 0..=u128::MAX, at most len(ids-of(arg0)) entries holding resource-of(arg0)
+  exports  handle for clause 0, edge arg0
+
+mint() — infallible
+  issues   "badge" non-fungible
+  declares
+      0  write self.instance[self-issued(non-fungible["badge"]), fresh-id(0)]
+      1  requires self.instance[self-issued(non-fungible["badge"]), fresh-id(0)] is absent
+  yields   edge 0 = edge(self-issued(non-fungible["badge"]) × [fresh-id(0)])
+  exports  handle for clause 0, fresh-id(0), the issuer
+
+operate() — infallible
+  declares
+      0  requires claim config[0]
+
+operate-instance() — infallible
+  declares
+      0  requires claim (config[0], config[1])
+
+operate-quorum() — infallible
+  declares
+      0  requires 2 of (claim (config[0], config[1]), claim (config[0], config[2]), claim (config[0], config[3]))
+
+withdraw(address, ids) — infallible
+  declares
+      0  write self.nf-vault[arg0] over 0..=u128::MAX, at most len(arg1) entries holding arg0
+  yields   edge 0 = edge(arg0 × arg1)
+  exports  handle for clause 0, arg1

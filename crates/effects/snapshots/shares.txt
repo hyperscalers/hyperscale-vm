@@ -1,0 +1,53 @@
+state
+     16  supply — one leaf, holding u128
+config
+      0  asset
+errors
+      0  empty-vault
+      1  insufficient
+
+deposit(bucket) — fallible
+  takes    arg0 carrying config.asset
+  issues   "unit" fungible
+  declares
+      0  write self.vault[config.asset] holding config.asset
+      1  write self.supply
+  yields   edge 0 = self-issued(fungible["unit"])
+  exports  handle for clause 0, handle for clause 1, edge arg0, the issuer
+
+instantiate() — infallible
+  declares
+      0  requires self.config is absent
+      1  write self.config
+      2  requires self.resource[self-issued(fungible["unit"])] is absent
+      3  write self.resource[self-issued(fungible["unit"])]
+  exports  handle for clause 1, handle for clause 3, self.record
+
+mint(u128, bucket) — fallible
+  takes    arg1 carrying config.asset
+  issues   "unit" fungible
+  declares
+      0  write self.vault[config.asset] holding config.asset
+      1  write self.supply
+  yields   edge 0 = self-issued(fungible["unit"])
+  yields   edge 1 = resource-of(arg1)
+  exports  handle for clause 0, handle for clause 1, arg0, edge arg1, the issuer
+
+redeem(bucket) — fallible
+  takes    arg0 carrying self-issued(fungible["unit"])
+  issues   "unit" fungible
+  declares
+      0  write self.vault[config.asset] holding config.asset
+      1  write self.supply
+  yields   edge 0 = config.asset
+  exports  handle for clause 0, handle for clause 1, edge arg0, the issuer
+
+withdraw(u128, bucket) — fallible
+  takes    arg1 carrying self-issued(fungible["unit"])
+  issues   "unit" fungible
+  declares
+      0  write self.vault[config.asset] holding config.asset
+      1  write self.supply
+  yields   edge 0 = config.asset
+  yields   edge 1 = resource-of(arg1)
+  exports  handle for clause 0, handle for clause 1, arg0, edge arg1, the issuer

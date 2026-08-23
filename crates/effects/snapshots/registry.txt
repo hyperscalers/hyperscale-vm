@@ -1,0 +1,15 @@
+
+bind(u64, u128) — infallible
+  declares
+      0  write self.slot 16 at order-key(self.slot 16[arg0])
+  exports  handle for clause 0, order-key(self.slot 16[arg0]), arg1
+
+check(u64, u128) — infallible
+  declares
+      0  read self.slot 16 at order-key(self.slot 16[arg0])
+  exports  handle for clause 0, arg1
+
+drain(u128) — infallible
+  declares
+      0  write self.slot 16 over arg0..=u128::MAX, at most 8 entries
+  exports  handle for clause 0

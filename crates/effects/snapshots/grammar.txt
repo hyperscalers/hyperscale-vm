@@ -1,0 +1,210 @@
+state
+     16  entries — an ordered collection, holding u128
+     17  ledger — an ordered collection, holding u64
+     18  noted — one leaf, holding u64
+     19  owed — a leaf per key, holding u64
+     20  fees — a leaf per key, holding u128
+config
+      0  tiers
+      1  fallback
+      2  sides
+      3  windows
+      4  marks
+      5  assets
+types
+  seat = { holder: u64 }
+
+accrue(u128) — infallible
+  declares
+      0  for each of config.assets
+        1  write self.vault[element] holding element
+        2  delta self.fees[element] holding element
+  exports  the run over clause 0 site 0, the run over clause 0 site 1, arg0
+
+charge(u64) — infallible
+  declares
+      0  write self.noted
+  exports  handle for clause 0, config.tiers[arg0]
+
+charge-or(u64) — infallible
+  declares
+      0  write self.noted
+  exports  handle for clause 0, if arg0 in config.tiers then config.tiers[arg0] else config.fallback
+
+escrow(u128) — infallible
+  declares
+      0  for each of config.assets
+        1  reserve arg0 self.vault[element] holding element
+        2  delta self.fees[element] holding element
+  exports  the run over clause 0 site 0, the run over clause 0 site 1
+
+file(ids) — infallible
+  declares
+      0  write self.entries over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 64 entries
+  exports  handle for clause 0, arg0
+
+fund(bucket) — infallible
+  declares
+      0  delta self.vault[resource-of(arg0)] holding resource-of(arg0)
+  exports  handle for clause 0, edge arg0
+
+instantiate() — infallible
+  declares
+      0  requires self.config is absent
+      1  write self.config
+      2  requires self.resource[self-issued(non-fungible["seat"])] is absent
+      3  write self.resource[self-issued(non-fungible["seat"])]
+  exports  handle for clause 1, handle for clause 3, self.record
+
+jot(u64, u64) — infallible
+  declares
+      0  write self.entries[arg0] over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 8 entries
+  exports  handle for clause 0, arg1
+
+later(u64, u64) — infallible
+  declares
+      0  write self.noted
+  exports  handle for clause 0, (arg0, arg1).1
+
+ledgered(u64) — infallible, answers
+  declares
+      0  read self.ledger[arg0] over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 8 entries
+  exports  handle for clause 0
+
+noted() — infallible, answers
+  declares
+      0  read self.noted
+  exports  handle for clause 0
+
+owe-each() — infallible
+  declares
+      0  for each of config.windows
+        1  write self.owed[element]
+  exports  the run over clause 0 site 0, config.windows
+
+reseat(u64, u64) — infallible
+  declares
+      0  requires self.instance[self-issued(non-fungible["seat"]), arg0] is present
+      1  write self.instance[self-issued(non-fungible["seat"]), arg0]
+      2  write self.noted
+  exports  handle for clause 1, handle for clause 2, arg1
+
+restow(ids) — infallible
+  declares
+      0  for each of config.marks
+        1  write self.nf-vault[element] over 0..=u128::MAX, at most (len(arg0) + len(ids-of(edge(element × arg0)))) entries holding element
+  exports  the run over clause 0 site 0, arg0
+
+scheduled(u64) — infallible
+  declares
+      0  write self.noted
+  exports  handle for clause 0, arg0 in config.tiers
+
+seat(u64, u64) — infallible
+  issues   "seat" non-fungible
+  declares
+      0  requires self.instance[self-issued(non-fungible["seat"]), arg0] is absent
+      1  write self.instance[self-issued(non-fungible["seat"]), arg0]
+      2  write self.noted
+  yields   edge 0 = edge(self-issued(non-fungible["seat"]) × [arg0])
+  exports  handle for clause 1, handle for clause 2, arg1, arg0, the issuer
+
+seated(nf-bucket) — infallible
+  takes    arg0 carrying self-issued(non-fungible["seat"])
+  declares
+      0  read self.instance[self-issued(non-fungible["seat"]), only(ids-of(arg0))]
+      1  write self.noted
+  yields   edge 0 = edge(resource-of(arg0) × ids-of(arg0))
+  exports  handle for clause 0, handle for clause 1, edge arg0
+
+settle(u64) — infallible
+  declares
+      0  write self.entries over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 64 entries
+  exports  handle for clause 0, arg0
+
+spread(u64) — infallible
+  declares
+      0  for each of config.sides
+        1  write self.owed[element]
+  exports  the run over clause 0 site 0, arg0
+
+spread-to(u64, address) — infallible
+  declares
+      0  for each of config.sides
+        1  when element == arg1 → write self.owed[element]
+  exports  the run over clause 0 site 0, arg0
+
+stash(u64) — infallible
+  declares
+      0  when arg0 == 1 → write self.entries over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 64 entries
+  exports  handle for clause 0, whether clause 0 was declared
+
+stow(nf-bucket) — infallible
+  declares
+      0  write self.nf-vault[resource-of(arg0)] over 0..=u128::MAX, at most len(ids-of(arg0)) entries holding resource-of(arg0)
+  exports  handle for clause 0, edge arg0
+
+survey(nf-bucket) — infallible
+  takes    arg0 carrying self-issued(non-fungible["seat"])
+  declares
+      0  for each of ids-of(arg0)
+        1  read self.instance[self-issued(non-fungible["seat"]), element]
+      2  write self.noted
+  yields   edge 0 = edge(resource-of(arg0) × ids-of(arg0))
+  exports  the run over clause 0 site 0, handle for clause 1, edge arg0
+
+surveyed() — infallible
+  declares
+      0  for each of config.assets
+        1  read self.vault[element] holding element
+      2  write self.noted
+  exports  the run over clause 0 site 0, handle for clause 1
+
+sweep(resource-address) — infallible
+  declares
+      0  write self.entries over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 64 entries
+      1  read self.vault[arg0] holding arg0
+  exports  handle for clause 0, handle for clause 1
+
+take(resource-address, u128) — infallible
+  declares
+      0  reserve arg1 self.vault[arg0] holding arg0
+  yields   edge 0 = arg0
+  exports  handle for clause 0
+
+tallied(u64) — infallible
+  declares
+      0  write self.noted
+  exports  handle for clause 0, config.tiers[arg0]
+
+tally(u64) — infallible
+  declares
+      0  write self.noted
+  exports  handle for clause 0, arg0
+
+tally-plainly(u64) — infallible
+  declares
+      0  write self.noted
+  exports  handle for clause 0, arg0
+
+unseat(nf-bucket) — infallible
+  takes    arg0 carrying self-issued(non-fungible["seat"])
+  issues   "seat" non-fungible
+  declares
+      0  for each of ids-of(arg0)
+        1  requires self.instance[self-issued(non-fungible["seat"]), element] is present
+        2  write self.instance[self-issued(non-fungible["seat"]), element]
+  exports  the run over clause 0 site 1, edge arg0, the issuer
+
+widest() — infallible
+  declares
+      0  write self.noted
+  exports  handle for clause 0, config.windows
+
+windowed(u64) — infallible
+  declares
+      0  for each of config.windows
+        1  read self.entries[element] over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 8 entries
+        2  write self.ledger[element] over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 8 entries
+      3  write self.noted
+  exports  the run over clause 0 site 0, the run over clause 0 site 1, handle for clause 1, arg0

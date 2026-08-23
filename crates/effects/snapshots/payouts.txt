@@ -1,0 +1,43 @@
+config
+      0  asset
+      1  protocol
+      2  treasury
+      3  referrer
+errors
+      0  share-unclaimed
+      1  below-one-lot
+
+disburse(bucket) — infallible
+  takes    arg0 carrying config.asset
+  declares
+      0  delta self.vault[config.asset] holding config.asset
+  yields   edge 0 = resource-of(arg0)
+  yields   edge 1 = resource-of(arg0)
+  yields   edge 2 = resource-of(arg0)
+  exports  handle for clause 0, config.protocol, config.treasury, config.referrer, edge arg0
+
+divides(u128, u128) — infallible, answers
+  exports  arg0, arg1
+
+in-lots(bucket, u128) — fallible
+  takes    arg0 carrying config.asset
+  declares
+      0  delta self.vault[config.asset] holding config.asset
+  yields   edge 0 = resource-of(arg0)
+  yields   edge 1 = resource-of(arg0)
+  exports  handle for clause 0, edge arg0, arg1
+
+instantiate() — infallible
+  declares
+      0  requires self.config is absent
+      1  write self.config
+  exports  handle for clause 1, self.record
+
+settle(bucket) — fallible
+  takes    arg0 carrying config.asset
+  declares
+      0  delta self.vault[config.asset] holding config.asset
+  yields   edge 0 = resource-of(arg0)
+  yields   edge 1 = resource-of(arg0)
+  yields   edge 2 = resource-of(arg0)
+  exports  handle for clause 0, config.protocol, config.treasury, config.referrer, edge arg0
