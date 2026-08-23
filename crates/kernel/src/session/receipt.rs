@@ -278,11 +278,14 @@ impl KernelSession {
         );
         // Value first, because a transaction that lost some has nothing
         // else worth judging. A bucket still carrying anything here was
-        // debited from a cell and never put into one, and the drop the
-        // canonical ABI delivers is only reached by a body that lets a
-        // handle go — a body that simply keeps one reaches nothing at
-        // all. So the table is the account, and it has to balance for the
-        // transaction to commit.
+        // debited from a cell and never put into one, whether the body
+        // let the handle go or held it to the end — the two are one loss
+        // and the table sees both. So the table is the account, and it
+        // has to balance for the transaction to commit.
+        //
+        // Only a transaction that would otherwise commit reaches this. A
+        // body that declines commits nothing, so what it was holding when
+        // it declined is not a question anything asks.
         if self.buckets.carries_value() {
             return Ok(abort_with(
                 self.store,

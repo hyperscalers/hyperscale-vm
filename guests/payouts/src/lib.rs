@@ -93,6 +93,7 @@ pub mod payouts {
         /// For a schedule that has to add up: a remainder means the
         /// payment and the table disagree, and paying out three parts
         /// that do not sum to what arrived is worse than declining.
+        #[allow(clippy::tuple_array_conversions)] // the lowering follows these names to the edges
         pub fn settle(&mut self, pot: Bucket) -> Result<(Bucket, Bucket, Bucket), Error> {
             let terms = self.config();
             let mut kept = self.vault(terms.asset);
@@ -103,15 +104,11 @@ pub mod payouts {
                 terms.referrer.ratio(),
             ]);
 
-            // Every part is disposed of on the refusing path too, because
-            // a body leaves by no path holding value. The decline
-            // discards the whole transaction, so putting them back is
-            // what makes the refusal a refusal rather than a seizure.
+            // The parts are still in hand on the refusing path, and that
+            // is the whole of what happens to them: a decline discards
+            // the transaction, so an edge nobody routed goes back where it
+            // came from with everything else the transaction claimed.
             if !dust.quantity().is_zero() {
-                kept.put(protocol);
-                kept.put(treasury);
-                kept.put(referrer);
-                kept.put(dust);
                 return Err(Error::ShareUnclaimed);
             }
             kept.put(dust);
@@ -124,18 +121,16 @@ pub mod payouts {
         /// rather than subunits: the payment is rounded down to a whole
         /// multiple of the configured lot and the change goes back,
         /// rather than being kept as dust nobody agreed to leave.
+        ///
+        /// Both halves go back to the caller, so this reaches no cell and
+        /// denominates nothing — what a payer sends is theirs to name.
+        /// `disburse` and `settle` take the configured asset because they
+        /// credit the vault the configuration keys; a method that keeps
+        /// none of what passes through it has no such claim to make.
         pub fn in_lots(&mut self, pot: Bucket, lot: Quantity) -> Result<(Bucket, Bucket), Error> {
-            let terms = self.config();
-            let mut kept = self.vault(terms.asset);
-
             let paid = pot.quantity();
             let whole = paid.round_to_multiple(lot, Rounding::Down);
-            // The payment is disposed of before the judgment, because a
-            // body leaves by no path holding value. A decline discards
-            // the whole transaction, so crediting here is what makes the
-            // refusal cost the payer nothing.
             if whole.is_zero() {
-                kept.put(pot);
                 return Err(Error::BelowOneLot);
             }
 

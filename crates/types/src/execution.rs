@@ -214,11 +214,11 @@ pub enum AbortReason {
     /// cell or handed back, and one still carrying anything when the
     /// transaction ends is the loss the linear model exists to exclude.
     ///
-    /// Both ways of losing it, because they are one loss. A body that
-    /// lets a handle go delivers the discard through the canonical ABI
-    /// and the kernel refuses it there; a body that simply keeps one
-    /// delivers nothing, and the kernel finds it holding value when the
-    /// transaction closes.
+    /// Both ways of losing it, because they are one loss and one
+    /// judgment. Letting a handle go delivers a discard through the
+    /// canonical ABI and keeping one delivers nothing at all, and neither
+    /// decides anything: the bucket stays in the table either way and the
+    /// kernel finds it holding value when the transaction closes.
     #[hbor(discriminant = 26)]
     ValueDropped,
     /// An emission outside any invocation, so the kernel has no address

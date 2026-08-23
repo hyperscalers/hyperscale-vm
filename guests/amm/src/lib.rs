@@ -117,17 +117,11 @@ pub mod amm {
             // falling: the pool never pays out the subunit it rounded.
             let out = y.scale(share, Rounding::Down);
 
-            // The payment goes in before the floor is judged, because a
-            // body disposes of what it holds on every path it can leave
-            // by — a refusal that let the input fall out of scope would
-            // be dropping value, which the kernel refuses. A decline
-            // discards the whole transaction, so the credit lands only on
-            // the path that also takes the output.
-            sold.put(traded);
-            sold.put(fee);
             if out < min_out {
                 return Err(Error::SlippageExceeded);
             }
+            sold.put(traded);
+            sold.put(fee);
             Ok(bought.take(out))
         }
 
@@ -176,17 +170,12 @@ pub mod amm {
                 claim_x.min(claim_y)
             };
 
-            // The deposits go in on every path the body can leave by,
-            // because a refusal that let them fall out of scope would be
-            // dropping value the kernel refuses to lose. A decline
-            // discards the whole transaction, so nothing is stranded by
-            // crediting before the judgment.
-            vault_x.put(x_side);
-            vault_y.put(y_side);
             if minted.is_zero() {
                 return Err(Error::NothingMinted);
             }
 
+            vault_x.put(x_side);
+            vault_y.put(y_side);
             self.supply.set(supply + minted);
             Ok(Share::mint(minted))
         }
@@ -205,6 +194,9 @@ pub mod amm {
             let supply = self.supply.get();
             let returned = shares.quantity();
 
+            // Nothing is disposed of before this, and nothing needs to
+            // be: a refusal commits nothing, so the claim the caller
+            // handed over goes back with the rest of the transaction.
             let Ok(part) = returned.ratio_to(supply) else {
                 return Err(Error::EmptyPool);
             };

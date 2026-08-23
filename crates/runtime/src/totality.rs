@@ -159,14 +159,11 @@ const DISCHARGED: &[(&str, &str)] = &[
 
 /// The resources whose `resource.drop` a total body may reach: every
 /// handle the world lends, whose destructor releases a table slot and
-/// judges nothing — plus the bucket, on the mark's envelope. A bucket's
-/// destructor refuses exactly one thing, an owned edge let go of while
-/// it still carries value, and a body that consumes every edge it holds
-/// never runs it on a full one; the drop glue is statically reachable
-/// from any body that so much as holds a bucket, so refusing it would
-/// deny the mark to every method that moves value. Nothing here proves
-/// the consumption; the grant's review does, on the same terms as
-/// `emit`.
+/// judges nothing. The bucket is one of them on the same terms as the
+/// rest — its destructor releases the slot when there is nothing left to
+/// account for and holds on to it when there is, and either way it
+/// returns no verdict a body could trip over. Whether the transaction
+/// lost value is settled once, at the close, over the whole table.
 const DISCHARGED_DROPS: &[(&str, &str)] = &[
     ("state", "read-cell"),
     ("state", "write-cell"),

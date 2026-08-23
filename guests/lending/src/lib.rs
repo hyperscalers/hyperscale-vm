@@ -230,12 +230,10 @@ pub mod lending {
         pub fn repay(&mut self, funds: Bucket, now: u64) -> Result<(), Error> {
             let mut owed_vault = self.vault(self.config().debt);
             let paid = funds.quantity();
-            // The payment lands before the judgment, because a body
-            // leaves by no path holding value.
-            owed_vault.put(funds);
             if self.accrued_at.get() != now {
                 return Err(Error::IndexStale);
             }
+            owed_vault.put(funds);
 
             let index = started(self.index.get());
             let Ok(per_debt) = index.recip_rate() else {

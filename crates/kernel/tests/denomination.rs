@@ -26,7 +26,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MaterializeError, MemoryStore, OverlayStore};
 use hyperscale_vm_types::math::U256;
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
@@ -404,13 +404,22 @@ fn a_split_carries_the_resource_into_both_halves() {
 
 /// The bucket table's own accounting is unchanged: value still has to
 /// land somewhere, and a resource tag does not excuse dropping it.
+///
+/// Letting the handle go is not itself the refusal. The drop releases
+/// nothing it cannot account for, so the edge is still in the table and
+/// still the transaction's to answer for — which is where it is answered.
 #[test]
 fn a_denominated_edge_still_has_to_be_disposed_of() {
     let mut session = session(&[Some(X), Some(Y)]);
     let funds = session.delta_take(0, 100).expect("the debit is queued");
-    assert_eq!(
-        session.drop_bucket(funds).map_err(AbortReason::from),
-        Err(AbortReason::ValueDropped)
-    );
+    assert_eq!(session.drop_bucket(funds), Ok(()));
     assert_eq!(session.bucket(funds).map(|held| held.quantity()), Ok(100));
+
+    let (receipt, _) = session.finish(vec![], 0).expect("the flip still receipts");
+    assert_eq!(
+        receipt.outcome,
+        Outcome::UserError {
+            reason: AbortReason::ValueDropped
+        }
+    );
 }

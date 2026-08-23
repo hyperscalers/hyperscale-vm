@@ -887,23 +887,47 @@ fn an_empty_bucket_drops_and_reaches_the_host() -> Result<()> {
 }
 
 #[test]
-fn letting_go_of_value_is_refused_by_the_hosts_own_hand() -> Result<()> {
+fn letting_go_of_value_keeps_it_the_tables_to_answer_for() -> Result<()> {
     let fx = fixture();
-    // The property the handle exists for. A record could carry the
-    // amount and could not notice being forgotten; the canonical ABI
-    // routes a discarded owned handle to the host, and the host says no.
-    assert_eq!(
-        discarded(&fx, 40)?,
-        DualOutcome::Refused(AbortReason::ValueDropped)
-    );
+    // The property the handle exists for, and where it is settled. The
+    // canonical ABI routes a discarded owned handle to the host, so the
+    // host learns of the discard where a record could not have noticed
+    // being forgotten — and what the host does with it is hold on to the
+    // value rather than judge it. A body that keeps a full bucket to the
+    // end delivers no drop at all, so a verdict here would answer for one
+    // of the two ways of losing value and be silent about the other.
+    let (outcome, held) = discarded(&fx, 40)?;
+    assert!(matches!(outcome, DualOutcome::Values(_)));
+    assert_eq!(held, Some(40), "the value is still the transaction's");
 
-    // And nothing to lose is nothing to refuse.
-    assert!(matches!(discarded(&fx, 0)?, DualOutcome::Values(_)));
+    // Nothing to lose is nothing to hold on to, so the slot goes.
+    let (outcome, held) = discarded(&fx, 0)?;
+    assert!(matches!(outcome, DualOutcome::Values(_)));
+    assert_eq!(held, None, "an empty bucket leaves the table");
     Ok(())
 }
 
-/// One discard on both engines: how the drop ended.
-fn discarded(fx: &Fixture, held: u128) -> Result<DualOutcome> {
+#[test]
+fn a_transaction_that_let_value_go_does_not_commit_on_either_engine() -> Result<()> {
+    let fx = fixture();
+    // The other half of the same fact. The discard itself judges nothing,
+    // so what says the value was lost is the close — and it has to say it
+    // on both engines, because the receipt is what every participant of a
+    // cross-shard transaction derives for itself.
+    for (held, expected) in [(40u128, Some(AbortReason::ValueDropped)), (0, None)] {
+        let (blessed, reference) = closed_after_discarding(&fx, held)?;
+        assert_eq!(blessed, expected, "the blessed lane at {held}");
+        assert_eq!(reference, expected, "the reference lane at {held}");
+    }
+    Ok(())
+}
+
+/// One discard on both engines, carried through to the close: the abort
+/// each lane's receipt names, or `None` where it committed.
+fn closed_after_discarding(
+    fx: &Fixture,
+    held: u128,
+) -> Result<(Option<AbortReason>, Option<AbortReason>)> {
     let build = || {
         let mut host = session_of(fx);
         host.open_bucket(Held::Amount(held), RESOURCE);
@@ -912,7 +936,38 @@ fn discarded(fx: &Fixture, held: u128) -> Result<DualOutcome> {
     let mut probe = session_of(fx);
     let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
     let mut dual = GUEST.instantiate(FUEL, build)?;
-    dual.invoke_both("discard", &[CVal::Own(funds)])
+    dual.invoke_both("discard", &[CVal::Own(funds)])?;
+
+    let (blessed, reference) = dual.finish()?;
+    let closed = |session: KernelSession| {
+        let (receipt, _) = session.finish(vec![], 0).expect("the close receipts");
+        match receipt.outcome {
+            Outcome::UserError { reason } => Some(reason),
+            _ => None,
+        }
+    };
+    Ok((closed(blessed.session), closed(reference.session)))
+}
+
+/// One discard on both engines: how the drop ended, and what the rep
+/// still names afterwards — which the two lanes have to agree on for
+/// `finish` to reach one verdict.
+fn discarded(fx: &Fixture, held: u128) -> Result<(DualOutcome, Option<u128>)> {
+    let build = || {
+        let mut host = session_of(fx);
+        host.open_bucket(Held::Amount(held), RESOURCE);
+        host
+    };
+    let mut probe = session_of(fx);
+    let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
+    let mut dual = GUEST.instantiate(FUEL, build)?;
+    let outcome = dual.invoke_both("discard", &[CVal::Own(funds)])?;
+
+    let (blessed, reference) = dual.finish()?;
+    let survives = |session: KernelSession| session.bucket(funds).ok().map(|h| h.quantity());
+    let blessed = survives(blessed.session);
+    assert_eq!(blessed, survives(reference.session), "the discard diverged");
+    Ok((outcome, blessed))
 }
 
 // ─── and the read that moves none of it ────────────────────────────────

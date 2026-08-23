@@ -273,22 +273,23 @@ impl Buckets {
         Ok(())
     }
 
-    /// Let go of the bucket at `rep`, which must carry nothing.
+    /// Let go of the bucket at `rep`.
     ///
-    /// An empty bucket drops freely, because there is nothing to lose;
-    /// one that still carries value is the loss the linear model exists
-    /// to exclude.
+    /// An empty one leaves the table, because there is nothing left to
+    /// account for. One still carrying value stays in it, and stays the
+    /// table's to answer for at
+    /// [`carries_value`](Self::carries_value) — so letting a handle go
+    /// and never letting it go are the same fact about the transaction,
+    /// judged once where the whole of it is visible.
     ///
     /// # Errors
     ///
-    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket,
-    /// and [`SessionTrap::ValueDropped`] for one that still carries value.
+    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
     pub(super) fn drop(&mut self, rep: u32) -> Result<(), SessionTrap> {
-        let held = self.get(rep)?;
-        if !held.is_empty() {
-            return Err(SessionTrap::ValueDropped(held.quantity()));
+        if self.get(rep)?.is_empty() {
+            self.take(rep)?;
         }
-        self.take(rep).map(|_| ())
+        Ok(())
     }
 
     /// Whether any live bucket still carries value — the account
@@ -383,20 +384,17 @@ impl KernelSession {
 
     /// A bucket handle the guest let go of.
     ///
-    /// The canonical ABI delivers the drop and the kernel decides what it
-    /// means. What it decides is that value is not forgotten: a bucket is
-    /// put into a cell or handed back, and one carrying anything at all
-    /// that reaches here is the loss the linear model exists to exclude.
-    /// That delivery is the whole of what an owned handle buys over a
-    /// value a body could simply let fall out of scope, and it is why a
-    /// record could not have carried this.
-    ///
-    /// An empty bucket drops freely, because there is nothing to lose.
+    /// The canonical ABI delivers the drop, and what the kernel does with
+    /// it is release the slot. It judges nothing: whether value was
+    /// forgotten is a question about the whole transaction, and a body
+    /// that keeps a full bucket to the end delivers no drop at all — so
+    /// deciding it here would answer for one of the two ways of losing
+    /// value and be silent about the other. [`KernelSession::finish`]
+    /// answers for both, once, where the table is whole.
     ///
     /// # Errors
     ///
-    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket,
-    /// and [`SessionTrap::ValueDropped`] for one that still carries value.
+    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
     pub fn drop_bucket(&mut self, rep: u32) -> Result<(), SessionTrap> {
         self.buckets.drop(rep)
     }
@@ -572,15 +570,16 @@ mod tests {
         assert!(!buckets.carries_value());
     }
 
-    /// A drop refuses value and admits emptiness — the two halves of the
-    /// linear model's exit.
+    /// A drop releases an empty slot and holds on to a full one, so what
+    /// a body let go of is still what the table has to answer for.
     #[test]
     fn a_drop_loses_nothing() {
         let mut buckets = Buckets::default();
         let full = buckets.open(Held::Amount(3), RESOURCE);
-        assert_eq!(buckets.drop(full), Err(SessionTrap::ValueDropped(3)));
+        assert_eq!(buckets.drop(full), Ok(()));
         assert!(buckets.carries_value());
         let emptied = buckets.split(full, 0).expect("nothing comes off");
         assert_eq!(buckets.drop(emptied), Ok(()));
+        assert!(buckets.carries_value(), "the full one is still held");
     }
 }

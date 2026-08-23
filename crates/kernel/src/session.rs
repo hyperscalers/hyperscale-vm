@@ -168,9 +168,6 @@ pub enum SessionTrap {
     /// a repeated one.
     #[error("not an id set")]
     MalformedIdSet,
-    /// A discarded bucket that still carried value.
-    #[error("a bucket carrying {0} was let go of")]
-    ValueDropped(u128),
     /// A stored cell a movement reads as an amount and cannot: a defect
     /// in state rather than in the call that found it.
     #[error("substate {0:?} is not an amount cell")]
@@ -230,7 +227,6 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::InstanceHeldTwice(_) => Self::InstanceHeldTwice,
             SessionTrap::InstanceNotHeld(_) => Self::InstanceNotHeld,
             SessionTrap::MalformedIdSet => Self::MalformedEdgeCell,
-            SessionTrap::ValueDropped(_) => Self::ValueDropped,
             SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
             SessionTrap::CellUnderflow => Self::CellUnderflow,
             SessionTrap::CellOverflow => Self::CellOverflow,
