@@ -20,16 +20,24 @@
 //! subunit, donate a fortune, and the next depositor's mint rounds to
 //! nothing.
 //!
-//! What closes that route is the method set. Assets reach this instance
-//! only through a body that takes a `Bucket`, and each of those bodies
-//! mints where it credits, so a credit and a mint are one operation
-//! rather than two a caller can order independently. There is no bare
-//! transfer and so no donation. A bare-transfer path would need a
-//! virtual-share offset or a burned minimum mint to stay safe.
+//! Two things close that route, and they close different halves of it.
 //!
-//! The argument is about the route value takes and not about what
-//! travels it: it establishes that assets cannot arrive unaccompanied by
-//! a mint, and says nothing about which resource arrives.
+//! **The method set closes the way in.** Assets reach this instance only
+//! through a body that takes a `Bucket`, and each of those bodies mints
+//! where it credits, so a credit and a mint are one operation rather than
+//! two a caller can order independently. There is no bare transfer and so
+//! no donation. A bare-transfer path would need a virtual-share offset or
+//! a burned minimum mint to stay safe.
+//!
+//! **The denomination closes what may travel it.** That argument is about
+//! the route and says nothing about which resource arrives — and a
+//! deposit of something the vault does not price would grow a cell the
+//! share price is computed against while minting against nothing, which
+//! is the donation the first half was supposed to have ruled out. Every
+//! body here credits the vault the configuration names, so its
+//! parameter's denomination *is* that resource and admission holds a
+//! caller to it. The foreign deposit is refused before the transaction
+//! exists, which is why no body below checks for one.
 //!
 //! # Returned shares are destroyed
 //!

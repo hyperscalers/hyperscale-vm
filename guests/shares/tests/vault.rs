@@ -8,13 +8,18 @@ use shares_guest::shares::client::{Settings, Shares};
 const ALICE: PrincipalAddr = principal(1);
 const MALLORY: PrincipalAddr = principal(2);
 const ASSET: ResourceAddr = resource(0xA1);
+/// Anything the vault was not created over.
+const OTHER: ResourceAddr = resource(0xA2);
 
 /// An empty vault, with Alice and Mallory each holding assets.
 fn vault(mut chain: Chain) -> (Chain, Shares) {
     chain.publish(package!(shares_guest::shares));
-    let vault = chain.instantiate::<Shares>(ALICE, Settings {
-        asset: ASSET.into(),
-    });
+    let vault = chain.instantiate::<Shares>(
+        ALICE,
+        Settings {
+            asset: ASSET,
+        },
+    );
     chain.credit(ALICE, ASSET, 10_000);
     chain.credit(MALLORY, ASSET, 10_000);
     (chain, vault)
@@ -85,6 +90,11 @@ fn redeeming_every_share_returns_every_asset(chain: Chain) {
 /// body mints against what arrived. Mallory's "donation" is a deposit, so
 /// it buys shares, so it is not a donation — and Alice's stake is
 /// unharmed.
+///
+/// That closes the route. What closes the other half — a donation in
+/// something the vault does not price — is the denomination, and
+/// [`a_deposit_of_a_foreign_resource_is_refused`] is where that is
+/// stated.
 #[hyperscale_vm_testing::test]
 fn there_is_no_path_that_grows_assets_without_minting_shares(chain: Chain) {
     let (mut chain, vault) = vault(chain);
@@ -121,3 +131,34 @@ fn there_is_no_path_that_grows_assets_without_minting_shares(chain: Chain) {
     );
 }
 
+/// A deposit of anything but the configured asset is refused before the
+/// transaction exists.
+///
+/// This is the half the method-set argument never reached. `deposit`
+/// credits the vault the configuration names, so its parameter's
+/// denomination *is* that resource and admission holds a caller to it —
+/// the refusal is a property of the declaration rather than of a check
+/// this body performs, and there is no body to reach.
+///
+/// Without it, a foreign deposit would grow a cell the share price is
+/// computed against while minting against nothing, which is the donation
+/// the method set was supposed to have ruled out.
+#[hyperscale_vm_testing::test]
+fn a_deposit_of_a_foreign_resource_is_refused(chain: Chain) {
+    let (mut chain, vault) = vault(chain);
+    deposit(&mut chain, vault, ALICE, 1_000);
+    chain.credit(MALLORY, OTHER, 5_000);
+
+    let refused = chain.try_transact(MALLORY, |b| {
+        let signed_in = account::authorize(b, MALLORY)?;
+        let funds = account::withdraw(b, signed_in, OTHER, 5_000)?;
+        let shares = vault.deposit(b, funds)?;
+        account::deposit(b, MALLORY, shares)
+    });
+
+    assert!(
+        refused.is_err(),
+        "a vault takes the resource it prices and no other"
+    );
+    assert_eq!(chain.balance(vault, ASSET), 1_000, "and nothing moved");
+}
