@@ -36,6 +36,7 @@ pub mod lending;
 pub mod lottery;
 pub mod nf;
 pub mod payouts;
+pub mod peg;
 pub mod perp;
 pub mod registry;
 pub mod shares;
@@ -109,6 +110,9 @@ seedable! {
     lottery => (LOTTERY_COMPONENT, lottery_artifact, lottery_package_hash, "lottery.component.wasm");
     /// The fee splitter: revenue in, three configured shares out.
     payouts => (PAYOUTS_COMPONENT, payouts_artifact, payouts_package_hash, "payouts.component.wasm");
+    /// The redemption window: a stable against a reserve, at a price
+    /// that moves both ways.
+    peg => (PEG_COMPONENT, peg_artifact, peg_package_hash, "peg.component.wasm");
     /// The perpetual: margin against a size, marked and funded.
     perp => (PERP_COMPONENT, perp_artifact, perp_package_hash, "perp.component.wasm");
     /// The share vault: assets in, shares out, at whatever the pool is worth.
@@ -129,6 +133,7 @@ mod tests {
             (lending_artifact(), lending::metadata()),
             (lottery_artifact(), lottery::metadata()),
             (payouts_artifact(), payouts::metadata()),
+            (peg_artifact(), peg::metadata()),
             (perp_artifact(), perp::metadata()),
             (shares_artifact(), shares::metadata()),
         ]

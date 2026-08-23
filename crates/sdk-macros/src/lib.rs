@@ -456,8 +456,9 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         "u128" | "Quantity" | "OrderKey" => quote!(U128),
         // A stored rate crosses at its own width, carrying the scale the
         // type fixes — so an oracle posting one writes a rate rather
-        // than an integer whose meaning lives in a doc comment.
-        "Fixed" => quote!(U256),
+        // than an integer whose meaning lives in a doc comment. Signed or
+        // not is the guest's reading of the same thirty-two bytes.
+        "Fixed" | "SignedFixed" => quote!(U256),
         "u64" => quote!(U64),
         "Vec" | "Bytes" => quote!(Bytes),
         "Rule" => quote!(Rule),
@@ -466,8 +467,8 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
             return Err(syn::Error::new(
                 ty.span(),
                 "a contract parameter must be one of `Bucket`, `NfBucket`, `Ids`, \
-                 `Quantity`, `OrderKey`, `Fixed`, `u128`, `u64`, `Address`, or bytes — \
-                 these are the kinds a manifest can bind",
+                 `Quantity`, `OrderKey`, `Fixed`, `SignedFixed`, `u128`, `u64`, `Address`, or \
+                 bytes — these are the kinds a manifest can bind",
             ));
         }
     };

@@ -27,7 +27,7 @@ use std::path::PathBuf;
 
 use hyperscale_vm_effects::{PackageMetadata, explain};
 use hyperscale_vm_fixtures::{
-    amm, book, grammar, lending, lottery, nf, payouts, perp, registry, shares,
+    amm, book, grammar, lending, lottery, nf, payouts, peg, perp, registry, shares,
 };
 use hyperscale_vm_stdlib::{account, staking};
 
@@ -96,6 +96,11 @@ fn the_splitter_declares_what_its_snapshot_records() {
 #[test]
 fn the_lending_market_declares_what_its_snapshot_records() {
     snapshot("lending", &lending::metadata());
+}
+
+#[test]
+fn the_redemption_window_declares_what_its_snapshot_records() {
+    snapshot("peg", &peg::metadata());
 }
 
 #[test]

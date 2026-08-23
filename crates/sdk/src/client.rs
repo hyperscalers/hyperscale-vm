@@ -23,7 +23,7 @@ pub use hyperscale_vm_types::{
     Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 
-use crate::num::{Fixed, Quantity, UnitFixed};
+use crate::num::{Fixed, Quantity, SignedFixed, UnitFixed};
 use crate::state::Table;
 
 /// The record an instance of `C` derives from, under `config` and
@@ -236,6 +236,14 @@ impl IntoSlot for Quantity {
 /// second scale, a lift between them, and a choice an author should not
 /// have to make.
 impl<A, B> IntoSlot for Fixed<A, B> {
+    fn into_slot(self) -> Value {
+        Value::U256(self.to_le_bytes())
+    }
+}
+
+/// A signed stored rate fills a slot as the two's complement integer it
+/// carries, on the same terms an unsigned one does.
+impl<A, B> IntoSlot for SignedFixed<A, B> {
     fn into_slot(self) -> Value {
         Value::U256(self.to_le_bytes())
     }

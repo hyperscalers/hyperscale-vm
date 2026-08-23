@@ -1,0 +1,36 @@
+state
+     16  deviation — one leaf, holding [u8; 32]
+config
+      0  stable
+      1  reserve
+      2  oracle
+      3  band
+errors
+      0  outside-band
+      1  nothing-redeemed
+
+instantiate() — infallible
+  declares
+      0  requires self.config is absent
+      1  write self.config
+  exports  handle for clause 1, self.record
+
+post-deviation(u256) — infallible
+  declares
+      0  requires claim config.oracle
+      1  write self.deviation
+  exports  handle for clause 1, arg0
+
+quote(u128) — infallible, answers
+  declares
+      0  read self.deviation
+  exports  handle for clause 0, arg0
+
+redeem(bucket) — fallible
+  takes    arg0 carrying config.stable
+  declares
+      0  read self.deviation
+      1  delta self.vault[config.stable] holding config.stable
+      2  delta self.vault[config.reserve] holding config.reserve
+  yields   edge 0 = config.reserve
+  exports  handle for clause 0, handle for clause 1, handle for clause 2, config.band, edge arg0

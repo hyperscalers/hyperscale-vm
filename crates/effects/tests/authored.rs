@@ -11,7 +11,9 @@ use hyperscale_vm_effects::{
     PackageMetadata, RECOVERY, ResourceKind, RuleExpr, RuleLeaf, Value, check_abi,
     check_declarations,
 };
-use hyperscale_vm_fixtures::{amm, book, lending, lottery, nf, payouts, perp, registry, splitter};
+use hyperscale_vm_fixtures::{
+    amm, book, lending, lottery, nf, payouts, peg, perp, registry, splitter,
+};
 use hyperscale_vm_stdlib::staking::OWNER_BADGE;
 use hyperscale_vm_stdlib::{account, staking};
 
@@ -29,6 +31,7 @@ fn corpus() -> Vec<(&'static str, PackageMetadata)> {
         ("lottery", lottery::metadata()),
         ("nf", nf::metadata()),
         ("payouts", payouts::metadata()),
+        ("peg", peg::metadata()),
         ("perp", perp::metadata()),
         ("registry", registry::metadata()),
         ("splitter", splitter::metadata()),
@@ -190,6 +193,15 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("payouts", "in-lots", open(), vec![]),
         ("payouts", "instantiate", open(), vec![]),
         ("payouts", "settle", open(), vec![]),
+        ("peg", "instantiate", open(), vec![]),
+        (
+            "peg",
+            "post-deviation",
+            vec![RuleExpr::claim(Expr::Config(2))],
+            vec![],
+        ),
+        ("peg", "quote", open(), vec![]),
+        ("peg", "redeem", open(), vec![]),
         (
             "perp",
             "charge-longs",

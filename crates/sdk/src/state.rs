@@ -70,7 +70,9 @@ use hyperscale_vm_types::{Address, CellKind, Drawn as WireDrawn, ResourceAddr};
 
 #[cfg(not(component))]
 use crate::host;
-pub use crate::num::{Fixed, NumError, Quantity, Rate, Ratio, Rounding, UnitFixed, Wide};
+pub use crate::num::{
+    Fixed, NumError, Quantity, Rate, Ratio, Rounding, Sign, SignedFixed, UnitFixed, Wide,
+};
 
 /// Where an entry sits in a collection's ordering.
 ///
@@ -357,20 +359,34 @@ impl<A, B> Cellular for Fixed<A, B> {
     /// movement semantics that read an amount cell are unreachable for
     /// it.
     fn from_cell(cell: &[u8]) -> Self {
-        let mut limbs = [0u64; 4];
-        let (chunks, _) = cell.as_chunks::<8>();
-        for (limb, chunk) in limbs.iter_mut().zip(chunks) {
-            *limb = u64::from_le_bytes(*chunk);
-        }
-        Self::from_scaled(Wide::from_limbs(limbs))
+        Self::from_le_bytes(cell.try_into().unwrap_or([0; 32]))
     }
 
     fn to_cell(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(32);
-        for limb in self.scaled().limbs() {
-            out.extend_from_slice(&limb.to_le_bytes());
-        }
-        out
+        self.to_le_bytes().to_vec()
+    }
+}
+
+impl<A, B> LeafShape for SignedFixed<A, B> {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::ByteArray(32))
+    }
+}
+
+/// The same thirty-two little-endian bytes an unsigned rate has, read as
+/// two's complement.
+///
+/// No check on the way in, and none to write: every thirty-two byte
+/// string is exactly one value, so a cell cannot hold a shape the type
+/// does not admit. An unwritten cell reads as zero, which is the value
+/// zero rather than a state a body has to special-case.
+impl<A, B> Cellular for SignedFixed<A, B> {
+    fn from_cell(cell: &[u8]) -> Self {
+        Self::from_bits(Fixed::<A, B>::from_cell(cell).scaled())
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        Fixed::<A, B>::from_scaled(self.bits()).to_cell()
     }
 }
 

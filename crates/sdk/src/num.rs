@@ -135,6 +135,83 @@ impl Wide {
         if borrow { None } else { Some(Self(difference)) }
     }
 
+    /// The sum, discarding the carry.
+    ///
+    /// What a two's complement value adds through, where the carry out of
+    /// the top limb is the wrap the representation is defined by rather
+    /// than a loss. [`Wide::checked_add`] is the one an unsigned value
+    /// wants.
+    #[must_use]
+    pub const fn wrapping_add(self, other: Self) -> Self {
+        let (sum, _) = limb_add(self.0, other.0);
+        Self(sum)
+    }
+
+    /// The two's complement negation: every bit flipped, plus one.
+    ///
+    /// Its own fixed point at the top of the range, which is the one
+    /// value a signed reading cannot negate — the caller that reads this
+    /// as signed is the one that owes that check.
+    #[must_use]
+    pub const fn wrapping_neg(self) -> Self {
+        let mut flipped = [0u64; 4];
+        let mut limb = 0;
+        while limb < 4 {
+            flipped[limb] = !self.0[limb];
+            limb += 1;
+        }
+        let (negated, _) = limb_add(flipped, [1, 0, 0, 0]);
+        Self(negated)
+    }
+
+    /// Whether the top bit is set, which is what a two's complement
+    /// reading calls negative.
+    #[must_use]
+    pub const fn top_bit(self) -> bool {
+        self.0[3] >> 63 == 1
+    }
+
+    /// The canonical little-endian bytes: each limb's own eight, least
+    /// significant limb first.
+    ///
+    /// The one place the width's byte form is written. A configuration
+    /// slot holds these, a leaf holds these, and a guest decodes these,
+    /// so a second spelling anywhere would be a second answer to what a
+    /// stored rate looks like.
+    #[must_use]
+    pub const fn to_le_bytes(self) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        let mut limb = 0;
+        while limb < 4 {
+            let word = self.0[limb].to_le_bytes();
+            let mut byte = 0;
+            while byte < 8 {
+                bytes[limb * 8 + byte] = word[byte];
+                byte += 1;
+            }
+            limb += 1;
+        }
+        bytes
+    }
+
+    /// The value those bytes name.
+    #[must_use]
+    pub const fn from_le_bytes(bytes: [u8; 32]) -> Self {
+        let mut limbs = [0u64; 4];
+        let mut limb = 0;
+        while limb < 4 {
+            let mut word = [0u8; 8];
+            let mut byte = 0;
+            while byte < 8 {
+                word[byte] = bytes[limb * 8 + byte];
+                byte += 1;
+            }
+            limbs[limb] = u64::from_le_bytes(word);
+            limb += 1;
+        }
+        Self(limbs)
+    }
+
     /// The value as a `u128`, or nothing past the amount width.
     ///
     /// What a body reaches for on a wide value it *stored* — a rate a
@@ -627,10 +704,23 @@ impl Ratio {
 /// The phantoms erase at the ABI boundary and carry no runtime cost. What
 /// they buy is that a rate cannot be applied to the wrong side: converting
 /// with one takes a `B` and yields an `A`, in that order, always.
-#[derive(Debug)]
 pub struct Rate<A, B> {
     ratio: Ratio,
     dimension: PhantomData<(A, B)>,
+}
+
+/// The terms, without asking the dimensions to be printable.
+///
+/// A derived one would want `A: Debug` for a phantom that holds nothing,
+/// and a dimension is a marker nobody derives anything on — so deriving
+/// here would make a rate unprintable in every contract that has one.
+impl<A, B> core::fmt::Debug for Rate<A, B> {
+    fn fmt(&self, out: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        out.debug_tuple("Rate")
+            .field(&self.ratio.num)
+            .field(&self.ratio.den)
+            .finish()
+    }
 }
 
 impl<A, B> Clone for Rate<A, B> {
@@ -733,10 +823,16 @@ impl<A, B> Rate<A, B> {
 /// [`Rounding`]. That is what removes the bug where a fixed-point rate is
 /// inverted and multiplied back: the reciprocal is taken on the exact
 /// fraction, where it is free and lossless.
-#[derive(Debug)]
 pub struct Fixed<A, B> {
     scaled: Wide,
     dimension: PhantomData<(A, B)>,
+}
+
+/// The scaled integer, without asking the dimensions to be printable.
+impl<A, B> core::fmt::Debug for Fixed<A, B> {
+    fn fmt(&self, out: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        out.debug_tuple("Fixed").field(&self.scaled).finish()
+    }
 }
 
 impl<A, B> Clone for Fixed<A, B> {
@@ -809,21 +905,13 @@ impl<A, B> Fixed<A, B> {
     /// the same terms an amount's sixteen bytes do.
     #[must_use]
     pub const fn to_le_bytes(self) -> [u8; 32] {
-        let limbs = self.scaled.limbs();
-        let mut bytes = [0u8; 32];
-        let mut limb = 0;
-        while limb < 4 {
-            let word = limbs[limb].to_le_bytes();
-            let mut byte = 0;
-            while byte < 8 {
-                bytes[limb * 8 + byte] = word[byte];
-                byte += 1;
-            }
-            byte = 0;
-            let _ = byte;
-            limb += 1;
-        }
-        bytes
+        self.scaled.to_le_bytes()
+    }
+
+    /// The rate those bytes name.
+    #[must_use]
+    pub const fn from_le_bytes(bytes: [u8; 32]) -> Self {
+        Self::from_scaled(Wide::from_le_bytes(bytes))
     }
 
     /// Whether the rate is zero.
@@ -910,6 +998,290 @@ impl<A, B> core::ops::Sub for Fixed<A, B> {
 impl<A, B> core::ops::AddAssign for Fixed<A, B> {
     fn add_assign(&mut self, other: Self) {
         *self = *self + other;
+    }
+}
+
+/// Which way a signed value points.
+///
+/// Zero is positive, because a sign has to be one of the two and nothing
+/// downstream can tell: what a body does with a magnitude of nothing is
+/// the same either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sign {
+    /// At or above zero.
+    Positive,
+    /// Below zero.
+    Negative,
+}
+
+/// A stored rate that may point either way: a quantity of `A` per
+/// quantity of `B`, signed.
+///
+/// What [`Fixed`] is for a rate that cannot fall below nothing, this is
+/// for one that can — an oracle-posted basis, a negative interest rate, a
+/// rebase that gives back. A separate type rather than a sign on `Fixed`,
+/// because the rates that are non-negative by nature are most of them and
+/// should pay neither a bit of range nor a branch.
+///
+/// # Two's complement, in the same thirty-two bytes
+///
+/// Every thirty-two byte string is exactly one value of this type, so a
+/// stored one is canonically encoded by construction and there is no
+/// negative zero to normalize away. A magnitude beside a sign flag would
+/// need both — a rule that zero is never negative, and a check at
+/// [`Cellular::from_cell`] that a stored pair obeys it — and a state root
+/// is the wrong place to hold an invariant something has to remember.
+///
+/// The range halves, to roughly `±5.8e40` at the scale. That is the
+/// harmless direction: a rate between subunits lives at the bottom of the
+/// range, which is where `Fixed`'s own note says the useful part is.
+///
+/// [`Cellular::from_cell`]: crate::state::Cellular::from_cell
+///
+/// # Nothing lossy happens here either
+///
+/// Addition, subtraction, negation and comparison are exact. There is
+/// deliberately **no** `convert`: `Rounding::Down` against a value that
+/// may be negative is two different operations — toward negative
+/// infinity, or toward zero — and answering that silently is the one
+/// thing this vocabulary refuses everywhere else.
+///
+/// So applying one goes through [`SignedFixed::split`], which hands back
+/// a magnitude and the way it points. The body names the rounding for the
+/// direction it is in, which is what a contract wants anyway: what a
+/// position pays and what it is paid round opposite ways, and a single
+/// figure cannot say so.
+pub struct SignedFixed<A, B> {
+    bits: Wide,
+    dimension: PhantomData<(A, B)>,
+}
+
+/// The magnitude and the way it points, which is what a reader wants —
+/// two's complement bits read as a number nobody recognises.
+impl<A, B> core::fmt::Debug for SignedFixed<A, B> {
+    fn fmt(&self, out: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let (magnitude, sign) = self.split();
+        out.debug_tuple("SignedFixed")
+            .field(&sign)
+            .field(&magnitude.scaled())
+            .finish()
+    }
+}
+
+impl<A, B> Clone for SignedFixed<A, B> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<A, B> Copy for SignedFixed<A, B> {}
+
+impl<A, B> PartialEq for SignedFixed<A, B> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bits == other.bits
+    }
+}
+
+impl<A, B> Eq for SignedFixed<A, B> {}
+
+impl<A, B> PartialOrd for SignedFixed<A, B> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<A, B> Ord for SignedFixed<A, B> {
+    /// The sign decides where the signs differ, and the bits decide
+    /// where they agree — which holds for two negatives too, because
+    /// two's complement orders them the same way it orders two
+    /// positives.
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self.bits.top_bit(), other.bits.top_bit()) {
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            _ => self.bits.cmp(&other.bits),
+        }
+    }
+}
+
+impl<A, B> Default for SignedFixed<A, B> {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+impl<A, B> SignedFixed<A, B> {
+    /// Nothing.
+    pub const ZERO: Self = Self {
+        bits: Wide::ZERO,
+        dimension: PhantomData,
+    };
+
+    /// One of `A` per one of `B`.
+    pub const ONE: Self = Self {
+        bits: Wide::from_u128(FIXED_SCALE),
+        dimension: PhantomData,
+    };
+
+    /// The two's complement bits this holds.
+    #[must_use]
+    pub const fn bits(self) -> Wide {
+        self.bits
+    }
+
+    /// The value these bits name.
+    ///
+    /// Total: every thirty-two byte string is a value, which is what
+    /// makes a stored one need no check on the way in.
+    #[must_use]
+    pub const fn from_bits(bits: Wide) -> Self {
+        Self {
+            bits,
+            dimension: PhantomData,
+        }
+    }
+
+    /// Whether the value is nothing.
+    #[must_use]
+    pub fn is_zero(self) -> bool {
+        self.bits.is_zero()
+    }
+
+    /// Whether the value is below nothing.
+    #[must_use]
+    pub const fn is_negative(self) -> bool {
+        self.bits.top_bit()
+    }
+
+    /// The magnitude, and the way it points.
+    ///
+    /// The only route from a signed rate to an unsigned one, and the seam
+    /// where a body says which rounding it means. The magnitude is a
+    /// [`Fixed`] because that is what it is — a rate that cannot be
+    /// negative — and it may exceed what a `SignedFixed` holds, at the one
+    /// value whose negation does not fit.
+    #[must_use]
+    pub const fn split(self) -> (Fixed<A, B>, Sign) {
+        if self.is_negative() {
+            (Fixed::from_scaled(self.bits.wrapping_neg()), Sign::Negative)
+        } else {
+            (Fixed::from_scaled(self.bits), Sign::Positive)
+        }
+    }
+
+    /// The two's complement integer as its canonical little-endian
+    /// bytes.
+    #[must_use]
+    pub const fn to_le_bytes(self) -> [u8; 32] {
+        self.bits.to_le_bytes()
+    }
+
+    /// The value those bytes name.
+    #[must_use]
+    pub const fn from_le_bytes(bytes: [u8; 32]) -> Self {
+        Self::from_bits(Wide::from_le_bytes(bytes))
+    }
+
+    /// The same value the other way round.
+    ///
+    /// # Panics
+    ///
+    /// At the one value with no opposite: the bottom of the range, whose
+    /// magnitude is one past the top.
+    #[must_use]
+    pub fn negate(self) -> Self {
+        let negated = self.bits.wrapping_neg();
+        assert!(
+            !(self.is_negative() && negated.top_bit()),
+            "a signed rate at the bottom of its range has no opposite"
+        );
+        Self::from_bits(negated)
+    }
+}
+
+impl<A, B> Fixed<A, B> {
+    /// This magnitude, pointing the way `sign` says.
+    ///
+    /// The inverse of [`SignedFixed::split`], and the only route from an
+    /// unsigned rate to a signed one.
+    ///
+    /// # Errors
+    ///
+    /// [`NumError::OutOfRange`] past what the signed range holds, which
+    /// is half what an unsigned one does.
+    pub fn signed(self, sign: Sign) -> Result<SignedFixed<A, B>, NumError> {
+        let bits = match sign {
+            Sign::Positive => self.scaled(),
+            Sign::Negative => self.scaled().wrapping_neg(),
+        };
+        // A magnitude fits where negating it lands on the sign it was
+        // given. Nothing else does, and zero passes either way because
+        // its negation is itself.
+        let fits = self.scaled().is_zero()
+            || match sign {
+                Sign::Positive => !bits.top_bit(),
+                Sign::Negative => bits.top_bit(),
+            };
+        if fits {
+            Ok(SignedFixed::from_bits(bits))
+        } else {
+            Err(NumError::OutOfRange)
+        }
+    }
+}
+
+impl<A, B> core::ops::Add for SignedFixed<A, B> {
+    type Output = Self;
+
+    /// Exact, and an operator for the same reason an unsigned rate's is.
+    ///
+    /// # Panics
+    ///
+    /// Past either end of the range. Two values of one sign summing to
+    /// the other sign is the whole of what overflow looks like here, and
+    /// two of different signs cannot overflow at all.
+    fn add(self, other: Self) -> Self {
+        let sum = Self::from_bits(self.bits.wrapping_add(other.bits));
+        assert!(
+            self.is_negative() != other.is_negative() || sum.is_negative() == self.is_negative(),
+            "a signed rate within the range"
+        );
+        sum
+    }
+}
+
+impl<A, B> core::ops::Sub for SignedFixed<A, B> {
+    type Output = Self;
+
+    /// Its own operation rather than the addition of a negation: the one
+    /// value with no opposite can still be subtracted, and `-1` less the
+    /// bottom of the range is a difference that fits.
+    ///
+    /// # Panics
+    ///
+    /// Past either end of the range. Two values of one sign cannot
+    /// overflow a difference; two of different signs do exactly when the
+    /// answer comes back wearing the subtrahend's.
+    fn sub(self, other: Self) -> Self {
+        let difference = Self::from_bits(self.bits.wrapping_add(other.bits.wrapping_neg()));
+        assert!(
+            self.is_negative() == other.is_negative()
+                || difference.is_negative() == self.is_negative(),
+            "a signed rate within the range"
+        );
+        difference
+    }
+}
+
+impl<A, B> core::ops::AddAssign for SignedFixed<A, B> {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
+impl<A, B> core::ops::SubAssign for SignedFixed<A, B> {
+    fn sub_assign(&mut self, other: Self) {
+        *self = *self - other;
     }
 }
 
@@ -1017,7 +1389,21 @@ impl UnitFixed {
 
 #[cfg(test)]
 mod tests {
-    use super::{Fixed, NumError, Quantity, Rate, Ratio, Rounding, UnitFixed, Wide, arith};
+    use super::{
+        FIXED_SCALE, Fixed, NumError, Quantity, Rate, Ratio, Rounding, Sign, SignedFixed,
+        UnitFixed, Wide, arith,
+    };
+
+    /// A dimension, for the rates that need two of them.
+    struct Up;
+    /// The other one.
+    struct Down;
+
+    fn signed(scaled: u128, sign: Sign) -> SignedFixed<Up, Down> {
+        Fixed::from_scaled(Wide::from_u128(scaled))
+            .signed(sign)
+            .expect("well inside the range")
+    }
 
     fn q(n: u128) -> Quantity {
         Quantity::from_subunits(n)
@@ -1267,5 +1653,112 @@ mod tests {
         let rate = q(3).ratio_to(q(7)).expect("funded");
         let back = rate.recip().expect("non-zero").recip().expect("non-zero");
         assert_eq!(rate.cmp_with(back), core::cmp::Ordering::Equal);
+    }
+
+    /// Every thirty-two byte string is one value and every value is one
+    /// string, which is what a state root needs of a leaf.
+    ///
+    /// The pair a magnitude and a flag would spell two ways is the whole
+    /// reason for the representation: there is no negative zero to
+    /// normalize, so nothing has to remember to.
+    #[test]
+    fn a_signed_rate_has_one_spelling_for_every_value() {
+        assert_eq!(signed(0, Sign::Positive), signed(0, Sign::Negative));
+        assert_eq!(signed(0, Sign::Negative), SignedFixed::ZERO);
+        assert!(!signed(0, Sign::Negative).is_negative(), "no negative zero");
+
+        let there = signed(7, Sign::Negative);
+        let back = SignedFixed::<Up, Down>::from_le_bytes(there.to_le_bytes());
+        assert_eq!(there, back);
+    }
+
+    /// The magnitude comes back with the way it points, and goes back in
+    /// the same way — which is the only route either direction.
+    #[test]
+    fn a_signed_rate_splits_into_a_magnitude_and_a_way_it_points() {
+        for sign in [Sign::Positive, Sign::Negative] {
+            let (magnitude, read) = signed(FIXED_SCALE, sign).split();
+            assert_eq!(magnitude, Fixed::ONE);
+            assert_eq!(read, sign);
+            assert_eq!(
+                magnitude.signed(sign).expect("in range"),
+                signed(FIXED_SCALE, sign)
+            );
+        }
+        // Zero points the one way a sign can, whichever way it was made.
+        assert_eq!(SignedFixed::<Up, Down>::ZERO.split().1, Sign::Positive);
+    }
+
+    /// A negative sorts below a positive, and two of one sign sort by
+    /// what they are — which two's complement gives without a branch per
+    /// comparison.
+    #[test]
+    fn signed_rates_order_by_value_and_not_by_bits() {
+        let ordered = [
+            signed(FIXED_SCALE, Sign::Negative),
+            signed(1, Sign::Negative),
+            SignedFixed::ZERO,
+            signed(1, Sign::Positive),
+            signed(FIXED_SCALE, Sign::Positive),
+        ];
+        for pair in ordered.windows(2) {
+            assert!(
+                pair[0] < pair[1],
+                "{:?} is not below {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    /// Addition and subtraction are exact and cross zero without a
+    /// special case.
+    #[test]
+    fn a_signed_rate_crosses_zero_arithmetically() {
+        let up = signed(3, Sign::Positive);
+        let down = signed(5, Sign::Negative);
+        assert_eq!(up + down, signed(2, Sign::Negative));
+        assert_eq!(up - down, signed(8, Sign::Positive));
+        assert_eq!(down - up, signed(8, Sign::Negative));
+        assert_eq!(up + up.negate(), SignedFixed::ZERO);
+    }
+
+    /// The bottom of the range has no opposite, and subtracting it is
+    /// still a difference — which is why subtraction is its own
+    /// operation rather than the addition of a negation.
+    #[test]
+    fn the_bottom_of_the_range_has_no_opposite_and_can_still_be_subtracted() {
+        let bottom = SignedFixed::<Up, Down>::from_bits(Wide::from_limbs([0, 0, 0, 1 << 63]));
+        assert!(bottom.is_negative());
+        let minus_one = SignedFixed::<Up, Down>::from_bits(Wide::from_limbs([u64::MAX; 4]));
+
+        let difference = minus_one - bottom;
+        assert!(!difference.is_negative());
+        assert_eq!(
+            difference.split().0.scaled(),
+            bottom
+                .split()
+                .0
+                .scaled()
+                .checked_sub(Wide::ONE)
+                .expect("the magnitude is not zero")
+        );
+
+        assert!(
+            std::panic::catch_unwind(|| bottom.negate()).is_err(),
+            "the bottom of the range negates to itself, which is not its opposite"
+        );
+    }
+
+    /// A magnitude past half the width is not a signed value, and saying
+    /// so is a refusal rather than a wrap.
+    #[test]
+    fn a_magnitude_past_the_signed_range_is_refused() {
+        let half = Fixed::<Up, Down>::from_scaled(Wide::from_limbs([0, 0, 0, 1 << 63]));
+        assert_eq!(half.signed(Sign::Positive), Err(NumError::OutOfRange));
+        // Its negation is exactly the bottom of the range, so that one
+        // fits — the asymmetry two's complement has and the reason the
+        // range is stated as one value wider below than above.
+        assert!(half.signed(Sign::Negative).is_ok());
     }
 }

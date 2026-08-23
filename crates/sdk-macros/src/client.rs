@@ -187,7 +187,7 @@ fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
     // A stored rate binds as its scaled integer, at the width a rate has,
     // and the caller writes the rate — so the scale is the type's and
     // never a number a call site has to agree with.
-    if is_named(ty, "Fixed") {
+    if is_named(ty, "Fixed") || is_named(ty, "SignedFixed") {
         return (
             quote!(#name: #ty),
             quote!(#value::U256(#name.to_le_bytes())),

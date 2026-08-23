@@ -37,6 +37,7 @@ const BLOBS: &[(&str, &str)] = &[
     ("lending", "crates/fixtures/blobs"),
     ("lottery", "crates/fixtures/blobs"),
     ("payouts", "crates/fixtures/blobs"),
+    ("peg", "crates/fixtures/blobs"),
     ("perp", "crates/fixtures/blobs"),
     ("shares", "crates/fixtures/blobs"),
 ];
