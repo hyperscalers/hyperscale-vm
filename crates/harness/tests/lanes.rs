@@ -1207,3 +1207,35 @@ fn the_instance_an_edge_carries_reads_the_same_in_both_lanes() {
     assert_eq!(native_two, Some(2), "an edge carrying two names neither");
     assert_eq!(native_none, Some(0), "an edge carrying none names nothing");
 }
+
+/// One text, and a test per lane the crate carries.
+///
+/// The differential tests above run both lanes inside one body because
+/// what they assert is the *agreement*. This is the other shape: a test
+/// that is about the contract rather than about the engines, written
+/// once and held to each of them separately, so a failure names the
+/// engine that failed rather than the pair.
+#[hyperscale_vm_testing::test]
+fn a_seeded_balance_is_there_to_read(mut chain: Chain) {
+    assert_eq!(
+        chain.balance(ALICE, X),
+        0,
+        "an unseeded chain holds nothing"
+    );
+    chain.credit(ALICE, X, 600);
+    assert_eq!(chain.balance(ALICE, X), 600);
+}
+
+/// The attribute emitted a lane per engine this crate was built with.
+///
+/// Named rather than run: a lane that did not expand is a name that does
+/// not resolve, so a missing lane fails to compile rather than quietly
+/// leaving the corpus one test shorter.
+#[test]
+fn a_lane_is_emitted_for_every_engine_the_crate_carries() {
+    let lanes: [fn(); 2] = [
+        a_seeded_balance_is_there_to_read_native,
+        a_seeded_balance_is_there_to_read_wasm,
+    ];
+    assert_eq!(lanes.len(), 2);
+}

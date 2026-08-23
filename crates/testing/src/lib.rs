@@ -60,6 +60,27 @@ use hyperscale_vm_types::{
     CallTarget, Outcome as KernelOutcome, SubstateKey, TxHash, encode_amount,
 };
 
+/// The blessed engine's lane, emitted where this crate carries one.
+///
+/// A `cfg` over whatever it is handed, and the reason it exists here
+/// rather than in the attribute: whether the second lane can be built is
+/// a fact about *this* crate's features, and a `cfg` written into the
+/// expansion would ask the test's own crate instead — where the feature
+/// has no meaning and the answer would always be no.
+#[cfg(feature = "wasm")]
+#[macro_export]
+macro_rules! wasm_lane {
+    ($($lane:tt)*) => { $($lane)* };
+}
+
+/// The same, where the crate was built without the blessed engine: the
+/// lane is not emitted, and a test written for both still runs on one.
+#[cfg(not(feature = "wasm"))]
+#[macro_export]
+macro_rules! wasm_lane {
+    ($($lane:tt)*) => {};
+}
+
 mod native;
 mod outcome;
 mod package;
@@ -67,6 +88,13 @@ mod package;
 mod wasm;
 
 pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot};
+/// Run one test on every engine lane this crate was built with.
+///
+/// The body takes the [`Chain`] it runs on and says nothing about what
+/// is under it. Spell it qualified — `#[hyperscale_vm_testing::test]` —
+/// rather than importing the name, which would put it where a plain
+/// `#[test]` resolves.
+pub use hyperscale_vm_sdk_macros::lanes as test;
 pub use hyperscale_vm_stdlib::account;
 pub use native::{Dispatch, Native};
 pub use outcome::Outcome;

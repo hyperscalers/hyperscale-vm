@@ -13,6 +13,10 @@ hyperscale-vm-manifest-builder.workspace = true
 # The client vocabulary a generated handle is written against: a chain
 # creating an instance answers with one.
 hyperscale-vm-sdk.workspace = true
+# The `#[test]` attribute, which is this crate's surface rather than the
+# SDK's: what it expands to is a chain per lane, and a package author
+# reaches it through the crate the chain lives in.
+hyperscale-vm-sdk-macros.workspace = true
 # The account: value has to come from somewhere, and every principal is
 # answered by one. A test that seeds a balance is seeding an account's
 # vault, so the package is part of the world rather than part of a test.

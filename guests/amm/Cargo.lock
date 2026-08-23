@@ -145,6 +145,7 @@ dependencies = [
  "hyperscale-vm-kernel",
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-sdk",
+ "hyperscale-vm-sdk-macros",
  "hyperscale-vm-stdlib",
  "hyperscale-vm-types",
  "thiserror",

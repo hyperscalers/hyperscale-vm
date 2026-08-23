@@ -98,6 +98,7 @@ mod client;
 mod emit;
 mod guest;
 mod host;
+mod lanes;
 mod lower;
 mod role;
 mod syntax;
@@ -142,6 +143,25 @@ pub fn blueprint(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn blueprint_publisher(attr: TokenStream, item: TokenStream) -> TokenStream {
     author(attr, item, Role::Publisher)
+}
+
+/// Run one test on every engine lane the crate was built with.
+///
+/// The body takes the chain it runs on and says nothing about what is
+/// under it; each lane is a test of its own, named for the engine, so a
+/// divergence names the engine that diverged.
+///
+/// # Panics
+///
+/// Never; a body the lanes cannot run is a `compile_error!` on its own
+/// span.
+#[proc_macro_attribute]
+pub fn lanes(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let body = syn::parse_macro_input!(item as syn::ItemFn);
+    match lanes::expand(body) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
 }
 
 fn author(attr: TokenStream, item: TokenStream, role: Role) -> TokenStream {
