@@ -31,3 +31,7 @@ codegen-units = 1
 # Deliberately outside the host workspace: this crate compiles to
 # wasm32-unknown-unknown and is built by the harness, not by workspace builds.
 [workspace]
+
+[dev-dependencies]
+# The author's chain: publish, seed, call, assert.
+hyperscale-vm-testing = { path = "../../crates/testing" }
