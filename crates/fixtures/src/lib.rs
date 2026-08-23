@@ -36,6 +36,7 @@ pub mod lending;
 pub mod lottery;
 pub mod nf;
 pub mod payouts;
+pub mod perp;
 pub mod registry;
 pub mod shares;
 pub mod splitter;
