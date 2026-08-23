@@ -158,6 +158,11 @@ struct Walked {
     /// the name is not on the wire.
     depth: usize,
     /// The fewest bytes any value of the shape occupies.
+    ///
+    /// Every sum of one is saturating: a shape is data, so it may claim
+    /// widths that add past what an address space holds, and a wrapped
+    /// sum would understate what a run costs and let a claimed length
+    /// past the bytes that must pay for it.
     least: usize,
 }
 
@@ -264,7 +269,7 @@ impl<'a> Resolution<'a> {
             TypeShape::Map { key, value } => {
                 let key = self.walk(key, remaining)?;
                 let value = self.walk(value, remaining)?;
-                if key.least + value.least == 0 {
+                if key.least.saturating_add(value.least) == 0 {
                     return Err(ShapeFault::ZeroWidth);
                 }
                 Ok(Walked {
@@ -305,7 +310,7 @@ impl<'a> Resolution<'a> {
                 Ok(Walked {
                     cost,
                     depth: deepest.unwrap_or(0),
-                    least: 1 + lightest.unwrap_or(0),
+                    least: lightest.unwrap_or(0).saturating_add(1),
                 })
             }
             // The hop is a frame of its own; the name is not on the wire,
@@ -336,9 +341,6 @@ impl<'a> Resolution<'a> {
             let walked = self.walk(shape, remaining)?;
             cost = cost.max(1 + walked.cost);
             deepest = Some(deepest.map_or(walked.depth, |seen: usize| seen.max(walked.depth)));
-            // Saturating because a hand-written shape may claim widths
-            // that sum past what an address space holds, and a wrapped
-            // sum would understate what a run costs.
             least = least.saturating_add(walked.least);
         }
         Ok(Walked {
@@ -557,8 +559,9 @@ impl TypeShape {
                 })
             }
             Self::Map { key, value } => {
-                let pair = resolution.min_encoded_len(key, MAX_SHAPE_DEPTH)?
-                    + resolution.min_encoded_len(value, MAX_SHAPE_DEPTH)?;
+                let pair = resolution
+                    .min_encoded_len(key, MAX_SHAPE_DEPTH)?
+                    .saturating_add(resolution.min_encoded_len(value, MAX_SHAPE_DEPTH)?);
                 if pair == 0 {
                     return Err(ShapeFault::ZeroWidth.into());
                 }
