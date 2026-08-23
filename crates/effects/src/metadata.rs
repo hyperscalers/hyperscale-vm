@@ -213,8 +213,14 @@ impl PackageMetadata {
     ///
     /// The whole of what the tables are for: an index becomes a name,
     /// the name becomes a shape, and the shape turns opaque bytes into
-    /// named fields. `None` where the index names no declared type,
-    /// which a receipt from another package's emitter would.
+    /// named fields. `None` where the index names no declared type.
+    ///
+    /// This must be the metadata of the package the emitter answers to.
+    /// An index is a number in that package's own table, and nothing
+    /// here maps an emitter back to the package behind it — so an event
+    /// from elsewhere whose index happens to be in range reads against
+    /// the wrong shape rather than against none. Pairing an emitter with
+    /// the package that answers for it is the caller's.
     ///
     /// # Errors
     ///
@@ -236,6 +242,10 @@ impl PackageMetadata {
     /// reads as its own zero. `None` where the slot is not one this
     /// package declares.
     ///
+    /// As [`read_event`](Self::read_event), this must be the metadata of
+    /// the package the leaf's owner answers to: a slot is that package's
+    /// own number.
+    ///
     /// # Errors
     ///
     /// [`ReadError`] for bytes the declared shape does not describe.
@@ -253,6 +263,9 @@ impl PackageMetadata {
     /// The mark is the material a signature's own claim names, and it is
     /// the name the mark's schema is declared under — so a consumer that
     /// found a resource in a signature can read what its instances hold.
+    ///
+    /// As [`read_event`](Self::read_event), this must be the metadata of
+    /// the package that mints under the mark.
     ///
     /// # Errors
     ///
