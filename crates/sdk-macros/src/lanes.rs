@@ -6,11 +6,10 @@
 //! the default was the spelling: naming the second lane took a second
 //! test, and a second test is a thing an author can forget to write.
 //!
-//! So the chain arrives as a parameter and the lanes are emitted. The
-//! blessed lane goes through the testing crate's `wasm_lane!`, which is
-//! a `cfg` gate over whatever it is handed: whether that lane exists is
-//! a fact about how *that* crate was built, and a `cfg` emitted here
-//! would ask the test's own crate instead.
+//! So the chain arrives as a parameter and both lanes are emitted, each
+//! a test of its own — the bodies at the speed of a function call, and
+//! the artifact a network would run. A failure then names the engine
+//! that failed rather than the pair.
 //!
 //! [`Chain`]: https://docs.rs/hyperscale-vm-testing
 
@@ -56,11 +55,9 @@ pub fn expand(mut item: syn::ItemFn) -> syn::Result<TokenStream2> {
             #body(::hyperscale_vm_testing::Chain::native())
         }
 
-        ::hyperscale_vm_testing::wasm_lane! {
-            #[test]
-            fn #blessed() #output {
-                #body(::hyperscale_vm_testing::Chain::wasm())
-            }
+        #[test]
+        fn #blessed() #output {
+            #body(::hyperscale_vm_testing::Chain::wasm())
         }
     })
 }

@@ -1226,13 +1226,13 @@ fn a_seeded_balance_is_there_to_read(mut chain: Chain) {
     assert_eq!(chain.balance(ALICE, X), 600);
 }
 
-/// The attribute emitted a lane per engine this crate was built with.
+/// The attribute emitted a test per engine.
 ///
 /// Named rather than run: a lane that did not expand is a name that does
 /// not resolve, so a missing lane fails to compile rather than quietly
 /// leaving the corpus one test shorter.
 #[test]
-fn a_lane_is_emitted_for_every_engine_the_crate_carries() {
+fn a_lane_is_emitted_for_every_engine() {
     let lanes: [fn(); 2] = [
         a_seeded_balance_is_there_to_read_native,
         a_seeded_balance_is_there_to_read_wasm,

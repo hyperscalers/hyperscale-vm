@@ -12,8 +12,7 @@ const Y: ResourceAddr = resource(0xE2);
 
 /// A pool holding a thousand of each side at 30 bps, and Alice with six
 /// hundred of the side she sells.
-fn pool() -> (Chain, Amm) {
-    let mut chain = Chain::native();
+fn pool(mut chain: Chain) -> (Chain, Amm) {
     chain.publish(package!(amm_guest::amm));
     let pool = chain.instantiate::<Amm>(ALICE, Settings {
         x: X.into(),
@@ -30,9 +29,9 @@ fn pool() -> (Chain, Amm) {
 ///
 /// The arithmetic is computed here rather than read off the body: 30 bps
 /// on 500 leaves 498 effective, and 1000 * 498 / 1498 is 332.
-#[test]
-fn a_swap_pays_the_curve_less_the_fee() {
-    let (mut chain, pool) = pool();
+#[hyperscale_vm_testing::test]
+fn a_swap_pays_the_curve_less_the_fee(chain: Chain) {
+    let (mut chain, pool) = pool(chain);
 
     chain
         .transact(ALICE, |b| {
@@ -52,9 +51,9 @@ fn a_swap_pays_the_curve_less_the_fee() {
 /// A floor the trade cannot reach is declined, not trapped: the sender
 /// lost a race rather than committing a defect, so the pool says so with
 /// its own error and nothing moves.
-#[test]
-fn a_floor_the_pool_cannot_reach_declines() {
-    let (mut chain, pool) = pool();
+#[hyperscale_vm_testing::test]
+fn a_floor_the_pool_cannot_reach_declines(chain: Chain) {
+    let (mut chain, pool) = pool(chain);
 
     let outcome = chain.transact(ALICE, |b| {
         let signed_in = account::authorize(b, ALICE)?;
@@ -76,9 +75,8 @@ fn a_floor_the_pool_cannot_reach_declines() {
 /// a share of `y`, the same trade has nothing to overflow: the share is
 /// bounded below one and the product is held whole inside a single
 /// division. The reserve here is the largest one there is.
-#[test]
-fn a_reserve_that_once_overflowed_the_curve_now_trades() {
-    let mut chain = Chain::native();
+#[hyperscale_vm_testing::test]
+fn a_reserve_that_once_overflowed_the_curve_now_trades(mut chain: Chain) {
     chain.publish(package!(amm_guest::amm));
     let pool = chain.instantiate::<Amm>(ALICE, Settings {
         x: X.into(),

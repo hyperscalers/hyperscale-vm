@@ -34,9 +34,10 @@ fn manifest(name: &str, sdk: &str, testing: &str) -> String {
          hyperscale-vm-sdk = {sdk}\n\
          \n\
          [dev-dependencies]\n\
-         # The chain a test runs on: publish, seed, call, assert. Native\n\
-         # by default; `features = [\"wasm\"]` adds the lane that builds\n\
-         # this crate to its artifact and runs that instead.\n\
+         # The chain a test runs on: publish, seed, call, assert. It\n\
+         # carries both lanes — the bodies called directly, and this\n\
+         # crate built to its artifact and run under the engine a network\n\
+         # would use.\n\
          hyperscale-vm-testing = {testing}\n\
          \n\
          [profile.release]\n\
@@ -130,12 +131,14 @@ fn first_test(module: &str) -> String {
          use hyperscale_vm_testing::{{Chain, account, package, principal, resource}};\n\
          use {module}::{module}::client::State;\n\
          \n\
-         #[test]\n\
-         fn a_deposit_lands_in_the_vault() {{\n\
+         // One text, and a test per engine the crate was built with: the\n\
+         // bodies at the speed of a function call, and the artifact a\n\
+         // network would run. Neither is wrong to run; running only one is.\n\
+         #[hyperscale_vm_testing::test]\n\
+         fn a_deposit_lands_in_the_vault(mut chain: Chain) {{\n\
          \x20   let alice = principal(1);\n\
          \x20   let xrd = resource(0xE1);\n\
          \n\
-         \x20   let mut chain = Chain::native();\n\
          \x20   chain.publish(package!({module}::{module}));\n\
          \x20   let instance = chain.instantiate::<State>(principal(1), ());\n\
          \x20   chain.credit(alice, xrd, 100);\n\
@@ -234,6 +237,10 @@ fn publisher(dependency: &str) -> String {
 
 /// The test harness as a scaffolded package reaches it, on the terms
 /// [`sdk_dependency`] describes.
+///
+/// With the blessed engine's lane, because the scaffold's own test is
+/// written for both: an author who has to turn on the second engine is
+/// an author whose first run proves half of what it says it does.
 #[must_use]
 pub fn testing_dependency(dir: &Path) -> String {
     crate_dependency(dir, "testing", "\"0.1\"")

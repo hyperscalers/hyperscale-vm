@@ -16,7 +16,7 @@ hyperscale-vm-ref.workspace = true
 hyperscale-vm-runtime = { workspace = true, features = ["engine"] }
 # The driver's blessed lane and native dispatch: one home for "a
 # GuestBackend over a component set", shared with every consumer.
-hyperscale-vm-testing = { workspace = true, features = ["wasm"] }
+hyperscale-vm-testing.workspace = true
 wasmtime.workspace = true
 wit-component.workspace = true
 

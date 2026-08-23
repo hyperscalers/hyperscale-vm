@@ -16,12 +16,16 @@
 //! # Which engine ran it
 //!
 //! Nothing in a test says but the constructor. [`Chain::native`] calls
-//! the package's own bodies; `Chain::wasm` — behind the `wasm` feature —
-//! builds the crate to its artifact and runs that under the blessed
-//! engine, which is what a network would execute. Everything after that
-//! line is engine-neutral on purpose: a test written once is a test more
-//! than one engine can be held to, and the harness holds them to each
-//! other.
+//! the package's own bodies; [`Chain::wasm`] builds the crate to its
+//! artifact and runs that under the blessed engine, which is what a
+//! network would execute. Everything after that line is engine-neutral
+//! on purpose: a test written once is a test more than one engine can be
+//! held to, and the harness holds them to each other.
+//!
+//! Which is what [`test`] is for. A body takes the chain it runs on and
+//! becomes a test per lane, so the constructor stops being a line an
+//! author writes — and running only one stops being something they can
+//! do by forgetting.
 //!
 //! # What the fast lane does not answer
 //!
@@ -52,39 +56,15 @@ use hyperscale_vm_kernel::{
     decode_amount, execute_batch,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
-#[cfg(feature = "wasm")]
-use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
-use hyperscale_vm_stdlib::instantiate;
+use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, instantiate};
 pub use hyperscale_vm_types::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_types::{
     CallTarget, Outcome as KernelOutcome, SubstateKey, TxHash, encode_amount,
 };
 
-/// The blessed engine's lane, emitted where this crate carries one.
-///
-/// A `cfg` over whatever it is handed, and the reason it exists here
-/// rather than in the attribute: whether the second lane can be built is
-/// a fact about *this* crate's features, and a `cfg` written into the
-/// expansion would ask the test's own crate instead — where the feature
-/// has no meaning and the answer would always be no.
-#[cfg(feature = "wasm")]
-#[macro_export]
-macro_rules! wasm_lane {
-    ($($lane:tt)*) => { $($lane)* };
-}
-
-/// The same, where the crate was built without the blessed engine: the
-/// lane is not emitted, and a test written for both still runs on one.
-#[cfg(not(feature = "wasm"))]
-#[macro_export]
-macro_rules! wasm_lane {
-    ($($lane:tt)*) => {};
-}
-
 mod native;
 mod outcome;
 mod package;
-#[cfg(feature = "wasm")]
 mod wasm;
 
 pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot};
@@ -99,7 +79,6 @@ pub use hyperscale_vm_stdlib::account;
 pub use native::{Dispatch, Native};
 pub use outcome::Outcome;
 pub use package::Package;
-#[cfg(feature = "wasm")]
 pub use wasm::{Blessed, FUEL_CEILING};
 
 /// An address the chain holds no instance of the wanted package at.
@@ -141,7 +120,6 @@ pub struct Chain {
 /// Whatever runs a package's code, behind the walk.
 enum Engine {
     /// The artifact a network would run, under the blessed engine.
-    #[cfg(feature = "wasm")]
     Blessed(Blessed),
     /// The bodies themselves, called directly.
     Native(Native),
@@ -167,7 +145,6 @@ impl Chain {
     /// the deploy-time profile all stand here, and a test that passes on
     /// both has been held to what a network would do as well as to what
     /// its author meant.
-    #[cfg(feature = "wasm")]
     #[must_use]
     pub fn wasm() -> Self {
         let mut blessed = Blessed::new();
@@ -231,7 +208,6 @@ impl Chain {
         let hash =
             declaration_hash(&TestHasher, &package.metadata).expect("a traced declaration encodes");
         match &mut self.engine {
-            #[cfg(feature = "wasm")]
             Engine::Blessed(blessed) => blessed.build(hash, &package),
             Engine::Native(native) => native.seed(hash, package.dispatch),
         }
@@ -504,7 +480,6 @@ impl Chain {
         let batch = std::slice::from_ref(&entry);
         let base = Arc::new(before.clone());
         let outcome = match &self.engine {
-            #[cfg(feature = "wasm")]
             Engine::Blessed(backend) => execute_batch(
                 base,
                 batch,

@@ -10,8 +10,7 @@ const MALLORY: PrincipalAddr = principal(2);
 const ASSET: ResourceAddr = resource(0xA1);
 
 /// An empty vault, with Alice and Mallory each holding assets.
-fn vault() -> (Chain, Shares) {
-    let mut chain = Chain::native();
+fn vault(mut chain: Chain) -> (Chain, Shares) {
     chain.publish(package!(shares_guest::shares));
     let vault = chain.instantiate::<Shares>(ALICE, Settings {
         asset: ASSET.into(),
@@ -35,18 +34,18 @@ fn deposit(chain: &mut Chain, vault: Shares, who: PrincipalAddr, amount: u128) {
 
 /// The first depositor prices a share at par, because nothing else can be
 /// priced against an empty pool.
-#[test]
-fn the_first_deposit_mints_at_par() {
-    let (mut chain, vault) = vault();
+#[hyperscale_vm_testing::test]
+fn the_first_deposit_mints_at_par(chain: Chain) {
+    let (mut chain, vault) = vault(chain);
     deposit(&mut chain, vault, ALICE, 1_000);
     assert_eq!(chain.balance(vault, ASSET), 1_000);
 }
 
 /// A second depositor into an unchanged pool gets the same rate, and the
 /// pool holds both stakes.
-#[test]
-fn a_later_deposit_prices_against_the_pool() {
-    let (mut chain, vault) = vault();
+#[hyperscale_vm_testing::test]
+fn a_later_deposit_prices_against_the_pool(chain: Chain) {
+    let (mut chain, vault) = vault(chain);
     deposit(&mut chain, vault, ALICE, 1_000);
     deposit(&mut chain, vault, MALLORY, 500);
     assert_eq!(chain.balance(vault, ASSET), 1_500);
@@ -54,9 +53,9 @@ fn a_later_deposit_prices_against_the_pool() {
 
 /// Round-tripping the whole position returns the whole stake: with one
 /// holder and no growth, redeeming every share is redeeming everything.
-#[test]
-fn redeeming_every_share_returns_every_asset() {
-    let (mut chain, vault) = vault();
+#[hyperscale_vm_testing::test]
+fn redeeming_every_share_returns_every_asset(chain: Chain) {
+    let (mut chain, vault) = vault(chain);
     deposit(&mut chain, vault, ALICE, 1_000);
 
     chain
@@ -86,9 +85,9 @@ fn redeeming_every_share_returns_every_asset() {
 /// body mints against what arrived. Mallory's "donation" is a deposit, so
 /// it buys shares, so it is not a donation — and Alice's stake is
 /// unharmed.
-#[test]
-fn there_is_no_path_that_grows_assets_without_minting_shares() {
-    let (mut chain, vault) = vault();
+#[hyperscale_vm_testing::test]
+fn there_is_no_path_that_grows_assets_without_minting_shares(chain: Chain) {
+    let (mut chain, vault) = vault(chain);
 
     // Mallory takes the first position, as small as one gets.
     deposit(&mut chain, vault, MALLORY, 1);
