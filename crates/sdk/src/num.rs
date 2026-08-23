@@ -135,13 +135,32 @@ impl Wide {
         if borrow { None } else { Some(Self(difference)) }
     }
 
+    /// The value as a `u128`, or nothing past the amount width.
+    ///
+    /// What a body reaches for on a wide value it *stored* — a rate a
+    /// market has been compounding — because how far that can grow is a
+    /// fact about the market rather than about the arithmetic, and a
+    /// reader asking for a number that will not fit should hear so rather
+    /// than lose the transaction.
+    #[must_use]
+    pub const fn try_to_u128(self) -> Option<u128> {
+        if self.0[2] == 0 && self.0[3] == 0 {
+            Some((self.0[0] as u128) | ((self.0[1] as u128) << 64))
+        } else {
+            None
+        }
+    }
+
     /// The value as a `u128`.
+    ///
+    /// For the narrowings the vocabulary's own arithmetic proves: an
+    /// amount scaled by a fraction at most one, a root, the mean of two
+    /// amounts. [`Wide::try_to_u128`] is the one to reach for where the
+    /// width is a fact about what a guest stored.
     ///
     /// # Panics
     ///
-    /// Past the amount width. A quantity is `u128` subunits and a
-    /// fraction's terms never leave the arithmetic, so a wider value has
-    /// nowhere in the vocabulary to go.
+    /// Past the amount width.
     #[must_use]
     pub const fn to_u128(self) -> u128 {
         assert!(
@@ -637,6 +656,30 @@ impl<A, B> Rate<A, B> {
         self.ratio
     }
 
+    /// This rate through another: `A` per `B` and `B` per `C` give `A`
+    /// per `C`.
+    ///
+    /// The composition the dimensions exist for. A chain of rates through
+    /// an intermediate — a price through a numeraire, an index against a
+    /// growth factor — is where a mismatched pair is easiest to write and
+    /// hardest to see, and taking the product here rather than on the
+    /// bare fraction is what makes the middle term cancel by construction
+    /// instead of by the author checking.
+    ///
+    /// Exact, on the same terms [`Ratio::compose`] is: both fractions are
+    /// unevaluated and the product is two multiplications.
+    ///
+    /// A dimensionless factor is a rate from a thing to itself, so
+    /// scaling a `Rate<A, B>` composes with a `Rate<B, B>` and the answer
+    /// keeps the dimensions it went in with.
+    #[must_use]
+    pub fn compose<C>(self, other: Rate<B, C>) -> Rate<A, C> {
+        Rate {
+            ratio: self.ratio.compose(other.ratio),
+            dimension: PhantomData,
+        }
+    }
+
     /// The rate the other way round: exact, because it is the same two
     /// terms swapped.
     ///
@@ -758,6 +801,29 @@ impl<A, B> Fixed<A, B> {
     #[must_use]
     pub const fn scaled(self) -> Wide {
         self.scaled
+    }
+
+    /// The scaled integer as its canonical little-endian bytes.
+    ///
+    /// What a configuration slot holds and what crosses to a guest, on
+    /// the same terms an amount's sixteen bytes do.
+    #[must_use]
+    pub const fn to_le_bytes(self) -> [u8; 32] {
+        let limbs = self.scaled.limbs();
+        let mut bytes = [0u8; 32];
+        let mut limb = 0;
+        while limb < 4 {
+            let word = limbs[limb].to_le_bytes();
+            let mut byte = 0;
+            while byte < 8 {
+                bytes[limb * 8 + byte] = word[byte];
+                byte += 1;
+            }
+            byte = 0;
+            let _ = byte;
+            limb += 1;
+        }
+        bytes
     }
 
     /// Whether the rate is zero.
