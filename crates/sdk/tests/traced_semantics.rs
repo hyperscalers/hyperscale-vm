@@ -12,7 +12,7 @@ use hyperscale_vm_effects::{
     MethodSignature, ModeExpr, PackageHash, ParamType, PresentedGrants, TargetExpr, TestHasher,
     Value, child_key, evaluate_declaration, evaluate_effects,
 };
-use hyperscale_vm_sdk::sym::{Addr, Amount, Bucket, Seq, Sym, eq};
+use hyperscale_vm_sdk::sym::{Addr, Bucket, Seq, Sym, U128, eq};
 use hyperscale_vm_sdk::{Blueprint, Trace};
 use hyperscale_vm_types::{
     Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, ModeKind, SubstateKey,
@@ -453,7 +453,7 @@ fn a_parameter_read_at_the_wrong_kind_fails_the_build() {
     // against the component's own type section — is also the one the tracer
     // can check the effect expressions against.
     let _ = Blueprint::builder().method("swap", &[ParamType::Bucket], |t: &mut Trace| {
-        let _: Sym<Amount> = t.arg(0);
+        let _: Sym<U128> = t.arg(0);
     });
 }
 

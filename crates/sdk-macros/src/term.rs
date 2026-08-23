@@ -269,8 +269,8 @@ impl Term {
                 let lo = lo.emit();
                 quote!(
                     ::hyperscale_vm_sdk::sym::pack(
-                        &#hi.cast::<::hyperscale_vm_sdk::Num>(),
-                        &#lo.cast::<::hyperscale_vm_sdk::Num>(),
+                        &#hi.cast::<::hyperscale_vm_sdk::U64>(),
+                        &#lo.cast::<::hyperscale_vm_sdk::U64>(),
                     )
                     .cast::<::hyperscale_vm_sdk::Opaque>()
                 )

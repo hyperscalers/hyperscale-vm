@@ -1,10 +1,10 @@
-use hyperscale_vm_sdk::{Amount, Blueprint, ParamType, SlotId, Sym, Trace, sym::lit_u64};
+use hyperscale_vm_sdk::{Blueprint, ParamType, SlotId, Sym, Trace, U128, sym::lit_u64};
 
 fn main() {
     let _ = Blueprint::builder()
         .method("sweep", &[ParamType::U128], |t: &mut Trace| {
             let owner = t.self_addr();
-            let cursor: Sym<Amount> = t.arg(0);
+            let cursor: Sym<U128> = t.arg(0);
             // A presence requirement is about the leaf a write lands on,
             // and an interval has none: it stays valid whatever entries
             // enter or leave it, which is what makes it declarable ahead

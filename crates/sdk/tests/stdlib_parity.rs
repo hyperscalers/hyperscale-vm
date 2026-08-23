@@ -23,7 +23,7 @@ use hyperscale_vm_fixtures::{
     amm as amm_package, book as book_package, splitter as splitter_package,
 };
 use hyperscale_vm_sdk::sym::{
-    Addr, Amount, Bucket, Num, Sym, eq, lit_u64, pack, select, self_record,
+    Addr, Bucket, Sym, U64, U128, eq, lit_u64, pack, select, self_record,
 };
 use hyperscale_vm_sdk::{Blueprint, GrantedBehaviour, ResourceKind, Trace};
 use hyperscale_vm_stdlib::account as account_package;
@@ -36,7 +36,7 @@ fn account() -> Blueprint {
             &[ParamType::Resource, ParamType::U128],
             |t: &mut Trace| {
                 let resource: Sym<Addr> = t.arg(0);
-                let amount: Sym<Amount> = t.arg(1);
+                let amount: Sym<U128> = t.arg(1);
                 let holder = t.self_addr();
 
                 // The gate first: the macro emits it ahead of the body.
@@ -52,7 +52,7 @@ fn account() -> Blueprint {
             &[ParamType::Resource, ParamType::U128],
             |t: &mut Trace| {
                 let resource: Sym<Addr> = t.arg(0);
-                let _amount: Sym<Amount> = t.arg(1);
+                let _amount: Sym<U128> = t.arg(1);
                 let holder = t.self_addr();
 
                 // The gate is the resource's own granted rule, resolved
@@ -244,7 +244,7 @@ fn book() -> Blueprint {
             "place-ask",
             &[ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
-                let price: Sym<Num> = t.arg(0);
+                let price: Sym<U64> = t.arg(0);
                 let _funds: Sym<Bucket> = t.arg(1);
                 let venue = t.self_addr();
 
@@ -267,8 +267,8 @@ fn book() -> Blueprint {
             "fill-asks",
             &[ParamType::U64, ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
-                let from: Sym<Num> = t.arg(0);
-                let to: Sym<Num> = t.arg(1);
+                let from: Sym<U64> = t.arg(0);
+                let to: Sym<U64> = t.arg(1);
                 let payment: Sym<Bucket> = t.arg(2);
                 let base: Sym<Addr> = t.config(0);
                 let venue = t.self_addr();

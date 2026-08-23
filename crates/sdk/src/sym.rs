@@ -44,11 +44,16 @@ pub trait Kind {
 
 /// An unsigned 64-bit integer.
 #[derive(Clone, Copy, Debug)]
-pub struct Num;
+pub struct U64;
 
-/// An unsigned 128-bit integer — the amount width.
+/// An unsigned 128-bit integer.
+///
+/// Named for the width and not for what sits at it, because what sits at
+/// it varies: an order key, a quantity of a resource, a configured
+/// number. A kind here stands for one of the value model's own variants,
+/// so it wears that variant's name.
 #[derive(Clone, Copy, Debug)]
-pub struct Amount;
+pub struct U128;
 
 /// Opaque bytes.
 #[derive(Clone, Copy, Debug)]
@@ -84,11 +89,11 @@ pub struct Flag;
 #[derive(Clone, Copy, Debug)]
 pub struct Opaque;
 
-impl Kind for Num {
+impl Kind for U64 {
     const NAME: &'static str = "u64";
     const PARAM: Option<ParamType> = Some(ParamType::U64);
 }
-impl Kind for Amount {
+impl Kind for U128 {
     const NAME: &'static str = "u128";
     const PARAM: Option<ParamType> = Some(ParamType::U128);
 }
@@ -125,8 +130,8 @@ impl Kind for Opaque {
 /// silent mis-declarations:
 ///
 /// ```compile_fail
-/// # use hyperscale_vm_sdk::sym::{Amount, Sym};
-/// fn branch(fee: Sym<Amount>, floor: Sym<Amount>) {
+/// # use hyperscale_vm_sdk::sym::{Sym, U128};
+/// fn branch(fee: Sym<U128>, floor: Sym<U128>) {
 ///     // A judgment is lowered, never evaluated; `Sym` has no `PartialOrd`.
 ///     if fee > floor {
 ///         unimplemented!()
@@ -135,8 +140,8 @@ impl Kind for Opaque {
 /// ```
 ///
 /// ```compile_fail
-/// # use hyperscale_vm_sdk::sym::{Amount, Sym};
-/// fn concretize(fee: Sym<Amount>) -> u128 {
+/// # use hyperscale_vm_sdk::sym::{Sym, U128};
+/// fn concretize(fee: Sym<U128>) -> u128 {
 ///     // A declaration never sees a runtime value; there is no way down.
 ///     u128::from(fee)
 /// }
@@ -237,7 +242,7 @@ impl Sym<Addr> {
 /// A 128-bit order key packed from a primary sort dimension and a
 /// tiebreaker.
 #[must_use]
-pub fn pack(hi: &Sym<Num>, lo: &Sym<Num>) -> Sym<Amount> {
+pub fn pack(hi: &Sym<U64>, lo: &Sym<U64>) -> Sym<U128> {
     Sym::new(Expr::Pack {
         hi: Box::new(hi.expr.clone()),
         lo: Box::new(lo.expr.clone()),
@@ -269,7 +274,7 @@ pub fn ids(bucket: &Sym<Bucket>) -> Sym<Seq> {
 /// What a move's cap is derived from: the count of the instances an
 /// edge carries or an argument names is the walk the move performs.
 #[must_use]
-pub fn len(list: &Sym<Seq>) -> Sym<Num> {
+pub fn len(list: &Sym<Seq>) -> Sym<U64> {
     Sym::new(Expr::Len(Box::new(list.expr.clone())))
 }
 
@@ -280,14 +285,14 @@ pub fn len(list: &Sym<Seq>) -> Sym<Num> {
 /// does not name one instance is refused where the declaration is read
 /// rather than where the body reads a cell.
 #[must_use]
-pub fn only(list: &Sym<Seq>) -> Sym<Num> {
+pub fn only(list: &Sym<Seq>) -> Sym<U64> {
     Sym::new(Expr::Only(Box::new(list.expr.clone())))
 }
 
 /// A sum, over the two integer widths and refusing overflow — how a cap
 /// covering more than one count is spelled.
 #[must_use]
-pub fn add<A: Kind, B: Kind>(left: &Sym<A>, right: &Sym<B>) -> Sym<Num> {
+pub fn add<A: Kind, B: Kind>(left: &Sym<A>, right: &Sym<B>) -> Sym<U64> {
     Sym::new(Expr::Add(
         Box::new(left.expr.clone()),
         Box::new(right.expr.clone()),
@@ -386,13 +391,13 @@ pub const fn self_record() -> Sym<Opaque> {
 
 /// A `u64` literal.
 #[must_use]
-pub const fn lit_u64(value: u64) -> Sym<Num> {
+pub const fn lit_u64(value: u64) -> Sym<U64> {
     Sym::new(Expr::Literal(Value::U64(value)))
 }
 
 /// A `u128` literal.
 #[must_use]
-pub const fn lit_u128(value: u128) -> Sym<Amount> {
+pub const fn lit_u128(value: u128) -> Sym<U128> {
     Sym::new(Expr::Literal(Value::U128(value)))
 }
 

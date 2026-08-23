@@ -77,7 +77,7 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     } else if let Some(amount) = param(Op::Reserve) {
         let amount = amount.emit();
         Some((
-            quote!(let __param = #amount.cast::<::hyperscale_vm_sdk::Amount>();),
+            quote!(let __param = #amount.cast::<::hyperscale_vm_sdk::U128>();),
             quote!(.reserve(&__param)),
         ))
     } else if has(Op::Move).is_some() {
@@ -112,7 +112,7 @@ fn target(site: &Site) -> TokenStream {
             quote!(
                 let __owner = __t.self_addr();
                 let __material = [#(#material),*];
-                let __order = #order.cast::<::hyperscale_vm_sdk::Amount>();
+                let __order = #order.cast::<::hyperscale_vm_sdk::U128>();
                 let __access = __t.entry(
                     &__owner,
                     ::hyperscale_vm_sdk::SlotId(#slot),
@@ -138,8 +138,8 @@ fn target(site: &Site) -> TokenStream {
             let cap = cap.emit();
             quote!(
                 let __owner = __t.self_addr();
-                let __cursor = #cursor.cast::<::hyperscale_vm_sdk::Amount>();
-                let __cap = #cap.cast::<::hyperscale_vm_sdk::Num>();
+                let __cursor = #cursor.cast::<::hyperscale_vm_sdk::U128>();
+                let __cap = #cap.cast::<::hyperscale_vm_sdk::U64>();
                 let __access = __t.sweep(
                     &__owner,
                     ::hyperscale_vm_sdk::SlotId(#slot),
@@ -170,9 +170,9 @@ fn target(site: &Site) -> TokenStream {
             quote!(
                 let __owner = __t.self_addr();
                 let __material = [#(#material),*];
-                let __lo = #lo.cast::<::hyperscale_vm_sdk::Amount>();
-                let __hi = #hi.cast::<::hyperscale_vm_sdk::Amount>();
-                let __cap = #cap.cast::<::hyperscale_vm_sdk::Num>();
+                let __lo = #lo.cast::<::hyperscale_vm_sdk::U128>();
+                let __hi = #hi.cast::<::hyperscale_vm_sdk::U128>();
+                let __cap = #cap.cast::<::hyperscale_vm_sdk::U64>();
                 let __access = __t.range(
                     &__owner,
                     ::hyperscale_vm_sdk::SlotId(#slot),

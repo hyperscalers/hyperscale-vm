@@ -39,7 +39,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_types::Presence;
 
-use crate::sym::{Addr, Amount, Flag, Key, Kind, Num, Opaque, Seq, Sym, expr_depth};
+use crate::sym::{Addr, Flag, Key, Kind, Opaque, Seq, Sym, U64, U128, expr_depth};
 
 /// One node of a gate's rule, built through the tracer.
 ///
@@ -299,7 +299,7 @@ impl Trace {
 
     /// A deterministic fresh 64-bit id, in the next unused slot.
     #[must_use]
-    pub const fn fresh_id(&mut self) -> Sym<Num> {
+    pub const fn fresh_id(&mut self) -> Sym<U64> {
         let slot = self.take_slot();
         Sym::new(Expr::FreshId { slot })
     }
@@ -333,7 +333,7 @@ impl Trace {
         owner: &Sym<Addr>,
         collection: SlotId,
         material: &[Sym<Opaque>],
-        order: &Sym<Amount>,
+        order: &Sym<U128>,
     ) -> Access<'_, Leaf> {
         let target = TargetExpr::Entry {
             owner: self.lower(owner.expr().clone()),
@@ -356,7 +356,7 @@ impl Trace {
     /// entry is handed the answer rather than asked to rebuild it — which
     /// is what lets an unordered collection have an executing body at all.
     #[must_use]
-    pub fn order_key<K: Kind>(&self, collection: SlotId, key: &Sym<K>) -> Sym<Amount> {
+    pub fn order_key<K: Kind>(&self, collection: SlotId, key: &Sym<K>) -> Sym<U128> {
         Sym::new(Expr::OrderKey {
             owner: Box::new(Expr::SelfAddr),
             slot: collection,
@@ -406,8 +406,8 @@ impl Trace {
         &mut self,
         owner: &Sym<Addr>,
         collection: SlotId,
-        cursor: &Sym<Amount>,
-        cap: &Sym<Num>,
+        cursor: &Sym<U128>,
+        cap: &Sym<U64>,
     ) -> Access<'_, Interval> {
         let target = TargetExpr::Range {
             owner: self.lower(owner.expr().clone()),
@@ -438,9 +438,9 @@ impl Trace {
         owner: &Sym<Addr>,
         collection: SlotId,
         material: &[Sym<Opaque>],
-        lo: &Sym<Amount>,
-        hi: &Sym<Amount>,
-        cap: &Sym<Num>,
+        lo: &Sym<U128>,
+        hi: &Sym<U128>,
+        cap: &Sym<U64>,
     ) -> Access<'_, Interval> {
         let target = TargetExpr::Range {
             owner: self.lower(owner.expr().clone()),
@@ -805,7 +805,7 @@ impl Trace {
     /// Record that naming this method requires the target's own rule and
     /// its possession of instance `id` of `badge`, and mints both that
     /// instance and the badge it is an instance of.
-    pub fn custodial_instance(&mut self, badge: &Sym<Addr>, id: &Sym<Amount>) {
+    pub fn custodial_instance(&mut self, badge: &Sym<Addr>, id: &Sym<U128>) {
         let badge = self.lower(badge.expr().clone());
         let id = self.lower(id.expr().clone());
         self.custody(badge.clone());
@@ -1070,7 +1070,7 @@ impl<Shape> Access<'_, Shape> {
 
     /// A conditional decrement, judged feasible against the declared
     /// amount.
-    pub fn reserve(self, amount: &Sym<Amount>) {
+    pub fn reserve(self, amount: &Sym<U128>) {
         let amount = self.trace.lower(amount.expr().clone());
         self.declare(ModeExpr::Reserve(amount));
     }
@@ -1266,7 +1266,7 @@ mod tests {
     };
 
     use super::{MAX_FOREACH_ELEMENTS, Trace, absolute, rebind};
-    use crate::sym::{Addr, Amount, Key, Num, Opaque, Seq, Sym};
+    use crate::sym::{Addr, Key, Opaque, Seq, Sym, U64, U128};
 
     #[test]
     fn a_binder_lowers_to_its_de_bruijn_index() {
@@ -1408,9 +1408,9 @@ mod tests {
     fn a_range_lowers_its_bounds() {
         let mut trace = Trace::new(vec![ParamType::U128, ParamType::U64]);
         let owner = trace.self_addr();
-        let lo: Sym<Amount> = trace.arg(0);
-        let hi: Sym<Amount> = trace.config(0);
-        let cap: Sym<Num> = trace.arg(1);
+        let lo: Sym<U128> = trace.arg(0);
+        let hi: Sym<U128> = trace.config(0);
+        let cap: Sym<U64> = trace.arg(1);
         trace.range(&owner, SlotId(4), &[], &lo, &hi, &cap).write();
         let recorded = trace.finish();
         assert!(matches!(

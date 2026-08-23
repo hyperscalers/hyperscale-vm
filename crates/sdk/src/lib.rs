@@ -21,7 +21,7 @@
 //!
 //! ```
 //! use hyperscale_vm_effects::{ParamType, SlotId};
-//! use hyperscale_vm_sdk::{Blueprint, sym::{Addr, Amount, Bucket, Seq, Sym}};
+//! use hyperscale_vm_sdk::{Blueprint, sym::{Addr, Bucket, Seq, Sym, U128}};
 //!
 //! const VAULT: SlotId = SlotId(1);
 //!
@@ -177,7 +177,7 @@ pub use hyperscale_vm_sdk_macros::blueprint_publisher as blueprint;
 pub use hyperscale_vm_types::{
     Address, CallTarget, CellKind, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
-pub use sym::{Addr, Amount, Blob, Bucket, Flag, Key, Kind, Num, Opaque, Seq, Sym};
+pub use sym::{Addr, Blob, Bucket, Flag, Key, Kind, Opaque, Seq, Sym, U64, U128};
 pub use trace::{Access, Interval, Leaf, Requirement, Trace};
 
 /// Narrow a rebuilt address to the class-typed form a parameter names.
