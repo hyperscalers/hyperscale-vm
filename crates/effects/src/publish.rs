@@ -7,8 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_hbor::Resolution;
-use hyperscale_hbor::shape::ShapeFault;
+use hyperscale_hbor::{Resolution, ShapeFault};
 use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
 
 use crate::auth::MAX_PACKAGE_ROLES;

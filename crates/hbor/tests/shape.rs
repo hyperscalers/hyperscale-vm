@@ -8,10 +8,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_hbor::shape::{ShapeFault, shape_of};
 use hyperscale_hbor::{
-    DecodeError, Hbor, HborShape, ReadError, ShapeField, ShapeTable, ShapeValue, ShapeVariant,
-    TypeShape, to_vec,
+    DecodeError, Hbor, HborShape, ReadError, ShapeFault, ShapeField, ShapeTable, ShapeValue,
+    ShapeVariant, TypeShape, shape_of, to_vec,
 };
 
 #[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
