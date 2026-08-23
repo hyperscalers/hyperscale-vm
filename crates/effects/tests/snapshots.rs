@@ -11,6 +11,12 @@
 //! any particular value. A diff here is not a failure — it is the
 //! derivation changing, which is a thing to read.
 //!
+//! It is rendered through [`explain`], which is the rendering the
+//! command prints, so the artifact a reviewer reads and the answer an
+//! author gets are one thing. That also makes this the rendering's own
+//! corpus test: every clause of every package's every method passes
+//! through it on the way to the file.
+//!
 //! It stands here, beside the other whole-corpus sweeps, because a
 //! package ships with the crate holding its blob and no one of those
 //! crates can see them all.
@@ -19,7 +25,7 @@
 
 use std::path::PathBuf;
 
-use hyperscale_vm_effects::PackageMetadata;
+use hyperscale_vm_effects::{PackageMetadata, explain};
 use hyperscale_vm_fixtures::{amm, book, lottery};
 use hyperscale_vm_stdlib::{account, staking};
 
@@ -27,7 +33,7 @@ fn snapshot(name: &str, metadata: &PackageMetadata) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("snapshots")
         .join(format!("{name}.txt"));
-    let rendered = format!("{metadata:#?}\n");
+    let rendered = explain(metadata);
 
     if std::env::var("SNAPSHOT").as_deref() == Ok("overwrite") {
         std::fs::create_dir_all(path.parent().expect("a snapshots directory"))

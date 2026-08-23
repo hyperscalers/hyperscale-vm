@@ -21,6 +21,7 @@ pub mod artifact;
 pub mod auth;
 pub mod dsl;
 pub mod envelope;
+pub mod explain;
 pub mod footprint;
 pub mod graph;
 pub mod hash;
@@ -63,6 +64,7 @@ pub use envelope::{
     SubintentHash, SubintentRecord, YieldBinding, YieldParam, admit_tree, encode_tree,
     nullifier_key, route_tree,
 };
+pub use explain::{explain, explain_method};
 pub use footprint::{
     DEPTH_UNITS, EXCLUSIVITY_FLOOR, SCAN_SEEK_ENTRIES, TARGET_UNITS, WIDTH_UNITS, effect_units,
     footprint,

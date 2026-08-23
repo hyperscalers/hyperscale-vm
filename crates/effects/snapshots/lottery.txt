@@ -1,489 +1,56 @@
-PackageMetadata {
-    methods: {
-        "close": MethodSignature {
-            totality: Infallible,
-            issues: None,
-            params: [],
-            outputs: [],
-            answers: false,
-            denominations: [],
-            effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    17,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Absent,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                17,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Write,
-                    denomination: None,
-                },
-            ],
-            abi: [
-                Handle(
-                    1,
-                ),
-            ],
-        },
-        "enter": MethodSignature {
-            totality: Infallible,
-            issues: None,
-            params: [
-                Address,
-                Bucket,
-            ],
-            outputs: [],
-            answers: false,
-            denominations: [],
-            effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    17,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Absent,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                17,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
-                Effect {
-                    guard: None,
-                    target: Entry {
-                        owner: SelfAddr,
-                        collection: SlotId(
-                            16,
-                        ),
-                        material: [],
-                        order: OrderKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                16,
-                            ),
-                            material: [
-                                Arg(
-                                    0,
-                                ),
-                            ],
-                        },
-                    },
-                    mode: Write,
-                    denomination: None,
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                1,
-                            ),
-                            material: [
-                                ResourceOf(
-                                    Arg(
-                                        1,
-                                    ),
-                                ),
-                            ],
-                        },
-                    ),
-                    mode: Delta,
-                    denomination: Some(
-                        ResourceOf(
-                            Arg(
-                                1,
-                            ),
-                        ),
-                    ),
-                },
-            ],
-            abi: [
-                Handle(
-                    1,
-                ),
-                Handle(
-                    2,
-                ),
-                Handle(
-                    3,
-                ),
-                Derived(
-                    OrderKey {
-                        owner: SelfAddr,
-                        slot: SlotId(
-                            16,
-                        ),
-                        material: [
-                            Arg(
-                                0,
-                            ),
-                        ],
-                    },
-                ),
-                Derived(
-                    Arg(
-                        0,
-                    ),
-                ),
-                Bucket(
-                    1,
-                ),
-            ],
-        },
-        "instantiate": MethodSignature {
-            totality: Infallible,
-            issues: None,
-            params: [],
-            outputs: [],
-            answers: false,
-            denominations: [],
-            effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    3,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Absent,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                3,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Write,
-                    denomination: None,
-                },
-            ],
-            abi: [
-                Handle(
-                    1,
-                ),
-                Derived(
-                    SelfRecord,
-                ),
-            ],
-        },
-        "reopen": MethodSignature {
-            totality: Fallible,
-            issues: None,
-            params: [],
-            outputs: [],
-            answers: false,
-            denominations: [],
-            effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    18,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Absent,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                18,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Read,
-                    denomination: None,
-                },
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    17,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                17,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Write,
-                    denomination: None,
-                },
-            ],
-            abi: [
-                Handle(
-                    1,
-                ),
-                Handle(
-                    3,
-                ),
-            ],
-        },
-        "settle": MethodSignature {
-            totality: Fallible,
-            issues: None,
-            params: [
-                U64,
-            ],
-            outputs: [],
-            answers: false,
-            denominations: [],
-            effects: [
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    17,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Present,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                17,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Write,
-                    denomination: None,
-                },
-                Effect {
-                    guard: None,
-                    target: Range {
-                        owner: SelfAddr,
-                        collection: SlotId(
-                            16,
-                        ),
-                        material: [],
-                        lo: Literal(
-                            U64(
-                                0,
-                            ),
-                        ),
-                        hi: Literal(
-                            U128(
-                                340282366920938463463374607431768211455,
-                            ),
-                        ),
-                        cap: Arg(
-                            0,
-                        ),
-                    },
-                    mode: Read,
-                    denomination: None,
-                },
-                Requires {
-                    guard: None,
-                    condition: Holds {
-                        target: Point(
-                            ChildKey {
-                                owner: SelfAddr,
-                                slot: SlotId(
-                                    18,
-                                ),
-                                material: [],
-                            },
-                        ),
-                        presence: Absent,
-                    },
-                },
-                Effect {
-                    guard: None,
-                    target: Point(
-                        ChildKey {
-                            owner: SelfAddr,
-                            slot: SlotId(
-                                18,
-                            ),
-                            material: [],
-                        },
-                    ),
-                    mode: Write,
-                    denomination: None,
-                },
-            ],
-            abi: [
-                Handle(
-                    1,
-                ),
-                Handle(
-                    2,
-                ),
-                Handle(
-                    4,
-                ),
-            ],
-        },
-    },
-    events: [
-        "entered",
-        "closed",
-        "settled",
-    ],
-    errors: [
-        "round-truncated",
-        "not-yet-drawn",
-        "seal-lapsed",
-        "round-stands-open",
-    ],
-    roles: [],
-    types: {
-        "address": ByteArray(
-            32,
-        ),
-        "closed": Tuple(
-            [],
-        ),
-        "entered": Struct(
-            [
-                ShapeField {
-                    name: "who",
-                    shape: Ref(
-                        "address",
-                    ),
-                },
-            ],
-        ),
-        "outcome": Struct(
-            [
-                ShapeField {
-                    name: "draw",
-                    shape: ByteArray(
-                        32,
-                    ),
-                },
-                ShapeField {
-                    name: "winner",
-                    shape: Option(
-                        Ref(
-                            "address",
-                        ),
-                    ),
-                },
-            ],
-        ),
-        "settled": Tuple(
-            [
-                Ref(
-                    "outcome",
-                ),
-            ],
-        ),
-    },
-    config: [],
-    state: {
-        SlotId(
-            16,
-        ): SlotShape {
-            name: "tickets",
-            kind: Unordered,
-            element: Value(
-                Ref(
-                    "address",
-                ),
-            ),
-        },
-        SlotId(
-            17,
-        ): SlotShape {
-            name: "round",
-            kind: Cell,
-            element: Value(
-                U64,
-            ),
-        },
-        SlotId(
-            18,
-        ): SlotShape {
-            name: "outcome",
-            kind: Cell,
-            element: Value(
-                Ref(
-                    "outcome",
-                ),
-            ),
-        },
-    },
-}
+state
+     16  tickets — an unordered collection, holding address
+     17  round — one leaf, holding u64
+     18  outcome — one leaf, holding outcome
+events
+      0  entered
+      1  closed
+      2  settled
+errors
+      0  round-truncated
+      1  not-yet-drawn
+      2  seal-lapsed
+      3  round-stands-open
+types
+  address = [u8; 32]
+  closed = ()
+  entered = { who: address }
+  outcome = { draw: [u8; 32], winner: address? }
+  settled = (outcome)
+
+close() — infallible
+  declares
+      0  requires self.round is absent
+      1  write self.round
+  exports  handle for clause 1
+
+enter(address, bucket) — infallible
+  declares
+      0  requires self.round is absent
+      1  read self.round
+      2  write self.tickets at order-key(self.tickets[arg0])
+      3  delta self.vault[resource-of(arg1)] holding resource-of(arg1)
+  exports  handle for clause 1, handle for clause 2, handle for clause 3, order-key(self.tickets[arg0]), arg0, edge arg1
+
+instantiate() — infallible
+  declares
+      0  requires self.config is absent
+      1  write self.config
+  exports  handle for clause 1, self.record
+
+reopen() — fallible
+  declares
+      0  requires self.outcome is absent
+      1  read self.outcome
+      2  requires self.round is present
+      3  write self.round
+  exports  handle for clause 1, handle for clause 3
+
+settle(u64) — fallible
+  declares
+      0  requires self.round is present
+      1  write self.round
+      2  read self.tickets over 0..=u128::MAX, at most arg0 entries
+      3  requires self.outcome is absent
+      4  write self.outcome
+  exports  handle for clause 1, handle for clause 2, handle for clause 4

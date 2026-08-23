@@ -285,7 +285,6 @@ pub struct Issuance {
 /// prefix.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct MethodSignature {
-    /// Whose authority naming this method on this target requires.
     /// How completely the method returns: whether a caller has a failure
     /// to handle, and whether anything rules out a trap.
     ///
