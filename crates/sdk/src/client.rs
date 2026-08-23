@@ -17,7 +17,7 @@ pub use hyperscale_vm_effects::{
 };
 use hyperscale_vm_effects::{ResourceKind, Value, granting_issued_resource};
 pub use hyperscale_vm_manifest_builder::{
-    AddressArg, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,
+    AddressArg, Answered, Arg, Args, Bucket, BucketArg, Outputs, Proof, TypedBuilder, TypedError,
 };
 pub use hyperscale_vm_types::{
     Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,

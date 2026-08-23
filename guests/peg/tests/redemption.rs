@@ -1,6 +1,6 @@
 //! The window's own tests, against the real kernel.
 
-use hyperscale_vm_sdk::state::{Fixed, Sign, SignedFixed, UnitFixed, Wide};
+use hyperscale_vm_sdk::state::{Fixed, Quantity, Sign, SignedFixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
     Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
 };
@@ -176,7 +176,7 @@ fn a_quote_is_what_a_redemption_pays(chain: Chain) {
 
     let outcome = chain.transact(HOLDER, |b| window.quote(b, 1_000u128));
     outcome.expect_completed();
-    assert_eq!(outcome.answer::<u128>(0), 950);
+    assert_eq!(outcome.answer(), Quantity::from_subunits(950));
 
     redeem(&mut chain, window, 1_000);
     assert_eq!(chain.balance(HOLDER, RESERVE), 950, "and it was not a guess");

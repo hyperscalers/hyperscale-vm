@@ -23,6 +23,7 @@
 //! refused transaction and can never admit one the protocol would refuse.
 
 use std::collections::BTreeSet;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
@@ -186,6 +187,7 @@ impl Proof {
 pub struct Outputs {
     method: String,
     buckets: Vec<Bucket>,
+    node: u32,
 }
 
 impl Outputs {
@@ -209,7 +211,9 @@ impl Outputs {
     /// [`TypedError::OutputArity`] when the method declares some other
     /// number of outputs.
     pub fn into_array<const N: usize>(self) -> Result<[Bucket; N], TypedError> {
-        let Self { method, buckets } = self;
+        let Self {
+            method, buckets, ..
+        } = self;
         let declared = buckets.len();
         buckets.try_into().map_err(|_| TypedError::OutputArity {
             method,
@@ -238,6 +242,59 @@ impl Outputs {
     pub fn none(self) -> Result<(), TypedError> {
         let [] = self.into_array()?;
         Ok(())
+    }
+
+    /// Discharge a call that answers with a value and produces no edge.
+    ///
+    /// The node is what a receipt files an answer under, so handing it
+    /// back typed is what lets a reader ask for the answer rather than
+    /// count the calls before it.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::OutputArity`] when the method produces an edge,
+    /// which would then dangle.
+    pub fn answered<T>(self) -> Result<Answered<T>, TypedError> {
+        let node = self.node;
+        let [] = self.into_array()?;
+        Ok(Answered {
+            node,
+            answer: PhantomData,
+        })
+    }
+}
+
+/// Where in the graph a value a method answered with will be filed, and
+/// what it decodes as.
+///
+/// A node reference rather than a value: what a call answers is known
+/// when the transaction runs and not when the graph is written, so this
+/// is the question rather than the answer. A reader hands it to the
+/// receipt.
+///
+/// The type rides along because the method's own signature knows it. A
+/// caller that had to name both the position and the type could get
+/// either wrong and would learn so from a decode failure rather than
+/// from the compiler.
+#[derive(Debug)]
+pub struct Answered<T> {
+    node: u32,
+    answer: PhantomData<fn() -> T>,
+}
+
+impl<T> Clone for Answered<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Answered<T> {}
+
+impl<T> Answered<T> {
+    /// The node the answer is filed under.
+    #[must_use]
+    pub const fn node(self) -> u32 {
+        self.node
     }
 }
 
@@ -564,6 +621,7 @@ impl<'a> TypedBuilder<'a> {
             Outputs {
                 method: method.to_owned(),
                 buckets,
+                node: producer,
             },
         ))
     }

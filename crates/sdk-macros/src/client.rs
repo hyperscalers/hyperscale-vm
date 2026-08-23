@@ -130,6 +130,11 @@ pub struct Method {
     pub shape: Shape,
     /// How many value edges the method produces.
     pub outputs: usize,
+    /// What the method answers with beside them, where it answers.
+    ///
+    /// The Rust type its own signature names, so a caller reading the
+    /// answer back off a receipt names neither the type nor the node.
+    pub answers: Option<syn::Type>,
     /// The method's own documentation, carried onto the wrapper.
     pub docs: Vec<syn::Attribute>,
 }
@@ -211,6 +216,12 @@ fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
 /// a caller states and then has held against it.
 fn produced(method: &Method) -> (TokenStream2, TokenStream2) {
     let bucket = sdk("Bucket");
+    // A method that answers yields no edge — nothing in the corpus does
+    // both — so the two readings of what a call hands back do not meet.
+    if let Some(answer) = &method.answers {
+        let answered = sdk("Answered");
+        return (quote!(#answered<#answer>), quote!(.answered()));
+    }
     match method.outputs {
         0 => (quote!(()), quote!(.none())),
         1 => (quote!(#bucket), quote!(.one())),

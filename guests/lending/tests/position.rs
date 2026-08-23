@@ -202,7 +202,7 @@ fn the_index_compounds_over_the_span_it_carries(chain: Chain) {
     outcome.expect_completed();
 
     const TWICE: u128 = 1_000_200_010_000_000_000_000_000_000_000_000_000;
-    assert_eq!(outcome.answer::<Option<u128>>(1), Some(TWICE));
+    assert_eq!(outcome.answer(), Some(TWICE));
 }
 
 /// Carrying the index a step at a time is not the same number as
@@ -230,9 +230,7 @@ fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: Chain) {
         stepwise.index_scaled(b)
     });
     outcome.expect_completed();
-    let stepped = outcome
-        .answer::<Option<u128>>(100)
-        .expect("an index this size fits");
+    let stepped = outcome.answer().expect("an index this size fits");
 
     let (mut chain, oneshot) = market(chain);
     let outcome = chain.transact(BORROWER, |b| {
@@ -240,9 +238,7 @@ fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: Chain) {
         oneshot.index_scaled(b)
     });
     outcome.expect_completed();
-    let once = outcome
-        .answer::<Option<u128>>(1)
-        .expect("an index this size fits");
+    let once = outcome.answer().expect("an index this size fits");
 
     assert!(
         stepped <= once,

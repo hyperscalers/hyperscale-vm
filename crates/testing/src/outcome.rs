@@ -1,6 +1,7 @@
 //! What one transaction did, as a test asks about it.
 
 use hyperscale_vm_kernel::Receipt;
+use hyperscale_vm_sdk::client::Answered;
 use hyperscale_vm_sdk::hbor::{HborDecode, from_slice};
 use hyperscale_vm_types::{AbortReason, Answer, Outcome as KernelOutcome};
 
@@ -9,15 +10,34 @@ use hyperscale_vm_types::{AbortReason, Answer, Outcome as KernelOutcome};
 /// A receipt is the whole record and a test usually wants one question
 /// answered, so the questions are here and the record is underneath for
 /// the ones that are not.
-pub struct Outcome {
+pub struct Outcome<T = ()> {
     receipt: Receipt,
     /// The declining node's package error table, where one declined.
     errors: Vec<String>,
+    /// Whatever writing the manifest handed back — nothing, usually, and
+    /// the handle on an answer where a call produced one.
+    ///
+    /// A type parameter with a default, so the surface is unchanged for
+    /// the transactions that hand back nothing and there is somewhere for
+    /// an answer's node to live for the ones that do.
+    written: T,
 }
 
-impl Outcome {
-    pub(crate) const fn new(receipt: Receipt, errors: Vec<String>) -> Self {
-        Self { receipt, errors }
+impl<T> Outcome<T> {
+    pub(crate) const fn new(receipt: Receipt, errors: Vec<String>, written: T) -> Self {
+        Self {
+            receipt,
+            errors,
+            written,
+        }
+    }
+
+    /// What writing the manifest handed back.
+    ///
+    /// Where a transaction wrote several answering calls, this is the
+    /// tuple of their handles, and [`Outcome::answer_at`] reads each.
+    pub const fn written(&self) -> &T {
+        &self.written
     }
 
     /// The receipt itself: the delta, the events, the fuel.
@@ -110,21 +130,23 @@ impl Outcome {
         }
     }
 
-    /// The value one call answered with, decoded as `T`.
+    /// The value one call answered with.
     ///
-    /// `node` is the position of the call in the manifest, which is what
-    /// the builder handed back when the call was made.
+    /// `handle` is what that call handed back when it was written, so
+    /// neither which node answered nor what its bytes decode as is a
+    /// thing the reader restates — both are the method's own, carried
+    /// here by the wrapper.
     ///
     /// # Panics
     ///
-    /// If no node at that index answered, or its bytes are not a `T`.
+    /// If no node at that position answered, or its bytes are not a `T`.
     #[must_use]
-    pub fn answer<T: HborDecode>(&self, node: u32) -> T {
+    pub fn answer_at<A: HborDecode>(&self, handle: Answered<A>) -> A {
         let answer = self
             .answers()
             .iter()
-            .find(|answer| answer.node == node)
-            .unwrap_or_else(|| panic!("node {node} answered nothing"));
+            .find(|answer| answer.node == handle.node())
+            .unwrap_or_else(|| panic!("node {} answered nothing", handle.node()));
         from_slice(&answer.value).expect("an answer decodes as what the method returned")
     }
 
@@ -143,5 +165,22 @@ impl Outcome {
             "the transaction did not complete: {:?}",
             self.receipt.outcome
         );
+    }
+}
+
+/// A transaction whose manifest ended in one answering call.
+///
+/// The common shape, and the one where nothing has to be named: the
+/// wrapper knew which node and knew the type, so a reader asks for the
+/// answer and gets it.
+impl<A: HborDecode> Outcome<Answered<A>> {
+    /// What the call answered with.
+    ///
+    /// # Panics
+    ///
+    /// If the node answered nothing, or its bytes are not an `A`.
+    #[must_use]
+    pub fn answer(&self) -> A {
+        self.answer_at(*self.written())
     }
 }

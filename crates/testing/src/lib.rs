@@ -432,11 +432,11 @@ impl Chain {
     ///
     /// If the manifest does not build or admit — see
     /// [`Self::try_transact`] for asserting on such a refusal instead.
-    pub fn transact(
+    pub fn transact<T>(
         &mut self,
         signer: PrincipalAddr,
-        build: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
-    ) -> Outcome {
+        build: impl FnOnce(&mut TypedBuilder<'_>) -> Result<T, TypedError>,
+    ) -> Outcome<T> {
         self.try_transact(signer, build)
             .expect("the manifest builds and admits")
     }
@@ -454,13 +454,13 @@ impl Chain {
     ///
     /// Panics if execution itself fails to produce a receipt — a batch
     /// defect, never a refusal.
-    pub fn try_transact(
+    pub fn try_transact<T>(
         &mut self,
         signer: PrincipalAddr,
-        build: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
-    ) -> Result<Outcome, Refused> {
+        build: impl FnOnce(&mut TypedBuilder<'_>) -> Result<T, TypedError>,
+    ) -> Result<Outcome<T>, Refused> {
         let mut builder = TypedBuilder::new(&self.records, &TestHasher);
-        build(&mut builder)?;
+        let written = build(&mut builder)?;
         let graph = builder.build()?;
 
         let admitted = admit(&graph, signer, &self.records, &TestHasher)?;
@@ -516,7 +516,7 @@ impl Chain {
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
-        Ok(Outcome::new(receipt, errors))
+        Ok(Outcome::new(receipt, errors, written))
     }
 }
 

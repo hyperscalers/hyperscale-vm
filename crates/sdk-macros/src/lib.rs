@@ -1329,6 +1329,32 @@ fn total_attr(method: &syn::ImplItemFn) -> Option<&syn::Attribute> {
         .find(|attr| attr.path().is_ident("total"))
 }
 
+/// The type a method answers with, where it answers with one.
+///
+/// Its own return type, less the error arm a fallible one wears. A
+/// method yielding edges returns those instead, and the lowering is what
+/// knows which of the two a signature meant — this only names the type
+/// once the lowering has said there is an answer.
+fn answered(method: &syn::ImplItemFn) -> Option<syn::Type> {
+    let syn::ReturnType::Type(_, ty) = &method.sig.output else {
+        return None;
+    };
+    let syn::Type::Path(path) = &**ty else {
+        return Some((**ty).clone());
+    };
+    let last = path.path.segments.last()?;
+    if last.ident != "Result" {
+        return Some((**ty).clone());
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    args.args.first().and_then(|arg| match arg {
+        syn::GenericArgument::Type(held) => Some(held.clone()),
+        _ => None,
+    })
+}
+
 /// Whether a method's return type carries an error arm, which is the whole
 /// of what its totality mark is.
 fn declines(method: &syn::ImplItemFn) -> bool {
@@ -1442,6 +1468,7 @@ fn lower_method(
         published,
         shape: client::Shape::of(&gate),
         outputs: lowered.outputs.len(),
+        answers: lowered.answer.is_some().then(|| answered(method)).flatten(),
         docs: method
             .attrs
             .iter()
