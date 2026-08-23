@@ -97,6 +97,19 @@ pub fn pool() -> ComponentAddr {
     pool_meta().address(&TestHasher)
 }
 
+/// A stored rate's slot value: the scaled integer in the width a rate
+/// has.
+#[must_use]
+pub fn scaled_rate(scaled: u128) -> Value {
+    let mut bytes = [0u8; 32];
+    bytes[..16].copy_from_slice(&scaled.to_le_bytes());
+    Value::U256(bytes)
+}
+
+/// One quote subunit per tick, which is the step a book prices in unless
+/// it was created finer.
+pub const ONE_PER_TICK: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;
+
 /// The order book's record.
 #[must_use]
 pub fn book_meta() -> InstanceMeta {
@@ -105,6 +118,7 @@ pub fn book_meta() -> InstanceMeta {
         config: vec![
             Value::Address(BASE.address()),
             Value::Address(QUOTE.address()),
+            scaled_rate(ONE_PER_TICK),
         ],
         salt: Hash32([3; 32]),
     }

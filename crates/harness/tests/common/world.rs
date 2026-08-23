@@ -97,6 +97,11 @@ pub fn asks() -> CollectionId {
     collection_id(&TestHasher, book(), book::ASKS, &[])
 }
 
+/// The finely quoted book's ladder.
+pub fn fine_asks() -> CollectionId {
+    collection_id(&TestHasher, fine_book(), book::ASKS, &[])
+}
+
 /// An account's stored-authority cell — what its sign-in reads.
 pub fn auth(owner: impl Into<Address>) -> SubstateKey {
     child_key(&TestHasher, owner, AUTH, &[])
@@ -144,6 +149,7 @@ pub fn world_instances() -> Vec<InstanceMeta> {
     vec![
         pool_meta(),
         book_meta(),
+        fine_book_meta(),
         registry_meta(),
         nf_issuer_meta(),
         nf_holder_meta(7),
@@ -209,12 +215,26 @@ pub fn shares_unit() -> ResourceAddr {
     shares_vault().issued_unit(&TestHasher)
 }
 
+/// A stored rate's slot value: the scaled integer in the width a rate
+/// has.
+#[must_use]
+pub fn scaled_rate(scaled: u128) -> Value {
+    let mut bytes = [0u8; 32];
+    bytes[..16].copy_from_slice(&scaled.to_le_bytes());
+    Value::U256(bytes)
+}
+
+/// One quote subunit per tick, which is the step a book prices in unless
+/// it was created finer.
+pub const ONE_PER_TICK: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;
+
 pub fn book_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("book"),
         config: vec![
             Value::Address(BASE.address()),
             Value::Address(QUOTE.address()),
+            scaled_rate(ONE_PER_TICK),
         ],
         salt: Hash32([3; 32]),
     }
@@ -223,6 +243,27 @@ pub fn book_meta() -> InstanceMeta {
 /// The order book instance.
 pub fn book() -> book::Book {
     book::Book::at(book_meta().address(&TestHasher))
+}
+
+/// A second book over the same pair, quoting in half a quote subunit.
+///
+/// The tick a book was created over is what its ladder means, so a
+/// finer one is a different book rather than a setting on this one.
+pub fn fine_book_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("book"),
+        config: vec![
+            Value::Address(BASE.address()),
+            Value::Address(QUOTE.address()),
+            scaled_rate(ONE_PER_TICK / 2),
+        ],
+        salt: Hash32([13; 32]),
+    }
+}
+
+/// The finely quoted book instance.
+pub fn fine_book() -> book::Book {
+    book::Book::at(fine_book_meta().address(&TestHasher))
 }
 
 pub fn registry_meta() -> InstanceMeta {

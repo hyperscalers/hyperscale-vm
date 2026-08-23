@@ -55,10 +55,23 @@ fn pool_config() -> Vec<Value> {
     ]
 }
 
+/// A stored rate's slot value: the scaled integer in the width a rate
+/// has.
+fn scaled_rate(scaled: u128) -> Value {
+    let mut bytes = [0u8; 32];
+    bytes[..16].copy_from_slice(&scaled.to_le_bytes());
+    Value::U256(bytes)
+}
+
+/// One quote subunit per tick, which is the step a book prices in unless
+/// it was created finer.
+const ONE_PER_TICK: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;
+
 fn pair_config() -> Vec<Value> {
     vec![
         Value::Address(BASE.address()),
         Value::Address(QUOTE.address()),
+        scaled_rate(ONE_PER_TICK),
     ]
 }
 

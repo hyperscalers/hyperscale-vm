@@ -58,7 +58,7 @@ const PIN_TRANSFER: &str = "48581278cc03342e87aa9c0fd30e8321c26a8f889f12f51db6ba
 
 const PIN_SWAP: &str = "7ba91597f941b234e5826d1c6cdd2fa2e9b4de39e12e805b1b8d9cd3b06bf582";
 
-const PIN_FILL: &str = "1624f2bd42e1e1c2dadd8307d7ba62e9a67909abc99fa31c8f7569a30f7a4e45";
+const PIN_FILL: &str = "f1aa5034c0af7cda726ce76dda7ac67f2caf54da651ccb67aaac6aa577889c34";
 
 const PIN_PROPOSE: &str = "15155b4205c3c1c16e7f5f940ff8df7ee6c69afcddb99a1ce5dca4dffc805a79";
 

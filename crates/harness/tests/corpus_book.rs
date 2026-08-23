@@ -197,3 +197,50 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
         Some(&encode_amount(10).to_vec())
     );
 }
+
+/// A book quoting in half a quote subunit fills at a price no integer
+/// names.
+///
+/// Three ticks of half a subunit is one and a half quote per base — a
+/// price the old integer ladder could only round to one or two. The
+/// ladder itself is unchanged: three is still what the key packs and
+/// still what the walk compares.
+///
+/// Sixty of budget at three halves buys forty, costing exactly sixty.
+/// The arithmetic is stated here rather than read off the body.
+#[test]
+fn a_finer_tick_prices_between_two_integers_on_both_runtimes() {
+    let world = world();
+    let mut store = sealed_store();
+    store.write(vault(TAKER, QUOTE), encode_amount(60).to_vec());
+    store.entry_write(
+        Address::from(fine_book()),
+        fine_asks(),
+        (3u128 << 64) | 1,
+        encode_amount(100).to_vec(),
+    );
+    store.write(vault(fine_book(), BASE), encode_amount(100).to_vec());
+
+    let fill = graph(|b| {
+        let taker = account::authorize(b, TAKER)?;
+        let payment = account::withdraw(b, taker, QUOTE, 60)?;
+        let [bought, change] = fine_book().fill_asks(b, 1, 9, payment)?;
+        account::deposit(b, TAKER, bought)?;
+        account::deposit(b, TAKER, change)
+    });
+    let (results, final_store) = run_both(&world, &store, &[(&fill, TxHash(Hash32([0x06; 32])))]);
+
+    let TxResult::Completed(_) = &results[0] else {
+        panic!("the fill must complete");
+    };
+    assert_eq!(
+        amount_of(&final_store, vault(TAKER, BASE)),
+        40,
+        "sixty of quote at one and a half buys forty of base"
+    );
+    assert_eq!(
+        amount_of(&final_store, vault(TAKER, QUOTE)),
+        0,
+        "and spends the whole budget, because it divides exactly"
+    );
+}

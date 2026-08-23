@@ -211,39 +211,39 @@ fn order_book_place_inserts_at_a_computed_entry() {
     let routing = route(&admitted, &resolver());
 
     let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0);
-    let expected = BTreeMap::from([
-        (
-            shard_of(ALICE),
-            effect_set(&[
-                Effect {
-                    target: EffectTarget::Point(auth(ALICE)),
-                    mode: Mode::Read,
-                },
-                Effect {
-                    target: EffectTarget::Point(vault(ALICE, BASE)),
-                    mode: Mode::Reserve { amount: 10 },
-                },
-            ]),
-        ),
-        (
-            shard_of(book()),
-            effect_set(&[
-                fence_read(book()),
-                Effect {
-                    target: EffectTarget::Entry {
-                        owner: book().into(),
-                        collection: collection_id(&TestHasher, book(), ASKS, &[]),
-                        order: (u128::from(105u64) << 64) | u128::from(seq),
-                    },
-                    mode: write(),
-                },
-                Effect {
-                    target: EffectTarget::Point(vault(book(), BASE)),
-                    mode: Mode::Delta,
-                },
-            ]),
-        ),
+    // Grouped rather than listed per shard, because which shard an
+    // address lands on is a fact about the address and two of them
+    // sharing one is not a case this test is about.
+    let mut grouped: BTreeMap<_, Vec<Effect>> = BTreeMap::new();
+    grouped.entry(shard_of(ALICE)).or_default().extend([
+        Effect {
+            target: EffectTarget::Point(auth(ALICE)),
+            mode: Mode::Read,
+        },
+        Effect {
+            target: EffectTarget::Point(vault(ALICE, BASE)),
+            mode: Mode::Reserve { amount: 10 },
+        },
     ]);
+    grouped.entry(shard_of(book())).or_default().extend([
+        fence_read(book()),
+        Effect {
+            target: EffectTarget::Entry {
+                owner: book().into(),
+                collection: collection_id(&TestHasher, book(), ASKS, &[]),
+                order: (u128::from(105u64) << 64) | u128::from(seq),
+            },
+            mode: write(),
+        },
+        Effect {
+            target: EffectTarget::Point(vault(book(), BASE)),
+            mode: Mode::Delta,
+        },
+    ]);
+    let expected: BTreeMap<_, _> = grouped
+        .into_iter()
+        .map(|(shard, effects)| (shard, effect_set(&effects)))
+        .collect();
     assert_eq!(routing.per_shard, expected);
 }
 
