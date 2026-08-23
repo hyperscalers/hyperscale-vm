@@ -71,6 +71,7 @@
 mod attrs;
 mod codec;
 mod merkle;
+mod shape;
 mod signing;
 
 use proc_macro::TokenStream;
@@ -107,4 +108,21 @@ pub fn hbor(input: TokenStream) -> TokenStream {
 pub fn hbor_merkle(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     merkle::derive(&input).map_or_else(|error| error.to_compile_error().into(), Into::into)
+}
+
+/// Derive `HborShape`: a type written down for a consumer that does not
+/// have it.
+///
+/// Read off the same declaration the codec is, so the description and the
+/// bytes cannot disagree. A struct or enum registers its definition under
+/// its kebab name and is referenced by it; a `transparent` wrapper is a
+/// name and not a layer, so it describes as the type it holds. A `skip`
+/// field is absent from both the wire and the shape.
+///
+/// Opt-in, and read by nothing on the encode or decode path: a type that
+/// nobody needs to describe carries no shape at all.
+#[proc_macro_derive(HborShape, attributes(hbor))]
+pub fn hbor_shape(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    shape::derive(&input).map_or_else(|error| error.to_compile_error().into(), Into::into)
 }

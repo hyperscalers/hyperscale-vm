@@ -2,10 +2,13 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
-use hyperscale_hbor::Hbor;
-use hyperscale_vm_types::{Address, SubstateKey};
+use hyperscale_hbor::{Hbor, HborShape, ShapeRegistry, ShapeTable, TypeShape};
+use hyperscale_vm_types::{
+    Address, CallTarget, ComponentAddr, NativeAddr, PackageAddr, PrincipalAddr, ResourceAddr,
+    SubstateKey,
+};
 
 use crate::KERNEL_SLOT_BASE;
 use crate::auth::{CONFIRMATION, PACKAGE_ROLE_BASE, PRIMARY, RECOVERY, RoleId};
@@ -63,6 +66,41 @@ pub struct PublishRefusal {
     pub source: SignatureError,
 }
 
+/// The levels a declared type's shape may nest, resolved.
+///
+/// Generous against what a monomorphic record reaches and finite against
+/// what a hand-written one could claim: the walk that resolves a
+/// reference spends the same budget a nesting level does, so a reference
+/// cycle is refused here rather than by a check of its own.
+pub const MAX_SHAPE_DEPTH: usize = 16;
+
+/// The names the protocol's own types hold, under the shapes those types
+/// give them.
+///
+/// Built by asking them rather than written down, so there is no second
+/// statement of what an address looks like for this one to drift from.
+static RESERVED_SHAPES: LazyLock<ShapeTable> = LazyLock::new(|| {
+    let mut registry = ShapeRegistry::new();
+    Address::shape(&mut registry);
+    PrincipalAddr::shape(&mut registry);
+    ComponentAddr::shape(&mut registry);
+    PackageAddr::shape(&mut registry);
+    ResourceAddr::shape(&mut registry);
+    NativeAddr::shape(&mut registry);
+    CallTarget::shape(&mut registry);
+    registry.into_types()
+});
+
+/// The shape the protocol pins `name` to, for a name it pins at all.
+///
+/// What makes a reserved name a fact rather than a convention: a package
+/// binding one to anything else is refused at the door, so a consumer
+/// that finds `address` in a package's types has found an address.
+#[must_use]
+pub fn reserved_shape(name: &str) -> Option<&'static TypeShape> {
+    RESERVED_SHAPES.get(name)
+}
+
 /// Everything routing reads about a published package.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct PackageMetadata {
@@ -94,6 +132,18 @@ pub struct PackageMetadata {
     /// where the wire carries `16`. Empty for a package that stores no
     /// role table.
     pub roles: Vec<String>,
+    /// Every type this package declares, by the name the tables above
+    /// index it under.
+    ///
+    /// A shape says how to decode a payload, never how to render one: it
+    /// is what turns an event's bytes into named fields, and a cell's
+    /// into a record. Nothing on the execution path reads it, on the same
+    /// terms as the name tables — the kernel bounds an index without
+    /// resolving it, and resolving is the consumer's business.
+    ///
+    /// Protocol names resolve to the protocol's shapes, which the door
+    /// pins: `address` is an address in every package that declares one.
+    pub types: ShapeTable,
 }
 
 impl PackageMetadata {

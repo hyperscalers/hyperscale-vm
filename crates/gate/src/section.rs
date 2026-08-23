@@ -58,7 +58,7 @@ pub fn decode_metadata(bytes: &[u8]) -> Result<PackageMetadata, GateError> {
 #[cfg(test)]
 mod tests {
 
-    use hyperscale_hbor::to_vec_with_depth;
+    use hyperscale_hbor::{ShapeTable, to_vec_with_depth};
     use hyperscale_vm_effects::{
         AbiParam, Clause, EdgeContent, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
         MAX_EXPR_DEPTH, MAX_VALUE_DEPTH, METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType,
@@ -333,6 +333,7 @@ mod tests {
             events: Vec<String>,
             errors: Vec<String>,
             roles: Vec<String>,
+            types: ShapeTable,
         }
 
         let mut metadata = PackageMetadata::default();
@@ -352,6 +353,7 @@ mod tests {
                     events: Vec::new(),
                     errors: Vec::new(),
                     roles: Vec::new(),
+                    types: ShapeTable::new(),
                 },
                 METADATA_WIRE_DEPTH,
             )

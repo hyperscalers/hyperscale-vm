@@ -262,4 +262,5 @@ PackageMetadata {
         "unpriced-ask",
     ],
     roles: [],
+    types: {},
 }

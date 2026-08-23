@@ -6,7 +6,7 @@ use core::fmt;
 
 use hyperscale_hbor::{
     DecodeError, Decoder, EncodeError, Encoder, Hbor, HborDecode, HborEncode, HborInfallible,
-    HborWidth, Sink,
+    HborShape, HborWidth, ShapeRegistry, Sink, TypeShape,
 };
 use thiserror::Error;
 
@@ -171,6 +171,24 @@ impl AddressClass {
             Self::Package => "package",
             Self::Resource => "resource",
             Self::Native => "native",
+        }
+    }
+
+    /// The name this class's addresses are described under.
+    ///
+    /// The encoding erases the distinction — every address is
+    /// thirty-two bytes — so a consumer reading a payload against a
+    /// shape has this name and nothing else to tell it that what it
+    /// found addresses something. Spelled as the effect vocabulary
+    /// spells the same narrowing, so one word answers both.
+    #[must_use]
+    pub const fn shape_name(self) -> &'static str {
+        match self {
+            Self::Principal => "principal-address",
+            Self::Component => "component-address",
+            Self::Package => "package-address",
+            Self::Resource => "resource-address",
+            Self::Native => "native-address",
         }
     }
 
@@ -340,6 +358,25 @@ impl HborDecode for Address {
     }
 }
 
+/// The name every address is described under: thirty-two bytes, and the
+/// name is the whole of what says so.
+pub const ADDRESS_SHAPE: &str = "address";
+
+/// Register an address shape of `name`, which is thirty-two bytes under
+/// every narrowing.
+fn address_shape(types: &mut ShapeRegistry, name: &str, owner: &'static str) -> TypeShape {
+    types.nominal(name, owner, |_| TypeShape::ByteArray(32))
+}
+
+/// An address survives the encoding that erases it: the shape is a name
+/// over thirty-two bytes, because a consumer that reads `bytes32` cannot
+/// link, render, or resolve what it found.
+impl HborShape for Address {
+    fn shape(types: &mut ShapeRegistry) -> TypeShape {
+        address_shape(types, ADDRESS_SHAPE, core::any::type_name::<Self>())
+    }
+}
+
 macro_rules! class_addr {
     ($(#[$doc:meta])* $name:ident => $class:ident) => {
         $(#[$doc])*
@@ -424,6 +461,15 @@ macro_rules! class_addr {
             }
         }
 
+        // The narrowing is what the shape carries: the bytes are the bare
+        // address's, and which class they name is the fact a consumer
+        // could not otherwise recover.
+        impl HborShape for $name {
+            fn shape(types: &mut ShapeRegistry) -> TypeShape {
+                address_shape(types, Self::CLASS.shape_name(), core::any::type_name::<Self>())
+            }
+        }
+
         impl TryFrom<Address> for $name {
             type Error = WrongClass;
 
@@ -486,7 +532,7 @@ class_addr! {
 macro_rules! position_addr {
     (
         $(#[$doc:meta])*
-        $name:ident, $error:ident {
+        $name:ident, $error:ident, $shape_name:literal {
             $($(#[$variant_doc:meta])* $variant:ident($class:ident)),+ $(,)?
         }
     ) => {
@@ -589,6 +635,12 @@ macro_rules! position_addr {
                     .map_err(|err| DecodeError::InvalidDiscriminant(err.found.tag()))
             }
         }
+
+        impl HborShape for $name {
+            fn shape(types: &mut ShapeRegistry) -> TypeShape {
+                address_shape(types, $shape_name, core::any::type_name::<Self>())
+            }
+        }
     };
 }
 
@@ -605,7 +657,7 @@ position_addr! {
     /// register's two roles are a resource and a publisher. A callable
     /// role arrives with its conversion, which is the fail-closed
     /// direction: a class not listed here cannot be called at all.
-    CallTarget, NotCallable {
+    CallTarget, NotCallable, "call-target" {
         /// An account, answering through the protocol's account blueprint.
         Principal(PrincipalAddr),
         /// An instance, answering through the blueprint its address

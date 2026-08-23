@@ -1,8 +1,8 @@
-error[E0599]: the method `create` exists for struct `hyperscale_vm_sdk::state::Cell<Option<Seal>>`, but its trait bounds were not satisfied
+error[E0599]: the method `create` exists for struct `hyperscale_vm_sdk::state::Cell<std::option::Option<Seal>>`, but its trait bounds were not satisfied
   --> tests/refusals/written_seal.rs:18:24
    |
 18 |             self.round.create(Seal(()));
-   |                        ^^^^^^ method cannot be called on `hyperscale_vm_sdk::state::Cell<Option<Seal>>` due to unsatisfied trait bounds
+   |                        ^^^^^^ method cannot be called due to unsatisfied trait bounds
    |
   ::: src/state.rs
    |
@@ -24,11 +24,11 @@ note: constructor is not visible here due to private fields
    | pub struct Seal(());
    |                 ^^ private field
 
-error[E0599]: the method `create` exists for struct `Slot<Option<Seal>>`, but its trait bounds were not satisfied
+error[E0599]: the method `create` exists for struct `Slot<std::option::Option<Seal>>`, but its trait bounds were not satisfied
   --> tests/refusals/written_seal.rs:18:24
    |
 18 |             self.round.create(Seal(()));
-   |                        ^^^^^^ method cannot be called on `Slot<Option<Seal>>` due to unsatisfied trait bounds
+   |                        ^^^^^^ method cannot be called on `Slot<std::option::Option<Seal>>` due to unsatisfied trait bounds
    |
   ::: src/state.rs
    |

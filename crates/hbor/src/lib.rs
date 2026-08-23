@@ -48,16 +48,17 @@
 //!
 //! Self-description, where a consumer needs it, is an envelope around a
 //! payload — a schema hash beside the bytes — never a tag inside one.
-//! Schema *derivation* — a describable shape a tool could walk — is
-//! deliberately absent, not forgotten: the type is the schema, nothing on
-//! the codec path depends on one, and an opt-in derive can land later
-//! without touching what a payload means.
+//! Schema *derivation* is [`shape`], an opt-in derive that writes a type
+//! down for a consumer that does not have it. It sits beside the codec
+//! rather than inside it: nothing on the encode or decode path reads a
+//! shape, and a payload means what it meant without one.
 
 pub mod bounded;
 pub mod canonical;
 pub mod decode;
 pub mod encode;
 pub mod error;
+pub mod shape;
 pub mod varint;
 
 pub mod hash;
@@ -72,8 +73,9 @@ pub use decode::Decoder;
 pub use encode::{Encoder, Fixed, Sink};
 pub use error::{DecodeError, EncodeError};
 pub use hash::{Hash32, Hasher};
-pub use hyperscale_hbor_macros::{Hbor, HborMerkle};
+pub use hyperscale_hbor_macros::{Hbor, HborMerkle, HborShape};
 pub use merkle::Chunked;
+pub use shape::{HborShape, ShapeField, ShapeRegistry, ShapeTable, ShapeVariant, TypeShape};
 pub use signing::{HborSigned, HborSignedWith};
 pub use varint::MAX_LENGTH;
 

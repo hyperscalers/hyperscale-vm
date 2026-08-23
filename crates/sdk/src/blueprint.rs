@@ -8,6 +8,7 @@
 //!
 use std::collections::BTreeMap;
 
+use hyperscale_hbor::ShapeTable;
 use hyperscale_vm_effects::{
     MAX_EFFECTS_PER_SIGNATURE, MethodSignature, PackageMetadata, ParamType,
 };
@@ -95,6 +96,7 @@ impl Blueprint {
             events: self.events.clone(),
             errors: self.errors.clone(),
             roles: self.roles.clone(),
+            types: ShapeTable::new(),
         }
     }
 }

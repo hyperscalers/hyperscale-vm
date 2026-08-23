@@ -12,5 +12,5 @@ error[E0277]: the trait bound `Vec<u8>: HborInfallible` is not satisfied
              Arc<T>
              Box<T>
              ComponentAddr
-             Option<T>
+             PackageAddr
            and $N others

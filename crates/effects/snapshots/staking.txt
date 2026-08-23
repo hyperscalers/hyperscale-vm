@@ -975,4 +975,5 @@ PackageMetadata {
     ],
     errors: [],
     roles: [],
+    types: {},
 }

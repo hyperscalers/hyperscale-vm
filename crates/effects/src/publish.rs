@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 
+use hyperscale_hbor::ShapeTable;
+use hyperscale_hbor::shape::ShapeFault;
 use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
 
 use crate::auth::MAX_PACKAGE_ROLES;
@@ -14,7 +16,7 @@ use crate::dsl::{
     Clause, ConditionExpr, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH,
     ModeExpr, TargetExpr, materialized_kind,
 };
-use crate::metadata::PackageMetadata;
+use crate::metadata::{MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
 use crate::resource::{GrantsExpr, holdings_entry};
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
 use crate::signature::{AbiParam, MethodSignature};
@@ -1408,6 +1410,23 @@ pub enum MetadataBoundsError {
         #[source]
         source: SignatureBoundsError,
     },
+    /// A declared type whose shape cannot be read.
+    #[error("type {name:?}: {source}")]
+    Type {
+        /// The type whose shape is refused.
+        name: String,
+        /// What cannot be read about it.
+        #[source]
+        source: ShapeFault,
+    },
+    /// A declared type under a name the protocol holds, describing
+    /// something else. The name is what a consumer resolves by, so one
+    /// meaning two things means neither.
+    #[error("type {name:?} is the protocol's name for another shape")]
+    ReservedType {
+        /// The name claimed.
+        name: String,
+    },
 }
 
 /// Why one signature is past a bound the vocabulary fixes.
@@ -1459,6 +1478,29 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
             name: name.clone(),
             source,
         })?;
+    }
+    check_types(&metadata.types)
+}
+
+/// Every declared shape readable, and every reserved name meaning what
+/// the protocol says it means.
+///
+/// The first is what stops a wallet meeting a shape it cannot walk: a
+/// reference to nothing, or a nest past what a decoder will follow. The
+/// second is what makes `address` a fact — a package may declare any type
+/// it likes and may not declare one under the protocol's name for
+/// something else.
+fn check_types(types: &ShapeTable) -> Result<(), MetadataBoundsError> {
+    for (name, shape) in types {
+        shape
+            .resolved_depth(types, MAX_SHAPE_DEPTH)
+            .map_err(|source| MetadataBoundsError::Type {
+                name: name.clone(),
+                source,
+            })?;
+        if reserved_shape(name).is_some_and(|reserved| reserved != shape) {
+            return Err(MetadataBoundsError::ReservedType { name: name.clone() });
+        }
     }
     Ok(())
 }
@@ -1639,9 +1681,110 @@ fn check_grants_bounds(grants: &GrantsExpr) -> Result<(), SignatureBoundsError> 
 mod tests {
     use std::collections::BTreeMap;
 
+    use hyperscale_hbor::{ShapeField, TypeShape};
     use hyperscale_vm_types::{Address, AddressClass};
 
     use super::*;
+
+    /// Metadata declaring `types` and nothing else, which is what the
+    /// shape door reads.
+    fn declaring(types: ShapeTable) -> PackageMetadata {
+        PackageMetadata {
+            types,
+            ..PackageMetadata::default()
+        }
+    }
+
+    /// One entry's table, for a shape whose whole content is its own.
+    fn one(name: &str, shape: TypeShape) -> ShapeTable {
+        std::iter::once((name.to_owned(), shape)).collect()
+    }
+
+    #[test]
+    fn a_shape_reaching_outside_the_package_is_refused() {
+        let types = one(
+            "holder",
+            TypeShape::Struct(vec![ShapeField {
+                name: "held".into(),
+                shape: TypeShape::Ref("elsewhere".into()),
+            }]),
+        );
+        assert_eq!(
+            check_metadata(&declaring(types)),
+            Err(MetadataBoundsError::Type {
+                name: "holder".into(),
+                source: ShapeFault::Unresolved("elsewhere".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn a_shape_past_the_cap_is_refused_and_one_at_it_is_not() {
+        let nested =
+            |levels| (0..levels).fold(TypeShape::U8, |inner, _| TypeShape::Option(Box::new(inner)));
+        // The walk spends its budget on the shape's own levels, so the
+        // deepest admissible type is one shallower than the cap.
+        assert_eq!(
+            check_metadata(&declaring(one("deep", nested(MAX_SHAPE_DEPTH - 1)))),
+            Ok(())
+        );
+        assert_eq!(
+            check_metadata(&declaring(one("deep", nested(MAX_SHAPE_DEPTH)))),
+            Err(MetadataBoundsError::Type {
+                name: "deep".into(),
+                source: ShapeFault::TooDeep,
+            })
+        );
+    }
+
+    /// A cycle is refused by the bound a deep nest is refused by, because
+    /// it is the same walk running out of the same budget.
+    #[test]
+    fn a_reference_cycle_is_refused() {
+        let holding = |held: &str| {
+            TypeShape::Struct(vec![ShapeField {
+                name: "next".into(),
+                shape: TypeShape::Option(Box::new(TypeShape::Ref(held.to_owned()))),
+            }])
+        };
+        let types = [
+            ("first".to_owned(), holding("second")),
+            ("second".to_owned(), holding("first")),
+        ]
+        .into_iter()
+        .collect();
+        assert!(matches!(
+            check_metadata(&declaring(types)),
+            Err(MetadataBoundsError::Type {
+                source: ShapeFault::TooDeep,
+                ..
+            })
+        ));
+    }
+
+    /// The protocol's name for an address describes an address, in every
+    /// package that declares one — which is what lets a consumer resolve
+    /// by the name at all.
+    #[test]
+    fn a_reserved_name_over_a_foreign_shape_is_refused() {
+        let pinned = reserved_shape("resource-address").expect("the protocol pins it");
+        assert_eq!(
+            check_metadata(&declaring(one("resource-address", pinned.clone()))),
+            Ok(())
+        );
+        assert_eq!(
+            check_metadata(&declaring(one("resource-address", TypeShape::Text))),
+            Err(MetadataBoundsError::ReservedType {
+                name: "resource-address".into(),
+            })
+        );
+        // A name the protocol does not hold is the package's own to spend.
+        assert_eq!(
+            check_metadata(&declaring(one("outcome", TypeShape::Text))),
+            Ok(())
+        );
+    }
+
     use crate::auth::PRIMARY;
     use crate::envelope::NULLIFIER_SLOT;
     use crate::metadata::PACKAGE_SLOT;

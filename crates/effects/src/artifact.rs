@@ -13,7 +13,7 @@ use hyperscale_hbor::{from_slice_with_depth, to_vec_with_depth};
 
 use crate::dsl::{MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH};
 use crate::hash::Hasher;
-use crate::metadata::{PackageHash, PackageMetadata};
+use crate::metadata::{MAX_SHAPE_DEPTH, PackageHash, PackageMetadata};
 use crate::publish::check_metadata;
 use crate::types::MAX_VALUE_DEPTH;
 
@@ -37,10 +37,12 @@ const PREAMBLE_LEN: usize = 8;
 /// field and its hoisted element body — so the clause, expression, and
 /// value bounds translate at two apiece, over a fixed prefix for the
 /// record, its method table, a method, and a clause's target and mode.
+/// A shape layer costs three: the variant's own sequence field, that
+/// sequence's elements, and the field or variant body one level down.
 /// The cap admits everything [`check_metadata`] accepts; the checks are
 /// what decide.
 pub const METADATA_WIRE_DEPTH: usize =
-    16 + 2 * (MAX_CLAUSE_DEPTH + MAX_EXPR_DEPTH + MAX_VALUE_DEPTH);
+    16 + 3 * MAX_SHAPE_DEPTH + 2 * (MAX_CLAUSE_DEPTH + MAX_EXPR_DEPTH + MAX_VALUE_DEPTH);
 
 /// Why an artifact's metadata section could not be read or written.
 ///
@@ -260,12 +262,50 @@ mod tests {
 
     use super::{
         ArtifactError, CUSTOM_SECTION_ID, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata,
-        declaration_hash, encode_metadata, extract_metadata, write_uleb128,
+        check_metadata, declaration_hash, decode_metadata, encode_metadata, extract_metadata,
+        write_uleb128,
     };
     use crate::dsl::{Clause, Expr, MAX_EXPR_DEPTH, ModeExpr, TargetExpr};
     use crate::hash::TestHasher;
-    use crate::metadata::{PackageMetadata, package_hash};
+    use crate::metadata::{MAX_SHAPE_DEPTH, PackageMetadata, package_hash};
     use crate::signature::{MethodSignature, Totality};
+
+    /// The wire depth admits every shape the door admits, so a package
+    /// cannot pass the checks and then fail to be written down.
+    #[test]
+    fn the_wire_depth_carries_the_deepest_admissible_shape() {
+        use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
+
+        // The costliest form per level: a struct's field and an enum's
+        // variant each put a sequence between one shape and the next.
+        let nested = |levels| {
+            let deepest = (0..levels).fold(TypeShape::U8, |inner, level| {
+                let held = TypeShape::Struct(vec![ShapeField {
+                    name: format!("field{level}"),
+                    shape: inner,
+                }]);
+                TypeShape::Enum(vec![ShapeVariant {
+                    name: format!("variant{level}"),
+                    discriminant: 0,
+                    content: held,
+                }])
+            });
+            PackageMetadata {
+                types: std::iter::once(("deepest".to_owned(), deepest)).collect(),
+                ..PackageMetadata::default()
+            }
+        };
+        // Whatever the door's last word is, the section codec carries it.
+        // A level costs at least one of the walk's budget, so no
+        // admissible shape has more of them than the cap.
+        let deepest = (1..=MAX_SHAPE_DEPTH)
+            .map(nested)
+            .take_while(|metadata| check_metadata(metadata).is_ok())
+            .last()
+            .expect("some depth is admissible");
+        let section = encode_metadata(&deepest).expect("the deepest shape encodes");
+        assert_eq!(decode_metadata(&section).expect("and decodes"), deepest);
+    }
 
     fn empty_component() -> Vec<u8> {
         let mut artifact = b"\0asm".to_vec();

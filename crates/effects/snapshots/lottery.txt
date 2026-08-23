@@ -409,4 +409,5 @@ PackageMetadata {
         "round-stands-open",
     ],
     roles: [],
+    types: {},
 }

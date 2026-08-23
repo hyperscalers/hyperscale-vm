@@ -266,4 +266,5 @@ PackageMetadata {
         "empty-pool",
     ],
     roles: [],
+    types: {},
 }
