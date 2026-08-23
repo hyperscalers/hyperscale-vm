@@ -173,6 +173,19 @@ impl Builder {
         self
     }
 
+    /// Declare `T` as a type this package's cells hold: a record, or the
+    /// data an instance of one of its marks carries.
+    ///
+    /// No band and no index — a cell is reached by its key rather than by
+    /// a number — so this adds the shape and nothing else. What names it
+    /// is the type's own name, which is also the mark's material for an
+    /// instance schema.
+    #[must_use]
+    pub fn declares<T: HborShape>(mut self) -> Self {
+        T::shape(&mut self.blueprint.types);
+        self
+    }
+
     /// Name the package's `index`-th error code, in the order a declined
     /// invocation's code refers to.
     #[must_use]

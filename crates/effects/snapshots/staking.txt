@@ -1018,6 +1018,16 @@ PackageMetadata {
                 },
             ],
         ),
+        "validator": Struct(
+            [
+                ShapeField {
+                    name: "pubkey",
+                    shape: ByteArray(
+                        48,
+                    ),
+                },
+            ],
+        ),
         "validator-deactivated": Struct(
             [
                 ShapeField {

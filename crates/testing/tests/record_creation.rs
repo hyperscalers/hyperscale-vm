@@ -12,7 +12,7 @@ use hyperscale_vm_effects::{
     resource_record_key,
 };
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_sdk::hbor::to_vec;
+use hyperscale_vm_sdk::hbor::{ShapeField, TypeShape, to_vec, varint};
 use hyperscale_vm_testing::{Chain, PrincipalAddr, account, package, principal};
 use hyperscale_vm_types::{Outcome, Presence, UnmetCondition};
 
@@ -37,6 +37,13 @@ mod issuer {
 
     #[resource(display_digits = 6)]
     struct Coupon;
+
+    /// A record no event reaches and no mark declares: a cell's content
+    /// on its own terms.
+    #[record]
+    struct Holding {
+        since: u64,
+    }
 
     #[state]
     struct Issuer {
@@ -202,6 +209,76 @@ fn a_fielded_mint_files_the_record_its_mark_declares() {
         })
         .expect("the record encodes"),
         "the cell holds the record's own encoding, not a presence byte",
+    );
+}
+
+/// A consumer holding the package's metadata reads an instance's data
+/// cell: the mark's material is its type's name, and the shape under
+/// that name says what the bytes are.
+///
+/// The mark is already in the metadata — a signature's own claim names
+/// it — so nothing new has to be published for a client to get from a
+/// resource it holds to the schema its instances carry.
+#[test]
+fn an_instance_cell_decodes_from_metadata_alone() {
+    let (mut chain, instance) = instantiated();
+    seated(&mut chain, instance);
+
+    let seat = instance.issued_seat(&TestHasher);
+    let filed = chain
+        .cell(instance_data_key(&TestHasher, instance, seat, 7))
+        .expect("the instance's data cell");
+
+    let metadata = issuer::blueprint().metadata();
+    let TypeShape::Struct(fields) = &metadata.types["seat"] else {
+        panic!("the mark declares named fields");
+    };
+    let mut rest = filed.as_slice();
+    let named: Vec<(&str, String)> = fields
+        .iter()
+        .map(|field| {
+            let read = match &field.shape {
+                TypeShape::U64 => {
+                    let (taken, tail) = rest.split_at(8);
+                    rest = tail;
+                    u64::from_le_bytes(taken.try_into().expect("eight bytes")).to_string()
+                }
+                TypeShape::Text => {
+                    let (len, read) = varint::read(rest).expect("a length");
+                    let (taken, tail) = rest[read..].split_at(len);
+                    rest = tail;
+                    String::from_utf8(taken.to_vec()).expect("utf-8")
+                }
+                other => panic!("this mark holds no {other:?}"),
+            };
+            (field.name.as_str(), read)
+        })
+        .collect();
+    assert!(rest.is_empty(), "the shape accounts for every byte");
+    assert_eq!(
+        named,
+        [
+            ("operator", "42".to_owned()),
+            ("label", "front-row".to_owned())
+        ]
+    );
+}
+
+/// A record no event reaches is in the table all the same: it is a cell
+/// somebody reads, and the shape is what lets them.
+#[test]
+fn a_record_no_event_names_still_declares_its_shape() {
+    let metadata = issuer::blueprint().metadata();
+    assert_eq!(
+        metadata.types["holding"],
+        TypeShape::Struct(vec![ShapeField {
+            name: "since".to_owned(),
+            shape: TypeShape::U64,
+        }])
+    );
+    assert!(
+        metadata.events.is_empty(),
+        "nothing here is reachable from an event",
     );
 }
 

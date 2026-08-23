@@ -2858,9 +2858,10 @@ fn walk_type_names(ty: &syn::Type, found: &mut Vec<String>) {
 /// terms as every other fact this macro derives: the encoding is the
 /// protocol's, so naming it is the protocol's job. The path routes
 /// through the SDK, which is the one crate a contract depends on.
-fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
+fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ident>) {
     let emitted = emit_closure(items);
     let mut records = Vec::new();
+    let mut stored_types = Vec::new();
     for item in items {
         let syn::Item::Struct(item) = item else {
             continue;
@@ -2912,9 +2913,10 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
             records.push(syn::parse_quote!(
                 impl ::hyperscale_vm_sdk::state::Record for #name {}
             ));
+            stored_types.push(name.clone());
         }
     }
-    records
+    (records, stored_types)
 }
 
 /// The lints that describe the off-host stubs rather than the contract.
@@ -3053,7 +3055,10 @@ fn expand(
 
     // Before the markers are stripped: `encode_declared` reads them, and
     // what it pushes has to survive the strip that follows.
-    let records = encode_declared(items);
+    let (records, stored_types) = encode_declared(items);
+    let stored_table = stored_types
+        .iter()
+        .map(|ident| quote!(.declares::<#ident>()));
     strip_macro_attrs(items, &state_name, role);
     items.extend(records);
     // A configuration is by definition what a creator supplies, so a
@@ -3079,6 +3084,7 @@ fn expand(
                 #(#event_table)*
                 #(#error_table)*
                 #(#role_table)*
+                #(#stored_table)*
                 .build()
         }
     ));
