@@ -7,7 +7,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{ALICE, BOB, RES_X, pkg, resolver, shard_of, splitter, vault, world};
+use common::{ALICE, BOB, RES_X, payouts, pkg, resolver, shard_of, vault, world};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, AdmissionError, Clause, Condition, ConditionExpr, Constraint, EdgeRef, EvalError,
@@ -22,10 +22,18 @@ use hyperscale_vm_types::{
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
 
+/// A quarter, at the scale a bounded configuration number holds.
+const QUARTER: u128 = 1_000_000_000_000_000_000 / 4;
+
 fn splitter_meta() -> InstanceMeta {
     InstanceMeta {
-        package: pkg("splitter"),
-        config: vec![],
+        package: pkg("payouts"),
+        config: vec![
+            Value::Address(RES_X.address()),
+            Value::U128(QUARTER),
+            Value::U128(QUARTER),
+            Value::U128(2 * QUARTER),
+        ],
         salt: Hash32([1; 32]),
     }
 }
@@ -73,7 +81,7 @@ fn setup() -> Records {
     let mut chain = world();
     chain
         .packages
-        .publish_unchecked(pkg("splitter"), splitter::metadata());
+        .publish_unchecked(pkg("payouts"), payouts::metadata());
     chain.instances.create(&TestHasher, splitter_meta());
     chain
 }
@@ -100,7 +108,7 @@ fn valid_graph() -> ManifestGraph {
             },
             GraphNode {
                 target: splitter().into(),
-                method: "take".into(),
+                method: "in-lots".into(),
                 args: vec![
                     GraphArg::Edge {
                         edge: EdgeRef {

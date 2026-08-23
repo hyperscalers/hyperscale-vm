@@ -7,7 +7,7 @@
 use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
 };
-use hyperscale_vm_fixtures::{amm, splitter};
+use hyperscale_vm_fixtures::{amm, payouts};
 use hyperscale_vm_manifest_builder::{GraphBuilder, Names, Param, TypedBuilder, render};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr, TextError};
@@ -17,6 +17,8 @@ const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
 const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const USDC: ResourceAddr = ResourceAddr::new([0xE2; 31]);
 const NETWORK: &str = "mainnet";
+/// A quarter, at the scale a bounded configuration number holds.
+const QUARTER: u128 = 1_000_000_000_000_000_000 / 4;
 
 fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
@@ -41,8 +43,17 @@ fn pool() -> amm::Amm {
     amm::Amm::at(instance("amm", pair()).address(&TestHasher))
 }
 
+fn splitter_config() -> Vec<Value> {
+    vec![
+        Value::Address(XRD.address()),
+        Value::U128(QUARTER),
+        Value::U128(QUARTER),
+        Value::U128(2 * QUARTER),
+    ]
+}
+
 fn splitter() -> ComponentAddr {
-    instance("splitter", vec![]).address(&TestHasher)
+    instance("payouts", splitter_config()).address(&TestHasher)
 }
 
 fn world() -> Records {
@@ -55,12 +66,12 @@ fn world() -> Records {
         .publish_unchecked(pkg("amm"), amm::metadata());
     chain
         .packages
-        .publish_unchecked(pkg("splitter"), splitter::metadata());
+        .publish_unchecked(pkg("payouts"), payouts::metadata());
     chain.instances.serve_principals(pkg("account"));
     chain.instances.create(&TestHasher, instance("amm", pair()));
     chain
         .instances
-        .create(&TestHasher, instance("splitter", vec![]));
+        .create(&TestHasher, instance("payouts", splitter_config()));
     chain
 }
 
@@ -127,7 +138,9 @@ fn a_split_binds_both_halves_and_numbers_the_repeat() {
     let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice_proof = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice_proof, XRD, 100).unwrap();
-    let [taken, rest] = splitter::take(&mut b, splitter(), funds, 30).unwrap();
+    let [taken, rest] = payouts::Payouts::at(splitter())
+        .in_lots(&mut b, funds, 30u128)
+        .unwrap();
     account::deposit(&mut b, BOB, taken.min(1)).unwrap();
     account::deposit(&mut b, ALICE, rest).unwrap();
     let graph = b.build().unwrap();
@@ -139,7 +152,7 @@ fn a_split_binds_both_halves_and_numbers_the_repeat() {
         render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
         "alice.authorize();\n\
          let xrd = alice.withdraw(@xrd, 100);\n\
-         let xrd2, xrd3 = splitter.take(xrd, 30);\n\
+         let xrd2, xrd3 = splitter.in-lots(xrd, 30);\n\
          bob.deposit(xrd2{>= 1});\n\
          alice.deposit(xrd3);\n"
     );

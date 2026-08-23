@@ -66,7 +66,7 @@ mod tests {
         MAX_EXPR_DEPTH, MAX_VALUE_DEPTH, METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType,
         SlotId, SlotShape, TargetExpr, Totality, Value, package_slot,
     };
-    use hyperscale_vm_fixtures::{amm, book, splitter};
+    use hyperscale_vm_fixtures::{amm, book};
     use hyperscale_vm_stdlib::account;
     use hyperscale_vm_types::{
         Address, AddressClass, LocalKey, MAX_ERROR_CODES, MAX_EVENT_TYPES, ResourceAddr,
@@ -80,7 +80,6 @@ mod tests {
             ("account", account::metadata()),
             ("amm", amm::metadata()),
             ("book", book::metadata()),
-            ("splitter", splitter::metadata()),
         ]
     }
 

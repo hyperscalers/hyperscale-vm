@@ -40,7 +40,6 @@ pub mod peg;
 pub mod perp;
 pub mod registry;
 pub mod shares;
-pub mod splitter;
 
 use std::sync::LazyLock;
 
@@ -160,8 +159,6 @@ packages! {
     registry;
     // The share vault: assets in, shares out, at whatever the pool is worth.
     shares => (SHARES_COMPONENT, shares_artifact, shares_package_hash, "shares.component.wasm");
-    // The bucket splitter, hand-authored and never built as a guest.
-    splitter;
 }
 
 #[cfg(test)]

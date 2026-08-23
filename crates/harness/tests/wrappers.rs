@@ -18,7 +18,7 @@ use hyperscale_vm_effects::{
     Presented, Records, ResourceKind, RoleTable, StoredRule, TestHasher, Value, admit,
     issued_resource,
 };
-use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, splitter};
+use hyperscale_vm_fixtures::{amm, book, lottery, nf, payouts, registry};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
 use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
@@ -75,6 +75,17 @@ fn pair_config() -> Vec<Value> {
     ]
 }
 
+/// The asset the splitter divides, and the three shares it divides by.
+fn payouts_config() -> Vec<Value> {
+    let quarter = 1_000_000_000_000_000_000 / 4;
+    vec![
+        Value::Address(BASE.address()),
+        Value::U128(quarter),
+        Value::U128(quarter),
+        Value::U128(2 * quarter),
+    ]
+}
+
 /// The pair plus the fee slot the amm's signatures read.
 fn amm_config() -> Vec<Value> {
     vec![
@@ -97,7 +108,7 @@ fn world() -> Records {
         ("nf", vec![]),
         ("nf", vec![Value::Address(BASE.address())]),
         ("registry", vec![]),
-        ("splitter", vec![]),
+        ("payouts", payouts_config()),
         ("lottery", vec![]),
     ] {
         chain.instances.create(&TestHasher, instance(name, config));
@@ -113,8 +124,8 @@ fn stdlib() -> Vec<(&'static str, PackageMetadata)> {
         ("book", book::metadata()),
         ("lottery", lottery::metadata()),
         ("nf", nf::metadata()),
+        ("payouts", payouts::metadata()),
         ("registry", registry::metadata()),
-        ("splitter", splitter::metadata()),
         ("staking", staking::metadata()),
     ]
 }
@@ -314,15 +325,17 @@ fn the_lottery_wrappers_match_their_signatures() {
     });
 }
 
+/// A method yielding two edges of one resource projects both of them,
+/// and a caller has to route each.
 #[test]
-fn the_splitter_wrapper_matches_its_signature() {
-    let splitter = address("splitter", vec![]);
+fn the_payouts_wrappers_match_their_signatures() {
+    let splitter = payouts::Payouts::at(address("payouts", payouts_config()));
     admits(|b| {
         let alice_proof = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, alice_proof, BASE, 100)?;
-        let [taken, rest] = splitter::take(b, splitter, funds, 30)?;
-        account::deposit(b, BOB, taken)?;
-        account::deposit(b, ALICE, rest)
+        let [payable, change] = splitter.in_lots(b, funds, 30u128)?;
+        account::deposit(b, BOB, payable)?;
+        account::deposit(b, ALICE, change)
     });
 }
 
@@ -385,13 +398,9 @@ fn every_hand_written_method_has_a_wrapper() {
             ],
         ),
         ("registry", &["bind", "check", "drain"]),
-        ("splitter", &["take"]),
     ];
-    let hand_written: Vec<(&str, PackageMetadata)> = vec![
-        ("nf", nf::metadata()),
-        ("registry", registry::metadata()),
-        ("splitter", splitter::metadata()),
-    ];
+    let hand_written: Vec<(&str, PackageMetadata)> =
+        vec![("nf", nf::metadata()), ("registry", registry::metadata())];
     // Zipping would truncate silently, so the lists are held to one
     // length first: a package appended to one and not the other is the
     // same drift as a method, and would otherwise go unchecked.

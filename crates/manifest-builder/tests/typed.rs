@@ -6,7 +6,7 @@ use hyperscale_vm_effects::{
     Constraint, EdgeRef, GraphArg, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash,
     Records, TestHasher, Value, admit,
 };
-use hyperscale_vm_fixtures::splitter;
+use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
 use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
@@ -15,6 +15,8 @@ const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
 const OPERATOR: PrincipalAddr = PrincipalAddr::new([0x30; 31]);
 const RES: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+/// A quarter, at the scale a bounded configuration number holds.
+const QUARTER: u128 = 1_000_000_000_000_000_000 / 4;
 
 fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
@@ -22,8 +24,13 @@ fn pkg(name: &str) -> PackageHash {
 
 fn splitter_meta() -> InstanceMeta {
     InstanceMeta {
-        package: pkg("splitter"),
-        config: vec![],
+        package: pkg("payouts"),
+        config: vec![
+            Value::Address(RES.address()),
+            Value::U128(QUARTER),
+            Value::U128(QUARTER),
+            Value::U128(2 * QUARTER),
+        ],
         salt: Hash32([2; 32]),
     }
 }
@@ -60,7 +67,7 @@ fn world() -> Records {
         .publish_unchecked(pkg("account"), account::metadata());
     chain
         .packages
-        .publish_unchecked(pkg("splitter"), splitter::metadata());
+        .publish_unchecked(pkg("payouts"), payouts::metadata());
     chain
         .packages
         .publish_unchecked(pkg("staking"), staking::metadata());
@@ -119,7 +126,7 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
     // `take` types both outputs by the resource of its input, so the type
     // travels the length of the chain from the one literal that fixed it.
     let [taken, rest] = b
-        .call(splitter(), "take", (funds, 30u128))
+        .call(splitter(), "in-lots", (funds, 30u128))
         .unwrap()
         .into_array()
         .unwrap();
@@ -178,7 +185,7 @@ fn an_edge_nothing_typed_stays_untyped() {
         .untyped()
         .call_bearing(ALICE, "withdraw", (RES, 100u128), sign_in);
     let [taken, rest] = b
-        .call(splitter(), "take", (funds, 30u128))
+        .call(splitter(), "in-lots", (funds, 30u128))
         .unwrap()
         .into_array()
         .unwrap();
@@ -205,7 +212,7 @@ fn an_asserted_type_carries_through_the_untyped_path() {
         .untyped()
         .call_bearing(ALICE, "withdraw", (RES, 100u128), sign_in);
     let [taken, rest] = b
-        .call(splitter(), "take", (funds.resource_is(RES), 30u128))
+        .call(splitter(), "in-lots", (funds.resource_is(RES), 30u128))
         .unwrap()
         .into_array()
         .unwrap();
@@ -266,7 +273,7 @@ fn a_call_is_typed_against_the_signature_it_names() {
         .one()
         .unwrap();
     assert!(matches!(
-        b.call(splitter(), "take", (one, two)),
+        b.call(splitter(), "in-lots", (one, two)),
         Err(TypedError::EdgeForValueParam { param: 1, .. })
     ));
 }

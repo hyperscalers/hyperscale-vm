@@ -1,5 +1,0 @@
-
-take(bucket, u128) — infallible
-  yields   edge 0 = resource-of(arg0)
-  yields   edge 1 = resource-of(arg0)
-  exports  edge arg0, arg1

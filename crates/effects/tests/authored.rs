@@ -257,7 +257,6 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("shares", "mint", open(), vec![]),
         ("shares", "redeem", open(), vec![]),
         ("shares", "withdraw", open(), vec![]),
-        ("splitter", "take", open(), vec![]),
         ("staking", "cast-param-vote", owner_badge(), vec![]),
         ("staking", "clear-param-vote", owner_badge(), vec![]),
         ("staking", "deactivate-validator", owner_badge(), vec![]),

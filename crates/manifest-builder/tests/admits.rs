@@ -14,9 +14,10 @@
 //! hand.
 
 use hyperscale_vm_effects::{
-    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, admit,
+    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
+    admit,
 };
-use hyperscale_vm_fixtures::splitter;
+use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{GraphBuilder, TypedBuilder};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
@@ -31,8 +32,13 @@ const ACCOUNTS: [PrincipalAddr; 4] = [
 
 fn splitter_meta() -> InstanceMeta {
     InstanceMeta {
-        package: pkg("splitter"),
-        config: vec![],
+        package: pkg("payouts"),
+        config: vec![
+            Value::Address(RES.address()),
+            Value::U128(QUARTER),
+            Value::U128(QUARTER),
+            Value::U128(2 * QUARTER),
+        ],
         salt: Hash32([2; 32]),
     }
 }
@@ -42,6 +48,8 @@ fn splitter() -> ComponentAddr {
     splitter_meta().address(&TestHasher)
 }
 const RES: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+/// A quarter, at the scale a bounded configuration number holds.
+const QUARTER: u128 = 1_000_000_000_000_000_000 / 4;
 
 fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
@@ -54,7 +62,7 @@ fn world() -> Records {
         .publish_unchecked(pkg("account"), account::metadata());
     chain
         .packages
-        .publish_unchecked(pkg("splitter"), splitter::metadata());
+        .publish_unchecked(pkg("payouts"), payouts::metadata());
     chain.instances.serve_principals(pkg("account"));
     chain.instances.create(&TestHasher, splitter_meta());
     chain
@@ -104,7 +112,7 @@ proptest! {
                 funds = funds.min(min).max(max);
             }
             if let Some(taken) = t.split {
-                let [taken, rest] = b.call(splitter(), "take", (funds, taken));
+                let [taken, rest] = b.call(splitter(), "in-lots", (funds, taken));
                 let [] = b.call(ACCOUNTS[t.to], "deposit", (taken,));
                 let [] = b.call(ACCOUNTS[t.from], "deposit", (rest,));
             } else {
@@ -129,7 +137,7 @@ proptest! {
                 funds = funds.min(min).max(max);
             }
             if let Some(taken) = t.split {
-                let [taken, rest] = b.call(splitter(), "take", (funds, taken)).unwrap().into_array().unwrap();
+                let [taken, rest] = b.call(splitter(), "in-lots", (funds, taken)).unwrap().into_array().unwrap();
                 b.call(ACCOUNTS[t.to], "deposit", (taken,)).unwrap().none().unwrap();
                 b.call(ACCOUNTS[t.from], "deposit", (rest,)).unwrap().none().unwrap();
             } else {

@@ -3,12 +3,11 @@
 //!
 //! Each package below is re-declared through the tracer by hand and
 //! compared to what its own crate publishes, with `assert_eq!` on the
-//! whole [`MethodSignature`]. For `splitter`, which is metadata-only, the
-//! other side is a hand-written literal. For the rest it is what
-//! `#[blueprint]` derived — so what these compare is a human calling the
-//! tracer against the macro calling it, which is exactly the reduction
-//! the macro's correctness rests on and the one thing a committed
-//! snapshot of the macro's own output cannot make.
+//! whole [`MethodSignature`]. The other side is what `#[blueprint]`
+//! derived — so what these compare is a human calling the tracer against
+//! the macro calling it, which is exactly the reduction the macro's
+//! correctness rests on and the one thing a committed snapshot of the
+//! macro's own output cannot make.
 //!
 //! Equality is the right bar rather than an over-strict one. A signature
 //! that merely *routes the same* on the cases someone thought to test is
@@ -19,9 +18,7 @@
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, RESOURCE, VAULT};
 use hyperscale_vm_effects::{CONFIRMATION, PackageMetadata, ParamType, RECOVERY, SlotId};
-use hyperscale_vm_fixtures::{
-    amm as amm_package, book as book_package, splitter as splitter_package,
-};
+use hyperscale_vm_fixtures::{amm as amm_package, book as book_package};
 use hyperscale_vm_sdk::sym::{
     Addr, Bucket, Sym, U64, U128, eq, lit_u64, pack, select, self_record,
 };
@@ -315,21 +312,6 @@ fn book() -> Blueprint {
         .build()
 }
 
-/// The bucket splitter: two output edges, no effects at all.
-fn splitter() -> Blueprint {
-    Blueprint::builder()
-        .method(
-            "take",
-            &[ParamType::Bucket, ParamType::U128],
-            |t: &mut Trace| {
-                let funds: Sym<Bucket> = t.arg(0);
-                t.output(&funds.resource());
-                t.output(&funds.resource());
-            },
-        )
-        .build()
-}
-
 /// The account's fungible surface, which is what the declaration above
 /// covers.
 fn fungible_account() -> PackageMetadata {
@@ -390,11 +372,6 @@ fn the_pool_traces_to_its_authored_signature() {
 #[test]
 fn the_book_traces_to_its_authored_signature() {
     assert_parity(&book(), &book_package::metadata(), "book");
-}
-
-#[test]
-fn the_splitter_traces_to_its_authored_signature() {
-    assert_parity(&splitter(), &splitter_package::metadata(), "splitter");
 }
 
 #[test]

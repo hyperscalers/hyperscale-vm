@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash, PrefixShardResolver, Records,
     ResourceKind, TestHasher, Value, issued_resource,
 };
-use hyperscale_vm_fixtures::{amm, splitter};
+use hyperscale_vm_fixtures::{amm, payouts};
 use hyperscale_vm_manifest_builder::{
     Authority, Names, TypedBuilder, TypedError, preflight, render,
 };
@@ -25,6 +25,9 @@ const NETWORK: &str = "mainnet";
 const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
 /// A ceiling a sender might sign for; the report prices against it.
 const GAS_LIMIT: u64 = 50_000;
+
+/// A quarter, at the scale a bounded configuration number holds.
+const QUARTER: u128 = 1_000_000_000_000_000_000 / 4;
 
 fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
@@ -60,8 +63,17 @@ fn stake_pool() -> staking::Staking {
     staking::Staking::at(instance("staking", operated()).address(&TestHasher))
 }
 
+fn splitter_config() -> Vec<Value> {
+    vec![
+        Value::Address(XRD.address()),
+        Value::U128(QUARTER),
+        Value::U128(QUARTER),
+        Value::U128(2 * QUARTER),
+    ]
+}
+
 fn splitter() -> ComponentAddr {
-    instance("splitter", vec![]).address(&TestHasher)
+    instance("payouts", splitter_config()).address(&TestHasher)
 }
 
 /// The pool's own stake units, derived from the pool and its declared
@@ -86,7 +98,7 @@ fn world() -> Records {
         .publish_unchecked(pkg("amm"), amm::metadata());
     chain
         .packages
-        .publish_unchecked(pkg("splitter"), splitter::metadata());
+        .publish_unchecked(pkg("payouts"), payouts::metadata());
     chain
         .packages
         .publish_unchecked(pkg("staking"), staking::metadata());
@@ -94,7 +106,7 @@ fn world() -> Records {
     chain.instances.create(&TestHasher, instance("amm", pair()));
     chain
         .instances
-        .create(&TestHasher, instance("splitter", vec![]));
+        .create(&TestHasher, instance("payouts", splitter_config()));
     chain
         .instances
         .create(&TestHasher, instance("staking", operated()));
@@ -148,7 +160,8 @@ fn main() {
                 b.rest_to(ALICE);
                 let alice = account::authorize(b, ALICE)?;
                 let funds = account::withdraw(b, alice, XRD, 100)?;
-                let [taken, _change] = splitter::take(b, splitter(), funds, 30)?;
+                let [taken, _change] =
+                    payouts::Payouts::at(splitter()).in_lots(b, funds, 30u128)?;
                 account::deposit(b, BOB, taken.min(30))
             }),
         ),

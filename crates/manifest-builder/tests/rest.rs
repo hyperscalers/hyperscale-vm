@@ -6,9 +6,10 @@
 //! value somewhere the author never named is worse than making them say.
 
 use hyperscale_vm_effects::{
-    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, admit,
+    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
+    admit,
 };
-use hyperscale_vm_fixtures::splitter;
+use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{BuildError, GraphBuilder, TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{CallTarget, ComponentAddr, PrincipalAddr, ResourceAddr};
@@ -16,6 +17,8 @@ use hyperscale_vm_types::{CallTarget, ComponentAddr, PrincipalAddr, ResourceAddr
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
 const RES: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+/// A quarter, at the scale a bounded configuration number holds.
+const QUARTER: u128 = 1_000_000_000_000_000_000 / 4;
 
 fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
@@ -23,8 +26,13 @@ fn pkg(name: &str) -> PackageHash {
 
 fn splitter_meta() -> InstanceMeta {
     InstanceMeta {
-        package: pkg("splitter"),
-        config: vec![],
+        package: pkg("payouts"),
+        config: vec![
+            Value::Address(RES.address()),
+            Value::U128(QUARTER),
+            Value::U128(QUARTER),
+            Value::U128(2 * QUARTER),
+        ],
         salt: Hash32([2; 32]),
     }
 }
@@ -40,7 +48,7 @@ fn world() -> Records {
         .publish_unchecked(pkg("account"), account::metadata());
     chain
         .packages
-        .publish_unchecked(pkg("splitter"), splitter::metadata());
+        .publish_unchecked(pkg("payouts"), payouts::metadata());
     chain.instances.serve_principals(pkg("account"));
     chain.instances.create(&TestHasher, splitter_meta());
     chain
@@ -52,7 +60,9 @@ fn without_a_policy_a_rest_edge_is_still_a_refusal() {
     let mut b = TypedBuilder::new(&chain, &TestHasher);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
-    let [taken, _rest] = splitter::take(&mut b, splitter(), funds, 30).unwrap();
+    let [taken, _rest] = payouts::Payouts::at(splitter())
+        .in_lots(&mut b, funds, 30u128)
+        .unwrap();
     account::deposit(&mut b, BOB, taken).unwrap();
     assert_eq!(
         b.build(),
@@ -70,7 +80,9 @@ fn a_policy_deposits_what_nothing_claimed() {
     b.rest_to(ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
-    let [taken, _rest] = splitter::take(&mut b, splitter(), funds, 30).unwrap();
+    let [taken, _rest] = payouts::Payouts::at(splitter())
+        .in_lots(&mut b, funds, 30u128)
+        .unwrap();
     account::deposit(&mut b, BOB, taken).unwrap();
     let graph = b.build().unwrap();
 
@@ -96,7 +108,9 @@ fn explicit_consumption_wins() {
     b.rest_to(ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
-    let [taken, rest] = splitter::take(&mut b, splitter(), funds, 30).unwrap();
+    let [taken, rest] = payouts::Payouts::at(splitter())
+        .in_lots(&mut b, funds, 30u128)
+        .unwrap();
     account::deposit(&mut b, BOB, taken).unwrap();
     account::deposit(&mut b, BOB, rest).unwrap();
     let graph = b.build().unwrap();
@@ -115,8 +129,12 @@ fn every_rest_edge_is_routed_not_just_the_first() {
     b.rest_to(ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
-    let [taken, _rest] = splitter::take(&mut b, splitter(), funds, 30).unwrap();
-    let [_a, _b] = splitter::take(&mut b, splitter(), taken, 10).unwrap();
+    let [taken, _rest] = payouts::Payouts::at(splitter())
+        .in_lots(&mut b, funds, 30u128)
+        .unwrap();
+    let [_a, _b] = payouts::Payouts::at(splitter())
+        .in_lots(&mut b, taken, 10u128)
+        .unwrap();
     let graph = b.build().unwrap();
 
     // Three halves nothing claimed, three deposits appended in node order.

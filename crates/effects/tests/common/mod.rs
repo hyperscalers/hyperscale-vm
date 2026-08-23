@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
     Records, ShardId, ShardResolver, SlotId, TargetExpr, TestHasher, Totality, Value, child_key,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
-pub use hyperscale_vm_fixtures::{amm, book, splitter};
+pub use hyperscale_vm_fixtures::{amm, book, payouts};
 pub use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     Address, ComponentAddr, Effect, EffectSet, Presence, PrincipalAddr, ResourceAddr, SubstateKey,
