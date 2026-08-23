@@ -508,9 +508,6 @@ pub struct Surface<'a> {
     pub methods: &'a [&'a Method],
     /// The resources the package issues.
     pub resources: &'a [Resource],
-    /// The module's own imports, so a wrapper can name a parameter's
-    /// type the way the method declaring it does.
-    pub imports: &'a [syn::ItemUse],
 }
 
 /// The package's calling surface.
@@ -523,7 +520,6 @@ pub fn module(surface: &Surface<'_>) -> TokenStream2 {
         serves,
         methods,
         resources,
-        imports,
     } = surface;
     let slots = slots(fields);
     let issued = issued(resources, config);
@@ -641,14 +637,15 @@ pub fn module(surface: &Surface<'_>) -> TokenStream2 {
         /// gate are all facts the declaration already carries — and one
         /// constant per state field, at the slot the numbering gave it.
         pub mod client {
-            // The module's own imports, so a wrapper names a parameter's
-            // type the way the method that declared it does. Without
-            // them a signature could only speak in what a manifest binds
-            // — and a rate would arrive as thirty-two bytes rather than
-            // as a rate.
+            // Everything the module has, so a wrapper names a
+            // parameter's type the way the method that declared it does
+            // — the author's own imports included, which a child module
+            // sees whether or not they were public. Without them a
+            // signature could only speak in what a manifest binds, and a
+            // rate would arrive as thirty-two bytes rather than as a
+            // rate.
             #[allow(unused_imports)]
             use super::*;
-            #(#[allow(unused_imports)] #imports)*
 
             #(#slots)*
 

@@ -3165,13 +3165,6 @@ fn expand(
         .map(|(name, field)| (name.clone(), field.slot))
         .collect();
     let reading = role.reading();
-    let imports: Vec<syn::ItemUse> = items
-        .iter()
-        .filter_map(|item| match item {
-            syn::Item::Use(item) => Some(item.clone()),
-            _ => None,
-        })
-        .collect();
     let client = client::module(&client::Surface {
         handle: &state_name,
         config: config_name.as_ref(),
@@ -3180,7 +3173,6 @@ fn expand(
         serves,
         methods: &calls,
         resources: &declared_resources,
-        imports: &imports,
     });
 
     let declarations = methods.iter().map(|m| &m.declaration);
