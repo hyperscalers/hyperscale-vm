@@ -353,8 +353,23 @@ impl<A, B> Cellular for Fixed<A, B> {
     /// site folds to an exclusive read-modify-write and the commutative
     /// movement semantics that read an amount cell are unreachable for
     /// it.
+    ///
+    /// # Panics
+    ///
+    /// On a cell of any other width. An unwritten leaf reads as zero,
+    /// which is the value zero rather than a state a body has to tell
+    /// apart from it; anything between the two was never written through
+    /// this impl, and is a defect in state on the same terms a malformed
+    /// address is. Reading it as zero would hand a body a rate of nothing
+    /// and let the transaction commit on it.
     fn from_cell(cell: &[u8]) -> Self {
-        Self::from_le_bytes(cell.try_into().unwrap_or([0; 32]))
+        if cell.is_empty() {
+            return Self::from_scaled(Wide::ZERO);
+        }
+        let bytes: [u8; 32] = cell
+            .try_into()
+            .unwrap_or_else(|_| panic!("a rate cell holds thirty-two bytes, not {}", cell.len()));
+        Self::from_le_bytes(bytes)
     }
 
     fn to_cell(&self) -> Vec<u8> {
@@ -371,10 +386,11 @@ impl<A, B> LeafShape for SignedFixed<A, B> {
 /// The same thirty-two little-endian bytes an unsigned rate has, read as
 /// two's complement.
 ///
-/// No check on the way in, and none to write: every thirty-two byte
-/// string is exactly one value, so a cell cannot hold a shape the type
-/// does not admit. An unwritten cell reads as zero, which is the value
-/// zero rather than a state a body has to special-case.
+/// No check on the value, and none to write: every thirty-two byte string
+/// is exactly one value, so a cell of that width cannot hold a shape the
+/// type does not admit. An unwritten cell reads as zero, which is the
+/// value zero rather than a state a body has to special-case, and a cell
+/// of any other width is the same defect in state an unsigned rate's is.
 impl<A, B> Cellular for SignedFixed<A, B> {
     fn from_cell(cell: &[u8]) -> Self {
         Self::from_bits(Fixed::<A, B>::from_cell(cell).scaled())
@@ -2147,5 +2163,35 @@ impl Cellular for RoleTable {
 
     fn to_cell(&self) -> Vec<u8> {
         self.to_bytes().expect("the table cap is the codec's own")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cellular, Fixed, SignedFixed, Wide};
+
+    /// A dimension, for the rates that need two of them.
+    struct Up;
+    /// The other one.
+    struct Down;
+
+    /// A leaf nobody wrote is the value zero; a leaf somebody wrote at
+    /// the wrong width is a defect, and reading it as zero would hand a
+    /// body a rate of nothing and let the transaction commit on it.
+    #[test]
+    fn a_rate_cell_is_thirty_two_bytes_or_nothing_at_all() {
+        assert_eq!(Fixed::<Up, Down>::from_cell(&[]), Fixed::ZERO);
+        assert_eq!(SignedFixed::<Up, Down>::from_cell(&[]), SignedFixed::ZERO);
+
+        let written = Fixed::<Up, Down>::from_scaled(Wide::from_u128(7));
+        assert_eq!(Fixed::<Up, Down>::from_cell(&written.to_cell()), written);
+
+        for width in [1, 16, 31, 33] {
+            let cell = vec![0u8; width];
+            assert!(
+                std::panic::catch_unwind(|| Fixed::<Up, Down>::from_cell(&cell)).is_err(),
+                "{width} bytes is not a rate"
+            );
+        }
     }
 }

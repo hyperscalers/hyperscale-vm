@@ -1466,6 +1466,8 @@ impl UnitFixed {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::{from_slice, to_vec};
+
     use super::{
         FIXED_SCALE, Fixed, NumError, Quantity, Rate, Ratio, Rounding, Sign, SignedFixed,
         UnitFixed, Wide, arith,
@@ -1825,6 +1827,34 @@ mod tests {
             std::panic::catch_unwind(|| bottom.negate()).is_err(),
             "the bottom of the range negates to itself, which is not its opposite"
         );
+    }
+
+    /// A stored rate travels as the thirty-two bytes it is, so a record
+    /// holding one holds what a cell holding one does.
+    ///
+    /// Both signs and both types, because the encoding is where the two
+    /// readings of one byte string have to stay one byte string: a rate
+    /// that a cell and a record spelled differently would be a value that
+    /// changed meaning by being carried.
+    #[test]
+    fn a_stored_rate_encodes_as_the_bytes_it_holds() {
+        let unsigned = Fixed::<Up, Down>::from_scaled(Wide::from_u128(7));
+        let bytes = to_vec(&unsigned).expect("a fixed width encodes");
+        assert_eq!(bytes, unsigned.to_le_bytes(), "no framing around the value");
+        assert_eq!(
+            from_slice::<Fixed<Up, Down>>(&bytes).expect("and decodes"),
+            unsigned
+        );
+
+        for sign in [Sign::Positive, Sign::Negative] {
+            let there = signed(FIXED_SCALE, sign);
+            let bytes = to_vec(&there).expect("a fixed width encodes");
+            assert_eq!(bytes, there.to_le_bytes());
+            assert_eq!(
+                from_slice::<SignedFixed<Up, Down>>(&bytes).expect("and decodes"),
+                there
+            );
+        }
     }
 
     /// A magnitude past half the width is not a signed value, and saying
