@@ -1,10 +1,15 @@
 //! The bucket table: the linearity state machine for value in flight.
 //!
 //! A bucket is opened only by the kernel's own producers, changes shape
-//! only through splits and merges the kernel performs, and leaves only by
-//! being taken back or dropped empty. The whole surface of these
-//! operations is one promise: value is never duplicated and never
-//! silently lost.
+//! only through splits and merges the kernel performs, and leaves the
+//! table only by being taken back or by carrying nothing. The whole
+//! surface of these operations is one promise: value is never duplicated
+//! and never silently lost.
+//!
+//! Nothing here judges a loss. Whether one happened is a question about
+//! the whole transaction, answered once at the close over the table as a
+//! whole — so a body that lets a full bucket go and a body that holds one
+//! to the end meet the same verdict rather than two.
 
 use std::collections::BTreeSet;
 
@@ -39,8 +44,8 @@ impl Held {
         }
     }
 
-    /// Whether it carries nothing, which is what a bucket must for a
-    /// guest to let go of it.
+    /// Whether it carries nothing, which is what lets its slot go when a
+    /// guest lets the handle go.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.quantity() == 0

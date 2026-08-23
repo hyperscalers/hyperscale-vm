@@ -263,30 +263,16 @@ fn absolute_paths(blob: &[u8]) -> Vec<String> {
     found
 }
 
-/// The committed blobs are what their sources build on the canonical
-/// builder platform — every one of them, read off the lists the crates
-/// shipping them keep, so a blob cannot be committed and left ungated.
-///
-/// The blob is the protocol artifact and the source is the thing people
-/// edit; without this equality an edited guest passes every behavioural
-/// test — those run the committed bytes — while the committed bytes
-/// quietly stop being what the repository says they are. The guest
-/// build is reproducible per platform (pinned toolchain,
-/// `immediate-abort` panics, no host paths in the artifact) but not
-/// across platforms: toolchains emit the same code in different
-/// function order per host OS. Linux owns the bytes —
-/// `scripts/regenerate-stdlib.sh` produces them in a pinned container —
-/// so the equality check runs only where the canonical builder lives.
 /// Every package either crate ships, with the bytes it committed.
-///
-/// Outside the platform gate below, so that the one thing this file can
-/// get wrong on any machine — which blobs it covers — is checked on every
-/// machine rather than only where the comparison itself can run.
 fn shipped() -> Vec<(&'static str, &'static [u8])> {
     PROTOCOL.iter().chain(FIXTURES).copied().collect()
 }
 
-/// The gate covers every blob the workspace commits.
+/// The gate below covers every blob the workspace commits.
+///
+/// Outside the platform gate, so that the one thing this file can get
+/// wrong on any machine — which blobs it covers — is checked on every
+/// machine rather than only where the comparison itself can run.
 #[test]
 fn the_digest_gate_covers_every_committed_blob() {
     let covered: std::collections::BTreeSet<_> = shipped().into_iter().map(|(n, _)| n).collect();
@@ -294,12 +280,28 @@ fn the_digest_gate_covers_every_committed_blob() {
         for entry in std::fs::read_dir(repo_root().join(directory)).expect("a blobs directory") {
             let file = entry.expect("a directory entry").file_name();
             let name = file.to_str().expect("a nameable blob");
-            let package = name.trim_end_matches(".component.wasm");
+            let package = name
+                .strip_suffix(".component.wasm")
+                .unwrap_or_else(|| panic!("{directory}/{name} is not a committed component"));
             assert!(covered.contains(package), "{directory}/{name} is not gated");
         }
     }
 }
 
+/// The committed blobs are what their sources build on the canonical
+/// builder platform — every one of them, read off the lists the crates
+/// shipping them keep, so a blob cannot be committed and left ungated.
+///
+/// The blob is the protocol artifact and the source is the thing people
+/// edit; without this equality an edited guest passes every behavioural
+/// test — those run the committed bytes — while the committed bytes
+/// quietly stop being what the repository says they are. The guest build
+/// is reproducible per platform (pinned toolchain, `immediate-abort`
+/// panics, no host paths in the artifact) but not across platforms:
+/// toolchains emit the same code in different function order per host
+/// OS. Linux owns the bytes — `scripts/regenerate-stdlib.sh` produces
+/// them in a pinned container — so the equality check runs only where the
+/// canonical builder lives.
 #[test]
 #[cfg(target_os = "linux")]
 fn the_committed_blobs_are_what_their_sources_build() -> Result<()> {

@@ -90,9 +90,6 @@ pub fn staking_artifact() -> &'static [u8] {
     &STAKING_ARTIFACT
 }
 
-/// The protocol's own packages: the account every principal answers and
-/// the stake pool the beacon folds facts for.
-///
 /// The protocol packages, by name, with the declaration each traces.
 ///
 /// The same reading `hyperscale_vm_fixtures::DECLARED` offers, so a
@@ -109,6 +106,9 @@ pub const SHIPPED: &[(&str, &[u8])] = &[
     ("staking", STAKING_COMPONENT),
 ];
 
+/// The protocol's own packages: the account every principal answers and
+/// the stake pool the beacon folds facts for.
+///
 /// What every network is born running, as against the artifacts a
 /// particular network chooses to seed beside them.
 #[must_use]
