@@ -913,5 +913,22 @@ PackageMetadata {
     ],
     errors: [],
     roles: [],
-    types: {},
+    types: {
+        "deposited": Struct(
+            [
+                ShapeField {
+                    name: "amount",
+                    shape: U128,
+                },
+            ],
+        ),
+        "withdrawn": Struct(
+            [
+                ShapeField {
+                    name: "amount",
+                    shape: U128,
+                },
+            ],
+        ),
+    },
 }

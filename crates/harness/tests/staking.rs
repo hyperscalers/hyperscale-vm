@@ -26,7 +26,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
 use hyperscale_vm_manifest_builder::{Names, TypedBuilder, TypedError, render};
-use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
+use hyperscale_vm_sdk::hbor::{TypeShape, from_slice, to_vec};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, instantiate, staking};
 use hyperscale_vm_types::{
     Address, Outcome, Presence, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
@@ -418,6 +418,57 @@ fn the_emitter_names_the_pool_and_the_guest_cannot() -> Result<()> {
     assert!(
         events.iter().any(|e| e.emitter == ALICE),
         "the account emitted under its own address",
+    );
+    Ok(())
+}
+
+/// A consumer holding the package's metadata and nothing else reads an
+/// event: the index names a type, the type's shape names its fields, and
+/// the bytes become facts.
+///
+/// The whole of what the shape table is for. Nothing here touches the
+/// package's source — no `staking::ValidatorRegistered`, no generated
+/// client — so this is what a wallet or an explorer can do with an
+/// artifact it fetched and cannot compile.
+#[test]
+fn an_event_decodes_from_metadata_alone() -> Result<()> {
+    let world = world();
+    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
+    let (outcome, _) = run_both(&operator_store(), std::slice::from_ref(&entry));
+    let (event_type, payload) = pool_event(&outcome, &entry);
+
+    let metadata = staking::metadata();
+    let name = &metadata.events[event_type as usize];
+    assert_eq!(name, "validator-registered");
+    let TypeShape::Struct(fields) = &metadata.types[name] else {
+        panic!("the event declares named fields");
+    };
+
+    // Walk the payload against the shape, taking each field at the width
+    // the shape claims.
+    let mut rest = payload.as_slice();
+    let mut read = |shape: &TypeShape| -> Vec<u8> {
+        let width = match shape {
+            TypeShape::U64 => 8,
+            TypeShape::ByteArray(bytes) => *bytes as usize,
+            other => panic!("this event holds no {other:?}"),
+        };
+        let (taken, tail) = rest.split_at(width);
+        rest = tail;
+        taken.to_vec()
+    };
+    let named: Vec<(String, Vec<u8>)> = fields
+        .iter()
+        .map(|field| (field.name.clone(), read(&field.shape)))
+        .collect();
+    assert!(rest.is_empty(), "the shape accounts for every byte");
+
+    assert_eq!(named[0].0, "validator_id");
+    assert_eq!(named[0].1, VALIDATOR.to_le_bytes());
+    assert_eq!(named[1], ("pubkey".to_owned(), PUBKEY.to_vec()));
+    assert_eq!(
+        named[2],
+        ("possession_proof".to_owned(), POSSESSION_PROOF.to_vec())
     );
     Ok(())
 }

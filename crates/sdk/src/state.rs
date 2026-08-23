@@ -49,7 +49,8 @@
 //! clause follows from calling one.
 
 use hyperscale_hbor::{
-    DEFAULT_MAX_DEPTH, Hbor, HborDecode, HborEncode, from_slice_with_depth, to_vec_with_depth,
+    DEFAULT_MAX_DEPTH, Hbor, HborDecode, HborEncode, HborShape, from_slice_with_depth,
+    to_vec_with_depth,
 };
 /// The record a resource's cell holds, in the shape a client reads.
 ///
@@ -347,7 +348,7 @@ pub const WORD_BYTES: usize = 32;
 /// amount is a type rather than sixteen: the width is the protocol's, so
 /// a package carrying it as a byte list would be restating a fact it was
 /// never told and checking it at runtime.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor, HborShape)]
 #[hbor(transparent, infallible)]
 pub struct Word([u8; WORD_BYTES]);
 

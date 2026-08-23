@@ -2878,8 +2878,9 @@ fn encode_declared(items: &mut [syn::Item]) -> Vec<syn::Item> {
         item.attrs.push(syn::parse_quote!(
             #[derive(::core::fmt::Debug, ::core::cmp::PartialEq, ::core::cmp::Eq)]
         ));
-        item.attrs
-            .push(syn::parse_quote!(#[derive(::hyperscale_vm_sdk::hbor::Hbor)]));
+        item.attrs.push(syn::parse_quote!(
+            #[derive(::hyperscale_vm_sdk::hbor::Hbor, ::hyperscale_vm_sdk::hbor::HborShape)]
+        ));
         // Fixed width where an emit spends it. The payload goes into a
         // buffer on the stack sized from this bound, because a method
         // marked total may not allocate and a heap buffer that grows can
@@ -3044,7 +3045,7 @@ fn expand(
     );
 
     let declarations = methods.iter().map(|m| &m.declaration);
-    let event_table = events.iter().map(|(_, name)| quote!(.event(#name)));
+    let event_table = events.iter().map(|(ident, _)| quote!(.event::<#ident>()));
     let error_table = errors.iter().map(|name| quote!(.error(#name)));
     let role_table = declared_roles.iter().map(|name| quote!(.role(#name)));
 

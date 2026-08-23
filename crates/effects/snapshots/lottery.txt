@@ -409,5 +409,47 @@ PackageMetadata {
         "round-stands-open",
     ],
     roles: [],
-    types: {},
+    types: {
+        "address": ByteArray(
+            32,
+        ),
+        "closed": Tuple(
+            [],
+        ),
+        "entered": Struct(
+            [
+                ShapeField {
+                    name: "who",
+                    shape: Ref(
+                        "address",
+                    ),
+                },
+            ],
+        ),
+        "outcome": Struct(
+            [
+                ShapeField {
+                    name: "draw",
+                    shape: ByteArray(
+                        32,
+                    ),
+                },
+                ShapeField {
+                    name: "winner",
+                    shape: Option(
+                        Ref(
+                            "address",
+                        ),
+                    ),
+                },
+            ],
+        ),
+        "settled": Tuple(
+            [
+                Ref(
+                    "outcome",
+                ),
+            ],
+        ),
+    },
 }

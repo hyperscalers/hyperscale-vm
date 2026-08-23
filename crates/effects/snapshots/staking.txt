@@ -975,5 +975,84 @@ PackageMetadata {
     ],
     errors: [],
     roles: [],
-    types: {},
+    types: {
+        "param-vote": Struct(
+            [
+                ShapeField {
+                    name: "split_bytes",
+                    shape: U64,
+                },
+                ShapeField {
+                    name: "impound_epochs",
+                    shape: U64,
+                },
+                ShapeField {
+                    name: "activate_at",
+                    shape: U64,
+                },
+            ],
+        ),
+        "param-vote-cast": Tuple(
+            [
+                Ref(
+                    "param-vote",
+                ),
+            ],
+        ),
+        "param-vote-cleared": Tuple(
+            [],
+        ),
+        "staked": Struct(
+            [
+                ShapeField {
+                    name: "amount",
+                    shape: U128,
+                },
+            ],
+        ),
+        "unstaked": Struct(
+            [
+                ShapeField {
+                    name: "amount",
+                    shape: U128,
+                },
+            ],
+        ),
+        "validator-deactivated": Struct(
+            [
+                ShapeField {
+                    name: "validator_id",
+                    shape: U64,
+                },
+            ],
+        ),
+        "validator-registered": Struct(
+            [
+                ShapeField {
+                    name: "validator_id",
+                    shape: U64,
+                },
+                ShapeField {
+                    name: "pubkey",
+                    shape: ByteArray(
+                        48,
+                    ),
+                },
+                ShapeField {
+                    name: "possession_proof",
+                    shape: ByteArray(
+                        96,
+                    ),
+                },
+            ],
+        ),
+        "validator-unjailed": Struct(
+            [
+                ShapeField {
+                    name: "validator_id",
+                    shape: U64,
+                },
+            ],
+        ),
+    },
 }

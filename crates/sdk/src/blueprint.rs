@@ -8,7 +8,7 @@
 //!
 use std::collections::BTreeMap;
 
-use hyperscale_hbor::ShapeTable;
+use hyperscale_hbor::{HborShape, ShapeRegistry, TypeShape};
 use hyperscale_vm_effects::{
     MAX_EFFECTS_PER_SIGNATURE, MethodSignature, PackageMetadata, ParamType,
 };
@@ -62,6 +62,7 @@ pub struct Blueprint {
     events: Vec<String>,
     errors: Vec<String>,
     roles: Vec<String>,
+    types: ShapeRegistry,
 }
 
 impl Blueprint {
@@ -96,7 +97,7 @@ impl Blueprint {
             events: self.events.clone(),
             errors: self.errors.clone(),
             roles: self.roles.clone(),
-            types: ShapeTable::new(),
+            types: self.types.clone().into_types(),
         }
     }
 }
@@ -151,11 +152,24 @@ impl Builder {
         self
     }
 
-    /// Name the package's `index`-th event type, in the order a receipt
-    /// event's index refers to.
+    /// Declare `T` as the package's next event type, in the order a
+    /// receipt event's index refers to.
+    ///
+    /// The name comes from the type's own shape rather than from a second
+    /// spelling beside it, so the table entry and the shape it indexes
+    /// cannot disagree about what the event is called.
+    ///
+    /// # Panics
+    ///
+    /// If `T` describes as anything but a declared type. An event is a
+    /// struct the package declares; a wrapper that describes as its
+    /// contents would leave the table naming a shape nobody registered.
     #[must_use]
-    pub fn event(mut self, name: &str) -> Self {
-        self.blueprint.events.push(name.to_owned());
+    pub fn event<T: HborShape>(mut self) -> Self {
+        let TypeShape::Ref(name) = T::shape(&mut self.blueprint.types) else {
+            panic!("an event is a type the package declares, and describes as one");
+        };
+        self.blueprint.events.push(name);
         self
     }
 

@@ -35,7 +35,7 @@
 use core::cmp::Ordering;
 use core::marker::PhantomData;
 
-use hyperscale_hbor::Hbor;
+use hyperscale_hbor::{Hbor, HborShape};
 
 // The arithmetic, from whichever side of the boundary this build is on.
 // One alias rather than a branch per call site: the two modules expose
@@ -206,7 +206,7 @@ const fn limb_sub(a: [u64; 4], b: [u64; 4]) -> ([u64; 4], bool) {
 /// resource's.
 /// Encoded as the width it is: a `u128` of subunits, with the tag erased,
 /// which is the same form its cell holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Hash, Hbor)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Hash, Hbor, HborShape)]
 #[hbor(transparent, infallible)]
 pub struct Quantity(u128);
 
