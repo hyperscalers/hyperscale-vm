@@ -45,6 +45,14 @@ mod issuer {
         since: u64,
     }
 
+    /// A fielded mark whose name is more than one word, so the material
+    /// a claim carries and the name its schema is declared under are
+    /// rendered by two different macros and have to agree.
+    #[resource(non_fungible)]
+    struct SeasonPass {
+        season: u64,
+    }
+
     #[state]
     struct Issuer {
         noted: Cell<u64>,
@@ -240,6 +248,28 @@ fn an_instance_cell_decodes_from_metadata_alone() {
             ("operator".to_owned(), ShapeValue::U64(42)),
             ("label".to_owned(), ShapeValue::Text("front-row".to_owned())),
         ]))
+    );
+}
+
+/// A mark's material and the name its schema is declared under are one
+/// string, rendered by two macros that must agree.
+///
+/// The material is the SDK macro's kebab of the struct's name; the
+/// table key is the codec macro's. Nothing links the two but their
+/// agreeing, and a mark of one word cannot tell them apart — so the
+/// crossing is checked on a name that can.
+#[test]
+fn a_marks_material_is_the_name_its_schema_is_declared_under() {
+    let metadata = issuer::blueprint().metadata();
+    assert_eq!(issuer::SEASON_PASS, b"season-pass");
+    let name = core::str::from_utf8(issuer::SEASON_PASS).expect("a mark is its name");
+    assert_eq!(
+        metadata.types.get(name),
+        Some(&TypeShape::Struct(vec![ShapeField {
+            name: "season".to_owned(),
+            shape: TypeShape::U64,
+        }])),
+        "the two renderings of `SeasonPass` disagree",
     );
 }
 

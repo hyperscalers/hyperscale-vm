@@ -1424,6 +1424,18 @@ pub enum MetadataBoundsError {
         #[source]
         source: ShapeFault,
     },
+    /// An event named with no shape declared for it.
+    ///
+    /// The table promises a consumer it can name what it read; without a
+    /// shape under that name the payload stays the opaque bytes the
+    /// table exists to open. An event carrying nothing still has a shape
+    /// — the empty one — so there is no event this refuses that a
+    /// derivation could produce.
+    #[error("event {name:?} declares no shape, so its payload opens to nothing")]
+    EventWithoutShape {
+        /// The event named without one.
+        name: String,
+    },
     /// A declared slot whose element cannot be read.
     #[error("slot {slot:?}: {source}")]
     Slot {
@@ -1495,6 +1507,11 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
             name: name.clone(),
             source,
         })?;
+    }
+    for name in &metadata.events {
+        if !metadata.types.contains_key(name) {
+            return Err(MetadataBoundsError::EventWithoutShape { name: name.clone() });
+        }
     }
     check_types(&metadata.types)?;
     for (slot, declared) in &metadata.state {
@@ -1710,7 +1727,7 @@ fn check_grants_bounds(grants: &GrantsExpr) -> Result<(), SignatureBoundsError> 
 mod tests {
     use std::collections::BTreeMap;
 
-    use hyperscale_hbor::{ShapeField, TypeShape};
+    use hyperscale_hbor::{ShapeField, ShapeTable, TypeShape};
     use hyperscale_vm_types::{Address, AddressClass};
 
     use super::*;
@@ -1790,6 +1807,29 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// An event's name is a promise its payload opens; a name with no
+    /// shape under it is a promise nothing keeps.
+    #[test]
+    fn an_event_with_no_shape_is_refused() {
+        let named = |types: ShapeTable| PackageMetadata {
+            events: vec!["moved".into()],
+            types,
+            ..PackageMetadata::default()
+        };
+        assert_eq!(
+            check_metadata(&named(ShapeTable::new())),
+            Err(MetadataBoundsError::EventWithoutShape {
+                name: "moved".into()
+            })
+        );
+        // An event carrying nothing still declares the empty shape, so
+        // there is no derived event this refuses.
+        assert_eq!(
+            check_metadata(&named(one("moved", TypeShape::Tuple(Vec::new())))),
+            Ok(())
+        );
     }
 
     /// A slot's element is judged where a declared type is: it names a
@@ -2017,8 +2057,11 @@ mod tests {
     /// ever refer to.
     #[test]
     fn a_name_table_past_the_index_the_kernel_accepts_is_refused() {
+        // One shape every entry names, so the table's length is the only
+        // thing under test here.
         let events = |len: usize| PackageMetadata {
             events: vec![String::new(); len],
+            types: one("", TypeShape::Tuple(Vec::new())),
             ..PackageMetadata::default()
         };
         assert_bounded(

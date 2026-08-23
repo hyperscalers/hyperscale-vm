@@ -60,7 +60,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use hyperscale_hbor::{ShapeTable, to_vec_with_depth};
+    use hyperscale_hbor::{ShapeTable, TypeShape, to_vec_with_depth};
     use hyperscale_vm_effects::{
         AbiParam, Clause, EdgeContent, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
         MAX_EXPR_DEPTH, MAX_VALUE_DEPTH, METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType,
@@ -278,6 +278,11 @@ mod tests {
             .methods
             .insert("another".into(), MethodSignature::default());
         metadata.events = vec!["withdrawn".into(), "deposited".into()];
+        metadata.types = metadata
+            .events
+            .iter()
+            .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
+            .collect();
 
         let bytes = encode_metadata(&metadata).expect("encodes");
         assert_eq!(decode_metadata(&bytes).expect("decodes"), metadata);
@@ -478,8 +483,11 @@ mod tests {
 
     #[test]
     fn a_name_table_past_the_index_the_kernel_accepts_is_refused() {
+        // One shape every entry names, so the table's length is the only
+        // thing under test here.
         let events = |len: usize| PackageMetadata {
             events: vec![String::new(); len],
+            types: std::iter::once((String::new(), TypeShape::Tuple(Vec::new()))).collect(),
             ..PackageMetadata::default()
         };
         assert_bounded(
@@ -504,6 +512,7 @@ mod tests {
         // reads a byte of it.
         let over = PackageMetadata {
             events: vec!["e".repeat(1024); MAX_EVENT_TYPES as usize],
+            types: std::iter::once(("e".repeat(1024), TypeShape::Tuple(Vec::new()))).collect(),
             ..PackageMetadata::default()
         };
         let bytes = encode_unchecked(&over);

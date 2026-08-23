@@ -258,7 +258,7 @@ fn read_uleb128(bytes: &[u8], pos: &mut usize) -> Result<usize, ArtifactError> {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::to_vec_with_depth;
+    use hyperscale_hbor::{ShapeField, TypeShape, to_vec_with_depth};
 
     use super::{
         ArtifactError, CUSTOM_SECTION_ID, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata,
@@ -274,7 +274,7 @@ mod tests {
     /// cannot pass the checks and then fail to be written down.
     #[test]
     fn the_wire_depth_carries_the_deepest_admissible_shape() {
-        use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
+        use hyperscale_hbor::ShapeVariant;
 
         // The costliest form per level: a struct's field and an enum's
         // variant each put a sequence between one shape and the next.
@@ -348,6 +348,13 @@ mod tests {
     fn metadata_rides_the_artifact_and_comes_back_canonical() {
         let mut metadata = PackageMetadata::default();
         metadata.events.push("transferred".to_owned());
+        metadata.types.insert(
+            "transferred".to_owned(),
+            TypeShape::Struct(vec![ShapeField {
+                name: "amount".to_owned(),
+                shape: TypeShape::U128,
+            }]),
+        );
 
         let published = attach_metadata(&empty_component(), &metadata).unwrap();
         assert_eq!(extract_metadata(&published).unwrap(), Some(metadata));
