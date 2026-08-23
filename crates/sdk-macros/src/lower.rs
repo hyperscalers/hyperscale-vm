@@ -3864,8 +3864,6 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Rebuild a method call the vocabulary does not model, over its
-    /// rewritten receiver and arguments.
     /// How many elements a literal collection is written with.
     ///
     /// Syntactic on purpose: what this answers is how many edges the
@@ -3897,6 +3895,8 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Rebuild a method call the vocabulary does not model, over its
+    /// rewritten receiver and arguments.
     fn pass_through(
         &mut self,
         receiver: &Eval,

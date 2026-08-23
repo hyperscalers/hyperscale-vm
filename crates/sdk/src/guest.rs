@@ -58,6 +58,7 @@ use kernel::state::{
 use crate::Address;
 pub use crate::handle::Handle;
 use crate::num::{Rounding, Wide};
+use crate::state::OrderKey;
 
 /// A `u128` as the kernel's world names it.
 #[allow(clippy::cast_possible_truncation)] // taking a half is the truncation
@@ -93,6 +94,15 @@ pub fn address_of(a: u64, b: u64, c: u64, d: u64) -> Address {
 /// The `u128` an `amount` carries.
 const fn whole(value: kernel::state::Amount) -> u128 {
     (value.low as u128) | ((value.high as u128) << 64)
+}
+
+/// The order key a world word names.
+///
+/// The kernel orders by the packed integer and knows nothing of what was
+/// packed into it, so the type goes on here — at the seam, once, rather
+/// than at each of the four sites a body reaches an interval through.
+const fn ordered(value: kernel::state::Amount) -> OrderKey {
+    OrderKey::from_bits(whole(value))
 }
 
 /// A wide word as the vocabulary holds it.
@@ -521,27 +531,25 @@ pub fn entry_covered(handle: Handle) -> bool {
 /// no declaration the clause did not already make.
 #[must_use]
 #[inline(always)]
-pub fn entry_order(handle: Handle, index: u32) -> u128 {
+pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
     match handle {
-        Handle::RangeRead(rep) => whole(kernel::state::range_read_order(&range_read(rep), index)),
+        Handle::RangeRead(rep) => ordered(kernel::state::range_read_order(&range_read(rep), index)),
         Handle::RangeWrite(rep) => {
-            whole(kernel::state::range_write_order(&range_write(rep), index))
+            ordered(kernel::state::range_write_order(&range_write(rep), index))
         }
-        Handle::InstanceRange(rep) => whole(kernel::state::instance_range_order(
+        Handle::InstanceRange(rep) => ordered(kernel::state::instance_range_order(
             &instance_range(rep),
             index,
         )),
-        Handle::Run(CellKind::RangeRead, rep, at) => whole(kernel::state::range_read_run_order(
+        Handle::Run(CellKind::RangeRead, rep, at) => ordered(kernel::state::range_read_run_order(
             &range_read_run(rep),
             at,
             index,
         )),
-        Handle::Run(CellKind::RangeWrite, rep, at) => whole(kernel::state::range_write_run_order(
-            &range_write_run(rep),
-            at,
-            index,
-        )),
-        Handle::Run(CellKind::InstanceRange, rep, at) => whole(
+        Handle::Run(CellKind::RangeWrite, rep, at) => ordered(
+            kernel::state::range_write_run_order(&range_write_run(rep), at, index),
+        ),
+        Handle::Run(CellKind::InstanceRange, rep, at) => ordered(
             kernel::state::instance_range_run_order(&instance_range_run(rep), at, index),
         ),
         other => unreachable!("{other:?} yields no order keys"),
@@ -585,7 +593,7 @@ pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
 ///
 /// On a handle that is not an interval.
 #[must_use]
-pub fn entry_at(handle: Handle, order: u128) -> Vec<u8> {
+pub fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {
     (0..entry_count(handle))
         .find(|&index| entry_order(handle, index) == order)
         .map_or_else(Vec::new, |index| entry_get(handle, index))
@@ -613,13 +621,18 @@ pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
 ///
 /// On any mode but [`Handle::RangeWrite`].
 #[inline(always)]
-pub fn entry_insert(handle: Handle, order: u128, value: &[u8]) {
+pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
     match handle {
         Handle::RangeWrite(rep) => {
-            kernel::state::range_write_insert(&range_write(rep), amount(order), value);
+            kernel::state::range_write_insert(&range_write(rep), amount(order.bits()), value);
         }
         Handle::Run(CellKind::RangeWrite, rep, at) => {
-            kernel::state::range_write_run_insert(&range_write_run(rep), at, amount(order), value);
+            kernel::state::range_write_run_insert(
+                &range_write_run(rep),
+                at,
+                amount(order.bits()),
+                value,
+            );
         }
         other => unreachable!("{other:?} does not write entries"),
     }

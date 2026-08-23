@@ -291,8 +291,12 @@ pub fn only(list: &Sym<Seq>) -> Sym<U64> {
 
 /// A sum, over the two integer widths and refusing overflow — how a cap
 /// covering more than one count is spelled.
+///
+/// Opaque rather than either width: what comes out is as wide as what
+/// went in, and a kind naming one of them would be a claim about the
+/// operands that the signature does not make.
 #[must_use]
-pub fn add<A: Kind, B: Kind>(left: &Sym<A>, right: &Sym<B>) -> Sym<U64> {
+pub fn add<A: Kind, B: Kind>(left: &Sym<A>, right: &Sym<B>) -> Sym<Opaque> {
     Sym::new(Expr::Add(
         Box::new(left.expr.clone()),
         Box::new(right.expr.clone()),

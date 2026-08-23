@@ -18,8 +18,8 @@
 //!
 //! # Why accrual is its own method
 //!
-//! `borrow`, `repay` and `liquidate` all refuse an index that has not
-//! been carried to the period they were handed. They could each carry it
+//! `draw`, `repay` and `liquidate` all refuse an index that has not been
+//! carried to the period they were handed. They could each carry it
 //! themselves, and then the same four lines would be written four times
 //! and a body would declare a write it usually does not need.
 //!
@@ -34,12 +34,18 @@
 //! outside. What is here is the arithmetic a lending market is wrong
 //! about when it is wrong — the index, the cross-resource comparison,
 //! and the threshold — and none of that needs a second side to be real.
+//!
+//! A liquidation seizes the whole position and returns nothing to the
+//! borrower. That follows from having no lender side to owe the residual
+//! to and no insurance fund to hold it, and a real market returns what
+//! the keeper did not take. A reader should not take this one for a model
+//! of how.
 
 use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod lending {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding, UnitFixed};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rate, Rounding, UnitFixed};
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     // The dimensions. None of these is a value — they name what a rate
@@ -101,6 +107,17 @@ pub mod lending {
         NothingOwed,
     }
 
+    /// The period the index has been carried to.
+    ///
+    /// A record so the cell can hold *nothing*, which is what a market
+    /// nobody has accrued is. A bare `u64` would have to spend a period
+    /// to say it — and period zero is a period this market's own tests
+    /// borrow in, so the one it would spend is a real one.
+    #[record]
+    struct Accrued {
+        period: u64,
+    }
+
     #[state]
     struct Lending {
         /// Debt subunits per share: what turns what a position holds
@@ -112,8 +129,8 @@ pub mod lending {
         debt_price: Cell<Fixed<Numeraire, Debt>>,
         /// What this position owes, in shares.
         shares: Cell<Quantity>,
-        /// The period the index has been carried to.
-        accrued_at: Cell<u64>,
+        /// The period the index has been carried to, where anyone has.
+        accrued_at: Cell<Option<Accrued>>,
     }
 
     impl Lending {
@@ -144,25 +161,32 @@ pub mod lending {
         /// growth over a span is the per-period growth raised to it, and
         /// squaring gets there in a bounded number of multiplications
         /// however long the span.
+        /// A market nobody has accrued is anchored rather than
+        /// compounded: there is no span to carry across, because the
+        /// market has not been anywhere yet. Compounding from an unwritten
+        /// cell would raise the growth to whatever clock the first caller
+        /// handed over, which for a real one is an exponent nothing
+        /// survives.
         pub fn accrue(&mut self, now: u64) {
-            let last = self.accrued_at.get();
-            let periods = u32::try_from(now.saturating_sub(last)).unwrap_or(u32::MAX);
-            let growth = self
-                .config()
-                .growth_per_period
-                .pow_int(periods, Rounding::Down);
+            if let Some(last) = self.accrued_at.get() {
+                let periods = u32::try_from(now.saturating_sub(last.period)).unwrap_or(u32::MAX);
+                let growth = self
+                    .config()
+                    .growth_per_period
+                    .pow_int(periods, Rounding::Down);
 
-            // The composition happens on the exact fractions and
-            // quantizes once, which is the only lossy step. Down, so the
-            // market never charges a subunit it cannot derive.
-            //
-            // Composed as rates rather than as bare fractions, so the
-            // share the growth is per cancels against the share the index
-            // is per, and what comes out is debt per share by
-            // construction rather than by the turbofish saying so.
-            let carried = started(self.index.get()).rate().compose(growth.rate());
-            self.index.set(carried.quantize(Rounding::Down));
-            self.accrued_at.set(now);
+                // The composition happens on the exact fractions and
+                // quantizes once, which is the only lossy step. Down, so
+                // the market never charges a subunit it cannot derive.
+                //
+                // Composed as rates rather than as bare fractions, so the
+                // share the growth is per cancels against the share the
+                // index is per, and what comes out is debt per share by
+                // construction rather than by the turbofish saying so.
+                let carried = index(self.index.get()).0.compose(growth.rate());
+                self.index.set(carried.quantize(Rounding::Down));
+            }
+            self.accrued_at.set(Some(Accrued { period: now }));
         }
 
         /// Post collateral against the position, and answer with what
@@ -198,7 +222,7 @@ pub mod lending {
             let collateral_resource = self.config().collateral;
             let debt_resource = self.config().debt;
             let ltv = self.config().ltv;
-            if self.accrued_at.get() != now {
+            if stale(self.accrued_at.get(), now) {
                 return Err(Error::IndexStale);
             }
             let collateral_price = self.collateral_price.get();
@@ -207,15 +231,12 @@ pub mod lending {
                 return Err(Error::PriceUnset);
             }
 
-            let index = started(self.index.get());
             // What the drawn debt is worth in shares, taken the other way
             // round on the exact fraction rather than by inverting a
             // quantized rate and multiplying back.
-            let Ok(per_debt) = index.recip_rate() else {
-                return Err(Error::NothingOwed);
-            };
+            let (index, per_debt) = index(self.index.get());
             let drawn = want.convert(per_debt, Rounding::Up);
-            let owed = (self.shares.get() + drawn).convert(index.rate(), Rounding::Up);
+            let owed = (self.shares.get() + drawn).convert(index, Rounding::Up);
 
             let posted = self.vault(collateral_resource).balance();
             let backing = posted.convert(collateral_price.rate(), Rounding::Down);
@@ -232,15 +253,12 @@ pub mod lending {
         pub fn repay(&mut self, funds: Bucket, now: u64) -> Result<(), Error> {
             let mut owed_vault = self.vault(self.config().debt);
             let paid = funds.quantity();
-            if self.accrued_at.get() != now {
+            if stale(self.accrued_at.get(), now) {
                 return Err(Error::IndexStale);
             }
             owed_vault.put(funds);
 
-            let index = started(self.index.get());
-            let Ok(per_debt) = index.recip_rate() else {
-                return Err(Error::NothingOwed);
-            };
+            let (_, per_debt) = index(self.index.get());
             // Down on retirement, so a payment never retires more debt
             // than it covers.
             let retired = paid.convert(per_debt, Rounding::Down);
@@ -263,7 +281,7 @@ pub mod lending {
         pub fn liquidate(&mut self, now: u64) -> Result<Bucket, Error> {
             let collateral_resource = self.config().collateral;
             let threshold = self.config().liquidation_threshold;
-            if self.accrued_at.get() != now {
+            if stale(self.accrued_at.get(), now) {
                 return Err(Error::IndexStale);
             }
             let collateral_price = self.collateral_price.get();
@@ -272,8 +290,8 @@ pub mod lending {
                 return Err(Error::PriceUnset);
             }
 
-            let index = started(self.index.get());
-            let owed = self.shares.get().convert(index.rate(), Rounding::Up);
+            let (index, _) = index(self.index.get());
+            let owed = self.shares.get().convert(index, Rounding::Up);
             if owed.is_zero() {
                 return Err(Error::NothingOwed);
             }
@@ -283,10 +301,11 @@ pub mod lending {
                 .balance()
                 .convert(collateral_price.rate(), Rounding::Down);
             let exposure = owed.convert(debt_price.rate(), Rounding::Up);
-            let Ok(utilisation) = exposure.ratio_to(backing) else {
-                return Err(Error::NothingOwed);
-            };
-            if utilisation.cmp_with(threshold.ratio()).is_le() {
+            // A comparison rather than a fraction: a position owing
+            // something against nothing posted is the most exceeded a
+            // threshold ever gets, and materializing the ratio first
+            // would have had to refuse it for want of a denominator.
+            if !exposure.exceeds(backing, threshold.ratio()) {
                 return Err(Error::StillCovered);
             }
 
@@ -307,6 +326,14 @@ pub mod lending {
         }
     }
 
+    /// Whether the index has not been carried to `now`.
+    ///
+    /// A market nobody has accrued is stale at every period, including
+    /// the one it would read as if the cell held a bare number.
+    fn stale(accrued: Option<Accrued>, now: u64) -> bool {
+        accrued.is_none_or(|last| last.period != now)
+    }
+
     /// The index a market starts at, which is one debt subunit per share.
     ///
     /// A cell that has never been written reads as zero, and zero is not
@@ -315,5 +342,20 @@ pub mod lending {
     /// individually.
     fn started(held: Fixed<Debt, Share>) -> Fixed<Debt, Share> {
         if held.is_zero() { Fixed::ONE } else { held }
+    }
+
+    /// What a share is worth, and what a debt subunit is worth in shares.
+    ///
+    /// Both together and neither refusable: `started` is never zero, so
+    /// its reciprocal always exists. Handing back the pair is what lets
+    /// the bodies stop carrying a refusal for a division that cannot
+    /// fail — an error arm nothing can reach reads as a case somebody
+    /// should think about, and there is none here.
+    fn index(held: Fixed<Debt, Share>) -> (Rate<Debt, Share>, Rate<Share, Debt>) {
+        let index = started(held);
+        let per_debt = index
+            .recip_rate()
+            .expect("the index a market starts at is one, never nothing");
+        (index.rate(), per_debt)
     }
 }

@@ -191,11 +191,17 @@ fn a_price_fall_makes_a_position_liquidatable(chain: Chain) {
 /// A hundredth of a percent per period, twice, is `1.0001^2` exactly —
 /// `1.00020001` — and the scale holds every digit of it. Computed here
 /// rather than read off the body.
+///
+/// The first accrual anchors and the second carries: a market nobody has
+/// accrued has not been anywhere, so there is no span from before it to
+/// compound across. Every borrowing path composes an accrual anyway, so
+/// the anchor costs a caller nothing it was not already writing.
 #[hyperscale_vm_testing::test]
 fn the_index_compounds_over_the_span_it_carries(chain: Chain) {
     let (mut chain, market) = market(chain);
 
     let outcome = chain.transact(BORROWER, |b| {
+        market.accrue(b, 0u64)?;
         market.accrue(b, 2u64)?;
         market.index_scaled(b)
     });
@@ -224,6 +230,7 @@ fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: Chain) {
     let (mut chain, stepwise) = market(chain);
 
     let outcome = chain.transact(BORROWER, |b| {
+        stepwise.accrue(b, 0u64)?;
         for period in 1..=100u64 {
             stepwise.accrue(b, period)?;
         }
@@ -234,6 +241,7 @@ fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: Chain) {
 
     let (mut chain, oneshot) = market(chain);
     let outcome = chain.transact(BORROWER, |b| {
+        oneshot.accrue(b, 0u64)?;
         oneshot.accrue(b, 100u64)?;
         oneshot.index_scaled(b)
     });
@@ -244,5 +252,26 @@ fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: Chain) {
         stepped <= once,
         "rounding down cannot make the debt grow faster"
     );
-    assert_ne!(stepped, once, "and ten roundings are not four");
+    assert_ne!(stepped, once, "and a hundred roundings are not one");
+}
+
+/// A market nobody has accrued anchors to the period it is handed, rather
+/// than compounding across every period before it.
+///
+/// The clock a real caller passes is a timestamp, and raising the growth
+/// to one is an exponent nothing survives. What makes that expressible is
+/// that the cell holds *nothing* until somebody writes it — a bare number
+/// would have had to spend a period to say so, and period zero is one this
+/// market's borrowers use.
+#[hyperscale_vm_testing::test]
+fn a_market_nobody_accrued_anchors_rather_than_compounding(chain: Chain) {
+    let (mut chain, market) = market(chain);
+
+    let outcome = chain.transact(BORROWER, |b| {
+        market.accrue(b, 1_750_000_000_000u64)?;
+        market.index_scaled(b)
+    });
+    outcome.expect_completed();
+
+    assert_eq!(outcome.answer(), Some(ONE), "the index is where it started");
 }

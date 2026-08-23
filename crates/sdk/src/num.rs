@@ -479,6 +479,23 @@ impl Quantity {
         Self(arith::mul_div(Wide::from_u128(self.0), share.num, share.den, rounding).to_u128())
     }
 
+    /// Whether this quantity over `other` is greater than `share`.
+    ///
+    /// Total, which is the whole point. Materializing the fraction first
+    /// refuses a zero `other` — and a position owing something against
+    /// nothing posted is the most exceeded a threshold ever gets, not a
+    /// question with no answer. The comparison cross-multiplies at a
+    /// width the products fit, so neither side is rounded on the way.
+    #[must_use]
+    pub fn exceeds(self, other: Self, share: Ratio) -> bool {
+        // Nothing to divide by: anything at all is over any share of it,
+        // and nothing over nothing is not.
+        Ratio::of(self.0, other.0).map_or_else(
+            |_| !self.is_zero(),
+            |ratio| ratio.cmp_with(share) == Ordering::Greater,
+        )
+    }
+
     /// This quantity converted through `rate` into the resource the
     /// rate's numerator names.
     ///
@@ -766,6 +783,24 @@ impl<A, B> Rate<A, B> {
     pub fn compose<C>(self, other: Rate<B, C>) -> Rate<A, C> {
         Rate {
             ratio: self.ratio.compose(other.ratio),
+            dimension: PhantomData,
+        }
+    }
+
+    /// `count` of `A` for every one of `B`.
+    ///
+    /// Total, where [`Quantity::per`] has a denominator that could be
+    /// nothing: the denominator here is one. What a body reaches for
+    /// where a number *is* a rate against a unit — ticks per base unit,
+    /// a reward per share — rather than the quotient of two amounts it
+    /// happens to hold.
+    #[must_use]
+    pub const fn per_unit(count: u128) -> Self {
+        Self {
+            ratio: Ratio {
+                num: Wide::from_u128(count),
+                den: Wide::ONE,
+            },
             dimension: PhantomData,
         }
     }

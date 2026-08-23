@@ -3,7 +3,7 @@ state
      17  collateral_price — one leaf, holding [u8; 32]
      18  debt_price — one leaf, holding [u8; 32]
      19  shares — one leaf, holding u128
-     20  accrued_at — one leaf, holding u64
+     20  accrued_at — one leaf, holding accrued
 config
       0  collateral
       1  debt
@@ -17,6 +17,8 @@ errors
       2  over-ltv
       3  still-covered
       4  nothing-owed
+types
+  accrued = { period: u64 }
 
 accrue(u64) — infallible
   declares

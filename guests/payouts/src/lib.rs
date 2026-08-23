@@ -129,8 +129,13 @@ pub mod payouts {
         /// none of what passes through it has no such claim to make.
         pub fn in_lots(&mut self, pot: Bucket, lot: Quantity) -> Result<(Bucket, Bucket), Error> {
             let paid = pot.quantity();
+            // A lot of nothing is not a lot, and rounding to a multiple
+            // of it is the identity — so a caller naming one would be
+            // paid in full by a method whose whole job is to round. It
+            // meets the same refusal a payment short of one lot does,
+            // which is what `divides` already says about a zero step.
             let whole = paid.round_to_multiple(lot, Rounding::Down);
-            if whole.is_zero() {
+            if lot.is_zero() || whole.is_zero() {
                 return Err(Error::BelowOneLot);
             }
 
@@ -146,8 +151,8 @@ pub mod payouts {
 
         /// Whether a payment divides into whole lots with nothing over.
         ///
-        /// What a payer asks before sending, and what `in_lots` never has
-        /// to ask, because it rounds either way.
+        /// What a payer asks before sending. A lot of nothing divides
+        /// nothing, which is the same answer `in_lots` gives it.
         pub fn divides(&self, paid: Quantity, lot: Quantity) -> bool {
             paid.is_multiple_of(lot)
         }

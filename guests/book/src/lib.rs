@@ -29,7 +29,9 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod book {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Fixed, Ordered, Quantity, Rounding, fresh_id, pack};
+    use hyperscale_vm_sdk::state::{
+        Bucket, Fixed, Ordered, Quantity, Rate, Rounding, fresh_id, pack,
+    };
 
     /// What the book sells.
     pub struct Base;
@@ -95,15 +97,12 @@ pub mod book {
             let mut bought = Quantity::ZERO;
 
             while asks.count() > 0 {
-                let ticks = asks.order(0).primary();
-                // What this ask asks, in ticks for every base unit.
-                // Standing asks are priced, because an unpriced one is
-                // refused where it would have been placed.
-                let Ok(ticks_per_base) = Quantity::from_subunits(u128::from(ticks))
-                    .per::<Tick, Base>(Quantity::from_subunits(1))
-                else {
-                    break;
-                };
+                // What this ask asks, in ticks for every base unit. A rate
+                // against a unit rather than a quotient of two amounts,
+                // so there is no denominator to refuse — which is what a
+                // standing ask is: a count, per one.
+                let ticks_per_base =
+                    Rate::<Tick, Base>::per_unit(u128::from(asks.order(0).primary()));
                 // Quote per tick through tick per base is quote per base,
                 // and the tick cancels because the types cancel it.
                 let per_unit = tick.rate().compose(ticks_per_base);

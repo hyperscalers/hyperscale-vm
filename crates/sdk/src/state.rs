@@ -101,23 +101,18 @@ impl OrderKey {
         Self(((hi as u128) << 64) | (lo as u128))
     }
 
-    /// The primary dimension this key was packed over: its high eight
-    /// bytes.
+    /// The primary dimension this key was packed over: its high half.
     #[must_use]
+    #[allow(clippy::cast_possible_truncation)] // taking the half is the truncation
     pub const fn primary(self) -> u64 {
-        let bytes = self.0.to_be_bytes();
-        u64::from_be_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ])
+        (self.0 >> 64) as u64
     }
 
-    /// The tiebreaker underneath it: its low eight bytes.
+    /// The tiebreaker underneath it: its low half.
     #[must_use]
+    #[allow(clippy::cast_possible_truncation)] // taking the half is the truncation
     pub const fn tiebreak(self) -> u64 {
-        let bytes = self.0.to_be_bytes();
-        u64::from_be_bytes([
-            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
-        ])
+        self.0 as u64
     }
 
     /// The key as the integer a collection orders by.
@@ -1681,7 +1676,7 @@ impl<T: Cellular> Entry<T> {
     #[inline(always)]
     pub fn get(&self) -> T {
         #[cfg(component)]
-        return T::from_cell(&crate::guest::entry_at(self.handle, self.order.bits()));
+        return T::from_cell(&crate::guest::entry_at(self.handle, self.order));
         #[cfg(not(component))]
         return T::from_cell(&host::entry_at(self.handle, self.order));
     }
@@ -1693,7 +1688,7 @@ impl<T: Cellular> Entry<T> {
     pub fn set(&mut self, value: T) {
         let _ = &value;
         #[cfg(component)]
-        return crate::guest::entry_insert(self.handle, self.order.bits(), &value.to_cell());
+        return crate::guest::entry_insert(self.handle, self.order, &value.to_cell());
         #[cfg(not(component))]
         return host::entry_insert(self.handle, self.order, &value.to_cell());
     }
@@ -1833,7 +1828,7 @@ impl<T> Interval<T> {
     pub fn order(&self, index: u32) -> OrderKey {
         let _ = index;
         #[cfg(component)]
-        return OrderKey::from_bits(crate::guest::entry_order(self.handle, index));
+        return crate::guest::entry_order(self.handle, index);
         #[cfg(not(component))]
         return host::entry_order(self.handle, index);
     }
@@ -1880,7 +1875,7 @@ impl<T: Cellular> Interval<T> {
     pub fn insert(&mut self, order: OrderKey, value: T) {
         let _ = (order, &value);
         #[cfg(component)]
-        return crate::guest::entry_insert(self.handle, order.bits(), &value.to_cell());
+        return crate::guest::entry_insert(self.handle, order, &value.to_cell());
         #[cfg(not(component))]
         return host::entry_insert(self.handle, order, &value.to_cell());
     }
