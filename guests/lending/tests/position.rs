@@ -275,3 +275,33 @@ fn a_market_nobody_accrued_anchors_rather_than_compounding(chain: Chain) {
 
     assert_eq!(outcome.answer(), Some(ONE), "the index is where it started");
 }
+
+/// A position whose collateral is worth nothing is liquidatable, which
+/// is the most exceeded a threshold ever gets.
+///
+/// It used to be refused, and refused as `nothing-owed`: the ratio of
+/// exposure to backing needs a denominator, and backing that rounds away
+/// has none. Comparing rather than dividing is what gives the case its
+/// answer instead of its refusal.
+///
+/// Reached by a price that falls rather than by one that is unset — a
+/// thousand of collateral at a two-thousandth is worth half a subunit,
+/// which floors to nothing while still being a price somebody posted.
+#[hyperscale_vm_testing::test]
+fn a_position_whose_backing_rounds_away_is_liquidatable(chain: Chain) {
+    let (mut chain, market) = market(chain);
+    price(&mut chain, market, 2 * ONE, ONE);
+    open(&mut chain, market, 1_000, 500, 0);
+    price(&mut chain, market, ONE / 2_000, ONE);
+
+    chain
+        .transact(KEEPER, |b| {
+            market.accrue(b, 0u64)?;
+            let seized = market.liquidate(b, 0u64)?;
+            account::deposit(b, KEEPER, seized)
+        })
+        .expect_completed();
+
+    assert_eq!(chain.balance(KEEPER, COLLATERAL), 1_000);
+    assert_eq!(chain.balance(market, COLLATERAL), 0);
+}

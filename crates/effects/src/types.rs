@@ -536,7 +536,7 @@ mod tests {
         Address, EdgeContent, LocalKey, MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, NativeRole,
         SchemeId, SlotId, SubstateKey, Value, child_key, component_address, config_hash,
         granting_resource_address, native_address, package_address, principal_address,
-        resource_address, to_vec,
+        resource_address, to_vec, u256_decimal,
     };
     use crate::auth::RoleBytes;
     use crate::hash::{Hash32, TestHasher};
@@ -788,5 +788,46 @@ mod tests {
         ];
         let unique: BTreeSet<[u8; 31]> = bodies.iter().copied().collect();
         assert_eq!(unique.len(), bodies.len());
+    }
+
+    fn le(n: u128) -> [u8; 32] {
+        let mut bytes = [0u8; 32];
+        bytes[..16].copy_from_slice(&n.to_le_bytes());
+        bytes
+    }
+
+    /// The rendering a person reads a stored rate as.
+    ///
+    /// Hand-checked values rather than a round trip, because there is
+    /// nothing to round-trip against: no integer type holds this width,
+    /// which is the whole reason the conversion is written out. The two
+    /// that matter are the ends — zero, and the value whose seventy-eight
+    /// digits exactly fill the buffer the conversion carries, where one
+    /// digit more would run past it.
+    #[test]
+    fn a_wide_literal_renders_as_the_decimal_it_is() {
+        for n in [0u128, 1, 9, 10, 255, 256, u128::MAX] {
+            assert_eq!(u256_decimal(le(n)), n.to_string());
+        }
+        // The stored rate's own scale, which is what a reader meets most.
+        assert_eq!(
+            u256_decimal(le(1_000_000_000_000_000_000_000_000_000_000_000_000)),
+            "1000000000000000000000000000000000000"
+        );
+
+        let mut top = [0u8; 32];
+        top[31] = 1;
+        assert_eq!(
+            u256_decimal(top),
+            "452312848583266388373324160190187140051835877600158453279131187530910662656",
+            "the top limb alone"
+        );
+
+        let widest = u256_decimal([0xff; 32]);
+        assert_eq!(widest.len(), 78, "the widest value fills the buffer");
+        assert_eq!(
+            widest,
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        );
     }
 }

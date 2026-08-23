@@ -161,3 +161,24 @@ fn a_payment_short_of_one_lot_is_refused(chain: Chain) {
     assert_eq!(outcome.declined_as(), Some("below-one-lot"));
     assert_eq!(chain.balance(PAYER, ASSET), 10_000);
 }
+
+/// A lot of nothing is not a lot.
+///
+/// Rounding to a multiple of zero is the identity, so a caller naming one
+/// would be paid in full by the method whose whole job is to round — and
+/// `divides` already answers no to a zero step. The two agree.
+#[hyperscale_vm_testing::test]
+fn a_lot_of_nothing_is_refused(chain: Chain) {
+    let (mut chain, splitter) = splitter(chain);
+
+    let outcome = chain.transact(PAYER, |b| {
+        let signed_in = account::authorize(b, PAYER)?;
+        let pot = account::withdraw(b, signed_in, ASSET, 950)?;
+        let [payable, change] = splitter.in_lots(b, pot, 0u128)?;
+        account::deposit(b, TREASURY, payable)?;
+        account::deposit(b, PAYER, change)
+    });
+
+    assert_eq!(outcome.declined_as(), Some("below-one-lot"));
+    assert_eq!(chain.balance(PAYER, ASSET), 10_000, "a decline moves nothing");
+}

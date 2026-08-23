@@ -208,6 +208,49 @@ fn a_division_conserves_what_it_divided() {
     );
 }
 
+/// A boolean is a cell like any other: one byte in, the same fact out.
+///
+/// The impl exists because a configuration slot has taken a `bool` since
+/// slots existed and nothing could read one back. What that gap looked
+/// like was a body writing the boolean its contract meant and meeting a
+/// type error — so what this pins is the round trip, and that an
+/// unwritten leaf reads as false rather than as something to tell apart
+/// from it.
+#[test]
+fn a_boolean_is_a_cell_the_vocabulary_admits() {
+    let flag = key(6);
+    let session = session(MemoryStore::new(), vec![point(flag, Mode::Write)]);
+
+    let (session, (unwritten, after)) = with_kernel(session, || {
+        let mut cell = Slot::<bool>::at(Handle::Write(0));
+        let unwritten = cell.get();
+        cell.set(true);
+        (unwritten, cell.get())
+    });
+
+    assert!(!unwritten, "an unwritten leaf is false");
+    assert!(after);
+    let (receipt, _) = session
+        .finish(vec![], 0)
+        .expect("nothing outside the declared set was touched");
+    assert_eq!(receipt.delta.cells.get(&flag), Some(&Some(vec![1])));
+}
+
+/// And a cell holding neither of the two bytes is a defect in state, on
+/// the same terms a malformed address is.
+#[test]
+fn a_boolean_cell_holding_neither_byte_is_a_defect() {
+    let flag = key(6);
+    let mut store = MemoryStore::new();
+    store.write(flag, vec![2]);
+    let session = session(store, vec![point(flag, Mode::Read)]);
+
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_kernel(session, || Slot::<bool>::at(Handle::Read(0)).get())
+    }));
+    assert!(read.is_err(), "a third byte is not a boolean");
+}
+
 /// An interval walks its entries in order, and writes land in the store.
 #[test]
 fn an_interval_reads_and_writes_the_entries_it_covers() {
