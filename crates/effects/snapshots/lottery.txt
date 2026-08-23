@@ -50,7 +50,7 @@ settle(u64) — fallible
   declares
       0  requires self.round is present
       1  write self.round
-      2  read self.tickets over 0..=u128::MAX, at most arg0 entries
+      2  read self.tickets over pack(0, 0)..=u128::MAX, at most arg0 entries
       3  requires self.outcome is absent
       4  write self.outcome
   exports  handle for clause 1, handle for clause 2, handle for clause 4

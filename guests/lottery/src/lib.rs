@@ -43,7 +43,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod lottery {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Drawn, Seal, Unordered, Word};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Drawn, Seal, Unordered, Word, pack};
 
     /// Somebody took a ticket.
     #[event]
@@ -170,7 +170,7 @@ pub mod lottery {
                 Drawn::Expired => return Err(Error::SealLapsed),
                 Drawn::Ready(draw) => draw,
             };
-            let window = self.tickets.sweep(0, cap);
+            let window = self.tickets.sweep(pack(0, 0), cap);
             if !window.covered() {
                 return Err(Error::RoundTruncated);
             }

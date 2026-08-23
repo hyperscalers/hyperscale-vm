@@ -79,7 +79,60 @@ pub use crate::num::{Fixed, NumError, Quantity, Rate, Ratio, Rounding, UnitFixed
 /// Not a quantity and never conserved — what a leaf *holds* is a
 /// [`Quantity`], and the two stopped being one type when the vocabulary
 /// they were sharing was split.
-pub type OrderKey = u128;
+/// No `MIN` or `MAX`: a bound in a range is read by the *declaration*,
+/// which resolves the terms a body spells and not an associated
+/// constant, so a pair of them would work off-guest and be refused in the
+/// one position an order key is for. [`pack`] says the same thing in the
+/// spelling both halves read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct OrderKey(u128);
+
+impl OrderKey {
+    /// The key `hi` over `lo`: a primary dimension in the high half and a
+    /// tiebreaker in the low.
+    ///
+    /// Ordering is the packed integer's, so the primary dimension decides
+    /// and the tiebreaker only separates ties — which is what makes a
+    /// price-time ladder a walk from one end rather than a sort.
+    #[must_use]
+    pub const fn packed(hi: u64, lo: u64) -> Self {
+        Self(((hi as u128) << 64) | (lo as u128))
+    }
+
+    /// The primary dimension this key was packed over: its high eight
+    /// bytes.
+    #[must_use]
+    pub const fn primary(self) -> u64 {
+        let bytes = self.0.to_be_bytes();
+        u64::from_be_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ])
+    }
+
+    /// The tiebreaker underneath it: its low eight bytes.
+    #[must_use]
+    pub const fn tiebreak(self) -> u64 {
+        let bytes = self.0.to_be_bytes();
+        u64::from_be_bytes([
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+        ])
+    }
+
+    /// The key as the integer a collection orders by.
+    #[must_use]
+    pub const fn bits(self) -> u128 {
+        self.0
+    }
+
+    /// The key an integer names.
+    ///
+    /// For a caller holding an order it read back rather than one it
+    /// packed — a client walking a ladder, a test pinning a position.
+    #[must_use]
+    pub const fn from_bits(bits: u128) -> Self {
+        Self(bits)
+    }
+}
 
 const OFF_HOST: &str = "the lowering answers this from the declaration — reaching it means a \
                         body was called directly rather than through the walk that materializes \
@@ -245,6 +298,25 @@ impl Cellular for u128 {
 
     fn to_cell(&self) -> Vec<u8> {
         self.to_le_bytes().to_vec()
+    }
+}
+
+impl LeafShape for OrderKey {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::U128)
+    }
+}
+
+/// The same sixteen little-endian bytes the packed integer is, because a
+/// stored order is that integer — what the newtype removes is a body's
+/// chance to do arithmetic on it, not a byte from the leaf.
+impl Cellular for OrderKey {
+    fn from_cell(cell: &[u8]) -> Self {
+        Self::from_bits(cell.try_into().map_or(0, u128::from_le_bytes))
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.bits().to_le_bytes().to_vec()
     }
 }
 
@@ -1533,7 +1605,7 @@ impl<T: Cellular> Entry<T> {
     #[inline(always)]
     pub fn get(&self) -> T {
         #[cfg(component)]
-        return T::from_cell(&crate::guest::entry_at(self.handle, self.order));
+        return T::from_cell(&crate::guest::entry_at(self.handle, self.order.bits()));
         #[cfg(not(component))]
         return T::from_cell(&host::entry_at(self.handle, self.order));
     }
@@ -1545,7 +1617,7 @@ impl<T: Cellular> Entry<T> {
     pub fn set(&mut self, value: T) {
         let _ = &value;
         #[cfg(component)]
-        return crate::guest::entry_insert(self.handle, self.order, &value.to_cell());
+        return crate::guest::entry_insert(self.handle, self.order.bits(), &value.to_cell());
         #[cfg(not(component))]
         return host::entry_insert(self.handle, self.order, &value.to_cell());
     }
@@ -1685,7 +1757,7 @@ impl<T> Interval<T> {
     pub fn order(&self, index: u32) -> OrderKey {
         let _ = index;
         #[cfg(component)]
-        return crate::guest::entry_order(self.handle, index);
+        return OrderKey::from_bits(crate::guest::entry_order(self.handle, index));
         #[cfg(not(component))]
         return host::entry_order(self.handle, index);
     }
@@ -1732,7 +1804,7 @@ impl<T: Cellular> Interval<T> {
     pub fn insert(&mut self, order: OrderKey, value: T) {
         let _ = (order, &value);
         #[cfg(component)]
-        return crate::guest::entry_insert(self.handle, order, &value.to_cell());
+        return crate::guest::entry_insert(self.handle, order.bits(), &value.to_cell());
         #[cfg(not(component))]
         return host::entry_insert(self.handle, order, &value.to_cell());
     }
@@ -1874,9 +1946,12 @@ pub fn burn_nf_granted(grant: u32, funds: NfBucket) {
 }
 
 /// A 128-bit order key packed from a primary dimension over a tiebreaker.
+///
+/// The free spelling of [`OrderKey::packed`], kept because a body reads
+/// better naming what it packs than naming the type it packs into.
 #[must_use]
 pub const fn pack(hi: u64, lo: u64) -> OrderKey {
-    ((hi as OrderKey) << 64) | (lo as OrderKey)
+    OrderKey::packed(hi, lo)
 }
 
 /// A deterministic fresh id, unique within this call.

@@ -67,10 +67,10 @@ pub mod book {
             let mut bought = Quantity::ZERO;
 
             while asks.count() > 0 {
-                let price = asks.order(0) >> 64;
+                let price = asks.order(0).primary();
                 // Standing asks are priced, because an unpriced one is
                 // refused where it would have been placed.
-                let Ok(per_unit) = Ratio::of(price, 1) else {
+                let Ok(per_unit) = Ratio::of(u128::from(price), 1) else {
                     break;
                 };
                 let Ok(per_quote) = per_unit.recip() else {

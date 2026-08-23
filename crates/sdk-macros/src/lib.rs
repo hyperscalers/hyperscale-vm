@@ -453,7 +453,7 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         "Ids" => quote!(Ids),
         // A quantity is a `u128` at the boundary: the tag is the
         // guest's and erases here, where a manifest binds a number.
-        "u128" | "Quantity" => quote!(U128),
+        "u128" | "Quantity" | "OrderKey" => quote!(U128),
         "u64" => quote!(U64),
         "Vec" | "Bytes" => quote!(Bytes),
         "Rule" => quote!(Rule),
@@ -462,8 +462,8 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
             return Err(syn::Error::new(
                 ty.span(),
                 "a contract parameter must be one of `Bucket`, `NfBucket`, `Ids`, \
-                 `Quantity`, `u128`, `u64`, `Address`, or bytes — these are the kinds a \
-                 manifest can bind",
+                 `Quantity`, `OrderKey`, `u128`, `u64`, `Address`, or bytes — these are \
+                 the kinds a manifest can bind",
             ));
         }
     };
@@ -1520,8 +1520,8 @@ fn gate_calls(gate: &Gate, lowered: &lower::Lowered) -> TokenStream2 {
             let __owner = __t.self_addr();
             let __badge = __t.arg::<::hyperscale_vm_sdk::Addr>(#badge);
             let __id = __t
-                .arg::<::hyperscale_vm_sdk::Num>(#id)
-                .cast::<::hyperscale_vm_sdk::Amount>();
+                .arg::<::hyperscale_vm_sdk::U64>(#id)
+                .cast::<::hyperscale_vm_sdk::U128>();
             let __material = [__badge.clone().cast::<::hyperscale_vm_sdk::Opaque>()];
             let __rule = __owner.child(::hyperscale_vm_sdk::SlotId(#rule), &[]);
             __t.point(&__rule).read();

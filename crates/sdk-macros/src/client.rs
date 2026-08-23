@@ -178,9 +178,10 @@ fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
             )),
         );
     }
-    // A quantity is a `u128` at the boundary: the tag is the guest's and
-    // erases where a manifest binds a number.
-    if is_named(ty, "Quantity") {
+    // A quantity and an order key are both a `u128` at the boundary: what
+    // the type says is the guest's and erases where a manifest binds a
+    // number.
+    if is_named(ty, "Quantity") || is_named(ty, "OrderKey") {
         return (quote!(#name: u128), quote!(#name));
     }
     if is_named(ty, "Rule") {

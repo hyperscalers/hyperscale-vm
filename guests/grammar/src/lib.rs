@@ -92,7 +92,7 @@ pub mod grammar {
         pub fn file(&mut self, ids: Ids) {
             let mut held = self.entries.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
             for id in ids.named().iter().copied() {
-                held.insert(u128::from(id), Quantity::from_subunits(1));
+                held.insert(pack(0, id), Quantity::from_subunits(1));
             }
         }
 
@@ -125,11 +125,11 @@ pub mod grammar {
             if seed == 1 {
                 self.entries
                     .range(pack(0, 0), pack(u64::MAX, u64::MAX), 64)
-                    .insert(1, Quantity::from_subunits(1));
+                    .insert(pack(0, 1), Quantity::from_subunits(1));
             }
             self.entries
                 .range(pack(0, 0), pack(u64::MAX, u64::MAX), 64)
-                .insert(2, Quantity::from_subunits(2));
+                .insert(pack(0, 2), Quantity::from_subunits(2));
         }
 
         /// A branch whose arm alone declares its clause, so the export
@@ -142,7 +142,7 @@ pub mod grammar {
             if seed == 1 {
                 self.entries
                     .range(pack(0, 0), pack(u64::MAX, u64::MAX), 64)
-                    .insert(3, Quantity::from_subunits(3));
+                    .insert(pack(0, 3), Quantity::from_subunits(3));
             }
         }
 

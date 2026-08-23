@@ -469,12 +469,14 @@ pub fn entry_covered(handle: Handle) -> bool {
 #[must_use]
 pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
     let handle = acting(handle);
-    scanned(kernel(|k| match handle {
+    // The kernel orders by the packed integer and knows nothing of what
+    // was packed into it, so the type is put back on at this seam.
+    OrderKey::from_bits(scanned(kernel(|k| match handle {
         Handle::RangeRead(rep) | Handle::RangeWrite(rep) | Handle::InstanceRange(rep) => {
             k.range_order(rep, index)
         }
         other => unreachable!("{other:?} yields no order keys"),
-    }))
+    })))
 }
 
 /// The value of this interval's entry at `index`.
@@ -522,7 +524,7 @@ pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
 pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
     let handle = acting(handle);
     scanned(kernel(|k| match handle {
-        Handle::RangeWrite(rep) => k.range_insert(rep, order, value.to_vec()),
+        Handle::RangeWrite(rep) => k.range_insert(rep, order.bits(), value.to_vec()),
         other => unreachable!("{other:?} does not write entries"),
     }));
 }

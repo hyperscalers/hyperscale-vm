@@ -111,7 +111,7 @@ fn every_spelling_of_a_conditional_declares_the_same_accesses() {
 /// role, and a sweep is a range to the top of the order space.
 #[blueprint]
 mod registry {
-    use hyperscale_vm_sdk::state::Unordered;
+    use hyperscale_vm_sdk::state::{OrderKey, Unordered};
 
     #[state]
     struct Registry {
@@ -131,7 +131,7 @@ mod registry {
         }
 
         /// One crank of a paginated walk over everything held.
-        pub fn sweep(&mut self, cursor: u128) {
+        pub fn sweep(&mut self, cursor: OrderKey) {
             let entries = self.names.sweep(cursor, 8);
             let _ = entries.count();
         }
@@ -1028,7 +1028,7 @@ fn every_comparison_reaches_the_two_the_vocabulary_has() {
 #[blueprint]
 mod roster {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::Ordered;
+    use hyperscale_vm_sdk::state::{OrderKey, Ordered, pack};
 
     #[state]
     struct Roster {
@@ -1038,13 +1038,16 @@ mod roster {
 
     impl Roster {
         /// File a seat for `validator` at `index`.
-        pub fn seat(&mut self, validator: Address, index: u128) {
+        pub fn seat(&mut self, validator: Address, index: OrderKey) {
             self.seats.of(validator).at(index).set(0);
         }
 
         /// Every seat filed for `validator`, up to the cap.
         pub fn page(&mut self, validator: Address) {
-            let entries = self.seats.of(validator).range(0, u128::MAX, 8);
+            let entries = self
+                .seats
+                .of(validator)
+                .range(pack(0, 0), pack(u64::MAX, u64::MAX), 8);
             let _ = entries.count();
         }
     }
@@ -1159,7 +1162,7 @@ fn every_address_type_declares_its_own_kind() {
 #[blueprint]
 mod shelf {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Ids, NfBucket, Ordered};
+    use hyperscale_vm_sdk::state::{Ids, NfBucket, Ordered, pack};
 
     #[state]
     struct Shelf {
@@ -1175,14 +1178,20 @@ mod shelf {
         /// A page whose size is spelled rather than derived: the count
         /// of the ids, as an explicit cap on a chosen interval.
         pub fn window(&mut self, ids: Ids) {
-            let entries = self.ledger.range(0, u128::MAX, ids.count());
+            let entries = self
+                .ledger
+                .range(pack(0, 0), pack(u64::MAX, u64::MAX), ids.count());
             let _ = entries.count();
         }
 
         /// A page sized by two counts at once: `+` over derivable
         /// values is itself derivable.
         pub fn window_both(&mut self, some: Ids, more: Ids) {
-            let entries = self.ledger.range(0, u128::MAX, some.count() + more.count());
+            let entries = self.ledger.range(
+                pack(0, 0),
+                pack(u64::MAX, u64::MAX),
+                some.count() + more.count(),
+            );
             let _ = entries.count();
         }
 

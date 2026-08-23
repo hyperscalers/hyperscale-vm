@@ -223,7 +223,7 @@ fn an_interval_reads_and_writes_the_entries_it_covers() {
     });
 
     assert_eq!(count, 3);
-    assert_eq!(orders, vec![1, 2, 3]);
+    assert_eq!(orders, [1, 2, 3].map(OrderKey::from_bits).to_vec());
     assert_eq!(second, 20);
     let (receipt, _) = session
         .finish(vec![], 0)
@@ -247,7 +247,7 @@ fn an_interval_removes_the_entry_it_names() {
     });
 
     assert_eq!(left, 2);
-    assert_eq!(orders, vec![1, 3]);
+    assert_eq!(orders, [1, 3].map(OrderKey::from_bits).to_vec());
     let (receipt, _) = session
         .finish(vec![], 0)
         .expect("nothing outside the declared set was touched");
@@ -270,7 +270,7 @@ fn an_entry_writes_at_the_order_it_names() {
     let session = session(MemoryStore::new(), vec![range(Mode::Write)]);
 
     let (session, read) = with_kernel(session, || {
-        let mut entry = Entry::<u64>::at(Handle::RangeWrite(0), 7);
+        let mut entry = Entry::<u64>::at(Handle::RangeWrite(0), OrderKey::from_bits(7));
         entry.set(1234);
         entry.get()
     });
