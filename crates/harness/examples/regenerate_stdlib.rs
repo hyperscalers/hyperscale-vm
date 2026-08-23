@@ -32,7 +32,13 @@ use wasmtime::error::Context;
 const BLOBS: &[(&str, &str)] = &[
     ("account", "crates/stdlib/blobs"),
     ("staking", "crates/stdlib/blobs"),
+    ("amm", "crates/fixtures/blobs"),
+    ("book", "crates/fixtures/blobs"),
+    ("lending", "crates/fixtures/blobs"),
     ("lottery", "crates/fixtures/blobs"),
+    ("payouts", "crates/fixtures/blobs"),
+    ("perp", "crates/fixtures/blobs"),
+    ("shares", "crates/fixtures/blobs"),
 ];
 
 /// Off the canonical host there is nothing to write that anyone could

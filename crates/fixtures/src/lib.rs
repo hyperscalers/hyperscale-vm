@@ -45,59 +45,109 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{Hasher, PackageHash, attach_metadata, package_hash};
 
-/// The componentized lottery guest: `enter` buys a ticket into the pot,
-/// `close` seals the round, and `settle` opens the seal to pick a
-/// winner.
-pub const LOTTERY_COMPONENT: &[u8] = include_bytes!("../blobs/lottery.component.wasm");
+/// One seedable package: its committed component, the artifact that
+/// component plus its metadata makes, and the address that artifact
+/// hashes to.
+///
+/// A macro because the three are the same three every time and the only
+/// thing that varies is which guest — and a package that reached this
+/// list by hand would be one whose plumbing could differ from its
+/// neighbours' without anybody noticing.
+macro_rules! seedable {
+    ($(
+        $(#[$doc:meta])*
+        $module:ident => ($component:ident, $artifact:ident, $hash:ident, $blob:literal);
+    )*) => {
+        $(
+            $(#[$doc])*
+            pub const $component: &[u8] = include_bytes!(concat!("../blobs/", $blob));
 
-/// The lottery package's content address under `hasher` — the key its
-/// metadata publishes under and instances bind to.
-#[must_use]
-pub fn lottery_package_hash(hasher: &dyn Hasher) -> PackageHash {
-    package_hash(hasher, lottery_artifact())
+            /// The package's content address under `hasher` — the key its
+            /// metadata publishes under and instances bind to.
+            #[must_use]
+            pub fn $hash(hasher: &dyn Hasher) -> PackageHash {
+                package_hash(hasher, $artifact())
+            }
+
+            /// The package as a publishable artifact: the committed guest
+            /// blob with its effect metadata attached in the section a
+            /// published package carries it in.
+            #[must_use]
+            pub fn $artifact() -> &'static [u8] {
+                static ARTIFACT: LazyLock<Vec<u8>> = LazyLock::new(|| {
+                    attach_metadata($component, &$module::metadata())
+                        .expect("the metadata attaches to its committed blob")
+                });
+                &ARTIFACT
+            }
+        )*
+
+        /// The fixture artifacts an embedder seeds as a set.
+        ///
+        /// What a simulation needs to start a network that already has
+        /// something to do: a pool, a book, a lending market, a
+        /// perpetual, a share vault, a splitter and a lottery. Every one
+        /// of them publishes from committed bytes rather than through a
+        /// test, which is the difference between a package a simulation
+        /// can seed and one only the corpus can reach.
+        #[must_use]
+        pub fn artifacts() -> Vec<&'static [u8]> {
+            vec![$($artifact()),*]
+        }
+    };
 }
 
-/// The lottery package as a publishable artifact: the committed guest
-/// blob with its effect metadata attached in the section a published
-/// package carries it in.
-static LOTTERY_ARTIFACT: LazyLock<Vec<u8>> = LazyLock::new(|| {
-    attach_metadata(LOTTERY_COMPONENT, &lottery::metadata())
-        .expect("the lottery metadata attaches to its committed blob")
-});
-
-/// The lottery artifact: the bytes a package cell commits and the
-/// package's content address covers.
-#[must_use]
-pub fn lottery_artifact() -> &'static [u8] {
-    &LOTTERY_ARTIFACT
-}
-
-/// The fixture artifacts an embedder seeds as a set: only the lottery
-/// today — the other fixtures publish through tests rather than ship as
-/// seedable artifacts.
-#[must_use]
-pub fn artifacts() -> Vec<&'static [u8]> {
-    vec![lottery_artifact()]
+seedable! {
+    /// The constant-product pool: swaps against a pair, and claims on it.
+    amm => (AMM_COMPONENT, amm_artifact, amm_package_hash, "amm.component.wasm");
+    /// The order book: makers rest asks on a tick ladder, takers walk it.
+    book => (BOOK_COMPONENT, book_artifact, book_package_hash, "book.component.wasm");
+    /// The lending market: collateral against debt, over a carried index.
+    lending => (LENDING_COMPONENT, lending_artifact, lending_package_hash, "lending.component.wasm");
+    /// The lottery: `enter` buys a ticket, `close` seals the round, and
+    /// `settle` opens the seal to pick a winner.
+    lottery => (LOTTERY_COMPONENT, lottery_artifact, lottery_package_hash, "lottery.component.wasm");
+    /// The fee splitter: revenue in, three configured shares out.
+    payouts => (PAYOUTS_COMPONENT, payouts_artifact, payouts_package_hash, "payouts.component.wasm");
+    /// The perpetual: margin against a size, marked and funded.
+    perp => (PERP_COMPONENT, perp_artifact, perp_package_hash, "perp.component.wasm");
+    /// The share vault: assets in, shares out, at whatever the pool is worth.
+    shares => (SHARES_COMPONENT, shares_artifact, shares_package_hash, "shares.component.wasm");
 }
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{TestHasher, extract_metadata};
+    use hyperscale_vm_effects::{PackageMetadata, TestHasher, extract_metadata};
 
     use super::*;
 
+    /// Every seedable package, with the metadata its address covers.
+    fn seeded() -> Vec<(&'static [u8], PackageMetadata)> {
+        vec![
+            (amm_artifact(), amm::metadata()),
+            (book_artifact(), book::metadata()),
+            (lending_artifact(), lending::metadata()),
+            (lottery_artifact(), lottery::metadata()),
+            (payouts_artifact(), payouts::metadata()),
+            (perp_artifact(), perp::metadata()),
+            (shares_artifact(), shares::metadata()),
+        ]
+    }
+
     #[test]
-    fn the_artifact_carries_the_metadata_its_address_covers() {
-        let artifact = lottery_artifact();
-        assert_eq!(
-            extract_metadata(artifact).unwrap(),
-            Some(lottery::metadata())
-        );
-        // The attached section is what the address covers, so the bare
-        // component addresses differently from the package.
+    fn every_artifact_carries_the_metadata_its_address_covers() {
+        for (artifact, metadata) in seeded() {
+            assert_eq!(extract_metadata(artifact).unwrap(), Some(metadata));
+        }
+    }
+
+    /// The attached section is what an address covers, so a bare
+    /// component addresses differently from the package it is half of.
+    #[test]
+    fn a_bare_component_is_not_the_package() {
         assert_eq!(
             lottery_package_hash(&TestHasher),
-            package_hash(&TestHasher, artifact)
+            package_hash(&TestHasher, lottery_artifact())
         );
         assert_ne!(
             lottery_package_hash(&TestHasher),
@@ -107,6 +157,7 @@ mod tests {
 
     #[test]
     fn the_fixture_set_is_every_artifact_this_crate_ships() {
-        assert_eq!(artifacts(), vec![lottery_artifact()]);
+        let shipped: Vec<_> = seeded().into_iter().map(|(artifact, _)| artifact).collect();
+        assert_eq!(artifacts(), shipped);
     }
 }
