@@ -178,6 +178,13 @@ take(resource-address, u128) — infallible
   yields   edge 0 = arg0
   exports  handle for clause 0
 
+take-noting(resource-address, u128) — infallible, answers
+  declares
+      0  reserve arg1 self.vault[arg0] holding arg0
+      1  read self.noted
+  yields   edge 0 = arg0
+  exports  handle for clause 0, handle for clause 1
+
 tallied(u64) — infallible
   declares
       0  write self.noted

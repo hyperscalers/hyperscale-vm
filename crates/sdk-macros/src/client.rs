@@ -210,26 +210,46 @@ fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
     (quote!(#name: #ty), quote!(#name))
 }
 
-/// The return type and the projection that reaches it.
+/// The return type, and the discharge that reaches it over an `outputs`
+/// the wrapper has already bound.
 ///
-/// The output count is the method's, so the projection is not something
-/// a caller states and then has held against it.
+/// The output count is the method's, so the discharge is not something a
+/// caller states and then has held against it.
 fn produced(method: &Method) -> (TokenStream2, TokenStream2) {
     let bucket = sdk("Bucket");
-    // A method that answers yields no edge — nothing in the corpus does
-    // both — so the two readings of what a call hands back do not meet.
-    if let Some(answer) = &method.answers {
-        let answered = sdk("Answered");
-        return (quote!(#answered<#answer>), quote!(.answered()));
-    }
-    match method.outputs {
-        0 => (quote!(()), quote!(.none())),
-        1 => (quote!(#bucket), quote!(.one())),
+    let (edges, discharge) = match method.outputs {
+        0 => (quote!(()), quote!(none())),
+        1 => (quote!(#bucket), quote!(one())),
         n => {
             let n = proc_macro2::Literal::usize_unsuffixed(n);
-            (quote!([#bucket; #n]), quote!(.into_array()))
+            (quote!([#bucket; #n]), quote!(into_array()))
         }
+    };
+    // An answer rides beside the edges rather than instead of them: a
+    // method hands back at most one value and any number of edges, and
+    // the signature says both independently. A method that answers and
+    // yields nothing hands back the handle alone, because a unit beside
+    // it would be a tuple whose second half never says anything.
+    let Some(answer) = &method.answers else {
+        return (edges, quote!(outputs.#discharge));
+    };
+    let answered = sdk("Answered");
+    if method.outputs == 0 {
+        return (
+            quote!(#answered<#answer>),
+            quote!({
+                let (answer, outputs) = outputs.answering();
+                outputs.none().map(|()| answer)
+            }),
+        );
     }
+    (
+        quote!((#answered<#answer>, #edges)),
+        quote!({
+            let (answer, outputs) = outputs.answering();
+            outputs.#discharge.map(|edges| (answer, edges))
+        }),
+    )
 }
 
 /// Whether the call presents a named proof, and so which builder form
@@ -309,7 +329,13 @@ fn wrapper(
                 quote!(builder.call_presenting(proofs, #target, #published, (#(#args,)*)))
             }
         };
-        (returns, quote!(#call? #projection))
+        (
+            returns,
+            quote!({
+                let outputs = #call?;
+                #projection
+            }),
+        )
     };
 
     quote!(

@@ -417,6 +417,14 @@ pub struct Lowered {
     /// halves compose it the same way, so unlike the edges this is the
     /// expression itself.
     pub answer: Option<TokenStream>,
+    /// Which element of the tail the answer came from.
+    ///
+    /// The signature's own tuple position, so a caller's wrapper can
+    /// name the answer's Rust type without classifying the tail a second
+    /// time — the walk already decided which element was an edge and
+    /// which was the value, and re-deciding it syntactically is the
+    /// classification that drifts.
+    pub answer_at: usize,
     /// Whether the method yields a value at all.
     pub returns: bool,
 }
@@ -435,6 +443,8 @@ struct Returned {
     edges: Vec<TokenStream>,
     /// The value beside them, where the method answers with one.
     answer: Option<TokenStream>,
+    /// Which element of the tail that value was.
+    answer_at: usize,
 }
 
 impl Lowered {
@@ -870,6 +880,7 @@ impl<'a> Lowerer<'a> {
             self.out.outputs = returned.outputs;
             self.out.edges = returned.edges;
             self.out.answer = returned.answer;
+            self.out.answer_at = returned.answer_at;
             Ok(self.out)
         } else {
             Err(self.errors)
@@ -906,7 +917,13 @@ impl<'a> Lowerer<'a> {
     /// where whoever sent the transaction reads it, and a manifest has
     /// nowhere else to put it. One answer per method, because one result
     /// is one value however many edges travel beside it.
-    fn hands_back(&mut self, expr: &syn::Expr, eval: Eval, returned: &mut Returned) {
+    fn hands_back(
+        &mut self,
+        expr: &syn::Expr,
+        eval: Eval,
+        position: usize,
+        returned: &mut Returned,
+    ) {
         let produced = match &eval.val {
             Val::Produced(term) => Some(term.clone()),
             // An edge the method was handed and hands on: it carries the
@@ -929,6 +946,7 @@ impl<'a> Lowerer<'a> {
             );
             return;
         }
+        returned.answer_at = position;
         returned.answer = Some(quote!(
             ::hyperscale_vm_sdk::hbor::to_vec(&#code)
                 .expect("a method's answer encodes within the vocabulary's caps")
@@ -967,9 +985,9 @@ impl<'a> Lowerer<'a> {
         let mut returned = Returned::default();
         match expr {
             syn::Expr::Tuple(tuple) => {
-                for element in &tuple.elems {
+                for (position, element) in tuple.elems.iter().enumerate() {
                     let eval = self.expr(element);
-                    self.hands_back(element, eval, &mut returned);
+                    self.hands_back(element, eval, position, &mut returned);
                 }
                 returned
             }
@@ -987,7 +1005,7 @@ impl<'a> Lowerer<'a> {
             syn::Expr::Call(call) if free_call_name(call).as_deref() == Some("Err") => returned,
             other => {
                 let eval = self.expr(other);
-                self.hands_back(other, eval, &mut returned);
+                self.hands_back(other, eval, 0, &mut returned);
                 returned
             }
         }

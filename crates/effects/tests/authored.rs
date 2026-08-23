@@ -157,6 +157,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("grammar", "surveyed", open(), vec![]),
         ("grammar", "sweep", open(), vec![]),
         ("grammar", "take", open(), vec![]),
+        ("grammar", "take-noting", open(), vec![]),
         ("grammar", "tallied", open(), vec![]),
         ("grammar", "tally", open(), vec![]),
         ("grammar", "tally-plainly", open(), vec![]),

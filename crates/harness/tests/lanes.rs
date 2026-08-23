@@ -235,6 +235,44 @@ fn a_closure_over_a_value_in_hand_declares_what_the_long_way_does() {
     assert_eq!(native, Some(42), "the closure folded what it was handed");
 }
 
+/// A method handing back an edge *and* an answer.
+///
+/// The two are independent facts about a signature: a body yields any
+/// number of edges and answers with at most one value, so a call site
+/// takes the handle on the answer beside whatever the edges were. A
+/// wrapper reading the answer as an alternative to the edges would route
+/// neither, and nothing else in the corpus is shaped this way.
+#[test]
+fn a_method_hands_back_an_edge_and_an_answer_in_both_lanes() {
+    let run = |mut chain: Chain| {
+        chain.publish(grammar());
+        let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
+        chain.credit(shapes, X, 100);
+        // Something in the noted cell for the answer to be, which the
+        // fold writes as one more than what it was handed.
+        chain
+            .transact(ALICE, |b| shapes.tally(b, 41))
+            .expect_completed();
+
+        let outcome = chain.transact(ALICE, |b| {
+            let (noted, taken) = shapes.take_noting(b, X, 30)?;
+            account::deposit(b, ALICE, taken)?;
+            Ok(noted)
+        });
+        outcome.expect_completed();
+        (outcome.answer(), chain.balance(ALICE, X))
+    };
+
+    let native = run(Chain::native());
+    let blessed = run(Chain::wasm());
+    assert_eq!(native, blessed, "lanes diverged");
+    assert_eq!(
+        native,
+        (42, 30),
+        "the answer rode the receipt and the edge was routed"
+    );
+}
+
 /// A method handing back an ordinary value.
 ///
 /// The value is not an edge, so it is not an output: a manifest naming

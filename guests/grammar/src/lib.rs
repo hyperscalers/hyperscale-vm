@@ -161,6 +161,18 @@ pub mod grammar {
             self.vault(resource).reserve(amount)
         }
 
+        /// An edge and an answer out of one body.
+        ///
+        /// A method hands back at most one value and any number of
+        /// edges, and the two are independent: an answer is not a third
+        /// arity but a thing that happens beside whichever arity the
+        /// method has. Here because the calling surface has to spell
+        /// that as a pair, and a shape only the lowering admits is one
+        /// the wrapper can get wrong unseen.
+        pub fn take_noting(&mut self, resource: ResourceAddr, amount: Quantity) -> (Bucket, u64) {
+            (self.vault(resource).reserve(amount), self.noted.get())
+        }
+
         /// A fielded mint beside the read of what it filed: one cell,
         /// written as the record the mark declares and decoded back as
         /// the same. Both halves are here because a host build settles

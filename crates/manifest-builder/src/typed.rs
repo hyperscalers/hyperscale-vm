@@ -244,23 +244,24 @@ impl Outputs {
         Ok(())
     }
 
-    /// Discharge a call that answers with a value and produces no edge.
+    /// Split off the handle on what this call answered with, leaving the
+    /// edges beside it to be discharged like any other call's.
+    ///
+    /// Total, and a split rather than a discharge of its own: a method
+    /// answers with at most one value and yields any number of edges,
+    /// and the two are independent facts about its signature. Answering
+    /// is not a third arity — it is a thing that happens alongside
+    /// whichever arity the method has.
     ///
     /// The node is what a receipt files an answer under, so handing it
     /// back typed is what lets a reader ask for the answer rather than
     /// count the calls before it.
-    ///
-    /// # Errors
-    ///
-    /// [`TypedError::OutputArity`] when the method produces an edge,
-    /// which would then dangle.
-    pub fn answered<T>(self) -> Result<Answered<T>, TypedError> {
-        let node = self.node;
-        let [] = self.into_array()?;
-        Ok(Answered {
-            node,
+    pub fn answering<T>(self) -> (Answered<T>, Self) {
+        let handle = Answered {
+            node: self.node,
             answer: PhantomData,
-        })
+        };
+        (handle, self)
     }
 }
 

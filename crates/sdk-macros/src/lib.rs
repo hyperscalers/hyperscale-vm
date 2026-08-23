@@ -1329,30 +1329,36 @@ fn total_attr(method: &syn::ImplItemFn) -> Option<&syn::Attribute> {
         .find(|attr| attr.path().is_ident("total"))
 }
 
-/// The type a method answers with, where it answers with one.
+/// The type a method answers with, at the tail position the lowering
+/// took it from.
 ///
-/// Its own return type, less the error arm a fallible one wears. A
-/// method yielding edges returns those instead, and the lowering is what
-/// knows which of the two a signature meant — this only names the type
-/// once the lowering has said there is an answer.
-fn answered(method: &syn::ImplItemFn) -> Option<syn::Type> {
+/// Its own return type, less the error arm a fallible one wears and less
+/// the edges travelling beside it. Which element was the answer is the
+/// lowering's finding rather than this function's: a method hands back
+/// any number of edges and at most one value, and reading the tuple a
+/// second time to decide which was which is the classification that
+/// drifts from the one that declared the outputs.
+fn answered(method: &syn::ImplItemFn, at: usize) -> Option<syn::Type> {
     let syn::ReturnType::Type(_, ty) = &method.sig.output else {
         return None;
     };
-    let syn::Type::Path(path) = &**ty else {
-        return Some((**ty).clone());
+    let held = match &**ty {
+        syn::Type::Path(path) if path.path.segments.last()?.ident == "Result" => {
+            let syn::PathArguments::AngleBracketed(args) = &path.path.segments.last()?.arguments
+            else {
+                return None;
+            };
+            match args.args.first()? {
+                syn::GenericArgument::Type(held) => held.clone(),
+                _ => return None,
+            }
+        }
+        other => other.clone(),
     };
-    let last = path.path.segments.last()?;
-    if last.ident != "Result" {
-        return Some((**ty).clone());
+    match held {
+        syn::Type::Tuple(tuple) => tuple.elems.into_iter().nth(at),
+        one => Some(one),
     }
-    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
-        return None;
-    };
-    args.args.first().and_then(|arg| match arg {
-        syn::GenericArgument::Type(held) => Some(held.clone()),
-        _ => None,
-    })
 }
 
 /// Whether a method's return type carries an error arm, which is the whole
@@ -1468,7 +1474,11 @@ fn lower_method(
         published,
         shape: client::Shape::of(&gate),
         outputs: lowered.outputs.len(),
-        answers: lowered.answer.is_some().then(|| answered(method)).flatten(),
+        answers: lowered
+            .answer
+            .is_some()
+            .then(|| answered(method, lowered.answer_at))
+            .flatten(),
         docs: method
             .attrs
             .iter()
