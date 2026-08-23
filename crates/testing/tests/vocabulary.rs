@@ -14,7 +14,9 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_sdk::handle::Handle;
 use hyperscale_vm_sdk::host::{Refusal, with_kernel};
-use hyperscale_vm_sdk::state::{self, Bucket, Entry, Interval, OrderKey, Quantity, Slot, Vault};
+use hyperscale_vm_sdk::state::{
+    self, Bucket, Entry, Interval, OrderKey, Quantity, Ratio, Slot, Vault,
+};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Mode,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
@@ -169,6 +171,40 @@ fn a_bucket_divides_into_what_comes_off_and_what_is_left() {
     assert_eq!(
         (split, rest),
         (Quantity::from_subunits(20), Quantity::from_subunits(30))
+    );
+}
+
+/// A division against a weight table conserves what it divided, and
+/// every share is of the whole.
+///
+/// Both halves matter. The parts plus the remainder are exactly what
+/// went in, because the kernel performed every subtraction and nothing
+/// here is written twice. And each part is floored against the payment
+/// rather than against what the part before it left — 100 at a third, a
+/// third and a third is 33, 33, 33 with 1 over, where taking in sequence
+/// would give 33, 22, 15 and call the difference dust.
+#[test]
+fn a_division_conserves_what_it_divided() {
+    let vault = key(3);
+    let mut store = MemoryStore::new();
+    store.write(vault, encode_amount(100).to_vec());
+    let session = value_session(store, vec![point(vault, Mode::Write)]);
+
+    let (_, (parts, rest)) = with_kernel(session, || {
+        let mut slot = Slot::<Vault>::at(Handle::Amount(0));
+        let funds = slot.take(Quantity::from_subunits(100));
+        let third = Ratio::of(1, 3).expect("a third is a ratio");
+        let ([a, b, c], rest) = funds.split_n(&[third, third, third]);
+        ([a.quantity(), b.quantity(), c.quantity()], rest.quantity())
+    });
+
+    assert_eq!(parts, [Quantity::from_subunits(33); 3]);
+    assert_eq!(rest, Quantity::from_subunits(1));
+    let summed = parts.iter().fold(rest, |total, part| total + *part);
+    assert_eq!(
+        summed,
+        Quantity::from_subunits(100),
+        "nothing was created or lost"
     );
 }
 

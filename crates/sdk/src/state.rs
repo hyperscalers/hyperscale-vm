@@ -694,50 +694,35 @@ impl Bucket {
     ///
     /// Every share is of the *whole*, which is what a caller writing a
     /// weight table means, so the parts do not depend on the order they
-    /// are taken in. The remainder is returned rather than folded into
-    /// the last part: a slice whose shares fall short of one would
-    /// otherwise hand its final claimant everything the others left,
-    /// which is a silent answer to a question nobody asked — and the
-    /// kernel refuses a dropped bucket, so an explicit remainder is one
-    /// the body must dispose of rather than one it can ignore.
+    /// are taken in. Taking them in sequence would not be the same
+    /// operation: a second share of what a first share left is a share
+    /// of a different number, and the rounding follows it.
+    ///
+    /// The remainder is returned rather than folded into the last part:
+    /// a slice whose shares fall short of one would otherwise hand its
+    /// final claimant everything the others left, which is a silent
+    /// answer to a question nobody asked — and the kernel refuses a
+    /// dropped bucket, so an explicit remainder is one the body must
+    /// dispose of rather than one it can ignore.
     ///
     /// Conservation still holds by construction: each part leaves through
     /// the kernel's own subtraction and the remainder is whatever is
     /// still in hand, so no number here is written twice.
+    ///
+    /// The share count is a constant because a declaration states how
+    /// many edges a method yields, and a count the signature could not
+    /// name is a method whose outputs vary by call.
     ///
     /// # Panics
     ///
     /// Where the shares claim more than the whole, which the kernel
     /// refuses when a take runs past what is left.
     #[must_use]
-    pub fn split_n(mut self, shares: &[Ratio]) -> (Vec<Self>, Self) {
+    pub fn split_n<const N: usize>(mut self, shares: &[Ratio; N]) -> ([Self; N], Self) {
         let whole = self.quantity();
-        let mut parts = Vec::with_capacity(shares.len());
-        for share in shares {
-            parts.push(self.take(whole.scale(*share, Rounding::Down)));
-        }
+        let parts =
+            core::array::from_fn(|index| self.take(whole.scale(shares[index], Rounding::Down)));
         (parts, self)
-    }
-
-    /// Divide this edge by shares that must claim all of it.
-    ///
-    /// For a distribution where truncating is worse than refusing — a
-    /// treasury schedule, a merkle drop — a non-zero remainder is the
-    /// refusal, and giving that its own name is cheaper than every such
-    /// body asserting on it.
-    ///
-    /// # Errors
-    ///
-    /// The parts and the leftover edge, where the shares did not claim
-    /// all of it. The caller still holds every piece, which is what lets
-    /// it decline without dropping any.
-    pub fn split_exact(self, shares: &[Ratio]) -> Result<Vec<Self>, (Vec<Self>, Self)> {
-        let (parts, rest) = self.split_n(shares);
-        if rest.quantity().is_zero() {
-            Ok(parts)
-        } else {
-            Err((parts, rest))
-        }
     }
 
     /// Merge `other` in, consuming it.

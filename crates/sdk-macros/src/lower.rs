@@ -2385,9 +2385,10 @@ impl<'a> Lowerer<'a> {
                 // is refused at the use site rather than resolved to
                 // whatever an outer scope happened to call by the same
                 // name.
+                let names = Self::edge_names(&local.pat);
                 match unwrap_pat(&local.pat) {
-                    syn::Pat::Tuple(tuple) if tuple.elems.len() == parts.len() => {
-                        for (element, term) in tuple.elems.iter().cloned().zip(parts) {
+                    syn::Pat::Tuple(_) if !parts.is_empty() && names.len() == parts.len() => {
+                        for (element, term) in names.into_iter().zip(parts) {
                             match unwrap_pat(&element) {
                                 syn::Pat::Ident(ident) => {
                                     self.bind(ident.ident.to_string(), Slot::Produced(term));
@@ -3465,6 +3466,32 @@ impl<'a> Lowerer<'a> {
             };
         }
 
+        // The same division against a stated weight table: as many parts
+        // as the table has rows, and the remainder beside them. The count
+        // is read off the table's own syntax because a declaration states
+        // how many edges a method yields, so a slice whose length only
+        // the runtime knows is a division this cannot lower.
+        if method == "split_n"
+            && let Some(resource) = Self::edge_resource(&receiver)
+        {
+            let Some(rows) = call.args.first().and_then(Self::literal_len) else {
+                self.error(
+                    call.args.span(),
+                    "a division needs its weight table written out here, because the \
+                     declaration states how many edges the method yields. Write the \
+                     shares as an array literal",
+                );
+                return Eval::absent(call.args.span(), "a division of unknown width");
+            };
+            let code = self.pass_through(&receiver, &method, evals, call);
+            return Eval {
+                // One per row, and the remainder last, in the order the
+                // parts come back.
+                val: Val::Edges(vec![resource; rows + 1]),
+                code: Code::Rust(code),
+            };
+        }
+
         match receiver.val.clone() {
             // ---- opening a handle on a state field ----------------------
             Val::Field { name, material } => {
@@ -3839,6 +3866,37 @@ impl<'a> Lowerer<'a> {
 
     /// Rebuild a method call the vocabulary does not model, over its
     /// rewritten receiver and arguments.
+    /// How many elements a literal collection is written with.
+    ///
+    /// Syntactic on purpose: what this answers is how many edges the
+    /// declaration names, so the only table it can read is one the
+    /// source spells out.
+    fn literal_len(arg: &syn::Expr) -> Option<usize> {
+        let mut expr = arg;
+        while let syn::Expr::Reference(reference) = expr {
+            expr = &reference.expr;
+        }
+        match expr {
+            syn::Expr::Array(array) => Some(array.elems.len()),
+            _ => None,
+        }
+    }
+
+    /// The names a division's pattern binds, in the order its parts come
+    /// back.
+    ///
+    /// Tuples and arrays both flatten, because how a division groups its
+    /// answer is a shape the Rust signature chose and not something the
+    /// declaration means: `(a, b)` and `([a, b], rest)` are both a run of
+    /// edges, and each name in either takes the part at its position.
+    fn edge_names(pat: &syn::Pat) -> Vec<syn::Pat> {
+        match unwrap_pat(pat) {
+            syn::Pat::Tuple(tuple) => tuple.elems.iter().flat_map(Self::edge_names).collect(),
+            syn::Pat::Slice(slice) => slice.elems.iter().flat_map(Self::edge_names).collect(),
+            other => vec![other.clone()],
+        }
+    }
+
     fn pass_through(
         &mut self,
         receiver: &Eval,

@@ -3,7 +3,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::Bucket;
+    use hyperscale_vm_sdk::state::{Bucket, Ratio};
 
     #[config]
     struct Settings {
@@ -17,9 +17,9 @@ mod contract {
     impl Contract {
         pub fn bank(&mut self, funds: Bucket) {
             let settings = self.config();
-            let (mut parts, rest) = funds.split_n(&[]);
-            parts.push(rest);
-            self.vault(settings.asset).put(parts.remove(0));
+            let ([part], rest) = funds.split_n(&[Ratio::of(1, 2).expect("a half")]);
+            let mut laundered = vec![part, rest];
+            self.vault(settings.asset).put(laundered.remove(0));
         }
     }
 }
