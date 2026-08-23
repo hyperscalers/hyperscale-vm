@@ -42,14 +42,22 @@ pub mod lending {
     use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding, UnitFixed, Wide};
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
-    /// What a position posts. A dimension, not a value.
-    struct Collateral;
+    // The dimensions. None of these is a value — they name what a rate
+    // is *per*, so that a chain of rates cancels its middle terms rather
+    // than the author checking that it did.
+    //
+    // Public because a dimension reaches the client surface the moment a
+    // configured type carries one: whoever creates a market states its
+    // growth as shares per share, and has to be able to spell it.
+
+    /// What a position posts.
+    pub struct Collateral;
     /// What it owes.
-    struct Debt;
+    pub struct Debt;
     /// A share of the debt, which is what the position actually holds.
-    struct Share;
+    pub struct Share;
     /// The unit both sides are compared in.
-    struct Numeraire;
+    pub struct Numeraire;
 
     /// The market's creation-fixed terms.
     #[config]
@@ -68,9 +76,13 @@ pub mod lending {
         /// liquidate. Above `ltv`, so a position does not open already
         /// liquidatable.
         liquidation_threshold: UnitFixed,
-        /// What the debt is multiplied by each period, at the stored
-        /// rate's own scale. One means a market that charges nothing.
-        growth_per_period: u128,
+        /// What the debt is multiplied by each period. One is a market
+        /// that charges nothing.
+        ///
+        /// Shares per share, which is what a pure scaling is: the index
+        /// it multiplies is debt per share, and composing the two leaves
+        /// that dimension where it was.
+        growth_per_period: Fixed<Share, Share>,
     }
 
     /// What an entry point declines with.
@@ -110,6 +122,12 @@ pub mod lending {
         /// Both at once, because a judgment reads both and a market that
         /// could update one alone would have a window where the pair
         /// disagrees about when it was priced.
+        ///
+        /// The prices arrive as scaled integers rather than as the rates
+        /// they become. A configuration slot holds a rate at its own
+        /// width; a *parameter* does not, so the lift is here — which is
+        /// the one place left in this market where a number crosses
+        /// without saying what it means.
         #[requires(oracle)]
         pub fn post_price(&mut self, collateral: u128, debt: u128) {
             self.collateral_price
@@ -127,18 +145,21 @@ pub mod lending {
         pub fn accrue(&mut self, now: u64) {
             let last = self.accrued_at.get();
             let periods = u32::try_from(now.saturating_sub(last)).unwrap_or(u32::MAX);
-            let growth =
-                Fixed::<(), ()>::from_scaled(Wide::from_u128(self.config().growth_per_period))
-                    .pow_int(periods, Rounding::Down);
+            let growth = self
+                .config()
+                .growth_per_period
+                .pow_int(periods, Rounding::Down);
 
             // The composition happens on the exact fractions and
             // quantizes once, which is the only lossy step. Down, so the
             // market never charges a subunit it cannot derive.
-            let carried = started(self.index.get())
-                .rate()
-                .ratio()
-                .compose(growth.rate().ratio());
-            self.index.set(carried.quantize_as(Rounding::Down));
+            //
+            // Composed as rates rather than as bare fractions, so the
+            // share the growth is per cancels against the share the index
+            // is per, and what comes out is debt per share by
+            // construction rather than by the turbofish saying so.
+            let carried = started(self.index.get()).rate().compose(growth.rate());
+            self.index.set(carried.quantize(Rounding::Down));
             self.accrued_at.set(now);
         }
 
@@ -277,11 +298,12 @@ pub mod lending {
         /// The index as a plain number, for a reader that wants to show
         /// it.
         ///
-        /// Traps past the amount width, which is a bound on how far a
-        /// market can compound before its own index stops being
-        /// readable.
-        pub fn index_scaled(&self) -> u128 {
-            started(self.index.get()).scaled().to_u128()
+        /// Nothing past the amount width, rather than a trap: how far a
+        /// market has compounded is a fact about the market, and a reader
+        /// asking for a number that will not fit should hear so rather
+        /// than lose the transaction it asked in.
+        pub fn index_scaled(&self) -> Option<u128> {
+            started(self.index.get()).scaled().try_to_u128()
         }
     }
 

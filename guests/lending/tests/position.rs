@@ -1,6 +1,6 @@
 //! The position's own tests, against the real kernel.
 
-use hyperscale_vm_sdk::state::UnitFixed;
+use hyperscale_vm_sdk::state::{Fixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
     Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
 };
@@ -14,8 +14,11 @@ const DEBT: ResourceAddr = resource(0xD1);
 
 /// The stored rate's scale: one whole unit per unit.
 const ONE: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;
-/// A hundredth of a percent per period.
-const GROWTH: u128 = ONE + ONE / 10_000;
+
+/// A hundredth of a percent per period, as the rate a slot holds.
+fn growth() -> Fixed<lending_guest::lending::Share, lending_guest::lending::Share> {
+    Fixed::from_scaled(Wide::from_u128(ONE + ONE / 10_000))
+}
 
 /// A market at half loan-to-value, liquidating past four fifths, funded
 /// with debt to lend and a borrower holding collateral.
@@ -29,7 +32,7 @@ fn market(mut chain: Chain) -> (Chain, Lending) {
             oracle: ORACLE.into(),
             ltv: UnitFixed::percent(50).expect("a half is under one"),
             liquidation_threshold: UnitFixed::percent(80).expect("four fifths is under one"),
-            growth_per_period: GROWTH,
+            growth_per_period: growth(),
         },
     );
     chain.credit(BORROWER, COLLATERAL, 10_000);
@@ -194,7 +197,7 @@ fn the_index_compounds_over_the_span_it_carries(chain: Chain) {
     outcome.expect_completed();
 
     const TWICE: u128 = 1_000_200_010_000_000_000_000_000_000_000_000_000;
-    assert_eq!(outcome.answer::<u128>(1), TWICE);
+    assert_eq!(outcome.answer::<Option<u128>>(1), Some(TWICE));
 }
 
 /// Carrying the index a step at a time is not the same number as
@@ -222,7 +225,9 @@ fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: Chain) {
         stepwise.index_scaled(b)
     });
     outcome.expect_completed();
-    let stepped = outcome.answer::<u128>(100);
+    let stepped = outcome
+        .answer::<Option<u128>>(100)
+        .expect("an index this size fits");
 
     let (mut chain, oneshot) = market(chain);
     let outcome = chain.transact(BORROWER, |b| {
@@ -230,7 +235,9 @@ fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: Chain) {
         oneshot.index_scaled(b)
     });
     outcome.expect_completed();
-    let once = outcome.answer::<u128>(1);
+    let once = outcome
+        .answer::<Option<u128>>(1)
+        .expect("an index this size fits");
 
     assert!(
         stepped <= once,
