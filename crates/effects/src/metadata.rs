@@ -101,6 +101,52 @@ pub fn reserved_shape(name: &str) -> Option<&'static TypeShape> {
     RESERVED_SHAPES.get(name)
 }
 
+/// The shape of state a declared slot holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub enum SlotKind {
+    /// One leaf under the slot.
+    Cell,
+    /// A family of leaves, each under material a body names. The key is
+    /// hashed into the child key, so a consumer reads a leaf it can
+    /// name and cannot enumerate the family.
+    Keyed,
+    /// An ordered collection: entries under an order key.
+    Ordered,
+    /// An unordered collection: entries under a hashed key.
+    Unordered,
+}
+
+/// What one leaf holds.
+///
+/// A leaf is empty or exactly one of these: absence is no bytes at all,
+/// and what an empty leaf means is the element's own business — zero for
+/// a number, nothing stored for a record.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub enum LeafForm {
+    /// One canonical encoding of this shape.
+    Value(TypeShape),
+    /// The leaf's own bytes, delimited by the leaf and by nothing inside
+    /// it.
+    ///
+    /// What a byte parameter and a stored rule both reach a cell as. The
+    /// encoding's own byte string carries a length, and these do not:
+    /// the substate is the frame, so the bytes inside it need no second
+    /// one.
+    Bytes,
+}
+
+/// One declared state slot: what it is called, what shape of state it
+/// is, and what its leaves hold.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub struct SlotShape {
+    /// The field's name, as its author spelled it.
+    pub name: String,
+    /// What shape of state the slot holds.
+    pub kind: SlotKind,
+    /// What one leaf holds.
+    pub element: LeafForm,
+}
+
 /// Everything routing reads about a published package.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct PackageMetadata {
@@ -144,6 +190,17 @@ pub struct PackageMetadata {
     /// Protocol names resolve to the protocol's shapes, which the door
     /// pins: `address` is an address in every package that declares one.
     pub types: ShapeTable,
+    /// The component's state, by the slot its leaves sit under.
+    ///
+    /// What gets a consumer from a substate key to a type: a slot
+    /// number is all a stored leaf carries about what it is, and the
+    /// tables above describe types without saying which cell holds one.
+    ///
+    /// Keyed by the slot rather than by position, because `#[slot(n)]`
+    /// is the author's own number and a system package pins every one of
+    /// them — a positional table would renumber under an in-place
+    /// upgrade, which is the thing pinning exists to prevent.
+    pub state: BTreeMap<SlotId, SlotShape>,
 }
 
 impl PackageMetadata {

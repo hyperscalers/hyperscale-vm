@@ -49,8 +49,8 @@
 //! clause follows from calling one.
 
 use hyperscale_hbor::{
-    DEFAULT_MAX_DEPTH, Hbor, HborDecode, HborEncode, HborShape, from_slice_with_depth,
-    to_vec_with_depth,
+    DEFAULT_MAX_DEPTH, Hbor, HborDecode, HborEncode, HborShape, ShapeRegistry, TypeShape,
+    from_slice_with_depth, to_vec_with_depth,
 };
 /// The record a resource's cell holds, in the shape a client reads.
 ///
@@ -65,7 +65,7 @@ pub use hyperscale_vm_effects::ResourceRecord;
 /// skeleton is legible here; each rule's bytes stay opaque, decoded only
 /// where a rule is judged.
 pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, RoleBytes, RoleTable};
-use hyperscale_vm_effects::{MAX_AUTH_CELL_WIRE_DEPTH, RECORD_WIRE_DEPTH};
+use hyperscale_vm_effects::{LeafForm, MAX_AUTH_CELL_WIRE_DEPTH, RECORD_WIRE_DEPTH};
 use hyperscale_vm_types::{Address, CellKind, Drawn as WireDrawn, ResourceAddr};
 
 #[cfg(not(component))]
@@ -143,13 +143,31 @@ impl<K, V> Table<K, V> {
     }
 }
 
+/// What one leaf of a declared field holds, for a consumer reading the
+/// cell without the type.
+///
+/// A leaf is empty or exactly one canonical encoding of this shape:
+/// absence is no bytes at all, and what an empty leaf means is the
+/// element's own business — zero for a number, nothing stored for a
+/// record.
+///
+/// A supertrait of [`Cellular`] rather than a companion to it, so a
+/// value the vocabulary carries cannot be one a consumer has no way to
+/// read. The value elements — a vault, a holder's instances — implement
+/// it without being `Cellular`, because what their leaves hold is the
+/// kernel's rather than a body's to read and write.
+pub trait LeafShape {
+    /// What one leaf holds.
+    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm;
+}
+
 /// A value a declared cell or entry can hold.
 ///
 /// The kernel's substates are bytes; this is the vocabulary's statement
 /// of which Rust values it will carry them as. Closed on purpose — a
 /// contract that could name any encoding would put an author's choice
 /// where a protocol representation belongs.
-pub trait Cellular: Sized {
+pub trait Cellular: LeafShape + Sized {
     /// Read the value from a substate. An absent substate reads empty,
     /// which every implementation takes as its zero.
     fn from_cell(cell: &[u8]) -> Self;
@@ -174,7 +192,7 @@ pub trait Cellular: Sized {
 /// no zero — HBOR decodes no fields from nothing. `None` is the zero the
 /// type does have, so an unwritten cell reads as the absence it is rather
 /// than as a record nobody stored.
-pub trait Record: HborEncode + HborDecode {
+pub trait Record: HborEncode + HborDecode + HborShape + LeafShape {
     /// The decoder nesting cap this type is read under.
     ///
     /// The default is the encoder's own, which is the right bound for a
@@ -214,6 +232,12 @@ impl Record for AuthCell {
     const WIRE_DEPTH: usize = MAX_AUTH_CELL_WIRE_DEPTH;
 }
 
+impl LeafShape for u128 {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::U128)
+    }
+}
+
 impl Cellular for u128 {
     fn from_cell(cell: &[u8]) -> Self {
         cell.try_into().map_or(0, Self::from_le_bytes)
@@ -221,6 +245,12 @@ impl Cellular for u128 {
 
     fn to_cell(&self) -> Vec<u8> {
         self.to_le_bytes().to_vec()
+    }
+}
+
+impl LeafShape for Quantity {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::U128)
     }
 }
 
@@ -234,6 +264,12 @@ impl Cellular for Quantity {
 
     fn to_cell(&self) -> Vec<u8> {
         self.subunits().to_le_bytes().to_vec()
+    }
+}
+
+impl<A, B> LeafShape for Fixed<A, B> {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::ByteArray(32))
     }
 }
 
@@ -266,6 +302,12 @@ impl<A, B> Cellular for Fixed<A, B> {
     }
 }
 
+impl LeafShape for UnitFixed {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::ByteArray(32))
+    }
+}
+
 impl Cellular for UnitFixed {
     /// # Panics
     ///
@@ -284,6 +326,12 @@ impl Cellular for UnitFixed {
     }
 }
 
+impl LeafShape for u64 {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::U64)
+    }
+}
+
 impl Cellular for u64 {
     fn from_cell(cell: &[u8]) -> Self {
         cell.try_into().map_or(0, Self::from_le_bytes)
@@ -291,6 +339,12 @@ impl Cellular for u64 {
 
     fn to_cell(&self) -> Vec<u8> {
         self.to_le_bytes().to_vec()
+    }
+}
+
+impl LeafShape for Address {
+    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(Self::shape(types))
     }
 }
 
@@ -320,12 +374,26 @@ impl Cellular for Address {
 /// check asks whether an entry is in range and never what it holds. A
 /// unit collection holds no value, so the instance operations live on
 /// [`NfVault`] and not here.
+impl LeafShape for () {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::Tuple(Vec::new()))
+    }
+}
+
 impl Cellular for () {
     fn to_cell(&self) -> Vec<u8> {
         Vec::new()
     }
 
     fn from_cell(_: &[u8]) -> Self {}
+}
+
+/// Bytes a caller supplied or a package stored, which the substate frames
+/// and nothing inside frames again.
+impl LeafShape for Vec<u8> {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Bytes
+    }
 }
 
 impl Cellular for Vec<u8> {
@@ -385,6 +453,12 @@ impl Word {
     #[must_use]
     pub fn from_protocol(bytes: &[u8]) -> Self {
         Self(bytes.try_into().expect("the protocol's own word"))
+    }
+}
+
+impl LeafShape for Word {
+    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(<[u8; WORD_BYTES] as HborShape>::shape(types))
     }
 }
 
@@ -1217,6 +1291,14 @@ impl Record for ResourceRecord {
 
 /// As the unit entry: presence is the whole of what a holdings entry
 /// says, so there is nothing to write and nothing to decode.
+impl LeafShape for NfVault {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        // An instance's id is the entry's own order key, so the entry
+        // holds nothing.
+        LeafForm::Value(TypeShape::Tuple(Vec::new()))
+    }
+}
+
 impl Cellular for NfVault {
     fn to_cell(&self) -> Vec<u8> {
         Vec::new()
@@ -1224,6 +1306,45 @@ impl Cellular for NfVault {
 
     fn from_cell(_: &[u8]) -> Self {
         Self
+    }
+}
+
+/// An optional element describes as what it holds. Absence is the empty
+/// leaf every `Cellular` reads as its zero, so there is no discriminant
+/// byte in the cell for a shape to name.
+impl<T: LeafShape> LeafShape for Option<T> {
+    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
+        T::leaf_form(types)
+    }
+}
+
+/// A seal's leaf: the epoch the kernel recorded, and nothing a package
+/// wrote. Not a [`Record`], so it states its own leaf rather than
+/// reaching one through an encoding it does not have.
+impl LeafShape for Seal {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::U64)
+    }
+}
+
+/// A record's leaf is the record's own encoding.
+impl LeafShape for AuthCell {
+    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(Self::shape(types))
+    }
+}
+
+impl LeafShape for ResourceRecord {
+    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(Self::shape(types))
+    }
+}
+
+/// A vault leaf holds the kernel's own amount, which is why nothing here
+/// writes one: the balance moves through an edge and never through a set.
+impl LeafShape for Vault {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::U128)
     }
 }
 
@@ -1865,6 +1986,12 @@ impl Rule {
     }
 }
 
+impl LeafShape for Rule {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Bytes
+    }
+}
+
 impl Cellular for Rule {
     fn from_cell(cell: &[u8]) -> Self {
         Self(cell.to_vec())
@@ -1876,6 +2003,12 @@ impl Cellular for Rule {
 }
 
 /// A role-table parameter crosses the boundary as its canonical bytes.
+impl LeafShape for RoleTable {
+    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(Self::shape(types))
+    }
+}
+
 impl Cellular for RoleTable {
     fn from_cell(cell: &[u8]) -> Self {
         Self::from_slice(cell).expect("the write path admits only a canonical table")

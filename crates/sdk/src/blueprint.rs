@@ -10,9 +10,11 @@ use std::collections::BTreeMap;
 
 use hyperscale_hbor::{HborShape, ShapeRegistry, TypeShape};
 use hyperscale_vm_effects::{
-    MAX_EFFECTS_PER_SIGNATURE, MethodSignature, PackageMetadata, ParamType,
+    MAX_EFFECTS_PER_SIGNATURE, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
+    SlotShape,
 };
 
+use crate::state::LeafShape;
 use crate::trace::Trace;
 
 /// One method: what routing reads, plus what the guest bridge needs.
@@ -63,6 +65,7 @@ pub struct Blueprint {
     errors: Vec<String>,
     roles: Vec<String>,
     types: ShapeRegistry,
+    state: BTreeMap<SlotId, SlotShape>,
 }
 
 impl Blueprint {
@@ -98,6 +101,7 @@ impl Blueprint {
             errors: self.errors.clone(),
             roles: self.roles.clone(),
             types: self.types.clone().into_types(),
+            state: self.state.clone(),
         }
     }
 }
@@ -170,6 +174,27 @@ impl Builder {
             panic!("an event is a type the package declares, and describes as one");
         };
         self.blueprint.events.push(name);
+        self
+    }
+
+    /// Declare the slot `name` sits at, and what `T` its leaves hold.
+    ///
+    /// The slot is the author's own number and the key of the table, so
+    /// two fields at one slot are one leaf under two names — which the
+    /// state walk refuses before this is reached.
+    ///
+    /// # Panics
+    ///
+    /// If two fields claim one slot.
+    #[must_use]
+    pub fn slot<T: LeafShape>(mut self, slot: u16, name: &str, kind: SlotKind) -> Self {
+        let declared = SlotShape {
+            name: name.to_owned(),
+            kind,
+            element: T::leaf_form(&mut self.blueprint.types),
+        };
+        let taken = self.blueprint.state.insert(SlotId(slot), declared);
+        assert!(taken.is_none(), "slot {slot} is already declared");
         self
     }
 

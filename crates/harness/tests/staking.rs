@@ -27,6 +27,7 @@ use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vau
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
 use hyperscale_vm_manifest_builder::{Names, TypedBuilder, TypedError, render};
 use hyperscale_vm_sdk::hbor::{TypeShape, from_slice, to_vec};
+use hyperscale_vm_sdk::{LeafForm, SlotId, SlotKind};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, instantiate, staking};
 use hyperscale_vm_types::{
     Address, Outcome, Presence, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
@@ -470,6 +471,43 @@ fn an_event_decodes_from_metadata_alone() -> Result<()> {
         named[2],
         ("possession_proof".to_owned(), POSSESSION_PROOF.to_vec())
     );
+    Ok(())
+}
+
+/// A consumer holding the metadata reads a state cell from its slot
+/// alone: the slot names the field, the field names what its leaves
+/// hold, and the shape turns the bytes into named fields.
+///
+/// The slot number is all a stored leaf carries about what it is, so
+/// this is the step that gets an explorer from a substate key to a
+/// record. Nothing here names `staking::Validator`.
+#[test]
+fn a_state_cell_decodes_from_its_slot_alone() -> Result<()> {
+    let world = world();
+    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
+    let (_, end) = run_both(&operator_store(), std::slice::from_ref(&entry));
+
+    let metadata = staking::metadata();
+    let declared = &metadata.state[&SlotId(staking::VALIDATORS.0)];
+    assert_eq!(declared.name, "validators");
+    assert_eq!(declared.kind, SlotKind::Keyed);
+
+    let leaf = cells(&end)
+        .get(&validator_leaf(pool(), VALIDATOR))
+        .cloned()
+        .expect("the pool filed its validator");
+    let LeafForm::Value(TypeShape::Ref(named)) = &declared.element else {
+        panic!("the leaf holds a declared type");
+    };
+    let TypeShape::Struct(fields) = &metadata.types[named] else {
+        panic!("that type has named fields");
+    };
+    let [field] = fields.as_slice() else {
+        panic!("a validator is its key and nothing else");
+    };
+    assert_eq!(field.name, "pubkey");
+    assert_eq!(field.shape, TypeShape::ByteArray(48));
+    assert_eq!(leaf, PUBKEY, "the leaf is what the shape says it is");
     Ok(())
 }
 

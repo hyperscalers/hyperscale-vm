@@ -12,7 +12,9 @@
 //! promoting a matured proposal's base before rewriting the cell — is
 //! compaction of what reads already answer, never a change of verdict.
 
-use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
+use hyperscale_hbor::{
+    DecodeError, EncodeError, Hbor, HborShape, from_slice_with_depth, to_vec_with_depth,
+};
 use hyperscale_vm_types::{Address, CallTarget};
 
 use crate::presented::Presented;
@@ -25,7 +27,7 @@ use crate::rule::StoredRule;
 /// roles count up from [`PACKAGE_ROLE_BASE`]. The kernel bounds a number
 /// without resolving it — a wallet renders a package role's name from
 /// the metadata table beside the ones for events and errors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor, HborShape)]
 #[hbor(transparent)]
 pub struct RoleId(pub u16);
 
@@ -76,7 +78,7 @@ pub const fn package_role(n: u16) -> RoleId {
 /// authority moves these bytes without reading them. Whoever judges a
 /// rule decodes them, under the vocabulary's own caps, where the judging
 /// happens.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor, HborShape)]
 #[hbor(transparent)]
 pub struct RoleBytes(pub Vec<u8>);
 
@@ -134,7 +136,7 @@ pub const MAX_ROLE_TABLE_WIRE_DEPTH: usize = 3;
 /// semantics stand — ascending, duplicate-free role numbers — held by
 /// the decode-time validation, so an unsorted payload is refused as a
 /// second byte string for a value that already has one.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor, HborShape)]
 #[hbor(transparent, validate = ascending)]
 pub struct RoleTable(Vec<(RoleId, RoleBytes)>);
 
@@ -251,7 +253,7 @@ pub const MAX_AUTH_CELL_WIRE_DEPTH: usize = 7;
 
 /// The cell's persistent half: the delay a proposal must wait, and the
 /// roles that govern while none has matured.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor, HborShape)]
 pub struct AuthBase {
     /// How long a proposal waits before it governs, in weighted-time
     /// milliseconds.
@@ -272,7 +274,7 @@ impl AuthBase {
 }
 
 /// A pending replacement for the whole base, governing from its instant.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor, HborShape)]
 pub struct Proposal {
     /// The weighted-time instant the proposal's base starts governing,
     /// computed where the proposal is written: the transaction clock
@@ -283,7 +285,7 @@ pub struct Proposal {
 }
 
 /// The decoded stored-authority cell.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor, HborShape)]
 pub struct AuthCell {
     /// The persistent half.
     pub base: AuthBase,

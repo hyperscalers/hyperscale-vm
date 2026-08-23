@@ -931,4 +931,5 @@ PackageMetadata {
             ],
         ),
     },
+    state: {},
 }

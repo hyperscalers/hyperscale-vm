@@ -452,4 +452,37 @@ PackageMetadata {
             ],
         ),
     },
+    state: {
+        SlotId(
+            16,
+        ): SlotShape {
+            name: "tickets",
+            kind: Unordered,
+            element: Value(
+                Ref(
+                    "address",
+                ),
+            ),
+        },
+        SlotId(
+            17,
+        ): SlotShape {
+            name: "round",
+            kind: Cell,
+            element: Value(
+                U64,
+            ),
+        },
+        SlotId(
+            18,
+        ): SlotShape {
+            name: "outcome",
+            kind: Cell,
+            element: Value(
+                Ref(
+                    "outcome",
+                ),
+            ),
+        },
+    },
 }

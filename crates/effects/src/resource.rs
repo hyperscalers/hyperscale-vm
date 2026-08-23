@@ -7,7 +7,7 @@
 //! the record says what they issue, never how much of it exists.
 
 use hyperscale_hbor::{
-    DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec, to_vec_with_depth,
+    DecodeError, EncodeError, Hbor, HborShape, from_slice_with_depth, to_vec, to_vec_with_depth,
 };
 use hyperscale_vm_types::{Address, CollectionId, ResourceAddr, SubstateKey};
 
@@ -115,7 +115,7 @@ pub const RECORD_WIRE_DEPTH: usize = 1;
 /// fungible arm because that is the only arm it means anything on:
 /// instances are whole by construction, so a non-fungible record has
 /// nothing to say beyond existing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor, HborShape)]
 pub enum ResourceRecord {
     /// Linear amounts in vault cells; edges carry 16-byte quantities.
     Fungible {

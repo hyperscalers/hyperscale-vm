@@ -263,4 +263,15 @@ PackageMetadata {
     ],
     roles: [],
     types: {},
+    state: {
+        SlotId(
+            16,
+        ): SlotShape {
+            name: "asks",
+            kind: Ordered,
+            element: Value(
+                U128,
+            ),
+        },
+    },
 }

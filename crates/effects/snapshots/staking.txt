@@ -1065,4 +1065,28 @@ PackageMetadata {
             ],
         ),
     },
+    state: {
+        SlotId(
+            17,
+        ): SlotShape {
+            name: "validators",
+            kind: Keyed,
+            element: Value(
+                Ref(
+                    "validator",
+                ),
+            ),
+        },
+        SlotId(
+            18,
+        ): SlotShape {
+            name: "vote",
+            kind: Cell,
+            element: Value(
+                Ref(
+                    "param-vote",
+                ),
+            ),
+        },
+    },
 }

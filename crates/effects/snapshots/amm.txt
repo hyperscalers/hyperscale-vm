@@ -267,4 +267,5 @@ PackageMetadata {
     ],
     roles: [],
     types: {},
+    state: {},
 }

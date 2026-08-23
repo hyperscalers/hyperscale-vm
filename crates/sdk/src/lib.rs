@@ -160,8 +160,8 @@ pub use blueprint::{Blueprint, Builder, Method};
 pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
 pub use hyperscale_vm_effects::{
     AuthBase, AuthCell, CONFIRMATION, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr,
-    PRIMARY, ParamType, Proposal, RECOVERY, ResourceKind, RoleId, SlotId, encode_metadata,
-    package_role,
+    LeafForm, PRIMARY, ParamType, Proposal, RECOVERY, ResourceKind, RoleId, SlotId, SlotKind,
+    encode_metadata, package_role,
 };
 /// Author a package from one module.
 ///

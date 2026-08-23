@@ -16,7 +16,7 @@ use crate::dsl::{
     Clause, ConditionExpr, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH,
     ModeExpr, TargetExpr, materialized_kind,
 };
-use crate::metadata::{MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
+use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
 use crate::resource::{GrantsExpr, holdings_entry};
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
 use crate::signature::{AbiParam, MethodSignature};
@@ -1419,6 +1419,15 @@ pub enum MetadataBoundsError {
         #[source]
         source: ShapeFault,
     },
+    /// A declared slot whose element cannot be read.
+    #[error("slot {slot:?}: {source}")]
+    Slot {
+        /// The slot whose element is refused.
+        slot: SlotId,
+        /// What cannot be read about it.
+        #[source]
+        source: ShapeFault,
+    },
     /// A declared type under a name the protocol holds, describing
     /// something else. The name is what a consumer resolves by, so one
     /// meaning two things means neither.
@@ -1479,7 +1488,19 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
             source,
         })?;
     }
-    check_types(&metadata.types)
+    check_types(&metadata.types)?;
+    for (slot, declared) in &metadata.state {
+        let LeafForm::Value(shape) = &declared.element else {
+            continue;
+        };
+        shape
+            .resolved_depth(&metadata.types, MAX_SHAPE_DEPTH)
+            .map_err(|source| MetadataBoundsError::Slot {
+                slot: *slot,
+                source,
+            })?;
+    }
+    Ok(())
 }
 
 /// Every declared shape readable, and every reserved name meaning what
@@ -1685,6 +1706,7 @@ mod tests {
     use hyperscale_vm_types::{Address, AddressClass};
 
     use super::*;
+    use crate::metadata::{SlotKind, SlotShape};
 
     /// Metadata declaring `types` and nothing else, which is what the
     /// shape door reads.
@@ -1760,6 +1782,34 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// A slot's element is judged where a declared type is: it names a
+    /// type the same table holds, and a slot reaching outside it would
+    /// be a leaf nobody could read.
+    #[test]
+    fn a_slot_reaching_a_type_the_package_lacks_is_refused() {
+        let holding = |element| PackageMetadata {
+            state: std::iter::once((
+                SlotId(17),
+                SlotShape {
+                    name: "held".into(),
+                    kind: SlotKind::Keyed,
+                    element,
+                },
+            ))
+            .collect(),
+            ..PackageMetadata::default()
+        };
+        assert_eq!(
+            check_metadata(&holding(LeafForm::Value(TypeShape::Ref("absent".into())))),
+            Err(MetadataBoundsError::Slot {
+                slot: SlotId(17),
+                source: ShapeFault::Unresolved("absent".into()),
+            })
+        );
+        // Bytes name no type, so there is nothing for them to reach.
+        assert_eq!(check_metadata(&holding(LeafForm::Bytes)), Ok(()));
     }
 
     /// The protocol's name for an address describes an address, in every

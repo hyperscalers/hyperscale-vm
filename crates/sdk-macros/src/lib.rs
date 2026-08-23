@@ -2913,6 +2913,17 @@ fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ident>)
             records.push(syn::parse_quote!(
                 impl ::hyperscale_vm_sdk::state::Record for #name {}
             ));
+            records.push(syn::parse_quote!(
+                impl ::hyperscale_vm_sdk::state::LeafShape for #name {
+                    fn leaf_form(
+                        types: &mut ::hyperscale_vm_sdk::hbor::ShapeRegistry,
+                    ) -> ::hyperscale_vm_sdk::LeafForm {
+                        ::hyperscale_vm_sdk::LeafForm::Value(
+                            <Self as ::hyperscale_vm_sdk::hbor::HborShape>::shape(types),
+                        )
+                    }
+                }
+            ));
             stored_types.push(name.clone());
         }
     }
@@ -2993,6 +3004,32 @@ fn executing(world: &str, methods: &[Lowered], role: Role) -> (TokenStream2, Tok
     (component, host::dispatch(&arms, role))
 }
 
+/// The `.slot(…)` builder call each declared state field contributes.
+///
+/// A configuration is a leaf per field under its own slot rather than
+/// one this table's key reaches, so it contributes none.
+fn state_table(fields: &BTreeMap<String, Field>) -> Vec<TokenStream2> {
+    fields
+        .iter()
+        .filter_map(|(name, field)| {
+            let kind = match field.kind {
+                FieldKind::Config => return None,
+                FieldKind::Cell => quote!(Cell),
+                FieldKind::Keyed => quote!(Keyed),
+                FieldKind::Ordered => quote!(Ordered),
+                FieldKind::Unordered => quote!(Unordered),
+            };
+            let element = field.element.as_ref()?;
+            let slot = field.slot;
+            Some(quote!(.slot::<#element>(
+                #slot,
+                #name,
+                ::hyperscale_vm_sdk::SlotKind::#kind,
+            )))
+        })
+        .collect()
+}
+
 fn expand(
     mut module: syn::ItemMod,
     serves: client::Serves,
@@ -3050,6 +3087,7 @@ fn expand(
     let event_table = events.iter().map(|(ident, _)| quote!(.event::<#ident>()));
     let error_table = errors.iter().map(|name| quote!(.error(#name)));
     let role_table = declared_roles.iter().map(|name| quote!(.role(#name)));
+    let state_table = state_table(&fields);
 
     let (component, dispatch) = executing(&world, &methods, role);
 
@@ -3085,6 +3123,7 @@ fn expand(
                 #(#error_table)*
                 #(#role_table)*
                 #(#stored_table)*
+                #(#state_table)*
                 .build()
         }
     ));

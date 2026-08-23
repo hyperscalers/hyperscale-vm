@@ -58,11 +58,13 @@ pub fn decode_metadata(bytes: &[u8]) -> Result<PackageMetadata, GateError> {
 #[cfg(test)]
 mod tests {
 
+    use std::collections::BTreeMap;
+
     use hyperscale_hbor::{ShapeTable, to_vec_with_depth};
     use hyperscale_vm_effects::{
         AbiParam, Clause, EdgeContent, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
         MAX_EXPR_DEPTH, MAX_VALUE_DEPTH, METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType,
-        TargetExpr, Totality, Value, package_slot,
+        SlotId, SlotShape, TargetExpr, Totality, Value, package_slot,
     };
     use hyperscale_vm_fixtures::{amm, book, splitter};
     use hyperscale_vm_stdlib::account;
@@ -334,6 +336,7 @@ mod tests {
             errors: Vec<String>,
             roles: Vec<String>,
             types: ShapeTable,
+            state: BTreeMap<SlotId, SlotShape>,
         }
 
         let mut metadata = PackageMetadata::default();
@@ -354,6 +357,7 @@ mod tests {
                     errors: Vec::new(),
                     roles: Vec::new(),
                     types: ShapeTable::new(),
+                    state: BTreeMap::new(),
                 },
                 METADATA_WIRE_DEPTH,
             )
