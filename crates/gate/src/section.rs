@@ -483,12 +483,18 @@ mod tests {
 
     #[test]
     fn a_name_table_past_the_index_the_kernel_accepts_is_refused() {
-        // One shape every entry names, so the table's length is the only
-        // thing under test here.
-        let events = |len: usize| PackageMetadata {
-            events: vec![String::new(); len],
-            types: std::iter::once((String::new(), TypeShape::Tuple(Vec::new()))).collect(),
-            ..PackageMetadata::default()
+        // A name of its own per entry, each with a shape under it, so the
+        // table's length is the only thing under test here.
+        let events = |len: usize| {
+            let named: Vec<String> = (0..len).map(|index| format!("e{index}")).collect();
+            PackageMetadata {
+                types: named
+                    .iter()
+                    .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
+                    .collect(),
+                events: named,
+                ..PackageMetadata::default()
+            }
         };
         assert_bounded(
             &events(MAX_EVENT_TYPES as usize),
@@ -510,9 +516,15 @@ mod tests {
         // Well formed but past the cap: an event table spending more
         // than the section budget, refused on length before the decoder
         // reads a byte of it.
+        let named: Vec<String> = (0..MAX_EVENT_TYPES)
+            .map(|index| format!("{index}{}", "e".repeat(1024)))
+            .collect();
         let over = PackageMetadata {
-            events: vec!["e".repeat(1024); MAX_EVENT_TYPES as usize],
-            types: std::iter::once(("e".repeat(1024), TypeShape::Tuple(Vec::new()))).collect(),
+            types: named
+                .iter()
+                .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
+                .collect(),
+            events: named,
             ..PackageMetadata::default()
         };
         let bytes = encode_unchecked(&over);

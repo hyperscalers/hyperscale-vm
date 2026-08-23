@@ -5,7 +5,7 @@
 //! node: refused at publish, and refused again at routing for a package
 //! that reached the cache without one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Resolution, ShapeFault};
 use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
@@ -1435,6 +1435,18 @@ pub enum MetadataBoundsError {
         /// The event named without one.
         name: String,
     },
+    /// One name over two entries of the event table.
+    ///
+    /// An index resolves through the table to a name and the name to one
+    /// shape, so a name at two indices reads the later event's bytes
+    /// against the earlier one's shape — a wrong answer rather than no
+    /// answer. Two of a package's own types cannot reach one name, so
+    /// there is no event this refuses that a derivation could produce.
+    #[error("event {name:?} is named at two indices, so one of them decodes as the other")]
+    EventNamedTwice {
+        /// The name at both.
+        name: String,
+    },
     /// A declared slot outside the band a package numbers its own state
     /// in.
     ///
@@ -1522,9 +1534,13 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
             source,
         })?;
     }
+    let mut named = BTreeSet::new();
     for name in &metadata.events {
         if !metadata.types.contains_key(name) {
             return Err(MetadataBoundsError::EventWithoutShape { name: name.clone() });
+        }
+        if !named.insert(name.as_str()) {
+            return Err(MetadataBoundsError::EventNamedTwice { name: name.clone() });
         }
     }
     // One resolution for the whole metadata: a name two shapes reach is
@@ -1853,6 +1869,23 @@ mod tests {
         );
     }
 
+    /// An index resolves to a name and a name to one shape, so a name at
+    /// two indices would read one event's bytes as the other's.
+    #[test]
+    fn one_name_at_two_event_indices_is_refused() {
+        let metadata = PackageMetadata {
+            events: vec!["moved".into(), "moved".into()],
+            types: one("moved", TypeShape::U64),
+            ..PackageMetadata::default()
+        };
+        assert_eq!(
+            check_metadata(&metadata),
+            Err(MetadataBoundsError::EventNamedTwice {
+                name: "moved".into()
+            })
+        );
+    }
+
     /// A slot's element is judged where a declared type is: it names a
     /// type the same table holds, and a slot reaching outside it would
     /// be a leaf nobody could read.
@@ -2111,12 +2144,18 @@ mod tests {
     /// ever refer to.
     #[test]
     fn a_name_table_past_the_index_the_kernel_accepts_is_refused() {
-        // One shape every entry names, so the table's length is the only
-        // thing under test here.
-        let events = |len: usize| PackageMetadata {
-            events: vec![String::new(); len],
-            types: one("", TypeShape::Tuple(Vec::new())),
-            ..PackageMetadata::default()
+        // A name of its own per entry, each with a shape under it, so the
+        // table's length is the only thing under test here.
+        let events = |len: usize| {
+            let named: Vec<String> = (0..len).map(|index| format!("e{index}")).collect();
+            PackageMetadata {
+                types: named
+                    .iter()
+                    .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
+                    .collect(),
+                events: named,
+                ..PackageMetadata::default()
+            }
         };
         assert_bounded(
             &events(MAX_EVENT_TYPES as usize),

@@ -144,6 +144,38 @@ pub enum ShapeFault {
     /// same thing at compile time, where a `Vec<()>` is unwritable.
     #[error("a run over an element that carries no bytes is a count nothing pays for")]
     ZeroWidth,
+    /// Two fields of one struct, or two variants of one enum, under one
+    /// name.
+    ///
+    /// The name is what turns a decoded position into a fact, so a name
+    /// covering two of them is two answers to the question a consumer
+    /// asks. A declaration cannot spell this — Rust names a type's
+    /// members once each — so nothing a derive writes is refused here.
+    #[error("{0:?} names two members of one type, so keying by it has two answers")]
+    AmbiguousName(String),
+    /// Two variants of one enum on one discriminant.
+    ///
+    /// The byte is what selects a variant, so the second is a name no
+    /// payload ever reaches. The codec refuses the same collision where
+    /// a variant is declared; a shape is data, so the refusal moves to
+    /// where it is read.
+    #[error("discriminant {0} selects two variants, so one of them is unreachable")]
+    AmbiguousDiscriminant(u8),
+}
+
+/// Every name in one composite its own.
+///
+/// # Errors
+///
+/// [`ShapeFault::AmbiguousName`] for the first name seen twice.
+fn distinct<'s>(names: impl Iterator<Item = &'s str>) -> Result<(), ShapeFault> {
+    let mut seen = BTreeSet::new();
+    for name in names {
+        if !seen.insert(name) {
+            return Err(ShapeFault::AmbiguousName(name.to_owned()));
+        }
+    }
+    Ok(())
 }
 
 /// What one walk found: the frames it spent, the levels a value of the
@@ -290,12 +322,20 @@ impl<'a> Resolution<'a> {
             }
             TypeShape::Tuple(elements) => self.under(elements.iter(), remaining),
             TypeShape::Struct(fields) => {
+                distinct(fields.iter().map(|field| field.name.as_str()))?;
                 self.under(fields.iter().map(|field| &field.shape), remaining)
             }
             // The discriminant is a byte the enum writes itself; every
             // level below it belongs to the variant's own content, and
             // the lightest variant is what no encoding is shorter than.
             TypeShape::Enum(variants) => {
+                distinct(variants.iter().map(|variant| variant.name.as_str()))?;
+                let mut selected = BTreeSet::new();
+                for variant in variants {
+                    if !selected.insert(variant.discriminant) {
+                        return Err(ShapeFault::AmbiguousDiscriminant(variant.discriminant));
+                    }
+                }
                 let mut cost = 1usize;
                 let mut deepest = None::<usize>;
                 let mut lightest = None::<usize>;
@@ -919,6 +959,62 @@ mod tests {
         assert_eq!(
             resolution.readable(&TypeShape::Seq(Box::new(TypeShape::U8)), 8),
             Ok(1)
+        );
+    }
+
+    /// A name is what turns a decoded position into a fact, so one name
+    /// over two members is two answers to one question — and a byte that
+    /// selects two variants leaves one of them unreachable.
+    ///
+    /// Neither is a shape a declaration can spell: Rust names a type's
+    /// members once each, and the codec refuses a discriminant collision
+    /// where the variant is written. A shape is data, so the refusals
+    /// move to where it is read.
+    #[test]
+    fn one_name_over_two_members_is_a_fault() {
+        let types = ShapeTable::new();
+        let named = |name: &str| ShapeField {
+            name: name.to_owned(),
+            shape: TypeShape::U8,
+        };
+        assert_eq!(
+            Resolution::of(&types).readable(
+                &TypeShape::Struct(vec![named("amount"), named("amount")]),
+                8
+            ),
+            Err(ShapeFault::AmbiguousName("amount".into()))
+        );
+        assert_eq!(
+            Resolution::of(&types)
+                .readable(&TypeShape::Struct(vec![named("amount"), named("fee")]), 8),
+            Ok(1)
+        );
+
+        let variant = |name: &str, discriminant| ShapeVariant {
+            name: name.to_owned(),
+            discriminant,
+            content: TypeShape::Tuple(Vec::new()),
+        };
+        assert_eq!(
+            Resolution::of(&types).readable(
+                &TypeShape::Enum(vec![variant("left", 0), variant("left", 1)]),
+                8
+            ),
+            Err(ShapeFault::AmbiguousName("left".into()))
+        );
+        assert_eq!(
+            Resolution::of(&types).readable(
+                &TypeShape::Enum(vec![variant("left", 0), variant("right", 0)]),
+                8
+            ),
+            Err(ShapeFault::AmbiguousDiscriminant(0))
+        );
+        assert_eq!(
+            Resolution::of(&types).readable(
+                &TypeShape::Enum(vec![variant("left", 0), variant("right", 7)]),
+                8
+            ),
+            Ok(0)
         );
     }
 
