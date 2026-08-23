@@ -1,0 +1,5 @@
+error: `sold` already declares slot 17, and a slot names one field: a stored leaf carries its slot and never the material hashed into its key, so a reader that found one could not tell which field it holds
+  --> tests/refusals/denominated_slot.rs:21:9
+   |
+21 |         #[slot(17)]
+   |         ^

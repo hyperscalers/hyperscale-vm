@@ -1154,10 +1154,13 @@ fn parse_state(
             config_name = Some(item.ident.clone());
         }
     }
-    // What a field would name a leaf by: its slot, and the material the
-    // field itself fixes. Two fields agreeing on both are one leaf under
-    // two names, which no accessor can tell apart afterwards.
-    let mut named: BTreeMap<(u16, String), String> = BTreeMap::new();
+    // The slot each field claims, which is one field's. A denomination
+    // separates two leaves in the store, because it is hashed into the
+    // key beside the slot — but it is hashed, so a stored leaf carries
+    // the slot and nothing of the material, and a slot naming two fields
+    // is two leaves a reader could not tell apart. Which is also what
+    // the declared state table is keyed by.
+    let mut named: BTreeMap<u16, String> = BTreeMap::new();
     // The package band's next free slot. A pinned slot advances it too,
     // so an unpinned field never lands on one a later pin also names —
     // the collision that remains is a pin *below* the counter, which the
@@ -1206,16 +1209,13 @@ fn parse_state(
             if parsed.slot >= PACKAGE_SLOT_BASE {
                 next = next.max(parsed.slot + 1);
             }
-            let material = parsed
-                .denomination
-                .as_ref()
-                .map_or_else(String::new, |expr| quote!(#expr).to_string());
-            if let Some(held) = named.insert((parsed.slot, material), name.clone()) {
+            if let Some(held) = named.insert(parsed.slot, name.clone()) {
                 return Err(syn::Error::new(
                     field.span(),
                     format!(
-                        "`{held}` already holds slot {} under the same material, so both fields \
-                         name one leaf",
+                        "`{held}` already declares slot {}, and a slot names one field: a \
+                         stored leaf carries its slot and never the material hashed into its \
+                         key, so a reader that found one could not tell which field it holds",
                         parsed.slot
                     ),
                 ));

@@ -1,4 +1,4 @@
-error: `seen` already holds slot 16 under the same material, so both fields name one leaf
+error: `seen` already declares slot 16, and a slot names one field: a stored leaf carries its slot and never the material hashed into its key, so a reader that found one could not tell which field it holds
   --> tests/refusals/aliased_slot.rs:11:9
    |
 11 |         #[slot(16)]
