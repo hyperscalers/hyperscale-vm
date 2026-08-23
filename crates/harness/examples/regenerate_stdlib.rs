@@ -28,19 +28,19 @@ use wasmtime::Result;
 use wasmtime::error::Context;
 
 /// Each guest and the crate whose `blobs` directory holds it.
+///
+/// Read off the two crates' own lists: what ships is what they say
+/// ships, so a blob this never writes is one nothing includes.
 #[cfg(target_os = "linux")]
-const BLOBS: &[(&str, &str)] = &[
-    ("account", "crates/stdlib/blobs"),
-    ("staking", "crates/stdlib/blobs"),
-    ("amm", "crates/fixtures/blobs"),
-    ("book", "crates/fixtures/blobs"),
-    ("lending", "crates/fixtures/blobs"),
-    ("lottery", "crates/fixtures/blobs"),
-    ("payouts", "crates/fixtures/blobs"),
-    ("peg", "crates/fixtures/blobs"),
-    ("perp", "crates/fixtures/blobs"),
-    ("shares", "crates/fixtures/blobs"),
-];
+fn blobs() -> Vec<(&'static str, &'static str)> {
+    let protocol = hyperscale_vm_stdlib::SHIPPED
+        .iter()
+        .map(|(name, _)| (*name, "crates/stdlib/blobs"));
+    let fixtures = hyperscale_vm_fixtures::SHIPPED
+        .iter()
+        .map(|(name, _)| (*name, "crates/fixtures/blobs"));
+    protocol.chain(fixtures).collect()
+}
 
 /// Off the canonical host there is nothing to write that anyone could
 /// reproduce, so the only honest outcome is a refusal naming the script
@@ -57,10 +57,10 @@ fn main() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn main() -> Result<()> {
-    for (guest, blobs) in BLOBS {
+    for (guest, directory) in blobs() {
         let artifact = build_guest(guest)?;
         let path = repo_root()
-            .join(Path::new(blobs))
+            .join(Path::new(directory))
             .join(format!("{guest}.component.wasm"));
         std::fs::write(&path, &artifact).with_context(|| format!("write {}", path.display()))?;
         println!("wrote {} ({} bytes)", path.display(), artifact.len());

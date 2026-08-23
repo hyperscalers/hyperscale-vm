@@ -142,6 +142,16 @@ pub struct SlotShape {
     pub element: LeafForm,
 }
 
+/// How a crate lists the packages it declares: each by the name its
+/// artifacts and snapshots are filed under, with the function that
+/// traces its declaration.
+///
+/// The shape rather than the list — which packages there are is each
+/// crate's own business, and this is only what "a package, by name, with
+/// what it declares" is spelled as so that a consumer sweeping several
+/// crates sweeps one shape.
+pub type DeclaredPackages = &'static [(&'static str, fn() -> PackageMetadata)];
+
 /// Everything routing reads about a published package.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct PackageMetadata {

@@ -11,32 +11,24 @@ use hyperscale_vm_effects::{
     PackageMetadata, RECOVERY, ResourceKind, RuleExpr, RuleLeaf, Value, check_abi,
     check_declarations,
 };
-use hyperscale_vm_fixtures::{
-    amm, book, lending, lottery, nf, payouts, peg, perp, registry, splitter,
-};
+use hyperscale_vm_fixtures::DECLARED as FIXTURES;
+use hyperscale_vm_stdlib::DECLARED as PROTOCOL;
 use hyperscale_vm_stdlib::staking::OWNER_BADGE;
-use hyperscale_vm_stdlib::{account, staking};
 
 /// Every authored package, in the order the exhaustive sweeps read them.
 ///
 /// Traced and hand-written alike. `nf` and `registry` are `wit_bindgen`
 /// packages whose declarations are written out beside them, which makes
 /// them the ones a rule the tracer happens to satisfy would miss.
+///
+/// Read off each crate's own list rather than named here, so a package
+/// cannot be added and left unswept.
 fn corpus() -> Vec<(&'static str, PackageMetadata)> {
-    vec![
-        ("account", account::metadata()),
-        ("amm", amm::metadata()),
-        ("book", book::metadata()),
-        ("lending", lending::metadata()),
-        ("lottery", lottery::metadata()),
-        ("nf", nf::metadata()),
-        ("payouts", payouts::metadata()),
-        ("peg", peg::metadata()),
-        ("perp", perp::metadata()),
-        ("registry", registry::metadata()),
-        ("splitter", splitter::metadata()),
-        ("staking", staking::metadata()),
-    ]
+    PROTOCOL
+        .iter()
+        .chain(FIXTURES)
+        .map(|(name, metadata)| (*name, metadata()))
+        .collect()
 }
 
 /// Exhaustive over the corpus: whatever a package may declare, an
@@ -138,6 +130,39 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("book", "fill-asks", open(), vec![]),
         ("book", "instantiate", open(), vec![]),
         ("book", "place-ask", open(), vec![]),
+        ("grammar", "accrue", open(), vec![]),
+        ("grammar", "charge", open(), vec![]),
+        ("grammar", "charge-or", open(), vec![]),
+        ("grammar", "escrow", open(), vec![]),
+        ("grammar", "file", open(), vec![]),
+        ("grammar", "fund", open(), vec![]),
+        ("grammar", "instantiate", open(), vec![]),
+        ("grammar", "jot", open(), vec![]),
+        ("grammar", "later", open(), vec![]),
+        ("grammar", "ledgered", open(), vec![]),
+        ("grammar", "noted", open(), vec![]),
+        ("grammar", "owe-each", open(), vec![]),
+        ("grammar", "raise", open(), vec![]),
+        ("grammar", "reseat", open(), vec![]),
+        ("grammar", "restow", open(), vec![]),
+        ("grammar", "scheduled", open(), vec![]),
+        ("grammar", "seat", open(), vec![]),
+        ("grammar", "seated", open(), vec![]),
+        ("grammar", "settle", open(), vec![]),
+        ("grammar", "spread", open(), vec![]),
+        ("grammar", "spread-to", open(), vec![]),
+        ("grammar", "stash", open(), vec![]),
+        ("grammar", "stow", open(), vec![]),
+        ("grammar", "survey", open(), vec![]),
+        ("grammar", "surveyed", open(), vec![]),
+        ("grammar", "sweep", open(), vec![]),
+        ("grammar", "take", open(), vec![]),
+        ("grammar", "tallied", open(), vec![]),
+        ("grammar", "tally", open(), vec![]),
+        ("grammar", "tally-plainly", open(), vec![]),
+        ("grammar", "unseat", open(), vec![]),
+        ("grammar", "widest", open(), vec![]),
+        ("grammar", "windowed", open(), vec![]),
         ("lending", "accrue", open(), vec![]),
         ("lending", "deposit", open(), vec![]),
         ("lending", "draw", open(), vec![]),
@@ -227,6 +252,11 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("registry", "bind", open(), vec![]),
         ("registry", "check", open(), vec![]),
         ("registry", "drain", open(), vec![]),
+        ("shares", "deposit", open(), vec![]),
+        ("shares", "instantiate", open(), vec![]),
+        ("shares", "mint", open(), vec![]),
+        ("shares", "redeem", open(), vec![]),
+        ("shares", "withdraw", open(), vec![]),
         ("splitter", "take", open(), vec![]),
         ("staking", "cast-param-vote", owner_badge(), vec![]),
         ("staking", "clear-param-vote", owner_badge(), vec![]),
@@ -247,7 +277,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
 #[test]
 fn every_authored_method_declares_who_may_call_it() {
     let packages = corpus();
-    let declared: Vec<_> = packages
+    let mut declared: Vec<_> = packages
         .iter()
         .flat_map(|(package, metadata)| {
             metadata.methods.iter().map(move |(name, signature)| {
@@ -267,6 +297,9 @@ fn every_authored_method_declares_who_may_call_it() {
             })
         })
         .collect();
+    // The table is written alphabetically, so the corpus reading is too:
+    // which crate a package lives in is not a fact the table records.
+    declared.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
     assert_eq!(declared, authored_authority());
 }
 

@@ -84,8 +84,9 @@ pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, NodeCall, distinct_ids};
 pub use manifest::{Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
-    LeafForm, MAX_SHAPE_DEPTH, MetadataCache, PACKAGE_SLOT, PackageHash, PackageMetadata,
-    PublishRefusal, SlotKind, SlotShape, package_hash, package_key, reserved_shape,
+    DeclaredPackages, LeafForm, MAX_SHAPE_DEPTH, MetadataCache, PACKAGE_SLOT, PackageHash,
+    PackageMetadata, PublishRefusal, SlotKind, SlotShape, package_hash, package_key,
+    reserved_shape,
 };
 pub use presented::Presented;
 pub use publish::{

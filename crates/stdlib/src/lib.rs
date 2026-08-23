@@ -18,7 +18,8 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::vocabulary::GENESIS_PUBLISHER as GENESIS_PUBLISHER_ROLE;
 use hyperscale_vm_effects::{
-    Hasher, PackageHash, attach_metadata, native_address, package_hash, package_key,
+    DeclaredPackages, Hasher, PackageHash, PackageMetadata, attach_metadata, native_address,
+    package_hash, package_key,
 };
 use hyperscale_vm_types::{NativeAddr, StateWrites};
 pub use instantiate::instantiate;
@@ -92,6 +93,22 @@ pub fn staking_artifact() -> &'static [u8] {
 /// The protocol's own packages: the account every principal answers and
 /// the stake pool the beacon folds facts for.
 ///
+/// The protocol packages, by name, with the declaration each traces.
+///
+/// The same reading `hyperscale_vm_fixtures::DECLARED` offers, so a
+/// corpus sweep covers both without knowing there are two crates.
+pub const DECLARED: DeclaredPackages = &[
+    ("account", account::metadata as fn() -> PackageMetadata),
+    ("staking", staking::metadata as fn() -> PackageMetadata),
+];
+
+/// The same two by name, with the committed bytes their digest gate and
+/// the regenerate example both read.
+pub const SHIPPED: &[(&str, &[u8])] = &[
+    ("account", ACCOUNT_COMPONENT),
+    ("staking", STAKING_COMPONENT),
+];
+
 /// What every network is born running, as against the artifacts a
 /// particular network chooses to seed beside them.
 #[must_use]

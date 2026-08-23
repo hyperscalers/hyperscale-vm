@@ -44,100 +44,133 @@ pub mod splitter;
 
 use std::sync::LazyLock;
 
-use hyperscale_vm_effects::{Hasher, PackageHash, attach_metadata, package_hash};
+use hyperscale_vm_effects::{
+    DeclaredPackages, Hasher, PackageHash, PackageMetadata, attach_metadata, package_hash,
+};
 
-/// One seedable package: its committed component, the artifact that
-/// component plus its metadata makes, and the address that artifact
-/// hashes to.
+/// Every package this crate declares, and for the ones that ship as
+/// artifacts, the three items a consumer reaches them through.
 ///
-/// A macro because the three are the same three every time and the only
-/// thing that varies is which guest — and a package that reached this
-/// list by hand would be one whose plumbing could differ from its
-/// neighbours' without anybody noticing.
-macro_rules! seedable {
+/// One list because a package is one thing. What a corpus sweep wants —
+/// every declaration — and what an embedder wants — every committed blob
+/// — are two readings of it rather than two lists to keep agreeing, and
+/// the second list is the one that quietly falls behind: the commit that
+/// added the seventh package left three of six registrations unmade.
+///
+/// A module named without a blob is one nothing seeds. It is still
+/// declared, still swept, and still snapshotted; it simply has no
+/// committed bytes for a consumer to publish.
+macro_rules! packages {
     ($(
-        $(#[$doc:meta])*
-        $module:ident => ($component:ident, $artifact:ident, $hash:ident, $blob:literal);
+        $module:ident $(=> ($component:ident, $artifact:ident, $hash:ident, $blob:literal))?;
     )*) => {
         $(
-            $(#[$doc])*
-            pub const $component: &[u8] = include_bytes!(concat!("../blobs/", $blob));
+            $(
+                /// The committed component bytes: the guest as its
+                /// canonical builder produced it, before its declaration
+                /// is attached.
+                pub const $component: &[u8] = include_bytes!(concat!("../blobs/", $blob));
 
-            /// The package's content address under `hasher` — the key its
-            /// metadata publishes under and instances bind to.
-            #[must_use]
-            pub fn $hash(hasher: &dyn Hasher) -> PackageHash {
-                package_hash(hasher, $artifact())
-            }
+                /// The package's content address under `hasher` — the key
+                /// its metadata publishes under and instances bind to.
+                #[must_use]
+                pub fn $hash(hasher: &dyn Hasher) -> PackageHash {
+                    package_hash(hasher, $artifact())
+                }
 
-            /// The package as a publishable artifact: the committed guest
-            /// blob with its effect metadata attached in the section a
-            /// published package carries it in.
-            #[must_use]
-            pub fn $artifact() -> &'static [u8] {
-                static ARTIFACT: LazyLock<Vec<u8>> = LazyLock::new(|| {
-                    attach_metadata($component, &$module::metadata())
-                        .expect("the metadata attaches to its committed blob")
-                });
-                &ARTIFACT
-            }
+                /// The package as a publishable artifact: the committed
+                /// guest blob with its effect metadata attached in the
+                /// section a published package carries it in.
+                #[must_use]
+                pub fn $artifact() -> &'static [u8] {
+                    static ARTIFACT: LazyLock<Vec<u8>> = LazyLock::new(|| {
+                        attach_metadata($component, &$module::metadata())
+                            .expect("the metadata attaches to its committed blob")
+                    });
+                    &ARTIFACT
+                }
+            )?
         )*
+
+        /// Every package here, by name, with the declaration it traces.
+        ///
+        /// What the corpus sweeps read: adding a module to this list is
+        /// enough to have its declaration checked and its snapshot
+        /// committed, so neither sweep can be the one somebody forgot.
+        pub const DECLARED: DeclaredPackages = &[
+            $((stringify!($module), $module::metadata as fn() -> PackageMetadata),)*
+        ];
+
+        /// The ones that ship as committed bytes, by name, with those
+        /// bytes.
+        ///
+        /// What the digest gate reads to prove a blob is what its source
+        /// builds, and what the regenerate example reads to know which
+        /// guests to build.
+        pub const SHIPPED: &[(&str, &[u8])] = &[
+            $($((stringify!($module), $component),)?)*
+        ];
 
         /// The fixture artifacts an embedder seeds as a set.
         ///
         /// What a simulation needs to start a network that already has
-        /// something to do: a pool, a book, a lending market, a
-        /// perpetual, a share vault, a splitter and a lottery. Every one
-        /// of them publishes from committed bytes rather than through a
-        /// test, which is the difference between a package a simulation
-        /// can seed and one only the corpus can reach.
+        /// something to do. Every one of them publishes from committed
+        /// bytes rather than through a test, which is the difference
+        /// between a package a simulation can seed and one only the
+        /// corpus can reach.
         #[must_use]
         pub fn artifacts() -> Vec<&'static [u8]> {
-            vec![$($artifact()),*]
+            vec![$($($artifact(),)?)*]
+        }
+
+        /// Every shipped package's artifact, with the metadata its
+        /// address covers.
+        #[must_use]
+        pub fn seeded() -> Vec<(&'static [u8], PackageMetadata)> {
+            vec![$($(($artifact(), $module::metadata()),)?)*]
         }
     };
 }
 
-seedable! {
-    /// The constant-product pool: swaps against a pair, and claims on it.
+packages! {
+    // The constant-product pool: swaps against a pair, and claims on it.
     amm => (AMM_COMPONENT, amm_artifact, amm_package_hash, "amm.component.wasm");
-    /// The order book: makers rest asks on a tick ladder, takers walk it.
+    // The order book: makers rest asks on a tick ladder, takers walk it.
     book => (BOOK_COMPONENT, book_artifact, book_package_hash, "book.component.wasm");
-    /// The lending market: collateral against debt, over a carried index.
+    // The shape corpus: every form the grammar admits, as a package that
+    // has to execute them. Declared and never seeded — what it is for is
+    // the derivation, not a network.
+    grammar;
+    // The lending market: collateral against debt, over a carried index.
     lending => (LENDING_COMPONENT, lending_artifact, lending_package_hash, "lending.component.wasm");
-    /// The lottery: `enter` buys a ticket, `close` seals the round, and
-    /// `settle` opens the seal to pick a winner.
+    // The lottery: `enter` buys a ticket, `close` seals the round, and
+    // `settle` opens the seal to pick a winner.
     lottery => (LOTTERY_COMPONENT, lottery_artifact, lottery_package_hash, "lottery.component.wasm");
-    /// The fee splitter: revenue in, three configured shares out.
+    // The non-fungible issuer, whose declaration is written out beside
+    // it rather than traced.
+    nf;
+    // The fee splitter: revenue in, three configured shares out.
     payouts => (PAYOUTS_COMPONENT, payouts_artifact, payouts_package_hash, "payouts.component.wasm");
-    /// The redemption window: a stable against a reserve, at a price
-    /// that moves both ways.
+    // The redemption window: a stable against a reserve, at a price
+    // that moves both ways.
     peg => (PEG_COMPONENT, peg_artifact, peg_package_hash, "peg.component.wasm");
-    /// The perpetual: margin against a size, marked and funded.
+    // The perpetual: margin against a size, marked and funded.
     perp => (PERP_COMPONENT, perp_artifact, perp_package_hash, "perp.component.wasm");
-    /// The share vault: assets in, shares out, at whatever the pool is worth.
+    // The registry, hand-authored alongside its declaration.
+    registry;
+    // The share vault: assets in, shares out, at whatever the pool is worth.
     shares => (SHARES_COMPONENT, shares_artifact, shares_package_hash, "shares.component.wasm");
+    // The bucket splitter, hand-authored and never built as a guest.
+    splitter;
 }
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{PackageMetadata, TestHasher, extract_metadata};
+    use std::collections::BTreeSet;
+
+    use hyperscale_vm_effects::{TestHasher, extract_metadata};
 
     use super::*;
-
-    /// Every seedable package, with the metadata its address covers.
-    fn seeded() -> Vec<(&'static [u8], PackageMetadata)> {
-        vec![
-            (amm_artifact(), amm::metadata()),
-            (book_artifact(), book::metadata()),
-            (lending_artifact(), lending::metadata()),
-            (lottery_artifact(), lottery::metadata()),
-            (payouts_artifact(), payouts::metadata()),
-            (peg_artifact(), peg::metadata()),
-            (perp_artifact(), perp::metadata()),
-            (shares_artifact(), shares::metadata()),
-        ]
-    }
 
     #[test]
     fn every_artifact_carries_the_metadata_its_address_covers() {
@@ -160,9 +193,34 @@ mod tests {
         );
     }
 
+    /// Every blob on disk is one the list names.
+    ///
+    /// The other direction is free — a name without a file fails to
+    /// compile, because the bytes are included at build time. This is the
+    /// direction that can go quiet: a committed blob nothing names is a
+    /// blob no digest test proves and no consumer can reach, which is
+    /// exactly how six of nine came to be ungated.
     #[test]
-    fn the_fixture_set_is_every_artifact_this_crate_ships() {
-        let shipped: Vec<_> = seeded().into_iter().map(|(artifact, _)| artifact).collect();
-        assert_eq!(artifacts(), shipped);
+    fn every_committed_blob_is_a_package_this_crate_ships() {
+        let named: BTreeSet<_> = SHIPPED
+            .iter()
+            .map(|(name, _)| format!("{name}.component.wasm"))
+            .collect();
+        let on_disk: BTreeSet<_> = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/blobs"))
+            .expect("the blobs directory")
+            .map(|entry| entry.expect("a directory entry").file_name())
+            .filter_map(|name| name.to_str().map(str::to_owned))
+            .filter(|name| std::path::Path::new(name).extension() == Some("wasm".as_ref()))
+            .collect();
+        assert_eq!(on_disk, named);
+    }
+
+    /// A package that ships is a package that is declared.
+    #[test]
+    fn everything_shipped_is_everything_declared_or_less() {
+        let declared: BTreeSet<_> = DECLARED.iter().map(|(name, _)| *name).collect();
+        for (name, _) in SHIPPED {
+            assert!(declared.contains(name), "{name} ships and is not declared");
+        }
     }
 }

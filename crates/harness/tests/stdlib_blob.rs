@@ -18,10 +18,11 @@ use hyperscale_vm_effects::{
     Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, Value, child_key,
     collection_id, order_key,
 };
-use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, lottery};
+use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, SHIPPED as FIXTURES, lottery};
 use hyperscale_vm_harness::dual::DualGuest;
 #[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
+use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_kernel::{
     Capability, DOMAIN_SEALED_DRAW, EnvInputs, Interval, KernelSession, MemoryStore, OverlayStore,
     Receipt,
@@ -30,7 +31,7 @@ use hyperscale_vm_ref::{CVal, HandleKind};
 use hyperscale_vm_runtime::validate_component;
 use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_sdk::state::Word;
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
+use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, SHIPPED as PROTOCOL, STAKING_COMPONENT};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Movement,
     ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey, TxHash, encode_amount,
@@ -263,7 +264,8 @@ fn absolute_paths(blob: &[u8]) -> Vec<String> {
 }
 
 /// The committed blobs are what their sources build on the canonical
-/// builder platform.
+/// builder platform — every one of them, read off the lists the crates
+/// shipping them keep, so a blob cannot be committed and left ungated.
 ///
 /// The blob is the protocol artifact and the source is the thing people
 /// edit; without this equality an edited guest passes every behavioural
@@ -275,14 +277,33 @@ fn absolute_paths(blob: &[u8]) -> Vec<String> {
 /// function order per host OS. Linux owns the bytes —
 /// `scripts/regenerate-stdlib.sh` produces them in a pinned container —
 /// so the equality check runs only where the canonical builder lives.
+/// Every package either crate ships, with the bytes it committed.
+///
+/// Outside the platform gate below, so that the one thing this file can
+/// get wrong on any machine — which blobs it covers — is checked on every
+/// machine rather than only where the comparison itself can run.
+fn shipped() -> Vec<(&'static str, &'static [u8])> {
+    PROTOCOL.iter().chain(FIXTURES).copied().collect()
+}
+
+/// The gate covers every blob the workspace commits.
+#[test]
+fn the_digest_gate_covers_every_committed_blob() {
+    let covered: std::collections::BTreeSet<_> = shipped().into_iter().map(|(n, _)| n).collect();
+    for directory in ["crates/stdlib/blobs", "crates/fixtures/blobs"] {
+        for entry in std::fs::read_dir(repo_root().join(directory)).expect("a blobs directory") {
+            let file = entry.expect("a directory entry").file_name();
+            let name = file.to_str().expect("a nameable blob");
+            let package = name.trim_end_matches(".component.wasm");
+            assert!(covered.contains(package), "{directory}/{name} is not gated");
+        }
+    }
+}
+
 #[test]
 #[cfg(target_os = "linux")]
 fn the_committed_blobs_are_what_their_sources_build() -> Result<()> {
-    for (name, committed) in [
-        ("account", ACCOUNT_COMPONENT),
-        ("staking", STAKING_COMPONENT),
-        ("lottery", LOTTERY_COMPONENT),
-    ] {
+    for (name, committed) in shipped() {
         let built = build_guest(name)?;
         assert!(
             built == committed,
