@@ -238,8 +238,15 @@ fn the_handle_plan_matches_what_the_kernel_materializes() {
     // (target, mode), which is a comparison over child-key hashes — stable
     // but arbitrary, and it moves with the hasher. This test asserts the
     // plan tracks `Declaration::ordered` and, separately, that the set
-    // order genuinely differs, so the correspondence is load-bearing
-    // rather than coincidental.
+    // order genuinely differs somewhere, so the correspondence is a
+    // property rather than a coincidence.
+    //
+    // The witness is statistical, so the sample has to be wide. Only the
+    // two vault keys move with the configuration; the configuration key
+    // is the same one every time, and where it happens to sort below
+    // every vault key drawn, the set agrees with the plan throughout and
+    // there is no witness at all. A sample of a few keys can lose that
+    // way on a hasher that means nothing by it.
     let pool = Blueprint::builder()
         .method(
             "swap",
@@ -270,8 +277,8 @@ fn the_handle_plan_matches_what_the_kernel_materializes() {
     assert!(plan.iter().all(|s| s.point));
 
     let mut set_order_differed = 0;
-    for x in 0..8_u8 {
-        for y in 0..8_u8 {
+    for x in 0..64_u8 {
+        for y in 0..64_u8 {
             if x == y {
                 continue; // a degenerate pair collapses; see the test below
             }

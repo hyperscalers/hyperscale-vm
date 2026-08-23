@@ -17,12 +17,28 @@ use crate::types::{MAX_IDS_PER_EDGE, Value};
 /// for any, a position or class kind for fewer — and admission refuses a
 /// literal outside them. That refusal is what lets a body read the
 /// parameter at the narrow type with no failure arm of its own.
+///
+/// The variants are grouped — numbers, bytes, addresses widest first,
+/// authority, then the two edge kinds — and the grouping is the wire
+/// format, not a tidying: nothing here carries a discriminant of its
+/// own, so a signature's parameter list is encoded by declaration order.
+/// A new kind goes where it belongs among its neighbours, which moves
+/// the ones below it; appending to dodge that is how a list stops
+/// meaning anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum ParamType {
     /// An unsigned 64-bit integer.
     U64,
     /// An unsigned 128-bit integer.
     U128,
+    /// An unsigned 256-bit integer, little-endian — the width a stored
+    /// rate has.
+    ///
+    /// The kind a rate crosses at. A configuration slot has held one
+    /// since a rate could be configured; a parameter holds one so that
+    /// the number an oracle posts says what it means where it is written,
+    /// rather than being a scaled integer and a comment agreeing.
+    U256,
     /// Opaque bytes.
     Bytes,
     /// A global object's address, of any class.
@@ -37,26 +53,6 @@ pub enum ParamType {
     Package,
     /// A resource's address: what an amount is denominated in.
     Resource,
-    /// An unsigned 256-bit integer, little-endian — the width a stored
-    /// rate has.
-    ///
-    /// The kind a rate crosses at. A configuration slot has held one
-    /// since a rate could be configured; a parameter holds one so that
-    /// the number an oracle posts says what it means where it is written,
-    /// rather than being a scaled integer and a comment agreeing.
-    ///
-    /// Appended, like every kind after the first set, because a
-    /// signature's parameter list is encoded by variant order.
-    U256,
-    /// A fungible value edge; its resource type is static, its amount
-    /// dynamic.
-    ///
-    /// Which of the two edge kinds a method consumes is part of its
-    /// signature rather than a fact about whichever edge is routed in:
-    /// the two cross the boundary as different cells, so a callee that
-    /// did not say would be one whose guest had to sniff what it was
-    /// handed.
-    Bucket,
     /// An authority rule, carried as its canonical bytes and decoded as
     /// the vocabulary at admission — so a rule past a cap, or with a
     /// degenerate threshold, is refused before anything signs.
@@ -70,6 +66,15 @@ pub enum ParamType {
     /// names the ids it moves; nothing about an instance is resolved at
     /// execution.
     Ids,
+    /// A fungible value edge; its resource type is static, its amount
+    /// dynamic.
+    ///
+    /// Which of the two edge kinds a method consumes is part of its
+    /// signature rather than a fact about whichever edge is routed in:
+    /// the two cross the boundary as different cells, so a callee that
+    /// did not say would be one whose guest had to sniff what it was
+    /// handed.
+    Bucket,
     /// A non-fungible value edge, carrying the instances it moves rather
     /// than an amount.
     NfBucket,
@@ -110,11 +115,11 @@ impl ParamType {
             Self::Component => "component-address",
             Self::Package => "package-address",
             Self::Resource => "resource-address",
-            Self::Bucket => "bucket",
-            Self::NfBucket => "nf-bucket",
             Self::Rule => "rule",
             Self::RoleTable => "role-table",
             Self::Ids => "ids",
+            Self::Bucket => "bucket",
+            Self::NfBucket => "nf-bucket",
         }
     }
 

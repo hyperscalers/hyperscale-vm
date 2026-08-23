@@ -364,30 +364,16 @@ pub const MAX_VALUE_WIRE_DEPTH: usize = 2 * MAX_VALUE_DEPTH;
 /// A typed value the DSL evaluates over: manifest literals, edge
 /// projections, instance configuration fields, and everything derivable
 /// from them.
+///
+/// The variants are grouped — the judgment and the integer widths, bytes,
+/// the two ways of naming a place, the two products, then the one thing
+/// that is not a literal at all — and the grouping is the wire format,
+/// not a tidying: a value's variant order is its encoding, and it is
+/// child-address material besides, so a kind added among its neighbours
+/// moves the ones below it. Appending to dodge that is how a list stops
+/// meaning anything.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 pub enum Value {
-    /// An unsigned 64-bit integer.
-    U64(u64),
-    /// An unsigned 128-bit integer — the amount width.
-    U128(u128),
-    /// Opaque bytes.
-    Bytes(Vec<u8>),
-    /// A global object's address.
-    Address(Address),
-    /// A full substate key.
-    Key(SubstateKey),
-    /// The routable projection of a value edge: its static resource type
-    /// and what it carries besides.
-    Bucket {
-        /// The resource the edge carries.
-        resource: ResourceAddr,
-        /// What crosses the edge: a dynamic amount, or named instances.
-        content: EdgeContent,
-    },
-    /// A fixed-arity product.
-    Tuple(Vec<Self>),
-    /// A bounded homogeneous sequence.
-    List(Vec<Self>),
     /// A judgment: what a predicate evaluates to.
     ///
     /// The one kind with no guest representation, and nothing hands one
@@ -397,11 +383,12 @@ pub enum Value {
     /// there — so a boolean is never two copies agreeing by convention,
     /// because there is only ever the one.
     Bool(bool),
+    /// An unsigned 64-bit integer.
+    U64(u64),
+    /// An unsigned 128-bit integer — the amount width.
+    U128(u128),
     /// An unsigned 256-bit integer, little-endian — the stored rate's
     /// width.
-    ///
-    /// Appended, like every variant after the first set, because a
-    /// value's variant order is its encoding.
     ///
     /// Bytes rather than a named type, because this crate cannot see the
     /// SDK's and the wire form is the bytes either way. It crosses to a
@@ -409,6 +396,24 @@ pub enum Value {
     /// it needs no shape of its own at the boundary — what reads it back
     /// is the decode the declared type already has.
     U256([u8; 32]),
+    /// Opaque bytes.
+    Bytes(Vec<u8>),
+    /// A global object's address.
+    Address(Address),
+    /// A full substate key.
+    Key(SubstateKey),
+    /// A fixed-arity product.
+    Tuple(Vec<Self>),
+    /// A bounded homogeneous sequence.
+    List(Vec<Self>),
+    /// The routable projection of a value edge: its static resource type
+    /// and what it carries besides.
+    Bucket {
+        /// The resource the edge carries.
+        resource: ResourceAddr,
+        /// What crosses the edge: a dynamic amount, or named instances.
+        content: EdgeContent,
+    },
 }
 
 /// The decimal a 256-bit literal names.
@@ -447,16 +452,16 @@ impl Value {
     #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
+            Self::Bool(_) => "bool",
             Self::U64(_) => "u64",
             Self::U128(_) => "u128",
+            Self::U256(_) => "u256",
             Self::Bytes(_) => "bytes",
             Self::Address(_) => "address",
             Self::Key(_) => "key",
-            Self::Bucket { .. } => "bucket",
             Self::Tuple(_) => "tuple",
             Self::List(_) => "list",
-            Self::Bool(_) => "bool",
-            Self::U256(_) => "u256",
+            Self::Bucket { .. } => "bucket",
         }
     }
 

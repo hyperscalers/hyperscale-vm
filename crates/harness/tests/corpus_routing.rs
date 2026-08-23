@@ -23,13 +23,20 @@ use common::world::*;
 /// the encoded role sets in the propose vector are the witness —
 /// unchanged, is a re-pin of the same routing.
 ///
+/// A drift in the addresses themselves is not that. Until a network
+/// runs, the protocol answer to one can be that the derivation was
+/// deliberately moved: [`Value`]'s variant order is its encoding and its
+/// encoding is child-address material, so reorganizing the vocabulary
+/// moves every key derived from a literal. After a network runs, no such
+/// answer exists.
+///
 /// The swap and fill pins carry the instantiation fence: admission reads
 /// the configuration leaf of every component a node targets, so the
-/// owning shard is a participant and provisions the leaf. The read is
-/// appended to the node's frame, which is where it sits in `ordered`.
-/// Transfer and propose reach only principals, which have no creation to
-/// finish and take no fence, and their pins did not move — the
-/// accounts-pay-nothing half of that answer.
+/// owning shard is a participant and provisions the leaf. Transfer and
+/// propose reach only principals, which have no creation to finish and
+/// take no fence.
+///
+/// [`Value`]: hyperscale_vm_effects::Value
 #[test]
 fn the_catalogue_routes_to_pinned_vectors() {
     let world = world();
@@ -54,11 +61,11 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "48581278cc03342e87aa9c0fd30e8321c26a8f889f12f51db6ba0f4f0a3f8825";
+const PIN_TRANSFER: &str = "0a3c07581858993f86bbbe2d6e30e40ab23690e1db50db5cea149e1992145187";
 
-const PIN_SWAP: &str = "7ba91597f941b234e5826d1c6cdd2fa2e9b4de39e12e805b1b8d9cd3b06bf582";
+const PIN_SWAP: &str = "5c03f897ed06e178b103d455a5e3dd1ba0b4dfd94209fd05e1a410a6b40a8b2c";
 
-const PIN_FILL: &str = "f1aa5034c0af7cda726ce76dda7ac67f2caf54da651ccb67aaac6aa577889c34";
+const PIN_FILL: &str = "d6e3984cc24b34ea38c7fa6f40df4b4e069d6a27d1a8487cc61d6b12523dec9a";
 
 const PIN_PROPOSE: &str = "15155b4205c3c1c16e7f5f940ff8df7ee6c69afcddb99a1ce5dca4dffc805a79";
 
