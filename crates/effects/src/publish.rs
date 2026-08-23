@@ -1436,6 +1436,21 @@ pub enum MetadataBoundsError {
         /// The event named without one.
         name: String,
     },
+    /// A declared slot outside the band a package numbers its own state
+    /// in.
+    ///
+    /// The table says what a package declares, and below the band are
+    /// the protocol's own cells — an engine derives their keys without
+    /// consulting any metadata, so they are declared by nobody and
+    /// described by the vocabulary rather than by whoever stores beside
+    /// them. Above the band are the kernel's, which no signature reaches
+    /// at all. A row for either is a package telling a consumer that a
+    /// cell it does not own holds what it says.
+    #[error("slot {slot:?} is not in the band a package numbers its own state in")]
+    SlotOutsideBand {
+        /// The slot claimed.
+        slot: SlotId,
+    },
     /// A declared slot whose element cannot be read.
     #[error("slot {slot:?}: {source}")]
     Slot {
@@ -1519,6 +1534,9 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
     let mut resolved = Resolution::of(&metadata.types);
     check_types(&mut resolved)?;
     for (slot, declared) in &metadata.state {
+        if !(PACKAGE_SLOT_BASE..KERNEL_SLOT_BASE).contains(&slot.0) {
+            return Err(MetadataBoundsError::SlotOutsideBand { slot: *slot });
+        }
         let LeafForm::Value(shape) = &declared.element else {
             continue;
         };
@@ -1862,6 +1880,39 @@ mod tests {
         );
         // Bytes name no type, so there is nothing for them to reach.
         assert_eq!(check_metadata(&holding(LeafForm::Bytes)), Ok(()));
+    }
+
+    /// The state table is what a package declares, and the protocol's
+    /// own cells are declared by nobody — so a row for one is refused
+    /// where the authoring macro refuses the field.
+    #[test]
+    fn a_slot_outside_the_package_band_is_refused() {
+        let at = |slot| PackageMetadata {
+            state: std::iter::once((
+                SlotId(slot),
+                SlotShape {
+                    name: "held".into(),
+                    kind: SlotKind::Cell,
+                    element: LeafForm::Value(TypeShape::U64),
+                },
+            ))
+            .collect(),
+            ..PackageMetadata::default()
+        };
+        // The protocol's vault, whose leaf every owner has already.
+        assert_eq!(
+            check_metadata(&at(VAULT.0)),
+            Err(MetadataBoundsError::SlotOutsideBand { slot: VAULT })
+        );
+        // The kernel's own band at the top, which no signature reaches.
+        assert_eq!(
+            check_metadata(&at(KERNEL_SLOT_BASE)),
+            Err(MetadataBoundsError::SlotOutsideBand {
+                slot: SlotId(KERNEL_SLOT_BASE)
+            })
+        );
+        assert_eq!(check_metadata(&at(PACKAGE_SLOT_BASE)), Ok(()));
+        assert_eq!(check_metadata(&at(KERNEL_SLOT_BASE - 1)), Ok(()));
     }
 
     /// The protocol's name for an address describes an address, in every
