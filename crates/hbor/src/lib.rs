@@ -76,8 +76,8 @@ pub use hash::{Hash32, Hasher};
 pub use hyperscale_hbor_macros::{Hbor, HborMerkle, HborShape};
 pub use merkle::Chunked;
 pub use shape::{
-    HborShape, MAX_SHAPE_DEPTH, ReadError, ShapeField, ShapeRegistry, ShapeTable, ShapeValue,
-    ShapeVariant, TypeShape,
+    HborShape, MAX_SHAPE_DEPTH, ReadError, Resolution, ShapeField, ShapeRegistry, ShapeTable,
+    ShapeValue, ShapeVariant, TypeShape,
 };
 pub use signing::{HborSigned, HborSignedWith};
 pub use varint::MAX_LENGTH;

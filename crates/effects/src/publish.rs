@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_hbor::ShapeTable;
+use hyperscale_hbor::Resolution;
 use hyperscale_hbor::shape::ShapeFault;
 use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
 
@@ -1513,13 +1513,17 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
             return Err(MetadataBoundsError::EventWithoutShape { name: name.clone() });
         }
     }
-    check_types(&metadata.types)?;
+    // One resolution for the whole metadata: a name two shapes reach is
+    // one answer, and asking the table per shape would be the same walk
+    // multiplied by the number of shapes that ask.
+    let mut resolved = Resolution::of(&metadata.types);
+    check_types(&mut resolved)?;
     for (slot, declared) in &metadata.state {
         let LeafForm::Value(shape) = &declared.element else {
             continue;
         };
-        shape
-            .readable(&metadata.types, MAX_SHAPE_DEPTH)
+        resolved
+            .readable(shape, MAX_SHAPE_DEPTH)
             .map_err(|source| MetadataBoundsError::Slot {
                 slot: *slot,
                 source,
@@ -1536,10 +1540,10 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
 /// second is what makes `address` a fact — a package may declare any type
 /// it likes and may not declare one under the protocol's name for
 /// something else.
-fn check_types(types: &ShapeTable) -> Result<(), MetadataBoundsError> {
-    for (name, shape) in types {
-        shape
-            .readable(types, MAX_SHAPE_DEPTH)
+fn check_types(resolved: &mut Resolution<'_>) -> Result<(), MetadataBoundsError> {
+    for (name, shape) in resolved.types() {
+        resolved
+            .readable(shape, MAX_SHAPE_DEPTH)
             .map_err(|source| MetadataBoundsError::Type {
                 name: name.clone(),
                 source,
