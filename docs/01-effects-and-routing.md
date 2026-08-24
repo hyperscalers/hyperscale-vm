@@ -66,7 +66,7 @@ A provision needs to carry only what a counterpart must *read*: fresh-`read` val
 
 ## 4. Locked reads
 
-A `locked` effect reads a substate the kernel has permanently locked: package code, creation-fixed instance configuration (a resource's divisibility and feature set), locked metadata, non-fungible field-mutability sets. Because no version of the target differs, the read needs no coherence and no proof: it takes no lock, defers nothing, conflicts with nothing, and makes its owner no participant — the one mode a shard can serve without joining the transaction (INV-VM-3). Verification is by content address, so any node resolves a locked read from any peer with no consensus round. This is what keeps inner-object hot paths shard-local: a vault's checks against its resource's immutable configuration add no shard to a transfer.
+A `locked` effect reads a substate the kernel has permanently locked: package code, creation-fixed instance configuration (a resource's divisibility and feature set), locked metadata, non-fungible field-mutability sets. Because no version of the target differs, the read needs no coherence and no proof: it takes no lock, defers nothing, conflicts with nothing, and makes its owner no participant — the one mode a shard can serve without joining the transaction (INV-VM-ACCESS-3). Verification is by content address, so any node resolves a locked read from any peer with no consensus round. This is what keeps inner-object hot paths shard-local: a vault's checks against its resource's immutable configuration add no shard to a transfer.
 
 A read of *mutable* state is `read`: fresh, coherent, provisioned, its owner a participant. There is no third option — no mode reads mutable state without its owner in the transaction.
 
@@ -80,9 +80,9 @@ Ranges are also **access-stable**: the declared interval stays valid whatever en
 
 ## 6. Enforcement
 
-The kernel does not check accesses against a declared list; it **only materializes handles for the declared set**. The component's world imports state-access capabilities per declared key and mode; an undeclared access has no handle to call and traps. Traps, infeasible reservations, and a `locked` read of an unlocked target all land in the abort taxonomy of [04-execution-semantics.md](04-execution-semantics.md) — deterministic, identical on every replica. This is constructive enforcement with the trust inverted: nothing about safety depends on declarations being right (INV-VM-1). The compiler owes tightness, a contention and fee property; the gate owes soundness.
+The kernel does not check accesses against a declared list; it **only materializes handles for the declared set**. The component's world imports state-access capabilities per declared key and mode; an undeclared access has no handle to call and traps. Traps, infeasible reservations, and a `locked` read of an unlocked target all land in the abort taxonomy of [04-execution-semantics.md](04-execution-semantics.md) — deterministic, identical on every replica. This is constructive enforcement with the trust inverted: nothing about safety depends on declarations being right (INV-VM-ACCESS-1). The compiler owes tightness, a contention and fee property; the gate owes soundness.
 
-What that leaves open is the declaration itself. Handles bound execution to the declared set, and nothing in the shape of a set says whose cells are in it — so a signature declares only against its own instance's prefix, and a target naming any other is refused (INV-VM-16). The owner half of a key is written as `self` or derived under it; an argument, a configuration slot, a `for-each` binding and a literal are all somebody else's prefix. Publish refuses the expression so an author hears about it, and routing refuses the evaluated effect so no expression shape can be overlooked. An object's cells are reachable by calling it, never by naming them, which is what leaves a method's declared accessibility ([02-manifests-and-intents.md](02-manifests-and-intents.md)) as the only way in.
+What that leaves open is the declaration itself. Handles bound execution to the declared set, and nothing in the shape of a set says whose cells are in it — so a signature declares only against its own instance's prefix, and a target naming any other is refused (INV-VM-ACCESS-4). The owner half of a key is written as `self` or derived under it; an argument, a configuration slot, a `for-each` binding and a literal are all somebody else's prefix. Publish refuses the expression so an author hears about it, and routing refuses the evaluated effect so no expression shape can be overlooked. An object's cells are reachable by calling it, never by naming them, which is what leaves a method's declared accessibility ([02-manifests-and-intents.md](02-manifests-and-intents.md)) as the only way in.
 
 Test builds keep the claim honest continuously: the kernel's trace-subset oracle (`crates/kernel`) records every substate access and asserts `trace ⊆ declared` on every scenario, differential, and fuzz workload. A violation is a design-falsifying event, not a bug.
 
@@ -96,7 +96,7 @@ route(tx, metadata_cache) -> { participating shards,
                                per-node declared frames }
 ```
 
-Consumed at gossip admission, mempool analysis, proposal selection, provision-set assembly, and fee estimation. Shard resolution (prefix → live shard) comes from the host's topology state, never from a peer. A wrong `route` output is impossible while metadata is immutable (INV-VM-2); a *loose* one costs the sender fees.
+Consumed at gossip admission, mempool analysis, proposal selection, provision-set assembly, and fee estimation. Shard resolution (prefix → live shard) comes from the host's topology state, never from a peer. A wrong `route` output is impossible while metadata is immutable (INV-VM-ACCESS-2); a *loose* one costs the sender fees.
 
 ## 8. The transaction envelope
 

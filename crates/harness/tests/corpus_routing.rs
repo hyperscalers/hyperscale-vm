@@ -1,5 +1,5 @@
 //! The corpus catalogue's routed and classified forms: the golden
-//! vectors pinning INV-VM-2, the star each pattern's shape implies, and
+//! vectors pinning routing as consensus content, the star each pattern's shape implies, and
 //! the sweeps that hold across every guest.
 
 use hyperscale_vm_effects::{MAX_STAGED_DEPTH, ManifestGraph, Role, Strategy};
@@ -12,7 +12,7 @@ mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
 use common::world::*;
 
-/// INV-VM-2: the routed form is consensus content — every node derives
+/// The routed form is consensus content — every node derives
 /// the identical routing from the identical signed form, and it must not
 /// drift as the fold is reshaped. The pins were generated from the fold
 /// as it stands; a change to any of them is a change to what routing

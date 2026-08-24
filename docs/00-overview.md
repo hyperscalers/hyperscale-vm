@@ -6,13 +6,13 @@ The recurring design move: wherever a property the host protocol already enforce
 
 ## What that buys, concretely
 
-- **Any node can compute a transaction's full footprint without executing it.** One pure function, `route()` in `crates/effects`, folds over the manifest and returns the participating shards, the per-shard key-and-mode sets, and each node's declared frame (INV-VM-2). Mempools schedule on it, proposers budget on it, provision assembly reads it, wallets render it.
-- **Undeclared access is unreachable, not filtered.** The kernel materializes state handles only for the declared effect set; an access outside it has no handle to call and traps deterministically (INV-VM-1). Nothing about safety depends on declarations being right — the compiler owes tightness, the gate owes soundness.
+- **Any node can compute a transaction's full footprint without executing it.** One pure function, `route()` in `crates/effects`, folds over the manifest and returns the participating shards, the per-shard key-and-mode sets, and each node's declared frame (INV-VM-ACCESS-2). Mempools schedule on it, proposers budget on it, provision assembly reads it, wallets render it.
+- **Undeclared access is unreachable, not filtered.** The kernel materializes state handles only for the declared effect set; an access outside it has no handle to call and traps deterministically (INV-VM-ACCESS-1). Nothing about safety depends on declarations being right — the compiler owes tightness, the gate owes soundness.
 - **Concurrency is judged per substate, per mode.** Five access modes with a compatibility relation replace exclusive whole-object locks: reads share with reads, increments and reservations commute, reads of immutable state conflict with nothing at all ([01-effects-and-routing.md](01-effects-and-routing.md)).
-- **Ownership is structural.** The owner is part of every substate's key, child addresses are computed rather than allocated, and placement is a property of the name (INV-VM-4) — no ownership walk, no contested claims, no re-parenting except by explicit move ([03-objects-and-state.md](03-objects-and-state.md)).
+- **Ownership is structural.** The owner is part of every substate's key, child addresses are computed rather than allocated, and placement is a property of the name (INV-VM-OBJ-1) — no ownership walk, no contested claims, no re-parenting except by explicit move ([03-objects-and-state.md](03-objects-and-state.md)).
 - **Cross-shard cost shrinks with the modes.** A provision carries only what a counterpart must read; commutative legs provision nothing and dispatch immediately ([08-host-integration.md](08-host-integration.md)).
 - **Authority is presented, never ambient.** A gate mints a claim only after reading state that verifies it, and a node names exactly what it hands its callee — so there is no auth zone to leak through, no `msg.sender` to spoof, and no proof a caller can conjure ([06-authority.md](06-authority.md)).
-- **Execution parallelizes without speculation.** Conflict groups derive from the declared effects, application order is canonical, and receipts are byte-identical across serial, parallel, and adversarially permuted schedules (INV-VM-14, [04-execution-semantics.md](04-execution-semantics.md)).
+- **Execution parallelizes without speculation.** Conflict groups derive from the declared effects, application order is canonical, and receipts are byte-identical across serial, parallel, and adversarially permuted schedules (INV-VM-RUN-1, [04-execution-semantics.md](04-execution-semantics.md)).
 
 ## The crate map
 
@@ -20,7 +20,7 @@ The workspace layers strictly; every arrow points down and nothing reaches aroun
 
 | Layer | Crates | What lives there |
 |---|---|---|
-| Encoding | `hbor`, `hbor-macros` | The canonical codec (INV-VM-13) and its derives |
+| Encoding | `hbor`, `hbor-macros` | The canonical codec (INV-VM-RUN-2) and its derives |
 | Vocabulary | `types` | Addresses, effects, modes, outcomes, receipts, the math — every type two layers share |
 | Boundary | `embed` | The engine seam: `KernelHost`, `GuestArg`, `Invoked`, the boundary charge table |
 | Declaration | `effects` | Signatures, the access DSL, admission, `route()`, the metadata cache |
@@ -46,9 +46,9 @@ Two rules the graph obeys: **engines never see effects** — what a declaration 
 
 The register ([09-invariants.md](09-invariants.md)) enumerates the full property set; the critical core is small:
 
-1. **Access truth** (INV-VM-1/2): execution cannot leave the declared set, and every honest node derives the same set.
-2. **Value conservation** (INV-VM-6/7/17/18): per-resource supply and storage-bond accounting balance in every reachable state, including across shard splits and merges (with INV-VM-5), and no transaction duplicates or loses value — neither in flight between them, nor in the cells it rests in, which are reached only through handles that move it.
-3. **Fee assurance** (INV-VM-9/10/11): no shard works for a payer that cannot pay, and every engaged reservation resolves exactly once.
-4. **Schedule invariance** (INV-VM-14): receipts are functions of committed content, never of execution timing.
+1. **Access truth** (INV-VM-ACCESS-1/2): execution cannot leave the declared set, and every honest node derives the same set.
+2. **Value conservation** (the whole `INV-VM-VALUE-*` family, with INV-VM-OBJ-2/3): per-resource supply and storage-bond accounting balance in every reachable state, including across shard splits and merges, and no transaction duplicates or loses value — neither in flight between them, nor in the cells it rests in, which are reached only through handles that move it.
+3. **Fee assurance** (INV-VM-HOST-1/2/3): no shard works for a payer that cannot pay, and every engaged reservation resolves exactly once.
+4. **Schedule invariance** (INV-VM-RUN-1): receipts are functions of committed content, never of execution timing.
 
 Everything else either supports these or bounds resources.

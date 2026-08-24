@@ -18,7 +18,7 @@ A manifest is a directed acyclic graph:
 
 ## 2. What each consumer reads
 
-- **`route()`**: a fold over nodes — evaluate each node's effect signature with its bound literals and inbound edge types, union the results. Order-independent by construction (INV-VM-8).
+- **`route()`**: a fold over nodes — evaluate each node's effect signature with its bound literals and inbound edge types, union the results. Order-independent by construction (INV-VM-ACCESS-5).
 - **Admission**: type agreement between every node and its WIT signature plus effect metadata; well-formedness (single producer and consumer per edge, acyclicity, constraint syntax); envelope binding. The parser and graph type-checker are more surface than an instruction-list decoder — a one-time toll at the layer where correctness matters most, and the admission checks are the bounded-decode discipline applied one level up.
 - **Wallets**: the manifest *is* the asset-flow diagram to display — sources, transformations, destinations, and the user's own constraints — with no simulation and no instruction-trace recovery. Value movement is manifest structure, not call side effects, which is what makes signing legible and blind-signing structurally impossible.
 - **The surface syntax** is SSA-style let-binding form — `let usdc = pool.swap(xrd); account.deposit(usdc)` — imperative to read, dataflow in denotation. The graph is the canonical (hashed, signed) encoding; the text form is a projection.

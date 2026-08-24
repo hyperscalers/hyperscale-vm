@@ -6,7 +6,7 @@ With verified effect sets, parallelism needs no speculation. The kernel's batch 
 
 - Commutative modes widen the groups: a thousand deposits to one vault are one parallel group with a canonical delta fold, not a serial chain.
 - A conflict group is a sequential chain against one overlay, so members see each other's writes: a group is the mechanism that makes committing a conflicting set safe rather than a hazard. Fifty withdrawals against a well-funded vault all succeed; only genuine overdrafts abort, at the floor.
-- The dispatch seam is the host's thread pool; determinism lives in the schedule derivation, not the thread timing. Receipts are byte-identical across serial, parallel, and adversarially permuted worker schedules (INV-VM-14), and the harness pins that continuously as a metamorphic test.
+- The dispatch seam is the host's thread pool; determinism lives in the schedule derivation, not the thread timing. Receipts are byte-identical across serial, parallel, and adversarially permuted worker schedules (INV-VM-RUN-1), and the harness pins that continuously as a metamorphic test.
 
 ## 2. No execution-position observability
 
