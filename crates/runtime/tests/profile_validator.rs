@@ -356,3 +356,20 @@ fn accepts_a_deep_but_light_chain() {
     let bytes = component_with_core(&format!("{chain}\n(func)"));
     validate_component(&bytes).expect("a light chain must be admitted");
 }
+
+#[test]
+fn rejects_a_resource_the_component_defines() {
+    // Every resource a contract handles is the kernel's, imported and
+    // lent or handed over. Defining one buys a destructor, which is
+    // guest code the canonical ABI runs on a `resource.drop` — an edge
+    // no walk over the artifact's own calls carries, so the frames it
+    // stands are frames the stack bound never counted.
+    let bytes = parse_str(
+        r#"(component
+             (core module $m (func (export "dtor") (param i32)))
+             (core instance $i (instantiate $m))
+             (type $r (resource (rep i32) (dtor (func $i "dtor")))))"#,
+    )
+    .expect("fixture must parse");
+    assert_rejected(&bytes, "may not define a resource");
+}

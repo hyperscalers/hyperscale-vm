@@ -286,4 +286,14 @@ pub mod fixtures {
     /// that checks it on one dispatch arm and not another diverges from
     /// the blessed engine exactly here.
     pub const REENTRANT_DROP_WAT: &str = include_str!("fixtures/reentrant_drop.wat");
+
+    /// A component defining its own resource, whose destructor drops
+    /// another handle of the same one.
+    ///
+    /// The cycle the call-graph bound cannot see: the edge from a
+    /// `resource.drop` call site into the destructor is the canonical
+    /// ABI's, not the module's, so no walk over the artifact's calls
+    /// carries it. Under the blessed engine the chain runs until the
+    /// stack is gone, on an artifact the stack bound judged finite.
+    pub const RECURSIVE_DTOR_WAT: &str = include_str!("fixtures/recursive_dtor.wat");
 }

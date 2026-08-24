@@ -10,7 +10,9 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{Declaration, Hash32, Hasher, TestHasher};
-use hyperscale_vm_harness::fixtures::{REENTRANT_DROP_WAT, REENTRANT_REALLOC_WAT};
+use hyperscale_vm_harness::fixtures::{
+    RECURSIVE_DTOR_WAT, REENTRANT_DROP_WAT, REENTRANT_REALLOC_WAT,
+};
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{CanonError, ExecError, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{add_kernel_to_linker, blessed_engine, validate_component};
@@ -109,4 +111,21 @@ fn the_profile_refuses_the_drop_shape_before_either_runtime_sees_it() {
         .expect_err("a realloc that reaches a canon builtin must not deploy")
         .to_string();
     assert!(refusal.contains("realloc"), "{refusal}");
+}
+
+/// A destructor is a callback like the two above, and the one no canon
+/// option names — so the rule that covers them cannot reach it, and the
+/// bound that counts a callback's frames never sees it stand.
+///
+/// The profile refuses the pair that makes one: a component may not
+/// define a resource, and `resource.new` is outside the built-ins the
+/// executable spec implements. Either refusal alone stops this artifact;
+/// both are stated because a guest with neither has no destructor to run.
+#[test]
+fn a_destructor_that_drops_its_own_resource_never_deploys() {
+    let bytes = parse_str(RECURSIVE_DTOR_WAT).expect("fixture must parse");
+    let refusal = validate_component(&bytes)
+        .expect_err("a component defining its own resource must not deploy")
+        .to_string();
+    assert!(refusal.contains("may not define a resource"), "{refusal}");
 }

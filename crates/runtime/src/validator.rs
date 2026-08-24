@@ -10,11 +10,11 @@
 use thiserror::Error;
 use wasmparser::types::Types;
 use wasmparser::{
-    ComponentAlias, ComponentDefinedType, ComponentExternalKind, ComponentImportSectionReader,
-    ComponentType, ComponentTypeRef, ComponentValType, CompositeInnerType, ConstExpr, DataKind,
-    DataSectionReader, ElementItems, ElementKind, ElementSectionReader, FunctionBody,
-    GlobalSectionReader, Operator, Parser, Payload, PrimitiveValType, TypeBounds, TypeRef,
-    TypeSectionReader, ValType, Validator, WasmFeatures,
+    CanonicalFunction, ComponentAlias, ComponentDefinedType, ComponentExternalKind,
+    ComponentImportSectionReader, ComponentType, ComponentTypeRef, ComponentValType,
+    CompositeInnerType, ConstExpr, DataKind, DataSectionReader, ElementItems, ElementKind,
+    ElementSectionReader, FunctionBody, GlobalSectionReader, Operator, Parser, Payload,
+    PrimitiveValType, TypeBounds, TypeRef, TypeSectionReader, ValType, Validator, WasmFeatures,
 };
 
 use crate::frames::{check_component_stack_bounds, check_stack_bounds};
@@ -224,6 +224,37 @@ fn admits_result_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bo
     )
 }
 
+/// The canonical built-ins the profile admits: the three the executable
+/// spec implements, and no others.
+///
+/// The rest of the canon vocabulary is what a component-model version
+/// brings with it — resource construction, the async and stream families,
+/// context accessors — and none of it has a witness in `vm-ref`, which
+/// decodes `lift`, `lower` and `resource.drop` and refuses everything else
+/// as an unsupported structure. Admitting one here would deploy an
+/// artifact the blessed engine runs and the spec cannot read, which is the
+/// divergence the two-engine discipline exists to make impossible rather
+/// than to discover.
+///
+/// The second line, and deliberately so. Two things stand in front of it
+/// today: the async, stream and context families need a feature
+/// [`profile_features`] leaves off, and `resource.new` and `resource.rep`
+/// are refused by the parser itself over anything but a resource the
+/// component defines — which the type walk refuses. So nothing reaches
+/// this refusal, and what it is for is the day one of those moves: the
+/// engine pin is a protocol event, and an admitted built-in should have
+/// to be added here rather than arrive with a bump.
+fn check_canonical(canon: &CanonicalFunction) -> Result<(), ProfileError> {
+    match canon {
+        CanonicalFunction::Lift { .. }
+        | CanonicalFunction::Lower { .. }
+        | CanonicalFunction::ResourceDrop { .. } => Ok(()),
+        other => Err(ProfileError::Structural(format!(
+            "canonical built-in outside the profile: {other:?}"
+        ))),
+    }
+}
+
 /// Records one component type entry, resolving what its type-index slot
 /// holds. The walk mirrors the executable spec's type index space —
 /// declared types, then world-level `use` imports, aliases, and re-exports
@@ -233,6 +264,18 @@ fn record_component_type(
     entry: &ComponentType<'_>,
 ) -> Result<(), ProfileError> {
     let slot = match entry {
+        // A resource the guest defines rather than imports, which the
+        // world gives it no reason to want: every resource a contract
+        // handles is the kernel's, lent or handed over across the ABI.
+        // What defining one buys is a destructor — guest code the
+        // canonical ABI runs, like `realloc` and `post-return`, but
+        // reached through a built-in instead of named by a canon option,
+        // so the stack bound counts none of the frames it stands.
+        ComponentType::Resource { .. } => {
+            return Err(ProfileError::Structural(
+                "a component may not define a resource of its own".to_string(),
+            ));
+        }
         ComponentType::Func(f) => {
             for (_, vt) in &*f.params {
                 if !admits_param_type(defined, *vt) {
@@ -409,6 +452,12 @@ fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
                 for entry in reader {
                     let entry = entry.map_err(|e| ProfileError::Feature(e.to_string()))?;
                     record_component_type(&mut defined, &entry)?;
+                }
+            }
+            Payload::ComponentCanonicalSection(reader) => {
+                for canon in reader {
+                    let canon = canon.map_err(|e| ProfileError::Feature(e.to_string()))?;
+                    check_canonical(&canon)?;
                 }
             }
             Payload::ComponentImportSection(reader) => {
@@ -802,4 +851,39 @@ fn check(actual: usize, max: usize, what: &str) -> Result<(), ProfileError> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use wasmparser::{CanonicalFunction, ValType};
+
+    use super::check_canonical;
+
+    /// The canon allowlist, asked directly: nothing in front of it can
+    /// produce a built-in outside the three today, so the rule that will
+    /// catch the next one is tested where it can be reached.
+    #[test]
+    fn only_the_built_ins_the_spec_implements_are_admitted() {
+        assert!(
+            check_canonical(&CanonicalFunction::ResourceDrop { resource: 0 }).is_ok(),
+            "the spec decodes a drop",
+        );
+        for canon in [
+            CanonicalFunction::ResourceNew { resource: 0 },
+            CanonicalFunction::ResourceRep { resource: 0 },
+            CanonicalFunction::ContextGet {
+                ty: ValType::I32,
+                slot: 0,
+            },
+            CanonicalFunction::BackpressureDec,
+        ] {
+            let refusal = check_canonical(&canon)
+                .expect_err("a built-in the spec cannot read does not deploy")
+                .to_string();
+            assert!(
+                refusal.contains("canonical built-in outside the profile"),
+                "{refusal}"
+            );
+        }
+    }
 }
