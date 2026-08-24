@@ -1798,6 +1798,11 @@ fn forced(value: Cow<'_, Value>, budget: &Budget<'_>) -> Result<Value, EvalError
 
 /// How many hashes a term runs, which is the part of its cost that no
 /// walk over its subterms accounts for.
+///
+/// Every variant named rather than a default, so a term added to the
+/// vocabulary has to answer for what it hashes: a wildcard would price
+/// the next hashing term at nothing, and nothing about the answer it
+/// gives would look wrong.
 const fn derivations(expr: &Expr) -> usize {
     match expr {
         // The granted tree resolves to an address, and the resource
@@ -1807,7 +1812,30 @@ const fn derivations(expr: &Expr) -> usize {
         | Expr::OrderKey { .. }
         | Expr::FreshId { .. }
         | Expr::FreshKey { .. } => 1,
-        _ => 0,
+        Expr::Literal(..)
+        | Expr::Arg(..)
+        | Expr::Config(..)
+        | Expr::Binding(..)
+        | Expr::SelfAddr
+        | Expr::SelfRecord
+        | Expr::Field(..)
+        | Expr::ResourceOf(..)
+        | Expr::IdsOf(..)
+        | Expr::Len(..)
+        | Expr::Only(..)
+        | Expr::List(..)
+        | Expr::Tuple(..)
+        | Expr::NfBucket { .. }
+        | Expr::Lookup { .. }
+        | Expr::Pack { .. }
+        | Expr::Add(..)
+        | Expr::Not(..)
+        | Expr::And(..)
+        | Expr::Or(..)
+        | Expr::Eq(..)
+        | Expr::Lt(..)
+        | Expr::Contains { .. }
+        | Expr::If { .. } => 0,
     }
 }
 
