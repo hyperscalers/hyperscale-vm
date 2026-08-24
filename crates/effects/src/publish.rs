@@ -1462,6 +1462,27 @@ pub enum MetadataBoundsError {
         /// The slot claimed.
         slot: SlotId,
     },
+    /// Two of a package's methods disagreeing about what a slot holds.
+    ///
+    /// The denomination chooses which handle a clause materializes, so a
+    /// slot one method denominates and another does not is a leaf handed
+    /// out as a vault and as a byte cell in turn. Nothing downstream
+    /// catches it: `check_agreement` judges the clauses of one signature
+    /// and the kernel's own fold the clauses of one transaction, and two
+    /// calls in two transactions meet at neither. What lands is a balance
+    /// written as bytes and debited as value, which is value no mint made.
+    #[error(
+        "slot {slot:?} holds value where {denominating:?} declares it and bytes where \
+         {plain:?} does"
+    )]
+    SlotHoldsTwoThings {
+        /// The slot both name.
+        slot: SlotId,
+        /// The method that says it holds value.
+        denominating: String,
+        /// The method that says it holds bytes.
+        plain: String,
+    },
     /// A declared slot whose element cannot be read.
     #[error("slot {slot:?}: {source}")]
     Slot {
@@ -1562,7 +1583,105 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
                 source,
             })?;
     }
+    check_slot_contents(metadata)
+}
+
+/// Which leaves a slot numbers: a cell's, or a collection's entries.
+///
+/// Two spaces rather than one, because `child_key` and `collection_id`
+/// are domain-separated — a cell at a slot and a collection at the same
+/// slot are leaves nothing can bring together, so holding them to one
+/// answer would refuse a package for a disagreement it does not have.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Numbered {
+    /// The cell the slot names under an owner.
+    Cell(SlotId),
+    /// Every entry of the collection the slot names under an owner.
+    Entries(SlotId),
+}
+
+impl Numbered {
+    /// The slot, whichever space it numbers in.
+    const fn slot(self) -> SlotId {
+        match self {
+            Self::Cell(slot) | Self::Entries(slot) => slot,
+        }
+    }
+}
+
+/// What a slot holds is one answer for the package that numbers it.
+///
+/// A denomination chooses which handle a clause materializes, and the two
+/// share no operation — so a slot one method denominates and another does
+/// not is a leaf reached as a vault and as a byte cell in turn. That is
+/// the same statement [`check_agreement`] makes of one signature and
+/// `MixedContents` of one transaction, and neither of them spans a
+/// package: two methods are judged one at a time and their calls need not
+/// share a transaction. Judged here, where the whole metadata is in hand.
+///
+/// Per slot rather than per target expression, which is what makes it
+/// total. A slot is a literal on every target that names one, so two
+/// clauses land on one leaf only if they carry the same slot — where
+/// comparing expressions would let two spellings of one key through, and
+/// the evaluated comparison that catches those exists only inside a
+/// transaction. A fresh key carries no slot and needs none: its leaf is
+/// derived from the transaction creating it, so no later declaration
+/// names it again.
+///
+/// The form is the whole of what two methods can disagree about. A
+/// denomination is the first material of the key it names
+/// ([`DeclarationError::DenominationNotKeyed`]), so two denominated
+/// clauses reaching one leaf keyed it by the same resource and have no
+/// room to name a second — what is left is a leaf one method denominates
+/// and another does not.
+fn check_slot_contents(metadata: &PackageMetadata) -> Result<(), MetadataBoundsError> {
+    let mut answered: BTreeMap<Numbered, (bool, &str)> = BTreeMap::new();
+    for (method, signature) in &metadata.methods {
+        // A method's own first answer, so what is compared here is one
+        // method against another. Two clauses of one signature reaching
+        // one leaf are [`check_agreement`]'s to judge, and it says more
+        // about them than a slot can.
+        let mut says: BTreeMap<Numbered, bool> = BTreeMap::new();
+        for clause in signature.effects.iter().flat_map(Clause::effects) {
+            let Clause::Effect {
+                target,
+                denomination,
+                ..
+            } = clause
+            else {
+                continue;
+            };
+            if let Some(numbered) = numbered(target) {
+                says.entry(numbered)
+                    .or_insert_with(|| denomination.is_some());
+            }
+        }
+        for (numbered, holds) in says {
+            let (said, first) = *answered.entry(numbered).or_insert((holds, method));
+            if said != holds {
+                let (denominating, plain) = if said {
+                    (first, method.as_str())
+                } else {
+                    (method.as_str(), first)
+                };
+                return Err(MetadataBoundsError::SlotHoldsTwoThings {
+                    slot: numbered.slot(),
+                    denominating: denominating.to_owned(),
+                    plain: plain.to_owned(),
+                });
+            }
+        }
+    }
     Ok(())
+}
+
+/// Which leaves a target's slot numbers, where it names one.
+fn numbered(target: &TargetExpr) -> Option<Numbered> {
+    let (slot, _) = slot_of(target)?;
+    Some(match target {
+        TargetExpr::Point(_) => Numbered::Cell(slot),
+        TargetExpr::Entry { .. } | TargetExpr::Range { .. } => Numbered::Entries(slot),
+    })
 }
 
 /// Every declared shape readable, and every reserved name meaning what
@@ -1945,6 +2064,73 @@ mod tests {
         );
         assert_eq!(check_metadata(&at(PACKAGE_SLOT_BASE)), Ok(()));
         assert_eq!(check_metadata(&at(KERNEL_SLOT_BASE - 1)), Ok(()));
+    }
+
+    /// What a slot holds is one answer for the package that numbers it.
+    ///
+    /// Two methods that disagree are one leaf reached as a vault and as a
+    /// byte cell, and nothing below sees them together: a signature is
+    /// judged alone and a transaction need not carry both calls. So the
+    /// bytes one writes are a balance the other debits, and value exists
+    /// that no mint made.
+    #[test]
+    fn two_methods_disagreeing_about_what_a_slot_holds_are_refused() {
+        let slot = SlotId(PACKAGE_SLOT_BASE);
+        let package = |forge: MethodSignature, withdraw: MethodSignature| PackageMetadata {
+            methods: [
+                ("forge".to_owned(), forge),
+                ("withdraw".to_owned(), withdraw),
+            ]
+            .into_iter()
+            .collect(),
+            ..PackageMetadata::default()
+        };
+        let disagreed = |slot| MetadataBoundsError::SlotHoldsTwoThings {
+            slot,
+            denominating: "withdraw".into(),
+            plain: "forge".into(),
+        };
+        let cell = |denomination| {
+            one_clause(
+                own_point(slot, vec![a_resource()]),
+                ModeExpr::Write,
+                denomination,
+            )
+        };
+        let entries = |denomination| {
+            one_clause(
+                own_interval(slot, vec![a_resource()]),
+                ModeExpr::Write,
+                denomination,
+            )
+        };
+
+        assert_eq!(
+            check_metadata(&package(cell(None), cell(Some(a_resource())))),
+            Err(disagreed(slot))
+        );
+        // An instance holding is the same disagreement in collection
+        // form: an entry written as bytes is one a take lifts out as an
+        // instance nothing minted.
+        assert_eq!(
+            check_metadata(&package(entries(None), entries(Some(a_resource())))),
+            Err(disagreed(slot))
+        );
+
+        // Agreement passes, whichever answer the two agree on.
+        assert_eq!(check_metadata(&package(cell(None), cell(None))), Ok(()));
+        assert_eq!(
+            check_metadata(&package(cell(Some(a_resource())), cell(Some(a_resource())))),
+            Ok(())
+        );
+
+        // A cell and a collection at one slot are leaves nothing brings
+        // together — the two derivations are domain-separated — so they
+        // are two answers about two things.
+        assert_eq!(
+            check_metadata(&package(cell(None), entries(Some(a_resource())))),
+            Ok(())
+        );
     }
 
     /// The protocol's name for an address describes an address, in every

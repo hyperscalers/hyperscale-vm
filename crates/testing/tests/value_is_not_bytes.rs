@@ -11,10 +11,11 @@
 //!
 //! What the two handles rest on is that a cell gets one of them. Which
 //! it gets is the declaration's answer about what the cell holds, and a
-//! signature that answered twice would hand out both over one leaf —
+//! declaration that answered twice would hand out both over one leaf —
 //! writing a balance through the byte handle and debiting it through the
-//! value one. So one cell is one answer, held at publish and again at
-//! materialization.
+//! value one. So one cell is one answer: held over a signature's clauses
+//! and over a transaction's, and held per slot over a package's methods,
+//! because two of those calls need not arrive together.
 //!
 //! Every package here is hand-authored. That is the point: a
 //! `#[blueprint]` package reaches a vault through `vault()` and has no
@@ -222,6 +223,90 @@ fn one_cell_is_not_a_vault_and_a_byte_cell_at_once() {
         aliased(),
         env!("CARGO_MANIFEST_DIR"),
         alias_body,
+    ));
+}
+
+/// The same pair, split across two methods — which is where nothing
+/// below the package would see it.
+///
+/// `fill` reaches the pot as bytes and `drain` reaches it as a vault.
+/// Each signature is sound read on its own, and a signature is what the
+/// clause fold judges; the transaction fold sees only the clauses one
+/// call declares, and nothing obliges an attacker to make one call. So
+/// the two are held together where the whole package is: a slot holds
+/// one thing, for every method that names it.
+fn two_faced() -> PackageMetadata {
+    let held = || Expr::Literal(Value::Address(TREASURE.address()));
+    let pot = || own(POT, vec![held()]);
+    let mut metadata = PackageMetadata::default();
+    metadata.methods.insert(
+        "fill".into(),
+        MethodSignature {
+            totality: Totality::Infallible,
+            params: vec![ParamType::U64],
+            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
+            effects: vec![write(pot(), None)],
+            ..MethodSignature::default()
+        },
+    );
+    metadata.methods.insert(
+        "drain".into(),
+        MethodSignature {
+            totality: Totality::Infallible,
+            params: vec![ParamType::U64],
+            outputs: vec![held()],
+            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
+            effects: vec![write(pot(), Some(Box::new(held())))],
+            ..MethodSignature::default()
+        },
+    );
+    metadata
+}
+
+/// What the two bodies would have been: one assigns the balance, the
+/// other debits it a transaction later.
+fn two_faced_body(
+    export: &str,
+    mut session: KernelSession,
+    args: &[GuestArg<'_>],
+) -> (KernelSession, Invoked) {
+    let [GuestArg::Handle { rep, .. }, GuestArg::U64(amount)] = args else {
+        panic!("a handle and a scalar: {args:?}");
+    };
+    let (rep, amount) = (*rep, u128::from(*amount));
+    match export {
+        "fill" => match session.write_cell_set(rep, encode_amount(amount).to_vec()) {
+            Ok(()) => (
+                session,
+                Invoked::Produced {
+                    edges: vec![],
+                    answer: None,
+                },
+            ),
+            Err(trap) => (session, Invoked::Aborted(trap.into())),
+        },
+        "drain" => match session.write_take(rep, amount) {
+            Ok(bucket) => (
+                session,
+                Invoked::Produced {
+                    edges: vec![bucket],
+                    answer: None,
+                },
+            ),
+            Err(trap) => (session, Invoked::Aborted(trap.into())),
+        },
+        other => panic!("no such export: {other}"),
+    }
+}
+
+#[test]
+#[should_panic(expected = "declares it and bytes where")]
+fn one_slot_is_not_a_vault_in_one_method_and_a_byte_cell_in_another() {
+    let mut chain = Chain::native();
+    chain.publish(Package::new(
+        two_faced(),
+        env!("CARGO_MANIFEST_DIR"),
+        two_faced_body,
     ));
 }
 
