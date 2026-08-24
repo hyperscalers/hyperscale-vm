@@ -949,8 +949,6 @@ impl Lower<'_> {
         let meta = resolved.instance.as_ref();
 
         let (bound, inputs) = self.bind_args(intent_index, local, node, signature, node_index)?;
-        let evidence =
-            self.resolve_evidence(intent_index, local_index, node, signature, node_index)?;
 
         // Evaluate this node's projections over its bound inputs.
         let eval_inputs = EvalInputs {
@@ -975,6 +973,15 @@ impl Lower<'_> {
             })?;
         own_prefix_only(&frame, node.target.address(), node_index)?;
         let fence = self.fence(node.target, &mut frame)?;
+        // Evidence last, because what a call must present is a property
+        // of the declaration this node actually evaluated rather than of
+        // the clause list its signature was written with: a guard that
+        // did not fire states no requirement, and neither does a granted
+        // entry open to everyone. Both are conditions the frame simply
+        // does not carry, and demanding a proof for one nothing will
+        // consume is the refusal a caller could never satisfy.
+        let evidence =
+            self.resolve_evidence(intent_index, local_index, node, &frame, node_index)?;
         // The frame's handles occupy the run of the capability table
         // starting here, so the offset is taken before the frame is
         // logged.
@@ -1274,16 +1281,27 @@ impl Lower<'_> {
         intent_index: usize,
         local_index: usize,
         node: &GraphNode,
-        signature: &MethodSignature,
+        frame: &Declaration,
         node_index: u32,
     ) -> Result<Vec<Presented>, AdmissionError> {
         let intent = &self.intents[intent_index];
-        // Evidence presence is a property of the signed form: a guarded
-        // or authorizing call presents something, a public one presents
-        // nothing. Whether what it presents satisfies the target's rule
-        // is the target's own business, answered where the target's
-        // state is.
-        if signature.requires_evidence() {
+        // Every authority condition the evaluated frame carries, which is
+        // what a proof presented here could satisfy — an authored gate,
+        // or a requirement admission injected onto the frame.
+        let required: Vec<&Rule<JudgedLeaf>> = frame
+            .conditions
+            .iter()
+            .filter_map(|condition| match condition {
+                Condition::Satisfies { rule } => Some(rule),
+                Condition::Holds { .. } => None,
+            })
+            .collect();
+        // Evidence presence is a property of what this call requires: a
+        // guarded or authorizing call presents something, a public one
+        // presents nothing. Whether what it presents satisfies the
+        // target's rule is the target's own business, answered where the
+        // target's state is.
+        if !required.is_empty() {
             if node.evidence.is_empty() {
                 return Err(AdmissionError::MissingEvidence { node: node_index });
             }
@@ -1299,7 +1317,11 @@ impl Lower<'_> {
                     // authority is the account's rule, so the only
                     // gates it may reach are the ones that read a rule
                     // — the sign-in, and the recovery surface.
-                    if !signature.reads_a_rule() {
+                    let reads_a_rule = required.iter().any(|rule| {
+                        rule.leaves()
+                            .any(|leaf| matches!(leaf, JudgedLeaf::Stored { .. }))
+                    });
+                    if !reads_a_rule {
                         return Err(AdmissionError::SignatureForGuarded { node: node_index });
                     }
                     let signer = intent

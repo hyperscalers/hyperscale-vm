@@ -1094,3 +1094,89 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
         vec![Presented::Identity(ALICE.into())]
     );
 }
+
+/// What a call must present is a property of the declaration it
+/// evaluated, not of the clause list its signature was written with.
+///
+/// A `Requires` clause carries a guard, so a signature stating one says
+/// nothing about whether this call requires anything — and demanding a
+/// proof for a condition that never fired would be a refusal no caller
+/// could act on, while accepting one would put an evidence assignment
+/// into a signed graph that nothing validates. Both are the same mistake
+/// from opposite sides, and reading the evaluated frame answers both.
+#[test]
+fn evidence_follows_the_conditions_this_call_evaluated() {
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "settle".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            params: vec![ParamType::U64],
+            effects: vec![Clause::Requires {
+                guard: Some(Box::new(Expr::Eq(
+                    Box::new(Expr::Arg(0)),
+                    Box::new(Expr::Literal(Value::U64(1))),
+                ))),
+                condition: ConditionExpr::Satisfies {
+                    rule: RuleExpr::Require(RuleLeaf::Stored {
+                        cell: Expr::ChildKey {
+                            owner: Box::new(Expr::SelfAddr),
+                            slot: AUTH,
+                            material: vec![],
+                        },
+                        role: PRIMARY,
+                    }),
+                },
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    let mut chain = setup();
+    chain.packages.publish_unchecked(pkg("settler"), package);
+    let meta = InstanceMeta {
+        package: pkg("settler"),
+        config: vec![],
+        salt: Hash32([11; 32]),
+    };
+    let settler = meta.address(&TestHasher);
+    chain.instances.create(&TestHasher, meta);
+
+    let call = |guarded: bool, evidence: BTreeSet<EvidenceRef>| ManifestGraph {
+        nodes: vec![GraphNode {
+            target: settler.into(),
+            method: "settle".into(),
+            args: vec![GraphArg::Literal(Value::U64(u64::from(guarded)))],
+            evidence,
+        }],
+    };
+
+    // The guard fires: the condition is there, so a proof is required and
+    // the signature answers for it.
+    assert!(
+        admit(
+            &call(true, [EvidenceRef::IntentSignature].into()),
+            ALICE,
+            &chain,
+            &TestHasher
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        admit(&call(true, BTreeSet::new()), ALICE, &chain, &TestHasher),
+        Err(AdmissionError::MissingEvidence { node: 0 })
+    );
+
+    // The guard does not fire: the frame carries no condition, so the
+    // same call needs nothing — and a proof presented anyway is refused
+    // rather than carried past everything that could have read it.
+    assert!(admit(&call(false, BTreeSet::new()), ALICE, &chain, &TestHasher).is_ok());
+    assert_eq!(
+        admit(
+            &call(false, [EvidenceRef::IntentSignature].into()),
+            ALICE,
+            &chain,
+            &TestHasher
+        ),
+        Err(AdmissionError::UnexpectedEvidence { node: 0 })
+    );
+}
