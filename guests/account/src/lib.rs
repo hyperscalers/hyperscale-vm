@@ -6,23 +6,23 @@
 //! composes under the sender's single signature — the recipient is not
 //! asked for one, because nothing about a deposit is theirs to refuse.
 //!
-//! The stored-authority cell is an `AuthCell`: a governing `AuthBase` —
-//! the recovery delay and the `RoleTable` — and at most one pending
-//! `Proposal`, a whole replacement base with the instant it starts
-//! governing. The bodies below read and write it through that codec, so
-//! every operation is a field of the decoded cell, one comparison of the
-//! proposal's instant against the transaction clock, and one saturating
-//! add. A role's rule bytes stay opaque here: the kernel decodes them
-//! where it judges a condition against them.
+//! Every address has one governing rule, in the cell the protocol keeps
+//! for it, and while nothing is stored there the address governs itself —
+//! which is the rule's own second branch rather than anything the kernel
+//! supplies. Everything past that is this package's policy and lives in
+//! this package's cells: the two further rules a recovery surface needs,
+//! the replacement waiting on a delay, and what it takes to enact one.
+//!
+//! Rule bytes stay opaque here. The kernel decodes them where it judges a
+//! call against them, and a body that stores what it was handed converts
+//! nothing.
 
 use hyperscale_vm_sdk::blueprint;
 
 #[blueprint(principals)]
 pub mod account {
-    use hyperscale_vm_sdk::state::{
-        AuthBase, AuthCell, Bucket, Ids, NfBucket, Proposal, Quantity, RoleTable, clock_ms,
-    };
-    use hyperscale_vm_sdk::{Address, PRIMARY, ResourceAddr};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Ids, NfBucket, Quantity, RuleBytes, clock_ms};
+    use hyperscale_vm_sdk::{Address, ResourceAddr, nobody};
 
     /// Funds left the account.
     #[event]
@@ -36,11 +36,36 @@ pub mod account {
         amount: Quantity,
     }
 
-    /// The account stores nothing of its own. Every cell it uses —
-    /// balances, the delivery fallback, the stored authority, the
-    /// instances held — is one the protocol gives every owner.
+    /// A replacement for all three rules, waiting on the delay that
+    /// governed when it was made.
+    #[record]
+    struct Pending {
+        /// When it may be enacted without a confirmation.
+        effective_at_ms: u64,
+        /// What each cell becomes.
+        primary: RuleBytes,
+        recovery: RuleBytes,
+        confirmation: RuleBytes,
+    }
+
+    /// What the account keeps beyond the governing rule every address
+    /// already has: the surface that can replace it.
+    ///
+    /// A recovery rule and a confirmation rule are two more of the same
+    /// thing, so they are two more cells rather than a table with a
+    /// vocabulary of its own — and each gate reads the one rule it needs
+    /// instead of every rule the account holds.
     #[state]
-    struct Account {}
+    struct Account {
+        /// Who may propose a replacement, and who may cancel one.
+        recovery: Cell<Option<RuleBytes>>,
+        /// Who may enact one before its delay runs out.
+        confirmation: Cell<Option<RuleBytes>>,
+        /// The replacement waiting, where one is.
+        pending: Cell<Option<Pending>>,
+        /// How long a proposal waits when nothing confirms it.
+        delay_ms: Cell<u64>,
+    }
 
     impl Account {
         /// Reserve `amount` on the caller's vault for `resource`.
@@ -142,102 +167,108 @@ pub mod account {
             self.vault(resource).take(amount)
         }
 
-        /// Create the stored-authority cell: the caller's roles and
-        /// recovery delay, with nothing pending. The cell existing is
-        /// this body's own refusal, which is what makes the transition
-        /// off the address-derived rule one-way.
+        /// Store the three rules that govern from here on.
+        ///
+        /// The governing cell being absent is this body's own refusal,
+        /// judged against committed state before it runs — and it is what
+        /// makes the transition off the address's own key one-way, since
+        /// the branch admitting that key is the one the cell's absence
+        /// meets.
         #[requires(self)]
-        pub fn securify(&mut self, roles: RoleTable, delay_ms: u64) {
-            // The one-way door is the declaration's, judged against
-            // committed state before this runs: the write requires the
-            // cell to be absent, so a second securify is refused by the
-            // shard holding it rather than trapped here.
-            self.auth().create(AuthCell::new(AuthBase {
-                recovery_delay_ms: delay_ms,
-                roles,
-            }));
+        pub fn securify(
+            &mut self,
+            primary: RuleBytes,
+            recovery: RuleBytes,
+            confirmation: RuleBytes,
+            delay_ms: u64,
+        ) {
+            self.auth().create(primary);
+            self.recovery.set(Some(recovery));
+            self.confirmation.set(Some(confirmation));
+            self.delay_ms.set(delay_ms);
         }
 
-        /// Append a pending replacement for the whole cell, maturing
-        /// after the stored recovery delay; an unmatured proposal is
-        /// replaced, a matured one first promoted.
-        #[requires(auth[recovery])]
-        pub fn propose(&mut self, roles: RoleTable, delay_ms: u64) {
-            let stored = self.auth().existing();
-            // The wait comes from the delay that governs now, never from
-            // the proposer: the proposal's own delay only starts
-            // governing when the proposal does.
-            let current = stored.governing(clock_ms()).clone();
-            let effective_at_ms = clock_ms().saturating_add(current.recovery_delay_ms);
-            self.auth().set(Some(AuthCell {
-                base: current,
-                proposal: Some(Proposal {
-                    effective_at_ms,
-                    base: AuthBase {
-                        recovery_delay_ms: delay_ms,
-                        roles,
-                    },
-                }),
-            }));
-        }
-
-        /// Drop an unmatured proposal; a matured one is promoted instead
-        /// — cancelling what already governs would be a rewrite, not a
-        /// cancel.
+        /// Wait out a replacement's delay, or replace one still waiting.
         ///
-        /// Withdrawn by the role that made it: a proposal is recovery's,
-        /// so a compromised primary cannot veto its own replacement, and
-        /// there is no cancel war for it to win.
-        #[requires(auth[recovery])]
+        /// The wait comes from the delay that governs now, never from the
+        /// proposer: a proposal's own delay starts governing when the
+        /// proposal does.
+        #[requires(governs(recovery))]
+        pub fn propose(
+            &mut self,
+            primary: RuleBytes,
+            recovery: RuleBytes,
+            confirmation: RuleBytes,
+        ) {
+            let effective_at_ms = clock_ms().saturating_add(self.delay_ms.get());
+            self.pending.set(Some(Pending {
+                effective_at_ms,
+                primary,
+                recovery,
+                confirmation,
+            }));
+        }
+
+        /// Enact a replacement whose delay has run out.
+        ///
+        /// Open to anyone, because it does only what the clock already
+        /// licensed: the party who wants it is whoever proposed it, and
+        /// it is a node in their own transaction. Nothing happens before
+        /// the instant the proposal named.
+        pub fn promote(&mut self) {
+            if let Some(pending) = self.pending.get()
+                && pending.effective_at_ms <= clock_ms()
+            {
+                self.auth().set(Some(pending.primary));
+                self.recovery.set(Some(pending.recovery));
+                self.confirmation.set(Some(pending.confirmation));
+                self.pending.set(None);
+            }
+        }
+
+        /// Drop the replacement waiting, whatever its instant.
+        ///
+        /// Withdrawn by whoever may propose one: a replacement is the
+        /// recovery rule's, so a compromised governing key cannot veto
+        /// its own replacement and there is no cancel war for it to win.
+        /// Cancelling one whose instant has passed is no different —
+        /// whoever wanted it enacted could have enacted it, in the same
+        /// transaction they proposed it or any since.
+        #[requires(governs(recovery))]
         pub fn cancel(&mut self) {
-            let stored = self.auth().existing();
-            let governing = stored.governing(clock_ms()).clone();
-            self.auth().set(Some(AuthCell::new(governing)));
+            self.pending.set(None);
         }
 
-        /// Promote the pending proposal now, matured or not: early
-        /// enactment and compaction are one operation.
-        ///
-        /// Nothing pending is already what a confirmation leaves behind
-        /// — one base and no proposal — so the write is the promotion
-        /// and its absence is the same cell.
-        #[requires(auth[confirmation])]
+        /// Enact a replacement now, matured or not.
+        #[requires(governs(confirmation))]
         pub fn confirm(&mut self) {
-            if let Some(proposal) = self.auth().existing().proposal {
-                self.auth().set(Some(AuthCell::new(proposal.base)));
+            if let Some(pending) = self.pending.get() {
+                self.auth().set(Some(pending.primary));
+                self.recovery.set(Some(pending.recovery));
+                self.confirmation.set(Some(pending.confirmation));
+                self.pending.set(None);
             }
         }
 
         /// Strip the primary's acting power, now, keeping whatever
-        /// proposal is pending: what stops a compromised key draining
-        /// the account while its replacement matures. An absent entry
-        /// denies, so the freeze is a removal rather than a rule nobody
-        /// can write.
+        /// replacement is waiting: what stops a compromised key draining
+        /// the account while its replacement matures.
         ///
-        /// Unfreezing is the rotation itself, and only that: a primary
-        /// comes back when a proposal naming one matures or is
-        /// confirmed. Nothing here requires a proposal to be pending or
-        /// to name a primary, so a freeze is immediate and one-way, and
-        /// the recovery delay governs takeover rather than this. A
+        /// A write of the rule nobody satisfies rather than a removal,
+        /// and the difference is the whole of the freeze: an absent cell
+        /// is what the address's own key still governs, so removing the
+        /// rule would hand the account back to the key being frozen out.
+        ///
+        /// Unfreezing is the replacement itself, and only that. Nothing
+        /// here requires one to be waiting, so a freeze is immediate and
+        /// one-way, and the delay governs takeover rather than this. A
         /// recovery factor in the wrong hands can therefore lock the
         /// account for good; the dial against that is the confirmation
-        /// rule, which every rotation must satisfy once the delay is
+        /// rule, which every replacement must satisfy once the delay is
         /// long enough not to arrive.
-        #[requires(auth[recovery])]
+        #[requires(governs(recovery))]
         pub fn freeze(&mut self) {
-            let stored = self.auth().existing();
-            let mut base = stored.governing(clock_ms()).clone();
-            // A matured proposal was promoted by the governing read;
-            // only one still waiting stays pending.
-            let pending = match stored.proposal {
-                Some(proposal) if proposal.effective_at_ms > clock_ms() => Some(proposal),
-                _ => None,
-            };
-            base.roles.remove(PRIMARY);
-            self.auth().set(Some(AuthCell {
-                base,
-                proposal: pending,
-            }));
+            self.auth().set(Some(nobody()));
         }
     }
 }

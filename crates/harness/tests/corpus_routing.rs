@@ -30,12 +30,18 @@ use common::world::*;
 /// moves every key derived from a literal. After a network runs, no such
 /// answer exists.
 ///
-/// The propose vector's role bytes moved once, and the protocol answer is
-/// that a sealed rule's leaf now says which side it asks about: a claim
+/// Every vector moved once, and the protocol answer is that what governs
+/// an address before anything is written for it is now part of the rule
+/// rather than something the kernel supplies. A sign-in's gate is the
+/// disjunction that says so — the rule stored at the cell, or, while the
+/// cell is absent, the identity that address derives — and every vector
+/// reaching an account carries one. The propose vector moved further,
+/// because the surface that replaces those rules is the account's own
+/// policy now and takes three rules where it took a role table.
+///
+/// A sealed rule's leaf also says which side it asks about: a claim
 /// somebody presents, or a badge the rule's own subject holds. That is
-/// what lets one rule vocabulary serve both an authority and a movement,
-/// and it is a change to the stored form rather than to any address the
-/// other three vectors carry — which is why they did not move.
+/// what lets one rule vocabulary serve both an authority and a movement.
 ///
 /// The swap and fill pins carry the instantiation fence: admission reads
 /// the configuration leaf of every component a node targets, so the
@@ -68,13 +74,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "2f3883cad0580db5c8e6b316251b0f081c491b1cb565685f666195b81031412d";
+const PIN_TRANSFER: &str = "0621be792499bb35c205eafc3261b66bd7b08984d67f17274775f451b5f9d7a6";
 
-const PIN_SWAP: &str = "01bb88301ca91d76ee1d9ec4c275dd674db12f7eebf83bcaae7c3a45d38bdbf1";
+const PIN_SWAP: &str = "bc200ea37a526ccf996221578039dca565cbc75e10e424f665c2e44f00615a6a";
 
-const PIN_FILL: &str = "5a3d6d936fa0573e46defe9045bc004ce81fd7b260f15e4f5e1e951e3d947825";
+const PIN_FILL: &str = "aeae852af2297534ca9cc35751daea3e0b717e4106f16e15a01a9f2c5b465443";
 
-const PIN_PROPOSE: &str = "dadf9aa2f6dbd309831cfefb3d43975fa9134b8ce568cf62318da1a37b685240";
+const PIN_PROPOSE: &str = "f63fa849d9374a7c148d8075a443be68154a7ce478fbdbefb9c9601c1677639a";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

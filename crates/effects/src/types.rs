@@ -625,7 +625,7 @@ mod tests {
         component_address, config_hash, granting_resource_address, native_address, package_address,
         principal_address, resource_address, to_vec, u256_decimal,
     };
-    use crate::auth::RoleBytes;
+    use crate::auth::RuleBytes;
     use crate::hash::{Hash32, TestHasher};
     use crate::metadata::PackageHash;
     use crate::presented::Presented;
@@ -877,7 +877,7 @@ mod tests {
             let mut rules = ResourceGrants::new();
             rules.set(
                 GrantedBehaviour::Recall,
-                RoleBytes::try_from(&StoredRule::claim(Presented::Identity(who.into())))
+                RuleBytes::try_from(&StoredRule::claim(Presented::Identity(who.into())))
                     .expect("a rule encodes"),
             );
             rules
@@ -901,7 +901,7 @@ mod tests {
     #[test]
     fn a_restricting_entry_derives_the_restricted_class() {
         let namespace = ComponentAddr::new([0x21; 31]);
-        let sealed = |rule| RoleBytes::try_from(&rule).expect("a rule encodes");
+        let sealed = |rule| RuleBytes::try_from(&rule).expect("a rule encodes");
         let entry = |behaviour| {
             let mut rules = ResourceGrants::new();
             rules.set(behaviour, sealed(never()));

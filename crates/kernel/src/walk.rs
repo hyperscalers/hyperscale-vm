@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    AuthCell, CallArg, EdgeContent, JudgedLeaf, NodeCall, PackageHash, RoleId, Rule,
+    CallArg, EdgeContent, JudgedLeaf, NodeCall, PackageHash, Rule, RuleBytes,
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_types::{
@@ -376,7 +376,7 @@ fn gated(
     // rule may name the same cell at every one of its leaves, and the
     // cells a gate reads are committed state no body has run against
     // yet, so the verdict cannot move between two leaves asking for it.
-    let mut judged: BTreeMap<(SubstateKey, RoleId), bool> = BTreeMap::new();
+    let mut judged: BTreeMap<SubstateKey, bool> = BTreeMap::new();
     for rule in &call.requires {
         match satisfies(rule, call, &mut session, &mut judged) {
             Ok(true) => {}
@@ -419,7 +419,7 @@ fn satisfies(
     rule: &Rule<JudgedLeaf>,
     call: &NodeCall,
     session: &mut KernelSession,
-    judged: &mut BTreeMap<(SubstateKey, RoleId), bool>,
+    judged: &mut BTreeMap<SubstateKey, bool>,
 ) -> Result<bool, SessionTrap> {
     match rule {
         Rule::Require(JudgedLeaf::Claim(claim)) => Ok(call.evidence.contains(claim)),
@@ -428,14 +428,21 @@ fn satisfies(
             Presence::Absent => !session.declared_present(*target)?,
             Presence::Present => session.declared_present(*target)?,
         }),
-        Rule::Require(JudgedLeaf::Stored { cell, role }) => {
-            if let Some(verdict) = judged.get(&(*cell, *role)) {
+        Rule::Require(JudgedLeaf::Stored { cell }) => {
+            if let Some(verdict) = judged.get(cell) {
                 return Ok(*verdict);
             }
             let bytes = session.declared_cell(*cell)?;
-            let clock = session.clock_ms();
-            let verdict = AuthCell::admits(&bytes, call.target, *role, &call.evidence, clock);
-            judged.insert((*cell, *role), verdict);
+            // An unwritten cell holds no rule, and no rule admits nobody.
+            // What governs a cell before anything is written there is the
+            // package's own business, stated as a rule beside this one —
+            // so the kernel reads what is there and nothing else. Bytes
+            // that do not decode are not a rule either: the write path
+            // refuses such bytes, so a cell that cannot be read fails
+            // closed.
+            let verdict =
+                RuleBytes::rule_in_cell(&bytes).is_ok_and(|rule| rule.satisfied_by(&call.evidence));
+            judged.insert(*cell, verdict);
             Ok(verdict)
         }
         Rule::CountOf { count, rules } => {

@@ -1,5 +1,5 @@
 error: one access requires the leaf to be absent and to be there — no committed state satisfies both, so the call could never be feasible. Declare the one the body actually needs
   --> tests/refusals/presence_mix.rs:17:13
    |
-17 |             self.held.create(AuthCell::new(AuthBase {
+17 |             self.held.create(rule);
    |             ^^^^

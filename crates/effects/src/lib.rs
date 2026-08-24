@@ -48,11 +48,7 @@ pub use artifact::{
     ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, declaration_hash,
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
 };
-pub use auth::{
-    AuthBase, AuthCell, CONFIRMATION, MAX_AUTH_CELL_WIRE_DEPTH, MAX_PACKAGE_ROLES,
-    MAX_ROLE_TABLE_WIRE_DEPTH, PACKAGE_ROLE_BASE, PRIMARY, Proposal, RECOVERY, RoleBytes, RoleId,
-    RoleTable, package_role,
-};
+pub use auth::RuleBytes;
 pub use dsl::{
     Clause, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH,
     MAX_EFFECTS_PER_SIGNATURE, MAX_ENVELOPE_EVALUATION_WORK, MAX_EVALUATION_WORK, MAX_EXPR_DEPTH,
@@ -104,7 +100,8 @@ pub use resource::{
 pub use route::{FrameDeclaration, PrefixShardResolver, Routing, ShardResolver, route};
 pub use rule::{
     GrantClaim, GrantRuleExpr, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES,
-    MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, RuleLeaf, StoredRule, always, never, well_formed,
+    MAX_RULE_WIRE_DEPTH, NOBODY_BYTES, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule, always,
+    never, well_formed,
 };
 pub use signature::{AbiParam, Issuance, MethodSignature, ParamType, Totality};
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};

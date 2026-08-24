@@ -8,7 +8,7 @@
 //! caller's, and growing it is a change to this crate rather than an impl
 //! away.
 
-use hyperscale_vm_effects::{GraphArg, RoleTable, StoredRule, Value};
+use hyperscale_vm_effects::{GraphArg, RuleBytes, StoredRule, Value};
 use hyperscale_vm_types::{
     Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
@@ -127,7 +127,16 @@ macro_rules! canonical_bytes_arg {
     };
 }
 
-canonical_bytes_arg!(StoredRule, RoleTable);
+canonical_bytes_arg!(StoredRule);
+
+/// A stored rule's bytes bind as themselves: they were canonical when
+/// whoever built them encoded the rule.
+impl sealed::Sealed for RuleBytes {}
+impl Arg for RuleBytes {
+    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+        GraphArg::Literal(Value::Bytes(self.0))
+    }
+}
 
 impl sealed::Sealed for Bucket {}
 impl Arg for Bucket {

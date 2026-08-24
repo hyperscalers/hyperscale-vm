@@ -24,9 +24,9 @@
 
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, AuthBase, AuthCell, Clause, Expr, MethodSignature, ModeExpr, PRIMARY,
-    PackageMetadata, ParamType, Presented, RoleTable, RuleExpr, RuleLeaf, SlotId, StoredRule,
-    TargetExpr, TestHasher, Totality, Value, xrd as protocol_xrd,
+    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, Presented,
+    RuleBytes, RuleExpr, RuleLeaf, SlotId, StoredRule, TargetExpr, TestHasher, Totality, Value,
+    xrd as protocol_xrd,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
@@ -348,7 +348,6 @@ fn impostor() -> PackageMetadata {
                             slot: AUTH,
                             material: vec![],
                         },
-                        role: PRIMARY,
                     }),
                 },
                 Clause::Requires {
@@ -383,14 +382,12 @@ fn impostor_body(
             else {
                 panic!("two handles: {args:?}");
             };
-            // The stored primary is the package's own business and writes
+            // The stored rule is the package's own business and writes
             // as bytes like any record.
-            let cell = AuthCell::new(AuthBase::new(
-                0,
-                RoleTable::uniform(&StoredRule::claim(Presented::Identity(ATTACKER.into())))
-                    .expect("a rule within the caps"),
-            ));
-            if let Err(trap) = session.write_cell_set(*auth, cell.to_bytes().expect("encodes")) {
+            let rule =
+                RuleBytes::try_from(&StoredRule::claim(Presented::Identity(ATTACKER.into())))
+                    .expect("a rule within the caps");
+            if let Err(trap) = session.write_cell_set(*auth, rule.0) {
                 return (session, Invoked::Aborted(trap.into()));
             }
             // Possession is the half that is not: a vault holds value.

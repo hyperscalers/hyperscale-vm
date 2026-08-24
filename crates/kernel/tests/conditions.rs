@@ -6,9 +6,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use hyperscale_vm_effects::{
-    AuthBase, AuthCell, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
-    NodeCall, PRIMARY, PackageHash, Presented, RoleTable, Rule, SlotId, StoredRule, TestHasher,
-    child_key,
+    Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, NodeCall,
+    PackageHash, Presented, Rule, RuleBytes, SlotId, StoredRule, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
@@ -207,16 +206,14 @@ fn a_required_claim_is_judged_with_the_calls_own_evidence() {
 
 /// A stored leaf reads the cell the declaration provisioned and judges
 /// the rule the named role selects there — and over an absent cell it
-/// judges the virtual rule, the identity the cell's owner derives, which
-/// only a key-derived principal can ever present.
+/// judges nobody: what governs a cell nothing has written is the
+/// package's own answer, stated as a branch of the rule beside this leaf,
+/// and the kernel reads what is there.
 #[test]
-fn a_stored_leaf_judges_the_stored_rule_and_the_virtual_one() {
+fn a_stored_leaf_judges_what_is_stored_and_nothing_else() {
     let target = principal(1);
     let key = cell_of(target);
-    let requires = vec![Rule::Require(JudgedLeaf::Stored {
-        cell: key,
-        role: PRIMARY,
-    })];
+    let requires = vec![Rule::Require(JudgedLeaf::Stored { cell: key })];
 
     let judged = |store: &MemoryStore, evidence: Vec<Presented>| {
         let mut entry = BatchTx::new(tx(4), declaring(key, Vec::new()), env());
@@ -227,28 +224,23 @@ fn a_stored_leaf_judges_the_stored_rule_and_the_virtual_one() {
         condition: UnmetCondition::Satisfies { node: 0 },
     };
 
-    // Stored: the rule in the cell governs, and the derived identity is
-    // no longer one of them.
+    // Stored: the rule in the cell governs, and nothing else does.
     let mut securified = MemoryStore::new();
-    let roles = RoleTable::uniform(&StoredRule::claim(identity(2))).unwrap();
-    let cell = AuthCell::new(AuthBase::new(1_000, roles))
-        .to_bytes()
-        .unwrap();
-    securified.write(key, cell);
+    let stored = RuleBytes::try_from(&StoredRule::claim(identity(2))).unwrap();
+    securified.write(key, stored.in_cell());
     assert!(matches!(
         judged(&securified, vec![identity(2)]),
         Outcome::Completed { .. }
     ));
     assert_eq!(judged(&securified, vec![identity(1)]), unmet);
 
-    // Absent: the virtual rule — the identity the owner's address
-    // derives — and nothing else.
-    let virtual_store = MemoryStore::new();
-    assert!(matches!(
-        judged(&virtual_store, vec![identity(1)]),
-        Outcome::Completed { .. }
-    ));
-    assert_eq!(judged(&virtual_store, vec![identity(2)]), unmet);
+    // Absent: no rule, so nobody — including the identity the owner's
+    // own address derives. What governs before anything is written is
+    // the package's answer, and a package that wants the address's own
+    // key says so in the rule beside this leaf.
+    let unwritten = MemoryStore::new();
+    assert_eq!(judged(&unwritten, vec![identity(1)]), unmet);
+    assert_eq!(judged(&unwritten, vec![identity(2)]), unmet);
 }
 
 /// A component's address is derived from no key, so its absent table's
@@ -267,10 +259,7 @@ fn an_absent_component_table_denies_whatever_is_presented() {
             identity(2),
             Presented::Resource(ResourceAddr::new([3; 31])),
         ],
-        vec![Rule::Require(JudgedLeaf::Stored {
-            cell: key,
-            role: PRIMARY,
-        })],
+        vec![Rule::Require(JudgedLeaf::Stored { cell: key })],
     )];
     assert_eq!(
         run(&MemoryStore::new(), &[entry]),
@@ -291,10 +280,7 @@ fn a_rule_mixes_claim_and_stored_leaves() {
         count: 1,
         rules: vec![
             Rule::Require(JudgedLeaf::Claim(identity(9))),
-            Rule::Require(JudgedLeaf::Stored {
-                cell: key,
-                role: PRIMARY,
-            }),
+            Rule::Require(JudgedLeaf::Stored { cell: key }),
         ],
     }];
     let judged = |evidence: Vec<Presented>| {
@@ -303,21 +289,21 @@ fn a_rule_mixes_claim_and_stored_leaves() {
         run(&MemoryStore::new(), &[entry])
     };
 
-    // The claim arm, the virtual-stored arm, and neither.
+    // The claim arm carries the whole rule while the cell is unwritten:
+    // a stored leaf over nothing admits nobody, so the threshold is met
+    // by its other branch or not at all.
     assert!(matches!(
         judged(vec![identity(9)]),
         Outcome::Completed { .. }
     ));
-    assert!(matches!(
-        judged(vec![identity(1)]),
-        Outcome::Completed { .. }
-    ));
-    assert_eq!(
-        judged(vec![identity(3)]),
-        Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
-        }
-    );
+    for stranger in [identity(1), identity(3)] {
+        assert_eq!(
+            judged(vec![stranger]),
+            Outcome::ConditionUnmet {
+                condition: UnmetCondition::Satisfies { node: 0 },
+            }
+        );
+    }
 }
 
 /// A store that answers from `MemoryStore` and counts what was asked.
@@ -380,10 +366,7 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
 
     // MAX_RULE_BRANCHES^(MAX_RULE_DEPTH - 1) stored leaves, all the
     // same cell and role.
-    let leaf = Rule::Require(JudgedLeaf::Stored {
-        cell: key,
-        role: PRIMARY,
-    });
+    let leaf = Rule::Require(JudgedLeaf::Stored { cell: key });
     let widest = (1..MAX_RULE_DEPTH).fold(leaf, |inner: Rule<JudgedLeaf>, _| Rule::CountOf {
         count: u8::try_from(MAX_RULE_BRANCHES).unwrap(),
         rules: vec![inner; MAX_RULE_BRANCHES],
@@ -394,13 +377,8 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
     );
 
     let mut securified = MemoryStore::new();
-    let roles = RoleTable::uniform(&StoredRule::claim(identity(2))).unwrap();
-    securified.write(
-        key,
-        AuthCell::new(AuthBase::new(1_000, roles))
-            .to_bytes()
-            .unwrap(),
-    );
+    let stored = RuleBytes::try_from(&StoredRule::claim(identity(2))).unwrap();
+    securified.write(key, stored.in_cell());
 
     let judged = |evidence: Vec<Presented>| {
         let store = Arc::new(Counting::over(securified.clone()));
@@ -426,13 +404,9 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
     let cell = securified.cell(key).unwrap();
     for (evidence, expected) in [(identity(2), true), (identity(1), false)] {
         assert_eq!(
-            AuthCell::admits(
-                &cell,
-                target,
-                PRIMARY,
-                std::slice::from_ref(&evidence),
-                env().clock_ms,
-            ),
+            RuleBytes::rule_in_cell(&cell)
+                .unwrap()
+                .satisfied_by(std::slice::from_ref(&evidence)),
             expected
         );
         let (outcome, reads) = judged(vec![evidence]);
@@ -461,19 +435,11 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
         target: EffectTarget::Point(key),
         expect: Presence::Present,
     })];
-    let requires = vec![Rule::Require(JudgedLeaf::Stored {
-        cell: key,
-        role: PRIMARY,
-    })];
+    let requires = vec![Rule::Require(JudgedLeaf::Stored { cell: key })];
 
     let mut securified = MemoryStore::new();
-    let roles = RoleTable::uniform(&StoredRule::claim(identity(2))).unwrap();
-    securified.write(
-        key,
-        AuthCell::new(AuthBase::new(1_000, roles))
-            .to_bytes()
-            .unwrap(),
-    );
+    let stored = RuleBytes::try_from(&StoredRule::claim(identity(2))).unwrap();
+    securified.write(key, stored.in_cell());
 
     let judged = |store: &MemoryStore, locality: &Locality, evidence: Vec<Presented>| {
         let mut entry = BatchTx::new(tx(8), declaring(key, conditions.clone()), env());

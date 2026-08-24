@@ -1,5 +1,0 @@
-error: `admin-role` already names one of this package's roles, and a band resolves by position — so this one is an entry nothing can reach
-  --> tests/refusals/colliding_roles.rs:10:9
-   |
-10 |         Admin_role,
-   |         ^^^^^^^^^^

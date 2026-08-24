@@ -3,9 +3,8 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    AuthBase, AuthCell, CONFIRMATION, Hash32, InstanceMeta, ManifestGraph, PRIMARY, Presented,
-    Proposal, RECOVERY, Records, RoleBytes, RoleTable, StoredRule, TestHasher, Value,
-    holdings_collection,
+    Hash32, InstanceMeta, ManifestGraph, Presented, Records, RuleBytes, StoredRule, TestHasher,
+    Value, holdings_collection, never,
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, vault};
@@ -74,7 +73,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("securify must complete; got {:?}", results[0]);
     };
-    let cell_bytes = AuthCell::new(uniform_base(BOB)).to_bytes().unwrap();
+    let cell_bytes = rule_of(BOB).in_cell();
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
         Some(&Some(cell_bytes)),
@@ -141,14 +140,8 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
 fn chained_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(MAKER, RES_X), encode_amount(150).to_vec());
-    store.write(
-        auth(ALICE),
-        AuthCell::new(uniform_base(BOB)).to_bytes().unwrap(),
-    );
-    store.write(
-        auth(MAKER),
-        AuthCell::new(uniform_base(ALICE)).to_bytes().unwrap(),
-    );
+    store.write(auth(ALICE), rule_of(BOB).in_cell());
+    store.write(auth(MAKER), rule_of(ALICE).in_cell());
     store
 }
 
@@ -237,36 +230,68 @@ fn a_proof_opens_only_the_account_that_minted_it() {
     );
 }
 
-/// The split-role setup every recovery test starts from: Alice holds
-/// primary, Bob recovery, the maker confirmation, and the corpus delay
-/// separates a proposal from its maturity.
-fn split_roles() -> RoleTable {
-    let rule = |who: PrincipalAddr| {
-        RoleBytes::try_from(&StoredRule::claim(Presented::Identity(who.into())))
-            .expect("a rule within the vocabulary caps")
+/// Seed `owner`'s authority as the account writes it: the rule that
+/// governs, the one that may replace it, the one that may enact a
+/// replacement early, and the delay a replacement waits.
+fn seed_authority(
+    store: &mut MemoryStore,
+    owner: PrincipalAddr,
+    governing: &RuleBytes,
+    replaces: &RuleBytes,
+    enacts: &RuleBytes,
+    delay_ms: u64,
+) {
+    store.write(auth(owner), governing.in_cell());
+    store.write(own_cell(owner, 0), replaces.in_cell());
+    store.write(own_cell(owner, 1), enacts.in_cell());
+    store.write(own_cell(owner, 3), delay_ms.to_le_bytes().to_vec());
+}
+
+/// The replacement `owner` has waiting, as the account writes it.
+fn seed_pending(store: &mut MemoryStore, owner: PrincipalAddr, at_ms: u64, rule: &RuleBytes) {
+    let pending = account::Pending {
+        effective_at_ms: at_ms,
+        primary: rule.clone(),
+        recovery: rule.clone(),
+        confirmation: rule.clone(),
     };
-    RoleTable::from_iter([
-        (PRIMARY, rule(ALICE)),
-        (RECOVERY, rule(BOB)),
-        (CONFIRMATION, rule(MAKER)),
-    ])
+    store.write(own_cell(owner, 2), account::encode_pending(&pending));
 }
 
-fn split_base() -> AuthBase {
-    AuthBase::new(DAY_MS, split_roles())
+/// The rule nobody satisfies, as a freeze writes it.
+fn nobody_rule() -> RuleBytes {
+    RuleBytes::try_from(&never()).expect("the empty threshold encodes")
 }
 
-/// A store holding Alice's funds and her securified split-role cell,
-/// written as the guest would write it.
+/// One identity, as the rule a cell stores.
+fn rule_of(who: PrincipalAddr) -> RuleBytes {
+    RuleBytes::try_from(&StoredRule::claim(Presented::Identity(who.into())))
+        .expect("a rule within the vocabulary caps")
+}
+
+/// The split setup every recovery test starts from: Alice governs, Bob
+/// may replace her, the maker may enact a replacement early, and the
+/// corpus delay separates a replacement from the instant it may be
+/// enacted without one.
+///
+/// Three cells rather than a table behind one, because a rule in a cell
+/// is a rule in a cell — and each gate reads the one it needs.
 fn recovered_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
-    store.write(auth(ALICE), AuthCell::new(split_base()).to_bytes().unwrap());
+    store.write(auth(ALICE), rule_of(ALICE).in_cell());
+    store.write(own_cell(ALICE, 0), rule_of(BOB).in_cell());
+    store.write(own_cell(ALICE, 1), rule_of(MAKER).in_cell());
+    store.write(own_cell(ALICE, 3), DAY_MS.to_le_bytes().to_vec());
     store
 }
 
 fn cancel_graph() -> ManifestGraph {
     graph(|b| account::cancel(b, ALICE))
+}
+
+fn promote_graph() -> ManifestGraph {
+    graph(|b| account::promote(b, ALICE))
 }
 
 fn confirm_graph() -> ManifestGraph {
@@ -344,36 +369,53 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("propose must complete; got {:?}", results[0]);
     };
-    let pending = AuthCell {
-        base: split_base(),
-        proposal: Some(Proposal {
-            effective_at_ms: t0 + DAY_MS,
-            base: uniform_base(BOB),
-        }),
-    };
+    let mut waiting = MemoryStore::new();
+    seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &rule_of(BOB));
     assert_eq!(
-        receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(pending.to_bytes().unwrap())),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&waiting.cell(own_cell(ALICE, 2))),
         "the guest's spliced frame is the codec's encoding, byte for byte"
     );
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        None,
+        "and a replacement waiting is not one enacted: the governing rule \
+         is untouched until something enacts it"
+    );
 
-    // One instant before maturity the old roles govern whole: Alice
-    // acts, Bob does not. At the instant the verdicts swap, with no
-    // write between: the matured proposal governs at read time.
+    // Before the instant, nothing enacts it however hard anyone tries:
+    // Alice still acts and Bob still does not.
     let before = t0 + DAY_MS - 1;
     let at = t0 + DAY_MS;
-    assert_acts(&world, &store, ALICE, before, true, 0x62);
-    assert_acts(&world, &store, BOB, before, false, 0x63);
-    assert_acts(&world, &store, BOB, at, true, 0x64);
-    assert_acts(&world, &store, ALICE, at, false, 0x65);
+    let promoted = |clock_ms: u64, tag: u8| {
+        let (results, after) = run_both_at(
+            &world,
+            &store,
+            &[(&promote_graph(), TxHash(Hash32([tag; 32])))],
+            Some(TAKER),
+            clock_ms,
+        );
+        assert!(matches!(&results[0], TxResult::Completed(_)));
+        after
+    };
+    let early = promoted(before, 0x62);
+    assert_acts(&world, &early, ALICE, before, true, 0x63);
+    assert_acts(&world, &early, BOB, before, false, 0x64);
 
-    // A later cancel by the new holder — uniform, so recovery too —
-    // compacts the matured proposal into the base; it cannot cancel
-    // what already governs, and the old primary stays retired.
-    let (results, store) = run_both_at(
+    // At the instant, anybody may enact it — the clock has licensed it,
+    // and enacting is the only thing that moves the rule. The verdicts
+    // swap on the write rather than on the read.
+    let enacted = promoted(at, 0x65);
+    assert_acts(&world, &enacted, BOB, at, true, 0x66);
+    assert_acts(&world, &enacted, ALICE, at, false, 0x67);
+
+    // A later cancel by the new holder drops nothing that was enacted:
+    // what enacting moved is the governing rule, and a cancel touches
+    // only what is still waiting.
+    let (results, after) = run_both_at(
         &world,
-        &store,
-        &[(&cancel_graph(), TxHash(Hash32([0x66; 32])))],
+        &enacted,
+        &[(&cancel_graph(), TxHash(Hash32([0x68; 32])))],
         Some(BOB),
         at,
     );
@@ -382,10 +424,11 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(AuthCell::new(uniform_base(BOB)).to_bytes().unwrap())),
-        "cancelling a matured proposal is compaction, not reversal"
+        None,
+        "a cancel never reaches what already governs"
     );
-    assert_acts(&world, &store, ALICE, at, false, 0x67);
+    assert_acts(&world, &after, BOB, at, true, 0x69);
+    assert_acts(&world, &after, ALICE, at, false, 0x6A);
 }
 
 /// Recovery withdraws its own unmatured proposal — a proposal is its
@@ -433,8 +476,13 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(AuthCell::new(split_base()).to_bytes().unwrap())),
-        "the cell is exactly what securify wrote"
+        None,
+        "the governing rule is exactly what securify wrote"
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&Some(Vec::new())),
+        "and what a cancel leaves is no replacement at all"
     );
 
     // Far past the would-be maturity, the old roles still govern: a
@@ -485,16 +533,13 @@ fn recovery_rotates_a_hostile_primary_out() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("freeze must complete; got {:?}", results[0]);
     };
-    let mut frozen = split_roles();
-    frozen.remove(PRIMARY);
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(
-            AuthCell::new(AuthBase::new(DAY_MS, frozen))
-                .to_bytes()
-                .unwrap()
-        )),
-        "the freeze is one entry's removal"
+        Some(&Some(nobody_rule().in_cell())),
+        "a freeze writes the rule nobody satisfies, rather than removing \
+         one — an unwritten cell is what the address's own key still \
+         governs, so a removal would hand the account back to the key \
+         being frozen out"
     );
 
     // The frozen key neither acts nor cancels.
@@ -512,7 +557,9 @@ fn recovery_rotates_a_hostile_primary_out() {
         })]
     );
 
-    // Recovery proposes its replacement and waits it out.
+    // Recovery proposes its replacement and waits it out. Nothing enacts
+    // itself: before the instant the attempt changes nothing, and at the
+    // instant anybody may enact what the clock has licensed.
     let (results, store) = run_both_signed(
         &world,
         &store,
@@ -522,9 +569,26 @@ fn recovery_rotates_a_hostile_primary_out() {
     assert!(matches!(&results[0], TxResult::Completed(_)));
     let before = t0 + DAY_MS - 1;
     let at = t0 + DAY_MS;
-    assert_acts(&world, &store, BOB, before, false, 0x94);
-    assert_acts(&world, &store, ALICE, at, false, 0x95);
-    assert_acts(&world, &store, BOB, at, true, 0x96);
+    let (results, early) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_graph(), TxHash(Hash32([0x94; 32])))],
+        Some(TAKER),
+        before,
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    assert_acts(&world, &early, BOB, before, false, 0x95);
+
+    let (results, enacted) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_graph(), TxHash(Hash32([0x96; 32])))],
+        Some(TAKER),
+        at,
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    assert_acts(&world, &enacted, ALICE, at, false, 0x97);
+    assert_acts(&world, &enacted, BOB, at, true, 0x98);
 }
 
 /// Freeze after propose: the pending replacement survives the removal.
@@ -557,30 +621,31 @@ fn a_freeze_keeps_the_proposal_it_finds_pending() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("freeze must complete; got {:?}", results[0]);
     };
-    let mut frozen = split_roles();
-    frozen.remove(PRIMARY);
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(
-            AuthCell {
-                base: AuthBase::new(DAY_MS, frozen),
-                proposal: Some(Proposal {
-                    effective_at_ms: t0 + DAY_MS,
-                    base: uniform_base(BOB),
-                }),
-            }
-            .to_bytes()
-            .unwrap()
-        )),
-        "the freeze strips the primary and leaves the proposal where it was"
+        Some(&Some(nobody_rule().in_cell())),
+        "the freeze closes the governing rule"
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        None,
+        "and leaves the replacement waiting exactly where it was"
     );
 
-    // The instant the proposal was already serving is the instant it
-    // arrives: the freeze moved nothing.
+    // The instant the replacement was already serving is the instant it
+    // may be enacted: the freeze moved nothing about it.
     let at = t0 + DAY_MS;
     assert_acts(&world, &store, ALICE, at - 1, false, 0xA2);
     assert_acts(&world, &store, BOB, at - 1, false, 0xA3);
-    assert_acts(&world, &store, BOB, at, true, 0xA4);
+    let (results, enacted) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_graph(), TxHash(Hash32([0xA4; 32])))],
+        Some(TAKER),
+        at,
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    assert_acts(&world, &enacted, BOB, at, true, 0xA5);
 }
 
 /// Freeze after maturity: the promoted base is what gets frozen.
@@ -617,12 +682,11 @@ fn a_freeze_after_maturity_strips_the_promoted_primary() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("freeze must complete; got {:?}", results[0]);
     };
-    let mut frozen = uniform_base(BOB);
-    frozen.roles.remove(PRIMARY);
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(AuthCell::new(frozen).to_bytes().unwrap())),
-        "a matured proposal is promoted by the read, then frozen"
+        Some(&Some(nobody_rule().in_cell())),
+        "a freeze closes the governing rule whether or not a replacement \
+         is waiting"
     );
 
     // Neither key acts: the promoted primary is the one that went.
@@ -639,11 +703,13 @@ fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
     let world = world();
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
-    store.write(
-        auth(ALICE),
-        AuthCell::new(AuthBase::new(u64::MAX, split_roles()))
-            .to_bytes()
-            .unwrap(),
+    seed_authority(
+        &mut store,
+        ALICE,
+        &rule_of(ALICE),
+        &rule_of(BOB),
+        &rule_of(MAKER),
+        u64::MAX,
     );
     let t0 = env().clock_ms;
 
@@ -690,11 +756,13 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     let world = world();
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
-    store.write(
-        auth(ALICE),
-        AuthCell::new(AuthBase::new(u64::MAX, split_roles()))
-            .to_bytes()
-            .unwrap(),
+    seed_authority(
+        &mut store,
+        ALICE,
+        &rule_of(ALICE),
+        &rule_of(BOB),
+        &rule_of(MAKER),
+        u64::MAX,
     );
     let t0 = env().clock_ms;
 
@@ -709,15 +777,9 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("freeze must complete; got {:?}", results[0]);
     };
-    let mut frozen = split_roles();
-    frozen.remove(PRIMARY);
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(
-            AuthCell::new(AuthBase::new(u64::MAX, frozen))
-                .to_bytes()
-                .unwrap()
-        )),
+        Some(&Some(nobody_rule().in_cell())),
         "an unmet delay gates a takeover, never the freeze"
     );
 
@@ -806,7 +868,7 @@ fn confirmation_enacts_a_proposal_early() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(AuthCell::new(uniform_base(BOB)).to_bytes().unwrap())),
+        Some(&Some(rule_of(BOB).in_cell())),
         "confirm promotes the proposal whole"
     );
 
@@ -834,15 +896,8 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
 
     // Replace it half a day later: one proposal, the fresh instant.
     let later = t0 + DAY_MS / 2;
-    let replace = graph(|b| {
-        account::propose(
-            b,
-            ALICE,
-            RoleTable::uniform(&StoredRule::claim(Presented::Identity(MAKER.into())))
-                .expect("a rule within the vocabulary caps"),
-            DAY_MS,
-        )
-    });
+    let replace =
+        graph(|b| account::propose(b, ALICE, rule_of(MAKER), rule_of(MAKER), rule_of(MAKER)));
     let (results, _) = run_both_at(
         &world,
         &store,
@@ -853,48 +908,50 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("propose must complete; got {:?}", results[0]);
     };
-    let replaced = AuthCell {
-        base: split_base(),
-        proposal: Some(Proposal {
-            effective_at_ms: later + DAY_MS,
-            base: uniform_base(MAKER),
-        }),
-    };
+    let mut replaced = MemoryStore::new();
+    seed_pending(&mut replaced, ALICE, later + DAY_MS, &rule_of(MAKER));
     assert_eq!(
-        receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(replaced.to_bytes().unwrap())),
-        "one proposal, restarted from the replacing clock"
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&replaced.cell(own_cell(ALICE, 2))),
+        "one replacement waiting, restarted from the replacing clock"
     );
 
-    // A virtual account has no cell, so `propose` is refused where it
-    // declares one: the write requires the leaf to be there, and the
-    // shard holding it judges that against committed state after the
-    // virtual rule signed the caller in and before the body runs.
+    // A virtual account has nothing stored anywhere, so the address's
+    // own key is what governs every one of its rules — including the one
+    // that may replace them. Proposing against yourself before you have
+    // securified is therefore admitted and does exactly what it says,
+    // which is the same answer the key gets everywhere else on an
+    // account nobody has written to.
     let mut virtual_store = sealed_store();
     virtual_store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
-    let own_propose = graph(|b| {
-        account::propose(
-            b,
-            ALICE,
-            RoleTable::uniform(&StoredRule::claim(Presented::Identity(BOB.into())))
-                .expect("a rule within the vocabulary caps"),
-            DAY_MS,
-        )
-    });
+    let own_propose =
+        graph(|b| account::propose(b, ALICE, rule_of(BOB), rule_of(BOB), rule_of(BOB)));
     let (results, _) = run_both_signed(
         &world,
         &virtual_store,
         &[(&own_propose, TxHash(Hash32([0x74; 32])))],
         Some(ALICE),
     );
+    assert!(
+        matches!(&results[0], TxResult::Completed(_)),
+        "an unwritten account is governed by its own key, this rule included; got {:?}",
+        results[0]
+    );
+
+    // And a stranger gets nothing from that: the key the absent cell
+    // admits is the account's own.
+    let (results, _) = run_both_signed(
+        &world,
+        &virtual_store,
+        &[(&own_propose, TxHash(Hash32([0x75; 32])))],
+        Some(BOB),
+    );
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Holds {
-                target: EffectTarget::Point(auth(ALICE)),
-                required: Presence::Present,
-            },
-        })]
+            condition: UnmetCondition::Satisfies { node: 0 },
+        })],
+        "and the branch an absent cell meets names the account, not a caller"
     );
 }
 

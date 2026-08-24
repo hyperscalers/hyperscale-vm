@@ -12,9 +12,9 @@ use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, AdmissionError, Clause, Constraint, EdgeRef, EvalError, EvidenceRef, Expr, GraphArg,
     GraphNode, Hash32, InstanceMeta, JudgedLeaf, MAX_VALUE_DEPTH, ManifestGraph, MethodSignature,
-    ModeExpr, PRIMARY, PackageMetadata, ParamType, Presented, Records, ResourceKind, Rule,
-    RuleExpr, RuleLeaf, TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id,
-    holdings_entry, route,
+    ModeExpr, PackageMetadata, ParamType, Presented, Records, ResourceKind, Rule, RuleExpr,
+    RuleLeaf, TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry,
+    route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
@@ -273,17 +273,31 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     let chain = setup();
     let admitted = admit(&proof_graph(), ALICE, &chain, &TestHasher).expect("admits");
 
-    // The authorizing gate is the stored rule at the cell the method's
-    // own declared read names; the guarded withdrawal keeps the pure
-    // identity match.
+    // The authorizing gate is the rule that governs the cell the
+    // method's own declared read names: what is stored there, or — while
+    // nothing is — the identity that address itself derives. The guarded
+    // withdrawal keeps the pure identity match.
     let authorize = &admitted.manifest().nodes[0];
     assert_eq!(authorize.evidence, vec![Presented::Identity(ALICE.into())]);
+    let cell = child_key(&TestHasher, ALICE, AUTH, &[]);
     assert_eq!(
         admitted.calls()[0].requires,
-        vec![Rule::Require(JudgedLeaf::Stored {
-            cell: child_key(&TestHasher, ALICE, AUTH, &[]),
-            role: PRIMARY,
-        })]
+        vec![Rule::CountOf {
+            count: 1,
+            rules: vec![
+                Rule::Require(JudgedLeaf::Stored { cell }),
+                Rule::CountOf {
+                    count: 2,
+                    rules: vec![
+                        Rule::Require(JudgedLeaf::Presence {
+                            target: EffectTarget::Point(cell),
+                            expect: Presence::Absent,
+                        }),
+                        Rule::Require(JudgedLeaf::Claim(Presented::Identity(ALICE.into()))),
+                    ],
+                },
+            ],
+        }]
     );
 
     let withdraw = &admitted.manifest().nodes[1];
@@ -324,10 +338,7 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
     };
     let satisfies = || Clause::Requires {
         guard: None,
-        rule: RuleExpr::Require(RuleLeaf::Stored {
-            cell: auth_cell(),
-            role: PRIMARY,
-        }),
+        rule: RuleExpr::Require(RuleLeaf::Stored { cell: auth_cell() }),
     };
     let holds = |target| Clause::Requires {
         guard: None,
@@ -432,7 +443,6 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
         admitted.calls()[0].requires,
         vec![Rule::Require(JudgedLeaf::Stored {
             cell: child_key(&TestHasher, custodian, AUTH, &[]),
-            role: PRIMARY,
         })],
         "the holder's rule rides the call"
     );
@@ -1018,10 +1028,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
                         count: 1,
                         rules: vec![
                             RuleExpr::claim(Expr::Config(0)),
-                            RuleExpr::Require(RuleLeaf::Stored {
-                                cell: auth_cell(),
-                                role: PRIMARY,
-                            }),
+                            RuleExpr::Require(RuleLeaf::Stored { cell: auth_cell() }),
                         ],
                     },
                 },
@@ -1077,10 +1084,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
             count: 1,
             rules: vec![
                 Rule::Require(JudgedLeaf::Claim(Presented::Identity(ALICE.into()))),
-                Rule::Require(JudgedLeaf::Stored {
-                    cell: key,
-                    role: PRIMARY,
-                }),
+                Rule::Require(JudgedLeaf::Stored { cell: key }),
             ],
         }]
     );
@@ -1120,7 +1124,6 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
                         slot: AUTH,
                         material: vec![],
                     },
-                    role: PRIMARY,
                 }),
             }],
             ..MethodSignature::default()

@@ -23,7 +23,6 @@
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 use hyperscale_vm_types::{Presence, ResourceAddr};
 
-use crate::auth::RoleId;
 use crate::dsl::{Expr, TargetExpr};
 use crate::presented::Presented;
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
@@ -166,15 +165,17 @@ pub enum RuleLeaf {
     /// A claim the declaration names, evaluated over the method's own
     /// inputs into the claim a caller must present.
     Claim(Expr),
-    /// The rule stored at this cell under this role, judged where the
-    /// cell lives.
+    /// The rule stored at this cell, judged where the cell lives.
+    ///
+    /// The one leaf that reaches mutable authority, and the type is what
+    /// bounds the reach: a stored rule is [`StoredRule`], which holds no
+    /// `Stored` leaf, so a declared rule reads a stored one exactly one
+    /// level deep and no chain of cell reads is expressible.
     Stored {
-        /// The cell expression the stored table lives at. Declared as an
-        /// access by the same signature, which is what provisions it to
-        /// every participant.
+        /// The cell expression the rule lives at. Declared as an access
+        /// by the same signature, which is what provisions it to every
+        /// participant.
         cell: Expr,
-        /// The role selecting the stored rule. An absent entry denies.
-        role: RoleId,
     },
     /// The leaf this target names is there, or is not.
     ///
@@ -227,7 +228,7 @@ impl RuleLeaf {
     pub(crate) fn reads_call_inputs(&self) -> bool {
         match self {
             Self::Claim(expr) => expr.reads_call_inputs(),
-            Self::Stored { cell, .. } => cell.reads_call_inputs(),
+            Self::Stored { cell } => cell.reads_call_inputs(),
             Self::Presence { target, .. } => target.reads_call_inputs(),
             // A caller may name the resource: the rule is the address's
             // own commitment, verified by re-derivation, so the namer
@@ -418,6 +419,15 @@ pub const fn never<L>() -> Rule<L> {
         rules: Vec::new(),
     }
 }
+
+/// [`never`]'s canonical bytes, as a constant.
+///
+/// Spelled out rather than encoded, because the one writer that needs it
+/// is a guest and a guest cannot carry a rule's codec: the vocabulary is
+/// recursive, and the deterministic profile wants an acyclic call graph.
+/// The bytes are pinned against the encoder by test, so the constant
+/// cannot drift from what the vocabulary would produce.
+pub const NOBODY_BYTES: &[u8] = &[1, 1, 0];
 
 impl<L> Rule<L> {
     /// Whether the tree sits inside the caps a stored rule is decoded
@@ -658,8 +668,8 @@ mod tests {
 
     use super::testing::{WideRule, chain, identity, wide_chain};
     use super::{
-        MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, Rule, SealedLeaf, StoredRule, always,
-        never,
+        MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, NOBODY_BYTES, Rule, SealedLeaf,
+        StoredRule, always, never,
     };
     use crate::types::MAX_VALUE_BYTES;
 
@@ -842,6 +852,16 @@ mod tests {
             let bytes = rule.to_bytes().unwrap();
             assert_eq!(StoredRule::from_slice(&bytes).unwrap(), rule);
         }
+    }
+
+    /// The bytes a guest writes to close a rule are the bytes the
+    /// encoder produces, held against it here because the guest cannot
+    /// run the encoder to check for itself.
+    #[test]
+    fn the_closed_rule_constant_is_what_the_encoder_writes() {
+        let closed: StoredRule = never();
+        assert_eq!(closed.to_bytes().unwrap(), NOBODY_BYTES);
+        assert_eq!(StoredRule::from_slice(NOBODY_BYTES).unwrap(), closed);
     }
 
     /// The algebra's top and bottom are the threshold over nothing, and

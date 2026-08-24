@@ -9,7 +9,6 @@
 
 use hyperscale_vm_types::{Address, EffectTarget, Presence, ResourceAddr, SubstateKey};
 
-use crate::auth::RoleId;
 use crate::hash::Hash32;
 use crate::presented::Presented;
 use crate::rule::Rule;
@@ -98,16 +97,14 @@ pub struct Node {
 pub enum JudgedLeaf {
     /// A claim the presented set must contain.
     Claim(Presented),
-    /// The rule stored at this cell under this role, judged where the
-    /// cell lives — or, while the cell is absent, the virtual rule: the
-    /// identity the cell's owner derives. An absent entry denies.
+    /// The rule stored at this cell, judged where the cell lives — or,
+    /// while the cell is unwritten, the virtual rule: the identity the
+    /// call's own target derives, which is what makes a key-derived
+    /// address govern itself before it has any state.
     Stored {
-        /// The cell the stored table lives in. The declaring method's
-        /// own declared access, so it is provisioned wherever the call
-        /// runs.
+        /// The cell the rule lives in. The declaring method's own
+        /// declared access, so it is provisioned wherever the call runs.
         cell: SubstateKey,
-        /// The stored rule the presented set must satisfy.
-        role: RoleId,
     },
     /// The leaf this target names is there, or is not.
     ///

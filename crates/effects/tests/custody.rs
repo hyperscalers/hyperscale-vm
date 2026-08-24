@@ -22,8 +22,8 @@ use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     EdgeRef, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta, IntentDecl,
-    JudgedLeaf, ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta, RoleBytes,
-    Rule, StoredRule, TestHasher, Value, admit_tree, child_key,
+    JudgedLeaf, ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule,
+    RuleBytes, StoredRule, TestHasher, Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -36,8 +36,8 @@ const BADGE: ResourceAddr = ResourceAddr::new([0x77; 31]);
 /// Whose namespace the governed resource sits in.
 const ISSUER: Address = Address::new([0x6A; 31], AddressClass::Component);
 
-fn sealed(rule: &StoredRule) -> RoleBytes {
-    RoleBytes::try_from(rule).expect("a rule within the caps encodes")
+fn sealed(rule: &StoredRule) -> RuleBytes {
+    RuleBytes::try_from(rule).expect("a rule within the caps encodes")
 }
 
 fn governed_meta() -> ResourceMeta {

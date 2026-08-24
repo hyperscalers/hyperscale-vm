@@ -14,7 +14,6 @@ use hyperscale_vm_types::{
 };
 
 use crate::KERNEL_SLOT_BASE;
-use crate::auth::{CONFIRMATION, PACKAGE_ROLE_BASE, PRIMARY, RECOVERY, RoleId};
 use crate::hash::{Hash32, Hasher};
 use crate::publish::{CheckedSignature, SignatureError, check_signature, seals};
 use crate::signature::MethodSignature;
@@ -174,15 +173,6 @@ pub struct PackageMetadata {
     /// render, and immutability is what stops an index coming to mean
     /// something else. Empty for a package whose methods cannot decline.
     pub errors: Vec<String>,
-    /// The package's role names, in the index order the package band's
-    /// offset from [`PACKAGE_ROLE_BASE`] refers to.
-    ///
-    /// The same shape as [`events`](Self::events) and for the same
-    /// reasons: a gate carries the number, the kernel bounds it without
-    /// resolving it, and the table is what lets a wallet render `Admin`
-    /// where the wire carries `16`. Empty for a package that stores no
-    /// role table.
-    pub roles: Vec<String>,
     /// Every type this package declares, by the name the tables above
     /// index it under.
     ///
@@ -312,21 +302,6 @@ impl PackageMetadata {
         shape.read(leaf, &self.types).map(Some)
     }
 
-    /// The name `role` renders as: a reserved role's protocol name, or
-    /// the package's own entry at the band offset.
-    #[must_use]
-    pub fn role_name(&self, role: RoleId) -> Option<&str> {
-        match role {
-            PRIMARY => Some("primary"),
-            RECOVERY => Some("recovery"),
-            CONFIRMATION => Some("confirmation"),
-            RoleId(n) => self
-                .roles
-                .get(usize::from(n.checked_sub(PACKAGE_ROLE_BASE)?))
-                .map(String::as_str),
-        }
-    }
-
     /// The method that makes a component of this package actual, and the
     /// name it publishes under.
     ///
@@ -445,27 +420,6 @@ impl MetadataCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_role_renders_by_name_from_metadata() {
-        use crate::auth::{PRIMARY, RoleId, package_role};
-
-        let record = PackageMetadata {
-            roles: vec!["admin".into(), "operator".into()],
-            ..PackageMetadata::default()
-        };
-        // The reserved band renders its protocol names; the package band
-        // renders the package's own table at the band offset; a number
-        // past the table renders as nothing rather than something else's
-        // name.
-        assert_eq!(record.role_name(PRIMARY), Some("primary"));
-        assert_eq!(record.role_name(package_role(0)), Some("admin"));
-        assert_eq!(record.role_name(package_role(1)), Some("operator"));
-        assert_eq!(record.role_name(package_role(2)), None);
-        // A reserved-band number with no protocol name is nobody's to
-        // render.
-        assert_eq!(record.role_name(RoleId(3)), None);
-    }
 
     #[test]
     fn publish_is_idempotent() {

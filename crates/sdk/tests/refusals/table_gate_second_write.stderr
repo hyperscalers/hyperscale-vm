@@ -1,5 +1,0 @@
-error: a method gated on its own stored table rewrites that table and nothing else: the gate reads its rule from the body's own write, so a second write leaves two cells answering for one role
-  --> tests/refusals/table_gate_second_write.rs:20:16
-   |
-20 |         pub fn rotate(&mut self, table: RoleTable, value: Quantity) {
-   |                ^^^^^^

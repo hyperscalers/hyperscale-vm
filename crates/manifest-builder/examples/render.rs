@@ -235,7 +235,7 @@ fn summarise(graph: &ManifestGraph, chain: &Records) {
             Authority::TargetHasNoKey => "an identity no key derives",
             Authority::Anyone
             | Authority::Signature(_)
-            | Authority::StoredRule(_)
+            | Authority::StoredRule
             | Authority::Held
             | Authority::Badge { .. }
             | Authority::Threshold { .. } => {

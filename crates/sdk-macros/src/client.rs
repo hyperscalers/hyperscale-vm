@@ -65,7 +65,7 @@ impl Shape {
                 threshold: *threshold,
             },
             Gate::Authorizing(_) => Self::Authorizing,
-            Gate::RoleGated(_) | Gate::TableGated { .. } => Self::RoleGated,
+            Gate::Governed(_) => Self::RoleGated,
             Gate::Custodial { .. } => Self::Custodial,
         }
     }

@@ -91,8 +91,6 @@
 // "the macro's model of it".
 #![allow(clippy::absolute_paths)]
 
-mod mode;
-use crate::mode::HandleMode;
 mod bind;
 mod client;
 mod emit;
@@ -100,6 +98,7 @@ mod guest;
 mod host;
 mod lanes;
 mod lower;
+mod mode;
 mod role;
 mod syntax;
 mod term;
@@ -118,9 +117,9 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 
-use crate::lower::{Field, FieldKind, Lowerer, Target};
+use crate::lower::{Field, FieldKind, Lowerer};
 use crate::role::Role;
-use crate::term::{Op, emit_kind};
+use crate::term::emit_kind;
 
 /// Derive a contract's package from its module: the declaration routing
 /// reads, and the component that executes it.
@@ -461,8 +460,7 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         "Fixed" | "SignedFixed" => quote!(U256),
         "u64" => quote!(U64),
         "Vec" | "Bytes" => quote!(Bytes),
-        "Rule" => quote!(Rule),
-        "RoleTable" => quote!(RoleTable),
+        "Rule" | "RuleBytes" => quote!(Rule),
         _ => {
             return Err(syn::Error::new(
                 ty.span(),
@@ -548,15 +546,9 @@ enum Gate {
     },
     /// The target's own stored rule, read at the named field's cell.
     Authorizing(u16),
-    /// One of the target's stored roles.
-    RoleGated(TokenStream2),
-    /// One of the package's own stored roles, at a declared table field.
-    TableGated {
-        /// The slot of the state field holding the table.
-        slot: u16,
-        /// The role's package-band offset.
-        role: u16,
-    },
+    /// The rule stored at a declared cell, or — while nothing is stored
+    /// there — the identity that address itself derives.
+    Governed(u16),
     /// The target's rule and its possession of the badge a parameter
     /// names: the field the rule is stored at, and the parameter's index.
     Custodial {
@@ -927,72 +919,42 @@ fn parse_requires(
     params: &[(String, syn::Type)],
 ) -> syn::Result<Gate> {
     let written: syn::Expr = attr.parse_args()?;
-    // The stored-rule form: `auth[primary]` names the protocol table,
-    // `<field>[Role]` a package's own — each with the role the caller
-    // must satisfy there.
-    if let syn::Expr::Index(index) = &written {
-        let syn::Expr::Path(base) = index.expr.as_ref() else {
-            return Err(syn::Error::new(
-                index.span(),
-                "a stored-rule condition is written `auth[role]` or `<field>[Role]`",
-            ));
+    // The stored-rule form: `governs(<field>)` names the cell whose rule
+    // governs, which is the address's own `auth` cell or one a package
+    // keeps itself. What governs while nothing is stored there is the
+    // rule's own second branch rather than anything the kernel supplies.
+    if let syn::Expr::Call(call) = &written
+        && calls(&call.func, "governs")
+    {
+        let named = match call.args.first() {
+            Some(syn::Expr::Path(path)) => path.path.require_ident()?,
+            _ => {
+                return Err(syn::Error::new(
+                    call.span(),
+                    "`governs(..)` names the cell whose stored rule governs",
+                ));
+            }
         };
-        let syn::Expr::Path(role) = index.index.as_ref() else {
-            return Err(syn::Error::new(
-                index.index.span(),
-                "a stored role is named, not computed",
-            ));
-        };
-        if base.path.is_ident("auth") {
-            let named = match role.path.get_ident().map(ToString::to_string).as_deref() {
-                Some("primary") => quote!(PRIMARY),
-                Some("recovery") => quote!(RECOVERY),
-                Some("confirmation") => quote!(CONFIRMATION),
-                _ => {
-                    return Err(syn::Error::new(
-                        role.span(),
-                        "a stored role is `primary`, `recovery`, or `confirmation`",
-                    ));
-                }
-            };
-            return Ok(Gate::RoleGated(quote!(::hyperscale_vm_sdk::#named)));
-        }
-        // A package's own table: the field holding it, indexed by a
-        // declared role name. The field's type is what says it holds a
-        // rule table, and the `#[roles]` enum is where the name gets its
-        // band offset.
-        let Some(field) = base
-            .path
-            .get_ident()
-            .and_then(|ident| declared.fields.get(&ident.to_string()))
+        let name = named.to_string();
+        let Some(field) = declared
+            .accessors
+            .get(&name)
+            .or_else(|| declared.fields.get(&name))
         else {
             return Err(syn::Error::new(
-                base.span(),
-                "a stored table is `auth`, or a declared field holding the package's \
-                 own role table",
+                named.span(),
+                "not a cell of this package — `governs(auth)` names the address's own \
+                 governing rule, and a package keeping others names one of its fields",
             ));
         };
-        if !holds_role_table(field) {
+        if !holds_rule(field) {
             return Err(syn::Error::new(
-                base.span(),
-                "this field does not hold a role table — a package's stored roles live \
-                 in a `Cell<Option<AuthCell>>` field",
+                named.span(),
+                "this cell does not hold a rule — a stored rule lives in a \
+                 `Cell<Option<RuleBytes>>` field",
             ));
         }
-        let named = role
-            .path
-            .get_ident()
-            .map(|ident| kebab(&ident.to_string()))
-            .and_then(|name| declared.roles.iter().position(|r| *r == name));
-        let Some(offset) = named else {
-            return Err(syn::Error::new(
-                role.span(),
-                "not a declared role — name a variant of the package's `#[roles]` enum",
-            ));
-        };
-        let slot = field.slot;
-        let role = u16::try_from(offset).expect("a role enum is shorter than u16");
-        return Ok(Gate::TableGated { slot, role });
+        return Ok(Gate::Governed(field.slot));
     }
     let (rule, on_self, threshold) = guarded_rule(
         &written,
@@ -1136,7 +1098,7 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
                 slot: AUTH.0,
                 kind: FieldKind::Cell,
                 element: Some(syn::parse_quote!(
-                    ::core::option::Option<::hyperscale_vm_sdk::AuthCell>
+                    ::core::option::Option<::hyperscale_vm_sdk::RuleBytes>
                 )),
                 denomination: None,
             },
@@ -1543,21 +1505,19 @@ fn gate_calls(gate: &Gate, lowered: &lower::Lowered) -> TokenStream2 {
             __t.point(&__key).read();
             __t.authorizing();
         }),
-        Gate::RoleGated(role) => quote!(__t.role_gated(#role);),
-        // A package-table gate declares its own read — unless the body
-        // already reaches the table, in which case the gate rides the
-        // body's own clause exactly as the protocol table's rewrites do:
-        // one cell is one clause, and two declarations of it would be a
-        // self-conflict.
-        Gate::TableGated { slot, role } => {
+        // A governing gate declares its own read — unless the body
+        // already reaches the cell, in which case the gate rides the
+        // body's own clause: one cell is one clause, and two declarations
+        // of it would be a self-conflict.
+        Gate::Governed(slot) => {
             if lowered.point_site(*slot).is_some() {
-                quote!(__t.role_gated(::hyperscale_vm_sdk::package_role(#role));)
+                quote!(__t.governed_by_what_it_writes(::hyperscale_vm_sdk::SlotId(#slot));)
             } else {
                 quote!({
                     let __owner = __t.self_addr();
                     let __key = __owner.child(::hyperscale_vm_sdk::SlotId(#slot), &[]);
                     __t.point(&__key).read();
-                    __t.table_gated(::hyperscale_vm_sdk::package_role(#role));
+                    __t.governed_by();
                 })
             }
         }
@@ -1625,7 +1585,11 @@ fn check_gate_shape(
 ) -> syn::Result<()> {
     let refuse = |message: &str| Err(syn::Error::new(method.sig.ident.span(), message));
     match gate {
-        Gate::Public | Gate::Guarded { .. } => Ok(()),
+        // A public method, a gate over claims, and a gate over a stored
+        // rule all put no shape on the body: what governs a cell nothing
+        // has written is the rule's own second branch, so a rewrite needs
+        // no reading of what it replaces.
+        Gate::Public | Gate::Guarded { .. } | Gate::Governed(_) => Ok(()),
         Gate::Authorizing(_) => {
             if lowered.sites.is_empty() {
                 Ok(())
@@ -1636,53 +1600,6 @@ fn check_gate_shape(
                      The body has nothing left to say, so it must be empty",
                 )
             }
-        }
-        Gate::RoleGated(_) => match lowered.sites.as_slice() {
-            [site]
-                if matches!(site.target, Target::Point { .. })
-                    && site.resource() == Some(HandleMode::WriteCell) =>
-            {
-                Ok(())
-            }
-            _ => refuse(
-                "a role-gated method declares exactly one point write — the cell its \
-                 stored roles live in. The write is where the gate's cell comes from, \
-                 and it serializes role rewrites against concurrent sign-ins",
-            ),
-        },
-        // A table-gated method's body is its own: the gate declares the
-        // read it judges where the body does not reach the table. Where
-        // it does, the rewrite must read what it rewrites — `existing()`
-        // — so a component nobody instantiated refuses its rotation as the routed
-        // absence rather than creating a table out of nowhere.
-        Gate::TableGated { slot, .. } => {
-            let Some(site) = lowered.point_site(*slot) else {
-                return Ok(());
-            };
-            if !site.ops.iter().any(|(op, _)| *op == Op::Existing) {
-                return refuse(
-                    "a role-gated rewrite of its own table reads what it rewrites — \
-                     `existing()` — so a component nobody instantiated refuses as the \
-                     routed absence rather than seeding a table nothing ever wrote",
-                );
-            }
-            // Where the body reaches the table the gate rides the body's
-            // own clause, and the cell it reads the rule from is the one
-            // write it finds — so a second write beside it would leave
-            // two cells answering for one role.
-            let writes = lowered
-                .sites
-                .iter()
-                .filter(|site| site.resource() == Some(HandleMode::WriteCell))
-                .count();
-            if writes > 1 {
-                return refuse(
-                    "a method gated on its own stored table rewrites that table and \
-                     nothing else: the gate reads its rule from the body's own write, \
-                     so a second write leaves two cells answering for one role",
-                );
-            }
-            Ok(())
         }
         Gate::Custodial { .. } => {
             if lowered.sites.is_empty() {
@@ -1862,6 +1779,7 @@ fn strip_macro_attrs(items: &mut [syn::Item], state_name: &syn::Ident, role: Rol
                 }
             }
             syn::Item::Enum(item) => {
+                // (roles removed)
                 // A `#[roles]` enum is names for the gates and the
                 // metadata table; nothing constructs a variant, and the
                 // lint would be describing the design.
@@ -1953,10 +1871,10 @@ fn authoring_accessors(
                 ::core::unimplemented!("a contract body runs on the guest")
             }
 
-            /// The stored authority cell, absent until the holder
+            /// The rule governing this address, absent until the holder
             /// securifies.
             fn auth(&self) -> ::hyperscale_vm_sdk::state::Cell<
-                ::core::option::Option<::hyperscale_vm_sdk::AuthCell>,
+                ::core::option::Option<::hyperscale_vm_sdk::RuleBytes>,
             > {
                 ::core::unimplemented!("a contract body runs on the guest")
             }
@@ -2960,8 +2878,6 @@ struct Declared<'a> {
     fields: &'a BTreeMap<String, Field>,
     /// The protocol cells reached by accessor.
     accessors: &'a BTreeMap<String, Field>,
-    /// The `#[roles]` enum's names, in band order.
-    roles: &'a [String],
     /// The configuration struct's own name, where the package has one.
     config_record: Option<&'a syn::Ident>,
     /// The configuration struct's fields, in slot order.
@@ -2976,47 +2892,10 @@ struct Declared<'a> {
 /// The absence is what the shape turns on, so the `Option` is read as
 /// well as the element under it — a table that cannot be absent has no
 /// one-way door to be behind.
-pub(crate) fn holds_role_table(field: &Field) -> bool {
+pub(crate) fn holds_rule(field: &Field) -> bool {
     field.element.as_ref().is_some_and(|ty| {
-        is_named(ty, "Option") && element_of(ty).is_some_and(|held| is_named(&held, "AuthCell"))
+        is_named(ty, "Option") && element_of(ty).is_some_and(|held| is_named(&held, "RuleBytes"))
     })
-}
-
-/// The package's role names, in the band order a `#[roles]` enum
-/// declares them.
-///
-/// One enum, because the band is one sequence: two enums would be two
-/// claims about where the numbering starts.
-fn role_names(items: &[syn::Item]) -> syn::Result<Vec<String>> {
-    let mut declared: Option<&syn::ItemEnum> = None;
-    for item in items {
-        let syn::Item::Enum(item) = item else {
-            continue;
-        };
-        if !item.attrs.iter().any(|a| a.path().is_ident("roles")) {
-            continue;
-        }
-        if declared.is_some() {
-            return Err(syn::Error::new(
-                item.ident.span(),
-                "a package declares one `#[roles]` enum — the band is one sequence, and \
-                 a second enum would be a second claim about where it starts",
-            ));
-        }
-        declared = Some(item);
-    }
-    let Some(item) = declared else {
-        return Ok(Vec::new());
-    };
-    for variant in &item.variants {
-        if !matches!(variant.fields, syn::Fields::Unit) {
-            return Err(syn::Error::new(
-                variant.ident.span(),
-                "a role is a name — the rule it selects lives in the stored table",
-            ));
-        }
-    }
-    distinct_band("roles", item.variants.iter().map(|variant| &variant.ident))
 }
 
 /// A Rust type name as the constant naming it: `OwnerBadge` is
@@ -3303,12 +3182,10 @@ fn expand(
             .map(|(name, _)| name.clone())
             .collect::<Vec<_>>(),
     )?;
-    let declared_roles = role_names(items)?;
     let accessors = accessors(config_name.as_ref());
     let declared = Declared {
         fields: &fields,
         accessors: &accessors,
-        roles: &declared_roles,
         config_record: config_name.as_ref(),
         config_fields: &config_fields,
         resources: &declared_resources,
@@ -3333,7 +3210,6 @@ fn expand(
     let declarations = methods.iter().map(|m| &m.declaration);
     let event_table = events.iter().map(|(ident, _)| quote!(.event::<#ident>()));
     let error_table = errors.iter().map(|name| quote!(.error(#name)));
-    let role_table = declared_roles.iter().map(|name| quote!(.role(#name)));
     let state_table = state_table(&fields);
     let config_table = config_fields.iter().map(|(name, _)| quote!(.config(#name)));
 
@@ -3369,7 +3245,6 @@ fn expand(
                 #(#declarations)*
                 #(#event_table)*
                 #(#error_table)*
-                #(#role_table)*
                 #(#stored_table)*
                 #(#state_table)*
                 #(#config_table)*

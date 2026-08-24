@@ -12,7 +12,7 @@
 //! move no package hash and no blob.
 
 pub use hyperscale_vm_effects::{
-    GrantsExpr, Hash32, Hasher, InstanceMeta, PackageMetadata, RoleTable, SlotId, StoredRule,
+    GrantsExpr, Hash32, Hasher, InstanceMeta, PackageMetadata, SlotId, StoredRule,
     Value as ManifestValue, declaration_hash,
 };
 use hyperscale_vm_effects::{ResourceKind, Value, granting_issued_resource};

@@ -1535,9 +1535,8 @@ fn eval_condition(
                             found: value.kind(),
                         })
                 }
-                RuleLeaf::Stored { cell, role } => Ok(Rule::Require(JudgedLeaf::Stored {
+                RuleLeaf::Stored { cell } => Ok(Rule::Require(JudgedLeaf::Stored {
                     cell: as_key(&*eval_expr(cell, inputs, hasher, bindings, 0, budget)?)?,
-                    role: *role,
                 })),
                 // The grant leaf stands for the tree its resource
                 // commits to: resolve the address, read the rule off the
@@ -2459,7 +2458,6 @@ mod tests {
     fn a_requires_clause_evaluates_to_a_condition_and_no_access() {
         use hyperscale_vm_types::CallTarget;
 
-        use crate::auth::PRIMARY;
         use crate::manifest::JudgedLeaf;
         use crate::presented::Presented;
         use crate::rule::{Rule, RuleExpr, RuleLeaf};
@@ -2489,7 +2487,6 @@ mod tests {
                         RuleExpr::claim(Expr::SelfAddr),
                         RuleExpr::Require(RuleLeaf::Stored {
                             cell: Expr::Literal(Value::Key(key)),
-                            role: PRIMARY,
                         }),
                     ],
                 },
@@ -2526,10 +2523,7 @@ mod tests {
                     count: 1,
                     rules: vec![
                         Rule::Require(JudgedLeaf::Claim(identity)),
-                        Rule::Require(JudgedLeaf::Stored {
-                            cell: key,
-                            role: PRIMARY,
-                        }),
+                        Rule::Require(JudgedLeaf::Stored { cell: key }),
                     ],
                 },
             ]

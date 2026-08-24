@@ -13,7 +13,8 @@
 //!
 //! [`PrincipalAddr`]: hyperscale_vm_effects::PrincipalAddr
 
-use hyperscale_vm_effects::{PackageMetadata, RoleTable, StoredRule};
+use hyperscale_hbor::to_vec;
+use hyperscale_vm_effects::{PackageMetadata, RuleBytes, StoredRule};
 use hyperscale_vm_manifest_builder::{Proof, TypedBuilder, TypedError};
 
 // The package, read from the crate the artifact is built from rather
@@ -22,7 +23,24 @@ use hyperscale_vm_manifest_builder::{Proof, TypedBuilder, TypedError};
 #[path = "../../../guests/account/src/lib.rs"]
 mod package;
 
+/// The replacement an account keeps while one is waiting, so a consumer
+/// can read the state a flow passes through rather than only its ends.
+pub use package::account::Pending;
 pub use package::account::client::*;
+
+/// One replacement as the cell holds it.
+///
+/// The account's own encoder rather than a second one beside it: a
+/// consumer seeding the state a flow passes through writes exactly what
+/// the guest would have written.
+///
+/// # Panics
+///
+/// Only on an encoder failure no well-formed record can reach.
+#[must_use]
+pub fn encode_pending(pending: &Pending) -> Vec<u8> {
+    to_vec(pending).expect("a record encodes")
+}
 /// The package's own bodies, dispatched natively.
 ///
 /// The same module the declaration is traced from, so a test running
@@ -47,7 +65,8 @@ pub fn metadata() -> PackageMetadata {
     package::account::blueprint().metadata()
 }
 
-/// Securify with one rule as all three reserved roles.
+/// Store one rule as all three: the rule that governs, the one that may
+/// replace it, and the one that may enact a replacement early.
 ///
 /// # Errors
 ///
@@ -63,6 +82,13 @@ pub fn securify_uniform(
     rule: &StoredRule,
     recovery_delay_ms: u64,
 ) -> Result<(), TypedError> {
-    let roles = RoleTable::uniform(rule).expect("a rule within the caps encodes");
-    securify(b, proof, roles, recovery_delay_ms)
+    let sealed = RuleBytes::try_from(rule).expect("a rule within the caps encodes");
+    securify(
+        b,
+        proof,
+        sealed.clone(),
+        sealed.clone(),
+        sealed,
+        recovery_delay_ms,
+    )
 }

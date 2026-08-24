@@ -11,7 +11,7 @@ use hyperscale_hbor::{
 };
 use hyperscale_vm_types::{Address, AddressClass, CollectionId, ResourceAddr, SubstateKey};
 
-use crate::auth::RoleBytes;
+use crate::auth::RuleBytes;
 use crate::dsl::{Expr, TargetExpr};
 use crate::hash::{Hash32, Hasher};
 use crate::presented::Presented;
@@ -272,7 +272,7 @@ impl GrantedBehaviour {
 /// so an entry that changed would be a different resource.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor, HborShape)]
 #[hbor(transparent, validate = ascending_behaviours)]
-pub struct ResourceGrants(Vec<(GrantedBehaviour, RoleBytes)>);
+pub struct ResourceGrants(Vec<(GrantedBehaviour, RuleBytes)>);
 
 /// The list's canonical-order rule: behaviours strictly ascending.
 fn ascending_behaviours(rules: &ResourceGrants) -> Result<(), &'static str> {
@@ -295,7 +295,7 @@ impl ResourceGrants {
     /// entry injects no requirement, which withholds a capability and
     /// permits a movement.
     #[must_use]
-    pub fn get(&self, behaviour: GrantedBehaviour) -> Option<&RoleBytes> {
+    pub fn get(&self, behaviour: GrantedBehaviour) -> Option<&RuleBytes> {
         self.0
             .binary_search_by_key(&behaviour, |(b, _)| *b)
             .ok()
@@ -325,7 +325,7 @@ impl ResourceGrants {
     }
 
     /// Grant `entry` for `behaviour`, replacing what was there.
-    pub fn set(&mut self, behaviour: GrantedBehaviour, entry: RoleBytes) {
+    pub fn set(&mut self, behaviour: GrantedBehaviour, entry: RuleBytes) {
         match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
             Ok(index) => self.0[index].1 = entry,
             Err(index) => self.0.insert(index, (behaviour, entry)),
@@ -440,7 +440,7 @@ impl GrantsExpr {
                 return Err(refusal);
             }
             let sealed =
-                RoleBytes::try_from(&stored).map_err(|_| GrantsResolveError::PastTheCaps)?;
+                RuleBytes::try_from(&stored).map_err(|_| GrantsResolveError::PastTheCaps)?;
             resolved.set(behaviour, sealed);
         }
         Ok(resolved)

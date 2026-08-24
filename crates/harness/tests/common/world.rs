@@ -6,9 +6,9 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG};
 use hyperscale_vm_effects::{
-    AuthBase, EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash,
-    PrefixShardResolver, Presented, Records, ResourceKind, RoleTable, Routing, ShardId,
-    ShardResolver, StarShape, StoredRule, TestHasher, Value, admit, child_key,
+    EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash,
+    PrefixShardResolver, Presented, Records, ResourceKind, Routing, RuleBytes, ShardId,
+    ShardResolver, SlotId, StarShape, StoredRule, TestHasher, Value, admit, child_key,
     classify as classify_star, collection_id, issued_resource, route,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
@@ -102,18 +102,22 @@ pub fn fine_asks() -> CollectionId {
     collection_id(&TestHasher, fine_book(), book::ASKS, &[])
 }
 
-/// An account's stored-authority cell — what its sign-in reads.
+/// The rule governing an address — what its sign-in reads.
 pub fn auth(owner: impl Into<Address>) -> SubstateKey {
     child_key(&TestHasher, owner, AUTH, &[])
 }
 
-/// One identity as all three roles, under the corpus delay.
-pub fn uniform_base(identity: PrincipalAddr) -> AuthBase {
-    AuthBase::new(
-        DAY_MS,
-        RoleTable::uniform(&StoredRule::claim(Presented::Identity(identity.into())))
-            .expect("a rule within the vocabulary caps"),
-    )
+/// One of the account's own cells, by its offset in the package band:
+/// 0 the rule that may replace the governing one, 1 the rule that may
+/// enact a replacement early, 2 the replacement waiting, 3 the delay.
+pub fn own_cell(owner: impl Into<Address>, offset: u16) -> SubstateKey {
+    child_key(&TestHasher, owner, SlotId(PACKAGE_SLOT_BASE + offset), &[])
+}
+
+/// One identity, as the rule a cell stores.
+pub fn stored_rule(identity: PrincipalAddr) -> RuleBytes {
+    RuleBytes::try_from(&StoredRule::claim(Presented::Identity(identity.into())))
+        .expect("a rule within the vocabulary caps")
 }
 
 pub fn world() -> Records {
@@ -669,9 +673,9 @@ pub fn propose_graph() -> ManifestGraph {
         account::propose(
             b,
             ALICE,
-            RoleTable::uniform(&StoredRule::claim(Presented::Identity(BOB.into())))
-                .expect("a rule within the vocabulary caps"),
-            DAY_MS,
+            stored_rule(BOB),
+            stored_rule(BOB),
+            stored_rule(BOB),
         )
     })
 }

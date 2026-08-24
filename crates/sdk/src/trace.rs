@@ -33,8 +33,8 @@ use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, GrantedBehaviour, GrantsExpr, Issuance, MAX_CLAUSE_DEPTH,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, PRIMARY, ParamType,
-    ResourceKind, RoleId, RuleExpr, RuleLeaf, SlotId, TargetExpr, Totality, Value, well_formed,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, ResourceKind,
+    RuleExpr, RuleLeaf, SlotId, TargetExpr, Totality, Value, well_formed,
 };
 use hyperscale_vm_types::Presence;
 
@@ -89,9 +89,10 @@ pub struct Trace {
     /// The position in the open loop's body of the site most recently
     /// declared there, which is the one [`Trace::bind_run`] names.
     last_site: Option<u32>,
-    /// Whose authority naming this method requires.
-    pending_role: Option<RoleId>,
     /// The resource this method may issue: its mark and its kind.
+    /// The slot of the rule cell this method is gated on and also
+    /// writes, which is lowered only once the body has been.
+    pending_governed: Option<SlotId>,
     issues: Option<Issuance>,
     /// Whether the method carries an error arm.
     totality: Totality,
@@ -115,7 +116,7 @@ impl Trace {
             values: Vec::new(),
             last_clause: None,
             last_site: None,
-            pending_role: None,
+            pending_governed: None,
             issues: None,
             totality: Totality::Infallible,
             answers: false,
@@ -736,10 +737,7 @@ impl Trace {
         let cell = self.last_point_target();
         self.emit(Clause::Requires {
             guard: None,
-            rule: RuleExpr::Require(RuleLeaf::Stored {
-                cell,
-                role: PRIMARY,
-            }),
+            rule: governs(cell),
         });
         self.emit(Clause::Mints {
             guard: None,
@@ -747,38 +745,22 @@ impl Trace {
         });
     }
 
-    /// Record that naming this method requires satisfying `role` of the
-    /// target's stored role table.
-    ///
-    /// Deferred: the cell the table lives in is the body's one exclusive
-    /// write, which has not been lowered yet, so [`Trace::finish`] reads
-    /// it off the recorded clauses.
-    pub const fn role_gated(&mut self, role: RoleId) {
-        self.pending_role = Some(role);
-    }
-
-    /// Record that naming this method requires satisfying `role` of the
-    /// package's own stored table — read through the cell the last
-    /// emitted clause declared — and that the table is there at all.
-    ///
-    /// The presence condition is the difference from the protocol table:
-    /// every method runs on a component nobody instantiated, a package cell
-    /// has no virtual rule to fall back to, and the condition is what
-    /// makes such a component's gated call a routed refusal a
-    /// caller can read rather than a deny inside the gate.
-    pub fn table_gated(&mut self, role: RoleId) {
+    /// Record that naming this method is governed by the rule stored at
+    /// the cell the last emitted clause declared.
+    pub fn governed_by(&mut self) {
         let cell = self.last_point_target();
         self.emit(Clause::Requires {
             guard: None,
-            rule: RuleExpr::Require(RuleLeaf::Presence {
-                target: Box::new(TargetExpr::Point(cell.clone())),
-                expect: Presence::Present,
-            }),
+            rule: governs(cell),
         });
-        self.emit(Clause::Requires {
-            guard: None,
-            rule: RuleExpr::Require(RuleLeaf::Stored { cell, role }),
-        });
+    }
+
+    /// The same, deferred to [`Trace::finish`]: a method that rewrites
+    /// the very cell its rule is read from has not lowered that write
+    /// yet, and the write is also what serialises a rewrite against a
+    /// concurrent sign-in.
+    pub const fn governed_by_what_it_writes(&mut self, slot: SlotId) {
+        self.pending_governed = Some(slot);
     }
 
     /// Record that naming this method requires the target's own rule and
@@ -817,10 +799,7 @@ impl Trace {
         let (rule_cell, possession) = self.last_two_targets();
         self.emit(Clause::Requires {
             guard: None,
-            rule: RuleExpr::Require(RuleLeaf::Stored {
-                cell: rule_cell,
-                role: PRIMARY,
-            }),
+            rule: governs(rule_cell),
         });
         self.emit(Clause::Requires {
             guard: None,
@@ -937,29 +916,34 @@ impl Trace {
             "a for-each scope outlived its closure"
         );
         let mut clauses = self.scopes.pop().unwrap_or_default();
-        // A role-gated method's rule cell is the body's one exclusive
-        // write, so the condition is written once the body has been: the
-        // write that serialises a role rewrite against a concurrent
-        // sign-in is also what names the cell the rule is read from.
-        if let Some(role) = self.pending_role {
-            let mut writes = clauses.iter().filter_map(|clause| match clause {
-                Clause::Effect {
-                    target: TargetExpr::Point(cell),
-                    mode: ModeExpr::Write,
-                    ..
-                } => Some(cell.clone()),
-                _ => None,
-            });
-            let cell = writes
-                .next()
-                .expect("a role-gated method rewrites its rule cell");
-            assert!(
-                writes.next().is_none(),
-                "a role-gated method rewrites exactly one cell"
-            );
+        // A method gated on the cell it rewrites states its rule once the
+        // body has been lowered: the write that serialises a rewrite
+        // against a concurrent sign-in is also what names the cell.
+        if let Some(slot) = self.pending_governed {
+            // The gate names its own slot, so it reads its rule from the
+            // write on that cell rather than from whichever write the
+            // body happens to make first — which is what lets a method
+            // gated on one rule write others beside it.
+            let cell = clauses
+                .iter()
+                .find_map(|clause| match clause {
+                    Clause::Effect {
+                        target: TargetExpr::Point(cell),
+                        mode: ModeExpr::Write,
+                        ..
+                    } if matches!(
+                        cell,
+                        Expr::ChildKey { slot: at, .. } if *at == slot
+                    ) =>
+                    {
+                        Some(cell.clone())
+                    }
+                    _ => None,
+                })
+                .expect("a method gated on what it writes writes its rule cell");
             clauses.push(Clause::Requires {
                 guard: None,
-                rule: RuleExpr::Require(RuleLeaf::Stored { cell, role }),
+                rule: governs(cell),
             });
         }
         let mut abi = self.handles;
@@ -1131,6 +1115,34 @@ impl Access<'_, Leaf> {
                 expect: presence,
             }),
         });
+    }
+}
+
+/// The rule that governs a cell: what is stored there, or — while
+/// nothing is — the identity that address itself derives.
+///
+/// The fallback is a rule rather than something the kernel supplies,
+/// which is what lets a key-derived address govern itself before it has
+/// any state and lets a package wanting a different answer write a
+/// different rule. It is also the one-way door said out loud: once a rule
+/// is stored, the branch admitting the bare address can never be met
+/// again, because the cell is no longer absent.
+fn governs(cell: Expr) -> RuleExpr {
+    RuleExpr::CountOf {
+        count: 1,
+        rules: vec![
+            RuleExpr::Require(RuleLeaf::Stored { cell: cell.clone() }),
+            RuleExpr::CountOf {
+                count: 2,
+                rules: vec![
+                    RuleExpr::Require(RuleLeaf::Presence {
+                        target: Box::new(TargetExpr::Point(cell)),
+                        expect: Presence::Absent,
+                    }),
+                    RuleExpr::claim(Expr::SelfAddr),
+                ],
+            },
+        ],
     }
 }
 

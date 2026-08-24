@@ -1,15 +1,14 @@
-//! A package's own stored roles: declared names, a table behind its own
-//! one-way door, and gates that read it where it lives.
+//! A package's own stored rule: one cell behind its own one-way door,
+//! and a gate that reads it where it lives.
 //!
 //! The admin's authority is a badge the registry itself issues, so
 //! handing the admin seat over is an ordinary holdings transfer that
 //! touches no cell of the governed component — and the stored form is
-//! there for the set that has to change, rotated under the same
-//! timelocked proposal the protocol table uses.
+//! there for the rule that has to change. Nothing about it is the
+//! protocol's: a rule in a cell is a rule in a cell, and what it takes to
+//! replace one is this package's own answer.
 
-use hyperscale_vm_effects::{
-    Presented, RoleBytes, RoleTable, StoredRule, TestHasher, package_role,
-};
+use hyperscale_vm_effects::{Presented, RuleBytes, StoredRule, TestHasher};
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::{Chain, PrincipalAddr, account, package, principal};
 use hyperscale_vm_types::{Outcome, Presence, ResourceAddr, UnmetCondition};
@@ -20,9 +19,7 @@ const SUCCESSOR: PrincipalAddr = principal(0x52);
 #[blueprint]
 mod registry {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{
-        AuthBase, AuthCell, Cell, Proposal, Quantity, RoleTable, clock_ms,
-    };
+    use hyperscale_vm_sdk::state::{Cell, Quantity, RuleBytes, clock_ms};
 
     /// The badge the table's rules name: the registry's own issue, so
     /// holding it is holding the seat and selling the seat is a
@@ -31,11 +28,6 @@ mod registry {
     #[resource(non_fungible, initial(0))]
     struct AdminBadge;
 
-    #[roles]
-    enum Roles {
-        Admin,
-    }
-
     /// Only the founder may bring the registry up or seed its table.
     #[config]
     #[requires(founder)]
@@ -43,9 +35,18 @@ mod registry {
         founder: Address,
     }
 
+    /// A replacement waiting on the delay that governed when it was made.
+    #[record]
+    struct Pending {
+        effective_at_ms: u64,
+        rule: RuleBytes,
+    }
+
     #[state]
     struct Registry {
-        roles: Cell<Option<AuthCell>>,
+        admin: Cell<Option<RuleBytes>>,
+        pending: Cell<Option<Pending>>,
+        delay_ms: Cell<u64>,
         flag: Cell<Quantity>,
     }
 
@@ -54,41 +55,43 @@ mod registry {
         /// absence is.
         ///
         /// A call of its own rather than part of the bring-up: what the
-        /// table holds is what a caller hands over, and an attribute has
+        /// cell holds is what a caller hands over, and an attribute has
         /// no way to say it. The cell's `Absent` door is what makes it
         /// once-only, so it needs no help from the seal.
         #[requires(founder)]
-        pub fn seed_roles(&mut self, table: RoleTable, delay_ms: u64) {
-            self.roles.create(AuthCell::new(AuthBase {
-                recovery_delay_ms: delay_ms,
-                roles: table,
-            }));
+        pub fn seed_admin(&mut self, rule: RuleBytes, delay_ms: u64) {
+            self.admin.create(rule);
+            self.delay_ms.set(delay_ms);
         }
 
         /// The admin surface.
-        #[requires(roles[Admin])]
+        #[requires(governs(admin))]
         pub fn set_flag(&mut self, value: Quantity) {
             self.flag.set(value);
         }
 
-        /// Rotate the table: a pending replacement maturing after the
-        /// stored delay, on the same terms the protocol table's
-        /// proposals mature.
-        #[requires(roles[Admin])]
-        pub fn propose_roles(&mut self, table: RoleTable) {
-            let stored = self.roles.existing();
-            let current = stored.governing(clock_ms()).clone();
-            let effective_at_ms = clock_ms().saturating_add(current.recovery_delay_ms);
-            self.roles.set(Some(AuthCell {
-                base: current.clone(),
-                proposal: Some(Proposal {
-                    effective_at_ms,
-                    base: AuthBase {
-                        recovery_delay_ms: current.recovery_delay_ms,
-                        roles: table,
-                    },
-                }),
+        /// Rotate the rule: a replacement waiting out the stored delay.
+        #[requires(governs(admin))]
+        pub fn propose_admin(&mut self, rule: RuleBytes) {
+            let effective_at_ms = clock_ms().saturating_add(self.delay_ms.get());
+            self.pending.set(Some(Pending {
+                effective_at_ms,
+                rule,
             }));
+        }
+
+        /// Enact a replacement whose delay has run out.
+        ///
+        /// Open to anyone, because it does only what the clock already
+        /// licensed. Nothing happens before the instant the replacement
+        /// named.
+        pub fn promote(&mut self) {
+            if let Some(pending) = self.pending.get()
+                && pending.effective_at_ms <= clock_ms()
+            {
+                self.admin.set(Some(pending.rule));
+                self.pending.set(None);
+            }
         }
     }
 }
@@ -112,33 +115,32 @@ fn badge(instance: registry::client::Registry) -> ResourceAddr {
     instance.issued_admin_badge(&TestHasher)
 }
 
-/// A one-role table: `Admin` admits whoever satisfies `rule`.
-fn admin(rule: &StoredRule) -> RoleTable {
-    let mut table = RoleTable::new();
-    table.set(
-        package_role(0),
-        RoleBytes::try_from(rule).expect("a rule within the caps encodes"),
-    );
-    table
+/// A rule as a cell stores it.
+fn stored(rule: &StoredRule) -> RuleBytes {
+    RuleBytes::try_from(rule).expect("a rule within the caps encodes")
 }
 
-/// Seed the registry's table with `Admin` held by instance 0 of the
-/// badge its bring-up already filed in the founder's account.
+/// Seed the registry's admin rule with instance 0 of the badge its
+/// bring-up already filed in the founder's account.
 fn seeded() -> (Chain, registry::client::Registry) {
     let (mut chain, instance) = setup();
-    let table = admin(&StoredRule::claim(Presented::Instance(badge(instance), 0)));
+    let rule = stored(&StoredRule::claim(Presented::Instance(badge(instance), 0)));
     chain
         .transact(FOUNDER, |b| {
             let founder = account::authorize(b, FOUNDER)?;
-            instance.seed_roles(b, founder, table.clone(), DELAY_MS)
+            instance.seed_admin(b, founder, rule.clone(), DELAY_MS)
         })
         .expect_completed();
     (chain, instance)
 }
 
-/// A component whose table nobody seeded refuses its gated call as the
-/// table's unmet presence — a routed verdict a caller can read, never a
-/// trap and never an empty table silently denying.
+/// A component whose rule nobody seeded refuses its gated call as the
+/// unmet rule — a routed verdict a caller can read, never a trap.
+///
+/// What an unwritten cell admits is the identity the address itself
+/// derives, and a component derives from no key: there is nothing to
+/// present for it, so the branch that would open the surface has no
+/// satisfier and the surface stays closed until somebody seeds a rule.
 #[test]
 fn an_unseeded_registry_refuses_its_surface_as_the_routed_absence() {
     let (mut chain, instance) = setup();
@@ -146,18 +148,15 @@ fn an_unseeded_registry_refuses_its_surface_as_the_routed_absence() {
         .transact(FOUNDER, |b| instance.set_flag(b, 7))
         .refused()
         .cloned()
-        .expect("an unseeded table refuses");
+        .expect("an unseeded rule refuses");
     assert!(
         matches!(
             outcome,
             Outcome::ConditionUnmet {
-                condition: UnmetCondition::Holds {
-                    required: Presence::Present,
-                    ..
-                },
+                condition: UnmetCondition::Satisfies { .. },
             }
         ),
-        "refused as the unmet presence: {outcome:?}",
+        "refused as the unmet rule: {outcome:?}",
     );
 }
 
@@ -179,11 +178,11 @@ fn a_seeded_table_opens_the_surface_to_the_badge_holder() {
 #[test]
 fn a_second_seeding_is_refused_where_the_table_lives() {
     let (mut chain, instance) = seeded();
-    let table = admin(&StoredRule::claim(Presented::Instance(badge(instance), 0)));
+    let rule = stored(&StoredRule::claim(Presented::Instance(badge(instance), 0)));
     let outcome = chain
         .transact(FOUNDER, |b| {
             let founder = account::authorize(b, FOUNDER)?;
-            instance.seed_roles(b, founder, table.clone(), DELAY_MS)
+            instance.seed_admin(b, founder, rule.clone(), DELAY_MS)
         })
         .refused()
         .cloned()
@@ -255,8 +254,8 @@ fn a_rotation_governs_only_after_the_stored_delay() {
     chain
         .transact(FOUNDER, |b| {
             let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
-            let table = admin(&StoredRule::claim(Presented::Identity(SUCCESSOR.into())));
-            b.call_as(held, instance, "propose-roles", (table,))?.none()
+            let rule = stored(&StoredRule::claim(Presented::Identity(SUCCESSOR.into())));
+            b.call_as(held, instance, "propose-admin", (rule,))?.none()
         })
         .expect_completed();
 
@@ -275,8 +274,19 @@ fn a_rotation_governs_only_after_the_stored_delay() {
         })
         .expect_completed();
 
-    // After it, the table is the proposal's.
+    // After it, anybody may enact what the clock has licensed — and
+    // until somebody does, the rule that governs is still the old one.
     let mut chain = chain.at(1_000_000 + DELAY_MS);
+    assert!(
+        chain
+            .transact(SUCCESSOR, |b| instance.set_flag(b, 4))
+            .refused()
+            .is_some(),
+        "a replacement past its instant still has to be enacted",
+    );
+    chain
+        .transact(SUCCESSOR, |b| instance.promote(b))
+        .expect_completed();
     chain
         .transact(SUCCESSOR, |b| instance.set_flag(b, 4))
         .expect_completed();
@@ -288,6 +298,6 @@ fn a_rotation_governs_only_after_the_stored_delay() {
             })
             .refused()
             .is_some(),
-        "the badge's rule matured away",
+        "and the badge's rule is the one it replaced",
     );
 }

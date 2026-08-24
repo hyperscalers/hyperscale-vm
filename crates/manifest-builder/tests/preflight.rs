@@ -6,7 +6,7 @@
 //! checked against the same call made directly.
 
 use hyperscale_vm_effects::{
-    Constraint, Hash32, Hasher, InstanceMeta, PRIMARY, PackageHash, PrefixShardResolver, Records,
+    Constraint, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, Records,
     ResourceKind, TestHasher, Value, admit, footprint, resource_address, route,
 };
 use hyperscale_vm_manifest_builder::{
@@ -120,10 +120,7 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
     // transfer composes under one signature — presented once, at the
     // sign-in, judged by the account's stored primary rule, and carried
     // to the withdrawal as its proof.
-    assert_eq!(
-        report.authority[0].authority,
-        Authority::StoredRule(PRIMARY)
-    );
+    assert_eq!(report.authority[0].authority, Authority::StoredRule);
     assert_eq!(report.authority[1].authority, Authority::Signature(ALICE));
     assert_eq!(report.authority[2].authority, Authority::Anyone);
     assert_eq!(report.signers(), std::iter::once(ALICE).collect());
@@ -144,10 +141,7 @@ fn the_operator_surface_is_the_badge_holders_custody() {
     // the badge itself at the surface — reachable only through that
     // presentation, which is the point, and which the report says
     // rather than calling the surface unreachable.
-    assert_eq!(
-        report.authority[0].authority,
-        Authority::StoredRule(PRIMARY)
-    );
+    assert_eq!(report.authority[0].authority, Authority::StoredRule);
     assert_eq!(
         report.authority[1].authority,
         Authority::Badge {

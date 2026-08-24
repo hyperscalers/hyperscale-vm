@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
     EnvelopeTree, GrantedBehaviour, Hasher, PackageHash, PrefixShardResolver, Presented, Records,
-    ResourceGrants, ResourceKind, ResourceMeta, RoleBytes, StoredRule, TestHasher, admit_tree,
+    ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, admit_tree,
     never, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
@@ -58,7 +58,7 @@ fn granting_meta() -> ResourceMeta {
     let mut rules = ResourceGrants::new();
     rules.set(
         GrantedBehaviour::Recall,
-        RoleBytes::try_from(&StoredRule::claim(Presented::Identity(RECALLER.into())))
+        RuleBytes::try_from(&StoredRule::claim(Presented::Identity(RECALLER.into())))
             .expect("a rule within the caps encodes"),
     );
     ResourceMeta {
@@ -191,7 +191,7 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     forged.rules = ResourceGrants::new();
     forged.rules.set(
         GrantedBehaviour::Recall,
-        RoleBytes::try_from(&StoredRule::claim(Presented::Identity(STRANGER.into())))
+        RuleBytes::try_from(&StoredRule::claim(Presented::Identity(STRANGER.into())))
             .expect("a rule encodes"),
     );
     assert_ne!(forged.address(&TestHasher), resource());
@@ -207,15 +207,15 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
 }
 
 /// A rule sealed into a resource's address.
-fn sealed(rule: &StoredRule) -> RoleBytes {
-    RoleBytes::try_from(rule).expect("a rule within the caps encodes")
+fn sealed(rule: &StoredRule) -> RuleBytes {
+    RuleBytes::try_from(rule).expect("a rule within the caps encodes")
 }
 
 /// The badge a governed resource's `Withdraw` entry names.
 const BADGE: ResourceAddr = ResourceAddr::new([0x77; 31]);
 
 /// A resource whose withdrawal is governed by a standing credential.
-fn governed_meta(entry: RoleBytes) -> ResourceMeta {
+fn governed_meta(entry: RuleBytes) -> ResourceMeta {
     let mut rules = ResourceGrants::new();
     rules.set(GrantedBehaviour::Withdraw, entry);
     ResourceMeta {
@@ -226,14 +226,14 @@ fn governed_meta(entry: RoleBytes) -> ResourceMeta {
     }
 }
 
-fn governed(entry: RoleBytes) -> ResourceAddr {
+fn governed(entry: RuleBytes) -> ResourceAddr {
     governed_meta(entry).address(&TestHasher)
 }
 
 /// The holder moves the governed resource out of their own account and
 /// banks it back — an ordinary transfer, declaring nothing about any
 /// rule, which is the whole point.
-fn governed_tree(entry: RoleBytes) -> Result<EnvelopeTree> {
+fn governed_tree(entry: RuleBytes) -> Result<EnvelopeTree> {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
@@ -249,7 +249,7 @@ fn governed_tree(entry: RoleBytes) -> Result<EnvelopeTree> {
 
 /// A holder's store, holding the governed resource and — where `carries`
 /// says so — the credential its withdraw rule names.
-fn governed_store(entry: RoleBytes, carries: bool) -> MemoryStore {
+fn governed_store(entry: RuleBytes, carries: bool) -> MemoryStore {
     let mut store = MemoryStore::new();
     seed_vault(&mut store, HOLDER, governed(entry), 100);
     if carries {

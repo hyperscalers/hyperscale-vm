@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use hyperscale_hbor::{Resolution, ShapeFault};
 use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
 
-use crate::auth::MAX_PACKAGE_ROLES;
 use crate::dsl::{
     Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr,
     TargetExpr, materialized_kind,
@@ -1403,9 +1402,6 @@ pub enum MetadataBoundsError {
     /// An event table longer than the index an emitted event can carry.
     #[error("event table names {0} types, past the {MAX_EVENT_TYPES} an event index can reach")]
     EventTable(usize),
-    /// A role table longer than the band a package's own roles occupy.
-    #[error("role table names {0} roles, past the {MAX_PACKAGE_ROLES} a package's band holds")]
-    RoleTable(usize),
     /// An error table longer than the index a declined code can carry.
     #[error("error table names {0} codes, past the {MAX_ERROR_CODES} a declined code can reach")]
     ErrorTable(usize),
@@ -1561,9 +1557,6 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataBoundsEr
     }
     if metadata.errors.len() > MAX_ERROR_CODES as usize {
         return Err(MetadataBoundsError::ErrorTable(metadata.errors.len()));
-    }
-    if metadata.roles.len() > MAX_PACKAGE_ROLES {
-        return Err(MetadataBoundsError::RoleTable(metadata.roles.len()));
     }
     if metadata.config.len() > MAX_CONFIG_FIELDS {
         return Err(MetadataBoundsError::ConfigTable(metadata.config.len()));
@@ -2223,7 +2216,6 @@ mod tests {
         );
     }
 
-    use crate::auth::PRIMARY;
     use crate::envelope::NULLIFIER_SLOT;
     use crate::metadata::PACKAGE_SLOT;
     use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
@@ -2423,43 +2415,6 @@ mod tests {
     /// checks an emitted event type and a returned error code without
     /// holding the metadata, and a gate carries a role's band offset —
     /// so a table longer than its ceiling names entries nothing could
-    /// ever refer to.
-    #[test]
-    fn a_name_table_past_the_index_the_kernel_accepts_is_refused() {
-        // A name of its own per entry, each with a shape under it, so the
-        // table's length is the only thing under test here.
-        let events = |len: usize| {
-            let named: Vec<String> = (0..len).map(|index| format!("e{index}")).collect();
-            PackageMetadata {
-                types: named
-                    .iter()
-                    .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
-                    .collect(),
-                events: named,
-                ..PackageMetadata::default()
-            }
-        };
-        assert_bounded(
-            &events(MAX_EVENT_TYPES as usize),
-            &events(MAX_EVENT_TYPES as usize + 1),
-        );
-
-        let errors = |len: usize| PackageMetadata {
-            errors: vec![String::new(); len],
-            ..PackageMetadata::default()
-        };
-        assert_bounded(
-            &errors(MAX_ERROR_CODES as usize),
-            &errors(MAX_ERROR_CODES as usize + 1),
-        );
-
-        let roles = |len: usize| PackageMetadata {
-            roles: vec![String::new(); len],
-            ..PackageMetadata::default()
-        };
-        assert_bounded(&roles(MAX_PACKAGE_ROLES), &roles(MAX_PACKAGE_ROLES + 1));
-    }
-
     fn clause() -> Clause {
         Clause::Effect {
             guard: None,
@@ -2547,7 +2502,6 @@ mod tests {
                     TargetExpr::Point(expr) => expr,
                     _ => unreachable!(),
                 },
-                role: PRIMARY,
             })
         };
         let declared = |clauses: Vec<Clause>| {
@@ -2681,10 +2635,7 @@ mod tests {
         assert_eq!(
             declared(vec![requires(
                 None,
-                RuleExpr::Require(RuleLeaf::Stored {
-                    cell: Expr::Arg(0),
-                    role: PRIMARY,
-                })
+                RuleExpr::Require(RuleLeaf::Stored { cell: Expr::Arg(0) })
             )]),
             Err(DeclarationError::CallerNamedCondition { clause: 0 })
         );
@@ -2784,10 +2735,7 @@ mod tests {
         };
         let satisfies = || Clause::Requires {
             guard: None,
-            rule: RuleExpr::Require(RuleLeaf::Stored {
-                cell: auth_cell(),
-                role: PRIMARY,
-            }),
+            rule: RuleExpr::Require(RuleLeaf::Stored { cell: auth_cell() }),
         };
         let vault = |badge: Expr| {
             TargetExpr::Point(Expr::ChildKey {

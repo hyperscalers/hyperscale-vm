@@ -48,7 +48,7 @@ use syn::spanned::Spanned;
 
 use crate::mode::HandleMode;
 use crate::term::{Op, Slot, Term};
-use crate::{Declared, Resource, holds_role_table, is_named};
+use crate::{Declared, Resource, holds_rule, is_named};
 
 /// What kind of state a component field holds, and under which slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4205,7 +4205,7 @@ impl<'a> Lowerer<'a> {
                 // instantiated, silently — so the table is reached by
                 // `existing()`, whose presence condition makes that the
                 // routed refusal it should be.
-                if matches!(method, "get" | "peek") && holds_role_table(field) {
+                if matches!(method, "get" | "peek") && holds_rule(field) {
                     self.error(
                         call.span(),
                         "a stored role table is read with `existing()` — a `get` reads an \
@@ -4525,7 +4525,6 @@ mod tests {
         let declared = Declared {
             fields: &fields,
             accessors: &accessors,
-            roles: &[],
             config_record: Some(&config),
             config_fields: &config_fields,
             resources: &[],

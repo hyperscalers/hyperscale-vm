@@ -100,7 +100,6 @@ impl Blueprint {
                 .collect(),
             events: self.events.clone(),
             errors: self.errors.clone(),
-            roles: self.roles.clone(),
             types: self.types.types().clone(),
             state: self.state.clone(),
             config: self.config.clone(),

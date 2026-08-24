@@ -24,12 +24,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, EnvelopeTree, Hasher, JudgedLeaf, Manifest,
-    ManifestGraph, ManifestHash, Presented, RoleId, Routing, Rule, ShardId, ShardResolver,
-    SubintentRecord, admit, admit_tree, footprint, route, route_tree,
+    ManifestGraph, ManifestHash, Presented, Routing, Rule, ShardId, ShardResolver, SubintentRecord,
+    admit, admit_tree, footprint, route, route_tree,
 };
 use hyperscale_vm_types::{
-    Address, CallTarget, NetworkWord, PrincipalAddr, ResourceAddr, SchemeId, TextError,
-    declared_work, signature_work,
+    Address, CallTarget, EffectTarget, NetworkWord, Presence, PrincipalAddr, ResourceAddr,
+    SchemeId, SubstateKey, TextError, declared_work, signature_work,
 };
 
 /// Why a transaction could not be preflighted.
@@ -60,7 +60,7 @@ pub enum Authority {
     /// that is the identity the target's address derives — its own
     /// signature — but once the target is securified the stored role
     /// set governs, and only state knows its shape.
-    StoredRule(RoleId),
+    StoredRule,
     /// A credential the mover must hold: a leaf under their own prefix
     /// whose presence is the whole question. Nothing is presented for
     /// it, so a builder reports it rather than routing evidence to it.
@@ -103,6 +103,40 @@ pub struct Required {
     pub method: String,
     /// Whose authority naming it requires.
     pub authority: Authority,
+}
+
+/// The cell a governing rule reads, where a rule is one.
+///
+/// Recognised by shape because the shape is the vocabulary's own idiom
+/// rather than one author's: a stored rule beside the address's own
+/// identity, the second arm reachable only while the first has nothing
+/// to read. What a holder is owed is that this asks the target's stored
+/// rule, not that it took two branches to say so.
+fn governing(rule: &Rule<JudgedLeaf>) -> Option<SubstateKey> {
+    let Rule::CountOf { count: 1, rules } = rule else {
+        return None;
+    };
+    let [
+        Rule::Require(JudgedLeaf::Stored { cell }),
+        Rule::CountOf {
+            count: 2,
+            rules: fallback,
+        },
+    ] = rules.as_slice()
+    else {
+        return None;
+    };
+    let [
+        Rule::Require(JudgedLeaf::Presence {
+            target: EffectTarget::Point(absent),
+            expect: Presence::Absent,
+        }),
+        Rule::Require(JudgedLeaf::Claim(_)),
+    ] = fallback.as_slice()
+    else {
+        return None;
+    };
+    (absent == cell).then_some(*cell)
 }
 
 /// Everything a holder can know before signing.
@@ -185,7 +219,7 @@ impl Report {
             .iter()
             .filter_map(|required| match required.authority {
                 Authority::Signature(principal) => Some(principal),
-                Authority::StoredRule(_) => PrincipalAddr::try_from(required.target).ok(),
+                Authority::StoredRule => PrincipalAddr::try_from(required.target).ok(),
                 Authority::Anyone
                 | Authority::TargetHasNoKey
                 | Authority::Held
@@ -294,8 +328,13 @@ fn report(
         let required = match admitted.calls()[index].requires.as_slice() {
             [] => Authority::Anyone,
             [Rule::Require(JudgedLeaf::Claim(claim))] => claimed(claim),
-            [Rule::Require(JudgedLeaf::Stored { role, .. })] => Authority::StoredRule(*role),
+            [Rule::Require(JudgedLeaf::Stored { .. })] => Authority::StoredRule,
             [Rule::Require(JudgedLeaf::Presence { .. })] => Authority::Held,
+            // The governing idiom: the rule stored at a cell, or — while
+            // nothing is stored there — the identity that address itself
+            // derives. Two branches, one question, and a holder is owed
+            // the question rather than the spelling.
+            [rule] if governing(rule).is_some() => Authority::StoredRule,
             // A threshold names more than one thing, and which of them a
             // holder can produce is theirs to know: the report says what
             // is asked rather than picking a way to satisfy it.

@@ -17,7 +17,7 @@
 //! those tests without restating them.
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, RESOURCE, VAULT};
-use hyperscale_vm_effects::{CONFIRMATION, PackageMetadata, ParamType, RECOVERY, SlotId};
+use hyperscale_vm_effects::{PACKAGE_SLOT_BASE, PackageMetadata, ParamType, SlotId};
 use hyperscale_vm_fixtures::{amm as amm_package, book as book_package};
 use hyperscale_vm_sdk::sym::{
     Addr, Bucket, Sym, U64, U128, eq, lit_u64, pack, select, self_record,
@@ -25,7 +25,13 @@ use hyperscale_vm_sdk::sym::{
 use hyperscale_vm_sdk::{Blueprint, GrantedBehaviour, ResourceKind, Trace};
 use hyperscale_vm_stdlib::account as account_package;
 
+/// One of the account's own cells, by its offset in the package band.
+const fn own(offset: u16) -> SlotId {
+    SlotId(PACKAGE_SLOT_BASE + offset)
+}
+
 /// The fungible account.
+#[allow(clippy::too_many_lines)] // one call per method, and the mirroring is the point
 fn account() -> Blueprint {
     Blueprint::builder()
         .method(
@@ -87,49 +93,66 @@ fn account() -> Blueprint {
             t.point(&cell).read();
             t.authorizing();
         })
-        // Securify and the recovery surface all write the same cell,
-        // exclusively — every role rewrite conflicts with every
-        // concurrent sign-in's read — and each says what it requires of
-        // the leaf: the one-way door is a write onto an absent cell, and
-        // a recovery is a write onto one that is there.
+        // Securify writes the governing rule onto an absent cell, which is
+        // the one-way door: the branch admitting the address's own key is
+        // the one the cell's absence meets, and once a rule is stored
+        // that branch can never be met again. Everything past that is the
+        // account's own policy, in the account's own cells.
         .method(
             "securify",
-            &[ParamType::RoleTable, ParamType::U64],
+            &[
+                ParamType::Rule,
+                ParamType::Rule,
+                ParamType::Rule,
+                ParamType::U64,
+            ],
             |t: &mut Trace| {
                 let holder = t.self_addr();
                 let rule = t.claim(&holder);
                 t.guarded_by(rule);
-                let cell = holder.child(AUTH, &[]);
-                t.point(&cell).create();
+                t.point(&holder.child(AUTH, &[])).create();
+                t.point(&holder.child(own(0), &[])).write();
+                t.point(&holder.child(own(1), &[])).write();
+                t.point(&holder.child(own(3), &[])).write();
             },
         )
         .method(
             "propose",
-            &[ParamType::RoleTable, ParamType::U64],
+            &[ParamType::Rule, ParamType::Rule, ParamType::Rule],
             |t: &mut Trace| {
                 let holder = t.self_addr();
-                let cell = holder.child(AUTH, &[]);
-                t.point(&cell).existing();
-                t.role_gated(RECOVERY);
+                t.point(&holder.child(own(0), &[])).read();
+                t.governed_by();
+                t.point(&holder.child(own(3), &[])).read();
+                t.point(&holder.child(own(2), &[])).write();
             },
         )
+        .method("promote", &[], |t: &mut Trace| {
+            let holder = t.self_addr();
+            t.point(&holder.child(own(2), &[])).write();
+            t.point(&holder.child(AUTH, &[])).write();
+            t.point(&holder.child(own(0), &[])).write();
+            t.point(&holder.child(own(1), &[])).write();
+        })
         .method("cancel", &[], |t: &mut Trace| {
             let holder = t.self_addr();
-            let cell = holder.child(AUTH, &[]);
-            t.point(&cell).existing();
-            t.role_gated(RECOVERY);
-        })
-        .method("freeze", &[], |t: &mut Trace| {
-            let holder = t.self_addr();
-            let cell = holder.child(AUTH, &[]);
-            t.point(&cell).existing();
-            t.role_gated(RECOVERY);
+            t.point(&holder.child(own(0), &[])).read();
+            t.governed_by();
+            t.point(&holder.child(own(2), &[])).write();
         })
         .method("confirm", &[], |t: &mut Trace| {
             let holder = t.self_addr();
-            let cell = holder.child(AUTH, &[]);
-            t.point(&cell).existing();
-            t.role_gated(CONFIRMATION);
+            t.point(&holder.child(own(2), &[])).write();
+            t.point(&holder.child(AUTH, &[])).write();
+            t.point(&holder.child(own(0), &[])).write();
+            t.point(&holder.child(own(1), &[])).write();
+            t.governed_by_what_it_writes(own(1));
+        })
+        .method("freeze", &[], |t: &mut Trace| {
+            let holder = t.self_addr();
+            t.point(&holder.child(own(0), &[])).read();
+            t.governed_by();
+            t.point(&holder.child(AUTH, &[])).write();
         })
         .build()
 }

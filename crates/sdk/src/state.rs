@@ -60,12 +60,11 @@ use hyperscale_hbor::{
 pub use hyperscale_vm_effects::ResourceRecord;
 /// The stored-authority vocabulary, named where a body's words live.
 ///
-/// A role-table parameter is [`RoleTable`] — the same type a cell holds,
-/// so a body that stores what it was handed converts nothing. The table's
-/// skeleton is legible here; each rule's bytes stay opaque, decoded only
-/// where a rule is judged.
-pub use hyperscale_vm_effects::{AuthBase, AuthCell, Proposal, RoleBytes, RoleTable};
-use hyperscale_vm_effects::{LeafForm, MAX_AUTH_CELL_WIRE_DEPTH, RECORD_WIRE_DEPTH};
+/// A rule parameter is [`RuleBytes`] — the same type a cell holds, so a
+/// body that stores what it was handed converts nothing. The bytes stay
+/// opaque, decoded only where the rule is judged.
+pub use hyperscale_vm_effects::RuleBytes;
+use hyperscale_vm_effects::{LeafForm, RECORD_WIRE_DEPTH};
 use hyperscale_vm_types::{Address, CellKind, Drawn as WireDrawn, ResourceAddr};
 
 #[cfg(not(component))]
@@ -275,16 +274,32 @@ impl<T: Record> Cellular for Option<T> {
     }
 }
 
-/// The account's stored-authority cell, written on behalf of the crate
-/// that defines it: [`crate::AuthCell`] is `hyperscale-vm-effects`', and
-/// that crate does not depend on the SDK.
-impl Record for AuthCell {
-    const WIRE_DEPTH: usize = MAX_AUTH_CELL_WIRE_DEPTH;
+/// A stored rule's bytes, written on behalf of the crate that defines
+/// them: [`crate::RuleBytes`] is `hyperscale-vm-effects`', and that crate
+/// does not depend on the SDK.
+///
+/// One byte string and no nesting of its own — what a rule holds is the
+/// rule vocabulary's, decoded where the rule is judged, so the cap here
+/// is the one level a byte string occupies.
+impl Record for RuleBytes {
+    const WIRE_DEPTH: usize = 1;
 }
 
 impl LeafShape for u128 {
     fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
         LeafForm::Value(TypeShape::U128)
+    }
+}
+
+/// A stored rule's bytes are the cell's bytes: nothing to decode here,
+/// because what they mean is settled where the rule is judged.
+impl Cellular for RuleBytes {
+    fn from_cell(cell: &[u8]) -> Self {
+        Self(cell.to_vec())
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.0.clone()
     }
 }
 
@@ -1472,7 +1487,7 @@ impl LeafShape for Seal {
 }
 
 /// A record's leaf is the record's own encoding.
-impl LeafShape for AuthCell {
+impl LeafShape for RuleBytes {
     fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
         LeafForm::Value(Self::shape(types))
     }
@@ -2157,23 +2172,6 @@ impl Cellular for Rule {
 
     fn to_cell(&self) -> Vec<u8> {
         self.0.clone()
-    }
-}
-
-/// A role-table parameter crosses the boundary as its canonical bytes.
-impl LeafShape for RoleTable {
-    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(Self::shape(types))
-    }
-}
-
-impl Cellular for RoleTable {
-    fn from_cell(cell: &[u8]) -> Self {
-        Self::from_slice(cell).expect("the write path admits only a canonical table")
-    }
-
-    fn to_cell(&self) -> Vec<u8> {
-        self.to_bytes().expect("the table cap is the codec's own")
     }
 }
 

@@ -4,7 +4,6 @@
 use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr};
 
-use crate::auth::RoleTable;
 use crate::dsl::{Clause, Expr};
 use crate::resource::{GrantsExpr, ResourceKind};
 use crate::rule::{RuleExpr, RuleLeaf, StoredRule};
@@ -57,10 +56,6 @@ pub enum ParamType {
     /// the vocabulary at admission — so a rule past a cap, or with a
     /// degenerate threshold, is refused before anything signs.
     Rule,
-    /// A whole role table — rules by role number, each entry canonical
-    /// rule bytes — decoded as the vocabulary at admission, for the same
-    /// reason.
-    RoleTable,
     /// A set of non-fungible instance ids: a list of distinct `u64`s
     /// within the per-edge cap. Signed manifest content — a transfer
     /// names the ids it moves; nothing about an instance is resolved at
@@ -116,7 +111,6 @@ impl ParamType {
             Self::Package => "package-address",
             Self::Resource => "resource-address",
             Self::Rule => "rule",
-            Self::RoleTable => "role-table",
             Self::Ids => "ids",
             Self::Bucket => "bucket",
             Self::NfBucket => "nf-bucket",
@@ -155,9 +149,6 @@ impl ParamType {
             (Self::Package, Value::Address(address)) => PackageAddr::try_from(*address).is_ok(),
             (Self::Resource, Value::Address(address)) => ResourceAddr::try_from(*address).is_ok(),
             (Self::Rule, Value::Bytes(bytes)) => StoredRule::from_slice(bytes).is_ok(),
-            (Self::RoleTable, Value::Bytes(bytes)) => {
-                RoleTable::from_slice(bytes).is_ok_and(|table| table.decodes())
-            }
             (Self::Ids, Value::List(elements)) => {
                 elements.len() <= MAX_IDS_PER_EDGE
                     && elements.iter().enumerate().all(|(position, element)| {

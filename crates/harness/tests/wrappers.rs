@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
     EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash, PackageMetadata,
-    Presented, Records, ResourceKind, RoleTable, StoredRule, TestHasher, Value, admit, always,
+    Presented, Records, ResourceKind, RuleBytes, StoredRule, TestHasher, Value, admit, always,
     issued_resource,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, payouts, registry};
@@ -157,13 +157,9 @@ fn the_account_wrappers_match_their_signatures() {
             &StoredRule::claim(Presented::Identity(BOB.into())),
             86_400_000,
         )?;
-        account::propose(
-            b,
-            ALICE,
-            RoleTable::uniform(&StoredRule::claim(Presented::Identity(BOB.into())))
-                .expect("a rule within the vocabulary caps"),
-            86_400_000,
-        )?;
+        let rule = RuleBytes::try_from(&StoredRule::claim(Presented::Identity(BOB.into())))
+            .expect("a rule within the vocabulary caps");
+        account::propose(b, ALICE, rule.clone(), rule.clone(), rule)?;
         account::cancel(b, ALICE)?;
         account::confirm(b, ALICE)
     });
@@ -190,19 +186,19 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
     assert!(matches!(
         refused,
         Err(TypedError::ParamKind {
-            expected: "role-table",
+            expected: "rule",
             ..
         })
     ));
 }
 
 /// The threshold over nothing is not degenerate — it is how the
-/// vocabulary says "anyone" — so a role table spelling it reaches the
-/// account rather than being refused at the builder.
+/// vocabulary says "anyone" — so a rule spelling it reaches the account
+/// rather than being refused at the builder.
 ///
-/// Whether an account wants an open role is the account's own question,
-/// answered where its policy lives and not by the algebra withholding a
-/// word.
+/// Whether an account wants a rule anyone meets is the account's own
+/// question, answered where its policy lives and not by the algebra
+/// withholding a word.
 #[test]
 fn the_empty_threshold_reaches_the_account() {
     let chain = world();

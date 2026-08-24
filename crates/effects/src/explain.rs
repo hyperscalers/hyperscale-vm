@@ -35,7 +35,6 @@ use std::fmt::Write as _;
 use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
 use hyperscale_vm_types::{Address, Presence, SubstateKey};
 
-use crate::auth::{CONFIRMATION, PACKAGE_ROLE_BASE, PRIMARY, RECOVERY, RoleId};
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::envelope::NULLIFIER_SLOT;
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
@@ -106,7 +105,6 @@ impl Names<'_> {
             }
         }
         name_table("config", &self.0.config, 0, out);
-        name_table("roles", &self.0.roles, PACKAGE_ROLE_BASE, out);
         name_table("events", &self.0.events, 0, out);
         name_table("errors", &self.0.errors, 0, out);
         if !self.0.types.is_empty() {
@@ -247,11 +245,9 @@ impl Names<'_> {
         match rule {
             Rule::Require(leaf) => match leaf {
                 RuleLeaf::Claim(claim) => format!("claim {}", self.expr(claim, ATOM)),
-                RuleLeaf::Stored { cell, role } => format!(
-                    "the {} rule stored at {}",
-                    self.role(*role),
-                    self.expr(cell, ATOM)
-                ),
+                RuleLeaf::Stored { cell } => {
+                    format!("the rule stored at {}", self.expr(cell, ATOM))
+                }
                 RuleLeaf::Presence { target, expect } => format!(
                     "{} is {}",
                     self.target(target),
@@ -512,19 +508,6 @@ impl Names<'_> {
     }
 
     /// A role, by the reserved name or the package's own.
-    fn role(&self, role: RoleId) -> String {
-        match role {
-            PRIMARY => return "primary".to_owned(),
-            RECOVERY => return "recovery".to_owned(),
-            CONFIRMATION => return "confirmation".to_owned(),
-            _ => {}
-        }
-        role.0
-            .checked_sub(PACKAGE_ROLE_BASE)
-            .and_then(|offset| self.0.roles.get(offset as usize))
-            .map_or_else(|| format!("role {}", role.0), Clone::clone)
-    }
-
     /// A slot, by the protocol's name for it or the package's own.
     fn slot(&self, slot: SlotId) -> String {
         let vocabulary = match slot {
@@ -794,7 +777,6 @@ mod tests {
     use hyperscale_vm_types::Presence;
 
     use super::{explain, explain_method};
-    use crate::auth::{PRIMARY, RoleId, package_role};
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, self_child};
     use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape};
     use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
@@ -808,7 +790,6 @@ mod tests {
     fn package(method: &str, signature: MethodSignature) -> PackageMetadata {
         let mut metadata = PackageMetadata {
             config: vec!["x".to_owned(), "y".to_owned()],
-            roles: vec!["admin".to_owned()],
             events: vec!["traded".to_owned()],
             errors: vec!["underfunded".to_owned()],
             ..PackageMetadata::default()
@@ -878,28 +859,6 @@ mod tests {
     fn an_index_past_its_table_renders_as_the_index() {
         let text = rendered("reads", declaring(vec![read(Expr::Config(7))]));
         assert!(text.contains("read config[7]"), "{text}");
-    }
-
-    #[test]
-    fn a_role_is_named_by_the_reserved_set_or_the_packages_own_band() {
-        let stored = |role| Clause::Requires {
-            guard: None,
-            rule: Rule::Require(RuleLeaf::Stored {
-                cell: Expr::SelfAddr,
-                role,
-            }),
-        };
-        let text = rendered(
-            "gated",
-            declaring(vec![
-                stored(PRIMARY),
-                stored(package_role(0)),
-                stored(RoleId(9)),
-            ]),
-        );
-        assert!(text.contains("the primary rule stored at self"), "{text}");
-        assert!(text.contains("the admin rule stored at self"), "{text}");
-        assert!(text.contains("the role 9 rule stored at self"), "{text}");
     }
 
     #[test]
@@ -1029,7 +988,6 @@ mod tests {
                         }),
                         Rule::Require(RuleLeaf::Stored {
                             cell: Expr::SelfAddr,
-                            role: PRIMARY,
                         }),
                     ],
                 },
@@ -1038,7 +996,7 @@ mod tests {
         assert!(
             text.contains(
                 "requires 2 of (claim config.x, the recall rule arg0 grants, \
-                 the primary rule stored at self)"
+                 the rule stored at self)"
             ),
             "{text}"
         );
@@ -1104,7 +1062,6 @@ mod tests {
         let text = explain(&package("deposit", signature));
         assert!(text.contains("     16  entries — an ordered collection, holding u128"));
         assert!(text.contains("      0  x"));
-        assert!(text.contains("     16  admin"));
         assert!(text.contains("      0  traded"));
         assert!(text.contains("      0  underfunded"));
         assert!(text.contains("deposit(bucket) — total"), "{text}");

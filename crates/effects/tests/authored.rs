@@ -7,12 +7,13 @@
 
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
-    CONFIRMATION, Clause, Expr, GrantedBehaviour, GrantsExpr, PRIMARY, PackageMetadata, RECOVERY,
-    ResourceKind, RuleExpr, RuleLeaf, Value, check_abi, check_declarations,
+    Clause, Expr, GrantedBehaviour, GrantsExpr, PACKAGE_SLOT_BASE, PackageMetadata, ResourceKind,
+    RuleExpr, RuleLeaf, SlotId, TargetExpr, Value, check_abi, check_declarations,
 };
 use hyperscale_vm_fixtures::DECLARED as FIXTURES;
 use hyperscale_vm_stdlib::DECLARED as PROTOCOL;
 use hyperscale_vm_stdlib::staking::OWNER_BADGE;
+use hyperscale_vm_types::Presence;
 
 /// Every authored package, in the order the exhaustive sweeps read them.
 ///
@@ -69,11 +70,31 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         slot: AUTH,
         material: vec![],
     };
-    let stored = |role| {
-        vec![RuleExpr::Require(RuleLeaf::Stored {
-            cell: auth_cell(),
-            role,
-        })]
+    // The rule that governs a cell, built here from the protocol's own
+    // types rather than from the tracer's — so agreement is between two
+    // derivations rather than one restated.
+    let governs = |cell: Expr| {
+        vec![RuleExpr::CountOf {
+            count: 1,
+            rules: vec![
+                RuleExpr::Require(RuleLeaf::Stored { cell: cell.clone() }),
+                RuleExpr::CountOf {
+                    count: 2,
+                    rules: vec![
+                        RuleExpr::Require(RuleLeaf::Presence {
+                            target: Box::new(TargetExpr::Point(cell)),
+                            expect: Presence::Absent,
+                        }),
+                        RuleExpr::claim(Expr::SelfAddr),
+                    ],
+                },
+            ],
+        }]
+    };
+    let own_cell = |offset: u16| Expr::ChildKey {
+        owner: Box::new(Expr::SelfAddr),
+        slot: SlotId(PACKAGE_SLOT_BASE + offset),
+        material: vec![],
     };
     let this = || vec![RuleExpr::claim(Expr::SelfAddr)];
     let owner_badge = || {
@@ -88,27 +109,31 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         (
             "account",
             "authorize",
-            stored(PRIMARY),
+            governs(auth_cell()),
             vec![Expr::SelfAddr],
         ),
-        ("account", "cancel", stored(RECOVERY), vec![]),
-        ("account", "confirm", stored(CONFIRMATION), vec![]),
+        ("account", "cancel", governs(own_cell(0)), vec![]),
+        ("account", "confirm", governs(own_cell(1)), vec![]),
         ("account", "deposit", open(), vec![]),
         ("account", "deposit-nf", open(), vec![]),
-        ("account", "freeze", stored(RECOVERY), vec![]),
+        ("account", "freeze", governs(own_cell(0)), vec![]),
         (
             "account",
             "present-badge",
-            stored(PRIMARY),
+            governs(auth_cell()),
             vec![Expr::Arg(0)],
         ),
         (
             "account",
             "present-instance",
-            stored(PRIMARY),
+            governs(auth_cell()),
             vec![Expr::Tuple(vec![Expr::Arg(0), Expr::Arg(1)])],
         ),
-        ("account", "propose", stored(RECOVERY), vec![]),
+        // Open, because it does only what the clock already licensed:
+        // whoever wants a replacement enacted is whoever proposed it, and
+        // it is a node in their own transaction.
+        ("account", "promote", open(), vec![]),
+        ("account", "propose", governs(own_cell(0)), vec![]),
         (
             "account",
             "recall",

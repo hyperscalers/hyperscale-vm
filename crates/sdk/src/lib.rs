@@ -158,7 +158,7 @@ pub use blueprint::{Blueprint, Builder, Method};
 // Re-exported so `#[blueprint]` output names one crate, and so a contract
 // never has to depend on `vm-effects` directly.
 pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
-use hyperscale_vm_effects::{always, never};
+use hyperscale_vm_effects::{NOBODY_BYTES, always, never};
 
 /// The granted entry anyone satisfies: the threshold over nothing.
 ///
@@ -176,10 +176,24 @@ pub const fn grant_nobody() -> GrantRuleExpr {
     never()
 }
 
+/// The stored rule nobody satisfies, as a body writes one.
+///
+/// What a freeze writes, and the difference from removing the cell is
+/// the whole of the freeze: an unwritten cell is what the address's own
+/// key still governs, so a removal would hand the account back to the
+/// key being frozen out.
+///
+/// # Panics
+///
+/// Never: the empty threshold is the smallest rule there is.
+#[must_use]
+pub fn nobody() -> RuleBytes {
+    RuleBytes(NOBODY_BYTES.to_vec())
+}
+
 pub use hyperscale_vm_effects::{
-    AuthBase, AuthCell, CONFIRMATION, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr,
-    LeafForm, PRIMARY, ParamType, Proposal, RECOVERY, ResourceKind, RoleId, SlotId, SlotKind,
-    encode_metadata, package_role,
+    GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, LeafForm, ParamType, ResourceKind,
+    RuleBytes, SlotId, SlotKind, encode_metadata,
 };
 /// Author a package from one module.
 ///
