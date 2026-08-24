@@ -20,7 +20,9 @@ use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape
 use crate::resource::{GrantsExpr, holdings_entry};
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
 use crate::signature::{AbiParam, MethodSignature};
-use crate::types::{MAX_VALUE_DEPTH, SlotId, Value};
+use crate::types::{
+    MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId, Value, value_within_width,
+};
 use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
 
@@ -1523,6 +1525,11 @@ pub enum SignatureBoundsError {
     /// More effect clauses than one signature may declare.
     #[error("signature declares more than {MAX_EFFECTS_PER_SIGNATURE} effects")]
     TooManyEffects,
+    /// A value wider than the bound every walk over one is charged
+    /// against — a literal past it, or a list the evaluator would build
+    /// past it.
+    #[error("a value is wider than {MAX_VALUE_ITEMS} items or {MAX_VALUE_BYTES} bytes")]
+    ValueWidth,
 }
 
 /// Reject metadata past a bound the vocabulary fixes.
@@ -1850,10 +1857,20 @@ fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), SignatureBoundsErr
     if depth > MAX_EXPR_DEPTH {
         return Err(SignatureBoundsError::ExprDepth);
     }
-    if let Expr::Literal(literal) = expr
-        && literal.depth() > MAX_VALUE_DEPTH
+    if let Expr::Literal(literal) = expr {
+        if literal.depth() > MAX_VALUE_DEPTH {
+            return Err(SignatureBoundsError::LiteralDepth);
+        }
+        value_within_width(literal).map_err(|_| SignatureBoundsError::ValueWidth)?;
+    }
+    // A list or tuple the evaluator *builds* rather than decodes: its
+    // arity is the expression's own, so the codec's width bound has
+    // nothing to say about it, and what it produces is a value every
+    // walk downstream pays for by the element.
+    if let Expr::List(elements) | Expr::Tuple(elements) = expr
+        && elements.len() > MAX_VALUE_ITEMS
     {
-        return Err(SignatureBoundsError::LiteralDepth);
+        return Err(SignatureBoundsError::ValueWidth);
     }
     // The granted set is not a child — its leaves hold no expression at
     // all — so it is walked here rather than reached by the recursion.
@@ -2320,6 +2337,35 @@ mod tests {
         assert_bounded(
             &one_method(signature_over(literal(MAX_VALUE_DEPTH))),
             &one_method(signature_over(literal(MAX_VALUE_DEPTH + 1))),
+        );
+    }
+
+    /// A value's width is bounded wherever one comes from.
+    ///
+    /// The codec refuses an over-wide value on the way in, so a literal
+    /// that arrived is already inside the bound; this holds the two
+    /// cases no decoder saw — a declaration assembled in memory, and a
+    /// list the evaluator would build from the expression's own arity.
+    /// What the bound buys is that a walk over a value costs something
+    /// the per-clause charge can pay for.
+    #[test]
+    fn a_value_wider_than_a_walk_is_charged_for_is_refused() {
+        let literal = |items: usize| Expr::Literal(Value::List(vec![Value::U64(0); items]));
+        assert_bounded(
+            &one_method(signature_over(literal(MAX_VALUE_ITEMS))),
+            &one_method(signature_over(literal(MAX_VALUE_ITEMS + 1))),
+        );
+
+        let built = |items: usize| Expr::List(vec![Expr::Literal(Value::U64(0)); items]);
+        assert_bounded(
+            &one_method(signature_over(built(MAX_VALUE_ITEMS))),
+            &one_method(signature_over(built(MAX_VALUE_ITEMS + 1))),
+        );
+
+        let bytes = |len: usize| Expr::Literal(Value::Bytes(vec![0; len]));
+        assert_bounded(
+            &one_method(signature_over(bytes(MAX_VALUE_BYTES))),
+            &one_method(signature_over(bytes(MAX_VALUE_BYTES + 1))),
         );
     }
 

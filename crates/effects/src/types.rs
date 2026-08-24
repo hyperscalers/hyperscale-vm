@@ -347,6 +347,32 @@ pub fn config_hash(hasher: &dyn Hasher, config_leaf: &[u8]) -> Hash32 {
 /// deterministic rejection rather than a divergence.
 pub const MAX_VALUE_DEPTH: usize = 16;
 
+/// The bound on how many elements one list or tuple inside a value may
+/// hold. A work bound, where [`MAX_VALUE_DEPTH`] is a recursion one.
+///
+/// Depth alone bounds nothing an evaluator spends: a walk over a value
+/// costs its width, and the DSL walks values — a lookup scans a table,
+/// a comparison descends two, a key encodes its material. Those walks
+/// are charged per clause rather than per element, so what a clause can
+/// buy is one walk of the widest value it can reach; without a bound
+/// here that width is whatever bytes carry it, which for a literal is
+/// the package's metadata and for an argument is the envelope.
+///
+/// The same figure as [`MAX_FOREACH_ELEMENTS`](crate::MAX_FOREACH_ELEMENTS),
+/// and for the same reason: the longest sequence a declaration works
+/// over is the longest one it can be handed.
+pub const MAX_VALUE_ITEMS: usize = 1024;
+
+/// The bound on one opaque byte string inside a value.
+///
+/// The width bound beside [`MAX_VALUE_ITEMS`] for the one leaf that
+/// carries length without carrying elements. Sized at the widest opaque
+/// payload the vocabulary admits anywhere — an event's
+/// (`MAX_EVENT_PAYLOAD_BYTES`) — because a byte string a declaration
+/// derives and one a receipt reports are the same kind of thing, and a
+/// scheme's signature material is what either has to hold.
+pub const MAX_VALUE_BYTES: usize = 4096;
+
 /// The codec nesting cost of the deepest admissible value.
 ///
 /// One value level costs at most two codec levels — the variant's
@@ -373,6 +399,7 @@ pub const MAX_VALUE_WIRE_DEPTH: usize = 2 * MAX_VALUE_DEPTH;
 /// moves the ones below it. Appending to dodge that is how a list stops
 /// meaning anything.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(validate = value_within_width)]
 pub enum Value {
     /// A judgment: what a predicate evaluates to.
     ///
@@ -396,15 +423,17 @@ pub enum Value {
     /// it needs no shape of its own at the boundary — what reads it back
     /// is the decode the declared type already has.
     U256([u8; 32]),
-    /// Opaque bytes.
+    /// Opaque bytes, no wider than [`MAX_VALUE_BYTES`].
     Bytes(Vec<u8>),
     /// A global object's address.
     Address(Address),
     /// A full substate key.
     Key(SubstateKey),
-    /// A fixed-arity product.
+    /// A fixed-arity product, no wider than [`MAX_VALUE_ITEMS`].
     Tuple(Vec<Self>),
-    /// A bounded homogeneous sequence.
+    /// A bounded homogeneous sequence — bounded by [`MAX_VALUE_ITEMS`],
+    /// which is what makes a walk over one cost something a clause
+    /// budget can bound.
     List(Vec<Self>),
     /// The routable projection of a value edge: its static resource type
     /// and what it carries besides.
@@ -414,6 +443,36 @@ pub enum Value {
         /// What crosses the edge: a dynamic amount, or named instances.
         content: EdgeContent,
     },
+}
+
+/// Every list, tuple and byte string inside a value within its width
+/// bound.
+///
+/// The codec's own validation, and the one publish reaches for over a
+/// declaration assembled in memory — one rule with one implementation,
+/// so a value built rather than decoded meets the bound it would have
+/// met on the way in. Nothing wider than this reaches the evaluator — which walks a value per clause and charges per clause,
+/// so the width it can be handed is the work one charge buys. Depth is
+/// bounded separately and the walk here rests on it: a value of
+/// admissible depth cannot nest deeply enough for this recursion to be
+/// the pathological one.
+pub(crate) fn value_within_width(value: &Value) -> Result<(), &'static str> {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            Value::Bytes(bytes) if bytes.len() > MAX_VALUE_BYTES => {
+                return Err("a byte string exceeds the value width cap");
+            }
+            Value::Tuple(items) | Value::List(items) => {
+                if items.len() > MAX_VALUE_ITEMS {
+                    return Err("a list or tuple exceeds the value width cap");
+                }
+                stack.extend(items);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// The decimal a 256-bit literal names.
@@ -534,14 +593,14 @@ pub enum EdgeContent {
 mod tests {
     use std::collections::BTreeSet;
 
-    use hyperscale_hbor::{assert_canonical, from_slice_with_depth};
+    use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, from_slice_with_depth};
     use hyperscale_vm_types::{AddressClass, ComponentAddr, ResourceAddr};
 
     use super::{
-        Address, EdgeContent, LocalKey, MAX_VALUE_DEPTH, MAX_VALUE_WIRE_DEPTH, NativeRole,
-        SchemeId, SlotId, SubstateKey, Value, child_key, component_address, config_hash,
-        granting_resource_address, native_address, package_address, principal_address,
-        resource_address, to_vec, u256_decimal,
+        Address, EdgeContent, LocalKey, MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS,
+        MAX_VALUE_WIRE_DEPTH, NativeRole, SchemeId, SlotId, SubstateKey, Value, child_key,
+        component_address, config_hash, granting_resource_address, native_address, package_address,
+        principal_address, resource_address, to_vec, u256_decimal,
     };
     use crate::auth::RoleBytes;
     use crate::hash::{Hash32, TestHasher};
@@ -555,6 +614,45 @@ mod tests {
 
     /// The hashing feed and the wire form are one byte string, and the
     /// vocabulary is canonical on the same terms as any wire type.
+    /// A value wider than the bound does not decode.
+    ///
+    /// Where the depth bound keeps a decoder off the native stack, this
+    /// keeps the evaluator off an unpriced walk: a lookup scans a table
+    /// and a key encodes its material, both charged per clause, so the
+    /// width one clause can be handed is the work one charge buys.
+    #[test]
+    fn a_value_wider_than_the_bound_does_not_decode() {
+        let wide = |items: usize| Value::List(vec![Value::U64(0); items]);
+        let bytes = to_vec(&wide(MAX_VALUE_ITEMS)).expect("encodes");
+        assert_eq!(from_slice::<Value>(&bytes), Ok(wide(MAX_VALUE_ITEMS)));
+
+        let over = to_vec(&wide(MAX_VALUE_ITEMS + 1)).expect("encoding does not judge width");
+        assert!(
+            matches!(
+                from_slice::<Value>(&over),
+                Err(DecodeError::FailedValidation(_))
+            ),
+            "one item past the bound is a refusal",
+        );
+
+        // Nested, because a walk that stopped at the outermost list
+        // would leave the width bound to the shallowest value.
+        let buried = Value::Tuple(vec![Value::List(vec![wide(MAX_VALUE_ITEMS + 1)])]);
+        let bytes = to_vec(&buried).expect("encodes");
+        assert!(matches!(
+            from_slice::<Value>(&bytes),
+            Err(DecodeError::FailedValidation(_))
+        ));
+
+        // And the byte string, which carries length without carrying
+        // elements.
+        let long = to_vec(&Value::Bytes(vec![0; MAX_VALUE_BYTES + 1])).expect("encodes");
+        assert!(matches!(
+            from_slice::<Value>(&long),
+            Err(DecodeError::FailedValidation(_))
+        ));
+    }
+
     #[test]
     fn canonical_bytes_is_the_wire_encoding() {
         let value = Value::Tuple(vec![

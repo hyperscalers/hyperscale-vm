@@ -25,18 +25,23 @@ use crate::resource::{
 };
 use crate::rule::{Rule, RuleExpr, RuleLeaf};
 use crate::types::{
-    EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id,
+    EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_ITEMS, SlotId, Value, child_key, collection_id,
     granting_resource_address, order_key,
 };
 
-/// The bound on any collection a `for-each` clause maps over. Keeps
-/// signature evaluation O(manifest size) whatever the metadata declares.
+/// The bound on any collection a `for-each` clause maps over.
 ///
 /// A bound on pre-payment work: evaluation happens at admission, before
 /// any fee is assured, so no charge can pay for a longer list — the
 /// ceiling is sized against the admission budget. The effects an
 /// iteration lands are charged by `footprint` like any others.
-pub const MAX_FOREACH_ELEMENTS: usize = 1024;
+///
+/// [`MAX_VALUE_ITEMS`] itself, because a list a loop maps over is a
+/// value and a value carries its own width bound: a decoded one cannot
+/// exceed this before the loop is reached. What the check below still
+/// stands for is a list evaluation *built* — the ids of an edge, an
+/// `Expr::List` — which no decoder saw.
+pub const MAX_FOREACH_ELEMENTS: usize = MAX_VALUE_ITEMS;
 
 /// The bound on expression nesting. A recursion bound: the evaluator
 /// recurses per subterm, so this is what keeps a pathological signature
