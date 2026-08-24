@@ -9,7 +9,7 @@
 use hyperscale_hbor::{
     DecodeError, EncodeError, Hbor, HborShape, from_slice_with_depth, to_vec, to_vec_with_depth,
 };
-use hyperscale_vm_types::{Address, CollectionId, ResourceAddr, SubstateKey};
+use hyperscale_vm_types::{Address, AddressClass, CollectionId, ResourceAddr, SubstateKey};
 
 use crate::auth::RoleBytes;
 use crate::dsl::{Expr, TargetExpr};
@@ -172,30 +172,138 @@ impl ResourceRecord {
 /// version change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 pub enum GrantedBehaviour {
-    /// Reaching the resource out of a holder's own account, through
-    /// that account's own method and no other way.
+    /// Bringing supply into existence.
     #[hbor(discriminant = 0)]
-    Recall,
-    /// Halting the resource's movement.
+    Mint,
+    /// Taking supply out of it.
     #[hbor(discriminant = 1)]
-    Freeze,
-    /// Restricting where a deposit lands — a destination, never a
-    /// refusal: a deposit the rule declines lands in the claims cell.
+    Burn,
+    /// Debiting a holding: a reserve, a delta, a write on a value cell,
+    /// or a take from an instance interval.
     #[hbor(discriminant = 2)]
+    Withdraw,
+    /// Crediting one.
+    #[hbor(discriminant = 3)]
     Deposit,
+    /// Halting a holder's movement of the resource, both ways at once.
+    #[hbor(discriminant = 4)]
+    Freeze,
+    /// Reaching a holding under a prefix that is not the reacher's.
+    #[hbor(discriminant = 5)]
+    Recall,
 }
 
-/// The granted rules a resource's address commits to: rules by
-/// behaviour, each as the bytes it was handed.
+impl GrantedBehaviour {
+    /// Every behaviour, in discriminant order.
+    pub const ALL: [Self; 6] = [
+        Self::Mint,
+        Self::Burn,
+        Self::Withdraw,
+        Self::Deposit,
+        Self::Freeze,
+        Self::Recall,
+    ];
+
+    /// Whether this behaviour asks about the actor rather than the
+    /// holder.
+    ///
+    /// An actor question is a capability the kernel otherwise withholds,
+    /// so a caller requests it and the node's evidence answers. A holder
+    /// question is about the party whose cell is moving, which evidence
+    /// cannot answer — the caller of the frame declaring a credit is
+    /// systematically not the party being credited.
+    #[must_use]
+    pub const fn asks_about_the_actor(self) -> bool {
+        match self {
+            Self::Mint | Self::Burn | Self::Freeze | Self::Recall => true,
+            Self::Withdraw | Self::Deposit => false,
+        }
+    }
+
+    /// Whether this behaviour admits `entry` as a spelling.
+    ///
+    /// Each state has exactly one spelling, so a behaviour refuses the
+    /// arm that would be a second way of saying what absence already
+    /// says — `Never` for an authority, which absence withholds anyway,
+    /// and `Open` for a movement, which absence already permits. A
+    /// credential is `Deposit`'s alone.
+    #[must_use]
+    pub const fn admits(self, entry: &Grant) -> bool {
+        match entry {
+            Grant::Open => self.asks_about_the_actor(),
+            Grant::Never => !self.asks_about_the_actor(),
+            Grant::Rule(_) => !matches!(self, Self::Deposit),
+            Grant::Credential(_) => matches!(self, Self::Deposit),
+        }
+    }
+
+    /// [`Self::admits`] over the declared form, which has the same arms.
+    #[must_use]
+    pub const fn admits_expr(self, entry: &GrantExpr) -> bool {
+        match entry {
+            GrantExpr::Open => self.asks_about_the_actor(),
+            GrantExpr::Never => !self.asks_about_the_actor(),
+            GrantExpr::Rule(_) => !matches!(self, Self::Deposit),
+            GrantExpr::Credential(_) => matches!(self, Self::Deposit),
+        }
+    }
+
+    /// Whether absence of this resource's rules would let a movement
+    /// proceed that the rules forbid — the one question the address
+    /// class answers without a lookup.
+    ///
+    /// `Freeze` is here despite asking about the actor: granting it puts
+    /// a halt read on every movement, and that read fails open when the
+    /// record is withheld.
+    #[must_use]
+    pub const fn restricts_movement(self) -> bool {
+        match self {
+            Self::Withdraw | Self::Deposit | Self::Freeze => true,
+            Self::Mint | Self::Burn | Self::Recall => false,
+        }
+    }
+}
+
+/// What one granted entry says, sealed.
+///
+/// Three answers rather than a rule and two magic rule values, so no
+/// evaluator meets a tree it has to recognise as meaning something other
+/// than what it says. Which answers a behaviour admits is
+/// [`GrantedBehaviour::admits`]'s, and a spelling it does not admit is a
+/// second way of saying what absence already says.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub enum Grant {
+    /// Anyone may. Only an authority entry admits it: for a movement,
+    /// this is what an absent entry already means.
+    Open,
+    /// Nobody may, ever. Only a movement entry admits it: for an
+    /// authority, absence already withholds.
+    Never,
+    /// Whoever satisfies these bytes, decoded where the rule is judged
+    /// and against the leaf vocabulary the behaviour selects.
+    Rule(RoleBytes),
+    /// Whoever holds this badge — one presence question, no rule.
+    ///
+    /// `Deposit` alone, and it carries a bare address rather than a
+    /// one-leaf rule because a credit lands on a method that cannot
+    /// refuse: only a condition is enforceable there, and a condition is
+    /// one leaf. Making that structural is what stops a rule needing
+    /// evidence from being written where no evidence can arrive.
+    Credential(ResourceAddr),
+}
+
+/// The granted entries a resource's address commits to, by behaviour.
 ///
 /// The same sorted-list discipline the role table keeps, and the same
-/// opacity: a rule's bytes decode where the rule is judged, under the
-/// vocabulary's own caps. **An absent entry denies.** Immutability is
-/// the derivation rather than a promise — the commitment rides the
-/// address, so a rule that changed would be a different resource.
+/// opacity where an entry holds a rule: the bytes decode where the rule
+/// is judged, under the vocabulary's own caps. **An absent entry injects
+/// no requirement**, which withholds a capability the kernel otherwise
+/// holds back and permits a movement it does not. Immutability is the
+/// derivation rather than a promise — the commitment rides the address,
+/// so an entry that changed would be a different resource.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 #[hbor(transparent, validate = ascending_behaviours)]
-pub struct ResourceGrants(Vec<(GrantedBehaviour, RoleBytes)>);
+pub struct ResourceGrants(Vec<(GrantedBehaviour, Grant)>);
 
 /// The list's canonical-order rule: behaviours strictly ascending.
 fn ascending_behaviours(rules: &ResourceGrants) -> Result<(), &'static str> {
@@ -214,20 +322,44 @@ impl ResourceGrants {
         Self(Vec::new())
     }
 
-    /// The rule granted for `behaviour`, where one is.
+    /// What is granted for `behaviour`, where anything is. An absent
+    /// entry injects no requirement, which withholds a capability and
+    /// permits a movement.
     #[must_use]
-    pub fn rule(&self, behaviour: GrantedBehaviour) -> Option<&RoleBytes> {
+    pub fn get(&self, behaviour: GrantedBehaviour) -> Option<&Grant> {
         self.0
             .binary_search_by_key(&behaviour, |(b, _)| *b)
             .ok()
             .map(|index| &self.0[index].1)
     }
 
-    /// Grant `bytes` for `behaviour`, replacing what was there.
-    pub fn set(&mut self, behaviour: GrantedBehaviour, bytes: RoleBytes) {
+    /// Whether any entry restricts a movement anyone could otherwise
+    /// make — the question [`AddressClass::Restricted`] answers without
+    /// a lookup, asked of the entries rather than of a list of names.
+    ///
+    /// [`AddressClass::Restricted`]: hyperscale_vm_types::AddressClass::Restricted
+    #[must_use]
+    pub fn restricts_movement(&self) -> bool {
+        self.0
+            .iter()
+            .any(|(behaviour, _)| behaviour.restricts_movement())
+    }
+
+    /// The class an address sealing these grants carries.
+    #[must_use]
+    pub fn address_class(&self) -> AddressClass {
+        if self.restricts_movement() {
+            AddressClass::Restricted
+        } else {
+            AddressClass::Resource
+        }
+    }
+
+    /// Grant `entry` for `behaviour`, replacing what was there.
+    pub fn set(&mut self, behaviour: GrantedBehaviour, entry: Grant) {
         match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
-            Ok(index) => self.0[index].1 = bytes,
-            Err(index) => self.0.insert(index, (behaviour, bytes)),
+            Ok(index) => self.0[index].1 = entry,
+            Err(index) => self.0.insert(index, (behaviour, entry)),
         }
     }
 
@@ -248,17 +380,34 @@ impl ResourceGrants {
 
 const DOMAIN_RESOURCE_GRANTS: &[u8] = b"hyperscale-vm/granted-rules";
 
-/// The granted rules a declaration commits, before the instance issuing
-/// them is known.
+/// One granted entry as a package writes it down.
+///
+/// [`Grant`]'s arms over declared forms: the rule holds a tree whose
+/// leaves name derivations rather than resolved claims, and the
+/// credential names a badge the same way.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+pub enum GrantExpr {
+    /// Anyone may.
+    Open,
+    /// Nobody may, ever.
+    Never,
+    /// Whoever satisfies this rule.
+    Rule(GrantRuleExpr),
+    /// Whoever holds the badge this claim names.
+    Credential(GrantClaim),
+}
+
+/// The granted entries a declaration commits, before the instance
+/// issuing them is known.
 ///
 /// [`ResourceGrants`] as a package writes it down: the same
-/// behaviour-keyed list under the same ascending discipline, holding the
-/// rule's tree rather than the bytes it encodes to. What separates them
-/// is what a leaf names — a declared leaf names a derivation, and
+/// behaviour-keyed list under the same ascending discipline, holding
+/// declared forms rather than the bytes they seal to. What separates
+/// them is what a leaf names — a declared leaf names a derivation, and
 /// resolving one against an instance is what [`Self::resolve`] does.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 #[hbor(transparent, validate = ascending_declared_behaviours)]
-pub struct GrantsExpr(Vec<(GrantedBehaviour, GrantRuleExpr)>);
+pub struct GrantsExpr(Vec<(GrantedBehaviour, GrantExpr)>);
 
 fn ascending_declared_behaviours(rules: &GrantsExpr) -> Result<(), &'static str> {
     rules
@@ -287,7 +436,7 @@ impl GrantsExpr {
     }
 
     /// Grant `rule` for `behaviour`, replacing what was there.
-    pub fn set(&mut self, behaviour: GrantedBehaviour, rule: GrantRuleExpr) {
+    pub fn set(&mut self, behaviour: GrantedBehaviour, rule: GrantExpr) {
         match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
             Ok(index) => self.0[index].1 = rule,
             Err(index) => self.0.insert(index, (behaviour, rule)),
@@ -295,7 +444,7 @@ impl GrantsExpr {
     }
 
     /// Every behaviour granted here, with the rule declared for it.
-    pub fn iter(&self) -> impl Iterator<Item = (GrantedBehaviour, &GrantRuleExpr)> {
+    pub fn iter(&self) -> impl Iterator<Item = (GrantedBehaviour, &GrantExpr)> {
         self.0.iter().map(|(behaviour, rule)| (*behaviour, rule))
     }
 
@@ -314,11 +463,34 @@ impl GrantsExpr {
         config: &[Value],
     ) -> Result<ResourceGrants, GrantsResolveError> {
         let mut resolved = ResourceGrants::new();
-        for (behaviour, rule) in self.iter() {
-            let stored = resolve_rule(hasher, instance, config, rule)?;
-            let bytes =
-                RoleBytes::try_from(&stored).map_err(|_| GrantsResolveError::PastTheCaps)?;
-            resolved.set(behaviour, bytes);
+        for (behaviour, entry) in self.iter() {
+            let sealed = match entry {
+                GrantExpr::Open => Grant::Open,
+                GrantExpr::Never => Grant::Never,
+                GrantExpr::Rule(rule) => {
+                    let stored = resolve_rule(hasher, instance, config, rule)?;
+                    Grant::Rule(
+                        RoleBytes::try_from(&stored)
+                            .map_err(|_| GrantsResolveError::PastTheCaps)?,
+                    )
+                }
+                GrantExpr::Credential(claim) => {
+                    let presented = resolve_claim(hasher, instance, config, claim)?;
+                    // A credential is one leaf under the mover's own
+                    // prefix, and only a fungible holding is one leaf: a
+                    // non-fungible one is entries at ids, whose
+                    // collection-wide presence is an interval nothing on
+                    // the transfer path may walk.
+                    let Presented::Resource(badge) = presented else {
+                        return Err(GrantsResolveError::NotAFungibleBadge);
+                    };
+                    Grant::Credential(badge)
+                }
+            };
+            if !behaviour.admits(&sealed) {
+                return Err(GrantsResolveError::UnadmittedSpelling(behaviour));
+            }
+            resolved.set(behaviour, sealed);
         }
         Ok(resolved)
     }
@@ -338,6 +510,13 @@ pub enum GrantsResolveError {
     /// A resolved rule past the caps a stored rule is held to.
     #[error("a resolved granted rule is past the caps a stored rule is held to")]
     PastTheCaps,
+    /// A credential naming something that is not a fungible badge.
+    #[error("a granted credential names something that is not a fungible badge")]
+    NotAFungibleBadge,
+    /// A spelling the behaviour does not admit — a second way of saying
+    /// what an absent entry already says.
+    #[error("{0:?} does not admit the spelling its grant was written with")]
+    UnadmittedSpelling(GrantedBehaviour),
 }
 
 fn resolve_rule(

@@ -109,6 +109,16 @@ pub enum JudgedLeaf {
         /// The stored rule the presented set must satisfy.
         role: RoleId,
     },
+    /// The mover holds what this cell names: the leaf is there.
+    ///
+    /// Resolved to a concrete key where the declaration was evaluated,
+    /// on the terms [`Stored`](Self::Stored) is, so the read is
+    /// provisioned wherever the call runs. A value cell deletes at zero,
+    /// so presence and a nonzero holding are the same fact.
+    Held {
+        /// The leaf whose presence is the question.
+        cell: SubstateKey,
+    },
 }
 
 /// A declared condition with its expressions evaluated: what the kernel

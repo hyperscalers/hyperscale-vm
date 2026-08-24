@@ -39,7 +39,7 @@ use crate::auth::{CONFIRMATION, PACKAGE_ROLE_BASE, PRIMARY, RECOVERY, RoleId};
 use crate::dsl::{Clause, ConditionExpr, Expr, ModeExpr, TargetExpr};
 use crate::envelope::NULLIFIER_SLOT;
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
-use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
+use crate::resource::{GrantExpr, GrantedBehaviour, GrantsExpr, ResourceKind};
 use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleExpr, RuleLeaf};
 use crate::signature::{AbiParam, Issuance, MethodSignature, Totality};
 use crate::types::{EdgeContent, SlotId, Value, u256_decimal};
@@ -576,7 +576,9 @@ fn grants_of(grants: &GrantsExpr) -> String {
     }
     let granted: Vec<String> = grants
         .iter()
-        .map(|(behaviour, rule)| format!("{} to {}", behaviour_name(behaviour), grant_rule(rule)))
+        .map(|(behaviour, entry)| {
+            format!("{} to {}", behaviour_name(behaviour), grant_entry(entry))
+        })
         .collect();
     format!(", granting {}", granted.join(" and "))
 }
@@ -634,16 +636,31 @@ fn leaf_form(form: &LeafForm) -> String {
 
 /// A granted rule, whose leaves name what the resource's own derivation
 /// commits to and nothing a caller supplies.
+/// What one granted entry admits, as a reader of the resource sees it.
+fn grant_entry(entry: &GrantExpr) -> String {
+    match entry {
+        GrantExpr::Open => "anyone".to_string(),
+        GrantExpr::Never => "nobody".to_string(),
+        GrantExpr::Rule(rule) => grant_rule(rule),
+        GrantExpr::Credential(claim) => format!("whoever holds {}", grant_claim(claim)),
+    }
+}
+
+/// What one declared claim names.
+fn grant_claim(claim: &GrantClaim) -> String {
+    match claim {
+        GrantClaim::SelfAddr => "the issuer".to_owned(),
+        GrantClaim::SelfBadge { mark } => format!("the issuer's {} badge", bytes(mark)),
+        GrantClaim::SelfInstance { mark, id } => {
+            format!("instance {id} of the issuer's {} badge", bytes(mark))
+        }
+        GrantClaim::Config(field) => format!("configuration field {field}"),
+    }
+}
+
 fn grant_rule(rule: &GrantRuleExpr) -> String {
     match rule {
-        Rule::Require(claim) => match claim {
-            GrantClaim::SelfAddr => "the issuer".to_owned(),
-            GrantClaim::SelfBadge { mark } => format!("the issuer's {} badge", bytes(mark)),
-            GrantClaim::SelfInstance { mark, id } => {
-                format!("instance {id} of the issuer's {} badge", bytes(mark))
-            }
-            GrantClaim::Config(field) => format!("configuration field {field}"),
-        },
+        Rule::Require(claim) => grant_claim(claim),
         Rule::CountOf { count, rules } => {
             let branches: Vec<String> = rules.iter().map(grant_rule).collect();
             format!("{count} of ({})", branches.join(", "))
@@ -731,9 +748,12 @@ const fn resource_kind(kind: ResourceKind) -> &'static str {
 /// What a granted rule governs.
 const fn behaviour_name(behaviour: GrantedBehaviour) -> &'static str {
     match behaviour {
-        GrantedBehaviour::Recall => "recall",
-        GrantedBehaviour::Freeze => "freeze",
+        GrantedBehaviour::Mint => "mint",
+        GrantedBehaviour::Burn => "burn",
+        GrantedBehaviour::Withdraw => "withdraw",
         GrantedBehaviour::Deposit => "deposit",
+        GrantedBehaviour::Freeze => "freeze",
+        GrantedBehaviour::Recall => "recall",
     }
 }
 
@@ -771,7 +791,7 @@ mod tests {
     use crate::auth::{PRIMARY, RoleId, package_role};
     use crate::dsl::{Clause, ConditionExpr, Expr, ModeExpr, TargetExpr, self_child};
     use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape};
-    use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
+    use crate::resource::{GrantExpr, GrantedBehaviour, GrantsExpr, ResourceKind};
     use crate::rule::{GrantClaim, Rule, RuleLeaf};
     use crate::signature::{MethodSignature, ParamType, Totality};
     use crate::types::{SlotId, Value, package_slot};
@@ -1027,7 +1047,7 @@ mod tests {
         let mut grants = GrantsExpr::new();
         grants.set(
             GrantedBehaviour::Deposit,
-            Rule::Require(GrantClaim::SelfBadge {
+            GrantExpr::Credential(GrantClaim::SelfBadge {
                 mark: b"owner-badge".to_vec(),
             }),
         );
@@ -1042,7 +1062,7 @@ mod tests {
         assert!(
             text.contains(
                 "read self-issued(non-fungible[\"ticket\"]), \
-                 granting deposit to the issuer's \"owner-badge\" badge"
+                 granting deposit to whoever holds the issuer's \"owner-badge\" badge"
             ),
             "{text}"
         );

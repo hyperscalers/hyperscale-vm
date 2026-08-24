@@ -97,9 +97,9 @@ pub use publish::{
 };
 pub use records::{ChainRecords, Composed, Records};
 pub use resource::{
-    GrantedBehaviour, GrantsExpr, GrantsResolveError, MAX_RESOURCE_MATERIAL_PARTS,
-    RECORD_WIRE_DEPTH, ResourceGrants, ResourceKind, ResourceMeta, ResourceRecord,
-    granting_issued_resource, holdings_collection, holdings_entry, holdings_range,
+    Grant, GrantExpr, GrantedBehaviour, GrantsExpr, GrantsResolveError,
+    MAX_RESOURCE_MATERIAL_PARTS, RECORD_WIRE_DEPTH, ResourceGrants, ResourceKind, ResourceMeta,
+    ResourceRecord, granting_issued_resource, holdings_collection, holdings_entry, holdings_range,
     instance_data_key, issued_resource, resource_record_key, xrd,
 };
 pub use route::{FrameDeclaration, PrefixShardResolver, Routing, ShardResolver, route};

@@ -23,7 +23,8 @@ use crate::instance::InstanceMeta;
 use crate::manifest::{Condition, JudgedLeaf, ManifestHash};
 use crate::presented::Presented;
 use crate::resource::{
-    GrantedBehaviour, GrantsExpr, GrantsResolveError, ResourceGrants, ResourceKind, ResourceMeta,
+    Grant, GrantedBehaviour, GrantsExpr, GrantsResolveError, ResourceGrants, ResourceKind,
+    ResourceMeta,
 };
 use crate::rule::{Rule, RuleExpr, RuleLeaf};
 use crate::types::{
@@ -1395,8 +1396,15 @@ fn eval_clauses(
             }
             Clause::Requires { condition, .. } => {
                 budget.charge()?;
-                let condition = eval_condition(condition, inputs, hasher, bindings, budget)?;
-                out.conditions.push(condition);
+                // An open grant states no requirement rather than a
+                // requirement anything meets: a threshold of nothing is
+                // not spellable, and a clause that admits everyone is
+                // one the declaration is better off not carrying.
+                if let Some(condition) =
+                    eval_condition(condition, inputs, hasher, bindings, budget)?
+                {
+                    out.conditions.push(condition);
+                }
             }
             Clause::Mints { claim, .. } => {
                 budget.charge()?;
@@ -1491,13 +1499,34 @@ fn eval_condition(
     hasher: &dyn Hasher,
     bindings: &[Value],
     budget: &Budget<'_>,
-) -> Result<Condition, EvalError> {
+) -> Result<Option<Condition>, EvalError> {
     match condition {
-        ConditionExpr::Holds { target, presence } => Ok(Condition::Holds {
+        ConditionExpr::Holds { target, presence } => Ok(Some(Condition::Holds {
             target: eval_target(target, inputs, hasher, bindings, budget)?,
             presence: *presence,
-        }),
+        })),
         ConditionExpr::Satisfies { rule } => {
+            // An open grant admits everyone, and a threshold has no top
+            // element to say so with — so the clause states no
+            // requirement at all rather than one nothing could fail.
+            // Decidable here because a granted leaf is the whole rule or
+            // it is refused at publish: a granted rule is itself a tree,
+            // and splicing one into a threshold would make the depth cap
+            // a joint property of two authors.
+            if let Rule::Require(RuleLeaf::Granted {
+                resource,
+                behaviour,
+            }) = rule
+            {
+                let address = eval_denomination(resource, inputs, hasher, bindings, budget)?;
+                let rules = inputs
+                    .grants
+                    .rules(address)
+                    .ok_or(EvalError::GrantsUnpresented(address))?;
+                if matches!(rules.get(*behaviour), Some(Grant::Open)) {
+                    return Ok(None);
+                }
+            }
             let rule = rule.try_graft(&mut |leaf| match leaf {
                 RuleLeaf::Claim(expr) => {
                     let value = eval_expr(expr, inputs, hasher, bindings, 0, budget)?;
@@ -1533,12 +1562,31 @@ fn eval_condition(
                         .grants
                         .rules(address)
                         .ok_or(EvalError::GrantsUnpresented(address))?;
-                    let granted = rules
-                        .rule(*behaviour)
-                        .ok_or(EvalError::GrantsNobody(*behaviour))?
-                        .decode()
-                        .map_err(|_| EvalError::GrantRuleMalformed)?;
-                    granted.map_leaves(&mut |claim| Ok::<_, EvalError>(JudgedLeaf::Claim(*claim)))
+                    Ok(
+                        match rules
+                            .get(*behaviour)
+                            .ok_or(EvalError::GrantsNobody(*behaviour))?
+                        {
+                            Grant::Never => return Err(EvalError::GrantsNobody(*behaviour)),
+                            Grant::Rule(bytes) => bytes
+                                .decode()
+                                .map_err(|_| EvalError::GrantRuleMalformed)?
+                                .map_leaves(&mut |claim| {
+                                    Ok::<_, EvalError>(JudgedLeaf::Claim(*claim))
+                                })?,
+                            // Neither is a tree this leaf can splice. An
+                            // open grant is answered above, where it is
+                            // the whole rule and states no requirement at
+                            // all; a credential is a presence question
+                            // about the mover, resolved against the
+                            // access's owner where the movement is
+                            // declared and never against a caller's
+                            // evidence here.
+                            Grant::Open | Grant::Credential(_) => {
+                                return Err(EvalError::GrantRuleMalformed);
+                            }
+                        },
+                    )
                 }
             })?;
             // A graft can deepen what a map never could, so the spliced
@@ -1546,7 +1594,7 @@ fn eval_condition(
             if !rule.within_caps(0) {
                 return Err(EvalError::GrantRuleMalformed);
             }
-            Ok(Condition::Satisfies { rule })
+            Ok(Some(Condition::Satisfies { rule }))
         }
     }
 }

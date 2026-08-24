@@ -236,6 +236,7 @@ fn summarise(graph: &ManifestGraph, chain: &Records) {
             Authority::Anyone
             | Authority::Signature(_)
             | Authority::StoredRule(_)
+            | Authority::Held
             | Authority::Badge { .. }
             | Authority::Threshold { .. } => {
                 unreachable!("satisfiable")

@@ -423,6 +423,7 @@ fn satisfies(
 ) -> Result<bool, SessionTrap> {
     match rule {
         Rule::Require(JudgedLeaf::Claim(claim)) => Ok(call.evidence.contains(claim)),
+        Rule::Require(JudgedLeaf::Held { cell }) => session.declared_present(*cell),
         Rule::Require(JudgedLeaf::Stored { cell, role }) => {
             if let Some(verdict) = judged.get(&(*cell, *role)) {
                 return Ok(*verdict);

@@ -613,7 +613,7 @@ mod tests {
     use crate::hash::{Hash32, TestHasher};
     use crate::metadata::PackageHash;
     use crate::presented::Presented;
-    use crate::resource::{GrantedBehaviour, ResourceGrants, ResourceKind};
+    use crate::resource::{Grant, GrantedBehaviour, ResourceGrants, ResourceKind};
     use crate::rule::StoredRule;
     use crate::vectors::{
         CONFIG_LEAF, PACKAGE, SALT, address_vector_lines, address_vectors, expected_classes,
@@ -861,8 +861,10 @@ mod tests {
             let mut rules = ResourceGrants::new();
             rules.set(
                 GrantedBehaviour::Recall,
-                RoleBytes::try_from(&StoredRule::Require(Presented::Identity(who.into())))
-                    .expect("a rule encodes"),
+                Grant::Rule(
+                    RoleBytes::try_from(&StoredRule::Require(Presented::Identity(who.into())))
+                        .expect("a rule encodes"),
+                ),
             );
             rules
         };

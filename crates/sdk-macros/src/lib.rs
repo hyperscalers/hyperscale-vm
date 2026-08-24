@@ -2211,15 +2211,17 @@ fn granted_rules(
     let mut reads_config = false;
     for entry in &entries {
         let behaviour = match entry.path.get_ident().map(ToString::to_string).as_deref() {
-            Some("recall") => quote!(Recall),
-            Some("freeze") => quote!(Freeze),
+            Some("mint") => quote!(Mint),
+            Some("burn") => quote!(Burn),
+            Some("withdraw") => quote!(Withdraw),
             Some("deposit") => quote!(Deposit),
+            Some("freeze") => quote!(Freeze),
+            Some("recall") => quote!(Recall),
             _ => {
                 return Err(syn::Error::new(
                     entry.path.span(),
-                    "a granted behaviour is `recall`, `freeze`, or `deposit` — the set an \
-                     address cannot answer by arithmetic, since who may mint is the \
-                     derivation's",
+                    "a granted behaviour is `mint`, `burn`, `withdraw`, `deposit`, \
+                     `freeze`, or `recall`",
                 ));
             }
         };
@@ -2235,7 +2237,7 @@ fn granted_rules(
             ));
         }
         named.push(name);
-        let rule = granted_rule(&entry.value, resources, config_fields, 0)?;
+        let rule = granted_entry(&entry.value, resources, config_fields)?;
         reads_config |= names_config(&entry.value, config_fields);
         granted.push(quote!(
             __seals.set(::hyperscale_vm_sdk::GrantedBehaviour::#behaviour, #rule);
@@ -2334,6 +2336,47 @@ fn granted_rule(
             Ok(quote!(::hyperscale_vm_sdk::GrantRuleExpr::Require(#claim)))
         }
     }
+}
+
+/// One granted entry as written: `anyone`, `nobody`, a credential, or a
+/// rule over claims.
+///
+/// The three that are not rules are spelled as bare words rather than as
+/// rule values, so an evaluator never meets a tree it has to recognise as
+/// meaning something other than what it says.
+fn granted_entry(
+    expr: &syn::Expr,
+    resources: &[(&syn::Ident, ResourceKind, bool)],
+    config_fields: &[String],
+) -> syn::Result<TokenStream2> {
+    if let syn::Expr::Path(path) = expr {
+        match path.path.get_ident().map(ToString::to_string).as_deref() {
+            Some("anyone") => return Ok(quote!(::hyperscale_vm_sdk::GrantExpr::Open)),
+            Some("nobody") => return Ok(quote!(::hyperscale_vm_sdk::GrantExpr::Never)),
+            _ => {}
+        }
+    }
+    if let syn::Expr::Call(call) = expr
+        && calls(&call.func, "held")
+    {
+        let mut args = call.args.iter();
+        let Some(named) = args.next() else {
+            return Err(syn::Error::new(
+                call.span(),
+                "`held(..)` names the badge a holder must hold",
+            ));
+        };
+        if args.next().is_some() {
+            return Err(syn::Error::new(
+                call.span(),
+                "`held(..)` names one badge: a credential is one presence question",
+            ));
+        }
+        let claim = granted_claim(named, resources, config_fields)?;
+        return Ok(quote!(::hyperscale_vm_sdk::GrantExpr::Credential(#claim)));
+    }
+    let rule = granted_rule(expr, resources, config_fields, 0)?;
+    Ok(quote!(::hyperscale_vm_sdk::GrantExpr::Rule(#rule)))
 }
 
 fn granted_branches(

@@ -61,6 +61,10 @@ pub enum Authority {
     /// signature — but once the target is securified the stored role
     /// set governs, and only state knows its shape.
     StoredRule(RoleId),
+    /// A credential the mover must hold: a leaf under their own prefix
+    /// whose presence is the whole question. Nothing is presented for
+    /// it, so a builder reports it rather than routing evidence to it.
+    Held,
     /// An identity no key derives — an instance's own address, or a
     /// configured slot holding one. Nothing signs for a hash of what an
     /// object is, so a method requiring one cannot be named by anyone.
@@ -184,6 +188,7 @@ impl Report {
                 Authority::StoredRule(_) => PrincipalAddr::try_from(required.target).ok(),
                 Authority::Anyone
                 | Authority::TargetHasNoKey
+                | Authority::Held
                 | Authority::Badge { .. }
                 | Authority::Threshold { .. } => None,
             })
@@ -290,6 +295,7 @@ fn report(
             [] => Authority::Anyone,
             [Rule::Require(JudgedLeaf::Claim(claim))] => claimed(claim),
             [Rule::Require(JudgedLeaf::Stored { role, .. })] => Authority::StoredRule(*role),
+            [Rule::Require(JudgedLeaf::Held { .. })] => Authority::Held,
             // A threshold names more than one thing, and which of them a
             // holder can produce is theirs to know: the report says what
             // is asked rather than picking a way to satisfy it.

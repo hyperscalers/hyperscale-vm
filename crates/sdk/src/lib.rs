@@ -159,9 +159,9 @@ pub use blueprint::{Blueprint, Builder, Method};
 // never has to depend on `vm-effects` directly.
 pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
 pub use hyperscale_vm_effects::{
-    AuthBase, AuthCell, CONFIRMATION, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr,
-    LeafForm, PRIMARY, ParamType, Proposal, RECOVERY, ResourceKind, RoleId, SlotId, SlotKind,
-    encode_metadata, package_role,
+    AuthBase, AuthCell, CONFIRMATION, GrantClaim, GrantExpr, GrantRuleExpr, GrantedBehaviour,
+    GrantsExpr, LeafForm, PRIMARY, ParamType, Proposal, RECOVERY, ResourceKind, RoleId, SlotId,
+    SlotKind, encode_metadata, package_role,
 };
 /// Author a package from one module.
 ///

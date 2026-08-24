@@ -11,9 +11,9 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, GrantedBehaviour, Hasher, PackageHash, PrefixShardResolver, Presented, Records,
-    ResourceGrants, ResourceKind, ResourceMeta, RoleBytes, StoredRule, TestHasher, admit_tree,
-    route_tree,
+    EnvelopeTree, Grant, GrantedBehaviour, Hasher, PackageHash, PrefixShardResolver, Presented,
+    Records, ResourceGrants, ResourceKind, ResourceMeta, RoleBytes, StoredRule, TestHasher,
+    admit_tree, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
@@ -58,8 +58,10 @@ fn granting_meta() -> ResourceMeta {
     let mut rules = ResourceGrants::new();
     rules.set(
         GrantedBehaviour::Recall,
-        RoleBytes::try_from(&StoredRule::Require(Presented::Identity(RECALLER.into())))
-            .expect("a rule within the caps encodes"),
+        Grant::Rule(
+            RoleBytes::try_from(&StoredRule::Require(Presented::Identity(RECALLER.into())))
+                .expect("a rule within the caps encodes"),
+        ),
     );
     ResourceMeta {
         minter: MINTER,
@@ -191,8 +193,10 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     forged.rules = ResourceGrants::new();
     forged.rules.set(
         GrantedBehaviour::Recall,
-        RoleBytes::try_from(&StoredRule::Require(Presented::Identity(STRANGER.into())))
-            .expect("a rule encodes"),
+        Grant::Rule(
+            RoleBytes::try_from(&StoredRule::Require(Presented::Identity(STRANGER.into())))
+                .expect("a rule encodes"),
+        ),
     );
     assert_ne!(forged.address(&TestHasher), resource());
     env.resource(forged);

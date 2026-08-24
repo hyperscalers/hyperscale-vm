@@ -117,9 +117,19 @@ pub enum AddressClass {
     /// Published code, addressed by its content and immutable for as
     /// long as it exists.
     Package,
-    /// A resource, addressed by the provenance of its supply — who may
-    /// mint it.
+    /// A resource, addressed by the namespace its issue sits in, the
+    /// kind it is, and the rules its issuer sealed into it. What may be
+    /// done with it is the rules' answer, not the namespace's.
     Resource,
+    /// A resource whose sealed rules restrict a movement anyone could
+    /// otherwise make.
+    ///
+    /// Its own class because absence of a resource's record is otherwise
+    /// indistinguishable from needing none: a reader holding only the
+    /// address has to know whether proceeding without the rules would
+    /// let through a movement the rules forbid, and this byte is the
+    /// only thing that answers it without a lookup.
+    Restricted,
     /// A protocol-defined role. The role is what the address names; the
     /// code behind it moves with the protocol version, which is the one
     /// upgrade channel a package address deliberately lacks.
@@ -136,6 +146,7 @@ impl AddressClass {
             Self::Package => 0x03,
             Self::Resource => 0x04,
             Self::Native => 0x05,
+            Self::Restricted => 0x06,
         }
     }
 
@@ -153,6 +164,7 @@ impl AddressClass {
             0x03 => Some(Self::Package),
             0x04 => Some(Self::Resource),
             0x05 => Some(Self::Native),
+            0x06 => Some(Self::Restricted),
             _ => None,
         }
     }
@@ -171,6 +183,11 @@ impl AddressClass {
             Self::Package => "package",
             Self::Resource => "resource",
             Self::Native => "native",
+            // Its own word rather than a second spelling of "resource":
+            // the text form doubles the class, so sharing one would make
+            // the two forms disagree — and a holder reading an address
+            // is exactly who the class exists to tell.
+            Self::Restricted => "restricted",
         }
     }
 
@@ -187,7 +204,7 @@ impl AddressClass {
             Self::Principal => "principal-address",
             Self::Component => "component-address",
             Self::Package => "package-address",
-            Self::Resource => "resource-address",
+            Self::Resource | Self::Restricted => "resource-address",
             Self::Native => "native-address",
         }
     }
@@ -204,6 +221,7 @@ impl AddressClass {
             Self::Package,
             Self::Resource,
             Self::Native,
+            Self::Restricted,
         ]
         .into_iter()
         .find(|class| class.word() == word)
@@ -378,7 +396,7 @@ impl HborShape for Address {
 }
 
 macro_rules! class_addr {
-    ($(#[$doc:meta])* $name:ident => $class:ident) => {
+    ($(#[$doc:meta])* $name:ident => $class:ident $(| $extra:ident)*) => {
         $(#[$doc])*
         ///
         /// Constructed only through a checked conversion, so holding one
@@ -387,10 +405,21 @@ macro_rules! class_addr {
         pub struct $name(Address);
 
         impl $name {
-            /// The class every value of this type carries.
+            /// The class a value of this type carries where nothing says
+            /// otherwise, and the one [`new`](Self::new) stamps.
             pub const CLASS: AddressClass = AddressClass::$class;
 
-            /// The address of this class with `body`.
+            /// Every class this narrowing admits.
+            ///
+            /// One for almost all of them. Where a narrowing admits more,
+            /// the classes are alternatives at one position — the same
+            /// kind of object, distinguished by something a reader must
+            /// know without a lookup — and every one of them satisfies
+            /// the type's contract.
+            pub const ADMITS: &'static [AddressClass] =
+                &[AddressClass::$class $(, AddressClass::$extra)*];
+
+            /// The address of this type's default class with `body`.
             ///
             /// The class comes from the constructor rather than from an
             /// argument, so a value of this type cannot be built carrying
@@ -399,6 +428,19 @@ macro_rules! class_addr {
             #[must_use]
             pub const fn new(body: [u8; 31]) -> Self {
                 Self(Address::new(body, AddressClass::$class))
+            }
+
+            /// The address with `body` under `class`, or `None` where
+            /// this narrowing does not admit that class.
+            ///
+            /// What a derivation choosing between a narrowing's classes
+            /// calls. The refusal is what keeps the choice inside the
+            /// set the type promises.
+            #[must_use]
+            pub fn with_class(body: [u8; 31], class: AddressClass) -> Option<Self> {
+                Self::ADMITS
+                    .contains(&class)
+                    .then(|| Self(Address::new(body, class)))
             }
 
             /// The address, with its class forgotten.
@@ -475,7 +517,7 @@ macro_rules! class_addr {
 
             fn try_from(address: Address) -> Result<Self, Self::Error> {
                 let found = address.class();
-                if found == AddressClass::$class {
+                if Self::ADMITS.contains(&found) {
                     Ok(Self(address))
                 } else {
                     Err(WrongClass { expected: AddressClass::$class, found })
@@ -514,8 +556,14 @@ class_addr! {
     PackageAddr => Package
 }
 class_addr! {
-    /// An address checked to name a resource.
-    ResourceAddr => Resource
+    /// An address checked to name a resource, of either resource class.
+    ///
+    /// Restriction is a fact about the rules a resource sealed, not about
+    /// what it is, so both classes are resources everywhere a resource is
+    /// named — one vault shape, one edge type, one badge vocabulary. What
+    /// the second class buys is that a reader holding only the address
+    /// knows whether it needs the rules before it may proceed.
+    ResourceAddr => Resource | Restricted
 }
 class_addr! {
     /// An address checked to name a protocol role.
@@ -715,7 +763,7 @@ impl EffectTarget {
 mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
 
-    use super::AddressClass::{Component, Native, Package, Principal, Resource};
+    use super::AddressClass::{Component, Native, Package, Principal, Resource, Restricted};
     use super::{
         Address, AddressClass, CallTarget, ComponentAddr, LocalKey, NativeAddr, PackageAddr,
         PrincipalAddr, ResourceAddr, SubstateKey,
@@ -758,7 +806,8 @@ mod tests {
         assert!(SubstateKey::from_bytes(bytes).is_err());
     }
 
-    const CLASSES: [AddressClass; 5] = [Principal, Component, Package, Resource, Native];
+    const CLASSES: [AddressClass; 6] =
+        [Principal, Component, Package, Resource, Native, Restricted];
 
     #[test]
     fn a_class_is_recoverable_from_the_address_it_tagged() {
@@ -772,9 +821,9 @@ mod tests {
     }
 
     #[test]
-    fn the_assigned_tags_are_one_through_five() {
+    fn the_assigned_tags_are_one_through_six() {
         let tags: Vec<u8> = CLASSES.iter().map(|class| class.tag()).collect();
-        assert_eq!(tags, vec![0x01, 0x02, 0x03, 0x04, 0x05]);
+        assert_eq!(tags, vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
     }
 
     #[test]
@@ -782,15 +831,45 @@ mod tests {
         let words: Vec<&str> = CLASSES.iter().map(|class| class.word()).collect();
         assert_eq!(
             words,
-            vec!["account", "component", "package", "resource", "native"]
+            vec![
+                "account",
+                "component",
+                "package",
+                "resource",
+                "native",
+                "restricted"
+            ]
         );
         let unique: std::collections::BTreeSet<&str> = words.iter().copied().collect();
         assert_eq!(unique.len(), words.len());
     }
 
+    /// Both resource classes are resources: one narrowing accepts each,
+    /// and the class survives the round trip so a reader can still tell
+    /// which it holds.
+    #[test]
+    fn a_resource_address_admits_either_resource_class() {
+        for class in [Resource, Restricted] {
+            let resource = ResourceAddr::with_class([7; 31], class).expect("a resource class");
+            assert_eq!(resource.address().class(), class);
+            assert_eq!(ResourceAddr::try_from(resource.address()), Ok(resource));
+        }
+        // And nothing else is one, however plausible the position.
+        for class in [Principal, Component, Package, Native] {
+            assert!(ResourceAddr::with_class([7; 31], class).is_none());
+            assert!(ResourceAddr::try_from(Address::new([7; 31], class)).is_err());
+        }
+        // The two are different addresses over one body, which is what
+        // stops value crossing between them.
+        assert_ne!(
+            ResourceAddr::with_class([7; 31], Resource),
+            ResourceAddr::with_class([7; 31], Restricted)
+        );
+    }
+
     #[test]
     fn an_unassigned_tag_names_no_address() {
-        for tag in [0x00u8, 0x06, 0x7f, 0xff] {
+        for tag in [0x00u8, 0x07, 0x7f, 0xff] {
             assert_eq!(AddressClass::from_tag(tag), None);
             let mut bytes = [3u8; 32];
             bytes[31] = tag;

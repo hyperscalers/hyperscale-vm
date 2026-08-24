@@ -510,6 +510,19 @@ impl KernelSession {
         Ok(self.store.read(key)?.unwrap_or_default())
     }
 
+    /// Whether the leaf a declared read names is there.
+    ///
+    /// Presence rather than contents, because that is the whole of what
+    /// a credential asks — and for a value cell the two agree, since a
+    /// balance reaching zero deletes its leaf.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`].
+    pub fn declared_present(&mut self, key: SubstateKey) -> Result<bool, SessionTrap> {
+        Ok(self.store.read(key)?.is_some())
+    }
+
     /// A fresh read through a read capability.
     ///
     /// # Errors

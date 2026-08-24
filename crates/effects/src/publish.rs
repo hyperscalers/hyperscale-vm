@@ -17,7 +17,7 @@ use crate::dsl::{
 };
 use crate::instance::MAX_CONFIG_FIELDS;
 use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
-use crate::resource::{GrantsExpr, holdings_entry};
+use crate::resource::{GrantExpr, GrantsExpr, holdings_entry};
 use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
 use crate::signature::{AbiParam, MethodSignature};
 use crate::types::{
@@ -1507,6 +1507,9 @@ pub enum MetadataBoundsError {
 /// Why one signature is past a bound the vocabulary fixes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SignatureBoundsError {
+    /// A granted entry spelled a way its behaviour does not admit.
+    #[error("a granted behaviour does not admit the spelling its entry was written with")]
+    UnadmittedGrant,
     /// A declared rule past the caps a stored one is decoded under.
     #[error(
         "a declared rule nests past {MAX_RULE_DEPTH}, branches past {MAX_RULE_BRANCHES}, or \
@@ -1889,10 +1892,22 @@ fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), SignatureBoundsErr
 /// rules nothing could decode, and refusing at publish is the verdict a
 /// package author can read.
 fn check_grants_bounds(grants: &GrantsExpr) -> Result<(), SignatureBoundsError> {
-    grants.iter().try_for_each(|(_, rule)| {
-        rule.within_caps(0)
-            .then_some(())
-            .ok_or(SignatureBoundsError::RuleCaps)
+    grants.iter().try_for_each(|(behaviour, entry)| {
+        // The spelling first: an arm the behaviour does not admit is a
+        // second way of saying what an absent entry already says, and
+        // saying it at publish is what keeps the sealed table to one
+        // spelling per state.
+        if !behaviour.admits_expr(entry) {
+            return Err(SignatureBoundsError::UnadmittedGrant);
+        }
+        match entry {
+            // Neither states a rule, so neither has a depth.
+            GrantExpr::Open | GrantExpr::Never | GrantExpr::Credential(_) => Ok(()),
+            GrantExpr::Rule(rule) => rule
+                .within_caps(0)
+                .then_some(())
+                .ok_or(SignatureBoundsError::RuleCaps),
+        }
     })
 }
 
