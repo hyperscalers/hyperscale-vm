@@ -196,7 +196,7 @@ proptest! {
 fn a_move_of_more_instances_prices_above_fewer() {
     use hyperscale_vm_effects::dsl::{Clause, ModeExpr};
     use hyperscale_vm_effects::{
-        DEPTH_UNITS, EvalInputs, Expr, Hash32, InstanceMeta, ManifestHash, PackageHash,
+        DEPTH_UNITS, EvalBudget, EvalInputs, Expr, Hash32, InstanceMeta, ManifestHash, PackageHash,
         PresentedGrants, TestHasher, Value, evaluate_effects, holdings_range,
     };
 
@@ -220,6 +220,7 @@ fn a_move_of_more_instances_prices_above_fewer() {
             config: Vec::new(),
             salt: Hash32([2; 32]),
         };
+        let budget = EvalBudget::default();
         let inputs = EvalInputs {
             self_addr: holder,
             args: &args,
@@ -227,6 +228,7 @@ fn a_move_of_more_instances_prices_above_fewer() {
             node_index: 0,
             identity: ManifestHash(Hash32([7; 32])),
             grants: PresentedGrants::none(),
+            budget: &budget,
         };
         footprint(&evaluate_effects(&clauses, &inputs, &TestHasher).unwrap())
     };

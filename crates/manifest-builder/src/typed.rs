@@ -27,9 +27,10 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    ChainRecords, Constraint, EdgeContent, EdgeRef, EvalInputs, EvidenceRef, Expr, GraphArg,
-    Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash, MethodSignature,
-    PackageHash, PackageMetadata, ParamType, PresentedGrants, Value, evaluate_expr,
+    ChainRecords, Constraint, EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef, Expr,
+    GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash,
+    MethodSignature, PackageHash, PackageMetadata, ParamType, PresentedGrants, Value,
+    evaluate_expr,
 };
 use hyperscale_vm_types::{Address, CallTarget, PrincipalAddr, ResourceAddr};
 
@@ -760,6 +761,9 @@ pub(crate) fn output_resources(
     node_index: u32,
     hasher: &dyn Hasher,
 ) -> Vec<Option<ResourceAddr>> {
+    // A builder-side projection, not admission: the meter is this
+    // call's own, and nothing here reaches a chain verdict.
+    let budget = EvalBudget::default();
     let inputs = EvalInputs {
         self_addr: target.address(),
         args: values,
@@ -767,6 +771,7 @@ pub(crate) fn output_resources(
         node_index,
         identity: UNBOUND,
         grants: PresentedGrants::none(),
+        budget: &budget,
     };
     signature
         .outputs

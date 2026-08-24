@@ -23,7 +23,7 @@ use hyperscale_vm_types::{
 };
 
 use crate::dsl::{
-    Clause, Declaration, DeclaredAccess, EvalError, EvalInputs, PresentedGrants,
+    Clause, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, PresentedGrants,
     evaluate_declaration, evaluate_expr, materialized_kind,
 };
 use crate::envelope::{YieldBinding, YieldParam};
@@ -688,6 +688,7 @@ pub(crate) fn admit_intents(
 
     let (flat_of, order) = interleave(intents, total)?;
 
+    let budget = EvalBudget::default();
     let mut lower = Lower {
         intents,
         identity,
@@ -696,6 +697,7 @@ pub(crate) fn admit_intents(
         grants,
         hasher,
         flat_of: &flat_of,
+        budget: &budget,
         outputs: Vec::with_capacity(total),
         consumed: Vec::with_capacity(total),
         minted: Vec::with_capacity(total),
@@ -904,6 +906,10 @@ struct Lower<'a> {
     presented: &'a BTreeSet<Address>,
     grants: &'a PresentedGrants,
     hasher: &'a dyn Hasher,
+    /// What admitting this envelope has spent, across every node the
+    /// interleaved order holds. One meter for the tree, because a caller
+    /// composes the tree and admission runs before any fee is assured.
+    budget: &'a EvalBudget,
     /// Flattened position per (intent, local node).
     flat_of: &'a [Vec<u32>],
     /// Evaluated output projections per flattened node.
@@ -954,6 +960,7 @@ impl Lower<'_> {
             node_index,
             identity: self.identity,
             grants: self.grants,
+            budget: self.budget,
         };
         check_denominations(signature, &bound, &eval_inputs, self.hasher, node_index)?;
         let node_outputs = project_outputs(signature, &eval_inputs, self.hasher, node_index)?;

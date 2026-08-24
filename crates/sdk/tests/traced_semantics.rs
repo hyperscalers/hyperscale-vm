@@ -8,9 +8,9 @@
 
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    Clause, Declaration, EvalInputs, Hash32, InstanceMeta, MAX_FOREACH_ELEMENTS, ManifestHash,
-    MethodSignature, ModeExpr, PackageHash, ParamType, PresentedGrants, TargetExpr, TestHasher,
-    Value, child_key, evaluate_declaration, evaluate_effects,
+    Clause, Declaration, EvalBudget, EvalInputs, Hash32, InstanceMeta, MAX_FOREACH_ELEMENTS,
+    ManifestHash, MethodSignature, ModeExpr, PackageHash, ParamType, PresentedGrants, TargetExpr,
+    TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
 };
 use hyperscale_vm_sdk::sym::{Addr, Bucket, Seq, Sym, U128, eq};
 use hyperscale_vm_sdk::{Blueprint, Trace};
@@ -48,6 +48,7 @@ fn record_of(config: &[Value]) -> InstanceMeta {
 /// Evaluate a traced signature the way routing would.
 fn declared(signature: &MethodSignature, args: &[Value], config: &[Value]) -> EffectSet {
     let record = record_of(config);
+    let budget = EvalBudget::default();
     let inputs = EvalInputs {
         self_addr: BASKET,
         args,
@@ -55,6 +56,7 @@ fn declared(signature: &MethodSignature, args: &[Value], config: &[Value]) -> Ef
         node_index: 0,
         identity: identity(),
         grants: PresentedGrants::none(),
+        budget: &budget,
     };
     evaluate_effects(&signature.effects, &inputs, &TestHasher)
         .expect("the traced signature evaluates")
@@ -64,6 +66,7 @@ fn declared(signature: &MethodSignature, args: &[Value], config: &[Value]) -> Ef
 /// scheduling reads and the clause order that materialization reads.
 fn evaluated(signature: &MethodSignature, args: &[Value], config: &[Value]) -> Declaration {
     let record = record_of(config);
+    let budget = EvalBudget::default();
     let inputs = EvalInputs {
         self_addr: BASKET,
         args,
@@ -71,6 +74,7 @@ fn evaluated(signature: &MethodSignature, args: &[Value], config: &[Value]) -> D
         node_index: 0,
         identity: identity(),
         grants: PresentedGrants::none(),
+        budget: &budget,
     };
     evaluate_declaration(&signature.effects, &inputs, &TestHasher)
         .expect("the traced signature evaluates")

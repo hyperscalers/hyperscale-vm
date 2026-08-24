@@ -81,6 +81,26 @@ pub const MAX_EVALUATION_WORK: usize = 65_536;
 /// nanoseconds buys.
 const BYTES_PER_WORK_UNIT: usize = 64;
 
+/// The bound on what admitting one envelope may cost, across every node
+/// in it.
+///
+/// [`MAX_EVALUATION_WORK`] bounds one signature; a tree holds up to
+/// `MAX_MANIFEST_NODES` of them, and each node's denominations and
+/// output projections are evaluations of their own. Admission runs at
+/// ingress over unverified bytes — before a signature is checked, before
+/// the envelope is in any block, and before any fee is assured — so what
+/// an envelope costs whoever receives it is the per-signature ceiling
+/// multiplied by the node cap unless something counts the tree.
+///
+/// Sized against the widest legitimate envelope rather than scaled off
+/// the figure beside it: a full tree of the dearest signature the corpus
+/// declares comes to under four hundred thousand units, so this clears
+/// the widest real envelope by a factor of two while holding the widest
+/// admissible one to about fifty milliseconds — where the per-signature
+/// ceiling alone left it at thirteen seconds, spent on bytes nobody had
+/// yet checked a signature over.
+pub const MAX_ENVELOPE_EVALUATION_WORK: usize = 1_048_576;
+
 /// The bound on `for-each` nesting within one signature.
 ///
 /// A recursion bound like [`MAX_EXPR_DEPTH`]: the evaluator recurses per
@@ -756,6 +776,12 @@ pub enum EvalError {
     /// does not see.
     #[error("signature evaluation exceeds {MAX_EVALUATION_WORK} units of work")]
     TooMuchWork,
+    /// An envelope whose nodes together spend more than
+    /// [`MAX_ENVELOPE_EVALUATION_WORK`] — the bound the per-signature one
+    /// above does not give, since a tree holds up to `MAX_MANIFEST_NODES`
+    /// signatures and admission runs before any fee is assured.
+    #[error("envelope admission exceeds {MAX_ENVELOPE_EVALUATION_WORK} units of work")]
+    EnvelopeTooMuchWork,
     /// A range whose lower bound exceeds its upper bound.
     #[error("range bounds inverted: lo > hi")]
     InvalidRange,
@@ -796,6 +822,10 @@ pub struct EvalInputs<'a> {
     /// address its own record derives. Not state: a presented claim, on
     /// the terms an instance's record is.
     pub grants: &'a PresentedGrants,
+    /// What admitting this envelope has spent so far. Shared by every
+    /// node in one tree, so what bounds a caller is the tree rather than
+    /// whichever signature it happened to reach.
+    pub budget: &'a EvalBudget,
 }
 
 /// The granted rules an envelope presented, by the address each record
@@ -1101,7 +1131,7 @@ pub fn evaluate_declaration(
 ) -> Result<Declaration, EvalError> {
     let mut out = Declaration::default();
     let mut bindings = Vec::new();
-    let budget = Budget::default();
+    let budget = Budget::new(inputs.budget);
     // One clause at a time, so each one's contribution to the flattened
     // order is bracketed as it is produced.
     for (index, clause) in clauses.iter().enumerate() {
@@ -1128,6 +1158,32 @@ pub fn evaluate_declaration(
     Ok(out)
 }
 
+/// What admitting one envelope has spent, across every node in it.
+///
+/// The meter every signature in one tree reports into, where [`Budget`]
+/// is the meter for one of them. Two ceilings rather than one because
+/// they answer different questions: a per-signature bound is what a
+/// package may declare, and this is what a caller may ask a node to
+/// spend deciding a whole envelope. Sharing one figure would refuse a
+/// wide manifest of ordinary calls; scaling one by the node cap would
+/// admit a narrow one whose every node is the expensive shape.
+#[derive(Debug, Default)]
+pub struct EvalBudget {
+    spent: Cell<usize>,
+}
+
+impl EvalBudget {
+    /// Charge `units` against the envelope, refusing past the tree-wide
+    /// bound. Deterministic, so every node reaches the same verdict.
+    fn spend(&self, units: usize) -> Result<(), EvalError> {
+        self.spent.set(self.spent.get().saturating_add(units));
+        if self.spent.get() > MAX_ENVELOPE_EVALUATION_WORK {
+            return Err(EvalError::EnvelopeTooMuchWork);
+        }
+        Ok(())
+    }
+}
+
 /// One signature evaluation's structural allowance: how deep the clause
 /// nesting has gone, and how much work — effects declared plus `for-each`
 /// iterations — it has done so far.
@@ -1144,17 +1200,29 @@ pub fn evaluate_declaration(
 /// walk of closures over its subterms, and a subterm charges like
 /// anything else — so the meter every arm reaches is one both halves of
 /// the evaluation hold at once.
-#[derive(Default)]
-struct Budget {
+struct Budget<'a> {
     clause_depth: Cell<usize>,
     work: Cell<usize>,
     spent: Cell<usize>,
     /// The top-level clause being evaluated, which is the index a
     /// `for-each`'s expansion map is filed under.
     clause: Cell<u32>,
+    /// The envelope meter every signature in one tree reports into.
+    envelope: &'a EvalBudget,
 }
 
-impl Budget {
+impl<'a> Budget<'a> {
+    /// A fresh signature allowance, reporting into `envelope`.
+    fn new(envelope: &'a EvalBudget) -> Self {
+        Self {
+            clause_depth: Cell::default(),
+            work: Cell::default(),
+            spent: Cell::default(),
+            clause: Cell::default(),
+            envelope,
+        }
+    }
+
     /// Charge one clause or one `for-each` iteration, refusing past the
     /// per-signature bound. Deterministic, so every node reaches the same
     /// verdict.
@@ -1180,7 +1248,7 @@ impl Budget {
         if self.spent.get() > MAX_EVALUATION_WORK {
             return Err(EvalError::TooMuchWork);
         }
-        Ok(())
+        self.envelope.spend(units)
     }
 }
 
@@ -1199,7 +1267,7 @@ fn eval_expansion(
     hasher: &dyn Hasher,
     bindings: &mut Vec<Value>,
     out: &mut Declaration,
-    budget: &Budget,
+    budget: &Budget<'_>,
     mut rows: Option<&mut Vec<Vec<Option<u32>>>>,
 ) -> Result<(), EvalError> {
     for (site, clause) in body.iter().enumerate() {
@@ -1235,7 +1303,7 @@ pub fn evaluate_expr(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
 ) -> Result<Value, EvalError> {
-    eval_expr(expr, inputs, hasher, &[], 0, &Budget::default())
+    eval_expr(expr, inputs, hasher, &[], 0, &Budget::new(inputs.budget))
 }
 
 fn eval_clauses(
@@ -1244,7 +1312,7 @@ fn eval_clauses(
     hasher: &dyn Hasher,
     bindings: &mut Vec<Value>,
     out: &mut Declaration,
-    budget: &Budget,
+    budget: &Budget<'_>,
 ) -> Result<(), EvalError> {
     if budget.clause_depth.get() > MAX_CLAUSE_DEPTH {
         return Err(EvalError::ClausesTooDeep);
@@ -1378,7 +1446,7 @@ fn eval_condition(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
-    budget: &Budget,
+    budget: &Budget<'_>,
 ) -> Result<Condition, EvalError> {
     match condition {
         ConditionExpr::Holds { target, presence } => Ok(Condition::Holds {
@@ -1444,7 +1512,7 @@ fn eval_target(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
-    budget: &Budget,
+    budget: &Budget<'_>,
 ) -> Result<EffectTarget, EvalError> {
     match target {
         TargetExpr::Point(expr) => {
@@ -1518,7 +1586,7 @@ fn eval_collection(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
-    budget: &Budget,
+    budget: &Budget<'_>,
 ) -> Result<CollectionId, EvalError> {
     let encoded = eval_material(material, inputs, hasher, bindings, 0, budget)?;
     Ok(collection_id(hasher, owner, slot, &encoded))
@@ -1549,7 +1617,7 @@ fn eval_mode(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
-    budget: &Budget,
+    budget: &Budget<'_>,
 ) -> Result<Mode, EvalError> {
     match mode {
         ModeExpr::Read => Ok(Mode::Read),
@@ -1613,7 +1681,7 @@ fn eval_material(
     hasher: &dyn Hasher,
     bindings: &[Value],
     depth: usize,
-    budget: &Budget,
+    budget: &Budget<'_>,
 ) -> Result<Vec<Vec<u8>>, EvalError> {
     let mut encoded = Vec::with_capacity(material.len());
     for expr in material {
@@ -1673,7 +1741,7 @@ fn eval_expr(
     hasher: &dyn Hasher,
     bindings: &[Value],
     depth: usize,
-    budget: &Budget,
+    budget: &Budget<'_>,
 ) -> Result<Value, EvalError> {
     if depth > MAX_EXPR_DEPTH {
         return Err(EvalError::ExpressionTooDeep);
@@ -1788,7 +1856,7 @@ fn eval_all(
     hasher: &dyn Hasher,
     bindings: &[Value],
     depth: usize,
-    budget: &Budget,
+    budget: &Budget<'_>,
 ) -> Result<Vec<Value>, EvalError> {
     elements
         .iter()
@@ -2022,13 +2090,14 @@ fn as_list(value: Value) -> Result<Vec<Value>, EvalError> {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_types::{
-        Address, AddressClass, Effect, EffectTarget, Mode, Presence, ResourceAddr, WrongClass,
+        Address, AddressClass, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Presence,
+        ResourceAddr, WrongClass,
     };
 
     use super::{
-        Clause, ConditionExpr, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
-        MAX_FOREACH_ELEMENTS, MAX_VALUE_ITEMS, ModeExpr, TargetExpr, evaluate_declaration,
-        evaluate_effects, evaluate_expr, fresh_id, fresh_local,
+        Clause, ConditionExpr, EvalBudget, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH,
+        MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_VALUE_ITEMS, ModeExpr, TargetExpr,
+        evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::instance::InstanceMeta;
@@ -2145,6 +2214,8 @@ mod tests {
     // Leaked so the borrow outlives the call: a record is owned, and
     // every case here wants one built from its own configuration rather
     // than threaded in from the caller. Bounded by the number of tests.
+    // The envelope meter goes the same way, one per call, so each case
+    // measures a signature rather than what the case before it spent.
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
         let record: &'a InstanceMeta = Box::leak(Box::new(InstanceMeta {
             package: PackageHash(Hash32([1; 32])),
@@ -2158,6 +2229,7 @@ mod tests {
             node_index: 3,
             identity: ManifestHash(Hash32([9; 32])),
             grants: super::PresentedGrants::none(),
+            budget: Box::leak(Box::new(EvalBudget::default())),
         }
     }
 
@@ -2742,6 +2814,70 @@ mod tests {
         assert_eq!(
             evaluate_effects(&over(MAX_VALUE_ITEMS), &ins, &TestHasher),
             Err(EvalError::TooMuchWork)
+        );
+    }
+
+    /// The ceiling a caller meets is the envelope's, not one node's.
+    ///
+    /// Every evaluation below is admissible on its own — the
+    /// per-signature bound sees a signature it is happy with each time —
+    /// and a manifest holds up to `MAX_MANIFEST_NODES` of them. Admission
+    /// runs at ingress over unverified bytes, before any fee is assured,
+    /// so what a node is asked to spend is the tree's total, and only a
+    /// meter shared across it can say so.
+    #[test]
+    fn an_envelope_is_bounded_across_the_nodes_it_holds() {
+        let node = [Clause::ForEach {
+            guard: None,
+            list: Expr::Arg(0),
+            body: vec![Clause::Effect {
+                guard: Some(Box::new(Expr::Contains {
+                    map: Box::new(Expr::Literal(Value::List(vec![Value::Tuple(vec![
+                        Value::U64(1),
+                        Value::U64(0),
+                    ])]))),
+                    key: Box::new(Expr::Binding(0)),
+                })),
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: SlotId(16),
+                    material: vec![Expr::Binding(0)],
+                }),
+                mode: ModeExpr::Write,
+                denomination: None,
+            }],
+        }];
+        let args = [Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS])];
+
+        // One node of it, on a meter of its own.
+        let alone = inputs(&args, &[]);
+        assert!(evaluate_effects(&node, &alone, &TestHasher).is_ok());
+
+        // The same node again and again, on the meter a tree shares.
+        let record = InstanceMeta {
+            package: PackageHash(Hash32([1; 32])),
+            config: Vec::new(),
+            salt: Hash32([2; 32]),
+        };
+        let budget = EvalBudget::default();
+        let shared = EvalInputs {
+            self_addr: Address::new([7; 31], AddressClass::Component),
+            args: &args,
+            record: &record,
+            node_index: 3,
+            identity: ManifestHash(Hash32([9; 32])),
+            grants: super::PresentedGrants::none(),
+            budget: &budget,
+        };
+        let mut nodes = 0;
+        while evaluate_effects(&node, &shared, &TestHasher).is_ok() {
+            nodes += 1;
+            assert!(nodes < MAX_MANIFEST_NODES, "the node cap is not the bound");
+        }
+        assert!(nodes > 1, "a tree-wide bound, not a per-signature one");
+        assert_eq!(
+            evaluate_effects(&node, &shared, &TestHasher),
+            Err(EvalError::EnvelopeTooMuchWork)
         );
     }
 

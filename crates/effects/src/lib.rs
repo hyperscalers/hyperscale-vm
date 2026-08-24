@@ -54,10 +54,11 @@ pub use auth::{
     RoleTable, package_role,
 };
 pub use dsl::{
-    Clause, ConditionExpr, Declaration, DeclaredAccess, EvalError, EvalInputs, Expr,
-    MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr,
-    PresentedGrants, TargetExpr, evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id,
-    fresh_local, materialized_kind, self_child,
+    Clause, ConditionExpr, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, Expr,
+    MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_ENVELOPE_EVALUATION_WORK, MAX_EVALUATION_WORK,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, PresentedGrants, TargetExpr,
+    evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local,
+    materialized_kind, self_child,
 };
 pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_SLOT, Subintent,

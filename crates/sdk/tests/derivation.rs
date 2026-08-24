@@ -883,8 +883,8 @@ mod selection {
 #[test]
 fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() {
     use hyperscale_vm_effects::{
-        EvalInputs, Expr, Hash32, InstanceMeta, ManifestHash, PackageHash, PresentedGrants, SlotId,
-        TargetExpr, TestHasher, Value, child_key, evaluate_effects,
+        EvalBudget, EvalInputs, Expr, Hash32, InstanceMeta, ManifestHash, PackageHash,
+        PresentedGrants, SlotId, TargetExpr, TestHasher, Value, child_key, evaluate_effects,
     };
     use hyperscale_vm_sdk::VAULT;
     use hyperscale_vm_types::{Address, AddressClass, EffectTarget};
@@ -916,6 +916,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
     };
     for (paid, expected) in [(left, left), (right, right), (address(0x33), right)] {
         let args = [Value::Address(paid)];
+        let budget = EvalBudget::default();
         let inputs = EvalInputs {
             self_addr,
             args: &args,
@@ -923,6 +924,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
             node_index: 0,
             identity: ManifestHash(Hash32([9; 32])),
             grants: PresentedGrants::none(),
+            budget: &budget,
         };
         let set = evaluate_effects(&effects("either"), &inputs, &TestHasher).unwrap();
         let vaults: Vec<_> = [left, right, address(0x33)]
@@ -944,6 +946,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
     // which is what the short-circuit buys: an empty table routes every
     // caller to the fallback instead of failing to route at all.
     let args = [Value::Address(right)];
+    let budget = EvalBudget::default();
     let inputs = EvalInputs {
         self_addr,
         args: &args,
@@ -951,6 +954,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
         node_index: 0,
         identity: ManifestHash(Hash32([9; 32])),
         grants: PresentedGrants::none(),
+        budget: &budget,
     };
     let set = evaluate_effects(&effects("routed"), &inputs, &TestHasher).unwrap();
     let fallback = EffectTarget::Point(child_key(
