@@ -224,7 +224,14 @@ fn transfer_executes_end_to_end_on_both_runtimes() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("transfer must complete");
     };
-    assert_eq!(receipt.delta.settles.get(&vault(ALICE, RES_X)), Some(&100));
+    assert_eq!(
+        receipt
+            .delta
+            .settles
+            .get(&vault(ALICE, RES_X))
+            .map(|moved| moved.debit),
+        Some(100)
+    );
     assert_eq!(
         receipt
             .delta
@@ -283,7 +290,14 @@ fn a_transfer_on_a_minted_proof_settles_like_one_on_the_signature() {
     };
     // The proof changes where the withdrawal's authority came from and
     // nothing about what it did.
-    assert_eq!(receipt.delta.settles.get(&vault(ALICE, RES_X)), Some(&100));
+    assert_eq!(
+        receipt
+            .delta
+            .settles
+            .get(&vault(ALICE, RES_X))
+            .map(|moved| moved.debit),
+        Some(100)
+    );
     assert_eq!(
         receipt
             .delta

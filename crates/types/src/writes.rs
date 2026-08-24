@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use hyperscale_hbor::{Hash32, Hasher, Hbor, to_vec};
 
-use crate::address::{Address, CollectionId, LocalKey, SubstateKey};
+use crate::address::{Address, CollectionId, LocalKey, ResourceAddr, SubstateKey};
 use crate::amount::{amount_cell, read_amount};
 
 /// The bytes one committed cell value may carry — one bound for a cell
@@ -115,15 +115,23 @@ pub struct StateWrites {
     pub entries: BTreeMap<EntryKey, Option<Vec<u8>>>,
 }
 
-/// A commutative change to one amount cell: checked credit and debit
-/// totals, relative to whatever the cell holds.
+/// A change to one amount cell: checked credit and debit totals,
+/// relative to whatever the cell holds, in the resource the cell is
+/// denominated in.
 ///
 /// Recording the movement rather than the value it would produce is what
 /// makes a receipt schedule-invariant — another transaction's compatible
 /// movement on the same cell cannot leak into this one, and neither
 /// overwrites the other when both settle.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hbor)]
+///
+/// The resource rides on the movement rather than being looked up from
+/// the declaration that authorised it, which is what lets a receipt
+/// answer what it moved without anything beside it, and lets a movement
+/// exist at all where no package declared the cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub struct Movement {
+    /// What the moved cell holds.
+    pub resource: ResourceAddr,
     /// Total credited.
     pub credit: u128,
     /// Total debited.
@@ -131,14 +139,48 @@ pub struct Movement {
 }
 
 impl Movement {
+    /// Nothing moved, in `resource`.
+    ///
+    /// There is no `Default`: a movement names what it moves, and a
+    /// resource nobody chose would be a denomination invented here.
+    #[must_use]
+    pub const fn none(resource: ResourceAddr) -> Self {
+        Self {
+            resource,
+            credit: 0,
+            debit: 0,
+        }
+    }
+
+    /// A debit of `amount`, which is what a settled reservation is.
+    #[must_use]
+    pub const fn debit(resource: ResourceAddr, amount: u128) -> Self {
+        Self {
+            resource,
+            credit: 0,
+            debit: amount,
+        }
+    }
+
     /// This movement followed by `next` on the same cell.
     ///
     /// Saturating on each side rather than checked: the totals are
     /// bounded by the balances that fed them, and a sum that could not
     /// overflow a cell cannot overflow here.
+    ///
+    /// # Panics
+    ///
+    /// Debug-only, if the two name different resources: one cell holds
+    /// one resource, so composing across two is the kernel disagreeing
+    /// with itself rather than anything a caller can cause.
     #[must_use]
-    pub const fn then(self, next: Self) -> Self {
+    pub fn then(self, next: Self) -> Self {
+        debug_assert_eq!(
+            self.resource, next.resource,
+            "composing movements of different resources on one cell",
+        );
         Self {
+            resource: self.resource,
             credit: self.credit.saturating_add(next.credit),
             debit: self.debit.saturating_add(next.debit),
         }
@@ -311,10 +353,16 @@ mod tests {
     use hyperscale_hbor::hash::TestHasher;
     use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
 
-    use super::{EntryKey, EntryLeaf, MAX_CELL_VALUE_LEN, Movement, StateWrites, entry_leaf_key};
+    use super::{
+        EntryKey, EntryLeaf, MAX_CELL_VALUE_LEN, Movement, ResourceAddr, StateWrites,
+        entry_leaf_key,
+    };
     use crate::address::{
         Address, AddressClass, CollectionId, LEAF_KEY_BYTES, LocalKey, SubstateKey,
     };
+
+    /// What every cell these fixtures move holds.
+    const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
     use crate::amount::{amount_cell, read_amount};
 
     fn key(owner: u8, local: u8) -> SubstateKey {
@@ -459,6 +507,7 @@ mod tests {
             writes.movements.insert(
                 vault,
                 Movement {
+                    resource: RESOURCE,
                     credit: 0,
                     debit: amount,
                 },
@@ -496,6 +545,7 @@ mod tests {
         writes.movements.insert(
             vault,
             Movement {
+                resource: RESOURCE,
                 credit: 0,
                 debit: 500,
             },
@@ -516,6 +566,7 @@ mod tests {
         writes.movements.insert(
             vault,
             Movement {
+                resource: RESOURCE,
                 credit: 50,
                 debit: 0,
             },

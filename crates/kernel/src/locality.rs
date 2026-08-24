@@ -128,16 +128,12 @@ impl StateDelta {
         for (key, change) in owned.entries() {
             writes.entries.insert(key, change.clone());
         }
-        for (key, movement) in owned.movements() {
-            let entry = writes.movements.entry(key).or_default();
-            *entry = entry.then(movement);
-        }
-        for (key, settled) in owned.settles() {
-            let entry = writes.movements.entry(key).or_default();
-            *entry = entry.then(Movement {
-                credit: 0,
-                debit: settled,
-            });
+        for (key, movement) in owned.movements().chain(owned.settles()) {
+            writes
+                .movements
+                .entry(key)
+                .and_modify(|standing| *standing = standing.then(movement))
+                .or_insert(movement);
         }
         writes
     }
@@ -178,14 +174,15 @@ impl<'a> OwnedDelta<'a> {
             .map(|(key, movement)| (*key, *movement))
     }
 
-    /// Settlements of owned reservations. A remote reservation settles at
-    /// its owning shard; the amount here is the outbound record.
-    pub fn settles(&self) -> impl Iterator<Item = (SubstateKey, u128)> + use<'a, '_> {
+    /// Settlements of owned reservations, as the debits they are. A
+    /// remote reservation settles at its owning shard; the debit here is
+    /// the outbound record.
+    pub fn settles(&self) -> impl Iterator<Item = (SubstateKey, Movement)> + use<'a, '_> {
         self.delta
             .settles
             .iter()
             .filter(|(key, _)| self.locality.is_local(key.owner))
-            .map(|(key, amount)| (*key, *amount))
+            .map(|(key, movement)| (*key, *movement))
     }
 }
 
@@ -196,8 +193,8 @@ mod tests {
 
     use hyperscale_vm_effects::Hash32;
     use hyperscale_vm_types::{
-        Address, AddressClass, CollectionId, EntryKey, LocalKey, Movement, SubstateKey, TxHash,
-        encode_amount,
+        Address, AddressClass, CollectionId, EntryKey, LocalKey, Movement, ResourceAddr,
+        SubstateKey, TxHash, encode_amount,
     };
 
     use super::Locality;
@@ -206,6 +203,9 @@ mod tests {
     use crate::overlay::OverlayStore;
     use crate::session::StateDelta;
     use crate::store::{MemoryStore, WorkingStore};
+
+    /// What every cell these fixtures move holds.
+    const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
     fn key(owner: u8, local: u8) -> SubstateKey {
         SubstateKey {
@@ -242,6 +242,7 @@ mod tests {
             (
                 vault,
                 Movement {
+                    resource: RESOURCE,
                     credit: 30,
                     debit: 10,
                 },
@@ -249,6 +250,7 @@ mod tests {
             (
                 drained,
                 Movement {
+                    resource: RESOURCE,
                     credit: 0,
                     debit: 40,
                 },
@@ -256,6 +258,7 @@ mod tests {
             (
                 fresh,
                 Movement {
+                    resource: RESOURCE,
                     credit: 5,
                     debit: 0,
                 },
@@ -264,8 +267,10 @@ mod tests {
         for (cell, movement) in movements {
             delta.movements.insert(cell, movement);
         }
-        delta.settles.insert(reserved, 40);
-        delta.settles.insert(emptied, 25);
+        delta
+            .settles
+            .insert(reserved, Movement::debit(RESOURCE, 40));
+        delta.settles.insert(emptied, Movement::debit(RESOURCE, 25));
 
         let mut overlay = OverlayStore::new(Arc::new(base.clone()));
         overlay.write(written, vec![7]).unwrap();
@@ -313,6 +318,7 @@ mod tests {
         delta.movements.insert(
             vault,
             Movement {
+                resource: RESOURCE,
                 credit: 0,
                 debit: 30,
             },
@@ -343,6 +349,7 @@ mod tests {
         delta.movements.insert(
             cell,
             Movement {
+                resource: RESOURCE,
                 credit: 0,
                 debit: 20,
             },
@@ -396,6 +403,7 @@ mod tests {
             delta.movements.insert(
                 cell,
                 Movement {
+                    resource: RESOURCE,
                     credit: 5,
                     debit: 0,
                 },

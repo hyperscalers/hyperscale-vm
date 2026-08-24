@@ -8,7 +8,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_types::{AbortReason, Answer, EntryKey, Event, Movement, Outcome, SubstateKey};
+use hyperscale_vm_types::{
+    AbortReason, Answer, EntryKey, Event, Movement, Outcome, ResourceAddr, SubstateKey,
+};
 
 use super::{Capability, KernelSession};
 use crate::ledger::AmountLedger;
@@ -29,8 +31,8 @@ pub struct StateDelta {
     pub entries: DeltaMap<EntryKey, Option<Vec<u8>>>,
     /// Delta movements per amount cell.
     pub movements: DeltaMap<SubstateKey, Movement>,
-    /// Settled reservation amounts per cell.
-    pub settles: DeltaMap<SubstateKey, u128>,
+    /// Settled reservations per cell, as the debits they are.
+    pub settles: DeltaMap<SubstateKey, Movement>,
 }
 
 /// One kind of change a receipt carries, keyed by what it changes.
@@ -177,16 +179,49 @@ pub enum FinishError {
     /// A store failure while folding deltas or settling reservations.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A movement on a cell no capability denominated. Value moves only
+    /// through handles and every value handle names what its cell holds,
+    /// so reaching this is the kernel disagreeing with itself.
+    #[error("movement on undenominated cell {0:?}")]
+    UndenominatedMovement(SubstateKey),
 }
 
 /// How a session's reservations settled: the per-cell amounts, or the
 /// outcome the transaction aborts with instead.
 enum Settlement {
-    Settled(BTreeMap<SubstateKey, u128>),
+    Settled(BTreeMap<SubstateKey, Movement>),
     Aborted(Outcome),
 }
 
 impl KernelSession {
+    /// What the cell at `key` holds, off the capability that reached it.
+    ///
+    /// A cell's denomination is its declaration's, and the table is this
+    /// session's record of what it may touch — so a movement is stamped
+    /// where the authority to make it came from, once, rather than
+    /// looked up again wherever the movement later travels.
+    fn resource_at(&self, key: SubstateKey) -> Option<ResourceAddr> {
+        self.table
+            .iter()
+            .enumerate()
+            .find_map(|(index, capability)| {
+                let named = match capability {
+                    Capability::Amount(at)
+                    | Capability::AmountRead(at)
+                    | Capability::Delta(at)
+                    | Capability::Reserve { key: at, .. } => *at,
+                    _ => return None,
+                };
+                (named == key)
+                    .then(|| {
+                        u32::try_from(index)
+                            .ok()
+                            .and_then(|rep| self.cell_resource(rep))
+                    })
+                    .flatten()
+            })
+    }
+
     /// What this transaction took against the reservations on `key`.
     ///
     /// A grant's own declared amount rather than the folded hold: several
@@ -229,6 +264,9 @@ impl KernelSession {
             if !seen.insert(key) {
                 continue;
             }
+            let Some(resource) = self.resource_at(key) else {
+                return Err(FinishError::UndenominatedMovement(key));
+            };
             let taken = self.taken_against(key);
             let settled = if taken == 0 {
                 self.store.release(key, self.tx).map(|_| None)
@@ -240,7 +278,7 @@ impl KernelSession {
             };
             match settled {
                 Ok(Some(amount)) => {
-                    settles.insert(key, amount);
+                    settles.insert(key, Movement::debit(resource, amount));
                 }
                 // A hold nothing was taken against moved no value, so
                 // there is no debit for the receipt to carry.
@@ -328,7 +366,10 @@ impl KernelSession {
         let mut movements: BTreeMap<SubstateKey, Movement> = BTreeMap::new();
         let queued: Vec<(SubstateKey, Vec<DeltaOp>)> = self.store.pending_deltas().collect();
         for (key, ops) in queued {
-            match total_movement(&ops) {
+            let Some(resource) = self.resource_at(key) else {
+                return Err(FinishError::UndenominatedMovement(key));
+            };
+            match total_movement(&ops, resource) {
                 Ok(movement) => {
                     movements.insert(key, movement);
                 }

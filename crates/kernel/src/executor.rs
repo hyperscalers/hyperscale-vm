@@ -1060,12 +1060,12 @@ fn apply_completed(
             },
         }
     }
-    for (key, amount) in owned.settles() {
+    for (key, movement) in owned.settles() {
         // The receipt carries what the transaction took, and the hold may
         // stand for more where a grant was declared and declined. Reducing
         // the hold to what moved settles that much and lets the remainder
         // go with it.
-        store.set_hold(key, tx, Some(amount));
+        store.set_hold(key, tx, Some(movement.debit));
         match store.settle(key, tx) {
             Ok(_) => {}
             // The refusal left the hold standing, so the amount the

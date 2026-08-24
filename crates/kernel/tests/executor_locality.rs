@@ -149,8 +149,12 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
         Outcome::Completed { .. }
     ));
     assert_eq!(
-        payer.receipts[&tx].delta.settles.get(&cell(PAYER_BYTE)),
-        Some(&50)
+        payer.receipts[&tx]
+            .delta
+            .settles
+            .get(&cell(PAYER_BYTE))
+            .map(|movement| movement.debit),
+        Some(50)
     );
     assert_eq!(
         payer.receipts[&tx]
@@ -408,6 +412,7 @@ fn a_remote_debit_never_reaches_the_next_receipt() {
             .movements
             .get(&cell(PAYER_BYTE)),
         Some(&Movement {
+            resource: RESOURCE,
             credit: 0,
             debit: 100,
         })

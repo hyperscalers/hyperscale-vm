@@ -313,6 +313,7 @@ fn own_movements(entry: &BatchTx) -> BTreeMap<SubstateKey, Movement> {
             } => Some((
                 key,
                 Movement {
+                    resource: RESOURCE,
                     credit: seed % 40,
                     debit: seed % 17,
                 },
@@ -554,7 +555,7 @@ proptest! {
             let expected = moved
                 .get(&entry.tx)
                 .map(|(key, debit)| {
-                    (*key, Movement { credit: 0, debit: *debit })
+                    (*key, Movement::debit(RESOURCE, *debit))
                 })
                 .into_iter()
                 .collect::<BTreeMap<_, _>>();

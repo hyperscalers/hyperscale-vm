@@ -148,7 +148,14 @@ fn swap_executes_with_real_pool_math_on_both_runtimes() {
         receipt.delta.cells.get(&vault(pool(), RES_Y)),
         Some(&Some(encode_amount(668).to_vec()))
     );
-    assert_eq!(receipt.delta.settles.get(&vault(ALICE, RES_X)), Some(&500));
+    assert_eq!(
+        receipt
+            .delta
+            .settles
+            .get(&vault(ALICE, RES_X))
+            .map(|moved| moved.debit),
+        Some(500)
+    );
     assert_eq!(
         receipt
             .delta

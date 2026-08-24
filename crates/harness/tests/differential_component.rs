@@ -18,7 +18,7 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet,
-    EffectTarget, EntryKey, Mode, Movement, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    EffectTarget, EntryKey, Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// The one answer a fixture guest hands back, so a receipt depends on
@@ -426,14 +426,20 @@ fn transfer_agrees_and_the_receipt_settles_the_reservation() -> Result<()> {
     // Commutative changes report as movements: the settlement debits the
     // sender, the delta credits the recipient, and no absolute cell value
     // appears — that is what keeps receipts schedule-invariant.
-    assert_eq!(receipt.delta.settles.get(&fx.sender), Some(&75));
     assert_eq!(
-        receipt.delta.movements.get(&fx.recipient),
-        Some(&Movement {
-            credit: 75,
-            debit: 0,
-        })
+        receipt
+            .delta
+            .settles
+            .get(&fx.sender)
+            .map(|moved| moved.debit),
+        Some(75)
     );
+    let credited = receipt
+        .delta
+        .movements
+        .get(&fx.recipient)
+        .expect("the recipient is credited");
+    assert_eq!((credited.credit, credited.debit), (75, 0));
     assert!(receipt.delta.cells.is_empty());
     assert!(receipt.delta.entries.is_empty());
     Ok(())

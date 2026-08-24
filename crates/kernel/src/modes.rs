@@ -10,7 +10,9 @@
 //! same order against committed balance minus prior reservations, never
 //! counting in-flight deltas.
 
-use hyperscale_vm_types::{AMOUNT_CELL_BYTES, AbortReason, Movement, TxHash, read_amount};
+use hyperscale_vm_types::{
+    AMOUNT_CELL_BYTES, AbortReason, Movement, ResourceAddr, TxHash, read_amount,
+};
 
 /// Why a mode-semantics computation rejected its inputs. Deterministic:
 /// the same inputs fail identically on every replica.
@@ -78,12 +80,35 @@ pub enum DeltaOp {
 /// [`ModeError::CellOverflow`] / [`ModeError::CellUnderflow`] if the folded
 /// cell leaves `u128`.
 pub fn fold_deltas(committed: u128, ops: &[DeltaOp]) -> Result<u128, ModeError> {
-    let movement = total_movement(ops)?;
+    let (credit, debit) = delta_totals(ops)?;
     committed
-        .checked_add(movement.credit)
+        .checked_add(credit)
         .ok_or(ModeError::CellOverflow)?
-        .checked_sub(movement.debit)
+        .checked_sub(debit)
         .ok_or(ModeError::CellUnderflow)
+}
+
+/// A queue's credit and debit totals, checked.
+///
+/// The one summation behind both the fold and the movement it reports,
+/// so the value a cell lands on and the movement a receipt carries
+/// cannot disagree about what the queue added up to.
+fn delta_totals(ops: &[DeltaOp]) -> Result<(u128, u128), ModeError> {
+    let mut credit = 0u128;
+    let mut debit = 0u128;
+    for op in ops {
+        match op {
+            DeltaOp::Add(amount) => {
+                credit = credit
+                    .checked_add(*amount)
+                    .ok_or(ModeError::DeltaOverflow)?;
+            }
+            DeltaOp::Sub(amount) => {
+                debit = debit.checked_add(*amount).ok_or(ModeError::DeltaOverflow)?;
+            }
+        }
+    }
+    Ok((credit, debit))
 }
 
 /// A batch of deltas as its checked credit and debit totals — the one
@@ -93,25 +118,13 @@ pub fn fold_deltas(committed: u128, ops: &[DeltaOp]) -> Result<u128, ModeError> 
 /// # Errors
 ///
 /// [`ModeError::DeltaOverflow`] if either total leaves `u128`.
-pub fn total_movement(ops: &[DeltaOp]) -> Result<Movement, ModeError> {
-    let mut movement = Movement::default();
-    for op in ops {
-        match op {
-            DeltaOp::Add(amount) => {
-                movement.credit = movement
-                    .credit
-                    .checked_add(*amount)
-                    .ok_or(ModeError::DeltaOverflow)?;
-            }
-            DeltaOp::Sub(amount) => {
-                movement.debit = movement
-                    .debit
-                    .checked_add(*amount)
-                    .ok_or(ModeError::DeltaOverflow)?;
-            }
-        }
-    }
-    Ok(movement)
+pub fn total_movement(ops: &[DeltaOp], resource: ResourceAddr) -> Result<Movement, ModeError> {
+    let (credit, debit) = delta_totals(ops)?;
+    Ok(Movement {
+        resource,
+        credit,
+        debit,
+    })
 }
 
 /// A reservation verdict.

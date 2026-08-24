@@ -240,11 +240,15 @@ fn the_batch_semantics_are_exact() {
     assert_eq!(
         outcome.receipts[&tx(0x01)].delta.movements[&cell(0xC)],
         Movement {
+            resource: RESOURCE,
             credit: 40,
             debit: 0,
         }
     );
-    assert_eq!(outcome.receipts[&tx(0x01)].delta.settles[&cell(0xA)], 40);
+    assert_eq!(
+        outcome.receipts[&tx(0x01)].delta.settles[&cell(0xA)].debit,
+        40
+    );
     assert!(outcome.receipts[&tx(0x01)].delta.cells.is_empty());
     assert!(matches!(
         outcome.receipts[&tx(0x05)].outcome,

@@ -99,7 +99,11 @@ fn session(held: u128, reserves: &[u128]) -> (KernelSession, u32) {
 
 fn finish(session: KernelSession) -> (Outcome, Option<u128>, u128) {
     let (receipt, store) = session.finish(vec![], 0).expect("the oracle stands");
-    let settled = receipt.delta.settles.get(&cell(SOURCE)).copied();
+    let settled = receipt
+        .delta
+        .settles
+        .get(&cell(SOURCE))
+        .map(|movement| movement.debit);
     let left = store
         .cell(cell(SOURCE))
         .map_or(0, |held| decode_amount(&held).expect("an amount cell"));

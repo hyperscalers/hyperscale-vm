@@ -33,7 +33,7 @@ use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_sdk::state::Word;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, SHIPPED as PROTOCOL, STAKING_COMPONENT};
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Movement,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode,
     ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
@@ -179,14 +179,20 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
 fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
     let (blessed_receipt, _) = dual_transfer()?;
     let (sender, recipient) = keys();
-    assert_eq!(blessed_receipt.delta.settles.get(&sender), Some(&AMOUNT));
     assert_eq!(
-        blessed_receipt.delta.movements.get(&recipient),
-        Some(&Movement {
-            credit: AMOUNT,
-            debit: 0,
-        })
+        blessed_receipt
+            .delta
+            .settles
+            .get(&sender)
+            .map(|moved| moved.debit),
+        Some(AMOUNT)
     );
+    let credited = blessed_receipt
+        .delta
+        .movements
+        .get(&recipient)
+        .expect("the recipient is credited");
+    assert_eq!((credited.credit, credited.debit), (AMOUNT, 0));
     // Each leg's event carries the account that ran, not the account the
     // guest could name — and the two legs of a transfer sit on different
     // shards, which is what the attribution decides.
