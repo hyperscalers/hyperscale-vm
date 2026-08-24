@@ -41,10 +41,24 @@ pub const MAX_RULE_DEPTH: usize = 4;
 /// The bound on one threshold's branch count, on the same pre-payment
 /// terms as [`MAX_RULE_DEPTH`].
 ///
-/// Together the two admit at worst
-/// `MAX_RULE_BRANCHES^(MAX_RULE_DEPTH - 1)` identity leaves — 4096 — so
-/// evaluating one is a few thousand address comparisons before it starts.
+/// A shape bound rather than a size one: what a tree of this depth and
+/// this width may hold in total is [`MAX_RULE_LEAVES`], which is the
+/// figure that binds.
 pub const MAX_RULE_BRANCHES: usize = 16;
+
+/// The leaves one rule may hold, however it arranges them.
+///
+/// The size bound the shape bounds do not give: depth and branch width
+/// together admit `MAX_RULE_BRANCHES^(MAX_RULE_DEPTH - 1)` leaves, and a
+/// tree that wide is neither a shape a guardian arrangement takes nor
+/// one anybody could hand to a package. A stored rule travels as
+/// [`Value::Bytes`](crate::Value::Bytes) — an argument under
+/// [`MAX_VALUE_BYTES`](crate::MAX_VALUE_BYTES), a role table's entry under
+/// the same — so past
+/// what those bytes hold, a rule the caps admit is a rule no call can
+/// carry. Sized so the widest tree inside the shape bounds encodes well
+/// under that cap, pinned by test.
+pub const MAX_RULE_LEAVES: usize = 64;
 
 /// The decoder nesting cap that admits exactly the [`StoredRule`]s
 /// within [`MAX_RULE_DEPTH`].
@@ -233,6 +247,19 @@ pub type GrantRuleExpr = Rule<GrantClaim>;
 /// nesting bound, a declared one from the caps walk, a written one from
 /// the lowering's counter.
 ///
+/// How many leaves a tree holds, over every branch of it.
+fn leaves<L>(rule: &Rule<L>) -> usize {
+    let mut total = 0;
+    let mut stack = vec![rule];
+    while let Some(rule) = stack.pop() {
+        match rule {
+            Rule::Require(_) => total += 1,
+            Rule::CountOf { rules, .. } => stack.extend(rules),
+        }
+    }
+    total
+}
+
 /// # Errors
 ///
 /// The refusal, phrased for whoever wrote the rule: each caller adds its
@@ -247,6 +274,8 @@ pub fn well_formed<L>(rule: &Rule<L>) -> Result<(), &'static str> {
                 Err("a threshold requiring more branches than it has would admit no one")
             } else if rules.len() > MAX_RULE_BRANCHES {
                 Err("a threshold branches wider than the vocabulary admits")
+            } else if leaves(rule) > MAX_RULE_LEAVES {
+                Err("a rule holds more leaves than the vocabulary admits")
             } else {
                 Ok(())
             }
@@ -482,7 +511,63 @@ mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, to_vec};
 
     use super::testing::{WideRule, chain, identity, wide_chain};
-    use super::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, StoredRule};
+    use super::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, Rule, StoredRule};
+    use crate::types::MAX_VALUE_BYTES;
+
+    /// The widest tree holding `leaves` leaves: the most thresholds the
+    /// depth cap allows above them, since every one costs bytes of its
+    /// own.
+    fn widest(leaves: usize) -> StoredRule {
+        fn build(leaves: usize, depth: usize) -> StoredRule {
+            if leaves <= 1 || depth <= 1 {
+                return StoredRule::Require(identity(1));
+            }
+            // The fewest branches that still reach `leaves` within the
+            // depth left, so the tree above them is as tall as it can be.
+            let reach = |branches: usize| (1..depth).fold(1, |wide, _| wide * branches);
+            let mut branches = 2;
+            while branches < MAX_RULE_BRANCHES && reach(branches) < leaves {
+                branches += 1;
+            }
+            let per = leaves.div_ceil(branches);
+            let mut rules = Vec::new();
+            let mut left = leaves;
+            while left > 0 {
+                let take = per.min(left);
+                rules.push(build(take, depth - 1));
+                left -= take;
+            }
+            Rule::CountOf { count: 1, rules }
+        }
+        build(leaves, MAX_RULE_DEPTH)
+    }
+
+    /// A rule the vocabulary admits is a rule a call can carry.
+    ///
+    /// The leaf cap and the value byte cap meet here: a stored rule
+    /// reaches a package as bytes in a value, so a tree the caps admit
+    /// and the bytes cannot hold would be a rule nobody could ever hand
+    /// over. The widest admissible tree encodes well inside the cap, and
+    /// one leaf past it is refused where the tree is written rather than
+    /// where the bytes are counted.
+    #[test]
+    fn the_widest_admissible_rule_fits_the_bytes_a_value_carries() {
+        let widest_admitted = widest(MAX_RULE_LEAVES);
+        let bytes = widest_admitted.to_bytes().expect("encodes");
+        assert!(bytes.len() <= MAX_VALUE_BYTES, "{} bytes", bytes.len());
+        assert_eq!(
+            StoredRule::from_slice(&bytes).as_ref(),
+            Ok(&widest_admitted)
+        );
+
+        let over = widest(MAX_RULE_LEAVES + 1);
+        assert!(!over.within_caps(0));
+        let bytes = to_vec(&over).expect("encoding does not judge the leaf count");
+        assert!(matches!(
+            StoredRule::from_slice(&bytes),
+            Err(DecodeError::FailedValidation(_))
+        ));
+    }
 
     #[test]
     fn a_threshold_is_satisfied_at_its_count_and_not_below() {

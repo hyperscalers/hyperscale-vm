@@ -371,6 +371,13 @@ pub const MAX_VALUE_ITEMS: usize = 1024;
 /// (`MAX_EVENT_PAYLOAD_BYTES`) — because a byte string a declaration
 /// derives and one a receipt reports are the same kind of thing, and a
 /// scheme's signature material is what either has to hold.
+///
+/// The figure every other opaque payload is held to, rather than a
+/// second one beside them: an authority rule and a role table reach a
+/// package as bytes in a value, so this is the cap they arrive under
+/// whatever their own vocabulary admits. Their caps are sized to fit
+/// inside it — [`MAX_RULE_LEAVES`](crate::MAX_RULE_LEAVES) — so a rule
+/// the vocabulary states is a rule a call can carry.
 pub const MAX_VALUE_BYTES: usize = 4096;
 
 /// The codec nesting cost of the deepest admissible value.
@@ -612,8 +619,6 @@ mod tests {
         CONFIG_LEAF, PACKAGE, SALT, address_vector_lines, address_vectors, expected_classes,
     };
 
-    /// The hashing feed and the wire form are one byte string, and the
-    /// vocabulary is canonical on the same terms as any wire type.
     /// A value wider than the bound does not decode.
     ///
     /// Where the depth bound keeps a decoder off the native stack, this
@@ -653,6 +658,8 @@ mod tests {
         ));
     }
 
+    /// The hashing feed and the wire form are one byte string, and the
+    /// vocabulary is canonical on the same terms as any wire type.
     #[test]
     fn canonical_bytes_is_the_wire_encoding() {
         let value = Value::Tuple(vec![

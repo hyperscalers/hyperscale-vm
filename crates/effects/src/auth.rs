@@ -115,9 +115,12 @@ impl TryFrom<&StoredRule> for RoleBytes {
 ///
 /// A rule's own depth is not in here — an entry is a byte string at this
 /// layer, decoded at the rule vocabulary's cap wherever one is judged.
-/// Nor is an entry count: an entry costs bytes, so the count is bounded
-/// by what the input paid for, and the roles that mean anything are the
-/// ones some method names.
+/// Nor is an entry count: an entry costs bytes, and a table reaches a
+/// package as bytes in a value, so what bounds the count is
+/// [`MAX_VALUE_BYTES`](crate::MAX_VALUE_BYTES) over the whole table — a
+/// ceiling the entries spend against each other rather than one each.
+/// [`MAX_PACKAGE_ROLES`] is what a package may *name*, which several
+/// tables may divide.
 pub const MAX_ROLE_TABLE_WIRE_DEPTH: usize = 3;
 
 /// The stored role table: rules by role number, each as the bytes it
