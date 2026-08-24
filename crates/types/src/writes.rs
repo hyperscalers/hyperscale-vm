@@ -96,15 +96,18 @@ pub struct EntryLeaf {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 #[hbor(validate = cell_values_fit)]
 pub struct StateWrites {
-    /// The committed value per exclusively written cell, or `None` for a
+    /// The committed value per written byte cell, or `None` for a
     /// removal.
     pub cells: BTreeMap<SubstateKey, Option<Vec<u8>>>,
-    /// What this transaction moved on each amount cell it reached
-    /// commutatively, relative to whatever the cell holds when the
-    /// movement applies.
+    /// What this transaction moved on each amount cell it reached,
+    /// relative to whatever the cell holds when the movement applies.
     ///
-    /// A cell never appears in both maps: an access is exclusive or it is
-    /// commutative, and the capability that granted it decided which.
+    /// A cell never appears in both maps, and what a cell holds is what
+    /// decides which — not how a capability reached it. An exclusive
+    /// claim on a value cell governs when the transaction may run and
+    /// leaves the record a movement, because the value the cell ends at
+    /// is the settling shard's answer and not this transaction's; only a
+    /// byte cell has a value to state outright.
     pub movements: BTreeMap<SubstateKey, Movement>,
     /// The committed value per exclusively written ordered-collection
     /// entry, or `None` for a removal.
