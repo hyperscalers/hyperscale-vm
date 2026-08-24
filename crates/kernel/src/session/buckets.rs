@@ -61,6 +61,11 @@ impl Held {
 /// leaves during execution. A slot empties when the bucket leaves —
 /// dropped by the guest or taken back by the kernel — and is never
 /// reused, so one rep names one bucket for the transaction's life.
+///
+/// The table therefore measures the takes and splits a body performed
+/// rather than what it is holding, and what bounds it is the signed fuel
+/// budget: every rep is minted by a metered call, so the slots a
+/// transaction can leave standing are priced before they are allocated.
 #[derive(Debug, Default)]
 pub(super) struct Buckets {
     slots: Vec<Option<Held>>,
