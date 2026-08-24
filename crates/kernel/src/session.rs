@@ -800,12 +800,11 @@ impl KernelSession {
     /// Resolved at the call, so the refusals are immediate: a stored cell
     /// that is not an amount, and a debit past what the cell has free.
     ///
-    /// Free, not held: the floor an exclusive debit meets is the one a
-    /// commutative debit meets, because what a reservation reserves is
-    /// the cell rather than a mode of reaching it. The same floor is
-    /// judged again at the fold, which is the reading every participant
-    /// shares; this one exists so a body learns of the refusal where it
-    /// asked.
+    /// What the cell holds, not what it has free. A reservation standing
+    /// on the cell is another transaction's doing and nothing this body
+    /// can see, so crossing one is judged at the fold with every other
+    /// movement's floor — where it is priced as the lost race it is,
+    /// rather than as this body's arithmetic.
     ///
     /// # Errors
     ///
@@ -815,13 +814,9 @@ impl KernelSession {
             return Err(SessionTrap::WrongMode(rep));
         };
         let resource = self.value_of(rep)?;
-        let free = self
-            .amount_cell(key)?
-            .checked_sub(self.store.held_total(key)?)
-            .ok_or(StoreError::HeldExceedsCommitted(key))?;
-        if amount > free {
-            return Err(SessionTrap::CellUnderflow);
-        }
+        self.amount_cell(key)?
+            .checked_sub(amount)
+            .ok_or(SessionTrap::CellUnderflow)?;
         self.store.queue_delta(key, DeltaOp::Sub(amount))?;
         Ok(self.open_bucket(Held::Amount(amount), resource))
     }

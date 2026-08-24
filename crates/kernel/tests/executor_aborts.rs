@@ -620,6 +620,97 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
     }
 }
 
+/// A hold is a floor an exclusive debit meets too.
+///
+/// The reserver bought a floor and the kernel held it, so a debit
+/// crossing it loses whatever mode it came through. That an exclusive
+/// one used to win was a consequence of an absolute being judged
+/// against nothing — and a value cell stopped being written down that
+/// way, so the exception went with it.
+///
+/// Priced as the lost race it is rather than as the writer's own
+/// arithmetic: what stood in its way is another transaction's claim,
+/// which nothing in its own body could have seen.
+#[test]
+fn an_exclusive_debit_past_a_hold_loses_to_the_reserver() {
+    let vault = cell(0xB);
+    let sink = cell(0xC);
+    let mut store = MemoryStore::new();
+    store.write(vault, encode_amount(100).to_vec());
+
+    // Every cell holds value here, so the vault's exclusive clause is a
+    // value handle rather than a byte one — which is the whole subject.
+    let holding = |set: EffectSet| Declaration::from_set(set).denominated(|_| Some(RESOURCE));
+
+    let scripted = |_entry: &BatchTx, mut session: KernelSession| {
+        let caps: Vec<Capability> = session.capabilities().to_vec();
+        let delta = caps.iter().enumerate().find_map(|(rep, c)| match c {
+            Capability::Delta(_) => Some(u32::try_from(rep).unwrap()),
+            _ => None,
+        });
+        for (rep, capability) in caps.iter().enumerate() {
+            let rep = u32::try_from(rep).unwrap();
+            match capability {
+                // The whole balance, exclusively — which the hold
+                // standing on the cell leaves none of.
+                Capability::Amount(_) => {
+                    let funds = session.write_take(rep, 100).unwrap();
+                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    session.burn(ISSUER_REP, funds).unwrap();
+                }
+                Capability::Reserve { .. } => {
+                    let funds = session.reserve_take(rep).unwrap();
+                    session
+                        .delta_put(delta.expect("the reserver has somewhere to file"), funds)
+                        .unwrap();
+                }
+                _ => {}
+            }
+        }
+        RunResult::Completed {
+            session,
+            answers: vec![],
+            fuel: FUEL,
+        }
+    };
+
+    let outcome = execute_batch(
+        Arc::new(store),
+        &[
+            BatchTx::new(tx(0x01), holding(point(vault, Mode::Write)), env()),
+            BatchTx::new(
+                tx(0x02),
+                holding(with_delta(
+                    point(vault, Mode::Reserve { amount: 100 }),
+                    sink,
+                )),
+                env(),
+            ),
+        ],
+        &scripted,
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    )
+    .expect("a crossed floor is one transaction's loss, not the batch's");
+
+    assert_eq!(
+        outcome.receipts[&tx(0x01)].outcome,
+        Outcome::Infeasible {
+            key: vault,
+            amount: 100,
+        },
+        "the writer crossed a floor it did not buy"
+    );
+    assert!(matches!(
+        outcome.receipts[&tx(0x02)].outcome,
+        Outcome::Completed { .. }
+    ));
+    // The reserver spent what it held, and nothing else reached the cell.
+    assert_eq!(amount_at(&outcome.store, vault), 0);
+    assert_eq!(amount_at(&outcome.store, sink), 100);
+}
+
 #[test]
 fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
     // A write capability is absolute, so it can lower an amount cell past
