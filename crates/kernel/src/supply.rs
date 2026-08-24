@@ -230,11 +230,27 @@ impl SupplyLedger {
 mod tests {
     use hyperscale_vm_types::ResourceAddr;
 
-    use super::SupplyLedger;
+    use super::{SupplyDelta, SupplyLedger};
     use crate::modes::ModeError;
 
     const fn resource(byte: u8) -> ResourceAddr {
         ResourceAddr::new([byte; 31])
+    }
+
+    /// A resource minted and burned in one transaction is one resource.
+    ///
+    /// It sits in both maps, and a caller folding per resource would
+    /// count each of its halves twice if the two key sets were chained
+    /// rather than merged — which is how the conservation fold read a
+    /// mint-and-burn as a transaction that gained and lost double.
+    #[test]
+    fn a_resource_moved_both_ways_is_named_once() {
+        let unit = resource(0xA1);
+        let mut delta = SupplyDelta::default();
+        delta.mint(unit, 500).expect("within bounds");
+        delta.burn(unit, 300).expect("within bounds");
+
+        assert_eq!(delta.resources().collect::<Vec<_>>(), vec![unit]);
     }
 
     #[test]
