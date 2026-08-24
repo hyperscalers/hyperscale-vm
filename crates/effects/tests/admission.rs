@@ -10,11 +10,11 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, RES_X, payouts, pkg, resolver, shard_of, vault, world};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, AdmissionError, Clause, Condition, ConditionExpr, Constraint, EdgeRef, EvalError,
-    EvidenceRef, Expr, GraphArg, GraphNode, Hash32, InstanceMeta, JudgedLeaf, MAX_VALUE_DEPTH,
-    ManifestGraph, MethodSignature, ModeExpr, PRIMARY, PackageMetadata, ParamType, Presented,
-    Records, ResourceKind, Rule, RuleExpr, RuleLeaf, TargetExpr, TestHasher, Totality, Value,
-    admit, child_key, fresh_id, holdings_entry, route,
+    AbiParam, AdmissionError, Clause, Constraint, EdgeRef, EvalError, EvidenceRef, Expr, GraphArg,
+    GraphNode, Hash32, InstanceMeta, JudgedLeaf, MAX_VALUE_DEPTH, ManifestGraph, MethodSignature,
+    ModeExpr, PRIMARY, PackageMetadata, ParamType, Presented, Records, ResourceKind, Rule,
+    RuleExpr, RuleLeaf, TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id,
+    holdings_entry, route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
@@ -324,19 +324,17 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
     };
     let satisfies = || Clause::Requires {
         guard: None,
-        condition: ConditionExpr::Satisfies {
-            rule: RuleExpr::Require(RuleLeaf::Stored {
-                cell: auth_cell(),
-                role: PRIMARY,
-            }),
-        },
+        rule: RuleExpr::Require(RuleLeaf::Stored {
+            cell: auth_cell(),
+            role: PRIMARY,
+        }),
     };
     let holds = |target| Clause::Requires {
         guard: None,
-        condition: ConditionExpr::Holds {
+        rule: RuleExpr::Require(RuleLeaf::Presence {
             target: Box::new(target),
-            presence: Presence::Present,
-        },
+            expect: Presence::Present,
+        }),
     };
     let mints = |claim| Clause::Mints { guard: None, claim };
     let vault = |badge: &Expr| {
@@ -382,9 +380,7 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
             totality: Totality::Fallible,
             effects: vec![Clause::Requires {
                 guard: None,
-                condition: ConditionExpr::Satisfies {
-                    rule: RuleExpr::claim(Expr::Config(0)),
-                },
+                rule: RuleExpr::claim(Expr::Config(0)),
             }],
             ..MethodSignature::default()
         },
@@ -444,15 +440,15 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
         admitted
             .declaration()
             .conditions
-            .contains(&Condition::Holds {
+            .contains(&Rule::Require(JudgedLeaf::Presence {
                 target: EffectTarget::Point(child_key(
                     &TestHasher,
                     custodian,
                     VAULT,
                     &[Value::Address(badge.address()).canonical_bytes()],
                 )),
-                presence: Presence::Present,
-            }),
+                expect: Presence::Present,
+            })),
         "the badge-keyed vault's possession joins the union declaration"
     );
     let operate = &admitted.manifest().nodes[1];
@@ -990,7 +986,7 @@ proptest! {
 /// evidence, exactly as a stored-rule gate is.
 #[test]
 fn a_condition_lowers_to_the_call_and_the_union_declaration() {
-    use hyperscale_vm_effects::{Condition, ConditionExpr, JudgedLeaf, Rule, RuleLeaf};
+    use hyperscale_vm_effects::{JudgedLeaf, Rule, RuleLeaf};
 
     let auth_cell = || Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
@@ -1011,24 +1007,22 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
                 },
                 Clause::Requires {
                     guard: None,
-                    condition: ConditionExpr::Holds {
+                    rule: RuleExpr::Require(RuleLeaf::Presence {
                         target: Box::new(TargetExpr::Point(auth_cell())),
-                        presence: Presence::Present,
-                    },
+                        expect: Presence::Present,
+                    }),
                 },
                 Clause::Requires {
                     guard: None,
-                    condition: ConditionExpr::Satisfies {
-                        rule: RuleExpr::CountOf {
-                            count: 1,
-                            rules: vec![
-                                RuleExpr::claim(Expr::Config(0)),
-                                RuleExpr::Require(RuleLeaf::Stored {
-                                    cell: auth_cell(),
-                                    role: PRIMARY,
-                                }),
-                            ],
-                        },
+                    rule: RuleExpr::CountOf {
+                        count: 1,
+                        rules: vec![
+                            RuleExpr::claim(Expr::Config(0)),
+                            RuleExpr::Require(RuleLeaf::Stored {
+                                cell: auth_cell(),
+                                role: PRIMARY,
+                            }),
+                        ],
                     },
                 },
             ],
@@ -1067,14 +1061,14 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
     assert_eq!(
         admitted.declaration().conditions,
         vec![
-            Condition::Holds {
+            Rule::Require(JudgedLeaf::Presence {
                 target: EffectTarget::Point(key),
-                presence: Presence::Present,
-            },
-            Condition::Holds {
+                expect: Presence::Present,
+            }),
+            Rule::Require(JudgedLeaf::Presence {
                 target: EffectTarget::Point(child_key(&TestHasher, target, CONFIG, &[])),
-                presence: Presence::Present,
-            },
+                expect: Presence::Present,
+            }),
         ]
     );
     assert_eq!(
@@ -1120,16 +1114,14 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
                     Box::new(Expr::Arg(0)),
                     Box::new(Expr::Literal(Value::U64(1))),
                 ))),
-                condition: ConditionExpr::Satisfies {
-                    rule: RuleExpr::Require(RuleLeaf::Stored {
-                        cell: Expr::ChildKey {
-                            owner: Box::new(Expr::SelfAddr),
-                            slot: AUTH,
-                            material: vec![],
-                        },
-                        role: PRIMARY,
-                    }),
-                },
+                rule: RuleExpr::Require(RuleLeaf::Stored {
+                    cell: Expr::ChildKey {
+                        owner: Box::new(Expr::SelfAddr),
+                        slot: AUTH,
+                        material: vec![],
+                    },
+                    role: PRIMARY,
+                }),
             }],
             ..MethodSignature::default()
         },

@@ -31,7 +31,7 @@ use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, ResolveError};
 use crate::invoke::{CallArg, EdgeBound, NodeCall};
-use crate::manifest::{Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
+use crate::manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{PackageHash, PackageMetadata};
 use crate::presented::Presented;
 use crate::publish::{CheckedSignature, seals};
@@ -1016,16 +1016,17 @@ impl Lower<'_> {
         // starting here, so the offset is taken before the frame is
         // logged.
         let offset = self.table_len;
-        // A frame's conditions split by where each kind is judged: an
-        // authority condition rides the node's call, judged with that
-        // call's evidence; a presence condition joins the union
-        // declaration, judged at materialization beside the presence a
-        // write requires.
+        // A frame's conditions split by where each is judged, and nothing
+        // declares which: a rule answerable from committed state joins
+        // the union declaration and is judged at materialization, beside
+        // the presence a write requires; one whose leaves reach the
+        // call's evidence rides the node's call.
         let mut requires = Vec::new();
-        for condition in &frame.conditions {
-            match condition {
-                Condition::Satisfies { rule } => requires.push(rule.clone()),
-                Condition::Holds { .. } => self.declaration.conditions.push(condition.clone()),
+        for rule in &frame.conditions {
+            if rule.reads_state_only() {
+                self.declaration.conditions.push(rule.clone());
+            } else {
+                requires.push(rule.clone());
             }
         }
         if let Some(condition) = fence {
@@ -1161,7 +1162,7 @@ impl Lower<'_> {
         &self,
         target: CallTarget,
         frame: &mut Declaration,
-    ) -> Result<Option<Condition>, AdmissionError> {
+    ) -> Result<Option<Rule<JudgedLeaf>>, AdmissionError> {
         let CallTarget::Component(address) = target else {
             return Ok(None);
         };
@@ -1181,10 +1182,10 @@ impl Lower<'_> {
             effect,
             holds: None,
         });
-        Ok(Some(Condition::Holds {
+        Ok(Some(Rule::Require(JudgedLeaf::Presence {
             target: leaf,
-            presence: Presence::Present,
-        }))
+            expect: Presence::Present,
+        })))
     }
 
     /// Bind the node's arguments against its declared parameters: a
@@ -1321,10 +1322,7 @@ impl Lower<'_> {
         let required: Vec<&Rule<JudgedLeaf>> = frame
             .conditions
             .iter()
-            .filter_map(|condition| match condition {
-                Condition::Satisfies { rule } => Some(rule),
-                Condition::Holds { .. } => None,
-            })
+            .filter(|rule| !rule.reads_state_only())
             .collect();
         // Evidence presence is a property of what this call requires: a
         // guarded or authorizing call presents something, a public one
@@ -1596,10 +1594,10 @@ fn inject_movement_rules(
             Grant::Credential(badge) => {
                 let cell = credential_cell(hasher, owner, *badge);
                 declare_read(frame, cell);
-                frame.conditions.push(Condition::Holds {
+                frame.conditions.push(Rule::Require(JudgedLeaf::Presence {
                     target: EffectTarget::Point(cell),
-                    presence: Presence::Present,
-                });
+                    expect: Presence::Present,
+                }));
             }
             // A movement entry never holds one: publish refuses the
             // spelling, because a rule is judged against a caller's

@@ -295,7 +295,7 @@ fn report(
             [] => Authority::Anyone,
             [Rule::Require(JudgedLeaf::Claim(claim))] => claimed(claim),
             [Rule::Require(JudgedLeaf::Stored { role, .. })] => Authority::StoredRule(*role),
-            [Rule::Require(JudgedLeaf::Held { .. })] => Authority::Held,
+            [Rule::Require(JudgedLeaf::Presence { .. })] => Authority::Held,
             // A threshold names more than one thing, and which of them a
             // holder can produce is theirs to know: the report says what
             // is asked rather than picking a way to satisfy it.

@@ -32,10 +32,9 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
-    AbiParam, Clause, ConditionExpr, Expr, GrantedBehaviour, GrantsExpr, Issuance,
-    MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, PRIMARY,
-    ParamType, ResourceKind, RoleId, RuleExpr, RuleLeaf, SlotId, TargetExpr, Totality, Value,
-    well_formed,
+    AbiParam, Clause, Expr, GrantedBehaviour, GrantsExpr, Issuance, MAX_CLAUSE_DEPTH,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, PRIMARY, ParamType,
+    ResourceKind, RoleId, RuleExpr, RuleLeaf, SlotId, TargetExpr, Totality, Value, well_formed,
 };
 use hyperscale_vm_types::Presence;
 
@@ -174,7 +173,7 @@ impl Trace {
                 denomination,
             },
             Clause::ForEach { list, body, .. } => Clause::ForEach { guard, list, body },
-            Clause::Requires { condition, .. } => Clause::Requires { guard, condition },
+            Clause::Requires { rule, .. } => Clause::Requires { guard, rule },
             Clause::Mints { claim, .. } => Clause::Mints { guard, claim },
         }
     }
@@ -726,7 +725,7 @@ impl Trace {
     pub fn guarded_by(&mut self, rule: Requirement) {
         self.emit(Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Satisfies { rule: rule.0 },
+            rule: rule.0,
         });
     }
 
@@ -737,12 +736,10 @@ impl Trace {
         let cell = self.last_point_target();
         self.emit(Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Satisfies {
-                rule: RuleExpr::Require(RuleLeaf::Stored {
-                    cell,
-                    role: PRIMARY,
-                }),
-            },
+            rule: RuleExpr::Require(RuleLeaf::Stored {
+                cell,
+                role: PRIMARY,
+            }),
         });
         self.emit(Clause::Mints {
             guard: None,
@@ -773,16 +770,14 @@ impl Trace {
         let cell = self.last_point_target();
         self.emit(Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Holds {
+            rule: RuleExpr::Require(RuleLeaf::Presence {
                 target: Box::new(TargetExpr::Point(cell.clone())),
-                presence: Presence::Present,
-            },
+                expect: Presence::Present,
+            }),
         });
         self.emit(Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Satisfies {
-                rule: RuleExpr::Require(RuleLeaf::Stored { cell, role }),
-            },
+            rule: RuleExpr::Require(RuleLeaf::Stored { cell, role }),
         });
     }
 
@@ -822,19 +817,17 @@ impl Trace {
         let (rule_cell, possession) = self.last_two_targets();
         self.emit(Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Satisfies {
-                rule: RuleExpr::Require(RuleLeaf::Stored {
-                    cell: rule_cell,
-                    role: PRIMARY,
-                }),
-            },
+            rule: RuleExpr::Require(RuleLeaf::Stored {
+                cell: rule_cell,
+                role: PRIMARY,
+            }),
         });
         self.emit(Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Holds {
+            rule: RuleExpr::Require(RuleLeaf::Presence {
                 target: Box::new(possession),
-                presence: Presence::Present,
-            },
+                expect: Presence::Present,
+            }),
         });
     }
 
@@ -966,9 +959,7 @@ impl Trace {
             );
             clauses.push(Clause::Requires {
                 guard: None,
-                condition: ConditionExpr::Satisfies {
-                    rule: RuleExpr::Require(RuleLeaf::Stored { cell, role }),
-                },
+                rule: RuleExpr::Require(RuleLeaf::Stored { cell, role }),
             });
         }
         let mut abi = self.handles;
@@ -1135,10 +1126,10 @@ impl Access<'_, Leaf> {
     fn presence(&mut self, presence: Presence) {
         self.trace.emit(Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Holds {
+            rule: RuleExpr::Require(RuleLeaf::Presence {
                 target: Box::new(self.target.clone()),
-                presence,
-            },
+                expect: presence,
+            }),
         });
     }
 }
@@ -1272,9 +1263,7 @@ fn pair(build: fn(Box<Expr>, Box<Expr>) -> Expr, left: Expr, right: Expr, depth:
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{
-        Clause, ConditionExpr, Expr, ParamType, RuleExpr, SlotId, TargetExpr,
-    };
+    use hyperscale_vm_effects::{Clause, Expr, ParamType, RuleExpr, SlotId, TargetExpr};
 
     use super::{MAX_FOREACH_ELEMENTS, Trace, absolute, rebind};
     use crate::sym::{Addr, Key, Opaque, Seq, Sym, U64, U128};
@@ -1309,10 +1298,7 @@ mod tests {
         let recorded = trace.finish();
         let [
             Clause::Requires {
-                condition:
-                    ConditionExpr::Satisfies {
-                        rule: RuleExpr::CountOf { count, rules },
-                    },
+                rule: RuleExpr::CountOf { count, rules },
                 ..
             },
         ] = recorded.clauses.as_slice()
@@ -1343,9 +1329,7 @@ mod tests {
             trace.finish().clauses,
             vec![Clause::Requires {
                 guard: None,
-                condition: ConditionExpr::Satisfies {
-                    rule: RuleExpr::claim(Expr::SelfAddr),
-                },
+                rule: RuleExpr::claim(Expr::SelfAddr),
             }]
         );
     }

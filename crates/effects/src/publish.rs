@@ -12,13 +12,13 @@ use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presen
 
 use crate::auth::MAX_PACKAGE_ROLES;
 use crate::dsl::{
-    Clause, ConditionExpr, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH,
-    ModeExpr, TargetExpr, materialized_kind,
+    Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr,
+    TargetExpr, materialized_kind,
 };
 use crate::instance::MAX_CONFIG_FIELDS;
 use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
 use crate::resource::{GrantExpr, GrantsExpr, holdings_entry};
-use crate::rule::{GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
+use crate::rule::{GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule, RuleExpr, RuleLeaf};
 use crate::signature::{AbiParam, MethodSignature};
 use crate::types::{
     MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId, Value, value_within_width,
@@ -950,11 +950,11 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     let requires = flat.iter().find_map(|beside| match beside {
         Clause::Requires {
             guard: condition_guard,
-            condition:
-                ConditionExpr::Holds {
+            rule:
+                Rule::Require(RuleLeaf::Presence {
                     target: required,
-                    presence,
-                },
+                    expect: presence,
+                }),
         } if **required == *target
             && (condition_guard.is_none() || condition_guard.as_deref() == guard.as_deref()) =>
         {
@@ -1038,10 +1038,10 @@ pub fn seal_clauses() -> Vec<Clause> {
     vec![
         Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Holds {
+            rule: Rule::Require(RuleLeaf::Presence {
                 target: Box::new(leaf()),
-                presence: Presence::Absent,
-            },
+                expect: Presence::Absent,
+            }),
         },
         Clause::Effect {
             guard: None,
@@ -1192,7 +1192,11 @@ fn check_agreement(flat: &[&Clause]) -> Result<(), DeclarationError> {
     for clause in flat {
         if let Clause::Requires {
             guard,
-            condition: ConditionExpr::Holds { target, presence },
+            rule:
+                Rule::Require(RuleLeaf::Presence {
+                    target,
+                    expect: presence,
+                }),
         } = clause
         {
             required
@@ -1272,58 +1276,50 @@ fn check_conditions(signature: &MethodSignature, flat: &[&Clause]) -> Result<(),
         };
     let coherent = |mode: &ModeExpr| matches!(mode, ModeExpr::Read | ModeExpr::Write);
     for (index, clause) in flat.iter().enumerate() {
-        let Clause::Requires { guard, condition } = clause else {
+        let Clause::Requires { guard, rule } = clause else {
             continue;
         };
         let clause = u32::try_from(index).unwrap_or(u32::MAX);
         let under = guard.as_deref();
-        match condition {
-            ConditionExpr::Holds { target, presence } => {
-                if *presence == Presence::Either {
-                    return Err(DeclarationError::VacuousCondition { clause });
-                }
-                // A presence is about the leaf it names, and an interval
-                // has none — the same refusal a presence-requiring write
-                // meets.
-                if matches!(**target, TargetExpr::Range { .. }) {
-                    return Err(DeclarationError::PresenceOnInterval { clause });
-                }
-                if !declares(target, under, &coherent) {
-                    return Err(DeclarationError::ConditionUndeclared { clause });
-                }
-            }
-            ConditionExpr::Satisfies { rule } => {
-                // An identity a caller names is one that caller can
-                // always present, and a caller-named cell is one holding
-                // whatever admits them.
-                if rule.reads_call_inputs() {
-                    return Err(DeclarationError::CallerNamedCondition { clause });
-                }
-                for leaf in rule.leaves() {
-                    // A grant leaf is the one condition a caller may
-                    // name, because the rule is the resource's own
-                    // commitment and naming it chooses which rule
-                    // governs rather than what it says. That holds only
-                    // while the resource governed is the resource
-                    // moved: a gate over one argument beside an effect
-                    // denominated in another is a rule a caller
-                    // satisfies with a resource of their own, over
-                    // value it says nothing about.
-                    if let RuleLeaf::Granted { resource, .. } = leaf {
-                        if !denominates(signature, flat, resource) {
-                            return Err(DeclarationError::GrantOverAnother { clause });
-                        }
-                        continue;
+        if rule.names_caller_authority() {
+            return Err(DeclarationError::CallerNamedCondition { clause });
+        }
+        for leaf in rule.leaves() {
+            match leaf {
+                RuleLeaf::Presence { target, expect } => {
+                    if *expect == Presence::Either {
+                        return Err(DeclarationError::VacuousCondition { clause });
                     }
-                    let RuleLeaf::Stored { cell, .. } = leaf else {
-                        continue;
-                    };
+                    // A presence is about the leaf it names, and an
+                    // interval has none — the same refusal a
+                    // presence-requiring write meets.
+                    if matches!(**target, TargetExpr::Range { .. }) {
+                        return Err(DeclarationError::PresenceOnInterval { clause });
+                    }
+                    if !declares(target, under, &coherent) {
+                        return Err(DeclarationError::ConditionUndeclared { clause });
+                    }
+                }
+                // A grant leaf is the one condition a caller may name,
+                // because the rule is the resource's own commitment and
+                // naming it chooses which rule governs rather than what it
+                // says. That holds only while the resource governed is
+                // the resource moved: a gate over one argument beside an
+                // effect denominated in another is a rule a caller
+                // satisfies with a resource of their own, over value it
+                // says nothing about.
+                RuleLeaf::Granted { resource, .. } => {
+                    if !denominates(signature, flat, resource) {
+                        return Err(DeclarationError::GrantOverAnother { clause });
+                    }
+                }
+                RuleLeaf::Stored { cell, .. } => {
                     let point = TargetExpr::Point(cell.clone());
-                    if declares(&point, under, &coherent) {
-                        continue;
+                    if !declares(&point, under, &coherent) {
+                        return Err(DeclarationError::ConditionUndeclared { clause });
                     }
-                    return Err(DeclarationError::ConditionUndeclared { clause });
                 }
+                RuleLeaf::Claim(_) => {}
             }
         }
     }
@@ -1353,7 +1349,7 @@ fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
                 beside,
                 Clause::Requires {
                     guard: condition_guard,
-                    condition: ConditionExpr::Satisfies { rule },
+                    rule,
                 } if rule
                     .leaves()
                     .any(|leaf| matches!(leaf, RuleLeaf::Stored { .. }))
@@ -1384,10 +1380,10 @@ fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
                 beside,
                 Clause::Requires {
                     guard: condition_guard,
-                    condition: ConditionExpr::Holds {
+                    rule: Rule::Require(RuleLeaf::Presence {
                         target,
-                        presence: Presence::Present,
-                    },
+                        expect: Presence::Present,
+                    }),
                 } if **target == possession
                     && (condition_guard.is_none() || condition_guard.as_deref() == under)
             )
@@ -1739,6 +1735,7 @@ fn check_rule_bounds(rule: &RuleExpr) -> Result<(), SignatureBoundsError> {
         RuleExpr::Require(
             RuleLeaf::Stored { cell, .. } | RuleLeaf::Granted { resource: cell, .. },
         ) => check_expr_bounds(cell, 0),
+        RuleExpr::Require(RuleLeaf::Presence { target, .. }) => check_target_bounds(target),
         RuleExpr::CountOf { rules, .. } => rules.iter().try_for_each(check_rule_bounds),
     }
 }
@@ -1798,7 +1795,7 @@ fn check_clause_bounds(
                 check_expr_bounds(list, 0)?;
                 check_clause_bounds(body, depth + 1, declared)?;
             }
-            Clause::Requires { guard, condition } => {
+            Clause::Requires { guard, rule } => {
                 if let Some(cond) = guard {
                     check_expr_bounds(cond, 0)?;
                 }
@@ -1806,10 +1803,7 @@ fn check_clause_bounds(
                 if *declared > MAX_EFFECTS_PER_SIGNATURE {
                     return Err(SignatureBoundsError::TooManyEffects);
                 }
-                match condition {
-                    ConditionExpr::Holds { target, .. } => check_target_bounds(target)?,
-                    ConditionExpr::Satisfies { rule } => check_rule_bounds(rule)?,
-                }
+                check_rule_bounds(rule)?;
             }
             Clause::Mints { guard, claim } => {
                 if let Some(cond) = guard {
@@ -2539,22 +2533,24 @@ mod tests {
             mode: ModeExpr::Delta,
             denomination: Some(Box::new(a_resource())),
         };
-        let requires = |guard: Option<Expr>, condition| Clause::Requires {
+        let requires = |guard: Option<Expr>, rule| Clause::Requires {
             guard: guard.map(Box::new),
-            condition,
+            rule,
         };
-        let holds = |presence| ConditionExpr::Holds {
-            target: Box::new(cell()),
-            presence,
+        let holds = |expect| {
+            RuleExpr::Require(RuleLeaf::Presence {
+                target: Box::new(cell()),
+                expect,
+            })
         };
-        let satisfies = || ConditionExpr::Satisfies {
-            rule: RuleExpr::Require(RuleLeaf::Stored {
+        let satisfies = || {
+            RuleExpr::Require(RuleLeaf::Stored {
                 cell: match cell() {
                     TargetExpr::Point(expr) => expr,
                     _ => unreachable!(),
                 },
                 role: PRIMARY,
-            }),
+            })
         };
         let declared = |clauses: Vec<Clause>| {
             check_declarations(&MethodSignature {
@@ -2634,13 +2630,15 @@ mod tests {
             mode,
             denomination: None,
         };
-        let requires = |guard: Option<Expr>, condition| Clause::Requires {
+        let requires = |guard: Option<Expr>, rule| Clause::Requires {
             guard: guard.map(Box::new),
-            condition,
+            rule,
         };
-        let holds = |presence| ConditionExpr::Holds {
-            target: Box::new(cell()),
-            presence,
+        let holds = |presence| {
+            RuleExpr::Require(RuleLeaf::Presence {
+                target: Box::new(cell()),
+                expect: presence,
+            })
         };
         let declared = |clauses: Vec<Clause>| {
             check_declarations(&MethodSignature {
@@ -2661,7 +2659,7 @@ mod tests {
         assert_eq!(
             declared(vec![requires(
                 None,
-                ConditionExpr::Holds {
+                RuleExpr::Require(RuleLeaf::Presence {
                     target: Box::new(TargetExpr::Range {
                         owner: Expr::SelfAddr,
                         collection: SlotId(PACKAGE_SLOT_BASE),
@@ -2670,8 +2668,8 @@ mod tests {
                         hi: Expr::Literal(Value::U128(10)),
                         cap: Expr::Literal(Value::U64(4)),
                     }),
-                    presence: Presence::Present,
-                },
+                    expect: Presence::Present,
+                })
             )]),
             Err(DeclarationError::PresenceOnInterval { clause: 0 })
         );
@@ -2679,23 +2677,16 @@ mod tests {
         // Authority the caller names admits everyone — at a claim leaf
         // and at a stored leaf's cell alike.
         assert_eq!(
-            declared(vec![requires(
-                None,
-                ConditionExpr::Satisfies {
-                    rule: RuleExpr::claim(Expr::Arg(0)),
-                },
-            )]),
+            declared(vec![requires(None, RuleExpr::claim(Expr::Arg(0)))]),
             Err(DeclarationError::CallerNamedCondition { clause: 0 })
         );
         assert_eq!(
             declared(vec![requires(
                 None,
-                ConditionExpr::Satisfies {
-                    rule: RuleExpr::Require(RuleLeaf::Stored {
-                        cell: Expr::Arg(0),
-                        role: PRIMARY,
-                    }),
-                },
+                RuleExpr::Require(RuleLeaf::Stored {
+                    cell: Expr::Arg(0),
+                    role: PRIMARY,
+                })
             )]),
             Err(DeclarationError::CallerNamedCondition { clause: 0 })
         );
@@ -2720,12 +2711,10 @@ mod tests {
         };
         let granted = |resource: Expr| Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Satisfies {
-                rule: RuleExpr::Require(RuleLeaf::Granted {
-                    resource,
-                    behaviour: GrantedBehaviour::Recall,
-                }),
-            },
+            rule: RuleExpr::Require(RuleLeaf::Granted {
+                resource,
+                behaviour: GrantedBehaviour::Recall,
+            }),
         };
         let declared = |clauses: Vec<Clause>| {
             check_declarations(&MethodSignature {
@@ -2797,12 +2786,10 @@ mod tests {
         };
         let satisfies = || Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Satisfies {
-                rule: RuleExpr::Require(RuleLeaf::Stored {
-                    cell: auth_cell(),
-                    role: PRIMARY,
-                }),
-            },
+            rule: RuleExpr::Require(RuleLeaf::Stored {
+                cell: auth_cell(),
+                role: PRIMARY,
+            }),
         };
         let vault = |badge: Expr| {
             TargetExpr::Point(Expr::ChildKey {
@@ -2819,10 +2806,10 @@ mod tests {
         };
         let holds = |target| Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Holds {
+            rule: RuleExpr::Require(RuleLeaf::Presence {
                 target: Box::new(target),
-                presence: Presence::Present,
-            },
+                expect: Presence::Present,
+            }),
         };
         let mints = |claim| Clause::Mints { guard: None, claim };
         let declared = |clauses: Vec<Clause>| {
@@ -2850,9 +2837,7 @@ mod tests {
             declared(vec![
                 Clause::Requires {
                     guard: None,
-                    condition: ConditionExpr::Satisfies {
-                        rule: RuleExpr::claim(Expr::Config(0)),
-                    },
+                    rule: RuleExpr::claim(Expr::Config(0)),
                 },
                 mints(Expr::SelfAddr),
             ]),
@@ -2898,10 +2883,7 @@ mod tests {
             methods: BTreeMap::from([(
                 "m".to_owned(),
                 MethodSignature {
-                    effects: vec![Clause::Requires {
-                        guard: None,
-                        condition: ConditionExpr::Satisfies { rule },
-                    }],
+                    effects: vec![Clause::Requires { guard: None, rule }],
                     ..MethodSignature::default()
                 },
             )]),
@@ -3010,9 +2992,7 @@ mod tests {
             check_declarations(&total(MethodSignature {
                 effects: vec![Clause::Requires {
                     guard: None,
-                    condition: ConditionExpr::Satisfies {
-                        rule: RuleExpr::claim(Expr::SelfAddr),
-                    },
+                    rule: RuleExpr::claim(Expr::SelfAddr),
                 }],
                 ..MethodSignature::default()
             })),
@@ -3054,10 +3034,10 @@ mod tests {
                     },
                     Clause::Requires {
                         guard: None,
-                        condition: ConditionExpr::Holds {
+                        rule: RuleExpr::Require(RuleLeaf::Presence {
                             target: Box::new(target),
-                            presence: requires,
-                        },
+                            expect: requires,
+                        }),
                     },
                 ],
                 ..MethodSignature::default()
@@ -3113,10 +3093,10 @@ mod tests {
         };
         let write = |guard: Option<Expr>, presence| Clause::Requires {
             guard: guard.map(Box::new),
-            condition: ConditionExpr::Holds {
+            rule: RuleExpr::Require(RuleLeaf::Presence {
                 target: Box::new(target()),
-                presence,
-            },
+                expect: presence,
+            }),
         };
         // The one access every condition above is backed by: unguarded,
         // so it fires whenever any of them does.
@@ -3187,10 +3167,10 @@ mod tests {
         let cond = || Expr::Eq(Box::new(Expr::Arg(0)), Box::new(Expr::Config(0)));
         let write = |guard: Option<Expr>, presence| Clause::Requires {
             guard: guard.map(Box::new),
-            condition: ConditionExpr::Holds {
+            rule: RuleExpr::Require(RuleLeaf::Presence {
                 target: Box::new(own_point(package_slot(0), vec![])),
-                presence,
-            },
+                expect: presence,
+            }),
         };
         let declared = |conditions: Vec<Clause>| {
             let mut effects = vec![Clause::Effect {
@@ -3346,10 +3326,10 @@ mod tests {
         };
         let write = |presence| Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Holds {
+            rule: RuleExpr::Require(RuleLeaf::Presence {
                 target: Box::new(cell(vec![])),
-                presence,
-            },
+                expect: presence,
+            }),
         };
         let access = |material| Clause::Effect {
             guard: None,
@@ -3398,10 +3378,10 @@ mod tests {
                 write(Presence::Absent),
                 Clause::Requires {
                     guard: None,
-                    condition: ConditionExpr::Holds {
+                    rule: RuleExpr::Require(RuleLeaf::Presence {
                         target: Box::new(cell(vec![Expr::Config(0)])),
-                        presence: Presence::Present,
-                    },
+                        expect: Presence::Present,
+                    }),
                 },
             ]),
             Ok(())
@@ -3624,10 +3604,10 @@ mod tests {
                 },
                 Clause::Requires {
                     guard: None,
-                    condition: ConditionExpr::Holds {
+                    rule: RuleExpr::Require(RuleLeaf::Presence {
                         target: Box::new(target),
-                        presence: Presence::Absent,
-                    },
+                        expect: Presence::Absent,
+                    }),
                 },
             ],
             ..MethodSignature::default()

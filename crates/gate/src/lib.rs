@@ -401,8 +401,7 @@ fn check_abi_against_export(
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        AbiParam, Clause, ConditionExpr, Expr, MethodSignature, PackageMetadata, RuleExpr,
-        seal_clauses,
+        AbiParam, Clause, Expr, MethodSignature, PackageMetadata, RuleExpr, seal_clauses,
     };
     use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
     use hyperscale_vm_runtime::component_exports;
@@ -568,9 +567,7 @@ mod tests {
             .effects
             .push(Clause::Requires {
                 guard: None,
-                condition: ConditionExpr::Satisfies {
-                    rule: RuleExpr::claim(Expr::SelfAddr),
-                },
+                rule: RuleExpr::claim(Expr::SelfAddr),
             });
         let artifact = attach_metadata(&component, &metadata).expect("attaches");
 

@@ -5,7 +5,7 @@ use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr};
 
 use crate::auth::RoleTable;
-use crate::dsl::{Clause, ConditionExpr, Expr};
+use crate::dsl::{Clause, Expr};
 use crate::resource::{GrantsExpr, ResourceKind};
 use crate::rule::{RuleExpr, RuleLeaf, StoredRule};
 use crate::types::{MAX_IDS_PER_EDGE, Value};
@@ -394,17 +394,18 @@ impl MethodSignature {
             .any(|clause| matches!(clause, Clause::Mints { .. }))
     }
 
-    /// Every rule a `Requires` clause of this declaration states, in
-    /// preorder.
+    /// Every rule a `Requires` clause of this declaration states that a
+    /// caller could have to satisfy, in preorder.
+    ///
+    /// A rule answerable from committed state alone is not one: it states
+    /// a feasibility fact, judged before any body runs, and turns no
+    /// caller away — so it is no part of what a call must present.
     fn required_rules(&self) -> impl Iterator<Item = &RuleExpr> {
         self.effects
             .iter()
             .flat_map(Clause::effects)
             .filter_map(|clause| match clause {
-                Clause::Requires {
-                    condition: ConditionExpr::Satisfies { rule },
-                    ..
-                } => Some(rule),
+                Clause::Requires { rule, .. } if !rule.reads_state_only() => Some(rule),
                 _ => None,
             })
     }

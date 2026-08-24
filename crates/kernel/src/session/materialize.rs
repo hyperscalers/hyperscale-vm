@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{Condition, Declaration};
+use hyperscale_vm_effects::{Declaration, JudgedLeaf, Rule};
 use hyperscale_vm_types::{
     Address, CellKind, CollectionId, Effect, EffectTarget, Mode, Presence, ResourceAddr,
     SubstateKey, TxHash,
@@ -344,37 +344,76 @@ impl KernelSession {
 /// for a target that names no leaf for a presence to be about.
 fn judge_conditions(
     store: &mut OverlayStore,
-    conditions: &[Condition],
+    conditions: &[Rule<JudgedLeaf>],
 ) -> Result<(), MaterializeError> {
-    for condition in conditions {
-        // An authority condition's raw material is a call's presented
-        // evidence, so it is judged at the node's call rather than here.
-        let Condition::Holds { target, presence } = condition else {
+    for rule in conditions {
+        if met(store, rule)? {
             continue;
-        };
-        let held = leaf_present(store, *target).map_err(|error| {
-            error.unsupported(Box::new(Effect {
-                target: *target,
-                mode: Mode::Read,
-            }))
-        })?;
-        match (presence, held) {
-            (Presence::Absent, true) | (Presence::Present, false) => {
+        }
+        // What a receipt names is the first leaf the rule holds that was
+        // not met: for the one-leaf rule injection builds that is exact,
+        // and for a threshold it is one of the reasons.
+        for leaf in rule.leaves() {
+            let JudgedLeaf::Presence { target, expect } = leaf else {
+                continue;
+            };
+            let held = present(store, *target)?;
+            if !met_by(*expect, held) {
                 return Err(MaterializeError::ConditionUnmet {
                     target: *target,
-                    required: *presence,
+                    required: *expect,
                 });
             }
-            _ => {}
         }
     }
     Ok(())
 }
 
-/// Whether the leaf `target` names is there. The one presence read,
-/// shared by the requirement a write carries and the condition a clause
-/// states.
-enum LeafReadError {
+/// [`leaf_present`] with the effect a refusal names attached.
+fn present(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, MaterializeError> {
+    leaf_present(store, target).map_err(|error| {
+        error.unsupported(Box::new(Effect {
+            target,
+            mode: Mode::Read,
+        }))
+    })
+}
+
+/// Whether `expect` is met by a leaf that is or is not there.
+const fn met_by(expect: Presence, held: bool) -> bool {
+    match expect {
+        Presence::Either => true,
+        Presence::Absent => !held,
+        Presence::Present => held,
+    }
+}
+
+/// Whether committed state satisfies `rule`.
+///
+/// Every leaf here reads the store: a rule reaching a call's evidence is
+/// judged at that call, and admission has already sent it there.
+fn met(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<bool, MaterializeError> {
+    match rule {
+        Rule::Require(JudgedLeaf::Presence { target, expect }) => {
+            Ok(met_by(*expect, present(store, *target)?))
+        }
+        // A leaf reading evidence cannot be answered here, and admission
+        // never routes a rule holding one this way.
+        Rule::Require(_) => Ok(true),
+        Rule::CountOf { count, rules } => {
+            let mut got = 0usize;
+            for branch in rules {
+                if met(store, branch)? {
+                    got += 1;
+                }
+            }
+            Ok(got >= usize::from(*count))
+        }
+    }
+}
+
+/// Why a presence read did not answer.
+pub enum LeafReadError {
     Store(StoreError),
     /// An interval names no leaf for a presence to be about — it stays
     /// valid whatever enters or leaves it, which is the property that
@@ -384,7 +423,7 @@ enum LeafReadError {
 }
 
 impl LeafReadError {
-    fn unsupported(self, effect: Box<Effect>) -> MaterializeError {
+    pub fn unsupported(self, effect: Box<Effect>) -> MaterializeError {
         match self {
             Self::Store(error) => MaterializeError::Store(error),
             Self::Interval => MaterializeError::Unsupported(effect),
@@ -392,7 +431,7 @@ impl LeafReadError {
     }
 }
 
-fn leaf_present(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, LeafReadError> {
+pub fn leaf_present(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, LeafReadError> {
     match target {
         // The two shapes that name one leaf. An entry's presence is the
         // same question a possession condition asks, over the same
@@ -534,7 +573,7 @@ fn capability_for(effect: Effect, denominated: bool) -> Result<Capability, Mater
 mod tests {
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{Condition, Declaration, DeclaredAccess};
+    use hyperscale_vm_effects::{Declaration, DeclaredAccess, JudgedLeaf, Rule};
     use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Presence, ResourceAddr,
         encode_amount,
@@ -560,7 +599,7 @@ mod tests {
         let ordered = ord(&set);
         let conditions = match requires {
             Presence::Either => Vec::new(),
-            presence => vec![Condition::Holds { target, presence }],
+            expect => vec![Rule::Require(JudgedLeaf::Presence { target, expect })],
         };
         KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),

@@ -7,9 +7,8 @@
 
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
-    CONFIRMATION, Clause, ConditionExpr, Expr, GrantedBehaviour, GrantsExpr, PRIMARY,
-    PackageMetadata, RECOVERY, ResourceKind, RuleExpr, RuleLeaf, Value, check_abi,
-    check_declarations,
+    CONFIRMATION, Clause, Expr, GrantedBehaviour, GrantsExpr, PRIMARY, PackageMetadata, RECOVERY,
+    ResourceKind, RuleExpr, RuleLeaf, Value, check_abi, check_declarations,
 };
 use hyperscale_vm_fixtures::DECLARED as FIXTURES;
 use hyperscale_vm_stdlib::DECLARED as PROTOCOL;
@@ -303,10 +302,9 @@ fn every_authored_method_declares_who_may_call_it() {
                 let mut mints = Vec::new();
                 for clause in signature.effects.iter().flat_map(Clause::effects) {
                     match clause {
-                        Clause::Requires {
-                            condition: ConditionExpr::Satisfies { rule },
-                            ..
-                        } => requires.push(rule.clone()),
+                        Clause::Requires { rule, .. } if !rule.reads_state_only() => {
+                            requires.push(rule.clone());
+                        }
                         Clause::Mints { claim, .. } => mints.push(claim.clone()),
                         _ => {}
                     }

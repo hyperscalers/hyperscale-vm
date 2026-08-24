@@ -309,7 +309,7 @@ fn a_stored_rate_folds_to_an_exclusive_write_never_a_movement() {
 
 #[test]
 fn an_instance_issues_resources_its_own_address_derives() {
-    use hyperscale_vm_effects::{Clause, ConditionExpr, Expr, Value};
+    use hyperscale_vm_effects::{Clause, Expr, Value};
 
     let metadata = issuer::blueprint().metadata();
     // Every issue is a declared one, and the mark is the declaration's
@@ -330,13 +330,11 @@ fn an_instance_issues_resources_its_own_address_derives() {
             .effects
             .contains(&Clause::Requires {
                 guard: None,
-                condition: ConditionExpr::Satisfies {
-                    rule: RuleExpr::claim(Expr::SelfResource {
-                        kind: ResourceKind::NonFungible,
-                        material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
-                        grants: GrantsExpr::new(),
-                    }),
-                },
+                rule: RuleExpr::claim(Expr::SelfResource {
+                    kind: ResourceKind::NonFungible,
+                    material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
+                    grants: GrantsExpr::new(),
+                }),
             })
     );
 }
@@ -711,7 +709,7 @@ mod board {
 /// operators and its own precedence.
 #[test]
 fn a_declared_gate_carries_the_whole_threshold_algebra() {
-    use hyperscale_vm_effects::{Clause, ConditionExpr, Expr};
+    use hyperscale_vm_effects::{Clause, Expr};
 
     let metadata = board::blueprint().metadata();
     let slot = |index| RuleExpr::claim(Expr::Config(index));
@@ -722,10 +720,7 @@ fn a_declared_gate_carries_the_whole_threshold_algebra() {
             .effects
             .iter()
             .find_map(|clause| match clause {
-                Clause::Requires {
-                    condition: ConditionExpr::Satisfies { rule },
-                    ..
-                } => Some(rule.clone()),
+                Clause::Requires { rule, .. } => Some(rule.clone()),
                 _ => None,
             })
             .expect("a gated method requires its rule")

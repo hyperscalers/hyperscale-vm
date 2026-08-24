@@ -36,7 +36,7 @@ use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
 use hyperscale_vm_types::{Address, Presence, SubstateKey};
 
 use crate::auth::{CONFIRMATION, PACKAGE_ROLE_BASE, PRIMARY, RECOVERY, RoleId};
-use crate::dsl::{Clause, ConditionExpr, Expr, ModeExpr, TargetExpr};
+use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::envelope::NULLIFIER_SLOT;
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
 use crate::resource::{GrantExpr, GrantedBehaviour, GrantsExpr, ResourceKind};
@@ -219,13 +219,13 @@ impl Names<'_> {
             }
             Clause::Requires {
                 guard: condition,
-                condition: precondition,
+                rule,
             } => {
                 let _ = writeln!(
                     out,
                     "{pad}{number:>3}  {}requires {}",
                     guard(condition),
-                    self.condition(precondition)
+                    self.rule(rule)
                 );
             }
             Clause::Mints {
@@ -242,24 +242,6 @@ impl Names<'_> {
         }
     }
 
-    /// A precondition, in the terms it is judged by.
-    fn condition(&self, condition: &ConditionExpr) -> String {
-        match condition {
-            ConditionExpr::Holds { target, presence } => {
-                format!(
-                    "{} is {}",
-                    self.target(target),
-                    match presence {
-                        Presence::Either => "there or not",
-                        Presence::Absent => "absent",
-                        Presence::Present => "present",
-                    }
-                )
-            }
-            ConditionExpr::Satisfies { rule } => self.rule(rule),
-        }
-    }
-
     /// A declared rule: a threshold over leaves a caller must present.
     fn rule(&self, rule: &RuleExpr) -> String {
         match rule {
@@ -269,6 +251,15 @@ impl Names<'_> {
                     "the {} rule stored at {}",
                     self.role(*role),
                     self.expr(cell, ATOM)
+                ),
+                RuleLeaf::Presence { target, expect } => format!(
+                    "{} is {}",
+                    self.target(target),
+                    match expect {
+                        Presence::Either => "there or not",
+                        Presence::Absent => "absent",
+                        Presence::Present => "present",
+                    }
                 ),
                 RuleLeaf::Granted {
                     resource,
@@ -790,7 +781,7 @@ mod tests {
 
     use super::{explain, explain_method};
     use crate::auth::{PRIMARY, RoleId, package_role};
-    use crate::dsl::{Clause, ConditionExpr, Expr, ModeExpr, TargetExpr, self_child};
+    use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, self_child};
     use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape};
     use crate::resource::{GrantExpr, GrantedBehaviour, GrantsExpr, ResourceKind};
     use crate::rule::{GrantClaim, Rule, RuleLeaf};
@@ -879,12 +870,10 @@ mod tests {
     fn a_role_is_named_by_the_reserved_set_or_the_packages_own_band() {
         let stored = |role| Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Satisfies {
-                rule: Rule::Require(RuleLeaf::Stored {
-                    cell: Expr::SelfAddr,
-                    role,
-                }),
-            },
+            rule: Rule::Require(RuleLeaf::Stored {
+                cell: Expr::SelfAddr,
+                role,
+            }),
         };
         let text = rendered(
             "gated",
@@ -997,10 +986,10 @@ mod tests {
     fn a_presence_condition_says_which_way_it_is_feasible() {
         let holds = |presence| Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Holds {
+            rule: Rule::Require(RuleLeaf::Presence {
                 target: Box::new(TargetExpr::Point(Expr::SelfAddr)),
-                presence,
-            },
+                expect: presence,
+            }),
         };
         let text = rendered(
             "held",
@@ -1016,21 +1005,19 @@ mod tests {
             "threshold",
             declaring(vec![Clause::Requires {
                 guard: None,
-                condition: ConditionExpr::Satisfies {
-                    rule: Rule::CountOf {
-                        count: 2,
-                        rules: vec![
-                            Rule::Require(RuleLeaf::Claim(Expr::Config(0))),
-                            Rule::Require(RuleLeaf::Granted {
-                                resource: Expr::Arg(0),
-                                behaviour: GrantedBehaviour::Recall,
-                            }),
-                            Rule::Require(RuleLeaf::Stored {
-                                cell: Expr::SelfAddr,
-                                role: PRIMARY,
-                            }),
-                        ],
-                    },
+                rule: Rule::CountOf {
+                    count: 2,
+                    rules: vec![
+                        Rule::Require(RuleLeaf::Claim(Expr::Config(0))),
+                        Rule::Require(RuleLeaf::Granted {
+                            resource: Expr::Arg(0),
+                            behaviour: GrantedBehaviour::Recall,
+                        }),
+                        Rule::Require(RuleLeaf::Stored {
+                            cell: Expr::SelfAddr,
+                            role: PRIMARY,
+                        }),
+                    ],
                 },
             }]),
         );

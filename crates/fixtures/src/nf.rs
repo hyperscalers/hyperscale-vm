@@ -6,11 +6,11 @@
 //! wrappers a client calls it through. A signature and the wrapper
 //! mirroring it drift the moment they live apart.
 
-use hyperscale_vm_effects::dsl::{Clause, ConditionExpr, ModeExpr, TargetExpr};
+use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::INSTANCE;
 use hyperscale_vm_effects::{
     AbiParam, Expr, GrantsExpr, Issuance, MethodSignature, PackageMetadata, ParamType,
-    ResourceKind, RuleExpr, Totality, Value, holdings_range,
+    ResourceKind, RuleExpr, RuleLeaf, Totality, Value, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
 use hyperscale_vm_types::{ComponentAddr, Presence, ResourceAddr};
@@ -42,10 +42,10 @@ fn creating_instance(minted_resource: &Expr, minted_id: &Expr) -> Vec<Clause> {
         },
         Clause::Requires {
             guard: None,
-            condition: ConditionExpr::Holds {
+            rule: RuleExpr::Require(RuleLeaf::Presence {
                 target: Box::new(target()),
-                presence: Presence::Absent,
-            },
+                expect: Presence::Absent,
+            }),
         },
     ]
 }
@@ -166,10 +166,7 @@ pub fn metadata() -> PackageMetadata {
             name.into(),
             MethodSignature {
                 totality: Totality::Infallible,
-                effects: vec![Clause::Requires {
-                    guard: None,
-                    condition: ConditionExpr::Satisfies { rule },
-                }],
+                effects: vec![Clause::Requires { guard: None, rule }],
                 issues: None,
                 ..MethodSignature::default()
             },

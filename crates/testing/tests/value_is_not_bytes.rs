@@ -24,7 +24,7 @@
 
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, AuthBase, AuthCell, Clause, ConditionExpr, Expr, MethodSignature, ModeExpr, PRIMARY,
+    AbiParam, AuthBase, AuthCell, Clause, Expr, MethodSignature, ModeExpr, PRIMARY,
     PackageMetadata, ParamType, Presented, RoleTable, RuleExpr, RuleLeaf, SlotId, StoredRule,
     TargetExpr, TestHasher, Totality, Value, xrd as protocol_xrd,
 };
@@ -342,23 +342,21 @@ fn impostor() -> PackageMetadata {
                 read(own(VAULT, vec![Expr::Arg(0)]), Some(Box::new(Expr::Arg(0)))),
                 Clause::Requires {
                     guard: None,
-                    condition: ConditionExpr::Satisfies {
-                        rule: RuleExpr::Require(RuleLeaf::Stored {
-                            cell: Expr::ChildKey {
-                                owner: Box::new(Expr::SelfAddr),
-                                slot: AUTH,
-                                material: vec![],
-                            },
-                            role: PRIMARY,
-                        }),
-                    },
+                    rule: RuleExpr::Require(RuleLeaf::Stored {
+                        cell: Expr::ChildKey {
+                            owner: Box::new(Expr::SelfAddr),
+                            slot: AUTH,
+                            material: vec![],
+                        },
+                        role: PRIMARY,
+                    }),
                 },
                 Clause::Requires {
                     guard: None,
-                    condition: ConditionExpr::Holds {
+                    rule: RuleExpr::Require(RuleLeaf::Presence {
                         target: Box::new(own(VAULT, vec![Expr::Arg(0)])),
-                        presence: Presence::Present,
-                    },
+                        expect: Presence::Present,
+                    }),
                 },
                 Clause::Mints {
                     guard: None,
@@ -436,9 +434,7 @@ fn treasury() -> PackageMetadata {
                 ),
                 Clause::Requires {
                     guard: None,
-                    condition: ConditionExpr::Satisfies {
-                        rule: RuleExpr::claim(Expr::Config(0)),
-                    },
+                    rule: RuleExpr::claim(Expr::Config(0)),
                 },
             ],
             ..MethodSignature::default()

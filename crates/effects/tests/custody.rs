@@ -21,9 +21,9 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Condition, EdgeRef, EnvelopeTree, Grant, GrantedBehaviour, GraphArg, GraphNode, Hash32,
-    InstanceMeta, IntentDecl, ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta,
-    TestHasher, Value, admit_tree, child_key,
+    EdgeRef, EnvelopeTree, Grant, GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta,
+    IntentDecl, JudgedLeaf, ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta,
+    Rule, TestHasher, Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -138,10 +138,10 @@ fn a_component_answers_for_its_own_vault() {
             .admitted
             .declaration()
             .conditions
-            .contains(&Condition::Holds {
+            .contains(&Rule::Require(JudgedLeaf::Presence {
                 target: EffectTarget::Point(cell),
-                presence: Presence::Present,
-            }),
+                expect: Presence::Present,
+            })),
         "the requirement is the custodian's own, not its caller's",
     );
     assert!(
@@ -246,11 +246,11 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
 
     // Both declarations carry the instantiation fence, which is nobody's
     // movement — what is under test is the credential beside it.
-    let wants_credential = |target, conditions: &[Condition]| {
-        conditions.contains(&Condition::Holds {
+    let wants_credential = |target, conditions: &[Rule<JudgedLeaf>]| {
+        conditions.contains(&Rule::Require(JudgedLeaf::Presence {
             target: EffectTarget::Point(credential(target)),
-            presence: Presence::Present,
-        })
+            expect: Presence::Present,
+        }))
     };
 
     // The governed resource grants `Withdraw` and nothing else, so a

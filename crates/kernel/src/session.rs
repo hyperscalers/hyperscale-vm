@@ -34,8 +34,8 @@ pub use buckets::Held;
 use hyperscale_vm_effects::{ResourceKind, distinct_ids};
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, Drawn, EffectSet, ISSUER_REP, LEAF_KEY_BYTES, ResourceAddr,
-    SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, TxHash,
+    ABSENT_REP, AbortReason, Address, Drawn, EffectSet, EffectTarget, ISSUER_REP, LEAF_KEY_BYTES,
+    ResourceAddr, SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, TxHash,
 };
 pub use materialize::{Capability, Interval, MaterializeError};
 use ranges::Ranges;
@@ -131,6 +131,11 @@ pub enum SessionTrap {
     /// unreachable, kept honest.
     #[error("no reservation held")]
     ReservationMissing,
+    /// A presence asked of an interval, which names no leaf for one to
+    /// be about. Refused at publish; refused again here, because
+    /// metadata can be authored rather than derived.
+    #[error("an interval names no leaf for a presence to be about")]
+    PresenceOnInterval,
     /// A second take of one reservation. The grant is a quantity, and it
     /// leaves the kernel once.
     #[error("reservation already taken")]
@@ -217,6 +222,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::UndeclaredBranch => Self::UndeclaredBranch,
             SessionTrap::IndexOutOfBounds { .. } => Self::EntryIndexOutOfBounds,
             SessionTrap::OrderOutsideInterval => Self::OrderOutsideInterval,
+            SessionTrap::PresenceOnInterval => Self::EffectUnsupported,
             SessionTrap::WriteCapExceeded { .. } => Self::IntervalWriteCapExceeded,
             SessionTrap::ReservationMissing => Self::ReservationMissing,
             SessionTrap::ReservationTaken => Self::ReservationAlreadyTaken,
@@ -514,13 +520,19 @@ impl KernelSession {
     ///
     /// Presence rather than contents, because that is the whole of what
     /// a credential asks — and for a value cell the two agree, since a
-    /// balance reaching zero deletes its leaf.
+    /// balance reaching zero deletes its leaf. The same read
+    /// materialization performs, so a rule mixing presence with evidence
+    /// gets the same answer wherever the mix sends it.
     ///
     /// # Errors
     ///
-    /// Any [`SessionTrap`].
-    pub fn declared_present(&mut self, key: SubstateKey) -> Result<bool, SessionTrap> {
-        Ok(self.store.read(key)?.is_some())
+    /// Any [`SessionTrap`]. An interval names no leaf for a presence to
+    /// be about, and is refused here as it is at publish.
+    pub fn declared_present(&mut self, target: EffectTarget) -> Result<bool, SessionTrap> {
+        materialize::leaf_present(&mut self.store, target).map_err(|error| match error {
+            materialize::LeafReadError::Store(error) => SessionTrap::Store(error),
+            materialize::LeafReadError::Interval => SessionTrap::PresenceOnInterval,
+        })
     }
 
     /// A fresh read through a read capability.

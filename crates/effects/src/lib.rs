@@ -54,11 +54,10 @@ pub use auth::{
     RoleTable, package_role,
 };
 pub use dsl::{
-    Clause, ConditionExpr, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, Expr,
-    MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_ENVELOPE_EVALUATION_WORK, MAX_EVALUATION_WORK,
-    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, PresentedGrants, TargetExpr,
-    evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local,
-    materialized_kind, self_child,
+    Clause, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH,
+    MAX_EFFECTS_PER_SIGNATURE, MAX_ENVELOPE_EVALUATION_WORK, MAX_EVALUATION_WORK, MAX_EXPR_DEPTH,
+    MAX_FOREACH_ELEMENTS, ModeExpr, PresentedGrants, TargetExpr, evaluate_declaration,
+    evaluate_effects, evaluate_expr, fresh_id, fresh_local, materialized_kind, self_child,
 };
 pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_SLOT, Subintent,
@@ -83,7 +82,7 @@ pub use hyperscale_vm_types::{
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, NodeCall, distinct_ids};
-pub use manifest::{Bounds, Condition, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
+pub use manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     DeclaredPackages, LeafForm, MAX_SHAPE_DEPTH, MetadataCache, PACKAGE_SLOT, PackageHash,
     PackageMetadata, PublishRefusal, SlotKind, SlotShape, package_hash, package_key,

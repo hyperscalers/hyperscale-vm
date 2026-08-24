@@ -21,9 +21,10 @@
 //! someone it admits and someone it refuses.
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
+use hyperscale_vm_types::Presence;
 
 use crate::auth::RoleId;
-use crate::dsl::Expr;
+use crate::dsl::{Expr, TargetExpr};
 use crate::presented::Presented;
 use crate::resource::{GrantedBehaviour, GrantsExpr};
 
@@ -141,6 +142,22 @@ pub enum RuleLeaf {
         /// The role selecting the stored rule. An absent entry denies.
         role: RoleId,
     },
+    /// The leaf this target names is there, or is not.
+    ///
+    /// The one leaf answered from the store rather than from what a
+    /// caller presented, which is what decides where a rule holding it is
+    /// judged. A rule of these alone states a feasibility fact and is
+    /// answered before any body runs; one mixing them with a claim is
+    /// judged at the call, like any rule that reads evidence.
+    Presence {
+        /// The cell the question is about, evaluated over the method's
+        /// own inputs. Declared as an access by the same signature, which
+        /// is what provisions it to every participant.
+        target: Box<TargetExpr>,
+        /// What must be true of it. Never [`Presence::Either`], which
+        /// requires nothing and is refused at publish.
+        expect: Presence,
+    },
     /// The rule a resource's own address grants for one behaviour,
     /// resolved at admission from the presented record whose derivation
     /// the address commits — no cell read anywhere in the path.
@@ -160,10 +177,24 @@ pub enum RuleLeaf {
 impl RuleLeaf {
     /// Whether the leaf reads what the caller supplies — the claim's own
     /// expression, or the cell a stored rule is read from.
+    /// Whether this leaf's answer is in the store rather than in what a
+    /// caller presents.
+    ///
+    /// The authored twin of [`JudgedLeaf::reads_state_only`], and what
+    /// separates a feasibility fact from a gate: a rule of these alone
+    /// turns no caller away, so it is not part of who may call a method.
+    ///
+    /// [`JudgedLeaf::reads_state_only`]: crate::manifest::JudgedLeaf::reads_state_only
+    #[must_use]
+    pub const fn reads_state_only(&self) -> bool {
+        matches!(self, Self::Presence { .. })
+    }
+
     pub(crate) fn reads_call_inputs(&self) -> bool {
         match self {
             Self::Claim(expr) => expr.reads_call_inputs(),
             Self::Stored { cell, .. } => cell.reads_call_inputs(),
+            Self::Presence { target, .. } => target.reads_call_inputs(),
             // A caller may name the resource: the rule is the address's
             // own commitment, verified by re-derivation, so the namer
             // chooses which granted rule governs and never what it says
@@ -236,6 +267,15 @@ pub enum GrantClaim {
     /// address class says which claim it makes — the same reading
     /// [`Presented::of_address`] gives every other declared address.
     Config(u32),
+}
+
+impl Rule<RuleLeaf> {
+    /// Whether every leaf reads the store alone, which is what keeps a
+    /// feasibility fact out of the question of who may call a method.
+    #[must_use]
+    pub fn reads_state_only(&self) -> bool {
+        self.leaves().all(RuleLeaf::reads_state_only)
+    }
 }
 
 /// A rule a resource's address grants, before the instance that issues it
@@ -489,12 +529,16 @@ impl RuleExpr {
     /// and admits everyone. Every leaf answers, because one caller-named
     /// branch of a threshold is one branch the caller satisfies for
     /// free.
+    ///
+    /// A presence leaf is not that, and is why this asks about the
+    /// evidence-reading leaves rather than about the tree: what a
+    /// presence reads is state, and what keeps a caller from naming
+    /// somewhere else is the access the same declaration must declare
+    /// beside it.
     #[must_use]
-    pub(crate) fn reads_call_inputs(&self) -> bool {
-        match self {
-            Self::Require(leaf) => leaf.reads_call_inputs(),
-            Self::CountOf { rules, .. } => rules.iter().any(Self::reads_call_inputs),
-        }
+    pub(crate) fn names_caller_authority(&self) -> bool {
+        self.leaves()
+            .any(|leaf| !leaf.reads_state_only() && leaf.reads_call_inputs())
     }
 }
 

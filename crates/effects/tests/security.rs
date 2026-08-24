@@ -24,9 +24,9 @@ use std::collections::BTreeSet;
 use common::{ALICE, pkg, world};
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Condition, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode, Hash32,
-    InstanceMeta, IntentDecl, Issuance, ManifestGraph, Records, ResourceMeta, TestHasher, Value,
-    admit_tree, child_key, granting_issued_resource,
+    EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode, Hash32,
+    InstanceMeta, IntentDecl, Issuance, JudgedLeaf, ManifestGraph, Records, ResourceMeta, Rule,
+    TestHasher, Value, admit_tree, child_key, granting_issued_resource,
 };
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_types::{
@@ -206,10 +206,12 @@ fn an_authored_rule_governs_a_holder_the_package_never_named() {
 
     let cell = credential(ALICE, registered);
     assert!(
-        declaration.conditions.contains(&Condition::Holds {
-            target: EffectTarget::Point(cell),
-            presence: Presence::Present,
-        }),
+        declaration
+            .conditions
+            .contains(&Rule::Require(JudgedLeaf::Presence {
+                target: EffectTarget::Point(cell),
+                expect: Presence::Present,
+            })),
         "the withdrawal is judged against the mover's own register entry",
     );
     assert!(
@@ -229,10 +231,10 @@ fn an_authored_rule_governs_a_holder_the_package_never_named() {
         .filter(|condition| {
             matches!(
                 condition,
-                Condition::Holds {
+                Rule::Require(JudgedLeaf::Presence {
                     target: EffectTarget::Point(_),
-                    presence: Presence::Present,
-                }
+                    expect: Presence::Present,
+                })
             )
         })
         .count();
@@ -253,7 +255,7 @@ fn the_unrestricted_class_is_asked_nothing() {
             .declaration()
             .conditions
             .iter()
-            .any(|condition| matches!(condition, Condition::Holds { .. })),
+            .any(|condition| matches!(condition, Rule::Require(JudgedLeaf::Presence { .. }))),
         "a resource binding no movement provisions nothing and asks nothing",
     );
 }

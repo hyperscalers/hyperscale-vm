@@ -109,41 +109,43 @@ pub enum JudgedLeaf {
         /// The stored rule the presented set must satisfy.
         role: RoleId,
     },
-    /// The mover holds what this cell names: the leaf is there.
-    ///
-    /// Resolved to a concrete key where the declaration was evaluated,
-    /// on the terms [`Stored`](Self::Stored) is, so the read is
-    /// provisioned wherever the call runs. A value cell deletes at zero,
-    /// so presence and a nonzero holding are the same fact.
-    Held {
-        /// The leaf whose presence is the question.
-        cell: SubstateKey,
-    },
-}
-
-/// A declared condition with its expressions evaluated: what the kernel
-/// judges, against committed state and the calling node's evidence.
-///
-/// The two kinds are judged where their raw material lives. A presence
-/// condition is judged at materialization, by the shard holding the
-/// leaf, beside the presence a write requires; an authority condition is
-/// judged at the calling node, with that call's presented evidence,
-/// where a gate is judged today.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Condition {
     /// The leaf this target names is there, or is not.
-    Holds {
-        /// The leaf the condition is about.
+    ///
+    /// The one leaf whose answer is in the store rather than in what the
+    /// call presented, which is what decides where a rule holding it is
+    /// judged: a rule made of these alone is answered at materialization,
+    /// before any body runs, so it turns no caller away. A value cell
+    /// deletes at zero, so presence and a nonzero holding are one fact.
+    Presence {
+        /// The leaf the question is about.
         target: EffectTarget,
         /// What must be true of it. Never [`Presence::Either`], which
         /// requires nothing.
-        presence: Presence,
+        expect: Presence,
     },
-    /// The presented claims satisfy this rule.
-    Satisfies {
-        /// The rule, its leaves evaluated.
-        rule: Rule<JudgedLeaf>,
-    },
+}
+
+impl JudgedLeaf {
+    /// Whether this leaf's answer is in the store rather than in what the
+    /// call presented.
+    #[must_use]
+    pub const fn reads_state_only(&self) -> bool {
+        matches!(self, Self::Presence { .. })
+    }
+}
+
+impl Rule<JudgedLeaf> {
+    /// Whether every leaf reads the store alone, which is what decides
+    /// where this rule is judged.
+    ///
+    /// A rule answerable from committed state is judged at
+    /// materialization, before any body runs, so it states a feasibility
+    /// fact and turns no caller away. One reading evidence is judged at
+    /// the node's own call. Nothing declares which it is.
+    #[must_use]
+    pub fn reads_state_only(&self) -> bool {
+        self.leaves().all(JudgedLeaf::reads_state_only)
+    }
 }
 
 /// A manifest: invocation nodes in topological order.

@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use hyperscale_vm_effects::{
-    AuthBase, AuthCell, Condition, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES,
-    MAX_RULE_DEPTH, NodeCall, PRIMARY, PackageHash, Presented, RoleTable, Rule, SlotId, StoredRule,
-    TestHasher, child_key,
+    AuthBase, AuthCell, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
+    NodeCall, PRIMARY, PackageHash, Presented, RoleTable, Rule, SlotId, StoredRule, TestHasher,
+    child_key,
 };
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
@@ -46,7 +46,7 @@ fn cell_of(owner: Address) -> SubstateKey {
 /// A declaration reading `key`, requiring the conditions beside it —
 /// the folded set holding the backing access every condition's target
 /// has, as the publish check guarantees.
-fn declaring(key: SubstateKey, conditions: Vec<Condition>) -> Declaration {
+fn declaring(key: SubstateKey, conditions: Vec<Rule<JudgedLeaf>>) -> Declaration {
     let mut set = EffectSet::new();
     set.insert(Effect {
         target: EffectTarget::Point(key),
@@ -119,11 +119,11 @@ fn call(target: Address, evidence: Vec<Presented>, requires: Vec<Rule<JudgedLeaf
 fn a_presence_condition_is_judged_against_the_committed_leaf() {
     let owner = principal(1);
     let key = cell_of(owner);
-    let holds = |presence| {
-        vec![Condition::Holds {
+    let holds = |expect| {
+        vec![Rule::Require(JudgedLeaf::Presence {
             target: EffectTarget::Point(key),
-            presence,
-        }]
+            expect,
+        })]
     };
 
     let empty = MemoryStore::new();
@@ -457,10 +457,10 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
     let elsewhere = owned_by(2);
     assert!(!elsewhere.is_local(owner));
 
-    let conditions = vec![Condition::Holds {
+    let conditions = vec![Rule::Require(JudgedLeaf::Presence {
         target: EffectTarget::Point(key),
-        presence: Presence::Present,
-    }];
+        expect: Presence::Present,
+    })];
     let requires = vec![Rule::Require(JudgedLeaf::Stored {
         cell: key,
         role: PRIMARY,

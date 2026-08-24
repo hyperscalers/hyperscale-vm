@@ -18,7 +18,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, Answer, MAX_ANSWER_BYTES, MAX_ERROR_CODES, Outcome,
+    ABSENT_REP, AbortReason, Address, Answer, MAX_ANSWER_BYTES, MAX_ERROR_CODES, Outcome, Presence,
     SubstateKey, UnmetCondition,
 };
 
@@ -423,7 +423,11 @@ fn satisfies(
 ) -> Result<bool, SessionTrap> {
     match rule {
         Rule::Require(JudgedLeaf::Claim(claim)) => Ok(call.evidence.contains(claim)),
-        Rule::Require(JudgedLeaf::Held { cell }) => session.declared_present(*cell),
+        Rule::Require(JudgedLeaf::Presence { target, expect }) => Ok(match expect {
+            Presence::Either => true,
+            Presence::Absent => !session.declared_present(*target)?,
+            Presence::Present => session.declared_present(*target)?,
+        }),
         Rule::Require(JudgedLeaf::Stored { cell, role }) => {
             if let Some(verdict) = judged.get(&(*cell, *role)) {
                 return Ok(*verdict);
