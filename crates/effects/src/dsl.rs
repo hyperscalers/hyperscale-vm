@@ -8,6 +8,7 @@
 //! creation-fixed record, and a hasher, and nothing else, so evaluation is
 //! pure by construction and identical on every node.
 
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::BTreeMap;
 
@@ -1303,7 +1304,8 @@ pub fn evaluate_expr(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
 ) -> Result<Value, EvalError> {
-    eval_expr(expr, inputs, hasher, &[], 0, &Budget::new(inputs.budget))
+    let budget = Budget::new(inputs.budget);
+    forced(eval_expr(expr, inputs, hasher, &[], 0, &budget)?, &budget)
 }
 
 fn eval_clauses(
@@ -1323,7 +1325,7 @@ fn eval_clauses(
         // inside a `for-each` body, where no fixed export parameter
         // reaches them.
         let taken = match clause.guard() {
-            Some(cond) => as_bool(eval_expr(cond, inputs, hasher, bindings, 0, budget)?)?,
+            Some(cond) => as_bool(&*eval_expr(cond, inputs, hasher, bindings, 0, budget)?)?,
             None => true,
         };
         if budget.clause_depth.get() == 0 {
@@ -1355,18 +1357,10 @@ fn eval_clauses(
                 // Evaluated beside the key it belongs to and kept parallel
                 // to `ordered`, because a capability's rep is its index
                 // there — the same alignment the guest's handles ride.
-                let held = match denomination {
-                    Some(expr) => match eval_expr(expr, inputs, hasher, bindings, 0, budget)? {
-                        Value::Address(address) => Some(ResourceAddr::try_from(address)?),
-                        found => {
-                            return Err(EvalError::TypeMismatch {
-                                expected: "resource",
-                                found: found.kind(),
-                            });
-                        }
-                    },
-                    None => None,
-                };
+                let held = denomination
+                    .as_ref()
+                    .map(|expr| eval_denomination(expr, inputs, hasher, bindings, budget))
+                    .transpose()?;
                 let effect = Effect { target, mode };
                 out.set.insert(effect)?;
                 out.ordered.push(DeclaredAccess {
@@ -1410,7 +1404,14 @@ fn eval_clauses(
                 }
             }
             Clause::ForEach { list, body, .. } => {
-                let items = as_list(eval_expr(list, inputs, hasher, bindings, 0, budget)?)?;
+                // The one place a borrow cannot reach: the loop pushes each
+                // element onto `bindings`, which a list read out of an
+                // enclosing binding would itself be borrowed from. Owned
+                // once per loop, and charged for the copy.
+                let items = as_list(forced(
+                    eval_expr(list, inputs, hasher, bindings, 0, budget)?,
+                    budget,
+                )?)?;
                 if items.len() > MAX_FOREACH_ELEMENTS {
                     return Err(EvalError::ForEachTooLong { len: items.len() });
                 }
@@ -1441,6 +1442,24 @@ fn eval_clauses(
     Ok(())
 }
 
+/// The resource a value cell's clause declares the cell holds.
+fn eval_denomination(
+    expr: &Expr,
+    inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    bindings: &[Value],
+    budget: &Budget<'_>,
+) -> Result<ResourceAddr, EvalError> {
+    let value = eval_expr(expr, inputs, hasher, bindings, 0, budget)?;
+    let Value::Address(address) = *value else {
+        return Err(EvalError::TypeMismatch {
+            expected: "resource",
+            found: value.kind(),
+        });
+    };
+    Ok(ResourceAddr::try_from(address)?)
+}
+
 fn eval_condition(
     condition: &ConditionExpr,
     inputs: &EvalInputs<'_>,
@@ -1465,7 +1484,7 @@ fn eval_condition(
                         })
                 }
                 RuleLeaf::Stored { cell, role } => Ok(Rule::Require(JudgedLeaf::Stored {
-                    cell: as_key(eval_expr(cell, inputs, hasher, bindings, 0, budget)?)?,
+                    cell: as_key(&*eval_expr(cell, inputs, hasher, bindings, 0, budget)?)?,
                     role: *role,
                 })),
                 // The grant leaf stands for the tree its resource
@@ -1477,7 +1496,7 @@ fn eval_condition(
                     behaviour,
                 } => {
                     let value = eval_expr(resource, inputs, hasher, bindings, 0, budget)?;
-                    let Value::Address(address) = value else {
+                    let Value::Address(address) = *value else {
                         return Err(EvalError::TypeMismatch {
                             expected: "resource address",
                             found: value.kind(),
@@ -1516,7 +1535,7 @@ fn eval_target(
 ) -> Result<EffectTarget, EvalError> {
     match target {
         TargetExpr::Point(expr) => {
-            let key = as_key(eval_expr(expr, inputs, hasher, bindings, 0, budget)?)?;
+            let key = as_key(&*eval_expr(expr, inputs, hasher, bindings, 0, budget)?)?;
             Ok(EffectTarget::Point(key))
         }
         TargetExpr::Entry {
@@ -1525,7 +1544,7 @@ fn eval_target(
             material,
             order,
         } => {
-            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, 0, budget)?)?;
+            let owner = as_address(&*eval_expr(owner, inputs, hasher, bindings, 0, budget)?)?;
             let collection = eval_collection(
                 owner,
                 *collection,
@@ -1535,7 +1554,7 @@ fn eval_target(
                 bindings,
                 budget,
             )?;
-            let order = as_u128(eval_expr(order, inputs, hasher, bindings, 0, budget)?)?;
+            let order = as_u128(&*eval_expr(order, inputs, hasher, bindings, 0, budget)?)?;
             Ok(EffectTarget::Entry {
                 owner,
                 collection,
@@ -1550,7 +1569,7 @@ fn eval_target(
             hi,
             cap,
         } => {
-            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, 0, budget)?)?;
+            let owner = as_address(&*eval_expr(owner, inputs, hasher, bindings, 0, budget)?)?;
             let collection = eval_collection(
                 owner,
                 *collection,
@@ -1560,12 +1579,12 @@ fn eval_target(
                 bindings,
                 budget,
             )?;
-            let lo = as_u128(eval_expr(lo, inputs, hasher, bindings, 0, budget)?)?;
-            let hi = as_u128(eval_expr(hi, inputs, hasher, bindings, 0, budget)?)?;
+            let lo = as_u128(&*eval_expr(lo, inputs, hasher, bindings, 0, budget)?)?;
+            let hi = as_u128(&*eval_expr(hi, inputs, hasher, bindings, 0, budget)?)?;
             if lo > hi {
                 return Err(EvalError::InvalidRange);
             }
-            let cap = as_cap(eval_expr(cap, inputs, hasher, bindings, 0, budget)?)?;
+            let cap = as_cap(&*eval_expr(cap, inputs, hasher, bindings, 0, budget)?)?;
             Ok(EffectTarget::Range {
                 owner,
                 collection,
@@ -1623,7 +1642,7 @@ fn eval_mode(
         ModeExpr::Read => Ok(Mode::Read),
         ModeExpr::Delta => Ok(Mode::Delta),
         ModeExpr::Reserve(expr) => {
-            let amount = as_u128(eval_expr(expr, inputs, hasher, bindings, 0, budget)?)?;
+            let amount = as_u128(&*eval_expr(expr, inputs, hasher, bindings, 0, budget)?)?;
             Ok(Mode::Reserve { amount })
         }
         ModeExpr::Write => Ok(Mode::Write),
@@ -1686,8 +1705,8 @@ fn eval_material(
     let mut encoded = Vec::with_capacity(material.len());
     for expr in material {
         let value = eval_expr(expr, inputs, hasher, bindings, depth, budget)?;
-        // Encoding walks the value a second time, so it is charged a
-        // second time — the term already paid for producing it.
+        // Encoding walks the value, and a walk is charged where it
+        // happens: the term paid for building the value, not for this.
         budget.spend(walked(&value))?;
         encoded.push(value.canonical_bytes());
     }
@@ -1735,14 +1754,30 @@ fn walked(value: &Value) -> usize {
     total
 }
 
-fn eval_expr(
-    expr: &Expr,
-    inputs: &EvalInputs<'_>,
+/// An evaluated value the caller keeps, charged for the copy that keeping
+/// it costs.
+///
+/// A borrowed value is copied here, which is the one place the copy
+/// happens and so the one place it is priced. An owned one was built by
+/// the term that answered it and paid there.
+fn forced(value: Cow<'_, Value>, budget: &Budget<'_>) -> Result<Value, EvalError> {
+    match value {
+        Cow::Borrowed(value) => {
+            budget.spend(walked(value))?;
+            Ok(value.clone())
+        }
+        Cow::Owned(value) => Ok(value),
+    }
+}
+
+fn eval_expr<'a>(
+    expr: &'a Expr,
+    inputs: &'a EvalInputs<'_>,
     hasher: &dyn Hasher,
-    bindings: &[Value],
+    bindings: &'a [Value],
     depth: usize,
     budget: &Budget<'_>,
-) -> Result<Value, EvalError> {
+) -> Result<Cow<'a, Value>, EvalError> {
     if depth > MAX_EXPR_DEPTH {
         return Err(EvalError::ExpressionTooDeep);
     }
@@ -1750,103 +1785,111 @@ fn eval_expr(
     // walked whatever its arms turn out to hold.
     budget.spend(1)?;
     let deeper = depth + 1;
-    let sub = |expr| eval_expr(expr, inputs, hasher, bindings, deeper, budget);
+    let sub = |expr: &'a Expr| eval_expr(expr, inputs, hasher, bindings, deeper, budget);
     let material = |material| eval_material(material, inputs, hasher, bindings, deeper, budget);
     let all = |elements| eval_all(elements, inputs, hasher, bindings, deeper, budget);
-    let value = match expr {
-        // The four terms handed a value rather than deriving one.
-        Expr::Literal(value) => Ok(value.clone()),
-        Expr::Arg(index) => Ok(arg(inputs, *index)?.clone()),
-        Expr::Config(index) => Ok(config(inputs, *index)?.clone()),
-        Expr::Binding(index) => Ok(binding(bindings, *index)?.clone()),
-        Expr::SelfAddr => Ok(Value::Address(inputs.self_addr)),
+    let built = match expr {
+        // The four terms handed a value rather than deriving one, and the
+        // conditional that forwards whichever branch it took. Each answers
+        // a borrow, so reading a value copies nothing — the copy is
+        // charged wherever a caller forces one.
+        Expr::Literal(value) => return Ok(Cow::Borrowed(value)),
+        Expr::Arg(index) => return Ok(Cow::Borrowed(arg(inputs, *index)?)),
+        Expr::Config(index) => return Ok(Cow::Borrowed(config(inputs, *index)?)),
+        Expr::Binding(index) => return Ok(Cow::Borrowed(binding(bindings, *index)?)),
+        Expr::If {
+            cond,
+            then,
+            otherwise,
+        } => {
+            return sub(if as_bool(&*sub(cond)?)? {
+                then
+            } else {
+                otherwise
+            });
+        }
+        Expr::SelfAddr => Value::Address(inputs.self_addr),
         Expr::SelfRecord => inputs
             .record
             .leaf_bytes()
             .map(Value::Bytes)
-            .map_err(|_| EvalError::RecordMalformed),
-        Expr::Field(tuple, index) => field(&as_tuple(sub(tuple)?)?, *index),
-        Expr::ResourceOf(bucket) => Ok(Value::Address(bucket_parts(sub(bucket)?)?.0.into())),
-        Expr::IdsOf(bucket) => edge_ids(bucket_parts(sub(bucket)?)?.1),
-        Expr::Len(list) => Ok(count(&as_list(sub(list)?)?)),
-        Expr::Only(list) => sole(as_list(sub(list)?)?),
+            .map_err(|_| EvalError::RecordMalformed)?,
+        Expr::Field(tuple, index) => field(&as_tuple(forced(sub(tuple)?, budget)?)?, *index)?,
+        Expr::ResourceOf(bucket) => {
+            Value::Address(bucket_parts(forced(sub(bucket)?, budget)?)?.0.into())
+        }
+        Expr::IdsOf(bucket) => edge_ids(bucket_parts(forced(sub(bucket)?, budget)?)?.1)?,
+        Expr::Len(list) => count(&as_list(forced(sub(list)?, budget)?)?),
+        Expr::Only(list) => sole(as_list(forced(sub(list)?, budget)?)?)?,
         Expr::Lookup { map, key } => {
-            find(as_list(sub(map)?)?, &sub(key)?, budget)?.ok_or(EvalError::LookupMiss)
+            find(as_list(forced(sub(map)?, budget)?)?, &*sub(key)?, budget)?
+                .ok_or(EvalError::LookupMiss)?
         }
         Expr::SelfResource {
             kind,
             material: parts,
             grants,
-        } => self_resource(hasher, inputs, *kind, &material(parts)?, grants),
+        } => self_resource(hasher, inputs, *kind, &material(parts)?, grants)?,
         Expr::ChildKey {
             owner,
             slot,
             material: parts,
-        } => Ok(Value::Key(child_key(
+        } => Value::Key(child_key(
             hasher,
-            as_address(sub(owner)?)?,
+            as_address(&*sub(owner)?)?,
             *slot,
             &material(parts)?,
-        ))),
+        )),
         Expr::OrderKey {
             owner,
             slot,
             material: parts,
-        } => Ok(Value::U128(order_key(
+        } => Value::U128(order_key(
             hasher,
-            as_address(sub(owner)?)?,
+            as_address(&*sub(owner)?)?,
             *slot,
             &material(parts)?,
-        ))),
-        Expr::FreshId { slot } => Ok(Value::U64(inputs.fresh_id(hasher, *slot))),
-        Expr::FreshKey { slot } => Ok(Value::Key(inputs.fresh_key(hasher, *slot))),
+        )),
+        Expr::FreshId { slot } => Value::U64(inputs.fresh_id(hasher, *slot)),
+        Expr::FreshKey { slot } => Value::Key(inputs.fresh_key(hasher, *slot)),
         Expr::Pack { hi, lo } => {
-            let hi = as_u64(sub(hi)?)?;
-            let lo = as_u64(sub(lo)?)?;
-            Ok(Value::U128((u128::from(hi) << 64) | u128::from(lo)))
+            let hi = as_u64(&*sub(hi)?)?;
+            let lo = as_u64(&*sub(lo)?)?;
+            Value::U128((u128::from(hi) << 64) | u128::from(lo))
         }
-        Expr::List(elements) => Ok(Value::List(all(elements)?)),
-        Expr::Tuple(fields) => Ok(Value::Tuple(all(fields)?)),
-        Expr::NfBucket { resource, ids } => Ok(Value::Bucket {
-            resource: ResourceAddr::try_from(as_address(sub(resource)?)?)?,
+        Expr::List(elements) => Value::List(all(elements)?),
+        Expr::Tuple(fields) => Value::Tuple(all(fields)?),
+        Expr::NfBucket { resource, ids } => Value::Bucket {
+            resource: ResourceAddr::try_from(as_address(&*sub(resource)?)?)?,
             content: EdgeContent::NonFungible {
-                ids: id_set(as_list(sub(ids)?)?)?,
+                ids: id_set(&as_list(forced(sub(ids)?, budget)?)?)?,
             },
-        }),
-        Expr::Not(inner) => Ok(Value::Bool(!as_bool(sub(inner)?)?)),
+        },
+        Expr::Not(inner) => Value::Bool(!as_bool(&*sub(inner)?)?),
         // Short-circuiting: a false `And` and a true `Or` are answered by
         // the left operand alone, and the right one is never evaluated.
         // That is what lets one arm of a judgment be an expression the
         // other case would refuse.
         Expr::And(left, right) | Expr::Or(left, right) => {
             let short = matches!(expr, Expr::Or(..));
-            if as_bool(sub(left)?)? == short {
-                Ok(Value::Bool(short))
+            if as_bool(&*sub(left)?)? == short {
+                Value::Bool(short)
             } else {
-                Ok(Value::Bool(as_bool(sub(right)?)?))
+                Value::Bool(as_bool(&*sub(right)?)?)
             }
         }
-        Expr::Add(left, right) => add(&sub(left)?, &sub(right)?),
-        Expr::Eq(left, right) => equals(&sub(left)?, &sub(right)?),
-        Expr::Lt(left, right) => less_than(&sub(left)?, &sub(right)?),
-        Expr::Contains { map, key } => Ok(Value::Bool(
-            find(as_list(sub(map)?)?, &sub(key)?, budget)?.is_some(),
-        )),
-        Expr::If {
-            cond,
-            then,
-            otherwise,
-        } => sub(if as_bool(sub(cond)?)? {
-            then
-        } else {
-            otherwise
-        }),
-    }?;
-    // Every term pays for what it hands back, whether it copied the
-    // value, read it out of one, or built it: what the term above will
-    // walk is what this one produced.
-    budget.spend(walked(&value))?;
-    Ok(value)
+        Expr::Add(left, right) => add(&*sub(left)?, &*sub(right)?)?,
+        Expr::Eq(left, right) => equals(&*sub(left)?, &*sub(right)?)?,
+        Expr::Lt(left, right) => less_than(&*sub(left)?, &*sub(right)?)?,
+        Expr::Contains { map, key } => {
+            Value::Bool(find(as_list(forced(sub(map)?, budget)?)?, &*sub(key)?, budget)?.is_some())
+        }
+    };
+    // A term that built a value pays for what it built: what the term
+    // above will walk is what this one produced. A term that borrowed one
+    // built nothing, and pays wherever the borrow is forced.
+    budget.spend(walked(&built))?;
+    Ok(Cow::Owned(built))
 }
 
 /// Every element of a sequence expression, in order.
@@ -1860,7 +1903,14 @@ fn eval_all(
 ) -> Result<Vec<Value>, EvalError> {
     elements
         .iter()
-        .map(|element| eval_expr(element, inputs, hasher, bindings, depth, budget))
+        .map(|element| {
+            // An element escapes into the list the caller builds, so the
+            // copy that puts it there is charged here.
+            forced(
+                eval_expr(element, inputs, hasher, bindings, depth, budget)?,
+                budget,
+            )
+        })
         .collect()
 }
 
@@ -1984,7 +2034,7 @@ fn reject_bucket(value: &Value) -> Result<(), EvalError> {
 /// A well-formed instance id set: every element a `u64`, at most
 /// [`MAX_IDS_PER_EDGE`] of them, each distinct — a duplicate would be
 /// one instance landing twice off a single edge.
-fn id_set(values: Vec<Value>) -> Result<Vec<u64>, EvalError> {
+fn id_set(values: &[Value]) -> Result<Vec<u64>, EvalError> {
     if values.len() > MAX_IDS_PER_EDGE {
         return Err(EvalError::TooManyIds { len: values.len() });
     }
@@ -2005,9 +2055,9 @@ fn indexed<T>(slice: &[T], index: u32) -> Option<&T> {
         .and_then(|index| slice.get(index))
 }
 
-fn as_u64(value: Value) -> Result<u64, EvalError> {
+const fn as_u64(value: &Value) -> Result<u64, EvalError> {
     match value {
-        Value::U64(v) => Ok(v),
+        Value::U64(v) => Ok(*v),
         other => Err(EvalError::TypeMismatch {
             expected: "u64",
             found: other.kind(),
@@ -2021,15 +2071,15 @@ fn as_u64(value: Value) -> Result<u64, EvalError> {
 /// the gas limit that pays it — but the count itself is a `u32` end to
 /// end, so a wider one is a refusal here rather than a truncation
 /// downstream.
-fn as_cap(value: Value) -> Result<u32, EvalError> {
+fn as_cap(value: &Value) -> Result<u32, EvalError> {
     let cap = as_u128(value)?;
     u32::try_from(cap).map_err(|_| EvalError::CapTooWide(cap))
 }
 
-fn as_u128(value: Value) -> Result<u128, EvalError> {
+fn as_u128(value: &Value) -> Result<u128, EvalError> {
     match value {
-        Value::U64(v) => Ok(u128::from(v)),
-        Value::U128(v) => Ok(v),
+        Value::U64(v) => Ok(u128::from(*v)),
+        Value::U128(v) => Ok(*v),
         other => Err(EvalError::TypeMismatch {
             expected: "u128",
             found: other.kind(),
@@ -2037,9 +2087,9 @@ fn as_u128(value: Value) -> Result<u128, EvalError> {
     }
 }
 
-fn as_address(value: Value) -> Result<Address, EvalError> {
+const fn as_address(value: &Value) -> Result<Address, EvalError> {
     match value {
-        Value::Address(addr) => Ok(addr),
+        Value::Address(addr) => Ok(*addr),
         other => Err(EvalError::TypeMismatch {
             expected: "address",
             found: other.kind(),
@@ -2047,9 +2097,9 @@ fn as_address(value: Value) -> Result<Address, EvalError> {
     }
 }
 
-fn as_key(value: Value) -> Result<SubstateKey, EvalError> {
+const fn as_key(value: &Value) -> Result<SubstateKey, EvalError> {
     match value {
-        Value::Key(key) => Ok(key),
+        Value::Key(key) => Ok(*key),
         other => Err(EvalError::TypeMismatch {
             expected: "key",
             found: other.kind(),
@@ -2067,9 +2117,9 @@ fn as_tuple(value: Value) -> Result<Vec<Value>, EvalError> {
     }
 }
 
-fn as_bool(value: Value) -> Result<bool, EvalError> {
+const fn as_bool(value: &Value) -> Result<bool, EvalError> {
     match value {
-        Value::Bool(flag) => Ok(flag),
+        Value::Bool(flag) => Ok(*flag),
         other => Err(EvalError::TypeMismatch {
             expected: "bool",
             found: other.kind(),
