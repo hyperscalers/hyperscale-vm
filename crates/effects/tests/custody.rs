@@ -170,3 +170,103 @@ fn a_component_answers_for_its_own_vault() {
         "and no signer's own credential is consulted",
     );
 }
+
+/// A declaration that carries its direction is judged on the movement it
+/// makes, and not on the one it gave up.
+///
+/// This is what separates the two movement behaviours in practice. A
+/// bidirectional access has to answer for both, so a resource governing
+/// only withdrawals ends up governing deposits too and the two collapse
+/// into one. A method that says it only receives is asked only what a
+/// recipient is asked.
+#[test]
+fn a_credit_is_asked_only_what_a_recipient_is_asked() {
+    use hyperscale_vm_effects::vocabulary::VAULT;
+    use hyperscale_vm_effects::{
+        Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, TargetExpr, Totality,
+    };
+
+    let vault_of = |resource: Expr| {
+        TargetExpr::Point(Expr::ChildKey {
+            owner: Box::new(Expr::SelfAddr),
+            slot: VAULT,
+            material: vec![resource],
+        })
+    };
+    let asset = || Expr::Literal(Value::Address(governed().address()));
+    let receiving = |mode: ModeExpr| {
+        let mut package = PackageMetadata::default();
+        package.methods.insert(
+            "receive".into(),
+            MethodSignature {
+                totality: Totality::Fallible,
+                effects: vec![Clause::Effect {
+                    guard: None,
+                    target: vault_of(asset()),
+                    mode,
+                    denomination: Some(Box::new(asset())),
+                }],
+                ..MethodSignature::default()
+            },
+        );
+        package
+    };
+
+    let admitted = |mode: ModeExpr, name: &str| {
+        let mut chain = world();
+        chain.packages.publish_unchecked(pkg(name), receiving(mode));
+        let meta = InstanceMeta {
+            package: pkg(name),
+            config: Vec::new(),
+            salt: Hash32([0x5D; 32]),
+        };
+        let target = meta.address(&TestHasher);
+        chain.instances.create(&TestHasher, meta);
+        let env = EnvelopeTree {
+            root: IntentDecl {
+                graph: ManifestGraph {
+                    nodes: vec![GraphNode {
+                        target: target.into(),
+                        method: "receive".into(),
+                        args: Vec::new(),
+                        evidence: BTreeSet::default(),
+                    }],
+                },
+                params: Vec::new(),
+            },
+            root_bindings: Vec::new(),
+            subintents: Vec::new(),
+            instances: Vec::new(),
+            resources: vec![governed_meta()],
+        };
+        let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
+            .expect("the receiving method admits");
+        (target, admitted.admitted.declaration().conditions.clone())
+    };
+
+    // Both declarations carry the instantiation fence, which is nobody's
+    // movement — what is under test is the credential beside it.
+    let wants_credential = |target, conditions: &[Condition]| {
+        conditions.contains(&Condition::Holds {
+            target: EffectTarget::Point(credential(target)),
+            presence: Presence::Present,
+        })
+    };
+
+    // The governed resource grants `Withdraw` and nothing else, so a
+    // credit earns no requirement from it at all.
+    let (receiver, credited) = admitted(ModeExpr::Credit, "receiver");
+    assert!(
+        !wants_credential(receiver, &credited),
+        "a credit is not asked for a withdrawal credential: {credited:?}",
+    );
+
+    // The same cell, the same resource, one word different: a
+    // bidirectional access has to answer for the debit it might make,
+    // so a withdraw-only credential ends up gating the credit too.
+    let (both_ways, both) = admitted(ModeExpr::Delta, "bidirectional");
+    assert!(
+        wants_credential(both_ways, &both),
+        "a delta answers for both directions, so it carries the withdrawal's: {both:?}",
+    );
+}

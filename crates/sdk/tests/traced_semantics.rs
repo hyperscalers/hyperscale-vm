@@ -218,6 +218,7 @@ fn planned(clauses: &[Clause], depth: usize) -> Vec<Planned> {
                 mode: match mode {
                     ModeExpr::Read => ModeKind::Read,
                     ModeExpr::Delta => ModeKind::Delta,
+                    ModeExpr::Credit => ModeKind::Credit,
                     ModeExpr::Reserve(_) => ModeKind::Reserve,
                     ModeExpr::Write => ModeKind::Write,
                 },

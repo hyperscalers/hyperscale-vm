@@ -1851,7 +1851,7 @@ fn check_target_bounds(target: &TargetExpr) -> Result<(), SignatureBoundsError> 
 
 fn check_mode_bounds(mode: &ModeExpr) -> Result<(), SignatureBoundsError> {
     match mode {
-        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Write => Ok(()),
+        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Credit | ModeExpr::Write => Ok(()),
         ModeExpr::Reserve(amount) => check_expr_bounds(amount, 0),
     }
 }

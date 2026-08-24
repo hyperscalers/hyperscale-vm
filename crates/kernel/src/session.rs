@@ -706,7 +706,9 @@ impl KernelSession {
         op: fn(u128) -> DeltaOp,
     ) -> Result<(), SessionTrap> {
         match self.capability(rep)? {
-            Capability::Delta(key) => Ok(self.store.queue_delta(key, op(amount))?),
+            Capability::Delta(key) | Capability::Credit(key) => {
+                Ok(self.store.queue_delta(key, op(amount))?)
+            }
             _ => Err(SessionTrap::WrongMode(rep)),
         }
     }
@@ -745,6 +747,12 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
+        // The half a credit gave up. A declaration that named one is
+        // judged on the crediting movement alone, so taking through it
+        // would take under a requirement nobody asked for.
+        if matches!(self.capability(rep)?, Capability::Credit(_)) {
+            return Err(SessionTrap::WrongMode(rep));
+        }
         self.delta(rep, amount, DeltaOp::Sub)?;
         let resource = self.value_of(rep)?;
         Ok(self.open_bucket(Held::Amount(amount), resource))
@@ -764,7 +772,9 @@ impl KernelSession {
         // way; what the ordering keeps true is that the kernel is never
         // holding a credit it did not make, which is the property the
         // bucket table exists to state.
-        let Capability::Delta(_) = self.capability(rep)? else {
+        // A credit answers this and a delta answers it too: what the
+        // narrower mode gave up is the other direction, not this one.
+        let (Capability::Delta(_) | Capability::Credit(_)) = self.capability(rep)? else {
             return Err(SessionTrap::WrongMode(rep));
         };
         self.judge_credit(rep, funds)?;

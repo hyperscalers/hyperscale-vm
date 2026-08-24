@@ -263,6 +263,16 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                         let _ = session.burn(ISSUER_REP, taken);
                     }
                 }
+                // Only the crediting half, which is the whole of what
+                // this capability answers: the debit beside it above is
+                // refused here, and the property is that the cell still
+                // conserves.
+                Capability::Credit(_) => {
+                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    if let Ok(minted) = session.mint(ISSUER_REP, seed % 40) {
+                        let _ = session.delta_put(rep, minted);
+                    }
+                }
                 Capability::Reserve { .. } => {
                     let _ = session.reserve_amount(rep);
                 }

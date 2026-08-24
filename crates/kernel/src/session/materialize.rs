@@ -76,6 +76,13 @@ pub enum Capability {
     AmountRead(SubstateKey),
     /// Commutative movement on one amount cell.
     Delta(SubstateKey),
+    /// The crediting half of one, and nothing else.
+    ///
+    /// Its own variant rather than a flag on [`Capability::Delta`],
+    /// because what separates them is which operations they answer: a
+    /// take through this is refused the way a byte read of a value cell
+    /// is, and by the same dispatch.
+    Credit(SubstateKey),
     /// A held reservation on one amount cell, at this clause's own
     /// declared amount. The store's hold is the per-transaction fold
     /// over every reservation on the cell, so the clause's share rides
@@ -105,7 +112,11 @@ impl Capability {
             Self::Write(_) => CellKind::Write,
             Self::Amount(_) => CellKind::Amount,
             Self::AmountRead(_) => CellKind::AmountRead,
-            Self::Delta(_) => CellKind::Delta,
+            // One handle type for both: what a credit gives up is a
+            // direction the kernel holds it to, not a surface the guest
+            // is handed. A world type of its own would buy the same
+            // guarantee at the price of every package rebuilding.
+            Self::Delta(_) | Self::Credit(_) => CellKind::Delta,
             Self::Reserve { .. } => CellKind::Reserve,
             Self::RangeRead(..) => CellKind::RangeRead,
             Self::RangeWrite(..) => CellKind::RangeWrite,
@@ -487,6 +498,13 @@ fn capability_for(effect: Effect, denominated: bool) -> Result<Capability, Mater
         (EffectTarget::Point(key), Mode::Delta) => {
             if denominated {
                 Ok(Capability::Delta(key))
+            } else {
+                Err(MaterializeError::UndenominatedMovement(key))
+            }
+        }
+        (EffectTarget::Point(key), Mode::Credit) => {
+            if denominated {
+                Ok(Capability::Credit(key))
             } else {
                 Err(MaterializeError::UndenominatedMovement(key))
             }

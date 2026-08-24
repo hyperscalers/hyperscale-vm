@@ -18,6 +18,19 @@ pub enum Mode {
     /// Unconditional commutative increment or decrement; the amount is
     /// dynamic and never part of the declaration.
     Delta,
+    /// Unconditional commutative increment, and no decrement.
+    ///
+    /// [`Delta`](Self::Delta) with one direction given up, which is what
+    /// a method that only receives can say about itself. Two things turn
+    /// on being able to say it. A credit cannot underflow, so it never
+    /// fails feasibility — the only movement in the vocabulary that
+    /// cannot. And a declaration that carries its direction can be judged
+    /// on the movement it actually makes, where one that does not has to
+    /// answer for both.
+    ///
+    /// Contends exactly as a delta does: giving up a direction gives up
+    /// nothing a scheduler reads.
+    Credit,
     /// Conditional decrement, feasible iff committed balance minus prior
     /// reservations covers the declared amount.
     Reserve {
@@ -205,6 +218,7 @@ impl Mode {
         match self {
             Self::Read => ModeKind::Read,
             Self::Delta => ModeKind::Delta,
+            Self::Credit => ModeKind::Credit,
             Self::Reserve { .. } => ModeKind::Reserve,
             Self::Write => ModeKind::Write,
         }
@@ -218,6 +232,8 @@ pub enum ModeKind {
     Read,
     /// See [`Mode::Delta`].
     Delta,
+    /// See [`Mode::Credit`].
+    Credit,
     /// See [`Mode::Reserve`].
     Reserve,
     /// See [`Mode::Write`].
@@ -236,8 +252,8 @@ pub const fn compatible(a: ModeKind, b: ModeKind) -> bool {
         (a, b),
         (ModeKind::Read, ModeKind::Read)
             | (
-                ModeKind::Delta | ModeKind::Reserve,
-                ModeKind::Delta | ModeKind::Reserve
+                ModeKind::Delta | ModeKind::Credit | ModeKind::Reserve,
+                ModeKind::Delta | ModeKind::Credit | ModeKind::Reserve
             )
     )
 }
@@ -252,7 +268,7 @@ pub const fn compatible(a: ModeKind, b: ModeKind) -> bool {
 pub enum ConflictClass {
     /// Fresh reads: internally compatible.
     Read = 0,
-    /// Delta and reserve: commute with each other.
+    /// The commutative movements: delta, credit and reserve.
     Commutative = 1,
     /// Exclusive writes: compatible with nothing that conflicts at all.
     Write = 2,
@@ -290,7 +306,7 @@ impl ModeKind {
     pub const fn conflict_class(self) -> ConflictClass {
         match self {
             Self::Read => ConflictClass::Read,
-            Self::Delta | Self::Reserve => ConflictClass::Commutative,
+            Self::Delta | Self::Credit | Self::Reserve => ConflictClass::Commutative,
             Self::Write => ConflictClass::Write,
         }
     }

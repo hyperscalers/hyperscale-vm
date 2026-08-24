@@ -1542,12 +1542,15 @@ fn inject_movement_rules(
         };
         let owner = access.effect.target.owner();
         let behaviours: &[GrantedBehaviour] = match access.effect.mode {
-            // A conditional decrement, and the one mode whose direction
-            // the declaration carries.
+            // The two that carry their direction are judged on the
+            // movement they make and nothing else.
             Mode::Reserve { .. } => &[GrantedBehaviour::Withdraw],
-            // Everything else reaches both ways through one access, so
-            // both are asked: a negative capability may over-bind and
-            // must never under-bind.
+            Mode::Credit => &[GrantedBehaviour::Deposit],
+            // The rest reach both ways through one access, so both are
+            // asked. That over-binds — a holder permitted to send is
+            // asked for the receiving credential too — which is why a
+            // method that only moves one way says so and is judged on
+            // that alone.
             Mode::Delta | Mode::Write => &[GrantedBehaviour::Withdraw, GrantedBehaviour::Deposit],
             Mode::Read => continue,
         };

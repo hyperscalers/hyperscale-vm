@@ -146,6 +146,7 @@ mod tests {
         match kind {
             ModeKind::Read => Mode::Read,
             ModeKind::Delta => Mode::Delta,
+            ModeKind::Credit => Mode::Credit,
             ModeKind::Reserve => Mode::Reserve { amount: 1 },
             ModeKind::Write => Mode::Write,
         }
@@ -153,14 +154,18 @@ mod tests {
 
     #[test]
     fn same_key_conflicts_follow_the_compatibility_matrix() {
-        use ModeKind::{Delta, Read, Reserve, Write};
-        let kinds = [Read, Delta, Reserve, Write];
+        use ModeKind::{Credit, Delta, Read, Reserve, Write};
+        // Credit sits with the commutative modes, so it takes delta's
+        // row and column: what it gave up is a direction, which is not
+        // something a scheduler reads.
+        let kinds = [Read, Delta, Credit, Reserve, Write];
         // The complement of the lattice's compatibility table.
         let conflict_table = [
-            [false, true, true, true],
-            [true, false, false, true],
-            [true, false, false, true],
-            [true, true, true, true],
+            [false, true, true, true, true],
+            [true, false, false, false, true],
+            [true, false, false, false, true],
+            [true, false, false, false, true],
+            [true, true, true, true, true],
         ];
         for (i, &a) in kinds.iter().enumerate() {
             for (j, &b) in kinds.iter().enumerate() {

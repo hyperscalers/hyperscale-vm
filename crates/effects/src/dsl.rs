@@ -458,6 +458,9 @@ pub enum ModeExpr {
     Read,
     /// Commutative increment or decrement; no declared amount.
     Delta,
+    /// Commutative increment and no decrement — what a method that only
+    /// receives says about itself.
+    Credit,
     /// Conditional decrement of the evaluated amount.
     Reserve(Expr),
     /// Exclusive read-modify-write.
@@ -556,7 +559,12 @@ pub const fn materialized_kind(clause: &Clause) -> Option<CellKind> {
         } else {
             CellKind::Write
         }),
-        (TargetExpr::Point(_), ModeExpr::Delta) => Some(CellKind::Delta),
+        // One handle for both: what a credit gives up is a direction, and
+        // the kernel is what holds it to that — a take through a credit
+        // capability is refused the way a byte read of a value cell is.
+        // A guest type of its own would buy the same guarantee at the
+        // price of a world change every package rebuilds against.
+        (TargetExpr::Point(_), ModeExpr::Delta | ModeExpr::Credit) => Some(CellKind::Delta),
         (TargetExpr::Point(_), ModeExpr::Reserve(_)) => Some(CellKind::Reserve),
         (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Read) => {
             Some(CellKind::RangeRead)
@@ -1715,6 +1723,7 @@ fn eval_mode(
     match mode {
         ModeExpr::Read => Ok(Mode::Read),
         ModeExpr::Delta => Ok(Mode::Delta),
+        ModeExpr::Credit => Ok(Mode::Credit),
         ModeExpr::Reserve(expr) => {
             let amount = as_u128(&*eval_expr(expr, inputs, hasher, bindings, 0, budget)?)?;
             Ok(Mode::Reserve { amount })

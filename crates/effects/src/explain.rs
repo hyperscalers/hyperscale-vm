@@ -291,6 +291,7 @@ impl Names<'_> {
         match mode {
             ModeExpr::Read => "read".to_owned(),
             ModeExpr::Delta => "delta".to_owned(),
+            ModeExpr::Credit => "credit".to_owned(),
             ModeExpr::Reserve(amount) => format!("reserve {}", self.expr(amount, ATOM)),
             ModeExpr::Write => "write".to_owned(),
         }
