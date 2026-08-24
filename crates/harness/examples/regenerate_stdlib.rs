@@ -20,7 +20,11 @@
 use std::path::Path;
 
 #[cfg(target_os = "linux")]
+use hyperscale_vm_fixtures::SHIPPED as FIXTURES_SHIPPED;
+#[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::{build_guest, repo_root};
+#[cfg(target_os = "linux")]
+use hyperscale_vm_stdlib::SHIPPED as STDLIB_SHIPPED;
 #[cfg(not(target_os = "linux"))]
 use wasmtime::Error;
 use wasmtime::Result;
@@ -33,10 +37,10 @@ use wasmtime::error::Context;
 /// ships, so a blob this never writes is one nothing includes.
 #[cfg(target_os = "linux")]
 fn blobs() -> Vec<(&'static str, &'static str)> {
-    let protocol = hyperscale_vm_stdlib::SHIPPED
+    let protocol = STDLIB_SHIPPED
         .iter()
         .map(|(name, _)| (*name, "crates/stdlib/blobs"));
-    let fixtures = hyperscale_vm_fixtures::SHIPPED
+    let fixtures = FIXTURES_SHIPPED
         .iter()
         .map(|(name, _)| (*name, "crates/fixtures/blobs"));
     protocol.chain(fixtures).collect()
