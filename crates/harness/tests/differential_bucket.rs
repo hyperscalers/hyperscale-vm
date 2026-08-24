@@ -382,15 +382,17 @@ fn each_take_yields_the_value_it_debits() -> Result<()> {
         "the debit the take performed is the movement the receipt carries"
     );
 
-    // An absolute cell resolves at the call, so the balance is already
-    // down by what the body is holding.
+    // An exclusive debit reports the movement it made, like a commutative
+    // one: the balance it leaves behind depends on what else settles, so
+    // the receipt states the change and not the total.
     let (vault, host) = both(&fx, Take::Vault(30))?;
     assert_eq!(vault, Took::Value(30));
     let (receipt, _) = host.finish(vec![], 0).expect("the oracle is clean");
     assert_eq!(
-        receipt.delta.cells.get(&fx.vault),
-        Some(&Some(encode_amount(BALANCE - 30).to_vec()))
+        receipt.delta.movements.get(&fx.vault).map(|m| m.debit),
+        Some(30)
     );
+    assert!(!receipt.delta.cells.contains_key(&fx.vault));
 
     // The grant is the bucket: no amount is named and none can be missed.
     let (reserve, _) = both(&fx, Take::Reserve)?;
@@ -497,12 +499,14 @@ fn credited(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<Credi
 fn a_credit_is_what_the_bucket_carried() -> Result<()> {
     let fx = fixture();
 
-    let absolute = credited(&fx, "put-write", 30, false)?;
-    assert_eq!(
-        absolute.cell,
-        Some(encode_amount(BALANCE + 30).to_vec()),
-        "the kernel added what crossed to what the cell held"
-    );
+    // Both modes record the same credit. What separates them is when
+    // they may run, not what the receipt says they did — an exclusive
+    // value cell reports a movement and no absolute, because the value
+    // it ends at is the settling shard's answer rather than this
+    // transaction's.
+    let exclusive = credited(&fx, "put-write", 30, false)?;
+    assert_eq!(exclusive.credit, Some(30));
+    assert_eq!(exclusive.cell, None, "a value cell reports no absolute");
 
     let commutative = credited(&fx, "put-delta", 30, true)?;
     assert_eq!(commutative.credit, Some(30));

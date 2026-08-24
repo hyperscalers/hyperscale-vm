@@ -139,14 +139,25 @@ fn swap_executes_with_real_pool_math_on_both_runtimes() {
     };
 
     // The constant-product math, computed independently: 30 bps fee on
-    // 500 in gives 498 effective; out = 1000 * 498 / 1498 = 332.
+    // 500 in gives 498 effective; out = 1000 * 498 / 1498 = 332. The
+    // pool's own vaults report what moved rather than what they hold:
+    // the curve read its reserves here, and the totals they land on are
+    // the settling shard's to fold.
     assert_eq!(
-        receipt.delta.cells.get(&vault(pool(), RES_X)),
-        Some(&Some(encode_amount(1_500).to_vec()))
+        receipt
+            .delta
+            .movements
+            .get(&vault(pool(), RES_X))
+            .map(|moved| (moved.credit, moved.debit)),
+        Some((500, 0))
     );
     assert_eq!(
-        receipt.delta.cells.get(&vault(pool(), RES_Y)),
-        Some(&Some(encode_amount(668).to_vec()))
+        receipt
+            .delta
+            .movements
+            .get(&vault(pool(), RES_Y))
+            .map(|moved| (moved.credit, moved.debit)),
+        Some((0, 332))
     );
     assert_eq!(
         receipt
@@ -192,12 +203,20 @@ fn the_pool_trades_both_directions_off_one_instance() {
     // The mirror of the forward trade, because the reserves are equal:
     // 500 in less 30 bps is 498 effective, and 1000 * 498 / 1498 is 332.
     assert_eq!(
-        receipt.delta.cells.get(&vault(pool(), RES_Y)),
-        Some(&Some(encode_amount(1_500).to_vec()))
+        receipt
+            .delta
+            .movements
+            .get(&vault(pool(), RES_Y))
+            .map(|moved| (moved.credit, moved.debit)),
+        Some((500, 0))
     );
     assert_eq!(
-        receipt.delta.cells.get(&vault(pool(), RES_X)),
-        Some(&Some(encode_amount(668).to_vec()))
+        receipt
+            .delta
+            .movements
+            .get(&vault(pool(), RES_X))
+            .map(|moved| (moved.credit, moved.debit)),
+        Some((0, 332))
     );
     assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 932);
     assert_eq!(amount_of(&final_store, vault(ALICE, RES_Y)), 100);

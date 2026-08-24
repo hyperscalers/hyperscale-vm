@@ -35,13 +35,14 @@ use hyperscale_vm_effects::{ResourceKind, distinct_ids};
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, Drawn, EffectSet, ISSUER_REP, LEAF_KEY_BYTES, ResourceAddr,
-    SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, TxHash, encode_amount,
+    SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, TxHash,
 };
 pub use materialize::{Capability, Interval, MaterializeError};
 use ranges::Ranges;
 pub use ranges::SCAN_SEEK_BYTES;
 pub use receipt::{DeltaMap, FinishError, Receipt, StateDelta};
 
+use crate::ledger::AmountLedger;
 use crate::locality::Locality;
 use crate::modes::{DeltaOp, ModeError, decode_amount};
 use crate::overlay::OverlayStore;
@@ -760,18 +761,21 @@ impl KernelSession {
         self.judge_credit(rep, funds)?;
         let held = self.amount_cell(key)?;
         let amount = self.bucket_amount(funds)?;
-        let total = held.checked_add(amount).ok_or(SessionTrap::CellOverflow)?;
-        self.store.write(key, encode_amount(total).to_vec())?;
+        held.checked_add(amount).ok_or(SessionTrap::CellOverflow)?;
+        self.store.queue_delta(key, DeltaOp::Add(amount))?;
         self.take_bucket(funds).map(|_| ())
     }
 
-    /// A declared cell's contents as an amount; an absent cell is zero.
+    /// A declared cell's contents as an amount, as this transaction has
+    /// left it; an absent cell is zero.
     fn amount_cell(&mut self, key: SubstateKey) -> Result<u128, SessionTrap> {
         let cell = self.store.read(key)?.unwrap_or_default();
-        if cell.is_empty() {
-            return Ok(0);
-        }
-        decode_amount(&cell).map_err(|_| SessionTrap::BadAmountCell(key))
+        let committed = if cell.is_empty() {
+            0
+        } else {
+            decode_amount(&cell).map_err(|_| SessionTrap::BadAmountCell(key))?
+        };
+        Ok(self.store.with_queued(key, committed)?)
     }
 
     /// Debit `amount` through a write capability and hand the value out
@@ -782,7 +786,14 @@ impl KernelSession {
     /// balance — a curve needs both sides — writes no absolute back, so
     /// there is no number of its own for the edge to disagree with.
     /// Resolved at the call, so the refusals are immediate: a stored cell
-    /// that is not an amount, and a debit past what it holds.
+    /// that is not an amount, and a debit past what the cell has free.
+    ///
+    /// Free, not held: the floor an exclusive debit meets is the one a
+    /// commutative debit meets, because what a reservation reserves is
+    /// the cell rather than a mode of reaching it. The same floor is
+    /// judged again at the fold, which is the reading every participant
+    /// shares; this one exists so a body learns of the refusal where it
+    /// asked.
     ///
     /// # Errors
     ///
@@ -792,9 +803,14 @@ impl KernelSession {
             return Err(SessionTrap::WrongMode(rep));
         };
         let resource = self.value_of(rep)?;
-        let held = self.amount_cell(key)?;
-        let left = held.checked_sub(amount).ok_or(SessionTrap::CellUnderflow)?;
-        self.store.write(key, encode_amount(left).to_vec())?;
+        let free = self
+            .amount_cell(key)?
+            .checked_sub(self.store.held_total(key)?)
+            .ok_or(StoreError::HeldExceedsCommitted(key))?;
+        if amount > free {
+            return Err(SessionTrap::CellUnderflow);
+        }
+        self.store.queue_delta(key, DeltaOp::Sub(amount))?;
         Ok(self.open_bucket(Held::Amount(amount), resource))
     }
 

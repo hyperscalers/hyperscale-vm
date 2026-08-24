@@ -53,6 +53,23 @@ pub trait AmountLedger: Baseline {
         }
     }
 
+    /// `committed` with this transaction's own queued deltas folded in.
+    ///
+    /// A body that credits a cell and then reads it sees the credit: the
+    /// queue is its own work and nothing else can observe it, so the
+    /// alternative is a balance that disagrees with what the body just
+    /// did.
+    ///
+    /// # Errors
+    ///
+    /// A fold that leaves `u128`.
+    fn with_queued(&self, key: SubstateKey, committed: u128) -> Result<u128, StoreError> {
+        match self.queued().get(&key) {
+            Some(ops) => Ok(fold_deltas(committed, ops)?),
+            None => Ok(committed),
+        }
+    }
+
     /// Every outstanding reservation on `key`, summed.
     ///
     /// # Errors

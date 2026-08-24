@@ -5,12 +5,13 @@
 //! is covered by the identical declared point, an entry access by the
 //! identical declared entry or a declared range containing its order key,
 //! and a scan by a declared range enclosing its interval with at least its
-//! cap. A declared write permits the reads its read-modify-write implies;
+//! cap. A declared write permits the reads its read-modify-write implies,
+//! and on a value cell the commutative record its change is kept as;
 //! every other mode permits exactly itself.
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_types::{Address, CollectionId, EffectSet, EffectTarget, ModeKind};
+use hyperscale_vm_types::{Address, CollectionId, Effect, EffectSet, EffectTarget, ModeKind};
 
 use crate::store::{Access, Substates};
 
@@ -120,8 +121,23 @@ pub fn target_covers(declared: &EffectTarget, accessed: &EffectTarget) -> bool {
 #[must_use]
 pub fn covered(access: &Access, declared: &EffectSet) -> bool {
     declared.iter().any(|effect| {
-        target_covers(&effect.target, &access.target) && permits(effect.mode.kind(), access.kind)
+        target_covers(&effect.target, &access.target)
+            && (permits(effect.mode.kind(), access.kind) || exclusive_movement(&effect, access))
     })
+}
+
+/// Whether a declared exclusive claim covers the commutative record a
+/// value cell's change is kept as.
+///
+/// An `amount-cell` is exclusive in when it may run and commutative in
+/// how it is written down, because a receipt says what moved rather than
+/// what a cell ended at. That holds for a point cell and nowhere else: a
+/// collection entry has no movement form, so a delta against one is an
+/// escape however its interval was declared.
+fn exclusive_movement(declared: &Effect, access: &Access) -> bool {
+    matches!(declared.target, EffectTarget::Point(_))
+        && declared.mode.kind() == ModeKind::Write
+        && access.kind == ModeKind::Delta
 }
 
 /// Every access in the trace not covered by the declared set. The oracle's
