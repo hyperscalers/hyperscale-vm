@@ -1677,10 +1677,10 @@ fn eval_mode(
 
 /// A non-fungible edge's ids as a list, or the refusal a fungible one
 /// earns: kind is structural, never an empty answer.
-fn edge_ids(content: EdgeContent) -> Result<Value, EvalError> {
+fn edge_ids(content: &EdgeContent) -> Result<Value, EvalError> {
     match content {
         EdgeContent::NonFungible { ids } => {
-            Ok(Value::List(ids.into_iter().map(Value::U64).collect()))
+            Ok(Value::List(ids.iter().copied().map(Value::U64).collect()))
         }
         EdgeContent::Fungible => Err(EvalError::TypeMismatch {
             expected: "non-fungible bucket",
@@ -1697,10 +1697,10 @@ fn count(elements: &[Value]) -> Value {
 
 /// The one element a list holds, or the refusal naming how many it held
 /// instead.
-fn sole(elements: Vec<Value>) -> Result<Value, EvalError> {
-    match <[Value; 1]>::try_from(elements) {
-        Ok([only]) => Ok(only),
-        Err(elements) => Err(EvalError::NotSingleton {
+const fn sole(elements: &[Value]) -> Result<&Value, EvalError> {
+    match elements {
+        [only] => Ok(only),
+        _ => Err(EvalError::NotSingleton {
             len: elements.len(),
         }),
     }
@@ -1708,9 +1708,9 @@ fn sole(elements: Vec<Value>) -> Result<Value, EvalError> {
 
 /// A bucket projection's parts, or the type mismatch every edge
 /// projection refuses alike.
-fn bucket_parts(value: Value) -> Result<(ResourceAddr, EdgeContent), EvalError> {
+const fn bucket_parts(value: &Value) -> Result<(ResourceAddr, &EdgeContent), EvalError> {
     match value {
-        Value::Bucket { resource, content } => Ok((resource, content)),
+        Value::Bucket { resource, content } => Ok((*resource, content)),
         other => Err(EvalError::TypeMismatch {
             expected: "bucket",
             found: other.kind(),
@@ -1858,13 +1858,24 @@ fn eval_expr<'a>(
             .leaf_bytes()
             .map(Value::Bytes)
             .map_err(|_| EvalError::RecordMalformed)?,
-        Expr::Field(tuple, index) => field(&as_tuple(forced(sub(tuple)?, budget)?)?, *index)?,
-        Expr::ResourceOf(bucket) => {
-            Value::Address(bucket_parts(forced(sub(bucket)?, budget)?)?.0.into())
+        // The projections read their operand in place and copy out the
+        // one part they answer, never the container around it — the same
+        // shape [`Expr::Lookup`] takes over a table.
+        Expr::Field(tuple, index) => {
+            let tuple = sub(tuple)?;
+            let field = field(fields(&tuple)?, *index)?;
+            budget.spend(walked(field))?;
+            field.clone()
         }
-        Expr::IdsOf(bucket) => edge_ids(bucket_parts(forced(sub(bucket)?, budget)?)?.1)?,
+        Expr::ResourceOf(bucket) => Value::Address(bucket_parts(&*sub(bucket)?)?.0.into()),
+        Expr::IdsOf(bucket) => edge_ids(bucket_parts(&*sub(bucket)?)?.1)?,
         Expr::Len(list) => count(elements(&*sub(list)?)?),
-        Expr::Only(list) => sole(as_list(forced(sub(list)?, budget)?)?)?,
+        Expr::Only(list) => {
+            let list = sub(list)?;
+            let only = sole(elements(&list)?)?;
+            budget.spend(walked(only))?;
+            only.clone()
+        }
         Expr::Lookup { map, key } => {
             let map = sub(map)?;
             let hit = find(elements(&map)?, &*sub(key)?, budget)?.ok_or(EvalError::LookupMiss)?;
@@ -1973,13 +1984,11 @@ fn eval_all(
 }
 
 /// One field of a tuple, by position.
-fn field(fields: &[Value], index: u32) -> Result<Value, EvalError> {
-    indexed(fields, index)
-        .cloned()
-        .ok_or(EvalError::FieldOutOfRange {
-            index,
-            arity: fields.len(),
-        })
+fn field(fields: &[Value], index: u32) -> Result<&Value, EvalError> {
+    indexed(fields, index).ok_or(EvalError::FieldOutOfRange {
+        index,
+        arity: fields.len(),
+    })
 }
 
 /// The first matching pair's value, or `None` where the table holds no
@@ -2169,21 +2178,22 @@ const fn as_key(value: &Value) -> Result<SubstateKey, EvalError> {
     }
 }
 
-fn as_tuple(value: Value) -> Result<Vec<Value>, EvalError> {
-    match value {
-        Value::Tuple(fields) => Ok(fields),
-        other => Err(EvalError::TypeMismatch {
-            expected: "tuple",
-            found: other.kind(),
-        }),
-    }
-}
-
 const fn as_bool(value: &Value) -> Result<bool, EvalError> {
     match value {
         Value::Bool(flag) => Ok(*flag),
         other => Err(EvalError::TypeMismatch {
             expected: "bool",
+            found: other.kind(),
+        }),
+    }
+}
+
+/// A tuple's fields read in place.
+fn fields(value: &Value) -> Result<&[Value], EvalError> {
+    match value {
+        Value::Tuple(fields) => Ok(fields),
+        other => Err(EvalError::TypeMismatch {
+            expected: "tuple",
             found: other.kind(),
         }),
     }
