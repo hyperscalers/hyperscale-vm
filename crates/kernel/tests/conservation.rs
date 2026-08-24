@@ -333,3 +333,100 @@ mod through_the_session {
         assert_eq!((supply.minted(UNIT), supply.burned(UNIT)), (500, 0));
     }
 }
+
+/// The instance term, where an entry changes without a holding moving.
+///
+/// A non-fungible's quantity is a count of entries, so what the fold
+/// weighs is a presence flip. An entry whose bytes change and whose
+/// presence does not is the same instance where it was — and reading
+/// that as an arrival refuses a transaction for creating what it still
+/// holds, for free, since the abort it reaches is priced to nobody.
+mod instances {
+    use std::sync::Arc;
+
+    use hyperscale_vm_effects::{
+        Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, Value, collection_id,
+    };
+    use hyperscale_vm_kernel::{EnvInputs, KernelSession, OverlayStore};
+    use hyperscale_vm_types::{
+        Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome, ResourceAddr, TxHash,
+    };
+
+    use super::MemoryStore;
+
+    const HOLDER: Address = Address::new([0x40; 31], AddressClass::Component);
+    const TICKET: ResourceAddr = ResourceAddr::new([0xB0; 31]);
+    /// The holder's own holdings collection, keyed by what it holds.
+    const HOLDINGS: SlotId = SlotId(16);
+    /// The order the one instance sits at.
+    const ORDER: u64 = 42;
+
+    fn hash(data: &[u8]) -> [u8; 32] {
+        TestHasher.hash(b"crypto", &[data]).0
+    }
+
+    /// A session over an interval of the holder's instances, with one
+    /// already filed at `ORDER` carrying `filed`.
+    fn session_holding(filed: &[u8]) -> KernelSession {
+        let collection = collection_id(
+            &TestHasher,
+            HOLDER,
+            HOLDINGS,
+            &[Value::Address(TICKET.address()).canonical_bytes()],
+        );
+        let interval = Effect {
+            target: EffectTarget::Range {
+                owner: HOLDER,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 8,
+            },
+            mode: Mode::Write,
+        };
+        let mut set = EffectSet::new();
+        set.insert(interval).expect("one interval");
+        let mut store = MemoryStore::new();
+        store.entry_write(HOLDER, collection, u128::from(ORDER), filed.to_vec());
+
+        KernelSession::materialize(
+            OverlayStore::new(Arc::new(store)),
+            &Declaration {
+                set,
+                ordered: vec![DeclaredAccess {
+                    effect: interval,
+                    holds: Some(TICKET),
+                }],
+                ..Declaration::default()
+            },
+            TxHash(Hash32([7; 32])),
+            EnvInputs::unsealed(0),
+            hash,
+        )
+        .expect("a denominated interval materializes")
+    }
+
+    /// Take the instance and file it back where it was, leaving `refiled`
+    /// in the entry.
+    fn refile(filed: &[u8], refiled: &[u8]) -> Outcome {
+        let mut session = session_holding(filed);
+        let held = session.range_take(0, &[ORDER]).expect("the holder has it");
+        session.range_put(0, held, refiled).expect("back it goes");
+        // The metered lane drains what a scan lifted after every call
+        // that can reach one; nothing meters this session, so what the
+        // two probes lifted is settled before finishing.
+        let _ = session.take_scan_debt();
+        let (receipt, _) = session.finish(vec![], 0).expect("a receipt either way");
+        receipt.outcome
+    }
+
+    #[test]
+    fn refiling_an_instance_where_it_was_moves_no_holding() {
+        assert_eq!(refile(&[1], &[1]), Outcome::Completed { answers: vec![] });
+        assert_eq!(
+            refile(&[1], &[2]),
+            Outcome::Completed { answers: vec![] },
+            "the entry carries something else and the instance is where it was",
+        );
+    }
+}

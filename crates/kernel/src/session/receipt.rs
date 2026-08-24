@@ -250,7 +250,10 @@ impl KernelSession {
     /// Walked unfiltered, unlike every other walk of a delta. The others
     /// exist to apply a receipt somewhere and see only what that shard
     /// owns; this one judges the transaction whole, which is what makes
-    /// the verdict identical on every participant of it.
+    /// the verdict identical on every participant of it. The baseline
+    /// the instance term reads is there wherever the fold runs, for the
+    /// reason a filing probe's answer is: an interval is provisioned, so
+    /// each participant holds the entries their owner does.
     fn unconserved(&self, delta: &StateDelta) -> Option<ResourceAddr> {
         let mut sides: BTreeMap<ResourceAddr, Option<(u128, u128)>> = BTreeMap::new();
         let mut weigh = |resource, gained: u128, lost: u128| {
@@ -263,12 +266,25 @@ impl KernelSession {
             weigh(movement.resource, movement.credit, movement.debit);
         }
         // An instance counts one whatever it is worth, which is the
-        // measure its mint credited.
+        // measure its mint credited. What counts is the presence flip
+        // and not the change: an entry rewritten in place is the same
+        // instance where it already was, and a take and a refile at one
+        // order are exactly that — the take clears the order the filing
+        // probe would have refused, so the two reach the receipt as one
+        // changed entry over a holding that never moved.
         for (key, change) in delta.entries.iter() {
             let Some(resource) = self.instance_resource_at(*key) else {
                 continue;
             };
-            let (filed, removed) = if change.is_some() { (1, 0) } else { (0, 1) };
+            let held = self
+                .store
+                .pre_active_entry(key.owner, key.collection, key.order)
+                .is_some();
+            let (filed, removed) = match (held, change.is_some()) {
+                (false, true) => (1, 0),
+                (true, false) => (0, 1),
+                _ => continue,
+            };
             weigh(resource, filed, removed);
         }
         for resource in self.supply.resources() {
