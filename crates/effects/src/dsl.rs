@@ -61,15 +61,27 @@ pub const MAX_EXPR_DEPTH: usize = 32;
 /// three orders of magnitude in work, and evaluation happens at
 /// admission, before any fee is assured.
 ///
-/// Measured at both ends rather than chosen. A unit costs about fifty
-/// nanoseconds on the machine the figure was taken on, so the widest
-/// admissible evaluation is a few milliseconds — where the shape that
-/// motivated the bound, a thousand iterations scanning a table of
-/// twenty-five thousand, ran for over a second at the same footprint as
-/// a signature that scanned nothing. At the other end, the dearest
-/// signature the corpus declares spends ninety-two units across every
-/// package it holds, so the ceiling clears real work by a factor in the
-/// hundreds and refuses only a signature whose cost is the point.
+/// Measured at both ends rather than chosen. Every charge is a shape's
+/// measured cost expressed in the one unit and rounded up, so the meter
+/// over-charges a cheap shape and never under-charges a dear one. A scan
+/// pair is the cheapest thing charged a whole unit;
+/// [`BYTES_PER_WORK_UNIT`] and [`WORK_PER_DERIVATION`] are the two costs
+/// that needed a divisor and a multiplier to land on the same unit.
+///
+/// The widest evaluation the ceiling admits derives a key over three
+/// hundred and seventy-five bytes of material per element across a full
+/// `for-each`; the dearest signature the corpus declares spends three
+/// hundred and sixty-four units, so the ceiling clears real work by a
+/// factor near two hundred. What it refuses is the shape that motivated
+/// it — eight four-kilobyte literals hashed into one key per element
+/// across a full loop, which asks sixty times the ceiling at the clause
+/// count and footprint of a signature that hashes one scalar.
+///
+/// [`MAX_EFFECTS_PER_SIGNATURE`] bounds the same evaluation by shape,
+/// and the two agree: the most derived effects a signature can land come
+/// to about half this, so the effect count binds first for an ordinary
+/// target and the work meter binds first for a scan or for wide
+/// material — which is what the meter exists to bound.
 pub const MAX_EVALUATION_WORK: usize = 65_536;
 
 /// The bytes of an opaque byte string one unit of work buys.
@@ -77,10 +89,19 @@ pub const MAX_EVALUATION_WORK: usize = 65_536;
 /// A byte string carries length without carrying elements, so counting
 /// elements alone prices a four-kilobyte literal as a scalar — while
 /// encoding one into a key's material hashes every byte of it. The
-/// divisor is what makes the two comparable: a unit is about fifty
-/// nanoseconds, and copying or hashing this many bytes is what fifty
-/// nanoseconds buys.
-const BYTES_PER_WORK_UNIT: usize = 64;
+/// divisor is what makes the two comparable: encoding and hashing this
+/// many bytes costs about what walking one subterm costs.
+const BYTES_PER_WORK_UNIT: usize = 8;
+
+/// What one derivation costs, in units.
+///
+/// The terms that hash — a child key, an order key, a fresh id or key,
+/// an issued resource address — cost about this many subterm walks
+/// apiece, where every other term costs one. Charged apart from the
+/// subterm walk because a signature is free to land one derivation per
+/// effect, and at a unit apiece the meter would price a thousand hashes
+/// below a thousand comparisons.
+const WORK_PER_DERIVATION: usize = 8;
 
 /// The bound on what admitting one envelope may cost, across every node
 /// in it.
@@ -95,12 +116,16 @@ const BYTES_PER_WORK_UNIT: usize = 64;
 ///
 /// Sized against the widest legitimate envelope rather than scaled off
 /// the figure beside it: a full tree of the dearest signature the corpus
-/// declares comes to under four hundred thousand units, so this clears
-/// the widest real envelope by a factor of two while holding the widest
-/// admissible one to about fifty milliseconds — where the per-signature
-/// ceiling alone left it at thirteen seconds, spent on bytes nobody had
-/// yet checked a signature over.
-pub const MAX_ENVELOPE_EVALUATION_WORK: usize = 1_048_576;
+/// declares comes to about one and a half million units, so this clears
+/// the widest real envelope by half again — where the per-signature
+/// ceiling alone would admit a full tree of the dearest shape that fits
+/// under it, over bytes nobody had yet checked a signature over.
+///
+/// What binds here is `MAX_MANIFEST_NODES`, not the meter: a full tree of
+/// ordinary signatures costs what it costs whatever the unit is worth, so
+/// admitting less work at ingress means admitting fewer nodes rather than
+/// counting the same ones more strictly.
+pub const MAX_ENVELOPE_EVALUATION_WORK: usize = 2_097_152;
 
 /// The bound on `for-each` nesting within one signature.
 ///
@@ -1608,6 +1633,7 @@ fn eval_collection(
     budget: &Budget<'_>,
 ) -> Result<CollectionId, EvalError> {
     let encoded = eval_material(material, inputs, hasher, bindings, 0, budget)?;
+    budget.spend(WORK_PER_DERIVATION)?;
     Ok(collection_id(hasher, owner, slot, &encoded))
 }
 
@@ -1770,6 +1796,21 @@ fn forced(value: Cow<'_, Value>, budget: &Budget<'_>) -> Result<Value, EvalError
     }
 }
 
+/// How many hashes a term runs, which is the part of its cost that no
+/// walk over its subterms accounts for.
+const fn derivations(expr: &Expr) -> usize {
+    match expr {
+        // The granted tree resolves to an address, and the resource
+        // address derives over that.
+        Expr::SelfResource { .. } => 2,
+        Expr::ChildKey { .. }
+        | Expr::OrderKey { .. }
+        | Expr::FreshId { .. }
+        | Expr::FreshKey { .. } => 1,
+        _ => 0,
+    }
+}
+
 #[allow(clippy::too_many_lines)] // one dispatch over the term vocabulary
 fn eval_expr<'a>(
     expr: &'a Expr,
@@ -1783,8 +1824,10 @@ fn eval_expr<'a>(
         return Err(EvalError::ExpressionTooDeep);
     }
     // One per subterm, before anything is read: an expression tree is
-    // walked whatever its arms turn out to hold.
-    budget.spend(1)?;
+    // walked whatever its arms turn out to hold. A term that hashes pays
+    // for the hash here too, so that it is charged whether or not the
+    // arm below reaches one.
+    budget.spend(1 + derivations(expr) * WORK_PER_DERIVATION)?;
     let deeper = depth + 1;
     let sub = |expr: &'a Expr| eval_expr(expr, inputs, hasher, bindings, deeper, budget);
     let material = |material| eval_material(material, inputs, hasher, bindings, deeper, budget);
