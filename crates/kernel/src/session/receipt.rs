@@ -9,7 +9,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_types::{
-    AbortReason, Answer, EntryKey, Event, Movement, Outcome, ResourceAddr, SubstateKey,
+    AbortReason, Address, Answer, CollectionId, EntryKey, Event, Movement, Outcome, ResourceAddr,
+    SubstateKey,
 };
 
 use super::{Capability, KernelSession};
@@ -200,34 +201,93 @@ enum Settlement {
     Aborted(Outcome),
 }
 
+/// What each declared leaf holds, folded out of the capability table
+/// once.
+///
+/// The table is the session's record of what it may touch, and the fold
+/// asks it three questions per key it settles: what a cell holds, what a
+/// collection's entries hold, and what was taken against a reservation.
+/// Asked of the table directly each is a walk of it, and the fold asks
+/// once per movement, per changed entry and per reserved key — so a
+/// declaration large enough makes finishing quadratic in what it
+/// declared. The table does not change after materialization, so the
+/// answers are gathered in one pass and read back by key.
+///
+/// First clause wins, which is the rule the walks it replaces had:
+/// several clauses may name one leaf, and materialization already
+/// refused the declaration where they disagreed about what it holds
+/// ([`MaterializeError::MixedContents`](crate::MaterializeError::MixedContents)).
+#[derive(Default)]
+struct Denominations {
+    /// What the cell at each declared key holds.
+    cells: BTreeMap<SubstateKey, ResourceAddr>,
+    /// What the entries of each declared collection hold, keyed by the
+    /// owner and identity they hang under — a collection being one
+    /// answer about all of its entries, whatever intervals name it.
+    entries: BTreeMap<(Address, CollectionId), ResourceAddr>,
+    /// Each reserved cell's clauses, as the rep that would exercise one
+    /// and the amount that clause declared.
+    reserved: BTreeMap<SubstateKey, Vec<(u32, u128)>>,
+}
+
+impl Denominations {
+    /// What the cell at `key` holds.
+    fn cell(&self, key: SubstateKey) -> Option<ResourceAddr> {
+        self.cells.get(&key).copied()
+    }
+
+    /// What the entries of the collection covering `key` hold; `None` for
+    /// a byte entry, which is what keeps an ordered collection's own
+    /// records out of a fold about value.
+    fn entry(&self, key: EntryKey) -> Option<ResourceAddr> {
+        self.entries.get(&(key.owner, key.collection)).copied()
+    }
+
+    /// What `taken` exercised against the reservations on `key`.
+    ///
+    /// Each grant's own declared amount rather than the folded hold:
+    /// several clauses may reserve one cell, and the hold is their sum,
+    /// so what leaves the cell is the sum of the ones a body took.
+    fn taken_against(&self, key: SubstateKey, taken: &BTreeSet<u32>) -> u128 {
+        self.reserved
+            .get(&key)
+            .into_iter()
+            .flatten()
+            .filter(|(rep, _)| taken.contains(rep))
+            .fold(0u128, |total, (_, amount)| total.saturating_add(*amount))
+    }
+}
+
 impl KernelSession {
-    /// What the interval covering `key` holds, where its entries are
-    /// instances rather than bytes.
-    ///
-    /// `None` for a byte entry, which is what keeps an ordered
-    /// collection's own records out of a fold about value.
-    ///
-    /// A collection is one answer about its entries, so the interval's
-    /// own bounds need no consulting: materialization keys denomination
-    /// by owner and collection, and refuses a declaration whose slices
-    /// disagree. Two intervals of one collection therefore name one
-    /// resource, and the first is every one of them.
-    fn instance_resource_at(&self, key: EntryKey) -> Option<ResourceAddr> {
-        self.table
-            .iter()
-            .enumerate()
-            .find_map(|(index, capability)| {
-                let Capability::InstanceRange(interval) = capability else {
-                    return None;
-                };
-                (interval.owner == key.owner && interval.collection == key.collection)
-                    .then(|| {
-                        u32::try_from(index)
-                            .ok()
-                            .and_then(|rep| self.cell_resource(rep))
-                    })
-                    .flatten()
-            })
+    /// The capability table's denominations, in one walk of it.
+    fn denominations(&self) -> Denominations {
+        let mut out = Denominations::default();
+        for (index, capability) in self.table.iter().enumerate() {
+            let Ok(rep) = u32::try_from(index) else {
+                continue;
+            };
+            if let Capability::Reserve { key, amount } = capability {
+                out.reserved.entry(*key).or_default().push((rep, *amount));
+            }
+            let Some(resource) = self.cell_resource(rep) else {
+                continue;
+            };
+            match capability {
+                Capability::Amount(key)
+                | Capability::AmountRead(key)
+                | Capability::Delta(key)
+                | Capability::Reserve { key, .. } => {
+                    out.cells.entry(*key).or_insert(resource);
+                }
+                Capability::InstanceRange(interval) => {
+                    out.entries
+                        .entry((interval.owner, interval.collection))
+                        .or_insert(resource);
+                }
+                _ => {}
+            }
+        }
+        out
     }
 
     /// The first resource this transaction did not conserve, if any.
@@ -254,7 +314,11 @@ impl KernelSession {
     /// the instance term reads is there wherever the fold runs, for the
     /// reason a filing probe's answer is: an interval is provisioned, so
     /// each participant holds the entries their owner does.
-    fn unconserved(&self, delta: &StateDelta) -> Option<ResourceAddr> {
+    fn unconserved(
+        &self,
+        delta: &StateDelta,
+        denominations: &Denominations,
+    ) -> Option<ResourceAddr> {
         let mut sides: BTreeMap<ResourceAddr, Option<(u128, u128)>> = BTreeMap::new();
         let mut weigh = |resource, gained: u128, lost: u128| {
             let side = sides.entry(resource).or_insert(Some((0, 0)));
@@ -273,7 +337,7 @@ impl KernelSession {
         // probe would have refused, so the two reach the receipt as one
         // changed entry over a holding that never moved.
         for (key, change) in delta.entries.iter() {
-            let Some(resource) = self.instance_resource_at(*key) else {
+            let Some(resource) = denominations.entry(*key) else {
                 continue;
             };
             let held = self
@@ -300,58 +364,6 @@ impl KernelSession {
         })
     }
 
-    /// What the cell at `key` holds, off the capability that reached it.
-    ///
-    /// A cell's denomination is its declaration's, and the table is this
-    /// session's record of what it may touch — so a movement is stamped
-    /// where the authority to make it came from, once, rather than
-    /// looked up again wherever the movement later travels.
-    ///
-    /// The first clause naming the cell answers for all of them, which is
-    /// sound because materialization refused the declaration where they
-    /// disagreed
-    /// ([`MaterializeError::MixedContents`](crate::MaterializeError::MixedContents)).
-    /// Without that the fold would read a debit's denomination off a
-    /// clause the body never used.
-    fn resource_at(&self, key: SubstateKey) -> Option<ResourceAddr> {
-        self.table
-            .iter()
-            .enumerate()
-            .find_map(|(index, capability)| {
-                let named = match capability {
-                    Capability::Amount(at)
-                    | Capability::AmountRead(at)
-                    | Capability::Delta(at)
-                    | Capability::Reserve { key: at, .. } => *at,
-                    _ => return None,
-                };
-                (named == key)
-                    .then(|| {
-                        u32::try_from(index)
-                            .ok()
-                            .and_then(|rep| self.cell_resource(rep))
-                    })
-                    .flatten()
-            })
-    }
-
-    /// What this transaction took against the reservations on `key`.
-    ///
-    /// A grant's own declared amount rather than the folded hold: several
-    /// clauses may reserve one cell, and the hold is their sum, so what
-    /// leaves the cell is the sum of the ones a body actually exercised.
-    fn taken_against(&self, key: SubstateKey) -> u128 {
-        self.table
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| u32::try_from(*index).is_ok_and(|rep| self.taken.contains(&rep)))
-            .filter_map(|(_, capability)| match capability {
-                Capability::Reserve { key: held, amount } if *held == key => Some(*amount),
-                _ => None,
-            })
-            .fold(0u128, u128::saturating_add)
-    }
-
     /// Settle the reservations this transaction exercised and release the
     /// rest: an owned cell's settle folds the debit, a remote one keeps
     /// the amount as the outbound record for the shard that owns it.
@@ -365,7 +377,10 @@ impl KernelSession {
     ///
     /// The error is a kernel defect; a refusal the caller aborts the
     /// transaction with comes back as [`Settlement::Aborted`].
-    fn settle_reservations(&mut self) -> Result<Settlement, FinishError> {
+    fn settle_reservations(
+        &mut self,
+        denominations: &Denominations,
+    ) -> Result<Settlement, FinishError> {
         let mut settles = BTreeMap::new();
         let mut seen = BTreeSet::new();
         for index in 0..self.table.len() {
@@ -377,10 +392,10 @@ impl KernelSession {
             if !seen.insert(key) {
                 continue;
             }
-            let Some(resource) = self.resource_at(key) else {
+            let Some(resource) = denominations.cell(key) else {
                 return Err(FinishError::UndenominatedMovement(key));
             };
-            let taken = self.taken_against(key);
+            let taken = denominations.taken_against(key, &self.taken);
             let settled = if taken == 0 {
                 self.store.release(key, self.tx).map(|_| None)
             } else if self.locality.is_local(key.owner) {
@@ -430,11 +445,11 @@ impl KernelSession {
     ///
     /// The error is a kernel defect; a refusal the caller aborts the
     /// transaction with comes back as [`Movements::Aborted`].
-    fn judge_movements(&mut self) -> Result<Movements, FinishError> {
+    fn judge_movements(&mut self, denominations: &Denominations) -> Result<Movements, FinishError> {
         let mut movements: BTreeMap<SubstateKey, Movement> = BTreeMap::new();
         let queued: Vec<(SubstateKey, Vec<DeltaOp>)> = self.store.pending_deltas().collect();
         for (key, ops) in queued {
-            let Some(resource) = self.resource_at(key) else {
+            let Some(resource) = denominations.cell(key) else {
                 return Err(FinishError::UndenominatedMovement(key));
             };
             match total_movement(&ops, resource) {
@@ -556,11 +571,12 @@ impl KernelSession {
                 fuel,
             ));
         }
-        let movements = match self.judge_movements()? {
+        let denominations = self.denominations();
+        let movements = match self.judge_movements(&denominations)? {
             Movements::Judged(movements) => movements,
             Movements::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
         };
-        let settles = match self.settle_reservations()? {
+        let settles = match self.settle_reservations(&denominations)? {
             Settlement::Settled(settles) => settles,
             Settlement::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
         };
@@ -575,7 +591,7 @@ impl KernelSession {
             .retain(|key, _| !movements.contains_key(key) && !settles.contains_key(key));
         delta.movements = movements.into();
         delta.settles = settles.into();
-        if self.unconserved(&delta).is_some() {
+        if self.unconserved(&delta, &denominations).is_some() {
             return Ok(abort_with(
                 self.store,
                 Outcome::ProtocolError {
