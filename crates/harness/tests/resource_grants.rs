@@ -11,9 +11,9 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, Grant, GrantedBehaviour, Hasher, PackageHash, PrefixShardResolver, Presented,
-    Records, ResourceGrants, ResourceKind, ResourceMeta, RoleBytes, StoredRule, TestHasher,
-    admit_tree, route_tree,
+    EnvelopeTree, GrantedBehaviour, Hasher, PackageHash, PrefixShardResolver, Presented, Records,
+    ResourceGrants, ResourceKind, ResourceMeta, RoleBytes, StoredRule, TestHasher, admit_tree,
+    never, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
@@ -58,10 +58,8 @@ fn granting_meta() -> ResourceMeta {
     let mut rules = ResourceGrants::new();
     rules.set(
         GrantedBehaviour::Recall,
-        Grant::Rule(
-            RoleBytes::try_from(&StoredRule::Require(Presented::Identity(RECALLER.into())))
-                .expect("a rule within the caps encodes"),
-        ),
+        RoleBytes::try_from(&StoredRule::claim(Presented::Identity(RECALLER.into())))
+            .expect("a rule within the caps encodes"),
     );
     ResourceMeta {
         namespace: MINTER,
@@ -193,10 +191,8 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     forged.rules = ResourceGrants::new();
     forged.rules.set(
         GrantedBehaviour::Recall,
-        Grant::Rule(
-            RoleBytes::try_from(&StoredRule::Require(Presented::Identity(STRANGER.into())))
-                .expect("a rule encodes"),
-        ),
+        RoleBytes::try_from(&StoredRule::claim(Presented::Identity(STRANGER.into())))
+            .expect("a rule encodes"),
     );
     assert_ne!(forged.address(&TestHasher), resource());
     env.resource(forged);
@@ -210,11 +206,16 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     Ok(())
 }
 
+/// A rule sealed into a resource's address.
+fn sealed(rule: &StoredRule) -> RoleBytes {
+    RoleBytes::try_from(rule).expect("a rule within the caps encodes")
+}
+
 /// The badge a governed resource's `Withdraw` entry names.
 const BADGE: ResourceAddr = ResourceAddr::new([0x77; 31]);
 
 /// A resource whose withdrawal is governed by a standing credential.
-fn governed_meta(entry: Grant) -> ResourceMeta {
+fn governed_meta(entry: RoleBytes) -> ResourceMeta {
     let mut rules = ResourceGrants::new();
     rules.set(GrantedBehaviour::Withdraw, entry);
     ResourceMeta {
@@ -225,14 +226,14 @@ fn governed_meta(entry: Grant) -> ResourceMeta {
     }
 }
 
-fn governed(entry: Grant) -> ResourceAddr {
+fn governed(entry: RoleBytes) -> ResourceAddr {
     governed_meta(entry).address(&TestHasher)
 }
 
 /// The holder moves the governed resource out of their own account and
 /// banks it back — an ordinary transfer, declaring nothing about any
 /// rule, which is the whole point.
-fn governed_tree(entry: Grant) -> Result<EnvelopeTree> {
+fn governed_tree(entry: RoleBytes) -> Result<EnvelopeTree> {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
@@ -248,7 +249,7 @@ fn governed_tree(entry: Grant) -> Result<EnvelopeTree> {
 
 /// A holder's store, holding the governed resource and — where `carries`
 /// says so — the credential its withdraw rule names.
-fn governed_store(entry: Grant, carries: bool) -> MemoryStore {
+fn governed_store(entry: RoleBytes, carries: bool) -> MemoryStore {
     let mut store = MemoryStore::new();
     seed_vault(&mut store, HOLDER, governed(entry), 100);
     if carries {
@@ -267,7 +268,7 @@ fn governed_store(entry: Grant, carries: bool) -> MemoryStore {
 /// inexpressible rather than merely discouraged.
 #[test]
 fn a_credential_governs_a_withdrawal_no_package_declared() -> Result<()> {
-    let entry = Grant::Credential(BADGE);
+    let entry = sealed(&StoredRule::held(BADGE));
 
     let carried = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
     let (outcome, end) = run(
@@ -304,7 +305,7 @@ fn a_credential_governs_a_withdrawal_no_package_declared() -> Result<()> {
 /// at admission, before anything routes or any fee is assured.
 #[test]
 fn a_forbidden_movement_refuses_at_admission() -> Result<()> {
-    let tree = governed_tree(Grant::Never)?;
+    let tree = governed_tree(sealed(&never()))?;
     let identity = tree.hash(&TestHasher);
     let chain = world();
     let refusal = admit_tree(&tree, HOLDER, identity, &chain, &TestHasher)
@@ -328,7 +329,7 @@ fn a_forbidden_movement_refuses_at_admission() -> Result<()> {
 /// for this resource is nothing.
 #[test]
 fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
-    let entry = Grant::Credential(BADGE);
+    let entry = sealed(&StoredRule::held(BADGE));
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {

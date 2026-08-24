@@ -126,10 +126,7 @@ fn admin(rule: &StoredRule) -> RoleTable {
 /// badge its bring-up already filed in the founder's account.
 fn seeded() -> (Chain, registry::client::Registry) {
     let (mut chain, instance) = setup();
-    let table = admin(&StoredRule::Require(Presented::Instance(
-        badge(instance),
-        0,
-    )));
+    let table = admin(&StoredRule::claim(Presented::Instance(badge(instance), 0)));
     chain
         .transact(FOUNDER, |b| {
             let founder = account::authorize(b, FOUNDER)?;
@@ -182,10 +179,7 @@ fn a_seeded_table_opens_the_surface_to_the_badge_holder() {
 #[test]
 fn a_second_seeding_is_refused_where_the_table_lives() {
     let (mut chain, instance) = seeded();
-    let table = admin(&StoredRule::Require(Presented::Instance(
-        badge(instance),
-        0,
-    )));
+    let table = admin(&StoredRule::claim(Presented::Instance(badge(instance), 0)));
     let outcome = chain
         .transact(FOUNDER, |b| {
             let founder = account::authorize(b, FOUNDER)?;
@@ -261,7 +255,7 @@ fn a_rotation_governs_only_after_the_stored_delay() {
     chain
         .transact(FOUNDER, |b| {
             let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
-            let table = admin(&StoredRule::Require(Presented::Identity(SUCCESSOR.into())));
+            let table = admin(&StoredRule::claim(Presented::Identity(SUCCESSOR.into())));
             b.call_as(held, instance, "propose-roles", (table,))?.none()
         })
         .expect_completed();

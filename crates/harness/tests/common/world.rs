@@ -111,7 +111,7 @@ pub fn auth(owner: impl Into<Address>) -> SubstateKey {
 pub fn uniform_base(identity: PrincipalAddr) -> AuthBase {
     AuthBase::new(
         DAY_MS,
-        RoleTable::uniform(&StoredRule::Require(Presented::Identity(identity.into())))
+        RoleTable::uniform(&StoredRule::claim(Presented::Identity(identity.into())))
             .expect("a rule within the vocabulary caps"),
     )
 }
@@ -669,7 +669,7 @@ pub fn propose_graph() -> ManifestGraph {
         account::propose(
             b,
             ALICE,
-            RoleTable::uniform(&StoredRule::Require(Presented::Identity(BOB.into())))
+            RoleTable::uniform(&StoredRule::claim(Presented::Identity(BOB.into())))
                 .expect("a rule within the vocabulary caps"),
             DAY_MS,
         )

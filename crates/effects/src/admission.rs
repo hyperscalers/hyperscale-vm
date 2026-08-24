@@ -36,9 +36,9 @@ use crate::metadata::{PackageHash, PackageMetadata};
 use crate::presented::Presented;
 use crate::publish::{CheckedSignature, seals};
 use crate::records::ChainRecords;
-use crate::resource::{Grant, GrantedBehaviour, ResourceKind, granting_issued_resource};
+use crate::resource::{GrantedBehaviour, ResourceKind, granting_issued_resource};
 use crate::route::FrameDeclaration;
-use crate::rule::Rule;
+use crate::rule::{Rule, SealedLeaf, never};
 use crate::signature::{AbiParam, MethodSignature, ParamType};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::{CONFIG, VAULT};
@@ -1570,47 +1570,48 @@ fn inject_movement_rules(
         let Some(rules) = grants.rules(resource) else {
             continue;
         };
-        let Some(entry) = rules.get(behaviour) else {
+        let Some(sealed) = rules.get(behaviour) else {
             continue;
         };
-        match entry {
-            // Not a movement spelling: an open movement is what an absent
-            // entry already means, and publish refuses the arm.
-            Grant::Open => {}
-            Grant::Never => {
-                return Err(AdmissionError::MovementForbidden {
-                    node: node_index,
-                    resource,
-                    behaviour,
-                });
-            }
-            // A condition, not a gate, and that distinction is the whole
-            // reason a credential carries no rule. `Satisfies` turns a
-            // caller away on evidence, which a method marked total may
-            // not do — and over-approximating direction puts a movement
-            // requirement on the credit side, where the method that
-            // lands it is `deposit`. `Holds` states a feasibility fact
-            // instead, judged before any body runs, so the mark stands.
-            Grant::Credential(badge) => {
+        let rule = sealed
+            .decode()
+            .map_err(|_| AdmissionError::MovementRuleMalformed {
+                node: node_index,
+                resource,
+                behaviour,
+            })?;
+        // Nobody may: decidable from the entry, without state and without
+        // a body, so the graph is refused rather than admitted to fail
+        // later.
+        if rule == never() {
+            return Err(AdmissionError::MovementForbidden {
+                node: node_index,
+                resource,
+                behaviour,
+            });
+        }
+        // The sealed rule is about the mover, and this is where the mover
+        // is known: every holding it names resolves to a leaf under the
+        // access's own owner, and the read is appended so the leaf is
+        // provisioned wherever the call runs.
+        let resolved = rule.map_leaves(&mut |leaf| match leaf {
+            SealedLeaf::Held(badge) => {
                 let cell = credential_cell(hasher, owner, *badge);
                 declare_read(frame, cell);
-                frame.conditions.push(Rule::Require(JudgedLeaf::Presence {
+                Ok(JudgedLeaf::Presence {
                     target: EffectTarget::Point(cell),
                     expect: Presence::Present,
-                }));
+                })
             }
-            // A movement entry never holds one: publish refuses the
-            // spelling, because a rule is judged against a caller's
-            // evidence and this requirement can land where no caller may
-            // be turned away.
-            Grant::Rule(_) => {
-                return Err(AdmissionError::MovementRuleMalformed {
-                    node: node_index,
-                    resource,
-                    behaviour,
-                });
-            }
-        }
+            // A movement entry's rule reads holdings alone, refused
+            // at the seal otherwise, so nothing else can arrive.
+            SealedLeaf::Claim(_) => Err(AdmissionError::MovementRuleMalformed {
+                node: node_index,
+                resource,
+                behaviour,
+            }),
+        })?;
+        frame.conditions.push(resolved);
     }
     Ok(())
 }

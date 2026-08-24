@@ -15,7 +15,7 @@ use crate::auth::RoleBytes;
 use crate::dsl::{Expr, TargetExpr};
 use crate::hash::{Hash32, Hasher};
 use crate::presented::Presented;
-use crate::rule::{GrantClaim, GrantRuleExpr, StoredRule};
+use crate::rule::{GrantClaim, GrantRuleExpr, SealedLeaf, StoredRule, always, never};
 use crate::types::{
     Value, child_key, collection_id, granting_resource_address, native_address, resource_address,
 };
@@ -220,35 +220,29 @@ impl GrantedBehaviour {
         }
     }
 
-    /// Whether this behaviour admits `entry` as a spelling.
+    /// Why this behaviour does not admit `rule`, or nothing if it does.
     ///
-    /// Each state has exactly one spelling, so a behaviour refuses the
-    /// arm that would be a second way of saying what absence already
-    /// says — `Never` for an authority, which absence withholds anyway,
-    /// and `Open` for a movement, which absence already permits. A
-    /// credential is `Deposit`'s alone.
+    /// Two questions and one answer each, both read off
+    /// [`asks_about_the_actor`](Self::asks_about_the_actor). **An actor
+    /// question's rule reads claims**, because a caller requests a
+    /// capability and the node's evidence answers; **a holder question's
+    /// rule reads holdings**, because the party it is about is the one
+    /// whose cell moves and no evidence can speak for them. And **the
+    /// constant that restates a behaviour's own default is refused**,
+    /// since absence already says it: everyone-may for a movement, which
+    /// absence permits, and no-one-may for an authority, which absence
+    /// withholds.
     #[must_use]
-    pub const fn admits(self, entry: &Grant) -> bool {
-        match entry {
-            // A rule is judged against a caller's evidence, which only an
-            // actor question has, and only an actor question can be
-            // opened to everyone. A movement's requirement can land on a
-            // frame that may not turn a caller away — over-approximating
-            // direction puts it on the credit side, where the method is
-            // total — so what it asks is a fact about the mover, and the
-            // two spellings it has are a credential or nothing at all.
-            Grant::Open | Grant::Rule(_) => self.asks_about_the_actor(),
-            Grant::Never | Grant::Credential(_) => !self.asks_about_the_actor(),
+    pub fn refuses(self, rule: &StoredRule) -> Option<GrantsResolveError> {
+        let actor = self.asks_about_the_actor();
+        let wrong_leaf = rule
+            .leaves()
+            .any(|leaf| matches!(leaf, SealedLeaf::Claim(_)) != actor);
+        if wrong_leaf {
+            return Some(GrantsResolveError::WrongQuestion(self));
         }
-    }
-
-    /// [`Self::admits`] over the declared form, which has the same arms.
-    #[must_use]
-    pub const fn admits_expr(self, entry: &GrantExpr) -> bool {
-        match entry {
-            GrantExpr::Open | GrantExpr::Rule(_) => self.asks_about_the_actor(),
-            GrantExpr::Never | GrantExpr::Credential(_) => !self.asks_about_the_actor(),
-        }
+        let restates = *rule == if actor { never() } else { always() };
+        restates.then_some(GrantsResolveError::RestatesAbsence(self))
     }
 
     /// Whether absence of this resource's rules would let a movement
@@ -267,34 +261,6 @@ impl GrantedBehaviour {
     }
 }
 
-/// What one granted entry says, sealed.
-///
-/// Three answers rather than a rule and two magic rule values, so no
-/// evaluator meets a tree it has to recognise as meaning something other
-/// than what it says. Which answers a behaviour admits is
-/// [`GrantedBehaviour::admits`]'s, and a spelling it does not admit is a
-/// second way of saying what absence already says.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor, HborShape)]
-pub enum Grant {
-    /// Anyone may. Only an authority entry admits it: for a movement,
-    /// this is what an absent entry already means.
-    Open,
-    /// Nobody may, ever. Only a movement entry admits it: for an
-    /// authority, absence already withholds.
-    Never,
-    /// Whoever satisfies these bytes, decoded where the rule is judged
-    /// and against the leaf vocabulary the behaviour selects.
-    Rule(RoleBytes),
-    /// Whoever holds this badge — one presence question, no rule.
-    ///
-    /// `Deposit` alone, and it carries a bare address rather than a
-    /// one-leaf rule because a credit lands on a method that cannot
-    /// refuse: only a condition is enforceable there, and a condition is
-    /// one leaf. Making that structural is what stops a rule needing
-    /// evidence from being written where no evidence can arrive.
-    Credential(ResourceAddr),
-}
-
 /// The granted entries a resource's address commits to, by behaviour.
 ///
 /// The same sorted-list discipline the role table keeps, and the same
@@ -306,7 +272,7 @@ pub enum Grant {
 /// so an entry that changed would be a different resource.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor, HborShape)]
 #[hbor(transparent, validate = ascending_behaviours)]
-pub struct ResourceGrants(Vec<(GrantedBehaviour, Grant)>);
+pub struct ResourceGrants(Vec<(GrantedBehaviour, RoleBytes)>);
 
 /// The list's canonical-order rule: behaviours strictly ascending.
 fn ascending_behaviours(rules: &ResourceGrants) -> Result<(), &'static str> {
@@ -329,7 +295,7 @@ impl ResourceGrants {
     /// entry injects no requirement, which withholds a capability and
     /// permits a movement.
     #[must_use]
-    pub fn get(&self, behaviour: GrantedBehaviour) -> Option<&Grant> {
+    pub fn get(&self, behaviour: GrantedBehaviour) -> Option<&RoleBytes> {
         self.0
             .binary_search_by_key(&behaviour, |(b, _)| *b)
             .ok()
@@ -359,7 +325,7 @@ impl ResourceGrants {
     }
 
     /// Grant `entry` for `behaviour`, replacing what was there.
-    pub fn set(&mut self, behaviour: GrantedBehaviour, entry: Grant) {
+    pub fn set(&mut self, behaviour: GrantedBehaviour, entry: RoleBytes) {
         match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
             Ok(index) => self.0[index].1 = entry,
             Err(index) => self.0.insert(index, (behaviour, entry)),
@@ -383,23 +349,6 @@ impl ResourceGrants {
 
 const DOMAIN_RESOURCE_GRANTS: &[u8] = b"hyperscale-vm/granted-rules";
 
-/// One granted entry as a package writes it down.
-///
-/// [`Grant`]'s arms over declared forms: the rule holds a tree whose
-/// leaves name derivations rather than resolved claims, and the
-/// credential names a badge the same way.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
-pub enum GrantExpr {
-    /// Anyone may.
-    Open,
-    /// Nobody may, ever.
-    Never,
-    /// Whoever satisfies this rule.
-    Rule(GrantRuleExpr),
-    /// Whoever holds the badge this claim names.
-    Credential(GrantClaim),
-}
-
 /// The granted entries a declaration commits, before the instance
 /// issuing them is known.
 ///
@@ -410,7 +359,7 @@ pub enum GrantExpr {
 /// resolving one against an instance is what [`Self::resolve`] does.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 #[hbor(transparent, validate = ascending_declared_behaviours)]
-pub struct GrantsExpr(Vec<(GrantedBehaviour, GrantExpr)>);
+pub struct GrantsExpr(Vec<(GrantedBehaviour, GrantRuleExpr)>);
 
 fn ascending_declared_behaviours(rules: &GrantsExpr) -> Result<(), &'static str> {
     rules
@@ -439,7 +388,7 @@ impl GrantsExpr {
     }
 
     /// Grant `rule` for `behaviour`, replacing what was there.
-    pub fn set(&mut self, behaviour: GrantedBehaviour, rule: GrantExpr) {
+    pub fn set(&mut self, behaviour: GrantedBehaviour, rule: GrantRuleExpr) {
         match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
             Ok(index) => self.0[index].1 = rule,
             Err(index) => self.0.insert(index, (behaviour, rule)),
@@ -447,7 +396,7 @@ impl GrantsExpr {
     }
 
     /// Every behaviour granted here, with the rule declared for it.
-    pub fn iter(&self) -> impl Iterator<Item = (GrantedBehaviour, &GrantExpr)> {
+    pub fn iter(&self) -> impl Iterator<Item = (GrantedBehaviour, &GrantRuleExpr)> {
         self.0.iter().map(|(behaviour, rule)| (*behaviour, rule))
     }
 
@@ -486,32 +435,12 @@ impl GrantsExpr {
     ) -> Result<ResourceGrants, GrantsResolveError> {
         let mut resolved = ResourceGrants::new();
         for (behaviour, entry) in self.iter() {
-            let sealed = match entry {
-                GrantExpr::Open => Grant::Open,
-                GrantExpr::Never => Grant::Never,
-                GrantExpr::Rule(rule) => {
-                    let stored = resolve_rule(hasher, instance, config, rule, link)?;
-                    Grant::Rule(
-                        RoleBytes::try_from(&stored)
-                            .map_err(|_| GrantsResolveError::PastTheCaps)?,
-                    )
-                }
-                GrantExpr::Credential(claim) => {
-                    let presented = resolve_claim(hasher, instance, config, claim, link)?;
-                    // A credential is one leaf under the mover's own
-                    // prefix, and only a fungible holding is one leaf: a
-                    // non-fungible one is entries at ids, whose
-                    // collection-wide presence is an interval nothing on
-                    // the transfer path may walk.
-                    let Presented::Resource(badge) = presented else {
-                        return Err(GrantsResolveError::NotAFungibleBadge);
-                    };
-                    Grant::Credential(badge)
-                }
-            };
-            if !behaviour.admits(&sealed) {
-                return Err(GrantsResolveError::UnadmittedSpelling(behaviour));
+            let stored = resolve_rule(hasher, instance, config, entry, behaviour, link)?;
+            if let Some(refusal) = behaviour.refuses(&stored) {
+                return Err(refusal);
             }
+            let sealed =
+                RoleBytes::try_from(&stored).map_err(|_| GrantsResolveError::PastTheCaps)?;
             resolved.set(behaviour, sealed);
         }
         Ok(resolved)
@@ -539,28 +468,51 @@ pub enum GrantsResolveError {
     /// is one link long.
     #[error("a granted rule names a badge whose own rules name a badge")]
     BadgeChainTooDeep,
-    /// A spelling the behaviour does not admit — a second way of saying
-    /// what an absent entry already says.
-    #[error("{0:?} does not admit the spelling its grant was written with")]
-    UnadmittedSpelling(GrantedBehaviour),
+    /// A rule reading the wrong side: claims where the behaviour asks
+    /// about the holder, or holdings where it asks about the actor.
+    #[error("{0:?} asks about the other party than the rule written for it reads")]
+    WrongQuestion(GrantedBehaviour),
+    /// A constant restating what an absent entry already says.
+    #[error("{0:?} is granted what its absence already says")]
+    RestatesAbsence(GrantedBehaviour),
 }
 
+/// Resolve a declared rule into the sealed one an address folds.
+///
+/// Which sealed leaf a declared one becomes is the behaviour's, not the
+/// leaf's: an actor question asks what a caller presented and seals a
+/// claim, a holder question asks what the moving party holds and seals a
+/// badge. So a package writes one derivation and never a second spelling
+/// for the second question.
 fn resolve_rule(
     hasher: &dyn Hasher,
     instance: Address,
     config: &[Value],
     rule: &GrantRuleExpr,
+    behaviour: GrantedBehaviour,
     link: usize,
 ) -> Result<StoredRule, GrantsResolveError> {
     Ok(match rule {
         GrantRuleExpr::Require(claim) => {
-            StoredRule::Require(resolve_claim(hasher, instance, config, claim, link)?)
+            let presented = resolve_claim(hasher, instance, config, claim, link)?;
+            StoredRule::Require(if behaviour.asks_about_the_actor() {
+                SealedLeaf::Claim(presented)
+            } else {
+                // A holding is one point cell keyed by what it holds, and
+                // only a fungible holding is one cell: a non-fungible one
+                // is entries at ids, whose collection-wide presence is an
+                // interval nothing on the transfer path may walk.
+                let Presented::Resource(badge) = presented else {
+                    return Err(GrantsResolveError::NotAFungibleBadge);
+                };
+                SealedLeaf::Held(badge)
+            })
         }
         GrantRuleExpr::CountOf { count, rules } => StoredRule::CountOf {
             count: *count,
             rules: rules
                 .iter()
-                .map(|rule| resolve_rule(hasher, instance, config, rule, link))
+                .map(|rule| resolve_rule(hasher, instance, config, rule, behaviour, link))
                 .collect::<Result<_, _>>()?,
         },
     })
@@ -792,10 +744,9 @@ mod tests {
     use hyperscale_vm_types::{Address, AddressClass, ResourceAddr};
 
     use super::{
-        Grant, GrantedBehaviour, ResourceKind, ResourceRecord, holdings_collection,
-        instance_data_key, resource_record_key,
+        GrantedBehaviour, ResourceKind, ResourceRecord, always, holdings_collection,
+        instance_data_key, never, resource_record_key,
     };
-    use crate::auth::RoleBytes;
     use crate::hash::TestHasher;
     use crate::presented::Presented;
     use crate::rule::StoredRule;
@@ -889,45 +840,42 @@ mod tests {
         );
     }
 
-    /// Each state has exactly one spelling, and which spellings a
-    /// behaviour admits follows from whose property its rule is about.
+    /// Which side a behaviour's rule reads follows from whose property it
+    /// is about, and the constant restating its own default is refused.
     ///
-    /// An actor question is asked of a caller, so it can hold a rule and
-    /// can be opened to everyone. A movement's requirement can land on a
-    /// frame that may not turn a caller away — over-approximating
-    /// direction puts it on the credit side, and the method that lands
-    /// there is total — so it asks a fact about the mover instead, and a
-    /// rule is not a spelling it has.
+    /// An actor question is asked of a caller, so it reads what the call
+    /// presented and may be opened to everyone. A holder question's
+    /// requirement can land on a frame that may not turn a caller away —
+    /// over-approximating direction puts it on the credit side, where the
+    /// method is total — so it reads a fact about the mover instead, and
+    /// closing it to no one is the statement it has that absence does not.
     #[test]
-    fn a_behaviour_admits_one_spelling_per_state() {
+    fn a_behaviour_reads_the_side_its_question_is_about() {
         let badge = ResourceAddr::new([0x77; 31]);
-        let rule = RoleBytes::try_from(&StoredRule::Require(Presented::Resource(badge)))
-            .expect("a rule encodes");
+        let claims = StoredRule::claim(Presented::Resource(badge));
+        let holds = StoredRule::held(badge);
+
         for behaviour in GrantedBehaviour::ALL {
             let actor = behaviour.asks_about_the_actor();
-            assert_eq!(behaviour.admits(&Grant::Open), actor, "{behaviour:?} open");
             assert_eq!(
-                behaviour.admits(&Grant::Never),
-                !actor,
-                "{behaviour:?} never"
-            );
-            assert_eq!(
-                behaviour.admits(&Grant::Rule(rule.clone())),
+                behaviour.refuses(&claims).is_none(),
                 actor,
-                "{behaviour:?} rule"
+                "{behaviour:?} over a claim",
             );
             assert_eq!(
-                behaviour.admits(&Grant::Credential(badge)),
+                behaviour.refuses(&holds).is_none(),
                 !actor,
-                "{behaviour:?} credential"
+                "{behaviour:?} over a holding",
             );
+            // The constant absence already says is refused; the other one
+            // is the statement absence cannot make.
+            let (restated, statable) = if actor {
+                (never(), always())
+            } else {
+                (always(), never())
+            };
+            assert!(behaviour.refuses(&restated).is_some());
+            assert!(behaviour.refuses(&statable).is_none());
         }
-
-        // Which is to say: the two movements take a credential or nothing
-        // at all, and every authority takes a rule or everyone.
-        assert!(!GrantedBehaviour::Withdraw.admits(&Grant::Rule(rule.clone())));
-        assert!(!GrantedBehaviour::Deposit.admits(&Grant::Rule(rule)));
-        assert!(GrantedBehaviour::Withdraw.admits(&Grant::Credential(badge)));
-        assert!(GrantedBehaviour::Mint.admits(&Grant::Open));
     }
 }

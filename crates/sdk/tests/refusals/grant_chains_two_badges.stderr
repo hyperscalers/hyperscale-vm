@@ -1,5 +1,5 @@
 error: `Registered` names a badge in its own granted rules, and a badge chain is one link long — the address a leaf derives folds the rules of the badge it names, so a second link would make one address a function of how deeply its author nested
-  --> tests/refusals/grant_chains_two_badges.rs:15:39
+  --> tests/refusals/grant_chains_two_badges.rs:15:34
    |
-15 |     #[resource(grants(withdraw = held(issued(Registered))))]
-   |                                       ^^^^^^
+15 |     #[resource(grants(withdraw = issued(Registered)))]
+   |                                  ^^^^^^

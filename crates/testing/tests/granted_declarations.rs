@@ -9,8 +9,8 @@
 //! the grant that mints it all read one registration.
 
 use hyperscale_vm_effects::{
-    Grant, GrantedBehaviour, Presented, ResourceGrants, ResourceKind, RoleBytes, StoredRule,
-    TestHasher, granting_issued_resource, issued_resource,
+    GrantedBehaviour, Presented, ResourceGrants, ResourceKind, RoleBytes, StoredRule, TestHasher,
+    granting_issued_resource, issued_resource,
 };
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::{Address, Chain, PrincipalAddr, account, package, principal};
@@ -58,10 +58,8 @@ fn declared_rules(instance: impl Into<Address>) -> ResourceGrants {
     let mut rules = ResourceGrants::new();
     rules.set(
         GrantedBehaviour::Recall,
-        Grant::Rule(
-            RoleBytes::try_from(&StoredRule::Require(Presented::Instance(badge, 0)))
-                .expect("a rule within the caps encodes"),
-        ),
+        RoleBytes::try_from(&StoredRule::claim(Presented::Instance(badge, 0)))
+            .expect("a rule within the caps encodes"),
     );
     rules
 }

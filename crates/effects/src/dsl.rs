@@ -23,10 +23,9 @@ use crate::instance::InstanceMeta;
 use crate::manifest::{JudgedLeaf, ManifestHash};
 use crate::presented::Presented;
 use crate::resource::{
-    Grant, GrantedBehaviour, GrantsExpr, GrantsResolveError, ResourceGrants, ResourceKind,
-    ResourceMeta,
+    GrantedBehaviour, GrantsExpr, GrantsResolveError, ResourceGrants, ResourceKind, ResourceMeta,
 };
-use crate::rule::{Rule, RuleExpr, RuleLeaf, always};
+use crate::rule::{Rule, RuleExpr, RuleLeaf, SealedLeaf, never};
 use crate::types::{
     EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_ITEMS, SlotId, Value, child_key, collection_id,
     granting_resource_address, order_key,
@@ -1561,32 +1560,28 @@ fn eval_condition(
                         .grants
                         .rules(address)
                         .ok_or(EvalError::GrantsUnpresented(address))?;
-                    Ok(
-                        match rules
-                            .get(*behaviour)
-                            .ok_or(EvalError::GrantsNobody(*behaviour))?
-                        {
-                            Grant::Never => return Err(EvalError::GrantsNobody(*behaviour)),
-                            Grant::Rule(bytes) => bytes
-                                .decode()
-                                .map_err(|_| EvalError::GrantRuleMalformed)?
-                                .map_leaves(&mut |claim| {
-                                    Ok::<_, EvalError>(JudgedLeaf::Claim(*claim))
-                                })?,
-                            // An open grant grafts to the top element and
-                            // the tree it lands in collapses on its own,
-                            // so a granted leaf needs no special case and
-                            // no longer has to be the whole rule.
-                            Grant::Open => always(),
-                            // A credential is a presence question about
-                            // the mover, resolved against the access's
-                            // owner where the movement is declared and
-                            // never against a caller's evidence here.
-                            Grant::Credential(_) => {
-                                return Err(EvalError::GrantRuleMalformed);
-                            }
-                        },
-                    )
+                    let sealed = rules
+                        .get(*behaviour)
+                        .ok_or(EvalError::GrantsNobody(*behaviour))?
+                        .decode()
+                        .map_err(|_| EvalError::GrantRuleMalformed)?;
+                    // Nobody may is a refusal rather than a rule nothing
+                    // meets, so a caller reads why. Everyone may grafts to
+                    // the top element and the tree it lands in collapses
+                    // on its own, which is what lets a granted leaf sit
+                    // anywhere a leaf may.
+                    if sealed == never() {
+                        return Err(EvalError::GrantsNobody(*behaviour));
+                    }
+                    Ok(sealed.map_leaves(&mut |leaf| match leaf {
+                        SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
+                        // A holding is about the mover, resolved against
+                        // the access's owner where the movement is
+                        // declared, never against a caller's evidence
+                        // here — and an actor question's rule reads no
+                        // holding, refused at the seal.
+                        SealedLeaf::Held(_) => Err(EvalError::GrantRuleMalformed),
+                    })?)
                 }
             })?;
             // A graft can deepen what a map never could, so the spliced

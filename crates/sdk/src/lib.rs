@@ -158,10 +158,28 @@ pub use blueprint::{Blueprint, Builder, Method};
 // Re-exported so `#[blueprint]` output names one crate, and so a contract
 // never has to depend on `vm-effects` directly.
 pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
+use hyperscale_vm_effects::{always, never};
+
+/// The granted entry anyone satisfies: the threshold over nothing.
+///
+/// Beside [`grant_nobody`] rather than an arm of its own, because the
+/// algebra already carries a top and a bottom and a second spelling would
+/// be a value an evaluator has to recognise as meaning something else.
+#[must_use]
+pub const fn grant_anyone() -> GrantRuleExpr {
+    always()
+}
+
+/// The granted entry nobody satisfies: one of nothing.
+#[must_use]
+pub const fn grant_nobody() -> GrantRuleExpr {
+    never()
+}
+
 pub use hyperscale_vm_effects::{
-    AuthBase, AuthCell, CONFIRMATION, GrantClaim, GrantExpr, GrantRuleExpr, GrantedBehaviour,
-    GrantsExpr, LeafForm, PRIMARY, ParamType, Proposal, RECOVERY, ResourceKind, RoleId, SlotId,
-    SlotKind, encode_metadata, package_role,
+    AuthBase, AuthCell, CONFIRMATION, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr,
+    LeafForm, PRIMARY, ParamType, Proposal, RECOVERY, ResourceKind, RoleId, SlotId, SlotKind,
+    encode_metadata, package_role,
 };
 /// Author a package from one module.
 ///

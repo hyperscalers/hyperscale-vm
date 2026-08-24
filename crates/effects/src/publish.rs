@@ -17,8 +17,10 @@ use crate::dsl::{
 };
 use crate::instance::MAX_CONFIG_FIELDS;
 use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
-use crate::resource::{GrantExpr, GrantsExpr, holdings_entry};
-use crate::rule::{GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule, RuleExpr, RuleLeaf};
+use crate::resource::{GrantsExpr, holdings_entry};
+use crate::rule::{
+    GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule, RuleExpr, RuleLeaf, always, never,
+};
 use crate::signature::{AbiParam, MethodSignature};
 use crate::types::{
     MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId, Value, value_within_width,
@@ -1897,25 +1899,25 @@ fn check_expr_bounds(expr: &Expr, depth: usize) -> Result<(), SignatureBoundsErr
 /// rules nothing could decode, and refusing at publish is the verdict a
 /// package author can read.
 fn check_grants_bounds(grants: &GrantsExpr) -> Result<(), SignatureBoundsError> {
-    grants.iter().try_for_each(|(behaviour, entry)| {
-        // The spelling first: an arm the behaviour does not admit is a
-        // second way of saying what an absent entry already says, and
-        // saying it at publish is what keeps the sealed table to one
-        // spelling per state.
-        if !behaviour.admits_expr(entry) {
+    grants.iter().try_for_each(|(behaviour, rule)| {
+        // The constant a behaviour's own absence already says is a second
+        // spelling of nothing, and saying so at publish is what keeps the
+        // sealed table to one spelling per state. Which side a rule's
+        // leaves read is the resolver's, because the sealed leaf a
+        // declared one becomes is chosen there.
+        if *rule
+            == if behaviour.asks_about_the_actor() {
+                never()
+            } else {
+                always()
+            }
+        {
             return Err(SignatureBoundsError::UnadmittedGrant);
         }
-        match entry {
-            // Neither states a rule, so neither has a depth.
-            GrantExpr::Open | GrantExpr::Never => Ok(()),
-            GrantExpr::Credential(claim) => check_grant_leaf(claim),
-            GrantExpr::Rule(rule) => {
-                if !rule.within_caps(0) {
-                    return Err(SignatureBoundsError::RuleCaps);
-                }
-                rule.leaves().try_for_each(check_grant_leaf)
-            }
+        if !rule.within_caps(0) {
+            return Err(SignatureBoundsError::RuleCaps);
         }
+        rule.leaves().try_for_each(check_grant_leaf)
     })
 }
 
@@ -1931,20 +1933,16 @@ fn check_grant_leaf(claim: &GrantClaim) -> Result<(), SignatureBoundsError> {
         GrantClaim::SelfAddr | GrantClaim::Config(_) => return Ok(()),
         GrantClaim::SelfBadge { rules, .. } | GrantClaim::SelfInstance { rules, .. } => rules,
     };
-    rules.iter().try_for_each(|(_, entry)| match entry {
-        GrantExpr::Open | GrantExpr::Never => Ok(()),
-        GrantExpr::Credential(_) => Err(SignatureBoundsError::BadgeChainTooDeep),
-        GrantExpr::Rule(rule) => {
-            if !rule.within_caps(0) {
-                return Err(SignatureBoundsError::RuleCaps);
-            }
-            rule.leaves().try_for_each(|leaf| match leaf {
-                GrantClaim::SelfAddr | GrantClaim::Config(_) => Ok(()),
-                GrantClaim::SelfBadge { .. } | GrantClaim::SelfInstance { .. } => {
-                    Err(SignatureBoundsError::BadgeChainTooDeep)
-                }
-            })
+    rules.iter().try_for_each(|(_, rule)| {
+        if !rule.within_caps(0) {
+            return Err(SignatureBoundsError::RuleCaps);
         }
+        rule.leaves().try_for_each(|leaf| match leaf {
+            GrantClaim::SelfAddr | GrantClaim::Config(_) => Ok(()),
+            GrantClaim::SelfBadge { .. } | GrantClaim::SelfInstance { .. } => {
+                Err(SignatureBoundsError::BadgeChainTooDeep)
+            }
+        })
     })
 }
 

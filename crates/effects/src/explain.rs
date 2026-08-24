@@ -39,8 +39,8 @@ use crate::auth::{CONFIRMATION, PACKAGE_ROLE_BASE, PRIMARY, RECOVERY, RoleId};
 use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
 use crate::envelope::NULLIFIER_SLOT;
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
-use crate::resource::{GrantExpr, GrantedBehaviour, GrantsExpr, ResourceKind};
-use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleExpr, RuleLeaf};
+use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
+use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleExpr, RuleLeaf, always, never};
 use crate::signature::{AbiParam, Issuance, MethodSignature, Totality};
 use crate::types::{EdgeContent, SlotId, Value, u256_decimal};
 use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
@@ -569,7 +569,11 @@ fn grants_of(grants: &GrantsExpr) -> String {
     let granted: Vec<String> = grants
         .iter()
         .map(|(behaviour, entry)| {
-            format!("{} to {}", behaviour_name(behaviour), grant_entry(entry))
+            format!(
+                "{} to {}",
+                behaviour_name(behaviour),
+                grant_entry(behaviour, entry)
+            )
         })
         .collect();
     format!(", granting {}", granted.join(" and "))
@@ -629,12 +633,22 @@ fn leaf_form(form: &LeafForm) -> String {
 /// A granted rule, whose leaves name what the resource's own derivation
 /// commits to and nothing a caller supplies.
 /// What one granted entry admits, as a reader of the resource sees it.
-fn grant_entry(entry: &GrantExpr) -> String {
-    match entry {
-        GrantExpr::Open => "anyone".to_string(),
-        GrantExpr::Never => "nobody".to_string(),
-        GrantExpr::Rule(rule) => grant_rule(rule),
-        GrantExpr::Credential(claim) => format!("whoever holds {}", grant_claim(claim)),
+///
+/// Which side a leaf asks about is the behaviour's, so the reading is
+/// too: a holder question is answered by what the moving party holds, an
+/// actor question by what a caller presents.
+fn grant_entry(behaviour: GrantedBehaviour, rule: &GrantRuleExpr) -> String {
+    if *rule == always() {
+        return "anyone".to_owned();
+    }
+    if *rule == never() {
+        return "nobody".to_owned();
+    }
+    let rendered = grant_rule(rule);
+    if behaviour.asks_about_the_actor() {
+        rendered
+    } else {
+        format!("whoever holds {rendered}")
     }
 }
 
@@ -783,8 +797,8 @@ mod tests {
     use crate::auth::{PRIMARY, RoleId, package_role};
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, self_child};
     use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape};
-    use crate::resource::{GrantExpr, GrantedBehaviour, GrantsExpr, ResourceKind};
-    use crate::rule::{GrantClaim, Rule, RuleLeaf};
+    use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
+    use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleLeaf};
     use crate::signature::{MethodSignature, ParamType, Totality};
     use crate::types::{SlotId, Value, package_slot};
     use crate::vocabulary::VAULT;
@@ -1035,7 +1049,7 @@ mod tests {
         let mut grants = GrantsExpr::new();
         grants.set(
             GrantedBehaviour::Deposit,
-            GrantExpr::Credential(GrantClaim::SelfBadge {
+            GrantRuleExpr::Require(GrantClaim::SelfBadge {
                 mark: b"owner-badge".to_vec(),
                 rules: GrantsExpr::new(),
             }),

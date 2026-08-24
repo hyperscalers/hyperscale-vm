@@ -12,7 +12,7 @@ mod contract {
 
     // Not: naming this would make the token's address fold a chain two
     // links long.
-    #[resource(grants(withdraw = held(issued(Registered))))]
+    #[resource(grants(withdraw = issued(Registered)))]
     struct Token;
 
     #[state]

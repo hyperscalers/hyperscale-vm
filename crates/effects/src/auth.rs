@@ -386,7 +386,7 @@ mod tests {
     use crate::rule::{MAX_RULE_DEPTH, StoredRule};
 
     fn table(byte: u8) -> RoleTable {
-        RoleTable::uniform(&StoredRule::Require(identity(byte))).unwrap()
+        RoleTable::uniform(&StoredRule::claim(identity(byte))).unwrap()
     }
 
     fn base(byte: u8, delay: u64) -> AuthBase {
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn a_role_selects_its_rule_and_an_absent_entry_holds_none() {
-        let rule = |byte| RoleBytes::try_from(&StoredRule::Require(identity(byte))).unwrap();
+        let rule = |byte| RoleBytes::try_from(&StoredRule::claim(identity(byte))).unwrap();
         let roles = RoleTable::from_iter([
             (PRIMARY, rule(1)),
             (RECOVERY, rule(2)),
@@ -562,9 +562,10 @@ mod tests {
         // A cell truncated inside its own table.
         let whole = AuthCell::new(base(1, 0)).to_bytes().unwrap();
         assert!(AuthCell::from_slice(&whole[..whole.len() - 1]).is_err());
-        // Bare rule bytes are not a cell.
-        let rule = StoredRule::Require(identity(1)).to_bytes().unwrap();
-        assert!(AuthCell::from_slice(&rule).is_err());
+        // A cell's own bytes are not a rule: the two are different
+        // shapes in different places, and nothing decodes a byte string
+        // as whichever it happens to parse as.
+        assert!(StoredRule::from_slice(&whole).is_err());
     }
 
     /// A stored rule is judged at the rule vocabulary's own cap wherever
@@ -644,7 +645,7 @@ mod tests {
         // Stored, with a proposal pending: each role selects its own
         // rule, the target's own identity is no longer one of them, and
         // the verdict flips at the instant with nothing applying it.
-        let rule = |byte| RoleBytes::try_from(&StoredRule::Require(identity(byte))).unwrap();
+        let rule = |byte| RoleBytes::try_from(&StoredRule::claim(identity(byte))).unwrap();
         let cell = AuthCell {
             base: AuthBase {
                 recovery_delay_ms: 1_000,

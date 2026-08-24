@@ -69,7 +69,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
 
     // Alice's last act under the virtual rule: signing in for its
     // retirement. Everything she stores from here is governed by Bob.
-    let securify = securify_graph(&StoredRule::Require(Presented::Identity(BOB.into())));
+    let securify = securify_graph(&StoredRule::claim(Presented::Identity(BOB.into())));
     let (results, store) = run_both(&world, &store, &[(&securify, TxHash(Hash32([0x51; 32])))]);
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("securify must complete; got {:?}", results[0]);
@@ -114,7 +114,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     // than the guest's: `securify` declares a write requiring the cell
     // to be absent, so the shard holding it judges the door against
     // committed state and the body never runs.
-    let again = securify_graph(&StoredRule::Require(Presented::Identity(BOB.into())));
+    let again = securify_graph(&StoredRule::claim(Presented::Identity(BOB.into())));
     let (results, _) = run_both_signed(
         &world,
         &store,
@@ -242,7 +242,7 @@ fn a_proof_opens_only_the_account_that_minted_it() {
 /// separates a proposal from its maturity.
 fn split_roles() -> RoleTable {
     let rule = |who: PrincipalAddr| {
-        RoleBytes::try_from(&StoredRule::Require(Presented::Identity(who.into())))
+        RoleBytes::try_from(&StoredRule::claim(Presented::Identity(who.into())))
             .expect("a rule within the vocabulary caps")
     };
     RoleTable::from_iter([
@@ -741,7 +741,7 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     assert!(matches!(&results[0], TxResult::Completed(_)));
     assert_acts(&world, &store, ALICE, far, false, 0xB5);
 
-    let securify = securify_graph(&StoredRule::Require(Presented::Identity(ALICE.into())));
+    let securify = securify_graph(&StoredRule::claim(Presented::Identity(ALICE.into())));
     let (results, store) = run_both_at(
         &world,
         &store,
@@ -838,7 +838,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         account::propose(
             b,
             ALICE,
-            RoleTable::uniform(&StoredRule::Require(Presented::Identity(MAKER.into())))
+            RoleTable::uniform(&StoredRule::claim(Presented::Identity(MAKER.into())))
                 .expect("a rule within the vocabulary caps"),
             DAY_MS,
         )
@@ -876,7 +876,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         account::propose(
             b,
             ALICE,
-            RoleTable::uniform(&StoredRule::Require(Presented::Identity(BOB.into())))
+            RoleTable::uniform(&StoredRule::claim(Presented::Identity(BOB.into())))
                 .expect("a rule within the vocabulary caps"),
             DAY_MS,
         )

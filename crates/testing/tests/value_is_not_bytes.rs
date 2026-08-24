@@ -387,7 +387,7 @@ fn impostor_body(
             // as bytes like any record.
             let cell = AuthCell::new(AuthBase::new(
                 0,
-                RoleTable::uniform(&StoredRule::Require(Presented::Identity(ATTACKER.into())))
+                RoleTable::uniform(&StoredRule::claim(Presented::Identity(ATTACKER.into())))
                     .expect("a rule within the caps"),
             ));
             if let Err(trap) = session.write_cell_set(*auth, cell.to_bytes().expect("encodes")) {

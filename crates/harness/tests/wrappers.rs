@@ -154,13 +154,13 @@ fn the_account_wrappers_match_their_signatures() {
         account::securify_uniform(
             b,
             carol,
-            &StoredRule::Require(Presented::Identity(BOB.into())),
+            &StoredRule::claim(Presented::Identity(BOB.into())),
             86_400_000,
         )?;
         account::propose(
             b,
             ALICE,
-            RoleTable::uniform(&StoredRule::Require(Presented::Identity(BOB.into())))
+            RoleTable::uniform(&StoredRule::claim(Presented::Identity(BOB.into())))
                 .expect("a rule within the vocabulary caps"),
             86_400_000,
         )?;
@@ -183,7 +183,7 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
         alice,
         &StoredRule::CountOf {
             count: 2,
-            rules: vec![StoredRule::Require(Presented::Identity(ALICE.into()))],
+            rules: vec![StoredRule::claim(Presented::Identity(ALICE.into()))],
         },
         86_400_000,
     );

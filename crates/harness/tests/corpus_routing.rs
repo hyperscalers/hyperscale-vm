@@ -30,6 +30,13 @@ use common::world::*;
 /// moves every key derived from a literal. After a network runs, no such
 /// answer exists.
 ///
+/// The propose vector's role bytes moved once, and the protocol answer is
+/// that a sealed rule's leaf now says which side it asks about: a claim
+/// somebody presents, or a badge the rule's own subject holds. That is
+/// what lets one rule vocabulary serve both an authority and a movement,
+/// and it is a change to the stored form rather than to any address the
+/// other three vectors carry — which is why they did not move.
+///
 /// The swap and fill pins carry the instantiation fence: admission reads
 /// the configuration leaf of every component a node targets, so the
 /// owning shard is a participant and provisions the leaf. Transfer and
@@ -67,7 +74,7 @@ const PIN_SWAP: &str = "01bb88301ca91d76ee1d9ec4c275dd674db12f7eebf83bcaae7c3a45
 
 const PIN_FILL: &str = "5a3d6d936fa0573e46defe9045bc004ce81fd7b260f15e4f5e1e951e3d947825";
 
-const PIN_PROPOSE: &str = "15155b4205c3c1c16e7f5f940ff8df7ee6c69afcddb99a1ce5dca4dffc805a79";
+const PIN_PROPOSE: &str = "dadf9aa2f6dbd309831cfefb3d43975fa9134b8ce568cf62318da1a37b685240";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

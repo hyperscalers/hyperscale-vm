@@ -21,7 +21,7 @@
 //! someone it admits and someone it refuses.
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
-use hyperscale_vm_types::Presence;
+use hyperscale_vm_types::{Presence, ResourceAddr};
 
 use crate::auth::RoleId;
 use crate::dsl::{Expr, TargetExpr};
@@ -112,8 +112,42 @@ pub enum Rule<L> {
     },
 }
 
-/// A rule as it is stored and judged, its leaves the claims themselves.
-pub type StoredRule = Rule<Presented>;
+/// A rule as it is sealed and judged, its leaves resolved.
+///
+/// Two sources and no more, because a sealed rule has no call to read and
+/// no expression left to evaluate: a claim somebody presents, and a badge
+/// the rule's own subject holds. Who that subject is, is the rule's
+/// position — the cell's owner for a rule stored in one, the access's
+/// owner for a movement entry — which is what lets one sealed rule govern
+/// a holder nobody had named when it was written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+pub enum SealedLeaf {
+    /// A claim the presented set must contain.
+    Claim(Presented),
+    /// The subject holds this badge: the vault leaf keyed by it is there.
+    ///
+    /// A fungible holding is one point cell keyed by what it holds, and a
+    /// balance reaching zero deletes its leaf — so presence and a nonzero
+    /// holding are the same fact, asked once.
+    Held(ResourceAddr),
+}
+
+/// A rule as it is stored and judged, its leaves resolved.
+pub type StoredRule = Rule<SealedLeaf>;
+
+impl Rule<SealedLeaf> {
+    /// The one-leaf rule a presented claim satisfies.
+    #[must_use]
+    pub const fn claim(presented: Presented) -> Self {
+        Self::Require(SealedLeaf::Claim(presented))
+    }
+
+    /// The one-leaf rule the subject's own holding satisfies.
+    #[must_use]
+    pub const fn held(badge: ResourceAddr) -> Self {
+        Self::Require(SealedLeaf::Held(badge))
+    }
+}
 
 /// A declared rule's leaf: a claim the declaration names, or the rule
 /// stored at a cell under a role.
@@ -477,7 +511,13 @@ impl StoredRule {
     #[must_use]
     pub fn satisfied_by(&self, presented: &[Presented]) -> bool {
         match self {
-            Self::Require(claim) => presented.contains(claim),
+            // A holding is not a claim, so a claims-only judge cannot
+            // meet one. Nothing routes such a rule here: an actor
+            // question's rule holds claims alone, refused otherwise where
+            // the rule is sealed, and a holder question's holdings are
+            // resolved to presence leaves before anything is judged.
+            Self::Require(SealedLeaf::Held(_)) => false,
+            Self::Require(SealedLeaf::Claim(claim)) => presented.contains(claim),
             Self::CountOf { count, rules } => {
                 let met = rules
                     .iter()
@@ -551,7 +591,7 @@ pub(crate) mod testing {
     use hyperscale_hbor::Hbor;
     use hyperscale_vm_types::{Address, AddressClass, CallTarget};
 
-    use super::StoredRule;
+    use super::{SealedLeaf, StoredRule};
     use crate::presented::Presented;
 
     /// The same wire form as [`StoredRule`], with no caps.
@@ -561,7 +601,7 @@ pub(crate) mod testing {
     /// the decoder inside metadata, under metadata's cap.
     #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
     pub enum WideRule {
-        Require(Presented),
+        Require(SealedLeaf),
         CountOf { count: u8, rules: Vec<Self> },
     }
 
@@ -583,7 +623,7 @@ pub(crate) mod testing {
 
     /// `levels` thresholds over one identity: nests `levels + 1` deep.
     pub fn chain(levels: usize) -> StoredRule {
-        let mut rule = StoredRule::Require(identity(1));
+        let mut rule = StoredRule::claim(identity(1));
         for _ in 0..levels {
             rule = StoredRule::CountOf {
                 count: 1,
@@ -595,7 +635,7 @@ pub(crate) mod testing {
 
     /// The same chain through the uncapped twin.
     pub fn wide_chain(levels: usize) -> WideRule {
-        let mut rule = WideRule::Require(identity(1));
+        let mut rule = WideRule::Require(SealedLeaf::Claim(identity(1)));
         for _ in 0..levels {
             rule = WideRule::CountOf {
                 count: 1,
@@ -612,7 +652,8 @@ mod tests {
 
     use super::testing::{WideRule, chain, identity, wide_chain};
     use super::{
-        MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, Rule, StoredRule, always, never,
+        MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, Rule, SealedLeaf, StoredRule, always,
+        never,
     };
     use crate::types::MAX_VALUE_BYTES;
 
@@ -622,7 +663,7 @@ mod tests {
     fn widest(leaves: usize) -> StoredRule {
         fn build(leaves: usize, depth: usize) -> StoredRule {
             if leaves <= 1 || depth <= 1 {
-                return StoredRule::Require(identity(1));
+                return StoredRule::claim(identity(1));
             }
             // The fewest branches that still reach `leaves` within the
             // depth left, so the tree above them is as tall as it can be.
@@ -676,9 +717,9 @@ mod tests {
         let two_of_three = StoredRule::CountOf {
             count: 2,
             rules: vec![
-                StoredRule::Require(identity(1)),
-                StoredRule::Require(identity(2)),
-                StoredRule::Require(identity(3)),
+                StoredRule::claim(identity(1)),
+                StoredRule::claim(identity(2)),
+                StoredRule::claim(identity(3)),
             ],
         };
         assert!(two_of_three.satisfied_by(&[identity(1), identity(3)]));
@@ -692,12 +733,12 @@ mod tests {
         let key_or_guardians = StoredRule::CountOf {
             count: 1,
             rules: vec![
-                StoredRule::Require(identity(1)),
+                StoredRule::claim(identity(1)),
                 StoredRule::CountOf {
                     count: 2,
                     rules: vec![
-                        StoredRule::Require(identity(2)),
-                        StoredRule::Require(identity(3)),
+                        StoredRule::claim(identity(2)),
+                        StoredRule::claim(identity(3)),
                     ],
                 },
             ],
@@ -719,7 +760,7 @@ mod tests {
         // Requiring more than the branches offer is satisfied by no one.
         let unsatisfiable = StoredRule::CountOf {
             count: 2,
-            rules: vec![StoredRule::Require(identity(1))],
+            rules: vec![StoredRule::claim(identity(1))],
         };
         assert!(!unsatisfiable.satisfied_by(&[identity(1), identity(2)]));
 
@@ -727,8 +768,8 @@ mod tests {
         let doubled = StoredRule::CountOf {
             count: 2,
             rules: vec![
-                StoredRule::Require(identity(1)),
-                StoredRule::Require(identity(1)),
+                StoredRule::claim(identity(1)),
+                StoredRule::claim(identity(1)),
             ],
         };
         assert!(doubled.satisfied_by(&[identity(1)]));
@@ -750,14 +791,14 @@ mod tests {
         refused(
             StoredRule::CountOf {
                 count: 0,
-                rules: vec![StoredRule::Require(identity(1))],
+                rules: vec![StoredRule::claim(identity(1))],
             },
             "a threshold over branches requiring none of them is the empty threshold",
         );
         refused(
             StoredRule::CountOf {
                 count: 2,
-                rules: vec![StoredRule::Require(identity(1))],
+                rules: vec![StoredRule::claim(identity(1))],
             },
             "a threshold requiring more branches than it has would admit no one",
         );
@@ -777,7 +818,7 @@ mod tests {
         refused(
             StoredRule::CountOf {
                 count: 1,
-                rules: vec![StoredRule::Require(identity(1)), always()],
+                rules: vec![StoredRule::claim(identity(1)), always()],
             },
             "a threshold branching on everyone or on no one can be written shorter",
         );
@@ -788,8 +829,8 @@ mod tests {
             let rule = StoredRule::CountOf {
                 count,
                 rules: vec![
-                    StoredRule::Require(identity(1)),
-                    StoredRule::Require(identity(2)),
+                    StoredRule::claim(identity(1)),
+                    StoredRule::claim(identity(2)),
                 ],
             };
             let bytes = rule.to_bytes().unwrap();
@@ -826,15 +867,15 @@ mod tests {
         let rule = StoredRule::CountOf {
             count: 2,
             rules: vec![
-                StoredRule::Require(identity(1)),
+                StoredRule::claim(identity(1)),
                 StoredRule::CountOf {
                     count: 1,
                     rules: vec![
-                        StoredRule::Require(identity(2)),
-                        StoredRule::Require(identity(3)),
+                        StoredRule::claim(identity(2)),
+                        StoredRule::claim(identity(3)),
                     ],
                 },
-                StoredRule::Require(identity(4)),
+                StoredRule::claim(identity(4)),
             ],
         };
         assert_canonical(&rule);
@@ -866,7 +907,7 @@ mod tests {
         let branches = |count: usize| WideRule::CountOf {
             count: 1,
             rules: (0..count)
-                .map(|i| WideRule::Require(identity(u8::try_from(i).unwrap())))
+                .map(|i| WideRule::Require(SealedLeaf::Claim(identity(u8::try_from(i).unwrap()))))
                 .collect(),
         };
 

@@ -629,8 +629,8 @@ mod tests {
     use crate::hash::{Hash32, TestHasher};
     use crate::metadata::PackageHash;
     use crate::presented::Presented;
-    use crate::resource::{Grant, GrantedBehaviour, ResourceGrants, ResourceKind};
-    use crate::rule::StoredRule;
+    use crate::resource::{GrantedBehaviour, ResourceGrants, ResourceKind};
+    use crate::rule::{StoredRule, always, never};
     use crate::vectors::{
         CONFIG_LEAF, PACKAGE, SALT, address_vector_lines, address_vectors, expected_classes,
     };
@@ -877,10 +877,8 @@ mod tests {
             let mut rules = ResourceGrants::new();
             rules.set(
                 GrantedBehaviour::Recall,
-                Grant::Rule(
-                    RoleBytes::try_from(&StoredRule::Require(Presented::Identity(who.into())))
-                        .expect("a rule encodes"),
-                ),
+                RoleBytes::try_from(&StoredRule::claim(Presented::Identity(who.into())))
+                    .expect("a rule encodes"),
             );
             rules
         };
@@ -903,9 +901,10 @@ mod tests {
     #[test]
     fn a_restricting_entry_derives_the_restricted_class() {
         let namespace = ComponentAddr::new([0x21; 31]);
+        let sealed = |rule| RoleBytes::try_from(&rule).expect("a rule encodes");
         let entry = |behaviour| {
             let mut rules = ResourceGrants::new();
-            rules.set(behaviour, Grant::Never);
+            rules.set(behaviour, sealed(never()));
             rules
         };
         // A movement entry restricts, so the address says so without a
@@ -923,7 +922,7 @@ mod tests {
         // withheld, so it costs the transfer path nothing and the
         // address stays plain.
         let mut authority = ResourceGrants::new();
-        authority.set(GrantedBehaviour::Burn, Grant::Open);
+        authority.set(GrantedBehaviour::Burn, sealed(always()));
         let plain = granting_resource_address(
             &TestHasher,
             namespace,

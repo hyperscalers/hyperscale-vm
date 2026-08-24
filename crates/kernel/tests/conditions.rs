@@ -230,7 +230,7 @@ fn a_stored_leaf_judges_the_stored_rule_and_the_virtual_one() {
     // Stored: the rule in the cell governs, and the derived identity is
     // no longer one of them.
     let mut securified = MemoryStore::new();
-    let roles = RoleTable::uniform(&StoredRule::Require(identity(2))).unwrap();
+    let roles = RoleTable::uniform(&StoredRule::claim(identity(2))).unwrap();
     let cell = AuthCell::new(AuthBase::new(1_000, roles))
         .to_bytes()
         .unwrap();
@@ -394,7 +394,7 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
     );
 
     let mut securified = MemoryStore::new();
-    let roles = RoleTable::uniform(&StoredRule::Require(identity(2))).unwrap();
+    let roles = RoleTable::uniform(&StoredRule::claim(identity(2))).unwrap();
     securified.write(
         key,
         AuthCell::new(AuthBase::new(1_000, roles))
@@ -467,7 +467,7 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
     })];
 
     let mut securified = MemoryStore::new();
-    let roles = RoleTable::uniform(&StoredRule::Require(identity(2))).unwrap();
+    let roles = RoleTable::uniform(&StoredRule::claim(identity(2))).unwrap();
     securified.write(
         key,
         AuthCell::new(AuthBase::new(1_000, roles))

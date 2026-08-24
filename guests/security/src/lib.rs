@@ -7,7 +7,7 @@
 //! and no holder of it, however written, can decline to be asked.
 //!
 //! Two entries and the difference between them is the whole design.
-//! `Share` grants `withdraw = held(issued(Registered))`, so a holder
+//! `Share` grants `withdraw = issued(Registered)`, so a holder
 //! moves it exactly while the register says so — a standing fact about
 //! the mover, read as one leaf under their own prefix, with no proof
 //! presented and nothing about the caller consulted. `Registered` grants
@@ -52,7 +52,7 @@ pub mod security {
 
     /// The share class. Movable by a registered holder and nobody else,
     /// wherever it is held and through whatever package holds it.
-    #[resource(grants(withdraw = held(issued(Registered))))]
+    #[resource(grants(withdraw = issued(Registered)))]
     struct Share;
 
     /// The same issuer's unrestricted class: recallable, and free to

@@ -2210,6 +2210,7 @@ fn granted_rules(
             }
         };
         let name = behaviour.to_string();
+        let asks_about_the_actor = !matches!(name.as_str(), "Withdraw" | "Deposit");
         if named.contains(&name) {
             return Err(syn::Error::new(
                 entry.path.span(),
@@ -2222,6 +2223,23 @@ fn granted_rules(
         }
         named.push(name);
         let (rule, names_config) = granted_entry(&entry.value, resources, config_fields)?;
+        // A holder question is answered by one leaf under the moving
+        // party's own prefix, and only a fungible holding is one leaf: a
+        // non-fungible one is entries at ids, whose collection-wide
+        // presence is an interval nothing on the transfer path may walk.
+        if !asks_about_the_actor && names_an_instance(&entry.value) {
+            return Err(syn::Error::new(
+                entry.value.span(),
+                format!(
+                    "`{}` asks whether the moving party holds what its rule names, and only \
+                     a fungible holding is a single leaf — asking whether a holder has any \
+                     instance of a non-fungible badge is an interval nothing on the \
+                     transfer path may walk. Issue a fungible eligibility badge beside the \
+                     instance carrying the data",
+                    entry.path.get_ident().expect("matched an ident")
+                ),
+            ));
+        }
         reads_config |= names_config;
         granted.push(quote!(
             __seals.set(::hyperscale_vm_sdk::GrantedBehaviour::#behaviour, #rule);
@@ -2308,6 +2326,22 @@ struct Nameable<'a> {
     /// The mark's own rules and whether they read configuration, where
     /// the mark is nameable at all.
     rules: Option<(TokenStream2, bool)>,
+}
+
+/// Whether a granted entry names one instance of a non-fungible badge
+/// anywhere in it.
+fn names_an_instance(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Paren(inner) => names_an_instance(&inner.expr),
+        syn::Expr::Binary(binary) => {
+            names_an_instance(&binary.left) || names_an_instance(&binary.right)
+        }
+        syn::Expr::Call(call) if calls(&call.func, "issued") => {
+            call.args.len() > 1 || call.args.iter().any(names_an_instance)
+        }
+        syn::Expr::Call(call) => call.args.iter().any(names_an_instance),
+        _ => false,
+    }
 }
 
 /// Whether a granted set names a badge anywhere in it, which is what
@@ -2406,12 +2440,14 @@ fn granted_rule(
     }
 }
 
-/// One granted entry as written: `anyone`, `nobody`, a credential, or a
-/// rule over claims.
+/// One granted entry as written: `anyone`, `nobody`, or a rule.
 ///
-/// The three that are not rules are spelled as bare words rather than as
-/// rule values, so an evaluator never meets a tree it has to recognise as
-/// meaning something other than what it says.
+/// The two constants are the threshold over nothing, so they are rules
+/// like any other and no evaluator meets a value it has to recognise as
+/// meaning something else. There is no separate credential spelling
+/// either: which side a leaf asks about — a claim a caller presents, or a
+/// badge the moving party holds — is the behaviour's own answer, so one
+/// derivation serves both questions.
 fn granted_entry(
     expr: &syn::Expr,
     resources: &[Nameable<'_>],
@@ -2419,54 +2455,22 @@ fn granted_entry(
 ) -> syn::Result<(TokenStream2, bool)> {
     if let syn::Expr::Path(path) = expr {
         match path.path.get_ident().map(ToString::to_string).as_deref() {
-            Some("anyone") => return Ok((quote!(::hyperscale_vm_sdk::GrantExpr::Open), false)),
-            Some("nobody") => return Ok((quote!(::hyperscale_vm_sdk::GrantExpr::Never), false)),
+            Some("anyone") => return Ok((quote!(::hyperscale_vm_sdk::grant_anyone()), false)),
+            Some("nobody") => return Ok((quote!(::hyperscale_vm_sdk::grant_nobody()), false)),
             _ => {}
         }
     }
     if let syn::Expr::Call(call) = expr
         && calls(&call.func, "held")
     {
-        let mut args = call.args.iter();
-        let Some(named) = args.next() else {
-            return Err(syn::Error::new(
-                call.span(),
-                "`held(..)` names the badge a holder must hold",
-            ));
-        };
-        if args.next().is_some() {
-            return Err(syn::Error::new(
-                call.span(),
-                "`held(..)` names one badge: a credential is one presence question",
-            ));
-        }
-        // A fungible holding is one point leaf, so presence is one read.
-        // A non-fungible one is collection entries at ids, whose
-        // collection-wide presence is an interval — a scan priced by
-        // span, which nothing on the transfer path may walk.
-        if let syn::Expr::Call(inner) = named
-            && calls(&inner.func, "issued")
-            && inner.args.len() > 1
-        {
-            return Err(syn::Error::new(
-                named.span(),
-                "a credential names a fungible badge: a holding of one is a single leaf, \
-                 and asking whether a holder has any instance of a non-fungible badge is \
-                 an interval nothing on the transfer path may walk — issue a fungible \
-                 eligibility badge beside the instance carrying the data",
-            ));
-        }
-        let (claim, names_config) = granted_claim(named, resources, config_fields)?;
-        return Ok((
-            quote!(::hyperscale_vm_sdk::GrantExpr::Credential(#claim)),
-            names_config,
+        return Err(syn::Error::new(
+            call.span(),
+            "a granted rule names what it names, and which side the leaf asks about is the \
+             behaviour's: `withdraw` and `deposit` ask whether the moving party holds it, \
+             every other behaviour whether a caller presented it",
         ));
     }
-    let (rule, names_config) = granted_rule(expr, resources, config_fields, 0)?;
-    Ok((
-        quote!(::hyperscale_vm_sdk::GrantExpr::Rule(#rule)),
-        names_config,
-    ))
+    granted_rule(expr, resources, config_fields, 0)
 }
 
 fn granted_branches(
