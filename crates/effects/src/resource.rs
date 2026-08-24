@@ -170,7 +170,7 @@ impl ResourceRecord {
 /// derivation's, and these are the rest. Closed like the role band — a
 /// behaviour is assigned or it is not one, and adding one is a protocol
 /// version change.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor, HborShape)]
 pub enum GrantedBehaviour {
     /// Bringing supply into existence.
     #[hbor(discriminant = 0)]
@@ -271,7 +271,7 @@ impl GrantedBehaviour {
 /// than what it says. Which answers a behaviour admits is
 /// [`GrantedBehaviour::admits`]'s, and a spelling it does not admit is a
 /// second way of saying what absence already says.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor, HborShape)]
 pub enum Grant {
     /// Anyone may. Only an authority entry admits it: for a movement,
     /// this is what an absent entry already means.
@@ -301,7 +301,7 @@ pub enum Grant {
 /// holds back and permits a movement it does not. Immutability is the
 /// derivation rather than a promise — the commitment rides the address,
 /// so an entry that changed would be a different resource.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor, HborShape)]
 #[hbor(transparent, validate = ascending_behaviours)]
 pub struct ResourceGrants(Vec<(GrantedBehaviour, Grant)>);
 
@@ -576,12 +576,16 @@ fn resolve_claim(
 /// stays exactly what it was.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct ResourceMeta {
-    /// The instance whose provenance the address commits.
-    pub minter: Address,
+    /// The instance whose namespace the address sits in.
+    ///
+    /// Provenance, not authority: who may mint is the `Mint` entry's
+    /// answer, and this is only what keeps two issuers' identically
+    /// configured resources from colliding.
+    pub namespace: Address,
     /// The kind the derivation folds.
     pub kind: ResourceKind,
-    /// The material separating the minter's resources, as the canonical
-    /// byte parts the derivation hashes.
+    /// The material separating the namespace's resources, as the
+    /// canonical byte parts the derivation hashes.
     #[hbor(max = MAX_RESOURCE_MATERIAL_PARTS)]
     pub material: Vec<Vec<u8>>,
     /// The granted rules whose commitment the address folds.
@@ -597,22 +601,29 @@ impl ResourceMeta {
     /// The address these four derive.
     #[must_use]
     pub fn address(&self, hasher: &dyn Hasher) -> ResourceAddr {
-        granting_resource_address(hasher, self.minter, self.kind, &self.rules, &self.material)
+        granting_resource_address(
+            hasher,
+            self.namespace,
+            self.kind,
+            &self.rules,
+            &self.material,
+        )
     }
 }
 
 /// The protocol's fee and transfer resource: the unmarked issue of the
 /// genesis publisher.
 ///
-/// A resource like any other — the minter is the one address no signer
-/// reaches, which is exactly the strength the fee resource needs: no
-/// transaction can present a method of the publisher, so who may mint it
-/// is nobody, by the same arithmetic that answers it for every resource.
-/// Supply moves only where the protocol writes state directly.
+/// A resource like any other, and it grants nothing: with no `Mint`
+/// entry its supply is fixed at creation and no authority anywhere can
+/// raise it, and with no movement entry it costs nothing on the transfer
+/// path and carries the plain class. Supply moves only where the protocol
+/// writes state directly.
 ///
 /// The one unmarked resource in the system, because a package's issues
 /// are all declared and a declaration carries a name. Nothing rests on
-/// that beyond legibility: the minter is what makes this unmintable.
+/// that beyond legibility: the empty grant table is what makes this
+/// unmintable.
 #[must_use]
 pub fn xrd(hasher: &dyn Hasher) -> ResourceAddr {
     let publisher = native_address(hasher, GENESIS_PUBLISHER);

@@ -64,7 +64,7 @@ fn granting_meta() -> ResourceMeta {
         ),
     );
     ResourceMeta {
-        minter: MINTER,
+        namespace: MINTER,
         kind: ResourceKind::Fungible,
         material: Vec::new(),
         rules,

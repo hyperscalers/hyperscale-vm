@@ -271,47 +271,63 @@ pub fn package_address(hasher: &dyn Hasher, package: PackageHash) -> PackageAddr
     PackageAddr::new(body(hasher.hash(DOMAIN_PACKAGE_ADDRESS, &[&package.0.0])))
 }
 
-/// The address of a resource minted under `minter`, sealing nothing.
+/// The address of a resource issued under `namespace`, sealing nothing.
 ///
-/// A resource address commits to its provenance, its kind, and its
-/// granted rules: who may mint it, what it is, and the behaviours it
-/// grants are readable from the address, so a holder checks all three
-/// by recomputing the derivation rather than by trusting a claim about
-/// any of them. The material separates the resources one minter issues;
-/// this spelling commits the empty granted set, which is what almost
-/// every resource carries.
+/// A resource address commits to its namespace, its kind, and its granted
+/// entries: which issuer's issue it is, what it is, and the behaviours it
+/// grants are readable from the address, so a holder checks all three by
+/// recomputing the derivation rather than by trusting a claim about any
+/// of them. The material separates the resources one issuer issues; this
+/// spelling commits the empty granted set, which is what almost every
+/// resource carries.
 #[must_use]
 pub fn resource_address(
     hasher: &dyn Hasher,
-    minter: impl Into<Address>,
+    namespace: impl Into<Address>,
     kind: ResourceKind,
     material: &[Vec<u8>],
 ) -> ResourceAddr {
-    granting_resource_address(hasher, minter, kind, &ResourceGrants::new(), material)
+    granting_resource_address(hasher, namespace, kind, &ResourceGrants::new(), material)
 }
 
-/// The address of a resource minted under `minter`, sealing `rules`.
+/// The address of a resource issued under `namespace`, sealing `rules`.
 ///
-/// The empty set is committed like any other — a granting resource and an
-/// one granting nothing can never collide — and immutability is the derivation:
-/// a rule that changed would be a different resource.
+/// The empty set is committed like any other — a granting resource and one
+/// granting nothing can never collide — and immutability is the
+/// derivation: an entry that changed would be a different resource.
+///
+/// The class comes from the entries rather than from the caller: a
+/// resource whose rules restrict a movement anyone could otherwise make
+/// carries [`AddressClass::Restricted`], and one that does not stays
+/// plain. So the two are different addresses over one body, and a reader
+/// holding only the address knows whether it must have the rules in hand
+/// before it may let a movement through.
+///
+/// # Panics
+///
+/// Never: the class comes from the entries, which answer with a resource
+/// class or the other one, and the narrowing admits both.
 #[must_use]
 pub fn granting_resource_address(
     hasher: &dyn Hasher,
-    minter: impl Into<Address>,
+    namespace: impl Into<Address>,
     kind: ResourceKind,
     rules: &ResourceGrants,
     material: &[Vec<u8>],
 ) -> ResourceAddr {
-    let minter_bytes = minter.into().to_bytes();
+    let namespace_bytes = namespace.into().to_bytes();
     let kind_tag = [kind.tag()];
     let commitment = rules.commitment(hasher);
     let mut parts: Vec<&[u8]> = Vec::with_capacity(3 + material.len());
-    parts.push(&minter_bytes);
+    parts.push(&namespace_bytes);
     parts.push(&kind_tag);
     parts.push(&commitment.0);
     parts.extend(material.iter().map(Vec::as_slice));
-    ResourceAddr::new(body(hasher.hash(DOMAIN_RESOURCE, &parts)))
+    ResourceAddr::with_class(
+        body(hasher.hash(DOMAIN_RESOURCE, &parts)),
+        rules.address_class(),
+    )
+    .expect("both resource classes are resource classes")
 }
 
 /// The address of a protocol role.
@@ -878,6 +894,55 @@ mod tests {
             granting,
             granting_resource_address(&TestHasher, minter, fungible, &admit(other), &[])
         );
+    }
+
+    /// The class follows the entries, and it is the only thing a reader
+    /// holding a bare address gets without resolving the rules — so the
+    /// two halves of the derivation agreeing is load-bearing rather than
+    /// tidy, and nothing else cross-checks it.
+    #[test]
+    fn a_restricting_entry_derives_the_restricted_class() {
+        let namespace = ComponentAddr::new([0x21; 31]);
+        let entry = |behaviour| {
+            let mut rules = ResourceGrants::new();
+            rules.set(behaviour, Grant::Never);
+            rules
+        };
+        // A movement entry restricts, so the address says so without a
+        // lookup.
+        let restricted = granting_resource_address(
+            &TestHasher,
+            namespace,
+            ResourceKind::Fungible,
+            &entry(GrantedBehaviour::Deposit),
+            &[],
+        );
+        assert_eq!(restricted.address().class(), AddressClass::Restricted);
+
+        // An authority entry answers for itself when the rules are
+        // withheld, so it costs the transfer path nothing and the
+        // address stays plain.
+        let mut authority = ResourceGrants::new();
+        authority.set(GrantedBehaviour::Burn, Grant::Open);
+        let plain = granting_resource_address(
+            &TestHasher,
+            namespace,
+            ResourceKind::Fungible,
+            &authority,
+            &[],
+        );
+        assert_eq!(plain.address().class(), AddressClass::Resource);
+        assert_eq!(
+            resource_address(&TestHasher, namespace, ResourceKind::Fungible, &[])
+                .address()
+                .class(),
+            AddressClass::Resource
+        );
+
+        // And the entries are derivation material either way, so the two
+        // are different addresses rather than one address wearing two
+        // tags.
+        assert_ne!(restricted.address().body(), plain.address().body());
     }
 
     #[test]
