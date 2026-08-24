@@ -882,3 +882,66 @@ fn an_unavailable_engine_refuses_the_batch() {
         } if hash == tx(0x01)
     ));
 }
+
+/// A transaction that lost value aborts alone, and its batch carries on.
+///
+/// The abort is priced to nobody — it names the kernel, not the sender —
+/// so the two properties are one question: if such a transaction could
+/// fail its batch, or take a sibling down with it, free execution would
+/// be worth provoking. Nothing a body can express reaches this, which is
+/// why the fabrication here goes through the primitive fixtures use to
+/// stand in for a kernel defect.
+#[test]
+fn a_transaction_that_lost_value_aborts_beside_one_that_did_not() {
+    let honest = cell(0xB);
+    let fabricating = cell(0xD);
+    let batch = vec![
+        BatchTx::new(tx(0x01), moving(point(honest, Mode::Delta)), env()),
+        BatchTx::new(tx(0x02), moving(point(fabricating, Mode::Delta)), env()),
+    ];
+    let run = |entry: &BatchTx, mut session: KernelSession| {
+        if entry.tx == tx(0x01) {
+            session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+            let minted = session.mint(ISSUER_REP, 500).unwrap();
+            session.delta_put(0, minted).unwrap();
+        } else {
+            // A credit with no mint behind it and no bucket to fund it.
+            session.delta_add(0, 500).unwrap();
+        }
+        RunResult::Completed {
+            session,
+            answers: vec![],
+            fuel: FUEL,
+        }
+    };
+
+    for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
+        let outcome = execute_batch(
+            Arc::new(MemoryStore::new()),
+            &batch,
+            &run,
+            test_hash,
+            mode,
+            &Locality::All,
+        )
+        .expect("one transaction's loss is not the batch's failure");
+
+        assert!(matches!(
+            outcome.receipts[&tx(0x01)].outcome,
+            Outcome::Completed { .. }
+        ));
+        assert_eq!(amount_at(&outcome.store, honest), 500, "the mint landed");
+
+        assert_eq!(
+            outcome.receipts[&tx(0x02)].outcome,
+            Outcome::ProtocolError {
+                reason: AbortReason::ValueNotConserved,
+            },
+        );
+        assert_eq!(
+            amount_at(&outcome.store, fabricating),
+            0,
+            "and nothing it credited survives"
+        );
+    }
+}
