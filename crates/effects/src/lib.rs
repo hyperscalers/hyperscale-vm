@@ -105,7 +105,7 @@ pub use resource::{
 pub use route::{FrameDeclaration, PrefixShardResolver, Routing, ShardResolver, route};
 pub use rule::{
     GrantClaim, GrantRuleExpr, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES,
-    MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, RuleLeaf, StoredRule, well_formed,
+    MAX_RULE_WIRE_DEPTH, Rule, RuleExpr, RuleLeaf, StoredRule, always, never, well_formed,
 };
 pub use signature::{AbiParam, Issuance, MethodSignature, ParamType, Totality};
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};

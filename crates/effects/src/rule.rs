@@ -95,9 +95,14 @@ pub enum Rule<L> {
     /// Satisfied when this leaf is among those presented.
     Require(L),
     /// Satisfied when enough branches are.
+    ///
+    /// Over an empty branch list this is the algebra's top and bottom:
+    /// [`always`] is a count of zero, [`never`] a count of one, and both
+    /// fall out of the same `met >= count` the judge already computes.
     CountOf {
-        /// How many of `rules` must be satisfied. At least one, at most
-        /// the branch count — the decode gate refuses the rest.
+        /// How many of `rules` must be satisfied. Over branches, at
+        /// least one and at most the branch count; over none, zero or
+        /// one — the decode gate refuses the rest.
         count: u8,
         /// The branches, each judged independently over the same
         /// presented set.
@@ -278,9 +283,31 @@ fn leaves<L>(rule: &Rule<L>) -> usize {
 pub fn well_formed<L>(rule: &Rule<L>) -> Result<(), &'static str> {
     match rule {
         Rule::Require(_) => Ok(()),
+        // The threshold over nothing is how this algebra spells its top
+        // and its bottom: none of nothing is met by anyone, one of
+        // nothing by no one, and the judge computes both from `met >=
+        // count` without an arm of its own. Two counts and no more, so
+        // each constant has one spelling.
+        Rule::CountOf { count, rules } if rules.is_empty() => {
+            if *count > 1 {
+                Err("everyone is a count of zero over no branches and no one is a count of one")
+            } else {
+                Ok(())
+            }
+        }
         Rule::CountOf { count, rules } => {
-            if *count == 0 {
-                Err("a threshold requiring nothing would admit anyone")
+            // A constant branch is a rule that could be written shorter:
+            // everyone-may beside anything is everyone-may, and no-one-may
+            // beside it is the rest of the threshold. Refused on the same
+            // grounds a degenerate count is, so each meaning has one
+            // spelling however deep it sits.
+            if rules
+                .iter()
+                .any(|branch| matches!(branch, Rule::CountOf { rules, .. } if rules.is_empty()))
+            {
+                Err("a threshold branching on everyone or on no one can be written shorter")
+            } else if *count == 0 {
+                Err("a threshold over branches requiring none of them is the empty threshold")
             } else if usize::from(*count) > rules.len() {
                 Err("a threshold requiring more branches than it has would admit no one")
             } else if rules.len() > MAX_RULE_BRANCHES {
@@ -291,6 +318,24 @@ pub fn well_formed<L>(rule: &Rule<L>) -> Result<(), &'static str> {
                 Ok(())
             }
         }
+    }
+}
+
+/// The rule anyone satisfies: none of nothing.
+#[must_use]
+pub const fn always<L>() -> Rule<L> {
+    Rule::CountOf {
+        count: 0,
+        rules: Vec::new(),
+    }
+}
+
+/// The rule nobody satisfies: one of nothing.
+#[must_use]
+pub const fn never<L>() -> Rule<L> {
+    Rule::CountOf {
+        count: 1,
+        rules: Vec::new(),
     }
 }
 
@@ -522,7 +567,9 @@ mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, to_vec};
 
     use super::testing::{WideRule, chain, identity, wide_chain};
-    use super::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, Rule, StoredRule};
+    use super::{
+        MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, Rule, StoredRule, always, never,
+    };
     use crate::types::MAX_VALUE_BYTES;
 
     /// The widest tree holding `leaves` leaves: the most thresholds the
@@ -643,11 +690,9 @@ mod tests {
         assert!(doubled.satisfied_by(&[identity(1)]));
     }
 
-    /// A stored rule must name someone it admits and someone it refuses:
-    /// the vacuous threshold would hand the account to anyone, and the
-    /// unsatisfiable one would lock every role for good — securify is
-    /// one-way, so no rule could undo either. Construction and encoding
-    /// stay total; the bytes are refused where they land.
+    /// A threshold over branches must be one the branch count can meet,
+    /// and must not restate what a shorter rule says. Construction and
+    /// encoding stay total; the bytes are refused where they land.
     #[test]
     fn a_degenerate_threshold_is_refused_at_decode() {
         let refused = |rule: StoredRule, why: &'static str| {
@@ -661,16 +706,9 @@ mod tests {
         refused(
             StoredRule::CountOf {
                 count: 0,
-                rules: vec![],
-            },
-            "a threshold requiring nothing would admit anyone",
-        );
-        refused(
-            StoredRule::CountOf {
-                count: 0,
                 rules: vec![StoredRule::Require(identity(1))],
             },
-            "a threshold requiring nothing would admit anyone",
+            "a threshold over branches requiring none of them is the empty threshold",
         );
         refused(
             StoredRule::CountOf {
@@ -680,20 +718,24 @@ mod tests {
             "a threshold requiring more branches than it has would admit no one",
         );
 
-        // A branch judges itself as it decodes, so a well-formed
-        // threshold cannot smuggle a degenerate one inside.
+        // Each constant has one count, so a third spelling of no one is
+        // refused rather than accepted as a synonym.
+        refused(
+            StoredRule::CountOf {
+                count: 2,
+                rules: vec![],
+            },
+            "everyone is a count of zero over no branches and no one is a count of one",
+        );
+
+        // A branch judges itself as it decodes, and a constant branch is
+        // a rule the author could have written shorter.
         refused(
             StoredRule::CountOf {
                 count: 1,
-                rules: vec![
-                    StoredRule::Require(identity(1)),
-                    StoredRule::CountOf {
-                        count: 0,
-                        rules: vec![],
-                    },
-                ],
+                rules: vec![StoredRule::Require(identity(1)), always()],
             },
-            "a threshold requiring nothing would admit anyone",
+            "a threshold branching on everyone or on no one can be written shorter",
         );
 
         // The gate's whole boundary: count one and count == branches
@@ -709,6 +751,30 @@ mod tests {
             let bytes = rule.to_bytes().unwrap();
             assert_eq!(StoredRule::from_slice(&bytes).unwrap(), rule);
         }
+    }
+
+    /// The algebra's top and bottom are the threshold over nothing, and
+    /// they survive the round trip the vocabulary holds every rule to.
+    ///
+    /// The judge needs no arm for either: `met >= count` is met by zero
+    /// of zero and unmet by one of zero, which is why admitting them is a
+    /// deletion in the gate rather than a variant everything downstream
+    /// has to learn.
+    #[test]
+    fn the_empty_threshold_is_everyone_and_no_one() {
+        let anyone: StoredRule = always();
+        let nobody: StoredRule = never();
+
+        assert!(anyone.satisfied_by(&[]));
+        assert!(anyone.satisfied_by(&[identity(1)]));
+        assert!(!nobody.satisfied_by(&[]));
+        assert!(!nobody.satisfied_by(&[identity(1)]));
+
+        for rule in [&anyone, &nobody] {
+            let bytes = rule.to_bytes().unwrap();
+            assert_eq!(&StoredRule::from_slice(&bytes).unwrap(), rule);
+        }
+        assert_ne!(anyone, nobody, "and they are different rules");
     }
 
     #[test]

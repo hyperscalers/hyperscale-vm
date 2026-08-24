@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
     EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash, PackageMetadata,
-    Presented, Records, ResourceKind, RoleTable, StoredRule, TestHasher, Value, admit,
+    Presented, Records, ResourceKind, RoleTable, StoredRule, TestHasher, Value, admit, always,
     issued_resource,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, payouts, registry};
@@ -171,9 +171,8 @@ fn the_account_wrappers_match_their_signatures() {
 }
 
 /// A rule literal is judged by decoding it as the vocabulary — the same
-/// predicate admission runs — so the vacuous threshold, the one that
-/// would hand the account to anyone, is refused at the call site that
-/// writes it.
+/// predicate admission runs — so a threshold its own branches can never
+/// meet is refused at the call site that writes it.
 #[test]
 fn a_degenerate_rule_is_refused_where_it_is_written() {
     let chain = world();
@@ -183,8 +182,8 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
         &mut b,
         alice,
         &StoredRule::CountOf {
-            count: 0,
-            rules: vec![],
+            count: 2,
+            rules: vec![StoredRule::Require(Presented::Identity(ALICE.into()))],
         },
         86_400_000,
     );
@@ -195,6 +194,22 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
             ..
         })
     ));
+}
+
+/// The threshold over nothing is not degenerate — it is how the
+/// vocabulary says "anyone" — so a role table spelling it reaches the
+/// account rather than being refused at the builder.
+///
+/// Whether an account wants an open role is the account's own question,
+/// answered where its policy lives and not by the algebra withholding a
+/// word.
+#[test]
+fn the_empty_threshold_reaches_the_account() {
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let alice = account::authorize(&mut b, ALICE).unwrap();
+    account::securify_uniform(&mut b, alice, &always(), 86_400_000)
+        .expect("anyone is a rule the vocabulary can carry");
 }
 
 /// A chained sign-in composes and admits: the second authorize presents

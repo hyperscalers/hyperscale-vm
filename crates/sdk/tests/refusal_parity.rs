@@ -61,7 +61,7 @@ fn a_threshold_met_by_every_branch_traces() {
 
 /// The tree `vacuous_threshold.rs` proves the macro refuses.
 #[test]
-#[should_panic(expected = "a threshold requiring nothing would admit anyone")]
+#[should_panic(expected = "requiring none of them is the empty threshold")]
 fn a_threshold_requiring_nothing_fails_the_build() {
     gated(|t| {
         let key: Sym<Addr> = t.config(0);
