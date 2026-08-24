@@ -40,6 +40,7 @@ pub mod payouts;
 pub mod peg;
 pub mod perp;
 pub mod registry;
+pub mod security;
 pub mod shares;
 
 use std::sync::LazyLock;
@@ -162,6 +163,10 @@ packages! {
     perp => (PERP_COMPONENT, perp_artifact, perp_package_hash, "perp.component.wasm");
     // The registry, hand-authored alongside its declaration.
     registry;
+    // The share class whose holders are a register, and the register
+    // entry itself. The declaring end of the movement seam, where the
+    // custodian is the declaring-nothing end.
+    security => (SECURITY_COMPONENT, security_artifact, security_package_hash, "security.component.wasm");
     // The share vault: assets in, shares out, at whatever the pool is worth.
     shares => (SHARES_COMPONENT, shares_artifact, shares_package_hash, "shares.component.wasm");
 }
