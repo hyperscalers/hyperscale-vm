@@ -34,7 +34,7 @@
 //! What a cross-shard leg does to it is the settlement attestation's
 //! answer, carried with the leg rather than derived here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_types::ResourceAddr;
 
@@ -81,9 +81,16 @@ impl SupplyDelta {
         self.burned.get(&resource).copied().unwrap_or(0)
     }
 
-    /// Every resource this transaction moved, ascending.
+    /// Every resource this transaction moved, ascending and once each.
+    ///
+    /// A resource minted and burned in one transaction is in both maps
+    /// and is still one resource, so the two key sets are merged rather
+    /// than chained — a caller folding per resource would otherwise
+    /// count such a resource's halves twice.
     pub fn resources(&self) -> impl Iterator<Item = ResourceAddr> + '_ {
-        self.minted.keys().chain(self.burned.keys()).copied()
+        let mut moved: BTreeSet<ResourceAddr> = self.minted.keys().copied().collect();
+        moved.extend(self.burned.keys().copied());
+        moved.into_iter()
     }
 
     /// Record a mint.

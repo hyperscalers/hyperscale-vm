@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, DeclaredAccess, Hash32, Hasher, SlotId, SubintentHash, TestHasher, child_key,
-    nullifier_key,
+    Declaration, DeclaredAccess, Hash32, Hasher, ResourceKind, SlotId, SubintentHash, TestHasher,
+    child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
@@ -15,7 +15,7 @@ use hyperscale_vm_kernel::{
     execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
@@ -100,8 +100,13 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
                 let funds = session.reserve_take(reserve).unwrap();
                 session.delta_put(delta, funds).unwrap();
             }
+            // Taken through the bucket and burned: a debit with no
+            // destination is value the transaction lost, which is not
+            // what this fixture is about.
             (None, Some(delta)) => {
-                session.delta_sub(delta, sub).unwrap();
+                session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                let taken = session.delta_take(delta, sub).unwrap();
+                session.burn(ISSUER_REP, taken).unwrap();
             }
             _ => {}
         }

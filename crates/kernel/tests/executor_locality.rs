@@ -9,15 +9,16 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, SlotId, SubintentHash, TestHasher, child_key, nullifier_key,
+    Declaration, Hash32, Hasher, ResourceKind, SlotId, SubintentHash, TestHasher, child_key,
+    nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, RunResult,
     WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement, Outcome,
-    ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Movement,
+    Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// The one answer a fixture guest hands back, so a receipt depends on
@@ -339,8 +340,14 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
             let rep = u32::try_from(rep).unwrap();
             match capability {
                 Capability::Delta(_) => {
-                    session.delta_add(rep, credit).unwrap();
-                    session.delta_sub(rep, debit).unwrap();
+                    // Both ways through the bucket, minting behind the
+                    // credit and burning after the debit, so the fixture
+                    // moves value rather than conjuring it.
+                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    let minted = session.mint(ISSUER_REP, credit).unwrap();
+                    session.delta_put(rep, minted).unwrap();
+                    let taken = session.delta_take(rep, debit).unwrap();
+                    session.burn(ISSUER_REP, taken).unwrap();
                 }
                 Capability::Read(_) => {
                     let cell = session.read_cell(rep).unwrap();

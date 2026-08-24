@@ -218,6 +218,50 @@ mod through_the_session {
         assert!(receipt.supply.is_empty());
     }
 
+    /// A credit no mint stands behind does not commit.
+    ///
+    /// The one thing a package cannot express and the kernel must never
+    /// do: value appearing in a cell with nothing accounting for it.
+    /// Reached here through the unmediated primitive, which is the only
+    /// way to write down what a defect would look like — every path a
+    /// body can take goes through a bucket, and the table has to balance
+    /// before any of it commits.
+    #[test]
+    fn value_from_nowhere_does_not_commit() {
+        let mut session = session();
+        session.delta_add(0, 500).expect("the queue takes it");
+
+        let (receipt, _) = session
+            .finish(vec![], 0)
+            .expect("the fold produces a receipt rather than failing the batch");
+        assert_eq!(
+            receipt.outcome,
+            Outcome::ProtocolError {
+                reason: AbortReason::ValueNotConserved,
+            },
+            "the kernel lost the value, so the kernel is what the abort names"
+        );
+        assert!(receipt.delta.is_empty(), "nothing it wrote survives");
+        assert!(receipt.supply.is_empty(), "and nothing it claimed does");
+    }
+
+    /// The same in the other direction: a debit that reached no bucket.
+    #[test]
+    fn value_into_nowhere_does_not_commit_either() {
+        let mut held = MemoryStore::new();
+        held.write(vault(1, UNIT.address()), encode_amount(500).to_vec());
+        let mut session = session_over(held);
+        session.delta_sub(0, 500).expect("the queue takes it");
+
+        let (receipt, _) = session.finish(vec![], 0).expect("a receipt either way");
+        assert_eq!(
+            receipt.outcome,
+            Outcome::ProtocolError {
+                reason: AbortReason::ValueNotConserved,
+            }
+        );
+    }
+
     /// A transfer moves no supply, which is what makes same-shard
     /// movement conserve the accumulator without counting anything.
     #[test]

@@ -186,6 +186,13 @@ pub enum FinishError {
     UndenominatedMovement(SubstateKey),
 }
 
+/// How a session's queued deltas judged: the per-cell totals, or the
+/// outcome the transaction aborts with instead.
+enum Movements {
+    Judged(BTreeMap<SubstateKey, Movement>),
+    Aborted(Outcome),
+}
+
 /// How a session's reservations settled: the per-cell amounts, or the
 /// outcome the transaction aborts with instead.
 enum Settlement {
@@ -194,6 +201,73 @@ enum Settlement {
 }
 
 impl KernelSession {
+    /// What the interval covering `key` holds, where its entries are
+    /// instances rather than bytes.
+    ///
+    /// `None` for a byte entry, which is what keeps an ordered
+    /// collection's own records out of a fold about value.
+    fn instance_resource_at(&self, key: EntryKey) -> Option<ResourceAddr> {
+        self.table
+            .iter()
+            .enumerate()
+            .find_map(|(index, capability)| {
+                let Capability::InstanceRange(interval) = capability else {
+                    return None;
+                };
+                (interval.owner == key.owner && interval.collection == key.collection)
+                    .then(|| {
+                        u32::try_from(index)
+                            .ok()
+                            .and_then(|rep| self.cell_resource(rep))
+                    })
+                    .flatten()
+            })
+    }
+
+    /// The first resource this transaction did not conserve, if any.
+    ///
+    /// For every resource, what the transaction's holdings gained equals
+    /// what they lost, once a mint counts as a loss and a burn as a gain
+    /// — value entering the world from a mint has to land somewhere, and
+    /// value leaving it through a burn has to have come from somewhere.
+    /// Stated as two unsigned totals rather than a signed net, because
+    /// the quantities are `u128` and the net would need a wider
+    /// accumulator to hold a sum neither side can overflow.
+    ///
+    /// Walked unfiltered, unlike every other walk of a delta. The others
+    /// exist to apply a receipt somewhere and see only what that shard
+    /// owns; this one judges the transaction whole, which is what makes
+    /// the verdict identical on every participant of it.
+    fn unconserved(&self, delta: &StateDelta) -> Option<ResourceAddr> {
+        let mut sides: BTreeMap<ResourceAddr, (u128, u128)> = BTreeMap::new();
+        for (_, movement) in delta.movements.iter().chain(delta.settles.iter()) {
+            let side = sides.entry(movement.resource).or_default();
+            side.0 = side.0.saturating_add(movement.credit);
+            side.1 = side.1.saturating_add(movement.debit);
+        }
+        // An instance counts one whatever it is worth, which is the
+        // measure its mint credited.
+        for (key, change) in delta.entries.iter() {
+            let Some(resource) = self.instance_resource_at(*key) else {
+                continue;
+            };
+            let side = sides.entry(resource).or_default();
+            if change.is_some() {
+                side.0 = side.0.saturating_add(1);
+            } else {
+                side.1 = side.1.saturating_add(1);
+            }
+        }
+        for resource in self.supply.resources() {
+            let side = sides.entry(resource).or_default();
+            side.0 = side.0.saturating_add(self.supply.burned(resource));
+            side.1 = side.1.saturating_add(self.supply.minted(resource));
+        }
+        sides
+            .into_iter()
+            .find_map(|(resource, (gained, lost))| (gained != lost).then_some(resource))
+    }
+
     /// What the cell at `key` holds, off the capability that reached it.
     ///
     /// A cell's denomination is its declaration's, and the table is this
@@ -307,6 +381,87 @@ impl KernelSession {
         Ok(Settlement::Settled(settles))
     }
 
+    /// The queued deltas as checked totals, judged against the floor on
+    /// every cell this shard owns, and folded into it.
+    ///
+    /// The same shape as [`Self::settle_reservations`] because it is the
+    /// same kind of step: a phase of finishing that either produces what
+    /// the receipt carries or names the outcome the transaction aborts
+    /// with instead.
+    ///
+    /// The error is a kernel defect; a refusal the caller aborts the
+    /// transaction with comes back as [`Movements::Aborted`].
+    fn judge_movements(&mut self) -> Result<Movements, FinishError> {
+        let mut movements: BTreeMap<SubstateKey, Movement> = BTreeMap::new();
+        let queued: Vec<(SubstateKey, Vec<DeltaOp>)> = self.store.pending_deltas().collect();
+        for (key, ops) in queued {
+            let Some(resource) = self.resource_at(key) else {
+                return Err(FinishError::UndenominatedMovement(key));
+            };
+            match total_movement(&ops, resource) {
+                Ok(movement) => {
+                    movements.insert(key, movement);
+                }
+                // Totals past `u128` are the guest's own arithmetic — it
+                // queued the operations — so the loss is its own.
+                Err(error) => {
+                    return Ok(Movements::Aborted(Outcome::UserError {
+                        reason: error.into(),
+                    }));
+                }
+            }
+        }
+        for (key, movement) in &movements {
+            if !self.locality.is_local(key.owner) {
+                // The owning shard judges its own cells; here the
+                // movement is the outbound record.
+                continue;
+            }
+            let refusal = match self
+                .store
+                .judge_movement(*key, movement.credit, movement.debit)
+            {
+                Ok(_) => continue,
+                // An uncovered debit, and a cell an exclusive write left
+                // below the reservations still outstanding on it, are the
+                // same deterministic loss: the floor this movement needed
+                // is not there, and the transaction that declared the
+                // movement is the one that loses.
+                Err(defect) => match defect.fault() {
+                    Fault::Floor => Outcome::Infeasible {
+                        key: *key,
+                        amount: movement.debit,
+                    },
+                    Fault::Declaration(error) => Outcome::UserError {
+                        reason: error.into(),
+                    },
+                    Fault::Defect => return Err(defect.into()),
+                },
+            };
+            return Ok(Movements::Aborted(refusal));
+        }
+        // A movement on a key this shard does not own folds at the owning
+        // shard, never here: the receipt already carries it as the
+        // outbound record, and folding it locally would fabricate a
+        // balance for a cell this shard holds none of.
+        let locality = self.locality.clone();
+        self.store
+            .retain_pending_deltas(&|key: SubstateKey| locality.is_local(key.owner));
+        if let Err(defect) = self.store.commit_deltas() {
+            // Every remaining fold is on an owned cell the movement judge
+            // just cleared, so a floor here — like anything else that is
+            // not a declaration defect — is the kernel disagreeing with
+            // itself.
+            return match defect.fault() {
+                Fault::Declaration(error) => Ok(Movements::Aborted(Outcome::UserError {
+                    reason: error.into(),
+                })),
+                Fault::Floor | Fault::Defect => Err(defect.into()),
+            };
+        }
+        Ok(Movements::Judged(movements))
+    }
+
     /// Close the session for a guest that completed: fold queued deltas,
     /// settle this transaction's reservations, run the trace-subset
     /// oracle, and produce the receipt together with the threaded store
@@ -362,82 +517,10 @@ impl KernelSession {
                 fuel,
             ));
         }
-        // Movements next: the pending deltas, as checked totals.
-        let mut movements: BTreeMap<SubstateKey, Movement> = BTreeMap::new();
-        let queued: Vec<(SubstateKey, Vec<DeltaOp>)> = self.store.pending_deltas().collect();
-        for (key, ops) in queued {
-            let Some(resource) = self.resource_at(key) else {
-                return Err(FinishError::UndenominatedMovement(key));
-            };
-            match total_movement(&ops, resource) {
-                Ok(movement) => {
-                    movements.insert(key, movement);
-                }
-                // Totals past `u128` are the guest's own arithmetic — it
-                // queued the operations — so the loss is its own.
-                Err(error) => {
-                    return Ok(abort_with(
-                        self.store,
-                        Outcome::UserError {
-                            reason: error.into(),
-                        },
-                        fuel,
-                    ));
-                }
-            }
-        }
-        for (key, movement) in &movements {
-            if !self.locality.is_local(key.owner) {
-                // The owning shard judges its own cells; here the
-                // movement is the outbound record.
-                continue;
-            }
-            let refusal = match self
-                .store
-                .judge_movement(*key, movement.credit, movement.debit)
-            {
-                Ok(_) => continue,
-                // An uncovered debit, and a cell an exclusive write left
-                // below the reservations still outstanding on it, are the
-                // same deterministic loss: the floor this movement needed
-                // is not there, and the transaction that declared the
-                // movement is the one that loses.
-                Err(defect) => match defect.fault() {
-                    Fault::Floor => Outcome::Infeasible {
-                        key: *key,
-                        amount: movement.debit,
-                    },
-                    Fault::Declaration(error) => Outcome::UserError {
-                        reason: error.into(),
-                    },
-                    Fault::Defect => return Err(defect.into()),
-                },
-            };
-            return Ok(abort_with(self.store, refusal, fuel));
-        }
-        // A movement on a key this shard does not own folds at the owning
-        // shard, never here: the receipt already carries it as the
-        // outbound record, and folding it locally would fabricate a
-        // balance for a cell this shard holds none of.
-        let locality = self.locality.clone();
-        self.store
-            .retain_pending_deltas(&|key: SubstateKey| locality.is_local(key.owner));
-        if let Err(defect) = self.store.commit_deltas() {
-            // Every remaining fold is on an owned cell the movement judge
-            // just cleared, so a floor here — like anything else that is
-            // not a declaration defect — is the kernel disagreeing with
-            // itself.
-            return match defect.fault() {
-                Fault::Declaration(error) => Ok(abort_with(
-                    self.store,
-                    Outcome::UserError {
-                        reason: error.into(),
-                    },
-                    fuel,
-                )),
-                Fault::Floor | Fault::Defect => Err(defect.into()),
-            };
-        }
+        let movements = match self.judge_movements()? {
+            Movements::Judged(movements) => movements,
+            Movements::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
+        };
         let settles = match self.settle_reservations()? {
             Settlement::Settled(settles) => settles,
             Settlement::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
@@ -453,6 +536,15 @@ impl KernelSession {
             .retain(|key, _| !movements.contains_key(key) && !settles.contains_key(key));
         delta.movements = movements.into();
         delta.settles = settles.into();
+        if self.unconserved(&delta).is_some() {
+            return Ok(abort_with(
+                self.store,
+                Outcome::ProtocolError {
+                    reason: AbortReason::ValueNotConserved,
+                },
+                fuel,
+            ));
+        }
         self.store.merge_active();
         Ok((
             Receipt {

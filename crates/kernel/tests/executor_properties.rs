@@ -19,14 +19,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Declaration, Hash32, Hasher, SlotId, TestHasher, child_key};
+use hyperscale_vm_effects::{
+    Declaration, Hash32, Hasher, ResourceKind, SlotId, TestHasher, child_key,
+};
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
     MemoryStore, RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
-    EntryKey, Mode, Movement, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    EntryKey, ISSUER_REP, Mode, Movement, Outcome, ResourceAddr, SubstateKey, TxHash,
+    encode_amount,
 };
 
 /// The one answer a fixture guest hands back, so a receipt depends on
@@ -247,9 +250,18 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 }
                 Capability::Delta(_) => {
                     // Credit, then a smaller debit, so the cell moves both
-                    // ways without always draining.
-                    let _ = session.delta_add(rep, seed % 40);
-                    let _ = session.delta_sub(rep, seed % 17);
+                    // ways without always draining. Through the bucket
+                    // each way, with a mint behind the credit and a burn
+                    // after the debit: value a transaction hands a cell
+                    // comes from somewhere, and a mint is the somewhere a
+                    // fixture has.
+                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    if let Ok(minted) = session.mint(ISSUER_REP, seed % 40) {
+                        let _ = session.delta_put(rep, minted);
+                    }
+                    if let Ok(taken) = session.delta_take(rep, seed % 17) {
+                        let _ = session.burn(ISSUER_REP, taken);
+                    }
                 }
                 Capability::Reserve { .. } => {
                     let _ = session.reserve_amount(rep);
@@ -441,8 +453,13 @@ fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
             let rep = u32::try_from(rep).expect("small table");
             match capability {
                 Capability::Delta(_) => {
-                    let _ = session.delta_add(rep, seed % 40 + 17);
-                    let _ = session.delta_sub(rep, seed % 17);
+                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    if let Ok(minted) = session.mint(ISSUER_REP, seed % 40 + 17) {
+                        let _ = session.delta_put(rep, minted);
+                    }
+                    if let Ok(taken) = session.delta_take(rep, seed % 17) {
+                        let _ = session.burn(ISSUER_REP, taken);
+                    }
                 }
                 Capability::Reserve { .. } => {
                     let amount = session.reserve_amount(rep).unwrap_or_default();
@@ -478,8 +495,16 @@ fn outbound_runner(
             let rep = u32::try_from(rep).expect("small table");
             match capability {
                 Capability::Delta(_) => {
+                    // Taken through the bucket and burned, so the debit
+                    // is value leaving the world rather than value the
+                    // fixture lost track of. The take is unjudged here —
+                    // a shard owning nothing judges nothing — which is
+                    // what the debit is for.
                     let debit = debits.get(&id).map_or(0, |(_, debit)| *debit);
-                    let _ = session.delta_sub(rep, debit);
+                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    if let Ok(taken) = session.delta_take(rep, debit) {
+                        let _ = session.burn(ISSUER_REP, taken);
+                    }
                 }
                 Capability::Read(_) => {
                     let cell = session.read_cell(rep).unwrap_or_default();

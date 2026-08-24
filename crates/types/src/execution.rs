@@ -367,6 +367,15 @@ pub enum AbortReason {
     /// answer is a re-roll of a draw somebody has already read.
     #[hbor(discriminant = 63)]
     SealStanding,
+    /// A transaction whose value holdings gained more, or less, than it
+    /// minted minus what it burned.
+    ///
+    /// Never the sender's fault: value moves only through buckets, every
+    /// bucket names what it carries, and no holding can be moved behind
+    /// the table's back — so reaching this means the kernel lost track of
+    /// value rather than that a transaction asked it to.
+    #[hbor(discriminant = 64)]
+    ValueNotConserved,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -595,6 +604,7 @@ mod tests {
             (61, AbortReason::AnswerTooLarge),
             (62, AbortReason::MalformedSeal),
             (63, AbortReason::SealStanding),
+            (64, AbortReason::ValueNotConserved),
         ];
         for (byte, reason) in classes {
             assert_eq!(

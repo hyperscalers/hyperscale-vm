@@ -24,6 +24,16 @@ use wasmtime::Result;
 use wasmtime::error::{bail, format_err};
 use wat::parse_str;
 
+/// A bucket of `amount`, minted rather than conjured.
+///
+/// Value entering a transaction comes from a mint; a fixture opening a
+/// bucket from nothing hands the session value no supply accounts for,
+/// which is the thing the conservation check exists to refuse.
+fn minted(session: &mut KernelSession, amount: u128) -> u32 {
+    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+    session.mint(ISSUER_REP, amount).expect("the grant mints")
+}
+
 const FUEL: u64 = 1_000_000_000;
 /// What the held bucket carries; the guest never learns it, which is the
 /// point of the handle.
@@ -186,8 +196,8 @@ fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
 /// same two.
 fn session(fx: &Fixture) -> (KernelSession, u32, u32) {
     let mut session = session_of(fx);
-    let held = session.open_bucket(Held::Amount(HELD), RESOURCE);
-    let spent = session.open_bucket(Held::Amount(SPENT), RESOURCE);
+    let held = minted(&mut session, HELD);
+    let spent = minted(&mut session, SPENT);
     (session, held, spent)
 }
 
@@ -354,13 +364,20 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
     let took = match produced {
         DualOutcome::Values(_) => {
             let rep = produced.bucket()?;
-            let value = blessed.take_bucket(rep)?.quantity();
+            let value = blessed.bucket(rep)?.quantity();
             assert_eq!(
                 value,
-                reference.take_bucket(rep)?.quantity(),
+                reference.bucket(rep)?.quantity(),
                 "{} diverged on the taken value",
                 take.export()
             );
+            // Burned rather than lifted out of the table: a debit
+            // nothing accounts for is value the transaction lost, and
+            // what this fixture is about is where the value went.
+            for session in [&mut blessed, &mut reference] {
+                session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                session.burn(ISSUER_REP, rep)?;
+            }
             Took::Value(value)
         }
         DualOutcome::Refused(reason) => Took::Refusal(reason),
@@ -468,11 +485,11 @@ fn settled(
 fn credited(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<Credited> {
     let build = || {
         let mut host = session_of(fx);
-        host.open_bucket(Held::Amount(held), RESOURCE);
+        minted(&mut host, held);
         host
     };
     let mut probe = session_of(fx);
-    let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
+    let funds = minted(&mut probe, held);
     let (key, mode, kind) = if delta {
         (fx.ledger, Mode::Delta, HandleKind::DeltaCell)
     } else {
@@ -531,11 +548,11 @@ fn a_consumed_handle_cannot_be_dropped_again() -> Result<()> {
     let fx = fixture();
     let build = || {
         let mut host = session_of(&fx);
-        host.open_bucket(Held::Amount(30), RESOURCE);
+        minted(&mut host, 30);
         host
     };
     let mut probe = session_of(&fx);
-    let funds = probe.open_bucket(Held::Amount(30), RESOURCE);
+    let funds = minted(&mut probe, 30);
     let rep = rep_of(&probe, fx.vault, Mode::Write);
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let refused = dual.invoke_both(
@@ -612,11 +629,11 @@ fn paired(fx: &Fixture, a: u64, b: u64) -> Result<Pair> {
 fn weighed(fx: &Fixture, held: u128) -> Result<u64> {
     let build = || {
         let mut host = session_of(fx);
-        host.open_bucket(Held::Amount(held), RESOURCE);
+        minted(&mut host, held);
         host
     };
     let mut probe = session_of(fx);
-    let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
+    let funds = minted(&mut probe, held);
     let ledger = rep_of(&probe, fx.ledger, Mode::Delta);
     let mut dual = GUEST.instantiate(FUEL, build)?;
     dual.invoke_both(
@@ -633,11 +650,11 @@ fn weighed(fx: &Fixture, held: u128) -> Result<u64> {
 fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
     let build = || {
         let mut host = session_of(fx);
-        host.open_bucket(Held::Amount(held), RESOURCE);
+        minted(&mut host, held);
         host
     };
     let mut probe = session_of(fx);
-    let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
+    let funds = minted(&mut probe, held);
     let ledger = rep_of(&probe, fx.ledger, Mode::Delta);
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let came_off = dual
@@ -652,12 +669,18 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
         .bucket()?;
     let (blessed, reference) = dual.finish()?;
     let (mut blessed, mut reference) = (blessed.session, reference.session);
-    let taken = blessed.take_bucket(came_off)?.quantity();
+    let taken = blessed.bucket(came_off)?.quantity();
     assert_eq!(
         taken,
-        reference.take_bucket(came_off)?.quantity(),
+        reference.bucket(came_off)?.quantity(),
         "the split diverged"
     );
+    // The half that came off is burned rather than lifted away, so what
+    // the split divided is still accounted for on both sides of it.
+    for session in [&mut blessed, &mut reference] {
+        session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+        session.burn(ISSUER_REP, came_off)?;
+    }
     let (receipt, _) = blessed.finish(vec![], 0).expect("the oracle is clean");
     let left = receipt
         .delta
@@ -759,11 +782,11 @@ fn a_bucket_survives_a_split_and_a_merge_whole() -> Result<()> {
     let fx = fixture();
     let build = || {
         let mut host = session_of(&fx);
-        host.open_bucket(Held::Amount(100), RESOURCE);
+        minted(&mut host, 100);
         host
     };
     let mut probe = session_of(&fx);
-    let funds = probe.open_bucket(Held::Amount(100), RESOURCE);
+    let funds = minted(&mut probe, 100);
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let whole = dual
         .invoke_both("halve", &[CVal::Own(funds), CVal::U64(30)])?
@@ -790,11 +813,11 @@ fn a_merge_of_a_bucket_into_itself_is_refused_by_both_engines() -> Result<()> {
     let fx = fixture();
     let build = || {
         let mut host = session_of(&fx);
-        host.open_bucket(Held::Amount(100), RESOURCE);
+        minted(&mut host, 100);
         host
     };
     let mut probe = session_of(&fx);
-    let funds = probe.open_bucket(Held::Amount(100), RESOURCE);
+    let funds = minted(&mut probe, 100);
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let refused = dual.invoke_both("self-merge", &[CVal::Own(funds)])?;
     assert_eq!(refused, DualOutcome::Trapped(AbortReason::AbiViolation));
@@ -934,11 +957,11 @@ fn closed_after_discarding(
 ) -> Result<(Option<AbortReason>, Option<AbortReason>)> {
     let build = || {
         let mut host = session_of(fx);
-        host.open_bucket(Held::Amount(held), RESOURCE);
+        minted(&mut host, held);
         host
     };
     let mut probe = session_of(fx);
-    let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
+    let funds = minted(&mut probe, held);
     let mut dual = GUEST.instantiate(FUEL, build)?;
     dual.invoke_both("discard", &[CVal::Own(funds)])?;
 
@@ -959,11 +982,11 @@ fn closed_after_discarding(
 fn discarded(fx: &Fixture, held: u128) -> Result<(DualOutcome, Option<u128>)> {
     let build = || {
         let mut host = session_of(fx);
-        host.open_bucket(Held::Amount(held), RESOURCE);
+        minted(&mut host, held);
         host
     };
     let mut probe = session_of(fx);
-    let funds = probe.open_bucket(Held::Amount(held), RESOURCE);
+    let funds = minted(&mut probe, held);
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let outcome = dual.invoke_both("discard", &[CVal::Own(funds)])?;
 

@@ -7,14 +7,26 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Declaration, Hash32, Hasher, SlotId, TestHasher, Value, child_key};
-use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore, OverlayStore};
+use hyperscale_vm_effects::{
+    Declaration, Hash32, Hasher, ResourceKind, SlotId, TestHasher, Value, child_key,
+};
+use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::host::{CellKind, GuestArg, Invoked};
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode,
-    ResourceAddr, SubstateKey, TxHash, encode_amount,
+    ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, ISSUER_REP,
+    Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
+
+/// A bucket of `amount`, minted rather than conjured.
+///
+/// Value entering a transaction comes from a mint; a fixture opening a
+/// bucket from nothing hands the session value no supply accounts for,
+/// which is the thing the conservation check exists to refuse.
+fn minted(session: &mut KernelSession, amount: u128) -> u32 {
+    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+    session.mint(ISSUER_REP, amount).expect("the grant mints")
+}
 
 const OWNER: Address = Address::new([0x21; 31], AddressClass::Component);
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
@@ -243,7 +255,7 @@ const fn wide(value: u128) -> [u8; 16] {
 #[test]
 fn an_edge_the_body_credits_lands_in_the_declared_cell() {
     let mut session = session(Mode::Delta, 0);
-    let funds = session.open_bucket(Held::Amount(70), RESOURCE);
+    let funds = minted(&mut session, 70);
 
     let (session, invoked) = till::invoke(
         "deposit",
