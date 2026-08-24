@@ -8,6 +8,7 @@
 //! creation-fixed record, and a hasher, and nothing else, so evaluation is
 //! pure by construction and identical on every node.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 
 use hyperscale_hbor::Hbor;
@@ -47,6 +48,28 @@ pub const MAX_FOREACH_ELEMENTS: usize = MAX_VALUE_ITEMS;
 /// recurses per subterm, so this is what keeps a pathological signature
 /// a deterministic rejection rather than a native stack abort.
 pub const MAX_EXPR_DEPTH: usize = 32;
+
+/// The bound on what evaluating one signature may cost: subterms
+/// evaluated, plus elements walked or copied by the operations that take
+/// a whole value.
+///
+/// The clause bound beside it counts what a signature *declares*, which
+/// is what the footprint prices. This counts what deciding that costs,
+/// which nothing prices: a lookup over a wide table and a bare
+/// comparison land the same effects at the same footprint and differ by
+/// three orders of magnitude in work, and evaluation happens at
+/// admission, before any fee is assured.
+///
+/// Measured at both ends rather than chosen. A unit costs about fifty
+/// nanoseconds on the machine the figure was taken on, so the widest
+/// admissible evaluation is a few milliseconds — where the shape that
+/// motivated the bound, a thousand iterations scanning a table of
+/// twenty-five thousand, ran for over a second at the same footprint as
+/// a signature that scanned nothing. At the other end, the dearest
+/// signature the corpus declares spends ninety-two units across every
+/// package it holds, so the ceiling clears real work by a factor in the
+/// hundreds and refuses only a signature whose cost is the point.
+pub const MAX_EVALUATION_WORK: usize = 65_536;
 
 /// The bound on `for-each` nesting within one signature.
 ///
@@ -717,6 +740,11 @@ pub enum EvalError {
     /// an empty-bodied loop declares nothing yet still iterates.
     #[error("signature evaluation exceeds {MAX_EFFECTS_PER_SIGNATURE} effects or iterations")]
     TooManyEffects,
+    /// A signature whose evaluation spends more than
+    /// [`MAX_EVALUATION_WORK`] — subterms evaluated plus elements walked
+    /// or copied, which is what the clause count above does not see.
+    #[error("signature evaluation exceeds {MAX_EVALUATION_WORK} units of work")]
+    TooMuchWork,
     /// A range whose lower bound exceeds its upper bound.
     #[error("range bounds inverted: lo > hi")]
     InvalidRange,
@@ -1062,21 +1090,23 @@ pub fn evaluate_declaration(
 ) -> Result<Declaration, EvalError> {
     let mut out = Declaration::default();
     let mut bindings = Vec::new();
-    let mut budget = Budget::default();
+    let budget = Budget::default();
     // One clause at a time, so each one's contribution to the flattened
     // order is bracketed as it is produced.
     for (index, clause) in clauses.iter().enumerate() {
         let start = out.ordered.len();
         // The clause's own index, so a `for-each` files its expansion
         // map under the number an ABI binding names it by.
-        budget.clause = u32::try_from(index).map_err(|_| EvalError::TooManyEffects)?;
+        budget
+            .clause
+            .set(u32::try_from(index).map_err(|_| EvalError::TooManyEffects)?);
         eval_clauses(
             std::slice::from_ref(clause),
             inputs,
             hasher,
             &mut bindings,
             &mut out,
-            &mut budget,
+            &budget,
         )?;
         let len = out.ordered.len() - start;
         out.clause_spans.push((
@@ -1098,22 +1128,46 @@ pub fn evaluate_declaration(
 /// and it bounds effect-declaring loops on the same budget — the count of
 /// landed effects can only be smaller than the iterations that produced
 /// them.
+///
+/// Shared rather than threaded by `&mut`: an expression's evaluation is a
+/// walk of closures over its subterms, and a subterm charges like
+/// anything else — so the meter every arm reaches is one both halves of
+/// the evaluation hold at once.
 #[derive(Default)]
 struct Budget {
-    clause_depth: usize,
-    work: usize,
+    clause_depth: Cell<usize>,
+    work: Cell<usize>,
+    spent: Cell<usize>,
     /// The top-level clause being evaluated, which is the index a
     /// `for-each`'s expansion map is filed under.
-    clause: u32,
+    clause: Cell<u32>,
 }
 
 impl Budget {
-    /// Charge one unit of evaluation work, refusing past the per-signature
-    /// bound. Deterministic, so every node reaches the same verdict.
-    const fn charge(&mut self) -> Result<(), EvalError> {
-        self.work += 1;
-        if self.work > MAX_EFFECTS_PER_SIGNATURE {
+    /// Charge one clause or one `for-each` iteration, refusing past the
+    /// per-signature bound. Deterministic, so every node reaches the same
+    /// verdict.
+    fn charge(&self) -> Result<(), EvalError> {
+        self.work.set(self.work.get() + 1);
+        if self.work.get() > MAX_EFFECTS_PER_SIGNATURE {
             return Err(EvalError::TooManyEffects);
+        }
+        Ok(())
+    }
+
+    /// Charge `units` of expression work: one per subterm evaluated, and
+    /// one per element a bulk operation walks or copies.
+    ///
+    /// The counter beside [`Self::charge`] rather than the same one,
+    /// because they bound different things. A clause count bounds the
+    /// *shape* a signature declares, which is what the footprint prices;
+    /// this bounds what evaluating that shape costs, which nothing
+    /// prices — a table scan and a bare comparison land the same effects
+    /// at the same footprint, and only this tells them apart.
+    fn spend(&self, units: usize) -> Result<(), EvalError> {
+        self.spent.set(self.spent.get().saturating_add(units));
+        if self.spent.get() > MAX_EVALUATION_WORK {
+            return Err(EvalError::TooMuchWork);
         }
         Ok(())
     }
@@ -1134,7 +1188,7 @@ fn eval_expansion(
     hasher: &dyn Hasher,
     bindings: &mut Vec<Value>,
     out: &mut Declaration,
-    budget: &mut Budget,
+    budget: &Budget,
     mut rows: Option<&mut Vec<Vec<Option<u32>>>>,
 ) -> Result<(), EvalError> {
     for (site, clause) in body.iter().enumerate() {
@@ -1170,7 +1224,7 @@ pub fn evaluate_expr(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
 ) -> Result<Value, EvalError> {
-    eval_expr(expr, inputs, hasher, &[], 0)
+    eval_expr(expr, inputs, hasher, &[], 0, &Budget::default())
 }
 
 fn eval_clauses(
@@ -1179,9 +1233,9 @@ fn eval_clauses(
     hasher: &dyn Hasher,
     bindings: &mut Vec<Value>,
     out: &mut Declaration,
-    budget: &mut Budget,
+    budget: &Budget,
 ) -> Result<(), EvalError> {
-    if budget.clause_depth > MAX_CLAUSE_DEPTH {
+    if budget.clause_depth.get() > MAX_CLAUSE_DEPTH {
         return Err(EvalError::ClausesTooDeep);
     }
     for clause in clauses {
@@ -1190,10 +1244,10 @@ fn eval_clauses(
         // inside a `for-each` body, where no fixed export parameter
         // reaches them.
         let taken = match clause.guard() {
-            Some(cond) => as_bool(eval_expr(cond, inputs, hasher, bindings, 0)?)?,
+            Some(cond) => as_bool(eval_expr(cond, inputs, hasher, bindings, 0, budget)?)?,
             None => true,
         };
-        if budget.clause_depth == 0 {
+        if budget.clause_depth.get() == 0 {
             out.clause_taken.push(taken);
         }
         if !taken {
@@ -1202,10 +1256,10 @@ fn eval_clauses(
             // no run, so a binding that names it reads what a list of
             // none leaves rather than refusing the call.
             if let Clause::ForEach { body, .. } = clause
-                && budget.clause_depth == 0
+                && budget.clause_depth.get() == 0
             {
                 out.expansions
-                    .insert(budget.clause, vec![Vec::new(); body.len()]);
+                    .insert(budget.clause.get(), vec![Vec::new(); body.len()]);
             }
             continue;
         }
@@ -1216,14 +1270,14 @@ fn eval_clauses(
                 denomination,
                 ..
             } => {
-                let target = eval_target(target, inputs, hasher, bindings)?;
-                let mode = eval_mode(mode, inputs, hasher, bindings)?;
+                let target = eval_target(target, inputs, hasher, bindings, budget)?;
+                let mode = eval_mode(mode, inputs, hasher, bindings, budget)?;
                 budget.charge()?;
                 // Evaluated beside the key it belongs to and kept parallel
                 // to `ordered`, because a capability's rep is its index
                 // there — the same alignment the guest's handles ride.
                 let held = match denomination {
-                    Some(expr) => match eval_expr(expr, inputs, hasher, bindings, 0)? {
+                    Some(expr) => match eval_expr(expr, inputs, hasher, bindings, 0, budget)? {
                         Value::Address(address) => Some(ResourceAddr::try_from(address)?),
                         found => {
                             return Err(EvalError::TypeMismatch {
@@ -1243,12 +1297,12 @@ fn eval_clauses(
             }
             Clause::Requires { condition, .. } => {
                 budget.charge()?;
-                let condition = eval_condition(condition, inputs, hasher, bindings)?;
+                let condition = eval_condition(condition, inputs, hasher, bindings, budget)?;
                 out.conditions.push(condition);
             }
             Clause::Mints { claim, .. } => {
                 budget.charge()?;
-                let value = eval_expr(claim, inputs, hasher, bindings, 0)?;
+                let value = eval_expr(claim, inputs, hasher, bindings, 0, budget)?;
                 let minted = Presented::of(&value).ok_or_else(|| EvalError::TypeMismatch {
                     expected: "claim",
                     found: value.kind(),
@@ -1277,16 +1331,16 @@ fn eval_clauses(
                 }
             }
             Clause::ForEach { list, body, .. } => {
-                let items = as_list(eval_expr(list, inputs, hasher, bindings, 0)?)?;
+                let items = as_list(eval_expr(list, inputs, hasher, bindings, 0, budget)?)?;
                 if items.len() > MAX_FOREACH_ELEMENTS {
                     return Err(EvalError::ForEachTooLong { len: items.len() });
                 }
                 // Only a top-level loop is one an ABI binding can name, so
                 // only that one records where its expansions landed.
-                let mut rows = (budget.clause_depth == 0)
+                let mut rows = (budget.clause_depth.get() == 0)
                     .then(|| vec![Vec::with_capacity(items.len()); body.len()]);
-                let clause = budget.clause;
-                budget.clause_depth += 1;
+                let clause = budget.clause.get();
+                budget.clause_depth.set(budget.clause_depth.get() + 1);
                 for item in items {
                     // The iteration is work whether or not the body declares
                     // anything, so a nest of empty loops is bounded here
@@ -1298,7 +1352,7 @@ fn eval_clauses(
                     bindings.pop();
                     result?;
                 }
-                budget.clause_depth -= 1;
+                budget.clause_depth.set(budget.clause_depth.get() - 1);
                 if let Some(rows) = rows {
                     out.expansions.insert(clause, rows);
                 }
@@ -1313,16 +1367,17 @@ fn eval_condition(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
+    budget: &Budget,
 ) -> Result<Condition, EvalError> {
     match condition {
         ConditionExpr::Holds { target, presence } => Ok(Condition::Holds {
-            target: eval_target(target, inputs, hasher, bindings)?,
+            target: eval_target(target, inputs, hasher, bindings, budget)?,
             presence: *presence,
         }),
         ConditionExpr::Satisfies { rule } => {
             let rule = rule.try_graft(&mut |leaf| match leaf {
                 RuleLeaf::Claim(expr) => {
-                    let value = eval_expr(expr, inputs, hasher, bindings, 0)?;
+                    let value = eval_expr(expr, inputs, hasher, bindings, 0, budget)?;
                     Presented::of(&value)
                         .map(|claim| Rule::Require(JudgedLeaf::Claim(claim)))
                         .ok_or_else(|| EvalError::TypeMismatch {
@@ -1331,7 +1386,7 @@ fn eval_condition(
                         })
                 }
                 RuleLeaf::Stored { cell, role } => Ok(Rule::Require(JudgedLeaf::Stored {
-                    cell: as_key(eval_expr(cell, inputs, hasher, bindings, 0)?)?,
+                    cell: as_key(eval_expr(cell, inputs, hasher, bindings, 0, budget)?)?,
                     role: *role,
                 })),
                 // The grant leaf stands for the tree its resource
@@ -1342,7 +1397,7 @@ fn eval_condition(
                     resource,
                     behaviour,
                 } => {
-                    let value = eval_expr(resource, inputs, hasher, bindings, 0)?;
+                    let value = eval_expr(resource, inputs, hasher, bindings, 0, budget)?;
                     let Value::Address(address) = value else {
                         return Err(EvalError::TypeMismatch {
                             expected: "resource address",
@@ -1378,10 +1433,11 @@ fn eval_target(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
+    budget: &Budget,
 ) -> Result<EffectTarget, EvalError> {
     match target {
         TargetExpr::Point(expr) => {
-            let key = as_key(eval_expr(expr, inputs, hasher, bindings, 0)?)?;
+            let key = as_key(eval_expr(expr, inputs, hasher, bindings, 0, budget)?)?;
             Ok(EffectTarget::Point(key))
         }
         TargetExpr::Entry {
@@ -1390,10 +1446,17 @@ fn eval_target(
             material,
             order,
         } => {
-            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, 0)?)?;
-            let collection =
-                eval_collection(owner, *collection, material, inputs, hasher, bindings)?;
-            let order = as_u128(eval_expr(order, inputs, hasher, bindings, 0)?)?;
+            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, 0, budget)?)?;
+            let collection = eval_collection(
+                owner,
+                *collection,
+                material,
+                inputs,
+                hasher,
+                bindings,
+                budget,
+            )?;
+            let order = as_u128(eval_expr(order, inputs, hasher, bindings, 0, budget)?)?;
             Ok(EffectTarget::Entry {
                 owner,
                 collection,
@@ -1408,15 +1471,22 @@ fn eval_target(
             hi,
             cap,
         } => {
-            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, 0)?)?;
-            let collection =
-                eval_collection(owner, *collection, material, inputs, hasher, bindings)?;
-            let lo = as_u128(eval_expr(lo, inputs, hasher, bindings, 0)?)?;
-            let hi = as_u128(eval_expr(hi, inputs, hasher, bindings, 0)?)?;
+            let owner = as_address(eval_expr(owner, inputs, hasher, bindings, 0, budget)?)?;
+            let collection = eval_collection(
+                owner,
+                *collection,
+                material,
+                inputs,
+                hasher,
+                bindings,
+                budget,
+            )?;
+            let lo = as_u128(eval_expr(lo, inputs, hasher, bindings, 0, budget)?)?;
+            let hi = as_u128(eval_expr(hi, inputs, hasher, bindings, 0, budget)?)?;
             if lo > hi {
                 return Err(EvalError::InvalidRange);
             }
-            let cap = as_cap(eval_expr(cap, inputs, hasher, bindings, 0)?)?;
+            let cap = as_cap(eval_expr(cap, inputs, hasher, bindings, 0, budget)?)?;
             Ok(EffectTarget::Range {
                 owner,
                 collection,
@@ -1437,8 +1507,9 @@ fn eval_collection(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
+    budget: &Budget,
 ) -> Result<CollectionId, EvalError> {
-    let encoded = eval_material(material, inputs, hasher, bindings, 0)?;
+    let encoded = eval_material(material, inputs, hasher, bindings, 0, budget)?;
     Ok(collection_id(hasher, owner, slot, &encoded))
 }
 
@@ -1467,12 +1538,13 @@ fn eval_mode(
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
+    budget: &Budget,
 ) -> Result<Mode, EvalError> {
     match mode {
         ModeExpr::Read => Ok(Mode::Read),
         ModeExpr::Delta => Ok(Mode::Delta),
         ModeExpr::Reserve(expr) => {
-            let amount = as_u128(eval_expr(expr, inputs, hasher, bindings, 0)?)?;
+            let amount = as_u128(eval_expr(expr, inputs, hasher, bindings, 0, budget)?)?;
             Ok(Mode::Reserve { amount })
         }
         ModeExpr::Write => Ok(Mode::Write),
@@ -1530,12 +1602,61 @@ fn eval_material(
     hasher: &dyn Hasher,
     bindings: &[Value],
     depth: usize,
+    budget: &Budget,
 ) -> Result<Vec<Vec<u8>>, EvalError> {
     let mut encoded = Vec::with_capacity(material.len());
     for expr in material {
-        encoded.push(eval_expr(expr, inputs, hasher, bindings, depth)?.canonical_bytes());
+        let value = eval_expr(expr, inputs, hasher, bindings, depth, budget)?;
+        // Encoding walks the value, so it is charged like every other
+        // walk of one.
+        budget.spend(items(&value))?;
+        encoded.push(value.canonical_bytes());
     }
     Ok(encoded)
+}
+
+/// The call's argument at `index`.
+fn arg<'a>(inputs: &'a EvalInputs<'_>, index: u32) -> Result<&'a Value, EvalError> {
+    indexed(inputs.args, index).ok_or(EvalError::ArgOutOfRange(index))
+}
+
+/// The target's configuration field at `index`.
+fn config<'a>(inputs: &'a EvalInputs<'_>, index: u32) -> Result<&'a Value, EvalError> {
+    indexed(&inputs.record.config, index).ok_or(EvalError::ConfigOutOfRange(index))
+}
+
+/// The `for-each` element `index` levels out from the innermost loop.
+fn binding(bindings: &[Value], index: u32) -> Result<&Value, EvalError> {
+    usize::try_from(index)
+        .ok()
+        .and_then(|back| bindings.len().checked_sub(back + 1))
+        .and_then(|position| bindings.get(position))
+        .ok_or(EvalError::BindingOutOfRange(index))
+}
+
+/// A value handed out of the evaluator, charged for the copy.
+fn copied(value: &Value, budget: &Budget) -> Result<Value, EvalError> {
+    budget.spend(items(value))?;
+    Ok(value.clone())
+}
+
+/// How many elements a value carries, counting what a walk over it
+/// visits: its own leaves and every element beneath them.
+///
+/// The unit `Budget::spend` charges in. A scalar is one; a list is one
+/// per element and one for itself, so a walk that copies or encodes a
+/// value pays what the copy costs rather than what its outermost shape
+/// suggests.
+fn items(value: &Value) -> usize {
+    let mut total = 0;
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        total += 1;
+        if let Value::Tuple(values) | Value::List(values) = value {
+            stack.extend(values);
+        }
+    }
+    total
 }
 
 fn eval_expr(
@@ -1544,28 +1665,26 @@ fn eval_expr(
     hasher: &dyn Hasher,
     bindings: &[Value],
     depth: usize,
+    budget: &Budget,
 ) -> Result<Value, EvalError> {
     if depth > MAX_EXPR_DEPTH {
         return Err(EvalError::ExpressionTooDeep);
     }
+    // One per subterm, before anything is read: an expression tree is
+    // walked whatever its arms turn out to hold.
+    budget.spend(1)?;
     let deeper = depth + 1;
-    let sub = |expr| eval_expr(expr, inputs, hasher, bindings, deeper);
-    let material = |material| eval_material(material, inputs, hasher, bindings, deeper);
-    let all = |elements| eval_all(elements, inputs, hasher, bindings, deeper);
+    let sub = |expr| eval_expr(expr, inputs, hasher, bindings, deeper, budget);
+    let material = |material| eval_material(material, inputs, hasher, bindings, deeper, budget);
+    let all = |elements| eval_all(elements, inputs, hasher, bindings, deeper, budget);
     match expr {
-        Expr::Literal(value) => Ok(value.clone()),
-        Expr::Arg(index) => indexed(inputs.args, *index)
-            .cloned()
-            .ok_or(EvalError::ArgOutOfRange(*index)),
-        Expr::Config(index) => indexed(&inputs.record.config, *index)
-            .cloned()
-            .ok_or(EvalError::ConfigOutOfRange(*index)),
-        Expr::Binding(index) => usize::try_from(*index)
-            .ok()
-            .and_then(|back| bindings.len().checked_sub(back + 1))
-            .and_then(|position| bindings.get(position))
-            .cloned()
-            .ok_or(EvalError::BindingOutOfRange(*index)),
+        // The four terms handed a value rather than deriving one. Each
+        // is a copy, and a copy costs what it holds — the one place a
+        // subterm is worth more than a unit without walking anything.
+        Expr::Literal(value) => copied(value, budget),
+        Expr::Arg(index) => copied(arg(inputs, *index)?, budget),
+        Expr::Config(index) => copied(config(inputs, *index)?, budget),
+        Expr::Binding(index) => copied(binding(bindings, *index)?, budget),
         Expr::SelfAddr => Ok(Value::Address(inputs.self_addr)),
         Expr::SelfRecord => inputs
             .record
@@ -1577,7 +1696,9 @@ fn eval_expr(
         Expr::IdsOf(bucket) => edge_ids(bucket_parts(sub(bucket)?)?.1),
         Expr::Len(list) => Ok(count(&as_list(sub(list)?)?)),
         Expr::Only(list) => sole(as_list(sub(list)?)?),
-        Expr::Lookup { map, key } => lookup(as_list(sub(map)?)?, &sub(key)?),
+        Expr::Lookup { map, key } => {
+            find(as_list(sub(map)?)?, &sub(key)?, budget)?.ok_or(EvalError::LookupMiss)
+        }
         Expr::SelfResource {
             kind,
             material: parts,
@@ -1634,7 +1755,7 @@ fn eval_expr(
         Expr::Eq(left, right) => equals(&sub(left)?, &sub(right)?),
         Expr::Lt(left, right) => less_than(&sub(left)?, &sub(right)?),
         Expr::Contains { map, key } => Ok(Value::Bool(
-            find(as_list(sub(map)?)?, &sub(key)?)?.is_some(),
+            find(as_list(sub(map)?)?, &sub(key)?, budget)?.is_some(),
         )),
         Expr::If {
             cond,
@@ -1655,10 +1776,11 @@ fn eval_all(
     hasher: &dyn Hasher,
     bindings: &[Value],
     depth: usize,
+    budget: &Budget,
 ) -> Result<Vec<Value>, EvalError> {
     elements
         .iter()
-        .map(|element| eval_expr(element, inputs, hasher, bindings, depth))
+        .map(|element| eval_expr(element, inputs, hasher, bindings, depth, budget))
         .collect()
 }
 
@@ -1672,17 +1794,16 @@ fn field(fields: &[Value], index: u32) -> Result<Value, EvalError> {
         })
 }
 
-/// The value of the first pair whose key matches, over a list of
-/// `(key, value)` tuples.
-fn lookup(pairs: Vec<Value>, key: &Value) -> Result<Value, EvalError> {
-    find(pairs, key)?.ok_or(EvalError::LookupMiss)
-}
-
 /// The first matching pair's value, or `None` where the table holds no
 /// such key. The one walk under both [`Expr::Lookup`], which refuses a
 /// miss, and [`Expr::Contains`], which reports it.
-fn find(pairs: Vec<Value>, key: &Value) -> Result<Option<Value>, EvalError> {
+fn find(pairs: Vec<Value>, key: &Value, budget: &Budget) -> Result<Option<Value>, EvalError> {
     for pair in pairs {
+        // Per pair examined. A scan is the one operation whose cost is
+        // the table's rather than the expression's, and charging it here
+        // is what makes the ceiling a bound on work instead of on the
+        // number of scans a signature spells.
+        budget.spend(1)?;
         let Value::Tuple(fields) = pair else {
             return Err(EvalError::LookupNotPairs);
         };
@@ -1894,8 +2015,8 @@ mod tests {
 
     use super::{
         Clause, ConditionExpr, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
-        MAX_FOREACH_ELEMENTS, ModeExpr, TargetExpr, evaluate_declaration, evaluate_effects,
-        evaluate_expr, fresh_id, fresh_local,
+        MAX_FOREACH_ELEMENTS, MAX_VALUE_ITEMS, ModeExpr, TargetExpr, evaluate_declaration,
+        evaluate_effects, evaluate_expr, fresh_id, fresh_local,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::instance::InstanceMeta;
@@ -2560,6 +2681,54 @@ mod tests {
             Err(EvalError::ForEachTooLong {
                 len: MAX_FOREACH_ELEMENTS + 1
             })
+        );
+    }
+
+    /// A scan costs what it scans, and the ceiling is on the work rather
+    /// than on the number of scans a signature spells.
+    ///
+    /// The clause count sees a loop and one guarded access either way, and
+    /// the footprint prices the accesses it lands — so without this the
+    /// two evaluations below are the same transaction at the same price
+    /// and a thousandfold apart in what a node spends deciding them,
+    /// before any fee is assured.
+    #[test]
+    fn a_scan_is_charged_for_what_it_walks() {
+        let table = |entries: usize| {
+            Expr::Literal(Value::List(
+                (0..entries)
+                    .map(|i| Value::Tuple(vec![Value::U64(i as u64), Value::U64(0)]))
+                    .collect(),
+            ))
+        };
+        let over = |entries: usize| {
+            [Clause::ForEach {
+                guard: None,
+                list: Expr::Arg(0),
+                body: vec![Clause::Effect {
+                    guard: Some(Box::new(Expr::Contains {
+                        map: Box::new(table(entries)),
+                        key: Box::new(Expr::Binding(0)),
+                    })),
+                    target: TargetExpr::Point(Expr::ChildKey {
+                        owner: Box::new(Expr::SelfAddr),
+                        slot: SlotId(16),
+                        material: vec![Expr::Binding(0)],
+                    }),
+                    mode: ModeExpr::Write,
+                    denomination: None,
+                }],
+            }]
+        };
+        let args = [Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS])];
+        let ins = inputs(&args, &[]);
+
+        // A table a body could plausibly carry, scanned once per element.
+        assert!(evaluate_effects(&over(8), &ins, &TestHasher).is_ok());
+        // A wide one, at the same clause count and the same footprint.
+        assert_eq!(
+            evaluate_effects(&over(MAX_VALUE_ITEMS), &ins, &TestHasher),
+            Err(EvalError::TooMuchWork)
         );
     }
 
