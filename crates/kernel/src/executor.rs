@@ -990,15 +990,15 @@ fn apply_receipts(
             store.discard_active();
             receipts.insert(tx, abort_receipt(Outcome::Infeasible { key, amount }, fuel));
         }
-        // A completed transaction settled its local holds and releases its
-        // remote ones, where the settlement happened at the owning shard;
-        // anything else releases every hold it still stands on.
-        let settled_locally = completed && refusal.is_none();
+        // Whatever the receipt settled is gone by now. A hold still
+        // standing is one nothing spent — a remote reservation, settled
+        // at its owning shard; an aborted transaction's; or a grant the
+        // body declined to take — and it releases without touching the
+        // cell. Asking the store rather than reasoning from the outcome
+        // is what keeps the two answers from drifting apart.
         if let Some(entry) = entries.get(&tx) {
             for (key, _) in declared_reservations(&entry.declaration.set) {
-                if (!settled_locally || !locality.is_local(key.owner))
-                    && store.held_reservation(key, tx).is_some()
-                {
+                if store.held_reservation(key, tx).is_some() {
                     store.release(key, tx)?;
                 }
             }
@@ -1060,7 +1060,12 @@ fn apply_completed(
             },
         }
     }
-    for (key, _) in owned.settles() {
+    for (key, amount) in owned.settles() {
+        // The receipt carries what the transaction took, and the hold may
+        // stand for more where a grant was declared and declined. Reducing
+        // the hold to what moved settles that much and lets the remainder
+        // go with it.
+        store.set_hold(key, tx, Some(amount));
         match store.settle(key, tx) {
             Ok(_) => {}
             // The refusal left the hold standing, so the amount the

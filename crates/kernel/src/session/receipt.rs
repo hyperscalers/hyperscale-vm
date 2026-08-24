@@ -6,7 +6,7 @@
 //! every recorded access against the declared set, and only then produces
 //! the receipt — outcome, state delta, fuel.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_types::{AbortReason, Answer, EntryKey, Event, Movement, Outcome, SubstateKey};
 
@@ -187,54 +187,83 @@ enum Settlement {
 }
 
 impl KernelSession {
-    /// Settle every reservation the table holds: an owned cell's settle
-    /// releases the hold and folds the debit, a remote one releases with
-    /// the amount kept as the outbound record. The store's hold is the
-    /// per-transaction fold, so a cell reserved by several clauses
-    /// settles once, whole — a second settle of the same hold would find
-    /// it already gone.
+    /// What this transaction took against the reservations on `key`.
+    ///
+    /// A grant's own declared amount rather than the folded hold: several
+    /// clauses may reserve one cell, and the hold is their sum, so what
+    /// leaves the cell is the sum of the ones a body actually exercised.
+    fn taken_against(&self, key: SubstateKey) -> u128 {
+        self.table
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| u32::try_from(*index).is_ok_and(|rep| self.taken.contains(&rep)))
+            .filter_map(|(_, capability)| match capability {
+                Capability::Reserve { key: held, amount } if *held == key => Some(*amount),
+                _ => None,
+            })
+            .fold(0u128, u128::saturating_add)
+    }
+
+    /// Settle the reservations this transaction exercised and release the
+    /// rest: an owned cell's settle folds the debit, a remote one keeps
+    /// the amount as the outbound record for the shard that owns it.
+    ///
+    /// A hold leaves the cell only for a grant that was taken. Declaring
+    /// a reservation reserves — it is a floor the transaction bought and
+    /// may decline to spend, which is what an over-declared conditional
+    /// does on the arm it does not run — and taking it is what spends it.
+    /// So a cell reserved by several clauses settles once, for their
+    /// taken share, and the remainder goes back untouched.
     ///
     /// The error is a kernel defect; a refusal the caller aborts the
     /// transaction with comes back as [`Settlement::Aborted`].
     fn settle_reservations(&mut self) -> Result<Settlement, FinishError> {
         let mut settles = BTreeMap::new();
+        let mut seen = BTreeSet::new();
         for index in 0..self.table.len() {
-            if let Capability::Reserve { key, .. } = self.table[index] {
-                if settles.contains_key(&key) {
-                    continue;
+            let Capability::Reserve { key, .. } = self.table[index] else {
+                continue;
+            };
+            // Keyed by cell, not by clause: the hold is one, so disposing
+            // of it is one operation however many grants named it.
+            if !seen.insert(key) {
+                continue;
+            }
+            let taken = self.taken_against(key);
+            let settled = if taken == 0 {
+                self.store.release(key, self.tx).map(|_| None)
+            } else if self.locality.is_local(key.owner) {
+                self.store.set_hold(key, self.tx, Some(taken));
+                self.store.settle(key, self.tx).map(Some)
+            } else {
+                self.store.release(key, self.tx).map(|_| Some(taken))
+            };
+            match settled {
+                Ok(Some(amount)) => {
+                    settles.insert(key, amount);
                 }
-                // A remote reservation settles at its owning shard; here
-                // the hold releases and the receipt keeps the amount as
-                // the outbound record.
-                let settled = if self.locality.is_local(key.owner) {
-                    self.store.settle(key, self.tx)
-                } else {
-                    self.store.release(key, self.tx)
-                };
-                match settled {
-                    Ok(amount) => {
-                        settles.insert(key, amount);
+                // A hold nothing was taken against moved no value, so
+                // there is no debit for the receipt to carry.
+                Ok(None) => {}
+                // An exclusive write earlier in this group drained the
+                // cell below the reservation it still covers. The
+                // reserver lost that race, and the refusal left its
+                // hold standing, so the amount is still readable.
+                Err(defect) => match defect.fault() {
+                    Fault::Floor => {
+                        let amount = self
+                            .store
+                            .held_reservation(key, self.tx)
+                            .unwrap_or_default();
+                        return Ok(Settlement::Aborted(Outcome::Infeasible { key, amount }));
                     }
-                    // An exclusive write earlier in this group drained the
-                    // cell below the reservation it still covers. The
-                    // reserver lost that race, and the refusal left its
-                    // hold standing, so the amount is still readable.
-                    Err(defect) => match defect.fault() {
-                        Fault::Floor => {
-                            let amount = self
-                                .store
-                                .held_reservation(key, self.tx)
-                                .unwrap_or_default();
-                            return Ok(Settlement::Aborted(Outcome::Infeasible { key, amount }));
-                        }
-                        Fault::Declaration(error) => {
-                            return Ok(Settlement::Aborted(Outcome::UserError {
-                                reason: error.into(),
-                            }));
-                        }
-                        Fault::Defect => return Err(defect.into()),
-                    },
-                }
+                    Fault::Declaration(error) => {
+                        return Ok(Settlement::Aborted(Outcome::UserError {
+                            reason: error.into(),
+                        }));
+                    }
+                    Fault::Defect => return Err(defect.into()),
+                },
             }
         }
         Ok(Settlement::Settled(settles))

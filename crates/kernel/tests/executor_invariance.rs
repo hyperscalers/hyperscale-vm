@@ -114,7 +114,8 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
 
     let outcome = if let (Some(reserve), Some(delta)) = (reserve, delta) {
         let amount = session.reserve_amount(reserve).unwrap();
-        session.delta_add(delta, amount).unwrap();
+        let funds = session.reserve_take(reserve).unwrap();
+        session.delta_put(delta, funds).unwrap();
         Outcome::Completed {
             answers: answered(u64::try_from(amount).unwrap()),
         }

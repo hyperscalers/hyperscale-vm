@@ -76,9 +76,14 @@ fn with_delta(mut set: EffectSet, key: SubstateKey) -> EffectSet {
     set
 }
 
-/// The scripted guest: a session with a reserve capability transfers the
-/// reserved amount into its delta cell; a session with only a delta
+/// The scripted guest: a session with a reserve capability takes its
+/// grant and files it in the delta cell; a session with only a delta
 /// capability debits `sub` from it.
+///
+/// The transfer goes through the bucket rather than reading the amount
+/// and crediting it by hand, because taking the grant is what spends the
+/// hold — a body that only reads it leaves the cell whole, and would be
+/// crediting one cell against a debit that never happened.
 fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
     move |_tx_id, mut session: KernelSession| {
         let caps: Vec<Capability> = session.capabilities().to_vec();
@@ -92,8 +97,8 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
         });
         match (reserve, delta) {
             (Some(reserve), Some(delta)) => {
-                let amount = session.reserve_amount(reserve).unwrap();
-                session.delta_add(delta, amount).unwrap();
+                let funds = session.reserve_take(reserve).unwrap();
+                session.delta_put(delta, funds).unwrap();
             }
             (None, Some(delta)) => {
                 session.delta_sub(delta, sub).unwrap();
@@ -623,6 +628,10 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
 
     let scripted = |_entry: &BatchTx, mut session: KernelSession| {
         let caps: Vec<Capability> = session.capabilities().to_vec();
+        let delta = caps.iter().enumerate().find_map(|(rep, c)| match c {
+            Capability::Delta(_) => Some(u32::try_from(rep).unwrap()),
+            _ => None,
+        });
         for (rep, capability) in caps.iter().enumerate() {
             let rep = u32::try_from(rep).unwrap();
             match capability {
@@ -631,8 +640,13 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
                         .write_cell_set(rep, encode_amount(10).to_vec())
                         .unwrap();
                 }
+                // Taken, not merely read: an undercut reservation is only
+                // a loss for a transaction that meant to spend it.
                 Capability::Reserve { .. } => {
-                    session.reserve_amount(rep).unwrap();
+                    let funds = session.reserve_take(rep).unwrap();
+                    session
+                        .delta_put(delta.expect("the reserver has somewhere to file"), funds)
+                        .unwrap();
                 }
                 _ => {}
             }
@@ -650,7 +664,10 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
             BatchTx::new(tx(0x01), moving(point(vault, Mode::Write)), env()),
             BatchTx::new(
                 tx(0x02),
-                moving(point(vault, Mode::Reserve { amount: 100 })),
+                moving(with_delta(
+                    point(vault, Mode::Reserve { amount: 100 }),
+                    cell(0xC),
+                )),
                 env(),
             ),
         ],
