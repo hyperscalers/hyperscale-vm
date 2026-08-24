@@ -126,6 +126,30 @@ fn the_declared_ids_are_the_minted_ids() {
         .expect_completed();
 }
 
+/// The same id minted twice: the second filing finds the instance
+/// already there.
+///
+/// Refused rather than written over, because an overwrite leaves the id
+/// in two places while the entries stay as they were — so the count a
+/// receipt reports as arrivals would no longer be true of what arrived,
+/// and the supply the mint credited would answer to nothing.
+#[test]
+fn a_mint_of_an_id_its_holder_already_holds_is_refused() {
+    let (mut chain, instance) = minting::<DECLARED>();
+    chain
+        .transact(MINTER, |b| {
+            let edge = b.call(instance, "mint", ())?.one()?;
+            account::deposit_nf(b, MINTER, edge)
+        })
+        .expect_completed();
+    let outcome = chain.transact(MINTER, |b| {
+        let edge = b.call(instance, "mint", ())?.one()?;
+        account::deposit_nf(b, MINTER, edge)
+    });
+
+    assert_eq!(outcome.aborted(), Some(AbortReason::InstanceHeldTwice));
+}
+
 /// The counterfeit path: declare id 7, mint id 8, and the walk refuses
 /// the edge before anything can file it into a holder's holdings.
 #[test]

@@ -395,7 +395,8 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`]: an instance outside the declared interval, a
-    /// bucket carrying an amount, or a cap the filing would overrun.
+    /// bucket carrying an amount, a cap the filing would overrun, or an
+    /// order the collection already holds.
     pub fn range_put(&mut self, rep: u32, funds: u32, value: &[u8]) -> Result<(), SessionTrap> {
         let interval = self.instance_interval(rep)?;
         self.judge_credit(rep, funds)?;
@@ -407,8 +408,24 @@ impl KernelSession {
                 return Err(SessionTrap::OrderOutsideInterval);
             }
         }
+        // Charged before probing, so a filing that overruns its cap is
+        // refused without paying for the seeks it would have taken.
         for order in &ids {
             self.charge_write(rep, *order, interval.cap)?;
+        }
+        // An instance arrives or it does not. Filing over an order the
+        // collection already holds leaves one instance in two places and
+        // the entry count unmoved — so what a receipt reports as an
+        // arrival would be a rewrite, and the id would exist twice.
+        //
+        // Asked at each instance's own key, for the reason a take asks
+        // there: a page answers only for the orders ahead of the cap, so
+        // a collection deep enough could be filed with an id it already
+        // had.
+        for order in &ids {
+            if self.probe(interval.owner, interval.collection, *order)? {
+                return Err(SessionTrap::InstanceHeldTwice(*order));
+            }
         }
         for order in &ids {
             self.store
@@ -438,7 +455,9 @@ mod tests {
         AMOUNT_CELL_BYTES, Address, AddressClass, CollectionId, Effect, EffectTarget, Mode,
     };
 
-    use super::super::fixtures::{declared, env, hash, holding, session_holding, session_over, tx};
+    use super::super::fixtures::{
+        RESOURCE, declared, env, hash, holding, session_holding, session_over, tx,
+    };
     use super::{Held, KernelSession, SCAN_SEEK_BYTES, SessionTrap};
     use crate::overlay::OverlayStore;
     use crate::store::MemoryStore;
@@ -651,6 +670,47 @@ mod tests {
         assert_eq!(session.range_insert(1, 5, vec![1]), Ok(()));
         assert_eq!(session.range_count(0), Ok(1));
         assert_eq!(session.take_scan_debt(), 0, "the cached page survives");
+    }
+
+    /// An instance arrives or it does not.
+    ///
+    /// A collection already holding an order refuses the filing rather
+    /// than writing over it. An overwrite would leave the id in two
+    /// places while the entries — which is what says how many arrived —
+    /// stayed as they were, so the one thing a receipt reports about an
+    /// instance would stop being true of it.
+    #[test]
+    fn filing_over_an_order_the_collection_holds_is_refused() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let mut store = MemoryStore::new();
+        // Deep enough that the contested id sits well past the cap,
+        // which is where answering from a page would have missed it.
+        for order in 0..100u128 {
+            store.entry_write(owner, collection, order, vec![1]);
+        }
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 4,
+            },
+            mode: Mode::Write,
+        }]);
+        let mut session = session_holding(store, &set);
+
+        let carried = session.open_bucket(Held::Instances([90].into()), RESOURCE);
+        assert_eq!(
+            session.range_put(0, carried, &[1]),
+            Err(SessionTrap::InstanceHeldTwice(90))
+        );
+
+        // An order it does not hold still files, so what the probe
+        // refuses is the collision and not the filing.
+        let fresh = session.open_bucket(Held::Instances([500].into()), RESOURCE);
+        assert_eq!(session.range_put(0, fresh, &[1]), Ok(()));
     }
 
     #[test]

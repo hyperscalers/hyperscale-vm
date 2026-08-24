@@ -536,7 +536,7 @@ pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
 /// On any mode but [`Handle::RangeWrite`].
 pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
     let handle = acting(handle);
-    settled(kernel(|k| match handle {
+    scanned(kernel(|k| match handle {
         Handle::InstanceRange(rep) => k.range_put(rep, funds, value.to_vec()),
         other => unreachable!("{other:?} carries no movement"),
     }));

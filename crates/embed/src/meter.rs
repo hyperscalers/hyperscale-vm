@@ -237,8 +237,8 @@ pub fn instance_range_take<P: HostAccess + FuelSink>(
     refused(taken)
 }
 
-/// `instance-range.put`. Files entries it already holds materialized, so
-/// it is the one interval function with no scan ask.
+/// `instance-range.put`. Asks the store what each order already holds
+/// before filing it, so it pays for the seeks like a take does.
 pub fn instance_range_put<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
@@ -246,7 +246,9 @@ pub fn instance_range_put<P: HostAccess + FuelSink>(
     value: Vec<u8>,
 ) -> Result<(), MeterError> {
     charge(port, value.len())?;
-    refused(port.host().range_put(rep, funds, value))
+    let filed = port.host().range_put(rep, funds, value);
+    charge_scan(port)?;
+    refused(filed)
 }
 
 /// `bucket.take`.

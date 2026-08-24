@@ -318,7 +318,12 @@ fn every_function_charges_its_pinned_sequence() {
             |p| {
                 let _ = meter::instance_range_put(p, 0, 1, vec![0; 5]);
             },
-            vec![Charge(5), Host("range-put")],
+            vec![
+                Charge(5),
+                Host("range-put"),
+                Host("take-scan-debt"),
+                Charge(3),
+            ],
         ),
         (
             "bucket-take",
