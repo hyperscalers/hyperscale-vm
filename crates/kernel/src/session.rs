@@ -656,20 +656,32 @@ impl KernelSession {
         }
     }
 
-    /// Credit through a delta capability.
+    /// Credit a delta capability with no bucket behind the credit.
+    ///
+    /// Fixtures only, and gated so it stays that way: value a
+    /// transaction hands a cell comes out of the bucket table, and a
+    /// credit that skipped it is value from nowhere. Production reaches
+    /// the same queue through [`Self::delta_put`], which consumes an
+    /// edge to make the credit.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
+    #[cfg(any(test, feature = "testing"))]
     pub fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), SessionTrap> {
         self.delta(rep, amount, DeltaOp::Add)
     }
 
-    /// Debit through a delta capability.
+    /// Debit a delta capability without producing the edge for it.
+    ///
+    /// Fixtures only, on the terms [`Self::delta_add`] states.
+    /// Production reaches the same queue through [`Self::delta_take`],
+    /// which hands the debit out as a bucket.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
+    #[cfg(any(test, feature = "testing"))]
     pub fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), SessionTrap> {
         self.delta(rep, amount, DeltaOp::Sub)
     }

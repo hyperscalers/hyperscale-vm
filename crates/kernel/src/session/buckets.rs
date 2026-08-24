@@ -318,7 +318,7 @@ impl KernelSession {
     /// Only past `u32` buckets in one transaction. Reps are minted per
     /// take and split, so the bound is the fuel budget — four billion
     /// host calls — not any declared count.
-    pub fn open_bucket(&mut self, held: Held, resource: ResourceAddr) -> u32 {
+    pub(crate) fn open_bucket(&mut self, held: Held, resource: ResourceAddr) -> u32 {
         self.buckets.open(held, resource)
     }
 

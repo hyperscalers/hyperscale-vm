@@ -728,6 +728,7 @@ version = "0.1.0"
 dependencies = [
  "hyperscale-vm-effects",
  "hyperscale-vm-embed",
+ "hyperscale-vm-kernel",
  "hyperscale-vm-types",
  "proptest",
  "thiserror 2.0.19",

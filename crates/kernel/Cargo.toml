@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 description = "The object model and mode semantics: substate store, ownership, conservation"
 
+[features]
+# The primitives a fixture drives value with directly: a bucket with no
+# mint behind it, and a cell moved with no bucket at all. Production
+# moves value through the bucket table, which is what makes conservation
+# structural rather than checked.
+testing = []
+
 [dependencies]
 hyperscale-vm-effects.workspace = true
 hyperscale-vm-embed.workspace = true
@@ -12,6 +19,9 @@ hyperscale-vm-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# The crate's own testing feature, for the integration tests that stand
+# in for a kernel defect.
+hyperscale-vm-kernel = { path = ".", features = ["testing"] }
 hyperscale-vm-effects = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 
