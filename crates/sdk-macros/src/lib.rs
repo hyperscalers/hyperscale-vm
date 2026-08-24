@@ -2571,10 +2571,20 @@ fn granted_claim(
                 ));
             };
             let mark = syn::LitByteStr::new(kebab(&named).as_bytes(), badge.ident.span());
+            let kind = match badge.kind {
+                ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::ResourceKind::Fungible),
+                ResourceKind::NonFungible => {
+                    quote!(::hyperscale_vm_sdk::ResourceKind::NonFungible)
+                }
+            };
             match (badge.kind, args.next()) {
-                (ResourceKind::Fungible, None) => Ok((
+                // Naming a badge without an instance is naming any of it,
+                // whichever kind it is — the reading `#[requires(..)]`
+                // already gives the same words.
+                (_, None) => Ok((
                     quote!(::hyperscale_vm_sdk::GrantClaim::SelfBadge {
                         mark: #mark.to_vec(),
+                        kind: #kind,
                         rules: #rules,
                     }),
                     *reads_config,
@@ -2590,13 +2600,6 @@ fn granted_claim(
                 (ResourceKind::Fungible, Some(id)) => Err(syn::Error::new(
                     id.span(),
                     format!("`{named}` is fungible, and a balance has no instance to name"),
-                )),
-                (ResourceKind::NonFungible, None) => Err(syn::Error::new(
-                    call.span(),
-                    format!(
-                        "`{named}` is non-fungible, so a claim on it names which instance: \
-                         `issued({named}, <id>)`"
-                    ),
                 )),
             }
         }

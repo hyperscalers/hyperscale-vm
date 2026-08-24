@@ -543,8 +543,8 @@ fn resolve_claim(
     Ok(match claim {
         GrantClaim::SelfAddr => Presented::of_address(instance)
             .expect("an instance issuing a resource is a callable address"),
-        GrantClaim::SelfBadge { mark, rules } => {
-            Presented::Resource(badge(ResourceKind::Fungible, mark, rules)?)
+        GrantClaim::SelfBadge { mark, kind, rules } => {
+            Presented::Resource(badge(*kind, mark, rules)?)
         }
         GrantClaim::SelfInstance { mark, id, rules } => {
             Presented::Instance(badge(ResourceKind::NonFungible, mark, rules)?, *id)

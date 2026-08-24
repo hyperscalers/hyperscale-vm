@@ -1051,6 +1051,7 @@ mod tests {
             GrantedBehaviour::Deposit,
             GrantRuleExpr::Require(GrantClaim::SelfBadge {
                 mark: b"owner-badge".to_vec(),
+                kind: ResourceKind::Fungible,
                 rules: GrantsExpr::new(),
             }),
         );

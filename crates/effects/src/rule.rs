@@ -26,7 +26,7 @@ use hyperscale_vm_types::{Presence, ResourceAddr};
 use crate::auth::RoleId;
 use crate::dsl::{Expr, TargetExpr};
 use crate::presented::Presented;
-use crate::resource::{GrantedBehaviour, GrantsExpr};
+use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
 
 /// The bound on a rule's nesting depth: a lone identity is one, a
 /// threshold one more than its deepest branch.
@@ -279,11 +279,17 @@ pub type RuleExpr = Rule<RuleLeaf>;
 pub enum GrantClaim {
     /// The issuing instance, acting as itself.
     SelfAddr,
-    /// A fungible badge the issuing instance also issues, at the
-    /// material separating it from the instance's others.
+    /// A badge the issuing instance also issues, at the material
+    /// separating it from the instance's others.
+    ///
+    /// Naming a non-fungible one here is naming **any instance of it**,
+    /// which is the same reading `#[requires(..)]` gives the same words —
+    /// one spelling, one meaning, wherever it is written.
     SelfBadge {
         /// The mark, canonically encoded into the badge's derivation.
         mark: Vec<u8>,
+        /// What the badge is, folded into its derivation beside the mark.
+        kind: ResourceKind,
         /// The rules the badge's own address grants, which name no badge.
         rules: GrantsExpr,
     },
