@@ -58,7 +58,7 @@ fn granting_meta() -> ResourceMeta {
     let mut rules = ResourceGrants::new();
     rules.set(
         GrantedBehaviour::Recall,
-        RuleBytes::try_from(&StoredRule::claim(Presented::Identity(RECALLER.into())))
+        RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(RECALLER)))
             .expect("a rule within the caps encodes"),
     );
     ResourceMeta {
@@ -191,7 +191,7 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     forged.rules = ResourceGrants::new();
     forged.rules.set(
         GrantedBehaviour::Recall,
-        RuleBytes::try_from(&StoredRule::claim(Presented::Identity(STRANGER.into())))
+        RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(STRANGER)))
             .expect("a rule encodes"),
     );
     assert_ne!(forged.address(&TestHasher), resource());

@@ -278,7 +278,7 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     // nothing is — the identity that address itself derives. The guarded
     // withdrawal keeps the pure identity match.
     let authorize = &admitted.manifest().nodes[0];
-    assert_eq!(authorize.evidence, vec![Presented::Identity(ALICE.into())]);
+    assert_eq!(authorize.evidence, vec![Presented::of_subject(ALICE)]);
     let cell = child_key(&TestHasher, ALICE, AUTH, &[]);
     assert_eq!(
         admitted.calls()[0].requires,
@@ -293,7 +293,7 @@ fn a_minted_proof_resolves_to_its_producers_target() {
                             target: EffectTarget::Point(cell),
                             expect: Presence::Absent,
                         }),
-                        Rule::Require(JudgedLeaf::Claim(Presented::Identity(ALICE.into()))),
+                        Rule::Require(JudgedLeaf::Claim(Presented::of_subject(ALICE))),
                     ],
                 },
             ],
@@ -301,11 +301,11 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     );
 
     let withdraw = &admitted.manifest().nodes[1];
-    assert_eq!(withdraw.evidence, vec![Presented::Identity(ALICE.into())]);
+    assert_eq!(withdraw.evidence, vec![Presented::of_subject(ALICE)]);
     assert_eq!(
         admitted.calls()[1].requires,
-        vec![Rule::Require(JudgedLeaf::Claim(Presented::Identity(
-            ALICE.into()
+        vec![Rule::Require(JudgedLeaf::Claim(Presented::of_subject(
+            ALICE
         )))]
     );
 
@@ -464,12 +464,14 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     let operate = &admitted.manifest().nodes[1];
     assert_eq!(
         operate.evidence,
-        vec![Presented::Resource(badge)],
+        vec![Presented::of_subject(badge)],
         "the proof presents the badge, not the producer's address"
     );
     assert_eq!(
         admitted.calls()[1].requires,
-        vec![Rule::Require(JudgedLeaf::Claim(Presented::Resource(badge)))],
+        vec![Rule::Require(JudgedLeaf::Claim(Presented::of_subject(
+            badge
+        )))],
         "a gate naming a resource address wants the badge, by the class alone"
     );
 
@@ -481,7 +483,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
         admitted.manifest().nodes[1].evidence,
-        vec![Presented::Identity(custodian.into())]
+        vec![Presented::of_subject(custodian)]
     );
     // A badge that is not a resource address has nothing possessable
     // behind it.
@@ -494,7 +496,10 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
         admitted.manifest().nodes[1].evidence,
-        vec![Presented::Instance(badge, 7), Presented::Resource(badge),],
+        vec![
+            Presented::of_instance(badge, 7),
+            Presented::of_subject(badge),
+        ],
         "one instance held is the badge held, where possession was verified"
     );
 
@@ -1083,7 +1088,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
         vec![Rule::CountOf {
             count: 1,
             rules: vec![
-                Rule::Require(JudgedLeaf::Claim(Presented::Identity(ALICE.into()))),
+                Rule::Require(JudgedLeaf::Claim(Presented::of_subject(ALICE))),
                 Rule::Require(JudgedLeaf::Stored { cell: key }),
             ],
         }]
@@ -1092,7 +1097,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
     // reads a stored rule; the presented identity is the signer's.
     assert_eq!(
         admitted.calls()[0].evidence,
-        vec![Presented::Identity(ALICE.into())]
+        vec![Presented::of_subject(ALICE)]
     );
 }
 

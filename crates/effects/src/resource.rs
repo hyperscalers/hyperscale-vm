@@ -502,7 +502,7 @@ fn resolve_rule(
                 // only a fungible holding is one cell: a non-fungible one
                 // is entries at ids, whose collection-wide presence is an
                 // interval nothing on the transfer path may walk.
-                let Presented::Resource(badge) = presented else {
+                let Some(badge) = presented.badge().filter(|_| presented.instance.is_none()) else {
                     return Err(GrantsResolveError::NotAFungibleBadge);
                 };
                 SealedLeaf::Held(badge)
@@ -544,10 +544,10 @@ fn resolve_claim(
         GrantClaim::SelfAddr => Presented::of_address(instance)
             .expect("an instance issuing a resource is a callable address"),
         GrantClaim::SelfBadge { mark, kind, rules } => {
-            Presented::Resource(badge(*kind, mark, rules)?)
+            Presented::of_subject(badge(*kind, mark, rules)?)
         }
         GrantClaim::SelfInstance { mark, id, rules } => {
-            Presented::Instance(badge(ResourceKind::NonFungible, mark, rules)?, *id)
+            Presented::of_instance(badge(ResourceKind::NonFungible, mark, rules)?, *id)
         }
         GrantClaim::Config(slot) => {
             let value = config
@@ -852,7 +852,7 @@ mod tests {
     #[test]
     fn a_behaviour_reads_the_side_its_question_is_about() {
         let badge = ResourceAddr::new([0x77; 31]);
-        let claims = StoredRule::claim(Presented::Resource(badge));
+        let claims = StoredRule::claim(Presented::of_subject(badge));
         let holds = StoredRule::held(badge);
 
         for behaviour in GrantedBehaviour::ALL {

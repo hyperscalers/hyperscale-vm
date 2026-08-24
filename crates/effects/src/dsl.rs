@@ -1438,7 +1438,12 @@ fn eval_clauses(
                 // satisfying one's own stored rule is no feat — so the
                 // refusal is structural rather than the publish check's
                 // alone.
-                if matches!(minted, Presented::Identity(_)) && !matches!(claim, Expr::SelfAddr) {
+                // A claim about something that is not a badge is a claim
+                // about somebody acting as themselves, and the only such
+                // claim a declaration may mint is its own target's: any
+                // other expression evaluating to a callable address would
+                // be forgeable.
+                if minted.badge().is_none() && !matches!(claim, Expr::SelfAddr) {
                     return Err(EvalError::TypeMismatch {
                         expected: "badge",
                         found: "identity",
@@ -1451,8 +1456,8 @@ fn eval_clauses(
                 // naming the instance. The widening happens at the mint,
                 // where possession was verified, which is what keeps the
                 // judge an equality walk.
-                if let Presented::Instance(badge, _) = claim {
-                    out.mints.push(Presented::Resource(badge));
+                if claim.instance.is_some() {
+                    out.mints.push(Presented::of_subject(claim.subject));
                 }
             }
             Clause::ForEach { list, body, .. } => {
@@ -2456,8 +2461,6 @@ mod tests {
     /// kernel judges.
     #[test]
     fn a_requires_clause_evaluates_to_a_condition_and_no_access() {
-        use hyperscale_vm_types::CallTarget;
-
         use crate::manifest::JudgedLeaf;
         use crate::presented::Presented;
         use crate::rule::{Rule, RuleExpr, RuleLeaf};
@@ -2511,7 +2514,7 @@ mod tests {
         );
         assert_eq!(declaration.clause_taken, vec![true, true, true, false]);
 
-        let identity = Presented::Identity(CallTarget::try_from(context.self_addr).unwrap());
+        let identity = Presented::of_subject(context.self_addr);
         assert_eq!(
             declaration.conditions,
             vec![

@@ -139,7 +139,7 @@ fn declared_rules(instance: impl Into<Address>) -> ResourceGrants {
     let mut rules = ResourceGrants::new();
     rules.set(
         GrantedBehaviour::Recall,
-        RuleBytes::try_from(&StoredRule::claim(Presented::Instance(badge, 0)))
+        RuleBytes::try_from(&StoredRule::claim(Presented::of_instance(badge, 0)))
             .expect("a rule within the caps encodes"),
     );
     rules

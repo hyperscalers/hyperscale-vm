@@ -14,8 +14,8 @@ use hyperscale_vm_kernel::{
     KernelSession, Locality, ManifestWalk, MemoryStore, Substates, execute_batch,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, CallTarget, CollectionId, Effect, EffectSet, EffectTarget, Mode,
-    Outcome, Presence, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Outcome, Presence,
+    ResourceAddr, SubstateKey, TxHash, UnmetCondition,
 };
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
@@ -35,7 +35,7 @@ const fn principal(byte: u8) -> Address {
 }
 
 fn identity(byte: u8) -> Presented {
-    Presented::Identity(CallTarget::try_from(principal(byte)).unwrap())
+    Presented::of_subject(principal(byte))
 }
 
 fn cell_of(owner: Address) -> SubstateKey {
@@ -257,7 +257,7 @@ fn an_absent_component_table_denies_whatever_is_presented() {
         vec![
             identity(1),
             identity(2),
-            Presented::Resource(ResourceAddr::new([3; 31])),
+            Presented::of_subject(ResourceAddr::new([3; 31])),
         ],
         vec![Rule::Require(JudgedLeaf::Stored { cell: key })],
     )];

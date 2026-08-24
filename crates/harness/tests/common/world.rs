@@ -116,7 +116,7 @@ pub fn own_cell(owner: impl Into<Address>, offset: u16) -> SubstateKey {
 
 /// One identity, as the rule a cell stores.
 pub fn stored_rule(identity: PrincipalAddr) -> RuleBytes {
-    RuleBytes::try_from(&StoredRule::claim(Presented::Identity(identity.into())))
+    RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(identity)))
         .expect("a rule within the vocabulary caps")
 }
 

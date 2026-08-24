@@ -384,9 +384,8 @@ fn impostor_body(
             };
             // The stored rule is the package's own business and writes
             // as bytes like any record.
-            let rule =
-                RuleBytes::try_from(&StoredRule::claim(Presented::Identity(ATTACKER.into())))
-                    .expect("a rule within the caps");
+            let rule = RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(ATTACKER)))
+                .expect("a rule within the caps");
             if let Err(trap) = session.write_cell_set(*auth, rule.0) {
                 return (session, Invoked::Aborted(trap.into()));
             }

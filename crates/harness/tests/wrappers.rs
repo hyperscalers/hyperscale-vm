@@ -154,10 +154,10 @@ fn the_account_wrappers_match_their_signatures() {
         account::securify_uniform(
             b,
             carol,
-            &StoredRule::claim(Presented::Identity(BOB.into())),
+            &StoredRule::claim(Presented::of_subject(BOB)),
             86_400_000,
         )?;
-        let rule = RuleBytes::try_from(&StoredRule::claim(Presented::Identity(BOB.into())))
+        let rule = RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(BOB)))
             .expect("a rule within the vocabulary caps");
         account::propose(b, ALICE, rule.clone(), rule.clone(), rule)?;
         account::cancel(b, ALICE)?;
@@ -179,7 +179,7 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
         alice,
         &StoredRule::CountOf {
             count: 2,
-            rules: vec![StoredRule::claim(Presented::Identity(ALICE.into()))],
+            rules: vec![StoredRule::claim(Presented::of_subject(ALICE))],
         },
         86_400_000,
     );

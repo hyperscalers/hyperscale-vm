@@ -1355,7 +1355,7 @@ impl Lower<'_> {
                     let signer = intent
                         .signer
                         .ok_or(AdmissionError::UnsignedEvidence { node: node_index })?;
-                    evidence.push(Presented::Identity(signer.into()));
+                    evidence.push(Presented::of_subject(signer));
                 }
                 EvidenceRef::Node(producer) => {
                     // An earlier node of the same intent, whose minted

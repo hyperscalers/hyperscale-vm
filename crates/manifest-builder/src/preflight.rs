@@ -302,19 +302,15 @@ fn report(
     // from its key material, so its own authority is a signature; every
     // other class derives from a hash of what it is, and nothing signs
     // for that.
-    let claimed = |claim: &Presented| match claim {
-        Presented::Identity(identity) => match identity {
-            CallTarget::Principal(principal) => Authority::Signature(*principal),
-            CallTarget::Component(_) => Authority::TargetHasNoKey,
+    // What a claim's subject is, is its class's answer, asked here
+    // because here is where it matters.
+    let claimed = |claim: &Presented| match (claim.badge(), claim.callable()) {
+        (Some(resource), _) => Authority::Badge {
+            resource,
+            instance: claim.instance,
         },
-        Presented::Resource(resource) => Authority::Badge {
-            resource: *resource,
-            instance: None,
-        },
-        Presented::Instance(resource, id) => Authority::Badge {
-            resource: *resource,
-            instance: Some(*id),
-        },
+        (None, Some(CallTarget::Principal(principal))) => Authority::Signature(principal),
+        (None, Some(CallTarget::Component(_)) | None) => Authority::TargetHasNoKey,
     };
 
     // The authority gate admission resolved for each node, read back

@@ -877,7 +877,7 @@ mod tests {
             let mut rules = ResourceGrants::new();
             rules.set(
                 GrantedBehaviour::Recall,
-                RuleBytes::try_from(&StoredRule::claim(Presented::Identity(who.into())))
+                RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(who)))
                     .expect("a rule encodes"),
             );
             rules

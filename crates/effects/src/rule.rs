@@ -634,7 +634,7 @@ pub(crate) mod testing {
 
     /// The claim that principal makes acting as itself.
     pub fn identity(byte: u8) -> Presented {
-        Presented::Identity(target(byte))
+        Presented::of_subject(target(byte))
     }
 
     /// `levels` thresholds over one identity: nests `levels + 1` deep.

@@ -43,6 +43,12 @@ use common::world::*;
 /// somebody presents, or a badge the rule's own subject holds. That is
 /// what lets one rule vocabulary serve both an authority and a movement.
 ///
+/// And a claim is a subject rather than a kind, so every vector's
+/// rendering names an address where it named a case. For transfer, swap
+/// and fill that is the whole of it — the same addresses under a shape
+/// that no longer decides what they are. The propose vector carries
+/// encoded claims, so its bytes moved with them.
+///
 /// The swap and fill pins carry the instantiation fence: admission reads
 /// the configuration leaf of every component a node targets, so the
 /// owning shard is a participant and provisions the leaf. Transfer and
@@ -74,13 +80,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "0621be792499bb35c205eafc3261b66bd7b08984d67f17274775f451b5f9d7a6";
+const PIN_TRANSFER: &str = "0321dc499fa87395edd7c30d90df6dc63543c23c52ce4488373c5c73711626a3";
 
-const PIN_SWAP: &str = "bc200ea37a526ccf996221578039dca565cbc75e10e424f665c2e44f00615a6a";
+const PIN_SWAP: &str = "fa864f5641f0147af3176e7e6d72c67699e9a6b90d4cf436ec813c064b847b9d";
 
-const PIN_FILL: &str = "aeae852af2297534ca9cc35751daea3e0b717e4106f16e15a01a9f2c5b465443";
+const PIN_FILL: &str = "ae800f56ab3c6b7303087ce58c6a09f699697f4780e6b5f0593c11abd50c26e0";
 
-const PIN_PROPOSE: &str = "f63fa849d9374a7c148d8075a443be68154a7ce478fbdbefb9c9601c1677639a";
+const PIN_PROPOSE: &str = "d13481fa79f902e241d4644b621a1c5089e9172e902c25a271de55169f4a5ea9";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

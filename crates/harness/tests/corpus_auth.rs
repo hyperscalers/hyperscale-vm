@@ -68,7 +68,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
 
     // Alice's last act under the virtual rule: signing in for its
     // retirement. Everything she stores from here is governed by Bob.
-    let securify = securify_graph(&StoredRule::claim(Presented::Identity(BOB.into())));
+    let securify = securify_graph(&StoredRule::claim(Presented::of_subject(BOB)));
     let (results, store) = run_both(&world, &store, &[(&securify, TxHash(Hash32([0x51; 32])))]);
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("securify must complete; got {:?}", results[0]);
@@ -113,7 +113,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     // than the guest's: `securify` declares a write requiring the cell
     // to be absent, so the shard holding it judges the door against
     // committed state and the body never runs.
-    let again = securify_graph(&StoredRule::claim(Presented::Identity(BOB.into())));
+    let again = securify_graph(&StoredRule::claim(Presented::of_subject(BOB)));
     let (results, _) = run_both_signed(
         &world,
         &store,
@@ -265,7 +265,7 @@ fn nobody_rule() -> RuleBytes {
 
 /// One identity, as the rule a cell stores.
 fn rule_of(who: PrincipalAddr) -> RuleBytes {
-    RuleBytes::try_from(&StoredRule::claim(Presented::Identity(who.into())))
+    RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(who)))
         .expect("a rule within the vocabulary caps")
 }
 
@@ -803,7 +803,7 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     assert!(matches!(&results[0], TxResult::Completed(_)));
     assert_acts(&world, &store, ALICE, far, false, 0xB5);
 
-    let securify = securify_graph(&StoredRule::claim(Presented::Identity(ALICE.into())));
+    let securify = securify_graph(&StoredRule::claim(Presented::of_subject(ALICE)));
     let (results, store) = run_both_at(
         &world,
         &store,
