@@ -1770,6 +1770,7 @@ fn forced(value: Cow<'_, Value>, budget: &Budget<'_>) -> Result<Value, EvalError
     }
 }
 
+#[allow(clippy::too_many_lines)] // one dispatch over the term vocabulary
 fn eval_expr<'a>(
     expr: &'a Expr,
     inputs: &'a EvalInputs<'_>,
@@ -1819,11 +1820,15 @@ fn eval_expr<'a>(
             Value::Address(bucket_parts(forced(sub(bucket)?, budget)?)?.0.into())
         }
         Expr::IdsOf(bucket) => edge_ids(bucket_parts(forced(sub(bucket)?, budget)?)?.1)?,
-        Expr::Len(list) => count(&as_list(forced(sub(list)?, budget)?)?),
+        Expr::Len(list) => count(elements(&*sub(list)?)?),
         Expr::Only(list) => sole(as_list(forced(sub(list)?, budget)?)?)?,
         Expr::Lookup { map, key } => {
-            find(as_list(forced(sub(map)?, budget)?)?, &*sub(key)?, budget)?
-                .ok_or(EvalError::LookupMiss)?
+            let map = sub(map)?;
+            let hit = find(elements(&map)?, &*sub(key)?, budget)?.ok_or(EvalError::LookupMiss)?;
+            // The one entry the scan hands out, copied out of the table
+            // rather than along with it.
+            budget.spend(walked(hit))?;
+            hit.clone()
         }
         Expr::SelfResource {
             kind,
@@ -1862,7 +1867,7 @@ fn eval_expr<'a>(
         Expr::NfBucket { resource, ids } => Value::Bucket {
             resource: ResourceAddr::try_from(as_address(&*sub(resource)?)?)?,
             content: EdgeContent::NonFungible {
-                ids: id_set(&as_list(forced(sub(ids)?, budget)?)?)?,
+                ids: id_set(elements(&*sub(ids)?)?)?,
             },
         },
         Expr::Not(inner) => Value::Bool(!as_bool(&*sub(inner)?)?),
@@ -1882,7 +1887,8 @@ fn eval_expr<'a>(
         Expr::Eq(left, right) => equals(&*sub(left)?, &*sub(right)?)?,
         Expr::Lt(left, right) => less_than(&*sub(left)?, &*sub(right)?)?,
         Expr::Contains { map, key } => {
-            Value::Bool(find(as_list(forced(sub(map)?, budget)?)?, &*sub(key)?, budget)?.is_some())
+            let map = sub(map)?;
+            Value::Bool(find(elements(&map)?, &*sub(key)?, budget)?.is_some())
         }
     };
     // A term that built a value pays for what it built: what the term
@@ -1927,7 +1933,11 @@ fn field(fields: &[Value], index: u32) -> Result<Value, EvalError> {
 /// The first matching pair's value, or `None` where the table holds no
 /// such key. The one walk under both [`Expr::Lookup`], which refuses a
 /// miss, and [`Expr::Contains`], which reports it.
-fn find(pairs: Vec<Value>, key: &Value, budget: &Budget) -> Result<Option<Value>, EvalError> {
+fn find<'a>(
+    pairs: &'a [Value],
+    key: &Value,
+    budget: &Budget<'_>,
+) -> Result<Option<&'a Value>, EvalError> {
     for pair in pairs {
         // Per pair examined. A scan is the one operation whose cost is
         // the table's rather than the expression's, and charging it here
@@ -1941,7 +1951,7 @@ fn find(pairs: Vec<Value>, key: &Value, budget: &Budget) -> Result<Option<Value>
             return Err(EvalError::LookupNotPairs);
         };
         if pair_key == key {
-            return Ok(Some(pair_value.clone()));
+            return Ok(Some(pair_value));
         }
     }
     Ok(None)
@@ -2122,6 +2132,18 @@ const fn as_bool(value: &Value) -> Result<bool, EvalError> {
         Value::Bool(flag) => Ok(*flag),
         other => Err(EvalError::TypeMismatch {
             expected: "bool",
+            found: other.kind(),
+        }),
+    }
+}
+
+/// A list's elements read in place, for a source the caller still holds.
+/// The borrowing counterpart of [`as_list`], which is for one it does not.
+fn elements(value: &Value) -> Result<&[Value], EvalError> {
+    match value {
+        Value::List(items) => Ok(items),
+        other => Err(EvalError::TypeMismatch {
+            expected: "list",
             found: other.kind(),
         }),
     }
@@ -2819,6 +2841,41 @@ mod tests {
         );
     }
 
+    /// A `for-each` over the widest list, each element guarded by a scan
+    /// of a table of `entries` pairs.
+    ///
+    /// Every element the loop binds is zero, and the table is keyed so
+    /// that the one pair matching zero sits at `at` — which is therefore
+    /// how far each scan runs. A scan stopping at the first pair says
+    /// nothing about the width of the table it stopped in.
+    fn scan_over(entries: usize, at: usize) -> [Clause; 1] {
+        let table = Expr::Literal(Value::List(
+            (0..entries)
+                .map(|i| {
+                    let key = if i == at { 0 } else { i as u64 + 1 };
+                    Value::Tuple(vec![Value::U64(key), Value::U64(0)])
+                })
+                .collect(),
+        ));
+        [Clause::ForEach {
+            guard: None,
+            list: Expr::Arg(0),
+            body: vec![Clause::Effect {
+                guard: Some(Box::new(Expr::Contains {
+                    map: Box::new(table),
+                    key: Box::new(Expr::Binding(0)),
+                })),
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: SlotId(16),
+                    material: vec![Expr::Binding(0)],
+                }),
+                mode: ModeExpr::Write,
+                denomination: None,
+            }],
+        }]
+    }
+
     /// A scan costs what it scans, and the ceiling is on the work rather
     /// than on the number of scans a signature spells.
     ///
@@ -2829,42 +2886,37 @@ mod tests {
     /// before any fee is assured.
     #[test]
     fn a_scan_is_charged_for_what_it_walks() {
-        let table = |entries: usize| {
-            Expr::Literal(Value::List(
-                (0..entries)
-                    .map(|i| Value::Tuple(vec![Value::U64(i as u64), Value::U64(0)]))
-                    .collect(),
-            ))
-        };
-        let over = |entries: usize| {
-            [Clause::ForEach {
-                guard: None,
-                list: Expr::Arg(0),
-                body: vec![Clause::Effect {
-                    guard: Some(Box::new(Expr::Contains {
-                        map: Box::new(table(entries)),
-                        key: Box::new(Expr::Binding(0)),
-                    })),
-                    target: TargetExpr::Point(Expr::ChildKey {
-                        owner: Box::new(Expr::SelfAddr),
-                        slot: SlotId(16),
-                        material: vec![Expr::Binding(0)],
-                    }),
-                    mode: ModeExpr::Write,
-                    denomination: None,
-                }],
-            }]
-        };
         let args = [Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS])];
         let ins = inputs(&args, &[]);
 
-        // A table a body could plausibly carry, scanned once per element.
-        assert!(evaluate_effects(&over(8), &ins, &TestHasher).is_ok());
+        // A table a body could plausibly carry, walked whole once per
+        // element.
+        assert!(evaluate_effects(&scan_over(32, 31), &ins, &TestHasher).is_ok());
         // A wide one, at the same clause count and the same footprint.
         assert_eq!(
-            evaluate_effects(&over(MAX_VALUE_ITEMS), &ins, &TestHasher),
+            evaluate_effects(
+                &scan_over(MAX_VALUE_ITEMS, MAX_VALUE_ITEMS - 1),
+                &ins,
+                &TestHasher
+            ),
             Err(EvalError::TooMuchWork)
         );
+    }
+
+    /// A table is read rather than copied, so what a signature may declare
+    /// is a statement about work and not about the evaluator.
+    ///
+    /// The width the case above refuses, scanned to a match on the first
+    /// pair. The two differ in how far the scan runs and in nothing else —
+    /// same table, same loop, same footprint — so a charge that separates
+    /// them is measuring the walk, and one that does not is measuring a
+    /// copy the evaluation need never make.
+    #[test]
+    fn a_table_is_read_rather_than_copied() {
+        let args = [Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS])];
+        let ins = inputs(&args, &[]);
+
+        assert!(evaluate_effects(&scan_over(MAX_VALUE_ITEMS, 0), &ins, &TestHasher).is_ok());
     }
 
     /// The ceiling a caller meets is the envelope's, not one node's.
