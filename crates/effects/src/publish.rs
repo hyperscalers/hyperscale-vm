@@ -776,7 +776,11 @@ fn vocabulary_shape(
                 && keyed_by_what_it_holds
                 && matches!(
                     mode,
-                    ModeExpr::Read | ModeExpr::Write | ModeExpr::Delta | ModeExpr::Reserve(_)
+                    ModeExpr::Read
+                        | ModeExpr::Write
+                        | ModeExpr::Delta
+                        | ModeExpr::Credit
+                        | ModeExpr::Reserve(_)
                 ),
             "holds a fungible balance: one leaf, keyed by the resource it holds, \
              denominated in that resource",
@@ -786,7 +790,11 @@ fn vocabulary_shape(
                 && keyed_by_what_it_holds
                 && matches!(
                     mode,
-                    ModeExpr::Read | ModeExpr::Write | ModeExpr::Delta | ModeExpr::Reserve(_)
+                    ModeExpr::Read
+                        | ModeExpr::Write
+                        | ModeExpr::Delta
+                        | ModeExpr::Credit
+                        | ModeExpr::Reserve(_)
                 ),
             "is the delivery fallback beside a vault, and holds value on the same \
              terms: one leaf, keyed by the resource it holds and denominated in it",

@@ -276,6 +276,7 @@ impl KernelSession {
                 Capability::Amount(key)
                 | Capability::AmountRead(key)
                 | Capability::Delta(key)
+                | Capability::Credit(key)
                 | Capability::Reserve { key, .. } => {
                     out.cells.entry(*key).or_insert(resource);
                 }

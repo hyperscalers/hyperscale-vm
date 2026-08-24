@@ -214,8 +214,11 @@ impl Site {
                 | Target::KeyedEntry { .. }
                 | Target::Sweep { .. }
         );
+        // A credit is a movement like any other for the purpose of
+        // choosing a handle; where it differs is the mode declared
+        // beside it, which is the emitter's.
         let (moves, writes, reads) = (
-            has(Op::Move),
+            has(Op::Move) || has(Op::Credit),
             has(Op::Set) || has(Op::Create) || has(Op::Existing),
             has(Op::Get) || has(Op::Vacant),
         );
@@ -1158,7 +1161,7 @@ impl<'a> Lowerer<'a> {
         let exclusive = |op: &Op| {
             matches!(
                 op,
-                Op::Get | Op::Set | Op::Move | Op::Create | Op::Existing | Op::Vacant
+                Op::Get | Op::Set | Op::Move | Op::Credit | Op::Create | Op::Existing | Op::Vacant
             )
         };
         let compatible = match op {
@@ -1167,7 +1170,7 @@ impl<'a> Lowerer<'a> {
             // presence requirement rides that same mode, so it sits
             // beside any of them — the one pair that does not is a
             // requirement against its own opposite, refused below.
-            Op::Get | Op::Set | Op::Move | Op::Create | Op::Existing | Op::Vacant => {
+            Op::Get | Op::Set | Op::Move | Op::Credit | Op::Create | Op::Existing | Op::Vacant => {
                 entry.ops.iter().all(|(prior, _)| exclusive(prior))
             }
             // A reservation folds with nothing, itself included, so it
@@ -3620,7 +3623,10 @@ impl<'a> Lowerer<'a> {
                 // handle: the clause is what the kernel provisions and
                 // what a caller routes on, and there is nothing for the
                 // guest to call.
-                if call.method == "declared" || call.method == "exclusive" {
+                if call.method == "declared"
+                    || call.method == "declared_credit"
+                    || call.method == "exclusive"
+                {
                     // The unit it evaluates to, not nothing: a declared
                     // access can stand in expression position, and a
                     // match arm needs something there. Neither binds a
@@ -3677,7 +3683,7 @@ impl<'a> Lowerer<'a> {
                 // constrains nothing reads as a method taking any
                 // resource, so a credit nobody can type would publish as
                 // a promise the body never made.
-                if op == Op::Move
+                if op == Op::Credit
                     && call.method == "put"
                     && let Some(keyed) = resource.clone()
                 {

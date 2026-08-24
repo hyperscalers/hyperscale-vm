@@ -76,7 +76,7 @@ post-price(u256, u256) — infallible
 repay(bucket, u64) — fallible
   takes    arg0 carrying config.debt
   declares
-      0  delta self.vault[config.debt] holding config.debt
+      0  credit self.vault[config.debt] holding config.debt
       1  read self.accrued_at
       2  read self.index
       3  write self.shares

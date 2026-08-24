@@ -73,8 +73,11 @@ fn account() -> Blueprint {
             // what the edge carries.
             let claims = holder.child(CLAIMS, &[resource.clone().cast()]);
             let vault = holder.child(VAULT, &[resource.clone().cast()]);
-            t.point(&claims).holding(&resource).delta();
-            t.point(&vault).holding(&resource).delta();
+            // Both credits: a deposit only ever pays in, and saying so is
+            // what keeps a resource governing withdrawals from asking
+            // this method for a withdrawal credential.
+            t.point(&claims).holding(&resource).credit();
+            t.point(&vault).holding(&resource).credit();
         })
         // The sign-in's whole body is its gate's read: the cell the
         // account's stored rule lives in.
@@ -256,7 +259,9 @@ fn book() -> Blueprint {
                 // is what fixes the parameter to that side.
                 let base: Sym<Addr> = t.config(0);
                 let escrow = venue.child(VAULT, &[base.clone().cast()]);
-                t.point(&escrow).holding(&base).delta();
+                // Placing an ask only escrows: the maker's funds go in and
+                // nothing comes back out until somebody fills it.
+                t.point(&escrow).holding(&base).credit();
                 t.denomination(1, &base);
             },
         )
@@ -288,9 +293,11 @@ fn book() -> Blueprint {
                 t.point(&venue.child(VAULT, &[base.clone().cast()]))
                     .holding(&base)
                     .delta();
+                // The payment goes in; the base comes out of the vault
+                // above, which is why that one stays both ways.
                 t.point(&venue.child(VAULT, &[quote.clone().cast()]))
                     .holding(&quote)
-                    .delta();
+                    .credit();
                 t.denomination(2, &quote);
 
                 // The change is what came off the payment, so it carries

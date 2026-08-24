@@ -43,7 +43,7 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
             | Target::Sweep { .. }
     ) {
         return match (
-            has(Op::Set).is_some() || has(Op::Move).is_some(),
+            has(Op::Set).is_some() || has(Op::Move).is_some() || has(Op::Credit).is_some(),
             has(Op::Get).is_some(),
         ) {
             (true, _) => Some((nothing, quote!(.write()))),
@@ -70,7 +70,8 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     // The same order the resource derivation reads: an assignment or a
     // read makes the mode exclusive, and a movement without either
     // commutes.
-    if has(Op::Set).is_some() || (has(Op::Move).is_some() && has(Op::Get).is_some()) {
+    let moves = has(Op::Move).is_some() || has(Op::Credit).is_some();
+    if has(Op::Set).is_some() || (moves && has(Op::Get).is_some()) {
         Some((nothing, quote!(.write())))
     } else if has(Op::Get).is_some() {
         Some((nothing, quote!(.read())))
@@ -82,6 +83,11 @@ fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
         ))
     } else if has(Op::Move).is_some() {
         Some((nothing, quote!(.delta())))
+    } else if has(Op::Credit).is_some() {
+        // Only the crediting half, so the declaration says so and is
+        // judged on that alone. A body that also takes reached the arm
+        // above, where the direction is no longer something to state.
+        Some((nothing, quote!(.credit())))
     } else {
         // A handle opened and never used declares nothing. Correct rather
         // than lenient: the body did not touch the substate.

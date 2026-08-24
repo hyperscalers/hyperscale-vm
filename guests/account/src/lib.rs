@@ -75,7 +75,7 @@ pub mod account {
             // the event carries, the resource both cells are keyed by —
             // happens while there is still a bucket to read it from.
             let credited = funds.quantity();
-            self.claims(funds.resource()).declared();
+            self.claims(funds.resource()).declared_credit();
             self.vault(funds.resource()).put(funds);
             Deposited { amount: credited }.emit();
         }

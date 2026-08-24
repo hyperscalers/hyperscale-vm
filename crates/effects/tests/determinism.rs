@@ -190,7 +190,7 @@ proptest! {
         let recipient_set = &first.per_shard[&shard_of(recipient)];
         assert!(recipient_set.contains(&Effect {
             target: EffectTarget::Point(vault(recipient, resource)),
-            mode: Mode::Delta,
+            mode: Mode::Credit,
         }));
     }
 
@@ -242,7 +242,7 @@ proptest! {
         assert_eq!(first.frames.len(), 3, "one frame per manifest node");
         assert!(first.per_shard[&shard_of(recipient)].contains(&Effect {
             target: EffectTarget::Point(vault(recipient, resource)),
-            mode: Mode::Delta,
+            mode: Mode::Credit,
         }));
     }
 }

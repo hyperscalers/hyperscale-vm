@@ -19,7 +19,7 @@ accrue(u128) — infallible
   declares
       0  for each of config.assets
         1  write self.vault[element] holding element
-        2  delta self.fees[element] holding element
+        2  credit self.fees[element] holding element
   exports  the run over clause 0 site 0, the run over clause 0 site 1, arg0
 
 charge(u64) — infallible
@@ -36,7 +36,7 @@ escrow(u128) — infallible
   declares
       0  for each of config.assets
         1  reserve arg0 self.vault[element] holding element
-        2  delta self.fees[element] holding element
+        2  credit self.fees[element] holding element
   exports  the run over clause 0 site 0, the run over clause 0 site 1
 
 file(ids) — infallible
@@ -46,7 +46,7 @@ file(ids) — infallible
 
 fund(bucket) — infallible
   declares
-      0  delta self.vault[resource-of(arg0)] holding resource-of(arg0)
+      0  credit self.vault[resource-of(arg0)] holding resource-of(arg0)
   exports  handle for clause 0, edge arg0
 
 instantiate() — infallible

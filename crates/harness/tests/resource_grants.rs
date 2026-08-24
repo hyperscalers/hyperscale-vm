@@ -316,3 +316,49 @@ fn a_forbidden_movement_refuses_at_admission() -> Result<()> {
     );
     Ok(())
 }
+
+/// A withdrawal credential governs withdrawals, and leaves receiving
+/// alone.
+///
+/// The two behaviours are only independent if a declaration can carry
+/// its direction. Where it cannot, a credit has to answer for the debit
+/// it might have made — so a resource governing who may *send* ends up
+/// governing who may *receive*, and the two collapse into one. A deposit
+/// that says it only receives is asked what a recipient is asked, which
+/// for this resource is nothing.
+#[test]
+fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
+    let entry = Grant::Credential(BADGE);
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let build = |b: &mut _| -> std::result::Result<(), TypedError> {
+        let caller = account::authorize(b, HOLDER)?;
+        let funds = account::withdraw(b, caller, governed(entry.clone()), 40)?;
+        // To a party holding no credential of any kind.
+        account::deposit(b, STRANGER, funds)
+    };
+    build(&mut root).context("the transfer types")?;
+    env.resource(governed_meta(entry.clone()));
+    env.seal(root).context("the root grants")?;
+    let tree = env.build().context("the tree builds")?;
+
+    let sent = batch_entry(&tree, HOLDER)?;
+    let (outcome, end) = run(
+        &governed_store(entry.clone(), true),
+        std::slice::from_ref(&sent),
+    );
+    assert!(
+        matches!(
+            outcome.receipts[&sent.tx].outcome,
+            Outcome::Completed { .. }
+        ),
+        "a permitted sender reaches an unpermitted recipient: {:?}",
+        outcome.receipts[&sent.tx].outcome,
+    );
+    assert_eq!(
+        amount_of(&end, vault(STRANGER, governed(entry.clone()))),
+        40
+    );
+    assert_eq!(amount_of(&end, vault(HOLDER, governed(entry))), 60);
+    Ok(())
+}

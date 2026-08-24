@@ -27,8 +27,8 @@ confirm() — infallible
 
 deposit(bucket) — total
   declares
-      0  delta self.claims[resource-of(arg0)] holding resource-of(arg0)
-      1  delta self.vault[resource-of(arg0)] holding resource-of(arg0)
+      0  credit self.claims[resource-of(arg0)] holding resource-of(arg0)
+      1  credit self.vault[resource-of(arg0)] holding resource-of(arg0)
   exports  handle for clause 1, edge arg0
 
 deposit-nf(nf-bucket) — infallible

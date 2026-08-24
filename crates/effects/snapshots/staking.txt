@@ -68,7 +68,7 @@ stake(bucket) — infallible
   takes    arg0 carrying config.staked_resource
   issues   "stake-unit" fungible
   declares
-      0  delta self.vault[config.staked_resource] holding config.staked_resource
+      0  credit self.vault[config.staked_resource] holding config.staked_resource
   yields   edge 0 = self-issued(fungible["stake-unit"])
   exports  handle for clause 0, edge arg0, the issuer
 

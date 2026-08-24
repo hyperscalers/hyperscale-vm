@@ -424,6 +424,12 @@ pub enum Op {
     /// spelling says which: what decides is whether the body also reads
     /// the balance.
     Move,
+    /// `put()` — value moving *into* an amount cell, and not out.
+    ///
+    /// Its own operation because the direction is what a narrower mode
+    /// needs: a body that only credits declares a credit, which a
+    /// resource governing withdrawals asks nothing of.
+    Credit,
     /// `reserve(amount)` — a conditional decrement.
     Reserve,
     /// `set()` / `insert()` / `remove()` — an exclusive read-modify-write.
@@ -453,7 +459,12 @@ impl Op {
         match name {
             "get" | "peek" | "count" | "covered" | "entry" | "order" | "balance" | "pick"
             | "picked" => Some(Self::Get),
-            "put" | "take" | "declared" | "file" => Some(Self::Move),
+            // The two that only pay in. A take is the other direction;
+            // a bare `declared` states a movement without making one and
+            // says nothing about which way, so it stays the conservative
+            // pair; and `file` is an interval op no narrower mode covers.
+            "put" | "declared_credit" => Some(Self::Credit),
+            "take" | "declared" | "file" => Some(Self::Move),
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),
             "create" | "seal" => Some(Self::Create),

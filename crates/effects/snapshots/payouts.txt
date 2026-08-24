@@ -10,7 +10,7 @@ errors
 disburse(bucket) — infallible
   takes    arg0 carrying config.asset
   declares
-      0  delta self.vault[config.asset] holding config.asset
+      0  credit self.vault[config.asset] holding config.asset
   yields   edge 0 = resource-of(arg0)
   yields   edge 1 = resource-of(arg0)
   yields   edge 2 = resource-of(arg0)
@@ -33,7 +33,7 @@ instantiate() — infallible
 settle(bucket) — fallible
   takes    arg0 carrying config.asset
   declares
-      0  delta self.vault[config.asset] holding config.asset
+      0  credit self.vault[config.asset] holding config.asset
   yields   edge 0 = resource-of(arg0)
   yields   edge 1 = resource-of(arg0)
   yields   edge 2 = resource-of(arg0)

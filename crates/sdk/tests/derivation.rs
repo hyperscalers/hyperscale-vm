@@ -432,11 +432,12 @@ fn a_branch_the_declaration_can_read_guards_its_own_clauses() {
         vec![Some(cond.clone()), Some(Expr::Not(Box::new(cond.clone()))),],
     );
 
-    // Both arms move value, so both clauses are commutative.
+    // Both arms only pay in, so both clauses are credits: commutative,
+    // and carrying the one direction either arm could have moved.
     assert!(credit.effects.iter().all(|clause| matches!(
         clause,
         Clause::Effect {
-            mode: ModeExpr::Delta,
+            mode: ModeExpr::Credit,
             ..
         }
     )));

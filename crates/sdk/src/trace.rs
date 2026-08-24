@@ -1068,6 +1068,17 @@ impl<Shape> Access<'_, Shape> {
         self.declare(ModeExpr::Delta);
     }
 
+    /// A commutative increment and no decrement — what a method that
+    /// only receives says about itself.
+    ///
+    /// Worth saying because a declaration that carries its direction is
+    /// judged on the movement it makes: a resource governing withdrawals
+    /// asks nothing of a credit, where a bidirectional access has to
+    /// answer for the debit it might have made.
+    pub fn credit(self) {
+        self.declare(ModeExpr::Credit);
+    }
+
     /// A conditional decrement, judged feasible against the declared
     /// amount.
     pub fn reserve(self, amount: &Sym<U128>) {

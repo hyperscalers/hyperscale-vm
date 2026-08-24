@@ -90,11 +90,11 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
             effect_set(&[
                 Effect {
                     target: EffectTarget::Point(vault(BOB, usdc)),
-                    mode: Mode::Delta,
+                    mode: Mode::Credit,
                 },
                 Effect {
                     target: EffectTarget::Point(claims(BOB, usdc)),
-                    mode: Mode::Delta,
+                    mode: Mode::Credit,
                 },
             ]),
         ),
@@ -153,11 +153,11 @@ fn swap_writes_both_reserves_and_reads_the_config() {
                 },
                 Effect {
                     target: EffectTarget::Point(vault(ALICE, RES_Y)),
-                    mode: Mode::Delta,
+                    mode: Mode::Credit,
                 },
                 Effect {
                     target: EffectTarget::Point(claims(ALICE, RES_Y)),
-                    mode: Mode::Delta,
+                    mode: Mode::Credit,
                 },
             ]),
         ),
@@ -237,7 +237,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
         },
         Effect {
             target: EffectTarget::Point(vault(book(), BASE)),
-            mode: Mode::Delta,
+            mode: Mode::Credit,
         },
     ]);
     let expected: BTreeMap<_, _> = grouped
@@ -310,21 +310,21 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 },
                 Effect {
                     target: EffectTarget::Point(vault(BOB, BASE)),
-                    mode: Mode::Delta,
+                    mode: Mode::Credit,
                 },
                 Effect {
                     target: EffectTarget::Point(claims(BOB, BASE)),
-                    mode: Mode::Delta,
+                    mode: Mode::Credit,
                 },
                 // The unspent quote comes back to the same vault the
                 // reservation was taken from.
                 Effect {
                     target: EffectTarget::Point(vault(BOB, QUOTE)),
-                    mode: Mode::Delta,
+                    mode: Mode::Credit,
                 },
                 Effect {
                     target: EffectTarget::Point(claims(BOB, QUOTE)),
-                    mode: Mode::Delta,
+                    mode: Mode::Credit,
                 },
             ]),
         ),
@@ -342,13 +342,15 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     },
                     mode: write(),
                 },
+                // The base leaves the book's own vault, so that side has
+                // to answer both ways; the payment only arrives.
                 Effect {
                     target: EffectTarget::Point(vault(book(), BASE)),
                     mode: Mode::Delta,
                 },
                 Effect {
                     target: EffectTarget::Point(vault(book(), QUOTE)),
-                    mode: Mode::Delta,
+                    mode: Mode::Credit,
                 },
             ]),
         ),

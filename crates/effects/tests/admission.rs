@@ -161,14 +161,17 @@ fn a_well_formed_graph_lowers_and_routes() {
         target: EffectTarget::Point(vault(ALICE, RES_X)),
         mode: Mode::Reserve { amount: 100 },
     }));
+    // The credits either side: a deposit only pays in, and the
+    // declaration carries that rather than answering for a debit it
+    // could not make.
     assert!(alice_set.contains(&Effect {
         target: EffectTarget::Point(vault(ALICE, RES_X)),
-        mode: Mode::Delta,
+        mode: Mode::Credit,
     }));
     let bob_set = &routing.per_shard[&shard_of(BOB)];
     assert!(bob_set.contains(&Effect {
         target: EffectTarget::Point(vault(BOB, RES_X)),
-        mode: Mode::Delta,
+        mode: Mode::Credit,
     }));
 }
 

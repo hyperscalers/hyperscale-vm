@@ -61,11 +61,11 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "0a3c07581858993f86bbbe2d6e30e40ab23690e1db50db5cea149e1992145187";
+const PIN_TRANSFER: &str = "2f3883cad0580db5c8e6b316251b0f081c491b1cb565685f666195b81031412d";
 
-const PIN_SWAP: &str = "5c03f897ed06e178b103d455a5e3dd1ba0b4dfd94209fd05e1a410a6b40a8b2c";
+const PIN_SWAP: &str = "01bb88301ca91d76ee1d9ec4c275dd674db12f7eebf83bcaae7c3a45d38bdbf1";
 
-const PIN_FILL: &str = "d6e3984cc24b34ea38c7fa6f40df4b4e069d6a27d1a8487cc61d6b12523dec9a";
+const PIN_FILL: &str = "5a3d6d936fa0573e46defe9045bc004ce81fd7b260f15e4f5e1e951e3d947825";
 
 const PIN_PROPOSE: &str = "15155b4205c3c1c16e7f5f940ff8df7ee6c69afcddb99a1ce5dca4dffc805a79";
 

@@ -30,7 +30,7 @@ redeem(bucket) — fallible
   takes    arg0 carrying config.stable
   declares
       0  read self.deviation
-      1  delta self.vault[config.stable] holding config.stable
+      1  credit self.vault[config.stable] holding config.stable
       2  delta self.vault[config.reserve] holding config.reserve
   yields   edge 0 = config.reserve
   exports  handle for clause 0, handle for clause 1, handle for clause 2, edge arg0, config.band

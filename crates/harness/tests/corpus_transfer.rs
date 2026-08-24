@@ -191,8 +191,11 @@ fn transfer_profile_and_provision_shape_are_exact() {
         (
             shard_of(BOB),
             set(&[
-                point(vault(BOB, RES_X), Mode::Delta),
-                point(claims(BOB, RES_X), Mode::Delta),
+                // The recipient's side only receives, and says so: a
+                // deposit that answered for a debit would be asked for
+                // the sender's credential as well as its own.
+                point(vault(BOB, RES_X), Mode::Credit),
+                point(claims(BOB, RES_X), Mode::Credit),
             ]),
         ),
     ]);

@@ -1548,6 +1548,17 @@ impl Slot<Vault> {
     #[inline(always)]
     pub const fn declared(&mut self) {}
 
+    /// Declare a credit on this cell without making one.
+    ///
+    /// [`declared`](Self::declared) for a cell the body only ever pays
+    /// into — a delivery fallback is the shape — so the declaration
+    /// carries the direction as well as the reach. Worth separating
+    /// because a movement requirement is judged on what a declaration
+    /// says it might do: a cell declared both ways answers for a debit
+    /// this body could not make.
+    #[inline(always)]
+    pub const fn declared_credit(&mut self) {}
+
     /// Take the reservation this method declared, as the value it grants.
     ///
     /// Feasibility was judged and the hold taken before this body ran, so
