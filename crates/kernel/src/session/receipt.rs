@@ -240,16 +240,27 @@ impl KernelSession {
     /// the quantities are `u128` and the net would need a wider
     /// accumulator to hold a sum neither side can overflow.
     ///
+    /// Each total is checked, and a side that leaves `u128` is a resource
+    /// this fold could not weigh. Unweighed is unconserved: a saturating
+    /// total would pin both sides to the same ceiling and read the
+    /// arithmetic it could not do as agreement. One cell's balance cannot
+    /// overflow a side, but a transaction reaching enough of them can, so
+    /// the case is decided rather than assumed away.
+    ///
     /// Walked unfiltered, unlike every other walk of a delta. The others
     /// exist to apply a receipt somewhere and see only what that shard
     /// owns; this one judges the transaction whole, which is what makes
     /// the verdict identical on every participant of it.
     fn unconserved(&self, delta: &StateDelta) -> Option<ResourceAddr> {
-        let mut sides: BTreeMap<ResourceAddr, (u128, u128)> = BTreeMap::new();
+        let mut sides: BTreeMap<ResourceAddr, Option<(u128, u128)>> = BTreeMap::new();
+        let mut weigh = |resource, gained: u128, lost: u128| {
+            let side = sides.entry(resource).or_insert(Some((0, 0)));
+            *side = side.and_then(|(had, spent)| {
+                Some((had.checked_add(gained)?, spent.checked_add(lost)?))
+            });
+        };
         for (_, movement) in delta.movements.iter().chain(delta.settles.iter()) {
-            let side = sides.entry(movement.resource).or_default();
-            side.0 = side.0.saturating_add(movement.credit);
-            side.1 = side.1.saturating_add(movement.debit);
+            weigh(movement.resource, movement.credit, movement.debit);
         }
         // An instance counts one whatever it is worth, which is the
         // measure its mint credited.
@@ -257,21 +268,20 @@ impl KernelSession {
             let Some(resource) = self.instance_resource_at(*key) else {
                 continue;
             };
-            let side = sides.entry(resource).or_default();
-            if change.is_some() {
-                side.0 = side.0.saturating_add(1);
-            } else {
-                side.1 = side.1.saturating_add(1);
-            }
+            let (filed, removed) = if change.is_some() { (1, 0) } else { (0, 1) };
+            weigh(resource, filed, removed);
         }
         for resource in self.supply.resources() {
-            let side = sides.entry(resource).or_default();
-            side.0 = side.0.saturating_add(self.supply.burned(resource));
-            side.1 = side.1.saturating_add(self.supply.minted(resource));
+            weigh(
+                resource,
+                self.supply.burned(resource),
+                self.supply.minted(resource),
+            );
         }
-        sides
-            .into_iter()
-            .find_map(|(resource, (gained, lost))| (gained != lost).then_some(resource))
+        sides.into_iter().find_map(|(resource, side)| {
+            side.is_none_or(|(gained, lost)| gained != lost)
+                .then_some(resource)
+        })
     }
 
     /// What the cell at `key` holds, off the capability that reached it.

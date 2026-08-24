@@ -262,6 +262,62 @@ mod through_the_session {
         );
     }
 
+    /// A total the fold cannot weigh is one it does not pass.
+    ///
+    /// One cell's balance cannot overflow a side of the sum, but a
+    /// transaction reaching enough of them can. Totalling to a ceiling
+    /// instead would pin both sides there and read the arithmetic it
+    /// could not do as agreement — here, a unit appearing out of nothing
+    /// beside a debit large enough to hide it.
+    #[test]
+    fn a_total_past_the_accumulator_does_not_commit() {
+        let drained = vault(2, UNIT.address());
+        let mut held = MemoryStore::new();
+        held.write(drained, encode_amount(u128::MAX).to_vec());
+
+        let cells = [vault(1, UNIT.address()), drained, vault(3, UNIT.address())];
+        let mut set = EffectSet::new();
+        for cell in cells {
+            set.insert(Effect {
+                target: EffectTarget::Point(cell),
+                mode: Mode::Delta,
+            })
+            .expect("three distinct cells");
+        }
+        let mut session = KernelSession::materialize(
+            OverlayStore::new(Arc::new(held)),
+            &Declaration::from_set(set).denominated(|_| Some(UNIT)),
+            TxHash(Hash32([9; 32])),
+            EnvInputs::unsealed(0),
+            hash,
+        )
+        .expect("three unheld delta cells materialize");
+
+        // The clause list orders by the set, so each cell's rep is its
+        // position among the three keys ascending.
+        let rep = |cell| {
+            u32::try_from(cells.iter().filter(|other| **other < cell).count()).expect("of three")
+        };
+        session
+            .delta_sub(rep(drained), u128::MAX)
+            .expect("the cell covers it");
+        session
+            .delta_add(rep(cells[0]), u128::MAX)
+            .expect("the queue takes it");
+        session
+            .delta_add(rep(cells[2]), 1)
+            .expect("and the unit that overflows the side");
+
+        let (receipt, _) = session.finish(vec![], 0).expect("a receipt either way");
+        assert_eq!(
+            receipt.outcome,
+            Outcome::ProtocolError {
+                reason: AbortReason::ValueNotConserved,
+            },
+            "a side that left u128 is unweighed, and unweighed is unconserved"
+        );
+    }
+
     /// A transfer moves no supply, which is what makes same-shard
     /// movement conserve the accumulator without counting anything.
     #[test]
