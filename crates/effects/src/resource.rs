@@ -230,10 +230,15 @@ impl GrantedBehaviour {
     #[must_use]
     pub const fn admits(self, entry: &Grant) -> bool {
         match entry {
-            Grant::Open => self.asks_about_the_actor(),
-            Grant::Never => !self.asks_about_the_actor(),
-            Grant::Rule(_) => !matches!(self, Self::Deposit),
-            Grant::Credential(_) => matches!(self, Self::Deposit),
+            // A rule is judged against a caller's evidence, which only an
+            // actor question has, and only an actor question can be
+            // opened to everyone. A movement's requirement can land on a
+            // frame that may not turn a caller away — over-approximating
+            // direction puts it on the credit side, where the method is
+            // total — so what it asks is a fact about the mover, and the
+            // two spellings it has are a credential or nothing at all.
+            Grant::Open | Grant::Rule(_) => self.asks_about_the_actor(),
+            Grant::Never | Grant::Credential(_) => !self.asks_about_the_actor(),
         }
     }
 
@@ -241,10 +246,8 @@ impl GrantedBehaviour {
     #[must_use]
     pub const fn admits_expr(self, entry: &GrantExpr) -> bool {
         match entry {
-            GrantExpr::Open => self.asks_about_the_actor(),
-            GrantExpr::Never => !self.asks_about_the_actor(),
-            GrantExpr::Rule(_) => !matches!(self, Self::Deposit),
-            GrantExpr::Credential(_) => matches!(self, Self::Deposit),
+            GrantExpr::Open | GrantExpr::Rule(_) => self.asks_about_the_actor(),
+            GrantExpr::Never | GrantExpr::Credential(_) => !self.asks_about_the_actor(),
         }
     }
 
@@ -748,12 +751,16 @@ pub fn instance_data_key(
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::assert_canonical;
-    use hyperscale_vm_types::{Address, AddressClass};
+    use hyperscale_vm_types::{Address, AddressClass, ResourceAddr};
 
     use super::{
-        ResourceKind, ResourceRecord, holdings_collection, instance_data_key, resource_record_key,
+        Grant, GrantedBehaviour, ResourceKind, ResourceRecord, holdings_collection,
+        instance_data_key, resource_record_key,
     };
+    use crate::auth::RoleBytes;
     use crate::hash::TestHasher;
+    use crate::presented::Presented;
+    use crate::rule::StoredRule;
     use crate::types::native_address;
     use crate::vocabulary::GENESIS_PUBLISHER;
 
@@ -842,5 +849,47 @@ mod tests {
             instance_data_key(&TestHasher, issuer, other_resource, 7),
             "another resource is another cell"
         );
+    }
+
+    /// Each state has exactly one spelling, and which spellings a
+    /// behaviour admits follows from whose property its rule is about.
+    ///
+    /// An actor question is asked of a caller, so it can hold a rule and
+    /// can be opened to everyone. A movement's requirement can land on a
+    /// frame that may not turn a caller away — over-approximating
+    /// direction puts it on the credit side, and the method that lands
+    /// there is total — so it asks a fact about the mover instead, and a
+    /// rule is not a spelling it has.
+    #[test]
+    fn a_behaviour_admits_one_spelling_per_state() {
+        let badge = ResourceAddr::new([0x77; 31]);
+        let rule = RoleBytes::try_from(&StoredRule::Require(Presented::Resource(badge)))
+            .expect("a rule encodes");
+        for behaviour in GrantedBehaviour::ALL {
+            let actor = behaviour.asks_about_the_actor();
+            assert_eq!(behaviour.admits(&Grant::Open), actor, "{behaviour:?} open");
+            assert_eq!(
+                behaviour.admits(&Grant::Never),
+                !actor,
+                "{behaviour:?} never"
+            );
+            assert_eq!(
+                behaviour.admits(&Grant::Rule(rule.clone())),
+                actor,
+                "{behaviour:?} rule"
+            );
+            assert_eq!(
+                behaviour.admits(&Grant::Credential(badge)),
+                !actor,
+                "{behaviour:?} credential"
+            );
+        }
+
+        // Which is to say: the two movements take a credential or nothing
+        // at all, and every authority takes a rule or everyone.
+        assert!(!GrantedBehaviour::Withdraw.admits(&Grant::Rule(rule.clone())));
+        assert!(!GrantedBehaviour::Deposit.admits(&Grant::Rule(rule)));
+        assert!(GrantedBehaviour::Withdraw.admits(&Grant::Credential(badge)));
+        assert!(GrantedBehaviour::Mint.admits(&Grant::Open));
     }
 }

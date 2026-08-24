@@ -209,3 +209,110 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     );
     Ok(())
 }
+
+/// The badge a governed resource's `Withdraw` entry names.
+const BADGE: ResourceAddr = ResourceAddr::new([0x77; 31]);
+
+/// A resource whose withdrawal is governed by a standing credential.
+fn governed_meta(entry: Grant) -> ResourceMeta {
+    let mut rules = ResourceGrants::new();
+    rules.set(GrantedBehaviour::Withdraw, entry);
+    ResourceMeta {
+        namespace: MINTER,
+        kind: ResourceKind::Fungible,
+        material: vec![b"governed".to_vec()],
+        rules,
+    }
+}
+
+fn governed(entry: Grant) -> ResourceAddr {
+    governed_meta(entry).address(&TestHasher)
+}
+
+/// The holder moves the governed resource out of their own account and
+/// banks it back — an ordinary transfer, declaring nothing about any
+/// rule, which is the whole point.
+fn governed_tree(entry: Grant) -> Result<EnvelopeTree> {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let build = |b: &mut _| -> std::result::Result<(), TypedError> {
+        let caller = account::authorize(b, HOLDER)?;
+        let funds = account::withdraw(b, caller, governed(entry.clone()), 40)?;
+        account::deposit(b, HOLDER, funds)
+    };
+    build(&mut root).context("the withdrawal types against the account")?;
+    env.resource(governed_meta(entry));
+    env.seal(root).context("the root grants")?;
+    env.build().context("the tree builds")
+}
+
+/// A holder's store, holding the governed resource and — where `carries`
+/// says so — the credential its withdraw rule names.
+fn governed_store(entry: Grant, carries: bool) -> MemoryStore {
+    let mut store = MemoryStore::new();
+    seed_vault(&mut store, HOLDER, governed(entry), 100);
+    if carries {
+        seed_vault(&mut store, HOLDER, BADGE, 1);
+    }
+    store
+}
+
+/// A movement of a governed resource is judged against its entry, in a
+/// declaration that says nothing about it.
+///
+/// The account declares a withdrawal and no rule; the requirement is
+/// admission's, resolved against the vault's own owner. So a holder
+/// carrying the credential moves value and one who does not cannot —
+/// with the package unchanged either way, which is what makes omission
+/// inexpressible rather than merely discouraged.
+#[test]
+fn a_credential_governs_a_withdrawal_no_package_declared() -> Result<()> {
+    let entry = Grant::Credential(BADGE);
+
+    let carried = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let (outcome, end) = run(
+        &governed_store(entry.clone(), true),
+        std::slice::from_ref(&carried),
+    );
+    assert!(
+        matches!(
+            outcome.receipts[&carried.tx].outcome,
+            Outcome::Completed { .. }
+        ),
+        "a holder carrying the credential moves what they hold",
+    );
+    assert_eq!(amount_of(&end, vault(HOLDER, governed(entry.clone()))), 100);
+
+    // The same transaction, the same package, one leaf absent.
+    let bare = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let (outcome, end) = run(
+        &governed_store(entry.clone(), false),
+        std::slice::from_ref(&bare),
+    );
+    assert!(
+        !matches!(
+            outcome.receipts[&bare.tx].outcome,
+            Outcome::Completed { .. }
+        ),
+        "a holder without it does not",
+    );
+    assert_eq!(amount_of(&end, vault(HOLDER, governed(entry))), 100);
+    Ok(())
+}
+
+/// A resource no cell may hold refuses the graph that would rest it, at
+/// admission, before anything routes or any fee is assured.
+#[test]
+fn a_forbidden_movement_refuses_at_admission() -> Result<()> {
+    let tree = governed_tree(Grant::Never)?;
+    let identity = tree.hash(&TestHasher);
+    let chain = world();
+    let refusal = admit_tree(&tree, HOLDER, identity, &chain, &TestHasher)
+        .expect_err("a movement the entry forbids is refused");
+    let said = refusal.to_string();
+    assert!(
+        said.contains("may not come to rest"),
+        "the refusal names what it refused: {said}"
+    );
+    Ok(())
+}

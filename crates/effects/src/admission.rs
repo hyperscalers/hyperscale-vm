@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectConflict, EffectTarget, MAX_MANIFEST_NODES, Mode, Presence,
-    PrincipalAddr, ResourceAddr,
+    PrincipalAddr, ResourceAddr, SubstateKey,
 };
 
 use crate::dsl::{
@@ -36,12 +36,12 @@ use crate::metadata::{PackageHash, PackageMetadata};
 use crate::presented::Presented;
 use crate::publish::{CheckedSignature, seals};
 use crate::records::ChainRecords;
-use crate::resource::{ResourceKind, granting_issued_resource};
+use crate::resource::{Grant, GrantedBehaviour, ResourceKind, granting_issued_resource};
 use crate::route::FrameDeclaration;
 use crate::rule::Rule;
 use crate::signature::{AbiParam, MethodSignature, ParamType};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
-use crate::vocabulary::CONFIG;
+use crate::vocabulary::{CONFIG, VAULT};
 
 /// The bound on yield parameters one intent may declare. A wire bound.
 ///
@@ -57,6 +57,33 @@ pub const MAX_YIELD_PARAMS: usize = 32;
 /// bare graph the two numberings coincide.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AdmissionError {
+    /// A movement of a resource no cell may hold.
+    ///
+    /// Decidable without state and without a body: whether a resource
+    /// may come to rest at all is its entry's answer, and the resource
+    /// an access is denominated in is fixed when the declaration is
+    /// evaluated. So the graph is refused rather than admitted to fail
+    /// later, which is what makes an obligation that must be discharged
+    /// inside its transaction cost nothing when it is not.
+    #[error("node {node}: {resource:?} may not come to rest, and this movement would rest it")]
+    MovementForbidden {
+        /// The offending node.
+        node: u32,
+        /// The resource whose entry forbids it.
+        resource: ResourceAddr,
+        /// Which movement the entry forbids.
+        behaviour: GrantedBehaviour,
+    },
+    /// A movement rule whose bytes are not a movement rule.
+    #[error("node {node}: {resource:?} has a {behaviour:?} rule that does not decode")]
+    MovementRuleMalformed {
+        /// The offending node.
+        node: u32,
+        /// The resource whose entry failed to decode.
+        resource: ResourceAddr,
+        /// Which entry it was.
+        behaviour: GrantedBehaviour,
+    },
     /// More nodes than an index can address.
     #[error("graph has more nodes than admission can address")]
     TooManyNodes,
@@ -973,6 +1000,7 @@ impl Lower<'_> {
             })?;
         own_prefix_only(&frame, node.target.address(), node_index)?;
         let fence = self.fence(node.target, &mut frame)?;
+        inject_movement_rules(self.hasher, self.grants, &mut frame, node_index)?;
         // Evidence last, because what a call must present is a property
         // of the declaration this node actually evaluated rather than of
         // the clause list its signature was written with: a guard that
@@ -1479,6 +1507,140 @@ fn own_prefix_only(
         }
     }
     Ok(())
+}
+
+/// Inject the movement requirements this frame's declared accesses earn.
+///
+/// A package will not declare a rule it does not want, so the requirement
+/// comes from here rather than from the signature — which is what makes
+/// omission inexpressible: a component's vault is fenced exactly as an
+/// account's is, and neither package wrote a word about it.
+///
+/// Appended to the frame's own conditions, so everything downstream reads
+/// them the way it reads an authored gate: a `Satisfies` rides the node's
+/// call and is judged where the evidence is.
+///
+/// One requirement per (owner, resource, behaviour) however many accesses
+/// name it, since a rule asked twice is one question. `Holds` resolves
+/// against the access's own owner, and the read it names is appended so
+/// the leaf is provisioned wherever the call runs — the owner is the
+/// frame's own instance, which `own_prefix_only` has already held every
+/// access to, so nothing here adds a participant.
+fn inject_movement_rules(
+    hasher: &dyn Hasher,
+    grants: &PresentedGrants,
+    frame: &mut Declaration,
+    node_index: u32,
+) -> Result<(), AdmissionError> {
+    // Which requirements this frame earns, before any is built: an access
+    // whose mode reaches both directions earns both, and only a
+    // reservation carries its own.
+    let mut wanted: Vec<(Address, ResourceAddr, GrantedBehaviour)> = Vec::new();
+    for access in &frame.ordered {
+        let Some(resource) = access.holds else {
+            continue;
+        };
+        let owner = access.effect.target.owner();
+        let behaviours: &[GrantedBehaviour] = match access.effect.mode {
+            // A conditional decrement, and the one mode whose direction
+            // the declaration carries.
+            Mode::Reserve { .. } => &[GrantedBehaviour::Withdraw],
+            // Everything else reaches both ways through one access, so
+            // both are asked: a negative capability may over-bind and
+            // must never under-bind.
+            Mode::Delta | Mode::Write => &[GrantedBehaviour::Withdraw, GrantedBehaviour::Deposit],
+            Mode::Read => continue,
+        };
+        for behaviour in behaviours {
+            let entry = (owner, resource, *behaviour);
+            if !wanted.contains(&entry) {
+                wanted.push(entry);
+            }
+        }
+    }
+
+    for (owner, resource, behaviour) in wanted {
+        // A resource whose record was not presented grants nothing here.
+        // That is safe only because a resource whose entries restrict a
+        // movement says so on its address, so absence and needing none
+        // are told apart before anything reaches this.
+        let Some(rules) = grants.rules(resource) else {
+            continue;
+        };
+        let Some(entry) = rules.get(behaviour) else {
+            continue;
+        };
+        match entry {
+            // Not a movement spelling: an open movement is what an absent
+            // entry already means, and publish refuses the arm.
+            Grant::Open => {}
+            Grant::Never => {
+                return Err(AdmissionError::MovementForbidden {
+                    node: node_index,
+                    resource,
+                    behaviour,
+                });
+            }
+            // A condition, not a gate, and that distinction is the whole
+            // reason a credential carries no rule. `Satisfies` turns a
+            // caller away on evidence, which a method marked total may
+            // not do — and over-approximating direction puts a movement
+            // requirement on the credit side, where the method that
+            // lands it is `deposit`. `Holds` states a feasibility fact
+            // instead, judged before any body runs, so the mark stands.
+            Grant::Credential(badge) => {
+                let cell = credential_cell(hasher, owner, *badge);
+                declare_read(frame, cell);
+                frame.conditions.push(Condition::Holds {
+                    target: EffectTarget::Point(cell),
+                    presence: Presence::Present,
+                });
+            }
+            // A movement entry never holds one: publish refuses the
+            // spelling, because a rule is judged against a caller's
+            // evidence and this requirement can land where no caller may
+            // be turned away.
+            Grant::Rule(_) => {
+                return Err(AdmissionError::MovementRuleMalformed {
+                    node: node_index,
+                    resource,
+                    behaviour,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The leaf whose presence answers whether `owner` holds `badge`.
+///
+/// A fungible holding is one point cell keyed by what it holds, and a
+/// balance reaching zero deletes its leaf — so presence and a non-empty
+/// holding are the same fact, asked once.
+fn credential_cell(hasher: &dyn Hasher, owner: Address, badge: ResourceAddr) -> SubstateKey {
+    child_key(
+        hasher,
+        owner,
+        VAULT,
+        &[Value::Address(badge.address()).canonical_bytes()],
+    )
+}
+
+/// Append a read of `cell` to the frame, so a condition over it is
+/// provisioned wherever this call runs.
+fn declare_read(frame: &mut Declaration, cell: SubstateKey) {
+    let effect = Effect {
+        target: EffectTarget::Point(cell),
+        mode: Mode::Read,
+    };
+    // A repeated insert is the same effect: the declaration already
+    // carries it, and the condition beside it asks the same question.
+    if frame.set.insert(effect).is_ok() {
+        frame.ordered.push(DeclaredAccess {
+            effect,
+            holds: None,
+        });
+    }
 }
 
 /// What lowering one frame's binding needs beyond the frame itself.
