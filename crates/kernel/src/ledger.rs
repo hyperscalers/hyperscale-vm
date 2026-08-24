@@ -32,6 +32,21 @@ pub trait AmountLedger: Baseline {
     /// Record a hold, or drop the one `tx` has when `amount` is `None`.
     fn set_hold(&mut self, key: SubstateKey, tx: TxHash, amount: Option<u128>);
 
+    /// Reduce `tx`'s hold on `key` to `amount`, leaving a smaller one
+    /// alone.
+    ///
+    /// What a hold is worth to everyone else is the floor it keeps under
+    /// the cell, and what it is worth to its own transaction is the
+    /// ceiling on what settling it may take. [`Self::set_hold`] states an
+    /// amount, so a caller settling a figure it derived elsewhere could
+    /// raise the ceiling it is about to spend against and debit past a
+    /// floor another transaction is standing on. Settling part of a hold
+    /// goes through here so that cannot be what a disagreement produces.
+    fn reduce_hold(&mut self, key: SubstateKey, tx: TxHash, amount: u128) {
+        let standing = self.held_reservation(key, tx).unwrap_or_default();
+        self.set_hold(key, tx, Some(amount.min(standing)));
+    }
+
     /// Note one access against the trace the oracle checks.
     fn note(&mut self, target: EffectTarget, kind: ModeKind);
 

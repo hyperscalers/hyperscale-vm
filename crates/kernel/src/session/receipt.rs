@@ -368,7 +368,7 @@ impl KernelSession {
             let settled = if taken == 0 {
                 self.store.release(key, self.tx).map(|_| None)
             } else if self.locality.is_local(key.owner) {
-                self.store.set_hold(key, self.tx, Some(taken));
+                self.store.reduce_hold(key, self.tx, taken);
                 self.store.settle(key, self.tx).map(Some)
             } else {
                 self.store.release(key, self.tx).map(|_| Some(taken))
