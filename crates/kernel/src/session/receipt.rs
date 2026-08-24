@@ -206,6 +206,12 @@ impl KernelSession {
     ///
     /// `None` for a byte entry, which is what keeps an ordered
     /// collection's own records out of a fold about value.
+    ///
+    /// A collection is one answer about its entries, so the interval's
+    /// own bounds need no consulting: materialization keys denomination
+    /// by owner and collection, and refuses a declaration whose slices
+    /// disagree. Two intervals of one collection therefore name one
+    /// resource, and the first is every one of them.
     fn instance_resource_at(&self, key: EntryKey) -> Option<ResourceAddr> {
         self.table
             .iter()
@@ -274,6 +280,13 @@ impl KernelSession {
     /// session's record of what it may touch — so a movement is stamped
     /// where the authority to make it came from, once, rather than
     /// looked up again wherever the movement later travels.
+    ///
+    /// The first clause naming the cell answers for all of them, which is
+    /// sound because materialization refused the declaration where they
+    /// disagreed
+    /// ([`MaterializeError::MixedContents`](crate::MaterializeError::MixedContents)).
+    /// Without that the fold would read a debit's denomination off a
+    /// clause the body never used.
     fn resource_at(&self, key: SubstateKey) -> Option<ResourceAddr> {
         self.table
             .iter()

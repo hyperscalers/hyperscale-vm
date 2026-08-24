@@ -10,7 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{Condition, Declaration};
 use hyperscale_vm_types::{
-    Address, CellKind, CollectionId, Effect, EffectTarget, Mode, Presence, SubstateKey, TxHash,
+    Address, CellKind, CollectionId, Effect, EffectTarget, Mode, Presence, ResourceAddr,
+    SubstateKey, TxHash,
 };
 
 use super::buckets::Buckets;
@@ -167,6 +168,14 @@ pub enum MaterializeError {
     /// through the first is value from nowhere, so the pair is refused
     /// before either handle exists.
     ///
+    /// Two clauses naming two resources is the same disagreement in the
+    /// other direction, and the one nothing downstream can catch. A
+    /// movement takes its denomination from the clause that authorised
+    /// it, so a body holding both handles debits one resource and has
+    /// the debit written down as the other — which conserves, one
+    /// resource going out as another comes in, while a cell of the first
+    /// empties and value of the second exists that no mint made.
+    ///
     /// Refused at publish too, against the target expressions; this is
     /// the verdict two expressions that evaluate onto one cell reach.
     #[error("clauses disagree about what {0:?} holds")]
@@ -244,20 +253,24 @@ impl KernelSession {
         // the two clauses that disagree can be any two: a leaf one
         // denominates and another does not is a leaf handed out as a
         // vault and as a byte cell at once, and a balance written
-        // through the byte handle is a balance nothing moved. Keyed by
-        // what the target names rather than by the target, so two
-        // intervals of one collection are one answer about its entries.
+        // through the byte handle is a balance nothing moved. Two
+        // clauses naming two resources is the same statement about the
+        // same leaf, and the one the receipt cannot survive: a movement
+        // is denominated off the clause that reached the cell, so a body
+        // holding both handles could debit one resource and have the
+        // debit recorded in the other. Keyed by what the target names
+        // rather than by the target, so two intervals of one collection
+        // are one answer about its entries.
         let mut table = Vec::with_capacity(ordered.len());
-        let mut holds: BTreeMap<Holds, bool> = BTreeMap::new();
+        let mut holds: BTreeMap<Holds, Option<ResourceAddr>> = BTreeMap::new();
         for access in ordered {
-            let denominated = access.holds.is_some();
             if holds
-                .insert(holds_of(access.effect.target), denominated)
-                .is_some_and(|held| held != denominated)
+                .insert(holds_of(access.effect.target), access.holds)
+                .is_some_and(|held| held != access.holds)
             {
                 return Err(MaterializeError::MixedContents(access.effect.target));
             }
-            table.push(capability_for(access.effect, denominated)?);
+            table.push(capability_for(access.effect, access.holds.is_some())?);
         }
         // One transaction may not declare both an exclusive write and a
         // commutative mode on the same cell: the receipt records
@@ -903,7 +916,8 @@ mod tests {
     /// spells one cell two ways passes it. What lands here is the
     /// evaluated key — and if a body held both handles over it, a balance
     /// written through the byte one and debited through the value one
-    /// would be value from nowhere.
+    /// would be value from nowhere, and a debit through one of two
+    /// resources would be recorded under the other.
     #[test]
     fn one_cell_does_not_materialise_as_a_vault_and_a_byte_cell() {
         let write = Effect {
@@ -942,6 +956,15 @@ mod tests {
         );
         assert_eq!(
             materialise(vec![None, Some(RESOURCE)]),
+            Err(MaterializeError::MixedContents(write.target))
+        );
+        // Two clauses, two resources: the pair a handle *is* built for
+        // twice, and the one the receipt cannot describe. A debit through
+        // either handle is recorded under whichever resource the first
+        // clause named, so the conservation fold reads a transfer of one
+        // resource where a cell of the other emptied.
+        assert_eq!(
+            materialise(vec![Some(RESOURCE), Some(ResourceAddr::new([0xB2; 31]))]),
             Err(MaterializeError::MixedContents(write.target))
         );
         // Agreeing clauses are what a body that reads and writes one cell
