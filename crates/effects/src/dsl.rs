@@ -1927,7 +1927,16 @@ fn eval_expr<'a>(
             }
         }
         Expr::Add(left, right) => add(&*sub(left)?, &*sub(right)?)?,
-        Expr::Eq(left, right) => equals(&*sub(left)?, &*sub(right)?)?,
+        // The one operator that walks its operands rather than reading a
+        // scalar off them: equality is structural, and refusing a bucket
+        // is a second walk over both. Charged here, because a borrowed
+        // operand was handed over for one unit and this is what reading
+        // it costs.
+        Expr::Eq(left, right) => {
+            let (left, right) = (sub(left)?, sub(right)?);
+            budget.spend(walked(&left) + walked(&right))?;
+            equals(&left, &right)?
+        }
         Expr::Lt(left, right) => less_than(&*sub(left)?, &*sub(right)?)?,
         Expr::Contains { map, key } => {
             let map = sub(map)?;
@@ -3061,6 +3070,50 @@ mod tests {
         // same footprint.
         assert_eq!(
             evaluate_effects(&over(MAX_VALUE_BYTES), &ins, &TestHasher),
+            Err(EvalError::TooMuchWork)
+        );
+    }
+
+    /// An equality costs what it walks, and the ceiling is on the work
+    /// rather than on the number of comparisons a signature spells.
+    ///
+    /// The one operator whose cost is its operands' rather than its own:
+    /// every other reads a scalar off a value it was handed, where
+    /// equality visits every leaf under both — and refusing a bucket
+    /// visits them again. So a wide operand under a loop walks megabytes
+    /// at the clause count and footprint of a loop comparing a scalar,
+    /// and the two below differ in the operand's width and in nothing
+    /// else.
+    #[test]
+    fn an_equality_is_charged_for_what_it_walks() {
+        let clauses = [Clause::ForEach {
+            guard: None,
+            list: Expr::Arg(0),
+            body: vec![Clause::Effect {
+                guard: Some(Box::new(Expr::Eq(
+                    Box::new(Expr::Arg(1)),
+                    Box::new(Expr::Arg(1)),
+                ))),
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: SlotId(16),
+                    material: vec![Expr::Binding(0)],
+                }),
+                mode: ModeExpr::Write,
+                denomination: None,
+            }],
+        }];
+        let elements = Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS]);
+
+        // A value a caller could plausibly pass, compared once per
+        // element.
+        let narrow = [elements.clone(), Value::Bytes(vec![0; 32])];
+        assert!(evaluate_effects(&clauses, &inputs(&narrow, &[]), &TestHasher).is_ok());
+        // The widest a list admits, at the same clause count and the same
+        // footprint.
+        let wide = [elements, Value::List(vec![Value::U64(0); MAX_VALUE_ITEMS])];
+        assert_eq!(
+            evaluate_effects(&clauses, &inputs(&wide, &[]), &TestHasher),
             Err(EvalError::TooMuchWork)
         );
     }
