@@ -50,8 +50,8 @@ pub const MAX_FOREACH_ELEMENTS: usize = MAX_VALUE_ITEMS;
 pub const MAX_EXPR_DEPTH: usize = 32;
 
 /// The bound on what evaluating one signature may cost: subterms
-/// evaluated, plus elements walked or copied by the operations that take
-/// a whole value.
+/// evaluated, plus what a walk over each value they yield visits —
+/// elements, and bytes at [`BYTES_PER_WORK_UNIT`] apiece.
 ///
 /// The clause bound beside it counts what a signature *declares*, which
 /// is what the footprint prices. This counts what deciding that costs,
@@ -70,6 +70,16 @@ pub const MAX_EXPR_DEPTH: usize = 32;
 /// package it holds, so the ceiling clears real work by a factor in the
 /// hundreds and refuses only a signature whose cost is the point.
 pub const MAX_EVALUATION_WORK: usize = 65_536;
+
+/// The bytes of an opaque byte string one unit of work buys.
+///
+/// A byte string carries length without carrying elements, so counting
+/// elements alone prices a four-kilobyte literal as a scalar — while
+/// encoding one into a key's material hashes every byte of it. The
+/// divisor is what makes the two comparable: a unit is about fifty
+/// nanoseconds, and copying or hashing this many bytes is what fifty
+/// nanoseconds buys.
+const BYTES_PER_WORK_UNIT: usize = 64;
 
 /// The bound on `for-each` nesting within one signature.
 ///
@@ -741,8 +751,9 @@ pub enum EvalError {
     #[error("signature evaluation exceeds {MAX_EFFECTS_PER_SIGNATURE} effects or iterations")]
     TooManyEffects,
     /// A signature whose evaluation spends more than
-    /// [`MAX_EVALUATION_WORK`] — subterms evaluated plus elements walked
-    /// or copied, which is what the clause count above does not see.
+    /// [`MAX_EVALUATION_WORK`] — subterms evaluated plus what walking
+    /// each value they yield costs, which is what the clause count above
+    /// does not see.
     #[error("signature evaluation exceeds {MAX_EVALUATION_WORK} units of work")]
     TooMuchWork,
     /// A range whose lower bound exceeds its upper bound.
@@ -1156,7 +1167,7 @@ impl Budget {
     }
 
     /// Charge `units` of expression work: one per subterm evaluated, and
-    /// one per element a bulk operation walks or copies.
+    /// what [`walked`] measures for each value one yields.
     ///
     /// The counter beside [`Self::charge`] rather than the same one,
     /// because they bound different things. A clause count bounds the
@@ -1607,9 +1618,9 @@ fn eval_material(
     let mut encoded = Vec::with_capacity(material.len());
     for expr in material {
         let value = eval_expr(expr, inputs, hasher, bindings, depth, budget)?;
-        // Encoding walks the value, so it is charged like every other
-        // walk of one.
-        budget.spend(items(&value))?;
+        // Encoding walks the value a second time, so it is charged a
+        // second time — the term already paid for producing it.
+        budget.spend(walked(&value))?;
         encoded.push(value.canonical_bytes());
     }
     Ok(encoded)
@@ -1634,26 +1645,23 @@ fn binding(bindings: &[Value], index: u32) -> Result<&Value, EvalError> {
         .ok_or(EvalError::BindingOutOfRange(index))
 }
 
-/// A value handed out of the evaluator, charged for the copy.
-fn copied(value: &Value, budget: &Budget) -> Result<Value, EvalError> {
-    budget.spend(items(value))?;
-    Ok(value.clone())
-}
-
-/// How many elements a value carries, counting what a walk over it
-/// visits: its own leaves and every element beneath them.
+/// What a walk over a value visits, in the units [`Budget::spend`]
+/// charges: its own leaves, every element beneath them, and every
+/// [`BYTES_PER_WORK_UNIT`] of an opaque byte string.
 ///
-/// The unit `Budget::spend` charges in. A scalar is one; a list is one
-/// per element and one for itself, so a walk that copies or encodes a
-/// value pays what the copy costs rather than what its outermost shape
-/// suggests.
-fn items(value: &Value) -> usize {
+/// A scalar is one; a list is one per element and one for itself; a byte
+/// string is what its length costs. So a walk that copies, compares or
+/// encodes a value pays what the walk costs rather than what its
+/// outermost shape suggests.
+fn walked(value: &Value) -> usize {
     let mut total = 0;
     let mut stack = vec![value];
     while let Some(value) = stack.pop() {
         total += 1;
-        if let Value::Tuple(values) | Value::List(values) = value {
-            stack.extend(values);
+        match value {
+            Value::Bytes(bytes) => total += bytes.len() / BYTES_PER_WORK_UNIT,
+            Value::Tuple(values) | Value::List(values) => stack.extend(values),
+            _ => {}
         }
     }
     total
@@ -1677,14 +1685,12 @@ fn eval_expr(
     let sub = |expr| eval_expr(expr, inputs, hasher, bindings, deeper, budget);
     let material = |material| eval_material(material, inputs, hasher, bindings, deeper, budget);
     let all = |elements| eval_all(elements, inputs, hasher, bindings, deeper, budget);
-    match expr {
-        // The four terms handed a value rather than deriving one. Each
-        // is a copy, and a copy costs what it holds — the one place a
-        // subterm is worth more than a unit without walking anything.
-        Expr::Literal(value) => copied(value, budget),
-        Expr::Arg(index) => copied(arg(inputs, *index)?, budget),
-        Expr::Config(index) => copied(config(inputs, *index)?, budget),
-        Expr::Binding(index) => copied(binding(bindings, *index)?, budget),
+    let value = match expr {
+        // The four terms handed a value rather than deriving one.
+        Expr::Literal(value) => Ok(value.clone()),
+        Expr::Arg(index) => Ok(arg(inputs, *index)?.clone()),
+        Expr::Config(index) => Ok(config(inputs, *index)?.clone()),
+        Expr::Binding(index) => Ok(binding(bindings, *index)?.clone()),
         Expr::SelfAddr => Ok(Value::Address(inputs.self_addr)),
         Expr::SelfRecord => inputs
             .record
@@ -1747,9 +1753,10 @@ fn eval_expr(
         Expr::And(left, right) | Expr::Or(left, right) => {
             let short = matches!(expr, Expr::Or(..));
             if as_bool(sub(left)?)? == short {
-                return Ok(Value::Bool(short));
+                Ok(Value::Bool(short))
+            } else {
+                Ok(Value::Bool(as_bool(sub(right)?)?))
             }
-            Ok(Value::Bool(as_bool(sub(right)?)?))
         }
         Expr::Add(left, right) => add(&sub(left)?, &sub(right)?),
         Expr::Eq(left, right) => equals(&sub(left)?, &sub(right)?),
@@ -1766,7 +1773,12 @@ fn eval_expr(
         } else {
             otherwise
         }),
-    }
+    }?;
+    // Every term pays for what it hands back, whether it copied the
+    // value, read it out of one, or built it: what the term above will
+    // walk is what this one produced.
+    budget.spend(walked(&value))?;
+    Ok(value)
 }
 
 /// Every element of a sequence expression, in order.
@@ -2024,7 +2036,8 @@ mod tests {
     use crate::metadata::PackageHash;
     use crate::resource::{GrantsExpr, ResourceKind, issued_resource};
     use crate::types::{
-        EdgeContent, MAX_IDS_PER_EDGE, SlotId, Value, child_key, collection_id, order_key,
+        EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_BYTES, SlotId, Value, child_key, collection_id,
+        order_key,
     };
 
     /// Every constructor, each subterm a distinct marker: the walk
@@ -2728,6 +2741,45 @@ mod tests {
         // A wide one, at the same clause count and the same footprint.
         assert_eq!(
             evaluate_effects(&over(MAX_VALUE_ITEMS), &ins, &TestHasher),
+            Err(EvalError::TooMuchWork)
+        );
+    }
+
+    /// A byte string costs what its length costs, not what a scalar
+    /// does.
+    ///
+    /// The one leaf that carries length without carrying elements, and
+    /// the one the DSL hands straight to a hash: a key's material is
+    /// encoded per iteration, so a wide literal under a loop walks
+    /// megabytes at the clause count and footprint of a loop over a
+    /// scalar. Counting elements alone prices the two the same.
+    #[test]
+    fn a_byte_string_is_charged_for_its_length() {
+        let over = |len: usize| {
+            [Clause::ForEach {
+                guard: None,
+                list: Expr::Arg(0),
+                body: vec![Clause::Effect {
+                    guard: None,
+                    target: TargetExpr::Point(Expr::ChildKey {
+                        owner: Box::new(Expr::SelfAddr),
+                        slot: SlotId(16),
+                        material: vec![Expr::Binding(0), Expr::Literal(Value::Bytes(vec![0; len]))],
+                    }),
+                    mode: ModeExpr::Write,
+                    denomination: None,
+                }],
+            }]
+        };
+        let args = [Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS])];
+        let ins = inputs(&args, &[]);
+
+        // A mark a body could plausibly carry, hashed once per element.
+        assert!(evaluate_effects(&over(32), &ins, &TestHasher).is_ok());
+        // The widest a value admits, at the same clause count and the
+        // same footprint.
+        assert_eq!(
+            evaluate_effects(&over(MAX_VALUE_BYTES), &ins, &TestHasher),
             Err(EvalError::TooMuchWork)
         );
     }
