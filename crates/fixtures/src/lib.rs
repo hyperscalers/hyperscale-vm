@@ -31,6 +31,7 @@
 
 pub mod amm;
 pub mod book;
+pub mod custodian;
 pub mod grammar;
 pub mod lending;
 pub mod lottery;
@@ -136,6 +137,10 @@ packages! {
     amm => (AMM_COMPONENT, amm_artifact, amm_package_hash, "amm.component.wasm");
     // The order book: makers rest asks on a tick ladder, takers walk it.
     book => (BOOK_COMPONENT, book_artifact, book_package_hash, "book.component.wasm");
+    // The component that holds value and declares no rule about it.
+    // Declared and never seeded: what it is for is what admission makes
+    // of its declaration, which needs no network to establish.
+    custodian;
     // The shape corpus: every form the grammar admits, as a package that
     // has to execute them. Declared and never seeded — what it is for is
     // the derivation, not a network.

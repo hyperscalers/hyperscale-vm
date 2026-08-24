@@ -1,0 +1,41 @@
+config
+      0  asset
+      1  other
+      2  instances
+
+deposit(bucket) — infallible
+  takes    arg0 carrying config.asset
+  declares
+      0  delta self.vault[config.asset] holding config.asset
+  exports  handle for clause 0, edge arg0
+
+file(nf-bucket) — infallible
+  declares
+      0  write self.nf-vault[resource-of(arg0)] over 0..=u128::MAX, at most len(ids-of(arg0)) entries holding resource-of(arg0)
+  exports  handle for clause 0, edge arg0
+
+instantiate() — infallible
+  declares
+      0  requires self.config is absent
+      1  write self.config
+  exports  handle for clause 1, self.record
+
+release(ids) — infallible
+  declares
+      0  write self.nf-vault[config.instances] over 0..=u128::MAX, at most len(arg0) entries holding config.instances
+  yields   edge 0 = edge(config.instances × arg0)
+  exports  handle for clause 0, arg0
+
+swap(bucket, u128) — infallible
+  takes    arg0 carrying config.asset
+  declares
+      0  delta self.vault[config.asset] holding config.asset
+      1  delta self.vault[config.other] holding config.other
+  yields   edge 0 = config.other
+  exports  handle for clause 0, handle for clause 1, edge arg0, arg1
+
+withdraw(u128) — infallible
+  declares
+      0  delta self.vault[config.asset] holding config.asset
+  yields   edge 0 = config.asset
+  exports  handle for clause 0, arg0

@@ -130,6 +130,15 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("book", "fill-asks", open(), vec![]),
         ("book", "instantiate", open(), vec![]),
         ("book", "place-ask", open(), vec![]),
+        // Every method open, which is the fixture's whole point: it
+        // declares nothing about who may move what it holds, and is
+        // bound anyway.
+        ("custodian", "deposit", open(), vec![]),
+        ("custodian", "file", open(), vec![]),
+        ("custodian", "instantiate", open(), vec![]),
+        ("custodian", "release", open(), vec![]),
+        ("custodian", "swap", open(), vec![]),
+        ("custodian", "withdraw", open(), vec![]),
         ("grammar", "accrue", open(), vec![]),
         ("grammar", "charge", open(), vec![]),
         ("grammar", "charge-or", open(), vec![]),
