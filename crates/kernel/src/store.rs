@@ -204,11 +204,18 @@ pub struct AppliedDelta {
     pub after: u128,
 }
 
-/// Durable substate content: point cells and ordered-collection entries,
-/// nothing execution-scoped.
+/// Substate content: point cells and ordered-collection entries, nothing
+/// execution-scoped.
 ///
-/// The contract a state backend implements. Every read is of committed
-/// content only.
+/// The contract a state backend implements. What a read excludes is the
+/// executing transaction's own working state — never state some block
+/// has already settled, which an embedder may layer under this trait
+/// long before it reaches durable storage.
+///
+/// Which version a read resolves at is the implementor's, and this trait
+/// does not say. A caller whose correctness turns on reading at one
+/// particular height gets no such guarantee here and has to require it
+/// separately.
 pub trait Substates: Send + Sync {
     /// The committed value of a point cell.
     fn cell(&self, key: SubstateKey) -> Option<Vec<u8>>;
