@@ -25,7 +25,7 @@ use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_
 use crate::auth::RoleId;
 use crate::dsl::Expr;
 use crate::presented::Presented;
-use crate::resource::GrantedBehaviour;
+use crate::resource::{GrantedBehaviour, GrantsExpr};
 
 /// The bound on a rule's nesting depth: a lone identity is one, a
 /// threshold one more than its deepest branch.
@@ -185,19 +185,26 @@ pub type RuleExpr = Rule<RuleLeaf>;
 /// A granted rule's leaf: a claim a resource's own derivation commits to.
 ///
 /// Its own closed vocabulary rather than [`RuleLeaf`], because a granted
-/// rule is folded into an address rather than judged against a cell. Two
-/// things follow from the closure. **The tree stays a tree**: reusing
-/// [`RuleLeaf`] would put a [`Rule`] inside an [`Expr`] while
-/// [`RuleLeaf::Claim`] already holds one, making the two mutually
-/// recursive and their depth caps a joint property. And **the derivation
-/// stays well-founded**: a badge named here derives through the form
-/// that grants nothing, so nothing in a resource's granted rules can name a resource
-/// whose own rules are still being computed.
+/// rule is folded into an address rather than judged against a cell.
+/// **The tree stays a tree**: reusing [`RuleLeaf`] would put a [`Rule`]
+/// inside an [`Expr`] while [`RuleLeaf::Claim`] already holds one, making
+/// the two mutually recursive and their depth caps a joint property.
 ///
 /// What it can name is what a resource's own address already knows: the
 /// instance that issues it, a badge that instance issues, or a field of
 /// the configuration the instance's address folds. Nothing a caller
 /// supplies, because a caller supplies nothing to a derivation.
+///
+/// A badge carries the rules **it** grants, because an address is the
+/// hash of them: a leaf deriving through the granting-nothing form would
+/// name an address nothing is minted at the moment the badge grants
+/// anything — and a credential badge is soulbound by granting
+/// `Withdraw: Never`, so that is the ordinary case rather than the exotic
+/// one. What keeps the derivation well-founded is that **those rules name
+/// no badge of their own**: the chain one address folds is one link long,
+/// refused at publish and at resolution alike, so a resource's address
+/// depth is a property of the resource rather than of how deeply its
+/// author nested. A cycle is unreachable for the same reason.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum GrantClaim {
     /// The issuing instance, acting as itself.
@@ -207,6 +214,8 @@ pub enum GrantClaim {
     SelfBadge {
         /// The mark, canonically encoded into the badge's derivation.
         mark: Vec<u8>,
+        /// The rules the badge's own address grants, which name no badge.
+        rules: GrantsExpr,
     },
     /// One named instance of a non-fungible badge the issuing instance
     /// also issues.
@@ -215,6 +224,8 @@ pub enum GrantClaim {
         mark: Vec<u8>,
         /// Which instance of it.
         id: u64,
+        /// The rules the badge's own address grants, which name no badge.
+        rules: GrantsExpr,
     },
     /// The n-th field of the issuing instance's configuration, whose
     /// address class says which claim it makes — the same reading

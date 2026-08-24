@@ -18,7 +18,7 @@ use crate::dsl::{
 use crate::instance::MAX_CONFIG_FIELDS;
 use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
 use crate::resource::{GrantExpr, GrantsExpr, holdings_entry};
-use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
+use crate::rule::{GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf};
 use crate::signature::{AbiParam, MethodSignature};
 use crate::types::{
     MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId, Value, value_within_width,
@@ -1518,6 +1518,9 @@ pub enum SignatureBoundsError {
     /// A granted entry spelled a way its behaviour does not admit.
     #[error("a granted behaviour does not admit the spelling its entry was written with")]
     UnadmittedGrant,
+    /// A granted rule naming a badge whose own rules name a badge.
+    #[error("a granted rule names a badge whose own rules name a badge")]
+    BadgeChainTooDeep,
     /// A declared rule past the caps a stored one is decoded under.
     #[error(
         "a declared rule nests past {MAX_RULE_DEPTH}, branches past {MAX_RULE_BRANCHES}, or \
@@ -1910,11 +1913,43 @@ fn check_grants_bounds(grants: &GrantsExpr) -> Result<(), SignatureBoundsError> 
         }
         match entry {
             // Neither states a rule, so neither has a depth.
-            GrantExpr::Open | GrantExpr::Never | GrantExpr::Credential(_) => Ok(()),
-            GrantExpr::Rule(rule) => rule
-                .within_caps(0)
-                .then_some(())
-                .ok_or(SignatureBoundsError::RuleCaps),
+            GrantExpr::Open | GrantExpr::Never => Ok(()),
+            GrantExpr::Credential(claim) => check_grant_leaf(claim),
+            GrantExpr::Rule(rule) => {
+                if !rule.within_caps(0) {
+                    return Err(SignatureBoundsError::RuleCaps);
+                }
+                rule.leaves().try_for_each(check_grant_leaf)
+            }
+        }
+    })
+}
+
+/// One grant leaf, held to the one link a badge chain may be.
+///
+/// A badge carries the rules its own address grants, and those rules name
+/// no badge: the chain a resource's address folds is one link long, so
+/// the depth of a derivation is a property of the resource rather than of
+/// how deeply its author nested. The verdict is here as well as at
+/// resolution because publish is where a package author can read it.
+fn check_grant_leaf(claim: &GrantClaim) -> Result<(), SignatureBoundsError> {
+    let rules = match claim {
+        GrantClaim::SelfAddr | GrantClaim::Config(_) => return Ok(()),
+        GrantClaim::SelfBadge { rules, .. } | GrantClaim::SelfInstance { rules, .. } => rules,
+    };
+    rules.iter().try_for_each(|(_, entry)| match entry {
+        GrantExpr::Open | GrantExpr::Never => Ok(()),
+        GrantExpr::Credential(_) => Err(SignatureBoundsError::BadgeChainTooDeep),
+        GrantExpr::Rule(rule) => {
+            if !rule.within_caps(0) {
+                return Err(SignatureBoundsError::RuleCaps);
+            }
+            rule.leaves().try_for_each(|leaf| match leaf {
+                GrantClaim::SelfAddr | GrantClaim::Config(_) => Ok(()),
+                GrantClaim::SelfBadge { .. } | GrantClaim::SelfInstance { .. } => {
+                    Err(SignatureBoundsError::BadgeChainTooDeep)
+                }
+            })
         }
     })
 }

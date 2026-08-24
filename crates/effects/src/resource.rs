@@ -465,20 +465,39 @@ impl GrantsExpr {
         instance: Address,
         config: &[Value],
     ) -> Result<ResourceGrants, GrantsResolveError> {
+        self.resolve_link(hasher, instance, config, 0)
+    }
+
+    /// [`Self::resolve`] at a known position in the badge chain.
+    ///
+    /// `link` counts how many badges deep this set already sits. A
+    /// resource's own rules are the first link and may name a badge; that
+    /// badge's rules are the second and may not, so the chain one address
+    /// folds is one link long. Held here rather than only at publish so
+    /// the bound is a property of the derivation itself — the address is
+    /// a hash of these bytes, and nothing that cannot be resolved may
+    /// derive one.
+    fn resolve_link(
+        &self,
+        hasher: &dyn Hasher,
+        instance: Address,
+        config: &[Value],
+        link: usize,
+    ) -> Result<ResourceGrants, GrantsResolveError> {
         let mut resolved = ResourceGrants::new();
         for (behaviour, entry) in self.iter() {
             let sealed = match entry {
                 GrantExpr::Open => Grant::Open,
                 GrantExpr::Never => Grant::Never,
                 GrantExpr::Rule(rule) => {
-                    let stored = resolve_rule(hasher, instance, config, rule)?;
+                    let stored = resolve_rule(hasher, instance, config, rule, link)?;
                     Grant::Rule(
                         RoleBytes::try_from(&stored)
                             .map_err(|_| GrantsResolveError::PastTheCaps)?,
                     )
                 }
                 GrantExpr::Credential(claim) => {
-                    let presented = resolve_claim(hasher, instance, config, claim)?;
+                    let presented = resolve_claim(hasher, instance, config, claim, link)?;
                     // A credential is one leaf under the mover's own
                     // prefix, and only a fungible holding is one leaf: a
                     // non-fungible one is entries at ids, whose
@@ -516,6 +535,10 @@ pub enum GrantsResolveError {
     /// A credential naming something that is not a fungible badge.
     #[error("a granted credential names something that is not a fungible badge")]
     NotAFungibleBadge,
+    /// A badge whose own rules name a badge: the chain one address folds
+    /// is one link long.
+    #[error("a granted rule names a badge whose own rules name a badge")]
+    BadgeChainTooDeep,
     /// A spelling the behaviour does not admit — a second way of saying
     /// what an absent entry already says.
     #[error("{0:?} does not admit the spelling its grant was written with")]
@@ -527,16 +550,17 @@ fn resolve_rule(
     instance: Address,
     config: &[Value],
     rule: &GrantRuleExpr,
+    link: usize,
 ) -> Result<StoredRule, GrantsResolveError> {
     Ok(match rule {
         GrantRuleExpr::Require(claim) => {
-            StoredRule::Require(resolve_claim(hasher, instance, config, claim)?)
+            StoredRule::Require(resolve_claim(hasher, instance, config, claim, link)?)
         }
         GrantRuleExpr::CountOf { count, rules } => StoredRule::CountOf {
             count: *count,
             rules: rules
                 .iter()
-                .map(|rule| resolve_rule(hasher, instance, config, rule))
+                .map(|rule| resolve_rule(hasher, instance, config, rule, link))
                 .collect::<Result<_, _>>()?,
         },
     })
@@ -547,17 +571,31 @@ fn resolve_claim(
     instance: Address,
     config: &[Value],
     claim: &GrantClaim,
+    link: usize,
 ) -> Result<Presented, GrantsResolveError> {
-    // A badge named inside a granted rule derives through the form that
-    // grants nothing, which keeps the derivation well-founded: nothing
-    // here can name a resource whose own rules are still being computed.
-    let badge = |kind, mark: &[u8]| issued_resource(hasher, instance, kind, mark);
+    // A badge named inside a granted rule derives through its own rules,
+    // because an address is the hash of them — the granting-nothing form
+    // would name an address nothing is minted at the moment the badge
+    // grants anything, which a soulbound credential always does. The
+    // chain is one link long, so what a badge's rules name is a claim
+    // needing no address of its own.
+    let badge = |kind, mark: &[u8], rules: &GrantsExpr| {
+        if link > 0 {
+            return Err(GrantsResolveError::BadgeChainTooDeep);
+        }
+        let rules = rules.resolve_link(hasher, instance, config, link + 1)?;
+        Ok(granting_issued_resource(
+            hasher, instance, kind, &rules, mark,
+        ))
+    };
     Ok(match claim {
         GrantClaim::SelfAddr => Presented::of_address(instance)
             .expect("an instance issuing a resource is a callable address"),
-        GrantClaim::SelfBadge { mark } => Presented::Resource(badge(ResourceKind::Fungible, mark)),
-        GrantClaim::SelfInstance { mark, id } => {
-            Presented::Instance(badge(ResourceKind::NonFungible, mark), *id)
+        GrantClaim::SelfBadge { mark, rules } => {
+            Presented::Resource(badge(ResourceKind::Fungible, mark, rules)?)
+        }
+        GrantClaim::SelfInstance { mark, id, rules } => {
+            Presented::Instance(badge(ResourceKind::NonFungible, mark, rules)?, *id)
         }
         GrantClaim::Config(slot) => {
             let value = config

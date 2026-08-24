@@ -651,8 +651,8 @@ fn grant_entry(entry: &GrantExpr) -> String {
 fn grant_claim(claim: &GrantClaim) -> String {
     match claim {
         GrantClaim::SelfAddr => "the issuer".to_owned(),
-        GrantClaim::SelfBadge { mark } => format!("the issuer's {} badge", bytes(mark)),
-        GrantClaim::SelfInstance { mark, id } => {
+        GrantClaim::SelfBadge { mark, .. } => format!("the issuer's {} badge", bytes(mark)),
+        GrantClaim::SelfInstance { mark, id, .. } => {
             format!("instance {id} of the issuer's {} badge", bytes(mark))
         }
         GrantClaim::Config(field) => format!("configuration field {field}"),
@@ -1050,6 +1050,7 @@ mod tests {
             GrantedBehaviour::Deposit,
             GrantExpr::Credential(GrantClaim::SelfBadge {
                 mark: b"owner-badge".to_vec(),
+                rules: GrantsExpr::new(),
             }),
         );
         let text = rendered(

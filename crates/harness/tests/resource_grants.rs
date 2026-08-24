@@ -300,8 +300,8 @@ fn a_credential_governs_a_withdrawal_no_package_declared() -> Result<()> {
     Ok(())
 }
 
-/// A resource no cell may hold refuses the graph that would rest it, at
-/// admission, before anything routes or any fee is assured.
+/// A resource nobody may withdraw refuses the graph that would move it,
+/// at admission, before anything routes or any fee is assured.
 #[test]
 fn a_forbidden_movement_refuses_at_admission() -> Result<()> {
     let tree = governed_tree(Grant::Never)?;
@@ -311,8 +311,8 @@ fn a_forbidden_movement_refuses_at_admission() -> Result<()> {
         .expect_err("a movement the entry forbids is refused");
     let said = refusal.to_string();
     assert!(
-        said.contains("may not come to rest"),
-        "the refusal names what it refused: {said}"
+        said.contains("grants Withdraw to nobody"),
+        "the refusal names the direction it refused, not the other one: {said}"
     );
     Ok(())
 }

@@ -57,15 +57,17 @@ pub const MAX_YIELD_PARAMS: usize = 32;
 /// bare graph the two numberings coincide.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AdmissionError {
-    /// A movement of a resource no cell may hold.
+    /// A movement a resource's entry grants to nobody: a debit of a
+    /// soulbound credential, or a credit of value that may not come to
+    /// rest.
     ///
-    /// Decidable without state and without a body: whether a resource
-    /// may come to rest at all is its entry's answer, and the resource
-    /// an access is denominated in is fixed when the declaration is
-    /// evaluated. So the graph is refused rather than admitted to fail
+    /// Decidable without state and without a body: whether a resource may
+    /// move at all in a given direction is its entry's answer, and the
+    /// resource an access is denominated in is fixed when the declaration
+    /// is evaluated. So the graph is refused rather than admitted to fail
     /// later, which is what makes an obligation that must be discharged
     /// inside its transaction cost nothing when it is not.
-    #[error("node {node}: {resource:?} may not come to rest, and this movement would rest it")]
+    #[error("node {node}: {resource:?} grants {behaviour:?} to nobody, and this movement is one")]
     MovementForbidden {
         /// The offending node.
         node: u32,

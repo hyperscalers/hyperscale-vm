@@ -2103,23 +2103,7 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
             !item.fields.is_empty(),
         ));
     }
-    // Rendered in a second pass, against the whole declared set: a
-    // grant leaf names another of the package's own marks, so what its
-    // kind is and whether it grants rules of its own are answers only the
-    // full set has.
-    let named: Vec<(&syn::Ident, ResourceKind, bool)> = structs
-        .iter()
-        .map(|(ident, kind, _, _, grants, _)| (*ident, *kind, grants.is_some()))
-        .collect();
-    let rendered: Vec<(TokenStream2, bool)> = structs
-        .iter()
-        .map(|(_, _, _, _, grants, _)| {
-            grants.as_ref().map_or_else(
-                || Ok((quote!(::hyperscale_vm_sdk::GrantsExpr::new()), false)),
-                |list| granted_rules(list, &named, config_fields),
-            )
-        })
-        .collect::<syn::Result<_>>()?;
+    let rendered = declared_grants(&structs, config_fields)?;
     let marks = distinct_band("resources", structs.iter().map(|(ident, ..)| *ident))?;
     let declared: Vec<Resource> = structs
         .into_iter()
@@ -2198,7 +2182,7 @@ fn calls(func: &syn::Expr, name: &str) -> bool {
 /// a badge that instance also issues, or a configuration field.
 fn granted_rules(
     attr: &syn::MetaList,
-    resources: &[(&syn::Ident, ResourceKind, bool)],
+    resources: &[Nameable<'_>],
     config_fields: &[String],
 ) -> syn::Result<(TokenStream2, bool)> {
     let entries = attr.parse_args_with(
@@ -2237,8 +2221,8 @@ fn granted_rules(
             ));
         }
         named.push(name);
-        let rule = granted_entry(&entry.value, resources, config_fields)?;
-        reads_config |= names_config(&entry.value, config_fields);
+        let (rule, names_config) = granted_entry(&entry.value, resources, config_fields)?;
+        reads_config |= names_config;
         granted.push(quote!(
             __seals.set(::hyperscale_vm_sdk::GrantedBehaviour::#behaviour, #rule);
         ));
@@ -2251,36 +2235,111 @@ fn granted_rules(
     Ok((rendered, reads_config))
 }
 
-/// Whether a granted rule names a configuration field anywhere in it.
+/// Every declared mark's granted set, rendered against the whole set.
 ///
-/// What it decides is a signature: a resource whose rules name
-/// configuration has an address that is a function of the instance's
-/// own, and the handle alone cannot recover it — an address is a hash.
-/// So the helper that derives one asks for the configuration, and the
-/// helper that does not, does not.
-fn names_config(expr: &syn::Expr, config_fields: &[String]) -> bool {
-    match expr {
-        syn::Expr::Paren(inner) => names_config(&inner.expr, config_fields),
-        syn::Expr::Binary(binary) => {
-            names_config(&binary.left, config_fields) || names_config(&binary.right, config_fields)
+/// Two passes, because a grant leaf names another of the package's own
+/// marks and carries the rules that mark's address folds. The first
+/// builds each mark's rules with nothing nameable, which succeeds exactly
+/// for the marks that name no badge — the ones a leaf may name, the chain
+/// being one link long. The second builds every mark against that,
+/// splicing in what a named badge grants.
+///
+/// Order-independent: a mark declared after the one naming it is nameable
+/// on the same terms as one declared before.
+fn declared_grants(
+    structs: &[DeclaredResource<'_>],
+    config_fields: &[String],
+) -> syn::Result<Vec<(TokenStream2, bool)>> {
+    let ungranted = || (quote!(::hyperscale_vm_sdk::GrantsExpr::new()), false);
+    let unnameable: Vec<Nameable<'_>> = structs
+        .iter()
+        .map(|(ident, kind, ..)| Nameable {
+            ident,
+            kind: *kind,
+            rules: None,
+        })
+        .collect();
+    let named: Vec<Nameable<'_>> = structs
+        .iter()
+        .map(|(ident, kind, _, _, grants, _)| {
+            let rules = match grants {
+                None => Some(ungranted()),
+                Some(list) if names_a_badge(list)? => None,
+                Some(list) => Some(granted_rules(list, &unnameable, config_fields)?),
+            };
+            Ok(Nameable {
+                ident,
+                kind: *kind,
+                rules,
+            })
+        })
+        .collect::<syn::Result<_>>()?;
+    structs
+        .iter()
+        .map(|(_, _, _, _, grants, _)| {
+            grants.as_ref().map_or_else(
+                || Ok(ungranted()),
+                |list| granted_rules(list, &named, config_fields),
+            )
+        })
+        .collect()
+}
+
+/// One `#[resource]` struct as the collecting pass reads it, before the
+/// marks are banded and the grants rendered.
+type DeclaredResource<'a> = (
+    &'a syn::Ident,
+    ResourceKind,
+    u8,
+    Option<syn::LitInt>,
+    Option<syn::MetaList>,
+    bool,
+);
+
+/// One of the package's own marks, as a grant leaf naming it needs it.
+///
+/// The rules ride here because a badge's address is the hash of its own
+/// rules, so a leaf naming a mark has to carry them — and they are
+/// [`Option`] because a mark whose rules name a badge is not nameable:
+/// the chain one address folds is one link long.
+struct Nameable<'a> {
+    ident: &'a syn::Ident,
+    kind: ResourceKind,
+    /// The mark's own rules and whether they read configuration, where
+    /// the mark is nameable at all.
+    rules: Option<(TokenStream2, bool)>,
+}
+
+/// Whether a granted set names a badge anywhere in it, which is what
+/// decides whether the mark it belongs to may itself be named from one.
+///
+/// Syntactic, and deliberately so: it answers before any lowering, so a
+/// mark that does name a badge is unnameable without its own rules having
+/// to render first — which is what keeps a malformed mark's verdict its
+/// own rather than something a mark naming it reports instead. Where it
+/// and the lowering could disagree, the second link is refused again at
+/// publish and again at resolution.
+fn names_a_badge(attr: &syn::MetaList) -> syn::Result<bool> {
+    fn walk(expr: &syn::Expr) -> bool {
+        match expr {
+            syn::Expr::Paren(inner) => walk(&inner.expr),
+            syn::Expr::Binary(binary) => walk(&binary.left) || walk(&binary.right),
+            syn::Expr::Call(call) => calls(&call.func, "issued") || call.args.iter().any(walk),
+            _ => false,
         }
-        syn::Expr::Call(call) if calls(&call.func, "n_of") => {
-            call.args.iter().any(|arg| names_config(arg, config_fields))
-        }
-        syn::Expr::Path(path) if !path.path.is_ident("self") => path
-            .path
-            .get_ident()
-            .is_some_and(|ident| config_fields.contains(&ident.to_string())),
-        _ => false,
     }
+    let entries = attr.parse_args_with(
+        syn::punctuated::Punctuated::<syn::MetaNameValue, syn::Token![,]>::parse_terminated,
+    )?;
+    Ok(entries.iter().any(|entry| walk(&entry.value)))
 }
 
 fn granted_rule(
     expr: &syn::Expr,
-    resources: &[(&syn::Ident, ResourceKind, bool)],
+    resources: &[Nameable<'_>],
     config_fields: &[String],
     depth: usize,
-) -> syn::Result<TokenStream2> {
+) -> syn::Result<(TokenStream2, bool)> {
     match expr {
         syn::Expr::Paren(inner) => granted_rule(&inner.expr, resources, config_fields, depth),
         syn::Expr::Binary(binary) => {
@@ -2295,7 +2354,7 @@ fn granted_rule(
                 }
             };
             let branches = flatten(expr, &binary.op);
-            let lowered =
+            let (lowered, names_config) =
                 granted_branches(expr.span(), &branches, resources, config_fields, depth)?;
             let count = if all {
                 u8::try_from(lowered.len()).unwrap_or(u8::MAX)
@@ -2303,10 +2362,13 @@ fn granted_rule(
                 1u8
             };
             check_threshold_node(expr.span(), count, lowered.len())?;
-            Ok(quote!(::hyperscale_vm_sdk::GrantRuleExpr::CountOf {
-                count: #count,
-                rules: ::std::vec![#(#lowered),*],
-            }))
+            Ok((
+                quote!(::hyperscale_vm_sdk::GrantRuleExpr::CountOf {
+                    count: #count,
+                    rules: ::std::vec![#(#lowered),*],
+                }),
+                names_config,
+            ))
         }
         syn::Expr::Call(call) if calls(&call.func, "n_of") => {
             let mut args = call.args.iter();
@@ -2323,17 +2385,23 @@ fn granted_rule(
                 }
             };
             let branches: Vec<&syn::Expr> = args.collect();
-            let lowered =
+            let (lowered, names_config) =
                 granted_branches(call.span(), &branches, resources, config_fields, depth)?;
             check_threshold_node(call.span(), count, lowered.len())?;
-            Ok(quote!(::hyperscale_vm_sdk::GrantRuleExpr::CountOf {
-                count: #count,
-                rules: ::std::vec![#(#lowered),*],
-            }))
+            Ok((
+                quote!(::hyperscale_vm_sdk::GrantRuleExpr::CountOf {
+                    count: #count,
+                    rules: ::std::vec![#(#lowered),*],
+                }),
+                names_config,
+            ))
         }
         other => {
-            let claim = granted_claim(other, resources, config_fields)?;
-            Ok(quote!(::hyperscale_vm_sdk::GrantRuleExpr::Require(#claim)))
+            let (claim, names_config) = granted_claim(other, resources, config_fields)?;
+            Ok((
+                quote!(::hyperscale_vm_sdk::GrantRuleExpr::Require(#claim)),
+                names_config,
+            ))
         }
     }
 }
@@ -2346,13 +2414,13 @@ fn granted_rule(
 /// meaning something other than what it says.
 fn granted_entry(
     expr: &syn::Expr,
-    resources: &[(&syn::Ident, ResourceKind, bool)],
+    resources: &[Nameable<'_>],
     config_fields: &[String],
-) -> syn::Result<TokenStream2> {
+) -> syn::Result<(TokenStream2, bool)> {
     if let syn::Expr::Path(path) = expr {
         match path.path.get_ident().map(ToString::to_string).as_deref() {
-            Some("anyone") => return Ok(quote!(::hyperscale_vm_sdk::GrantExpr::Open)),
-            Some("nobody") => return Ok(quote!(::hyperscale_vm_sdk::GrantExpr::Never)),
+            Some("anyone") => return Ok((quote!(::hyperscale_vm_sdk::GrantExpr::Open), false)),
+            Some("nobody") => return Ok((quote!(::hyperscale_vm_sdk::GrantExpr::Never), false)),
             _ => {}
         }
     }
@@ -2372,38 +2440,70 @@ fn granted_entry(
                 "`held(..)` names one badge: a credential is one presence question",
             ));
         }
-        let claim = granted_claim(named, resources, config_fields)?;
-        return Ok(quote!(::hyperscale_vm_sdk::GrantExpr::Credential(#claim)));
+        // A fungible holding is one point leaf, so presence is one read.
+        // A non-fungible one is collection entries at ids, whose
+        // collection-wide presence is an interval — a scan priced by
+        // span, which nothing on the transfer path may walk.
+        if let syn::Expr::Call(inner) = named
+            && calls(&inner.func, "issued")
+            && inner.args.len() > 1
+        {
+            return Err(syn::Error::new(
+                named.span(),
+                "a credential names a fungible badge: a holding of one is a single leaf, \
+                 and asking whether a holder has any instance of a non-fungible badge is \
+                 an interval nothing on the transfer path may walk — issue a fungible \
+                 eligibility badge beside the instance carrying the data",
+            ));
+        }
+        let (claim, names_config) = granted_claim(named, resources, config_fields)?;
+        return Ok((
+            quote!(::hyperscale_vm_sdk::GrantExpr::Credential(#claim)),
+            names_config,
+        ));
     }
-    let rule = granted_rule(expr, resources, config_fields, 0)?;
-    Ok(quote!(::hyperscale_vm_sdk::GrantExpr::Rule(#rule)))
+    let (rule, names_config) = granted_rule(expr, resources, config_fields, 0)?;
+    Ok((
+        quote!(::hyperscale_vm_sdk::GrantExpr::Rule(#rule)),
+        names_config,
+    ))
 }
 
 fn granted_branches(
     span: Span,
     branches: &[&syn::Expr],
-    resources: &[(&syn::Ident, ResourceKind, bool)],
+    resources: &[Nameable<'_>],
     config_fields: &[String],
     depth: usize,
-) -> syn::Result<Vec<TokenStream2>> {
+) -> syn::Result<(Vec<TokenStream2>, bool)> {
     if depth + 1 >= MAX_RULE_DEPTH {
         return Err(syn::Error::new(
             span,
             format!("a granted rule nests past the {MAX_RULE_DEPTH} levels the vocabulary admits"),
         ));
     }
-    branches
+    let lowered = branches
         .iter()
         .map(|branch| granted_rule(branch, resources, config_fields, depth + 1))
-        .collect()
+        .collect::<syn::Result<Vec<_>>>()?;
+    let names_config = lowered.iter().any(|(_, names)| *names);
+    Ok((
+        lowered.into_iter().map(|(rule, _)| rule).collect(),
+        names_config,
+    ))
 }
 
 /// One grant leaf, as the closed vocabulary spells it.
+///
+/// Beside the leaf, whether it reads the instance's configuration —
+/// which decides whether the address is derivable from a handle alone.
+/// Read off the leaf actually built rather than off a second walk of the
+/// syntax, so a spelling the two would have disagreed about cannot exist.
 fn granted_claim(
     expr: &syn::Expr,
-    resources: &[(&syn::Ident, ResourceKind, bool)],
+    resources: &[Nameable<'_>],
     config_fields: &[String],
-) -> syn::Result<TokenStream2> {
+) -> syn::Result<(TokenStream2, bool)> {
     let refuse = |span| {
         syn::Error::new(
             span,
@@ -2416,7 +2516,7 @@ fn granted_claim(
     match expr {
         // The issuing instance, acting as itself.
         syn::Expr::Path(path) if path.path.is_ident("self") => {
-            Ok(quote!(::hyperscale_vm_sdk::GrantClaim::SelfAddr))
+            Ok((quote!(::hyperscale_vm_sdk::GrantClaim::SelfAddr), false))
         }
         // A configuration field, whose address class says which claim.
         syn::Expr::Path(path) => {
@@ -2435,7 +2535,7 @@ fn granted_claim(
                     )
                 })?;
             let slot = u32::try_from(slot).unwrap_or(u32::MAX);
-            Ok(quote!(::hyperscale_vm_sdk::GrantClaim::Config(#slot)))
+            Ok((quote!(::hyperscale_vm_sdk::GrantClaim::Config(#slot)), true))
         }
         // A badge the issuing instance also issues.
         syn::Expr::Call(call) if calls(&call.func, "issued") => {
@@ -2445,38 +2545,43 @@ fn granted_claim(
                 _ => None,
             }
             .ok_or_else(|| refuse(call.span()))?;
-            let Some((ident, kind, grants)) = resources.iter().find(|(ident, ..)| **ident == named)
-            else {
+            let Some(badge) = resources.iter().find(|badge| *badge.ident == named) else {
                 return Err(syn::Error::new(
                     call.span(),
                     format!("`{named}` is not a `#[resource]` of this package"),
                 ));
             };
-            // The well-foundedness rule, said where the author wrote it:
-            // a leaf derives through the granting-nothing form, so naming a mark
-            // that grants its own rules would name an address nothing is
-            // ever minted at.
-            if *grants {
+            // A badge's address is the hash of its own rules, so the leaf
+            // carries them. What it may not carry is a badge of its own:
+            // the chain one address folds is one link long, so a mark
+            // whose rules name a badge is not nameable from one.
+            let Some((rules, reads_config)) = badge.rules.as_ref() else {
                 return Err(syn::Error::new(
                     call.span(),
                     format!(
-                        "`{named}` grants rules of its own, and a granted rule names only \
-                         resources that grant none — a leaf derives through the \
-                         granting-nothing form, so this would name an address nothing \
-                         is minted at"
+                        "`{named}` names a badge in its own granted rules, and a badge \
+                         chain is one link long — the address a leaf derives folds the \
+                         rules of the badge it names, so a second link would make one \
+                         address a function of how deeply its author nested"
                     ),
                 ));
-            }
-            let mark = syn::LitByteStr::new(kebab(&named).as_bytes(), ident.span());
-            match (kind, args.next()) {
-                (ResourceKind::Fungible, None) => Ok(quote!(
-                    ::hyperscale_vm_sdk::GrantClaim::SelfBadge { mark: #mark.to_vec() }
+            };
+            let mark = syn::LitByteStr::new(kebab(&named).as_bytes(), badge.ident.span());
+            match (badge.kind, args.next()) {
+                (ResourceKind::Fungible, None) => Ok((
+                    quote!(::hyperscale_vm_sdk::GrantClaim::SelfBadge {
+                        mark: #mark.to_vec(),
+                        rules: #rules,
+                    }),
+                    *reads_config,
                 )),
-                (ResourceKind::NonFungible, Some(id)) => Ok(quote!(
-                    ::hyperscale_vm_sdk::GrantClaim::SelfInstance {
+                (ResourceKind::NonFungible, Some(id)) => Ok((
+                    quote!(::hyperscale_vm_sdk::GrantClaim::SelfInstance {
                         mark: #mark.to_vec(),
                         id: #id,
-                    }
+                        rules: #rules,
+                    }),
+                    *reads_config,
                 )),
                 (ResourceKind::Fungible, Some(id)) => Err(syn::Error::new(
                     id.span(),

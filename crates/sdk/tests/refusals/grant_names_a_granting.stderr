@@ -1,5 +1,0 @@
-error: `AdminBadge` grants rules of its own, and a granted rule names only resources that grant none — a leaf derives through the granting-nothing form, so this would name an address nothing is minted at
- --> tests/refusals/grant_names_a_granting.rs:8:32
-  |
-8 |     #[resource(grants(recall = issued(AdminBadge, 0)))]
-  |                                ^^^^^^

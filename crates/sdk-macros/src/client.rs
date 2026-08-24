@@ -460,7 +460,7 @@ fn issued(resources: &[Resource], config: Option<&syn::Ident>) -> Vec<TokenStrea
             );
             let (param, config_values) = match (resource.grants_config, config) {
                 (true, Some(config)) => (
-                    quote!(config: &super::#config,),
+                    quote!(config: super::#config,),
                     quote!(&::hyperscale_vm_sdk::client::ConfigValues::values(config)),
                 ),
                 _ => (quote!(), quote!(&[])),
