@@ -113,16 +113,16 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
     });
 
     let outcome = if let (Some(reserve), Some(delta)) = (reserve, delta) {
-        let amount = session.reserve_amount(reserve).unwrap();
-        let funds = session.reserve_take(reserve).unwrap();
-        session.cell_put(delta, funds).unwrap();
+        let amount = session.reserve_amount(reserve, 0).unwrap();
+        let funds = session.reserve_take(reserve, 0).unwrap();
+        session.cell_put(delta, 0, funds).unwrap();
         Outcome::Completed {
             answers: answered(u64::try_from(amount).unwrap()),
         }
     } else if let Some(write) = write {
-        let mut value = session.cell_get(write).unwrap();
+        let mut value = session.cell_get(write, 0).unwrap();
         value[0] += 1;
-        session.write_cell_set(write, value.clone()).unwrap();
+        session.write_cell_set(write, 0, value.clone()).unwrap();
         if tx_id == tx(0x66) {
             // The doomed writer: state must not survive its failure.
             Outcome::UserError {

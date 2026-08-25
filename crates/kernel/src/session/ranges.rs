@@ -40,7 +40,7 @@ pub(super) struct Ranges {
     /// length and then each entry in turn; re-scanning per question makes
     /// that walk quadratic in the interval and floods the access log with
     /// one record per step.
-    scans: BTreeMap<u32, Scan>,
+    scans: BTreeMap<(u32, u32), Scan>,
     /// What the scans above lifted out of the store, in boundary-byte
     /// terms, since whoever holds the fuel budget last drained it.
     ///
@@ -60,7 +60,7 @@ pub(super) struct Ranges {
     /// a property of the declared interval, and cumulative across the
     /// transaction rather than per scan — a write budget the invalidation
     /// of a materialized interval must not refund.
-    written: BTreeMap<u32, BTreeSet<u128>>,
+    written: BTreeMap<(u32, u32), BTreeSet<u128>>,
 }
 
 impl Ranges {
@@ -83,13 +83,19 @@ impl KernelSession {
     /// The point arms are unreachable — no operation admitting an
     /// interval is granted by a point capability — and answer as the
     /// refusal they would be rather than as a panic.
-    fn acting_interval(&self, rep: u32, attempted: Op) -> Result<Interval, SessionTrap> {
-        match self.acting(rep, attempted)? {
+    fn acting_interval(
+        &self,
+        site: u32,
+        element: u32,
+        attempted: Op,
+    ) -> Result<Interval, SessionTrap> {
+        match self.acting(site, element, attempted)? {
             Capability::RangeRead(interval)
             | Capability::RangeWrite(interval)
             | Capability::InstanceRange(interval) => Ok(interval),
             held => Err(SessionTrap::WrongMode {
-                rep,
+                site,
+                element,
                 held,
                 attempted,
             }),
@@ -97,20 +103,20 @@ impl KernelSession {
     }
 
     /// The interval a walk reads over, whichever mode carries it.
-    fn interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
-        self.acting_interval(rep, Op::ReadEntries)
+    fn interval(&self, site: u32, element: u32) -> Result<Interval, SessionTrap> {
+        self.acting_interval(site, element, Op::ReadEntries)
     }
 
     /// The interval a byte-writing handle names.
-    fn write_interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
-        self.acting_interval(rep, Op::WriteEntries)
+    fn write_interval(&self, site: u32, element: u32) -> Result<Interval, SessionTrap> {
+        self.acting_interval(site, element, Op::WriteEntries)
     }
 
     /// The interval an instance-moving handle names — the same
     /// statement as [`Self::write_interval`], for the entries that are
     /// value rather than bytes.
-    fn instance_interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
-        self.acting_interval(rep, Op::MoveInstances)
+    fn instance_interval(&self, site: u32, element: u32) -> Result<Interval, SessionTrap> {
+        self.acting_interval(site, element, Op::MoveInstances)
     }
 
     /// Read a run of entries, charging what it lifted to
@@ -149,11 +155,11 @@ impl KernelSession {
     }
 
     /// Materialize the interval behind `rep` if it is not already.
-    fn scan(&mut self, rep: u32) -> Result<(), SessionTrap> {
-        if self.ranges.scans.contains_key(&rep) {
+    fn scan(&mut self, site: u32, element: u32) -> Result<(), SessionTrap> {
+        if self.ranges.scans.contains_key(&(site, element)) {
             return Ok(());
         }
-        let interval = self.interval(rep)?;
+        let interval = self.interval(site, element)?;
         let entries = self.lift(
             interval.owner,
             interval.collection,
@@ -162,7 +168,7 @@ impl KernelSession {
             interval.cap,
         )?;
         self.ranges.scans.insert(
-            rep,
+            (site, element),
             Scan {
                 entries,
                 covered: None,
@@ -188,9 +194,15 @@ impl KernelSession {
     /// an entry this interval already changed is the same entry touched
     /// again, and the cap bounds how much of the collection a declaration
     /// reaches, not how many times a guest reaches it.
-    fn charge_write(&mut self, rep: u32, order: u128, cap: u32) -> Result<(), SessionTrap> {
+    fn charge_write(
+        &mut self,
+        site: u32,
+        element: u32,
+        order: u128,
+        cap: u32,
+    ) -> Result<(), SessionTrap> {
         let cap = usize::try_from(cap).unwrap_or(usize::MAX);
-        let written = self.ranges.written.entry(rep).or_default();
+        let written = self.ranges.written.entry((site, element)).or_default();
         if !written.contains(&order) && written.len() >= cap {
             return Err(SessionTrap::WriteCapExceeded {
                 cap: u32::try_from(cap).unwrap_or(u32::MAX),
@@ -203,18 +215,18 @@ impl KernelSession {
 
     /// Drop every materialized interval over a collection a write touched.
     fn invalidate(&mut self, owner: Address, collection: CollectionId) {
-        let stale: Vec<u32> = self
+        let stale: Vec<(u32, u32)> = self
             .ranges
             .scans
             .keys()
             .copied()
-            .filter(|rep| {
-                self.interval(*rep)
+            .filter(|(site, element)| {
+                self.interval(*site, *element)
                     .is_ok_and(|scanned| scanned.owner == owner && scanned.collection == collection)
             })
             .collect();
-        for rep in stale {
-            self.ranges.scans.remove(&rep);
+        for key in stale {
+            self.ranges.scans.remove(&key);
         }
     }
 
@@ -223,9 +235,9 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn range_count(&mut self, rep: u32) -> Result<u32, SessionTrap> {
-        self.scan(rep)?;
-        Ok(u32::try_from(self.ranges.scans[&rep].entries.len()).unwrap_or(u32::MAX))
+    pub fn range_count(&mut self, site: u32, element: u32) -> Result<u32, SessionTrap> {
+        self.scan(site, element)?;
+        Ok(u32::try_from(self.ranges.scans[&(site, element)].entries.len()).unwrap_or(u32::MAX))
     }
 
     /// Whether the materialized page holds every entry the interval
@@ -244,10 +256,10 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn range_covered(&mut self, rep: u32) -> Result<bool, SessionTrap> {
-        self.scan(rep)?;
-        let interval = self.interval(rep)?;
-        let page = &self.ranges.scans[&rep];
+    pub fn range_covered(&mut self, site: u32, element: u32) -> Result<bool, SessionTrap> {
+        self.scan(site, element)?;
+        let interval = self.interval(site, element)?;
+        let page = &self.ranges.scans[&(site, element)];
         if let Some(covered) = page.covered {
             return Ok(covered);
         }
@@ -264,7 +276,7 @@ impl KernelSession {
                 .lift(interval.owner, interval.collection, resume, interval.hi, 1)?
                 .is_empty(),
         };
-        if let Some(page) = self.ranges.scans.get_mut(&rep) {
+        if let Some(page) = self.ranges.scans.get_mut(&(site, element)) {
             page.covered = Some(covered);
         }
         Ok(covered)
@@ -275,9 +287,14 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, SessionTrap> {
-        self.scan(rep)?;
-        indexed(&self.ranges.scans[&rep].entries, index).map(|(order, _)| *order)
+    pub fn range_order(
+        &mut self,
+        site: u32,
+        element: u32,
+        index: u32,
+    ) -> Result<u128, SessionTrap> {
+        self.scan(site, element)?;
+        indexed(&self.ranges.scans[&(site, element)].entries, index).map(|(order, _)| *order)
     }
 
     /// The entry value at `index`, ascending.
@@ -285,9 +302,14 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, SessionTrap> {
-        self.scan(rep)?;
-        indexed(&self.ranges.scans[&rep].entries, index).map(|(_, value)| value.clone())
+    pub fn range_entry(
+        &mut self,
+        site: u32,
+        element: u32,
+        index: u32,
+    ) -> Result<Vec<u8>, SessionTrap> {
+        self.scan(site, element)?;
+        indexed(&self.ranges.scans[&(site, element)].entries, index).map(|(_, value)| value.clone())
     }
 
     /// Replace the entry value at `index` through a write interval.
@@ -295,11 +317,18 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), SessionTrap> {
-        let interval = self.write_interval(rep)?;
-        self.scan(rep)?;
-        let order = *indexed(&self.ranges.scans[&rep].entries, index).map(|(order, _)| order)?;
-        self.charge_write(rep, order, interval.cap)?;
+    pub fn range_set(
+        &mut self,
+        site: u32,
+        element: u32,
+        index: u32,
+        value: Vec<u8>,
+    ) -> Result<(), SessionTrap> {
+        let interval = self.write_interval(site, element)?;
+        self.scan(site, element)?;
+        let order = *indexed(&self.ranges.scans[&(site, element)].entries, index)
+            .map(|(order, _)| order)?;
+        self.charge_write(site, element, order, interval.cap)?;
         self.store
             .entry_write(interval.owner, interval.collection, order, value)?;
         self.invalidate(interval.owner, interval.collection);
@@ -314,15 +343,16 @@ impl KernelSession {
     /// Any [`SessionTrap`].
     pub fn range_insert(
         &mut self,
-        rep: u32,
+        site: u32,
+        element: u32,
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
-        let interval = self.write_interval(rep)?;
+        let interval = self.write_interval(site, element)?;
         if !interval.holds(order) {
             return Err(SessionTrap::OrderOutsideInterval);
         }
-        self.charge_write(rep, order, interval.cap)?;
+        self.charge_write(site, element, order, interval.cap)?;
         self.store
             .entry_write(interval.owner, interval.collection, order, value)?;
         self.invalidate(interval.owner, interval.collection);
@@ -334,11 +364,12 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), SessionTrap> {
-        let interval = self.write_interval(rep)?;
-        self.scan(rep)?;
-        let order = *indexed(&self.ranges.scans[&rep].entries, index).map(|(order, _)| order)?;
-        self.charge_write(rep, order, interval.cap)?;
+    pub fn range_remove(&mut self, site: u32, element: u32, index: u32) -> Result<(), SessionTrap> {
+        let interval = self.write_interval(site, element)?;
+        self.scan(site, element)?;
+        let order = *indexed(&self.ranges.scans[&(site, element)].entries, index)
+            .map(|(order, _)| order)?;
+        self.charge_write(site, element, order, interval.cap)?;
         self.store
             .entry_remove(interval.owner, interval.collection, order)?;
         self.invalidate(interval.owner, interval.collection);
@@ -359,9 +390,9 @@ impl KernelSession {
     /// Any [`SessionTrap`]: a malformed id cell, an id outside the
     /// declared interval, one the collection does not hold, or more
     /// entries than the interval's cap admits.
-    pub fn range_take(&mut self, rep: u32, ids: &[u64]) -> Result<u32, SessionTrap> {
-        let interval = self.instance_interval(rep)?;
-        let resource = self.value_of(rep)?;
+    pub fn range_take(&mut self, site: u32, element: u32, ids: &[u64]) -> Result<u32, SessionTrap> {
+        let interval = self.instance_interval(site, element)?;
+        let resource = self.value_of(site, element)?;
         // The decoder refuses a repeated id, so the set below loses
         // nothing to dedup and a count is an instance count.
         let ids = distinct_ids(ids).ok_or(SessionTrap::MalformedIdSet)?;
@@ -384,7 +415,7 @@ impl KernelSession {
             if !held {
                 return Err(SessionTrap::InstanceNotHeld(order));
             }
-            self.charge_write(rep, order, interval.cap)?;
+            self.charge_write(site, element, order, interval.cap)?;
             taken.insert(order);
         }
         for order in &taken {
@@ -403,9 +434,15 @@ impl KernelSession {
     /// Any [`SessionTrap`]: an instance outside the declared interval, a
     /// bucket carrying an amount, a cap the filing would overrun, or an
     /// order the collection already holds.
-    pub fn range_put(&mut self, rep: u32, funds: u32, value: &[u8]) -> Result<(), SessionTrap> {
-        let interval = self.instance_interval(rep)?;
-        self.judge_credit(rep, funds)?;
+    pub fn range_put(
+        &mut self,
+        site: u32,
+        element: u32,
+        funds: u32,
+        value: &[u8],
+    ) -> Result<(), SessionTrap> {
+        let interval = self.instance_interval(site, element)?;
+        self.judge_credit(site, element, funds)?;
         let Held::Instances(ids) = self.bucket(funds)? else {
             return Err(SessionTrap::WrongEdgeKind);
         };
@@ -417,7 +454,7 @@ impl KernelSession {
         // Charged before probing, so a filing that overruns its cap is
         // refused without paying for the seeks it would have taken.
         for order in &ids {
-            self.charge_write(rep, *order, interval.cap)?;
+            self.charge_write(site, element, *order, interval.cap)?;
         }
         // An instance arrives or it does not. Filing over an order the
         // collection already holds leaves one instance in two places and
@@ -486,24 +523,24 @@ mod tests {
         }]);
         let mut session = session_over(store, &set);
 
-        assert_eq!(session.range_count(0), Ok(1));
-        assert_eq!(session.range_entry(0, 0), Ok(vec![1]));
+        assert_eq!(session.range_count(0, 0), Ok(1));
+        assert_eq!(session.range_entry(0, 0, 0), Ok(vec![1]));
         assert_eq!(
-            session.range_entry(0, 1),
+            session.range_entry(0, 0, 1),
             Err(SessionTrap::IndexOutOfBounds { index: 1, count: 1 })
         );
         assert_eq!(
-            session.range_remove(0, 9),
+            session.range_remove(0, 0, 9),
             Err(SessionTrap::IndexOutOfBounds { index: 9, count: 1 })
         );
         // An insert must land inside the declared interval, and its order
         // key is an amount cell like any other.
         assert_eq!(
-            session.range_insert(0, 99, vec![2]),
+            session.range_insert(0, 0, 99, vec![2]),
             Err(SessionTrap::OrderOutsideInterval)
         );
-        assert_eq!(session.range_insert(0, 12, vec![2]), Ok(()));
-        assert_eq!(session.range_count(0), Ok(2));
+        assert_eq!(session.range_insert(0, 0, 12, vec![2]), Ok(()));
+        assert_eq!(session.range_count(0, 0), Ok(2));
     }
 
     #[test]
@@ -525,17 +562,17 @@ mod tests {
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
-        assert_eq!(session.range_insert(0, 10, vec![1]), Ok(()));
-        assert_eq!(session.range_insert(0, 20, vec![2]), Ok(()));
+        assert_eq!(session.range_insert(0, 0, 10, vec![1]), Ok(()));
+        assert_eq!(session.range_insert(0, 0, 20, vec![2]), Ok(()));
         assert_eq!(
-            session.range_insert(0, 30, vec![3]),
+            session.range_insert(0, 0, 30, vec![3]),
             Err(SessionTrap::WriteCapExceeded { cap: 2, order: 30 }),
             "a third distinct entry is past the declared cap"
         );
 
         // Rewriting an entry the interval already changed is the same
         // entry touched again, not a new one.
-        assert_eq!(session.range_insert(0, 10, vec![9]), Ok(()));
+        assert_eq!(session.range_insert(0, 0, 10, vec![9]), Ok(()));
     }
 
     #[test]
@@ -557,14 +594,14 @@ mod tests {
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
-        assert_eq!(session.range_insert(0, 10, vec![1]), Ok(()));
+        assert_eq!(session.range_insert(0, 0, 10, vec![1]), Ok(()));
         assert_eq!(
-            session.range_count(0),
+            session.range_count(0, 0),
             Ok(1),
             "re-materializes the interval"
         );
         assert_eq!(
-            session.range_insert(0, 20, vec![2]),
+            session.range_insert(0, 0, 20, vec![2]),
             Err(SessionTrap::WriteCapExceeded { cap: 1, order: 20 }),
         );
     }
@@ -593,12 +630,12 @@ mod tests {
         }]);
         let mut session = session_over(store, &set);
 
-        assert_eq!(session.range_count(0), Ok(4));
+        assert_eq!(session.range_count(0, 0), Ok(4));
         for index in 0..4 {
-            assert_eq!(session.range_set(0, index, vec![0xFF]), Ok(()));
+            assert_eq!(session.range_set(0, 0, index, vec![0xFF]), Ok(()));
         }
         // And removing what it just rewrote reaches no new entry.
-        assert_eq!(session.range_remove(0, 0), Ok(()));
+        assert_eq!(session.range_remove(0, 0, 0), Ok(()));
     }
 
     #[test]
@@ -624,15 +661,15 @@ mod tests {
         }]);
         let mut session = session_over(store, &set);
 
-        assert_eq!(session.range_count(0), Ok(4));
+        assert_eq!(session.range_count(0, 0), Ok(4));
         let page = SCAN_SEEK_BYTES + 4 * (AMOUNT_CELL_BYTES + 10);
         assert_eq!(session.take_scan_debt(), page);
         // Drained, and a memoized page is not scanned twice.
-        assert_eq!(session.range_count(0), Ok(4));
+        assert_eq!(session.range_count(0, 0), Ok(4));
         assert_eq!(session.take_scan_debt(), 0);
         // A write drops the page, and asking for it again buys another.
-        assert_eq!(session.range_set(0, 0, vec![8; 10]), Ok(()));
-        assert_eq!(session.range_count(0), Ok(4));
+        assert_eq!(session.range_set(0, 0, 0, vec![8; 10]), Ok(()));
+        assert_eq!(session.range_count(0, 0), Ok(4));
         assert_eq!(session.take_scan_debt(), page);
     }
 
@@ -671,10 +708,10 @@ mod tests {
         )
         .expect("two write intervals materialize");
 
-        assert_eq!(session.range_count(0), Ok(1));
+        assert_eq!(session.range_count(0, 0), Ok(1));
         assert!(session.take_scan_debt() > 0, "the page was lifted");
-        assert_eq!(session.range_insert(1, 5, vec![1]), Ok(()));
-        assert_eq!(session.range_count(0), Ok(1));
+        assert_eq!(session.range_insert(1, 0, 5, vec![1]), Ok(()));
+        assert_eq!(session.range_count(0, 0), Ok(1));
         assert_eq!(session.take_scan_debt(), 0, "the cached page survives");
     }
 
@@ -709,14 +746,14 @@ mod tests {
 
         let carried = session.open_bucket(Held::Instances([90].into()), RESOURCE);
         assert_eq!(
-            session.range_put(0, carried, &[1]),
+            session.range_put(0, 0, carried, &[1]),
             Err(SessionTrap::InstanceHeldTwice(90))
         );
 
         // An order it does not hold still files, so what the probe
         // refuses is the collision and not the filing.
         let fresh = session.open_bucket(Held::Instances([500].into()), RESOURCE);
-        assert_eq!(session.range_put(0, fresh, &[1]), Ok(()));
+        assert_eq!(session.range_put(0, 0, fresh, &[1]), Ok(()));
     }
 
     #[test]
@@ -742,18 +779,18 @@ mod tests {
         let mut session = session_holding(store, &set);
 
         // An id well past the first page of four.
-        assert_eq!(session.range_take(0, &[90]), Ok(0));
+        assert_eq!(session.range_take(0, 0, &[90]), Ok(0));
         assert_eq!(session.bucket(0), Ok(Held::Instances([90].into())));
         // And one the collection does not hold still refuses.
         assert_eq!(
-            session.range_take(0, &[500]),
+            session.range_take(0, 0, &[500]),
             Err(SessionTrap::InstanceNotHeld(500))
         );
         // The cap is the budget it always was: three more distinct
         // entries fit, a fourth does not.
-        assert!(session.range_take(0, &[91, 92, 93]).is_ok());
+        assert!(session.range_take(0, 0, &[91, 92, 93]).is_ok());
         assert_eq!(
-            session.range_take(0, &[94]),
+            session.range_take(0, 0, &[94]),
             Err(SessionTrap::WriteCapExceeded { cap: 4, order: 94 })
         );
     }
@@ -783,7 +820,7 @@ mod tests {
         };
         let covered = |cap| {
             session_over(store.clone(), &at_cap(cap))
-                .range_covered(0)
+                .range_covered(0, 0)
                 .unwrap()
         };
         // Headroom is the cheap proof: five saw four and stopped short.
@@ -822,15 +859,15 @@ mod tests {
         let mut session = session_over(store, &set);
 
         // A full page: the answer costs a page and a probe.
-        assert!(session.range_covered(0).unwrap());
+        assert!(session.range_covered(0, 0).unwrap());
         assert!(session.take_scan_debt() > 0);
         // Asked again, it answers from the memo and lifts nothing.
-        assert!(session.range_covered(0).unwrap());
+        assert!(session.range_covered(0, 0).unwrap());
         assert_eq!(session.take_scan_debt(), 0);
         // A write drops the page and the memo with it: a fifth entry
         // past the cap turns the same question false.
-        assert_eq!(session.range_insert(0, 10, vec![2]), Ok(()));
-        assert!(!session.range_covered(0).unwrap());
+        assert_eq!(session.range_insert(0, 0, 10, vec![2]), Ok(()));
+        assert!(!session.range_covered(0, 0).unwrap());
         assert!(session.take_scan_debt() > 0, "the new page was paid for");
     }
 
@@ -855,7 +892,7 @@ mod tests {
             mode: Mode::Read,
         }]);
         let mut session = session_over(store, &set);
-        assert!(session.range_covered(0).unwrap());
+        assert!(session.range_covered(0, 0).unwrap());
     }
 
     /// An empty interval is covered at any cap — including zero, where
@@ -877,7 +914,7 @@ mod tests {
         };
         for cap in [0, 4] {
             let mut session = session_over(MemoryStore::new(), &at_cap(cap));
-            assert!(session.range_covered(0).unwrap());
+            assert!(session.range_covered(0, 0).unwrap());
         }
     }
 
@@ -896,9 +933,9 @@ mod tests {
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
         for outcome in [
-            session.range_set(0, 0, vec![1]),
-            session.range_insert(0, 1, vec![1]),
-            session.range_remove(0, 0),
+            session.range_set(0, 0, 0, vec![1]),
+            session.range_insert(0, 0, 1, vec![1]),
+            session.range_remove(0, 0, 0),
         ] {
             assert!(matches!(
                 outcome,

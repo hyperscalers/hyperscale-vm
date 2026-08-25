@@ -93,8 +93,8 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
         _ => None,
     });
     if let (Some(reserve), Some(delta)) = (reserve, delta) {
-        let funds = session.reserve_take(reserve).unwrap();
-        session.cell_put(delta, funds).unwrap();
+        let funds = session.reserve_take(reserve, 0).unwrap();
+        session.cell_put(delta, 0, funds).unwrap();
     }
     RunResult::Completed {
         session,
@@ -345,12 +345,12 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
                     // moves value rather than conjuring it.
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
                     let minted = session.mint(credit).unwrap();
-                    session.cell_put(rep, minted).unwrap();
-                    let taken = session.cell_take(rep, debit).unwrap();
+                    session.cell_put(rep, 0, minted).unwrap();
+                    let taken = session.cell_take(rep, 0, debit).unwrap();
                     session.burn(taken).unwrap();
                 }
                 Capability::Read(_) => {
-                    let cell = session.cell_get(rep).unwrap();
+                    let cell = session.cell_get(rep, 0).unwrap();
                     let amount = if cell.is_empty() {
                         0
                     } else {

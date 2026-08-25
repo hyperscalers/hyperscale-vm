@@ -869,8 +869,8 @@ mod tests {
         )
         .expect("11 reserved against 100 is feasible");
 
-        assert_eq!(session.reserve_amount(0), Ok(5));
-        assert_eq!(session.reserve_amount(1), Ok(6));
+        assert_eq!(session.reserve_amount(0, 0), Ok(5));
+        assert_eq!(session.reserve_amount(1, 0), Ok(6));
     }
 
     /// Publish refuses exactly the pairings materialization cannot build.

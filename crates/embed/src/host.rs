@@ -18,7 +18,7 @@ use hyperscale_vm_types::{AbortReason, Drawn};
 /// across a call boundary that requires it, and because a conflict group
 /// executes on its own thread.
 pub trait KernelHost: Send {
-    /// How many elements a run's site mapped over.
+    /// How many elements the site covers.
     ///
     /// The element count rather than the count of expansions that fired,
     /// so two sites in one body agree on what an index means.
@@ -26,18 +26,17 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn run_len(&mut self, rep: u32) -> Result<u32, AbortReason>;
+    fn site_len(&mut self, site: u32) -> Result<u32, AbortReason>;
 
-    /// Whether a run's site declared anything for the element at
-    /// `index`.
+    /// Whether the site declared anything for the element at `element`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn run_declared(&mut self, rep: u32, index: u32) -> Result<bool, AbortReason>;
+    fn site_declared(&mut self, site: u32, element: u32) -> Result<bool, AbortReason>;
 
-    /// The capability a run's site declared for the element at `index`,
-    /// as the rep every other operation here takes.
+    /// The capability the site declared for the element at `element`, as
+    /// the site rep every other operation here takes.
     ///
     /// An expansion whose guard did not fire answers a rep no capability
     /// occupies, so the operation it is handed to refuses by its own
@@ -47,7 +46,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn run_at(&mut self, rep: u32, index: u32) -> Result<u32, AbortReason>;
+    fn site_at(&mut self, site: u32, element: u32) -> Result<u32, AbortReason>;
 
     /// The cell's current bytes; empty if absent.
     ///
@@ -57,14 +56,19 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
+    fn cell_get(&mut self, site: u32, element: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// Replace the cell's bytes.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason>;
+    fn write_cell_set(
+        &mut self,
+        site: u32,
+        element: u32,
+        value: Vec<u8>,
+    ) -> Result<(), AbortReason>;
 
     /// Remove the cell, so nothing is there.
     ///
@@ -74,7 +78,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn write_cell_clear(&mut self, rep: u32) -> Result<(), AbortReason>;
+    fn write_cell_clear(&mut self, site: u32, element: u32) -> Result<(), AbortReason>;
 
     /// What an amount cell holds.
     ///
@@ -86,7 +90,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn amount_cell_balance(&mut self, rep: u32) -> Result<u128, AbortReason>;
+    fn amount_cell_balance(&mut self, site: u32, element: u32) -> Result<u128, AbortReason>;
 
     /// Create value under this invocation's issuance grant, returning
     /// the bucket's rep.
@@ -106,7 +110,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn cell_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
+    fn cell_take(&mut self, site: u32, element: u32, amount: u128) -> Result<u32, AbortReason>;
 
     /// Destroy what this invocation issues, consuming the bucket.
     ///
@@ -129,7 +133,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_take(&mut self, rep: u32, ids: &[u64]) -> Result<u32, AbortReason>;
+    fn range_take(&mut self, site: u32, element: u32, ids: &[u64]) -> Result<u32, AbortReason>;
 
     /// File every instance the bucket at `funds` carries as an entry,
     /// consuming it.
@@ -137,7 +141,13 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_put(&mut self, rep: u32, funds: u32, value: Vec<u8>) -> Result<(), AbortReason>;
+    fn range_put(
+        &mut self,
+        site: u32,
+        element: u32,
+        funds: u32,
+        value: Vec<u8>,
+    ) -> Result<(), AbortReason>;
 
     /// Split `amount` off the bucket at `rep`; the new bucket's rep.
     ///
@@ -176,14 +186,14 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn cell_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
+    fn cell_put(&mut self, site: u32, element: u32, funds: u32) -> Result<(), AbortReason>;
 
     /// Take the reservation as a bucket, whose rep this returns.
     ///
     /// # Errors
     ///
     /// A deterministic refusal, including a second take of one grant.
-    fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason>;
+    fn reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason>;
 
     /// What interval scans lifted out of the store since this was last
     /// asked, in the boundary-byte terms the fuel schedule prices.
@@ -199,7 +209,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason>;
+    fn range_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason>;
 
     /// Whether the materialized page holds every entry the interval
     /// does: a page short of its cap exhausted the interval, and a full
@@ -208,49 +218,61 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_covered(&mut self, rep: u32) -> Result<bool, AbortReason>;
+    fn range_covered(&mut self, site: u32, element: u32) -> Result<bool, AbortReason>;
 
     /// The order key of the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, AbortReason>;
+    fn range_order(&mut self, site: u32, element: u32, index: u32) -> Result<u128, AbortReason>;
 
     /// The value of the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
+    fn range_entry(&mut self, site: u32, element: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// Replace the value of the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), AbortReason>;
+    fn range_set(
+        &mut self,
+        site: u32,
+        element: u32,
+        index: u32,
+        value: Vec<u8>,
+    ) -> Result<(), AbortReason>;
 
     /// Insert or replace the entry at `order` within the declared interval.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (an order outside the interval).
-    fn range_insert(&mut self, rep: u32, order: u128, value: Vec<u8>) -> Result<(), AbortReason>;
+    fn range_insert(
+        &mut self,
+        site: u32,
+        element: u32,
+        order: u128,
+        value: Vec<u8>,
+    ) -> Result<(), AbortReason>;
 
     /// Remove the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), AbortReason>;
+    fn range_remove(&mut self, site: u32, element: u32, index: u32) -> Result<(), AbortReason>;
 
     /// Seal this cell on the epoch now running.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (a handle that names no write).
-    fn seal(&mut self, rep: u32) -> Result<(), AbortReason>;
+    fn seal(&mut self, site: u32, element: u32) -> Result<(), AbortReason>;
 
     /// The draw the seal in this cell matures into.
     ///
@@ -261,7 +283,7 @@ pub trait KernelHost: Send {
     ///
     /// A deterministic refusal (a handle that names no write, or a cell
     /// holding something that is not a seal).
-    fn open_seal(&mut self, rep: u32) -> Result<Drawn, AbortReason>;
+    fn open_seal(&mut self, site: u32, element: u32) -> Result<Drawn, AbortReason>;
 
     /// The transaction clock in milliseconds.
     fn clock_ms(&self) -> u64;

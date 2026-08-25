@@ -141,33 +141,50 @@ struct TestHost {
 }
 
 impl KernelHost for TestHost {
-    fn run_len(&mut self, _rep: u32) -> std::result::Result<u32, AbortReason> {
+    fn site_len(&mut self, _site: u32) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn run_declared(&mut self, _rep: u32, _index: u32) -> std::result::Result<bool, AbortReason> {
+    fn site_declared(
+        &mut self,
+        _site: u32,
+        _element: u32,
+    ) -> std::result::Result<bool, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn run_at(&mut self, _rep: u32, _index: u32) -> std::result::Result<u32, AbortReason> {
+    fn site_at(&mut self, _site: u32, _index: u32) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn cell_get(&mut self, rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
-        Ok(self.values[rep as usize].clone())
+    fn cell_get(&mut self, site: u32, _element: u32) -> std::result::Result<Vec<u8>, AbortReason> {
+        Ok(self.values[site as usize].clone())
     }
 
-    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> std::result::Result<(), AbortReason> {
-        self.values[rep as usize] = value;
+    fn write_cell_set(
+        &mut self,
+        site: u32,
+        _element: u32,
+        value: Vec<u8>,
+    ) -> std::result::Result<(), AbortReason> {
+        self.values[site as usize] = value;
         Ok(())
     }
 
-    fn write_cell_clear(&mut self, rep: u32) -> std::result::Result<(), AbortReason> {
-        self.values[rep as usize].clear();
+    fn write_cell_clear(
+        &mut self,
+        site: u32,
+        _element: u32,
+    ) -> std::result::Result<(), AbortReason> {
+        self.values[site as usize].clear();
         Ok(())
     }
 
-    fn amount_cell_balance(&mut self, _rep: u32) -> std::result::Result<u128, AbortReason> {
+    fn amount_cell_balance(
+        &mut self,
+        _site: u32,
+        _element: u32,
+    ) -> std::result::Result<u128, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
@@ -179,13 +196,19 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn range_take(&mut self, _r: u32, _ids: &[u64]) -> std::result::Result<u32, AbortReason> {
+    fn range_take(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _ids: &[u64],
+    ) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
     fn range_put(
         &mut self,
-        _rep: u32,
+        _site: u32,
+        _element: u32,
         _funds: u32,
         _value: Vec<u8>,
     ) -> std::result::Result<(), AbortReason> {
@@ -213,7 +236,12 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn cell_put(&mut self, _rep: u32, _funds: u32) -> std::result::Result<(), AbortReason> {
+    fn cell_put(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _funds: u32,
+    ) -> std::result::Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
@@ -221,11 +249,16 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn cell_take(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
+    fn cell_take(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _amount: u128,
+    ) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn reserve_take(&mut self, _rep: u32) -> std::result::Result<u32, AbortReason> {
+    fn reserve_take(&mut self, _site: u32, _element: u32) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
@@ -233,25 +266,40 @@ impl KernelHost for TestHost {
         0
     }
 
-    fn range_count(&mut self, _rep: u32) -> std::result::Result<u32, AbortReason> {
+    fn range_count(&mut self, _site: u32, _element: u32) -> std::result::Result<u32, AbortReason> {
         Ok(0)
     }
 
-    fn range_covered(&mut self, _rep: u32) -> std::result::Result<bool, AbortReason> {
+    fn range_covered(
+        &mut self,
+        _site: u32,
+        _element: u32,
+    ) -> std::result::Result<bool, AbortReason> {
         Ok(true)
     }
 
-    fn range_order(&mut self, _rep: u32, _index: u32) -> std::result::Result<u128, AbortReason> {
+    fn range_order(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _index: u32,
+    ) -> std::result::Result<u128, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn range_entry(&mut self, _rep: u32, _index: u32) -> std::result::Result<Vec<u8>, AbortReason> {
+    fn range_entry(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _index: u32,
+    ) -> std::result::Result<Vec<u8>, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
     fn range_set(
         &mut self,
-        _rep: u32,
+        _site: u32,
+        _element: u32,
         _index: u32,
         _value: Vec<u8>,
     ) -> std::result::Result<(), AbortReason> {
@@ -260,14 +308,20 @@ impl KernelHost for TestHost {
 
     fn range_insert(
         &mut self,
-        _rep: u32,
+        _site: u32,
+        _element: u32,
         _order: u128,
         _value: Vec<u8>,
     ) -> std::result::Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn range_remove(&mut self, _rep: u32, _index: u32) -> std::result::Result<(), AbortReason> {
+    fn range_remove(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _index: u32,
+    ) -> std::result::Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
@@ -279,11 +333,11 @@ impl KernelHost for TestHost {
         CLOCK_MS
     }
 
-    fn seal(&mut self, _rep: u32) -> Result<(), AbortReason> {
+    fn seal(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
         unreachable!("this world holds no seal")
     }
 
-    fn open_seal(&mut self, _rep: u32) -> Result<Drawn, AbortReason> {
+    fn open_seal(&mut self, _site: u32, _element: u32) -> Result<Drawn, AbortReason> {
         Ok(Drawn::Ready([9; 32]))
     }
 

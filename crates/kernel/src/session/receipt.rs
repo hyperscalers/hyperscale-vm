@@ -269,7 +269,7 @@ impl KernelSession {
             if let Capability::Reserve { key, amount } = capability {
                 out.reserved.entry(*key).or_default().push((rep, *amount));
             }
-            let Some(resource) = self.cell_resource(rep) else {
+            let Some(resource) = self.resource_at(rep) else {
                 continue;
             };
             match capability {
@@ -717,7 +717,7 @@ mod tests {
 
         session.enter_invocation(Address::new([9; 31], AddressClass::Component));
         session.emit(1, b"paid".to_vec()).unwrap();
-        session.delta_sub(0, 1).unwrap();
+        session.delta_sub(0, 0, 1).unwrap();
 
         let (receipt, _) = session.finish(vec![], 7).unwrap();
         assert!(
@@ -743,7 +743,7 @@ mod tests {
         }]);
         let mut session = session_holding(store, &set);
 
-        let funds = session.cell_take(0, 40).expect("the cell covers it");
+        let funds = session.cell_take(0, 0, 40).expect("the cell covers it");
         let (receipt, mut threaded) = session.finish(vec![], 7).expect("finishes");
         assert_eq!(
             receipt.outcome,
@@ -777,9 +777,9 @@ mod tests {
         }]);
         let mut session = session_holding(store, &set);
 
-        let funds = session.cell_take(0, 40).expect("the cell covers it");
+        let funds = session.cell_take(0, 0, 40).expect("the cell covers it");
         let split = session.bucket_take(funds, 40).expect("the whole of it");
-        session.cell_put(0, split).expect("the credit lands");
+        session.cell_put(0, 0, split).expect("the credit lands");
 
         let (receipt, _) = session.finish(vec![], 7).expect("finishes");
         assert_eq!(receipt.outcome, Outcome::Completed { answers: vec![] });
@@ -800,7 +800,7 @@ mod tests {
             mode: Mode::Write,
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
-        session.range_count(0).unwrap();
+        session.range_count(0, 0).unwrap();
         let _ = session.finish(vec![], 0);
     }
 }

@@ -31,28 +31,33 @@ fn refused<T>(answer: Result<T, SessionTrap>) -> Result<T, AbortReason> {
 }
 
 impl KernelHost for KernelSession {
-    fn run_len(&mut self, rep: u32) -> Result<u32, AbortReason> {
-        refused(Self::site_len(self, rep))
+    fn site_len(&mut self, site: u32) -> Result<u32, AbortReason> {
+        refused(Self::site_len(self, site))
     }
-    fn run_declared(&mut self, rep: u32, index: u32) -> Result<bool, AbortReason> {
-        refused(Self::site_declared(self, rep, index))
+    fn site_declared(&mut self, site: u32, element: u32) -> Result<bool, AbortReason> {
+        refused(Self::site_declared(self, site, element))
     }
-    fn run_at(&mut self, rep: u32, index: u32) -> Result<u32, AbortReason> {
-        refused(Self::site_at(self, rep, index))
-    }
-
-    fn cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason> {
-        refused(Self::cell_get(self, rep))
-    }
-    fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason> {
-        refused(Self::write_cell_set(self, rep, value))
-    }
-    fn write_cell_clear(&mut self, rep: u32) -> Result<(), AbortReason> {
-        refused(Self::write_cell_clear(self, rep))
+    fn site_at(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
+        refused(Self::site_at(self, site, element))
     }
 
-    fn amount_cell_balance(&mut self, rep: u32) -> Result<u128, AbortReason> {
-        self.amount_cell_balance(rep).map_err(Into::into)
+    fn cell_get(&mut self, site: u32, element: u32) -> Result<Vec<u8>, AbortReason> {
+        refused(Self::cell_get(self, site, element))
+    }
+    fn write_cell_set(
+        &mut self,
+        site: u32,
+        element: u32,
+        value: Vec<u8>,
+    ) -> Result<(), AbortReason> {
+        refused(Self::write_cell_set(self, site, element, value))
+    }
+    fn write_cell_clear(&mut self, site: u32, element: u32) -> Result<(), AbortReason> {
+        refused(Self::write_cell_clear(self, site, element))
+    }
+
+    fn amount_cell_balance(&mut self, site: u32, element: u32) -> Result<u128, AbortReason> {
+        self.amount_cell_balance(site, element).map_err(Into::into)
     }
     fn burn(&mut self, funds: u32) -> Result<(), AbortReason> {
         refused(Self::burn(self, funds))
@@ -60,11 +65,17 @@ impl KernelHost for KernelSession {
     fn mint_instances(&mut self, ids: &[u64]) -> Result<u32, AbortReason> {
         refused(Self::mint_instances(self, ids))
     }
-    fn range_take(&mut self, rep: u32, ids: &[u64]) -> Result<u32, AbortReason> {
-        refused(Self::range_take(self, rep, ids))
+    fn range_take(&mut self, site: u32, element: u32, ids: &[u64]) -> Result<u32, AbortReason> {
+        refused(Self::range_take(self, site, element, ids))
     }
-    fn range_put(&mut self, rep: u32, funds: u32, value: Vec<u8>) -> Result<(), AbortReason> {
-        refused(Self::range_put(self, rep, funds, &value))
+    fn range_put(
+        &mut self,
+        site: u32,
+        element: u32,
+        funds: u32,
+        value: Vec<u8>,
+    ) -> Result<(), AbortReason> {
+        refused(Self::range_put(self, site, element, funds, &value))
     }
     fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
         refused(Self::bucket_take(self, rep, amount))
@@ -78,50 +89,62 @@ impl KernelHost for KernelSession {
     fn bucket_amount(&mut self, rep: u32) -> Result<u128, AbortReason> {
         refused(Self::bucket_amount(self, rep))
     }
-    fn cell_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
-        refused(Self::cell_put(self, rep, funds))
+    fn cell_put(&mut self, site: u32, element: u32, funds: u32) -> Result<(), AbortReason> {
+        refused(Self::cell_put(self, site, element, funds))
     }
     fn mint(&mut self, amount: u128) -> Result<u32, AbortReason> {
         refused(Self::mint(self, amount))
     }
-    fn cell_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
-        refused(Self::cell_take(self, rep, amount))
+    fn cell_take(&mut self, site: u32, element: u32, amount: u128) -> Result<u32, AbortReason> {
+        refused(Self::cell_take(self, site, element, amount))
     }
-    fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason> {
-        refused(Self::reserve_take(self, rep))
+    fn reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
+        refused(Self::reserve_take(self, site, element))
     }
     fn take_scan_debt(&mut self) -> usize {
         Self::take_scan_debt(self)
     }
-    fn range_count(&mut self, rep: u32) -> Result<u32, AbortReason> {
-        refused(Self::range_count(self, rep))
+    fn range_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
+        refused(Self::range_count(self, site, element))
     }
-    fn range_covered(&mut self, rep: u32) -> Result<bool, AbortReason> {
-        refused(Self::range_covered(self, rep))
+    fn range_covered(&mut self, site: u32, element: u32) -> Result<bool, AbortReason> {
+        refused(Self::range_covered(self, site, element))
     }
-    fn range_order(&mut self, rep: u32, index: u32) -> Result<u128, AbortReason> {
-        refused(Self::range_order(self, rep, index))
+    fn range_order(&mut self, site: u32, element: u32, index: u32) -> Result<u128, AbortReason> {
+        refused(Self::range_order(self, site, element, index))
     }
-    fn range_entry(&mut self, rep: u32, index: u32) -> Result<Vec<u8>, AbortReason> {
-        refused(Self::range_entry(self, rep, index))
+    fn range_entry(&mut self, site: u32, element: u32, index: u32) -> Result<Vec<u8>, AbortReason> {
+        refused(Self::range_entry(self, site, element, index))
     }
-    fn range_set(&mut self, rep: u32, index: u32, value: Vec<u8>) -> Result<(), AbortReason> {
-        refused(Self::range_set(self, rep, index, value))
+    fn range_set(
+        &mut self,
+        site: u32,
+        element: u32,
+        index: u32,
+        value: Vec<u8>,
+    ) -> Result<(), AbortReason> {
+        refused(Self::range_set(self, site, element, index, value))
     }
-    fn range_insert(&mut self, rep: u32, order: u128, value: Vec<u8>) -> Result<(), AbortReason> {
-        refused(Self::range_insert(self, rep, order, value))
+    fn range_insert(
+        &mut self,
+        site: u32,
+        element: u32,
+        order: u128,
+        value: Vec<u8>,
+    ) -> Result<(), AbortReason> {
+        refused(Self::range_insert(self, site, element, order, value))
     }
-    fn range_remove(&mut self, rep: u32, index: u32) -> Result<(), AbortReason> {
-        refused(Self::range_remove(self, rep, index))
+    fn range_remove(&mut self, site: u32, element: u32, index: u32) -> Result<(), AbortReason> {
+        refused(Self::range_remove(self, site, element, index))
     }
     fn bucket_drop(&mut self, rep: u32) -> Result<(), AbortReason> {
         refused(Self::drop_bucket(self, rep))
     }
-    fn seal(&mut self, rep: u32) -> Result<(), AbortReason> {
-        refused(Self::seal(self, rep))
+    fn seal(&mut self, site: u32, element: u32) -> Result<(), AbortReason> {
+        refused(Self::seal(self, site, element))
     }
-    fn open_seal(&mut self, rep: u32) -> Result<Drawn, AbortReason> {
-        refused(Self::open_seal(self, rep))
+    fn open_seal(&mut self, site: u32, element: u32) -> Result<Drawn, AbortReason> {
+        refused(Self::open_seal(self, site, element))
     }
     fn clock_ms(&self) -> u64 {
         Self::clock_ms(self)

@@ -55,25 +55,30 @@ pub mod fixtures {
 
     #[allow(clippy::missing_errors_doc)] // unreachable: the guest imports nothing
     impl KernelHost for NoHost {
-        fn run_len(&mut self, _rep: u32) -> Result<u32, AbortReason> {
+        fn site_len(&mut self, _site: u32) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn run_declared(&mut self, _rep: u32, _index: u32) -> Result<bool, AbortReason> {
+        fn site_declared(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn run_at(&mut self, _rep: u32, _index: u32) -> Result<u32, AbortReason> {
+        fn site_at(&mut self, _site: u32, _index: u32) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn cell_get(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
+        fn cell_get(&mut self, _site: u32, _element: u32) -> Result<Vec<u8>, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn write_cell_set(&mut self, _rep: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
+        fn write_cell_set(
+            &mut self,
+            _site: u32,
+            _element: u32,
+            _value: Vec<u8>,
+        ) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn write_cell_clear(&mut self, _rep: u32) -> Result<(), AbortReason> {
+        fn write_cell_clear(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn amount_cell_balance(&mut self, _rep: u32) -> Result<u128, AbortReason> {
+        fn amount_cell_balance(&mut self, _site: u32, _element: u32) -> Result<u128, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn burn(&mut self, _funds: u32) -> Result<(), AbortReason> {
@@ -82,10 +87,21 @@ pub mod fixtures {
         fn mint_instances(&mut self, _ids: &[u64]) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn range_take(&mut self, _rep: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
+        fn range_take(
+            &mut self,
+            _site: u32,
+            _element: u32,
+            _ids: &[u64],
+        ) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn range_put(&mut self, _rep: u32, _funds: u32, _v: Vec<u8>) -> Result<(), AbortReason> {
+        fn range_put(
+            &mut self,
+            _site: u32,
+            _element: u32,
+            _funds: u32,
+            _v: Vec<u8>,
+        ) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn bucket_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
@@ -100,36 +116,52 @@ pub mod fixtures {
         fn bucket_amount(&mut self, _rep: u32) -> Result<u128, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn cell_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
+        fn cell_put(&mut self, _site: u32, _element: u32, _funds: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn mint(&mut self, _amount: u128) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn cell_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
+        fn cell_take(
+            &mut self,
+            _site: u32,
+            _element: u32,
+            _amount: u128,
+        ) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn reserve_take(&mut self, _rep: u32) -> Result<u32, AbortReason> {
+        fn reserve_take(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn take_scan_debt(&mut self) -> usize {
             0
         }
-        fn range_count(&mut self, _rep: u32) -> Result<u32, AbortReason> {
+        fn range_count(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn range_covered(&mut self, _rep: u32) -> Result<bool, AbortReason> {
+        fn range_covered(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn range_order(&mut self, _rep: u32, _index: u32) -> Result<u128, AbortReason> {
+        fn range_order(
+            &mut self,
+            _site: u32,
+            _element: u32,
+            _index: u32,
+        ) -> Result<u128, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn range_entry(&mut self, _rep: u32, _index: u32) -> Result<Vec<u8>, AbortReason> {
+        fn range_entry(
+            &mut self,
+            _site: u32,
+            _element: u32,
+            _index: u32,
+        ) -> Result<Vec<u8>, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn range_set(
             &mut self,
-            _rep: u32,
+            _site: u32,
+            _element: u32,
             _index: u32,
             _value: Vec<u8>,
         ) -> Result<(), AbortReason> {
@@ -137,22 +169,28 @@ pub mod fixtures {
         }
         fn range_insert(
             &mut self,
-            _rep: u32,
+            _site: u32,
+            _element: u32,
             _order: u128,
             _v: Vec<u8>,
         ) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn range_remove(&mut self, _rep: u32, _index: u32) -> Result<(), AbortReason> {
+        fn range_remove(
+            &mut self,
+            _site: u32,
+            _element: u32,
+            _index: u32,
+        ) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn bucket_drop(&mut self, _rep: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn seal(&mut self, _rep: u32) -> Result<(), AbortReason> {
+        fn seal(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn open_seal(&mut self, _rep: u32) -> Result<Drawn, AbortReason> {
+        fn open_seal(&mut self, _site: u32, _element: u32) -> Result<Drawn, AbortReason> {
             Ok(Drawn::Pending)
         }
         fn clock_ms(&self) -> u64 {

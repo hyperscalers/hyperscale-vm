@@ -139,7 +139,7 @@ mod through_the_session {
     fn a_mint_is_what_the_receipt_reports_and_the_ledger_takes() {
         let mut session = session();
         let minted = session.mint(500).expect("the grant mints");
-        session.cell_put(0, minted).expect("into its own vault");
+        session.cell_put(0, 0, minted).expect("into its own vault");
 
         let supply = completed(session);
         assert_eq!(supply.minted(UNIT), 500);
@@ -158,7 +158,7 @@ mod through_the_session {
 
         let mut minting = session();
         let minted = minting.mint(500).expect("the grant mints");
-        minting.cell_put(0, minted).expect("into its own vault");
+        minting.cell_put(0, 0, minted).expect("into its own vault");
         completed(minting).apply(&mut ledger).expect("credited");
 
         // The burn needs value to destroy, which is the mint's — held in
@@ -167,7 +167,7 @@ mod through_the_session {
         let mut held = MemoryStore::new();
         held.write(vault(1, UNIT.address()), encode_amount(500).to_vec());
         let mut burning = session_over(held);
-        let taken = burning.cell_take(0, 500).expect("the debit is queued");
+        let taken = burning.cell_take(0, 0, 500).expect("the debit is queued");
         burning.burn(taken).expect("the grant burns");
         let supply = completed(burning);
         assert_eq!(supply.burned(UNIT), 500);
@@ -229,7 +229,7 @@ mod through_the_session {
     #[test]
     fn value_from_nowhere_does_not_commit() {
         let mut session = session();
-        session.delta_add(0, 500).expect("the queue takes it");
+        session.delta_add(0, 0, 500).expect("the queue takes it");
 
         let (receipt, _) = session
             .finish(vec![], 0)
@@ -251,7 +251,7 @@ mod through_the_session {
         let mut held = MemoryStore::new();
         held.write(vault(1, UNIT.address()), encode_amount(500).to_vec());
         let mut session = session_over(held);
-        session.delta_sub(0, 500).expect("the queue takes it");
+        session.delta_sub(0, 0, 500).expect("the queue takes it");
 
         let (receipt, _) = session.finish(vec![], 0).expect("a receipt either way");
         assert_eq!(
@@ -299,13 +299,13 @@ mod through_the_session {
             u32::try_from(cells.iter().filter(|other| **other < cell).count()).expect("of three")
         };
         session
-            .delta_sub(rep(drained), u128::MAX)
+            .delta_sub(rep(drained), 0, u128::MAX)
             .expect("the cell covers it");
         session
-            .delta_add(rep(cells[0]), u128::MAX)
+            .delta_add(rep(cells[0]), 0, u128::MAX)
             .expect("the queue takes it");
         session
-            .delta_add(rep(cells[2]), 1)
+            .delta_add(rep(cells[2]), 0, 1)
             .expect("and the unit that overflows the side");
 
         let (receipt, _) = session.finish(vec![], 0).expect("a receipt either way");
@@ -324,9 +324,9 @@ mod through_the_session {
     fn value_moving_between_cells_moves_no_supply() {
         let mut session = session();
         let minted = session.mint(500).expect("the grant mints");
-        session.cell_put(0, minted).expect("into its own vault");
-        let moved = session.cell_take(0, 200).expect("out again");
-        session.cell_put(0, moved).expect("and back");
+        session.cell_put(0, 0, minted).expect("into its own vault");
+        let moved = session.cell_take(0, 0, 200).expect("out again");
+        session.cell_put(0, 0, moved).expect("and back");
 
         // The mint is the only movement; the two cell operations cancel.
         let supply = completed(session);
@@ -410,8 +410,12 @@ mod instances {
     /// in the entry.
     fn refile(filed: &[u8], refiled: &[u8]) -> Outcome {
         let mut session = session_holding(filed);
-        let held = session.range_take(0, &[ORDER]).expect("the holder has it");
-        session.range_put(0, held, refiled).expect("back it goes");
+        let held = session
+            .range_take(0, 0, &[ORDER])
+            .expect("the holder has it");
+        session
+            .range_put(0, 0, held, refiled)
+            .expect("back it goes");
         // The metered lane drains what a scan lifted after every call
         // that can reach one; nothing meters this session, so what the
         // two probes lifted is settled before finishing.

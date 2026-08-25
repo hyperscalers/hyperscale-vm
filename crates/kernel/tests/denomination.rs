@@ -165,15 +165,15 @@ fn every_producer_stamps_what_its_source_held() {
 
     // A debit out of each mode that holds an amount, and the two ways an
     // edge divides once it is in hand.
-    let from_absolute = session.cell_take(0, 40).expect("the cell covers it");
+    let from_absolute = session.cell_take(0, 0, 40).expect("the cell covers it");
     let split = session
         .bucket_take(from_absolute, 10)
         .expect("the edge covers it");
     let share = session
         .bucket_split(from_absolute, U256::from_u128(1), U256::from_u128(2))
         .expect("half of what is left");
-    let from_commutative = session.cell_take(1, 40).expect("the debit is queued");
-    let from_reserved = session.reserve_take(2).expect("the grant is held");
+    let from_commutative = session.cell_take(1, 0, 40).expect("the debit is queued");
+    let from_reserved = session.reserve_take(2, 0).expect("the grant is held");
 
     for (name, funds) in [
         ("write-take", from_absolute),
@@ -183,7 +183,7 @@ fn every_producer_stamps_what_its_source_held() {
         ("reserve-take", from_reserved),
     ] {
         assert_eq!(
-            session.cell_put(3, funds).map_err(AbortReason::from),
+            session.cell_put(3, 0, funds).map_err(AbortReason::from),
             Err(AbortReason::WrongResource),
             "{name} handed out an edge the other vault admitted"
         );
@@ -245,13 +245,15 @@ fn every_instance_producer_stamps_what_its_source_held() {
     )
     .expect("two denominated intervals materialize");
 
-    let taken = session.range_take(0, &[10]).expect("the holder has it");
+    let taken = session.range_take(0, 0, &[10]).expect("the holder has it");
     session.grant_issuance(X, ResourceKind::NonFungible);
     let minted = session.mint_instances(&[99]).expect("the grant mints");
 
     for (name, funds) in [("range-take", taken), ("mint-instances", minted)] {
         assert_eq!(
-            session.range_put(1, funds, &[1]).map_err(AbortReason::from),
+            session
+                .range_put(1, 0, funds, &[1])
+                .map_err(AbortReason::from),
             Err(AbortReason::WrongResource),
             "{name} handed out instances the other holder's interval admitted"
         );
@@ -268,10 +270,10 @@ fn every_instance_producer_stamps_what_its_source_held() {
 #[test]
 fn value_debited_from_one_vault_cannot_be_credited_to_another() {
     let mut session = session(&[Some(X), Some(Y)]);
-    let funds = session.cell_take(0, 100).expect("the debit is queued");
+    let funds = session.cell_take(0, 0, 100).expect("the debit is queued");
 
     assert_eq!(
-        session.cell_put(1, funds).map_err(AbortReason::from),
+        session.cell_put(1, 0, funds).map_err(AbortReason::from),
         Err(AbortReason::WrongResource),
         "the Y vault holds Y and this is X"
     );
@@ -281,8 +283,8 @@ fn value_debited_from_one_vault_cannot_be_credited_to_another() {
 #[test]
 fn value_returns_to_the_vault_that_holds_it() {
     let mut session = session(&[Some(X), Some(Y)]);
-    let funds = session.cell_take(0, 100).expect("the debit is queued");
-    assert_eq!(session.cell_put(0, funds), Ok(()));
+    let funds = session.cell_take(0, 0, 100).expect("the debit is queued");
+    assert_eq!(session.cell_put(0, 0, funds), Ok(()));
 }
 
 /// A merge is the same question with an edge in place of the cell.
@@ -294,8 +296,8 @@ fn value_returns_to_the_vault_that_holds_it() {
 #[test]
 fn two_edges_of_different_resources_do_not_merge() {
     let mut session = session(&[Some(X), Some(Y)]);
-    let held_x = session.cell_take(0, 100).expect("the X debit is queued");
-    let held_y = session.cell_take(1, 100).expect("the Y debit is queued");
+    let held_x = session.cell_take(0, 0, 100).expect("the X debit is queued");
+    let held_y = session.cell_take(1, 0, 100).expect("the Y debit is queued");
 
     assert_eq!(
         session
@@ -334,7 +336,7 @@ fn a_cell_that_denominates_nothing_moves_nothing() {
 #[test]
 fn a_grant_burns_only_what_it_issues() {
     let mut session = session(&[Some(X), Some(Y)]);
-    let foreign = session.cell_take(0, 100).expect("the debit is queued");
+    let foreign = session.cell_take(0, 0, 100).expect("the debit is queued");
     session.grant_issuance(Y, ResourceKind::Fungible);
 
     let issued = session.mint(5).expect("the grant mints");
@@ -374,11 +376,11 @@ fn minted_value_lands_only_in_its_own_cell() {
     let minted = session.mint(5).expect("the grant mints");
 
     assert_eq!(
-        session.cell_put(0, minted).map_err(AbortReason::from),
+        session.cell_put(0, 0, minted).map_err(AbortReason::from),
         Err(AbortReason::WrongResource)
     );
     let minted = session.mint(5).expect("the grant mints");
-    assert_eq!(session.cell_put(1, minted), Ok(()));
+    assert_eq!(session.cell_put(1, 0, minted), Ok(()));
 }
 
 /// A bucket carries what it was debited from across a split, so neither
@@ -386,16 +388,16 @@ fn minted_value_lands_only_in_its_own_cell() {
 #[test]
 fn a_split_carries_the_resource_into_both_halves() {
     let mut session = session(&[Some(X), Some(Y)]);
-    let funds = session.cell_take(0, 100).expect("the debit is queued");
+    let funds = session.cell_take(0, 0, 100).expect("the debit is queued");
     let part = session
         .bucket_take(funds, 40)
         .expect("a split off the edge");
 
     assert_eq!(
-        session.cell_put(1, part).map_err(AbortReason::from),
+        session.cell_put(1, 0, part).map_err(AbortReason::from),
         Err(AbortReason::WrongResource)
     );
-    assert_eq!(session.cell_put(0, funds), Ok(()));
+    assert_eq!(session.cell_put(0, 0, funds), Ok(()));
 }
 
 /// The bucket table's own accounting is unchanged: value still has to
@@ -407,7 +409,7 @@ fn a_split_carries_the_resource_into_both_halves() {
 #[test]
 fn a_denominated_edge_still_has_to_be_disposed_of() {
     let mut session = session(&[Some(X), Some(Y)]);
-    let funds = session.cell_take(0, 100).expect("the debit is queued");
+    let funds = session.cell_take(0, 0, 100).expect("the debit is queued");
     assert_eq!(session.drop_bucket(funds), Ok(()));
     assert_eq!(session.bucket(funds).map(|held| held.quantity()), Ok(100));
 

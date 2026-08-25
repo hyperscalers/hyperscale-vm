@@ -48,25 +48,30 @@ impl StubHost {
 }
 
 impl KernelHost for StubHost {
-    fn run_len(&mut self, _rep: u32) -> Result<u32, AbortReason> {
-        self.op("run-len", 0)
+    fn site_len(&mut self, _site: u32) -> Result<u32, AbortReason> {
+        self.op("site-len", 0)
     }
-    fn run_declared(&mut self, _rep: u32, _index: u32) -> Result<bool, AbortReason> {
-        self.op("run-declared", true)
+    fn site_declared(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
+        self.op("site-declared", true)
     }
-    fn run_at(&mut self, _rep: u32, index: u32) -> Result<u32, AbortReason> {
-        self.op("run-at", index)
+    fn site_at(&mut self, _site: u32, index: u32) -> Result<u32, AbortReason> {
+        self.op("site-at", index)
     }
-    fn cell_get(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
+    fn cell_get(&mut self, _site: u32, _element: u32) -> Result<Vec<u8>, AbortReason> {
         self.op("cell-get", vec![0; 5])
     }
-    fn write_cell_set(&mut self, _rep: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
+    fn write_cell_set(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _value: Vec<u8>,
+    ) -> Result<(), AbortReason> {
         self.op("cell-set", ())
     }
-    fn write_cell_clear(&mut self, _rep: u32) -> Result<(), AbortReason> {
+    fn write_cell_clear(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
         self.op("cell-clear", ())
     }
-    fn amount_cell_balance(&mut self, _rep: u32) -> Result<u128, AbortReason> {
+    fn amount_cell_balance(&mut self, _site: u32, _element: u32) -> Result<u128, AbortReason> {
         self.op("balance", 7)
     }
     fn burn(&mut self, _funds: u32) -> Result<(), AbortReason> {
@@ -78,10 +83,16 @@ impl KernelHost for StubHost {
     fn mint_instances(&mut self, _ids: &[u64]) -> Result<u32, AbortReason> {
         self.op("mint-instances", 1)
     }
-    fn range_take(&mut self, _rep: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
+    fn range_take(&mut self, _site: u32, _element: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
         self.op("range-take", 1)
     }
-    fn range_put(&mut self, _rep: u32, _funds: u32, _v: Vec<u8>) -> Result<(), AbortReason> {
+    fn range_put(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _funds: u32,
+        _v: Vec<u8>,
+    ) -> Result<(), AbortReason> {
         self.op("range-put", ())
     }
     fn bucket_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
@@ -96,38 +107,55 @@ impl KernelHost for StubHost {
     fn bucket_amount(&mut self, _rep: u32) -> Result<u128, AbortReason> {
         self.op("bucket-amount", 7)
     }
-    fn cell_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
+    fn cell_put(&mut self, _site: u32, _element: u32, _funds: u32) -> Result<(), AbortReason> {
         self.op("cell-put", ())
     }
-    fn cell_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
+    fn cell_take(&mut self, _site: u32, _element: u32, _amount: u128) -> Result<u32, AbortReason> {
         self.op("cell-take", 1)
     }
-    fn reserve_take(&mut self, _rep: u32) -> Result<u32, AbortReason> {
+    fn reserve_take(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
         self.op("reserve-take", 1)
     }
     fn take_scan_debt(&mut self) -> usize {
         self.log.lock().unwrap().push(Host("take-scan-debt"));
         std::mem::take(&mut self.scan_debt)
     }
-    fn range_count(&mut self, _rep: u32) -> Result<u32, AbortReason> {
+    fn range_count(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
         self.op("range-count", 2)
     }
-    fn range_covered(&mut self, _rep: u32) -> Result<bool, AbortReason> {
+    fn range_covered(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
         self.op("range-covered", true)
     }
-    fn range_order(&mut self, _rep: u32, _index: u32) -> Result<u128, AbortReason> {
+    fn range_order(&mut self, _site: u32, _element: u32, _index: u32) -> Result<u128, AbortReason> {
         self.op("range-order", 7)
     }
-    fn range_entry(&mut self, _rep: u32, _index: u32) -> Result<Vec<u8>, AbortReason> {
+    fn range_entry(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _index: u32,
+    ) -> Result<Vec<u8>, AbortReason> {
         self.op("range-entry", vec![0; 9])
     }
-    fn range_set(&mut self, _rep: u32, _i: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
+    fn range_set(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _i: u32,
+        _value: Vec<u8>,
+    ) -> Result<(), AbortReason> {
         self.op("range-set", ())
     }
-    fn range_insert(&mut self, _rep: u32, _o: u128, _v: Vec<u8>) -> Result<(), AbortReason> {
+    fn range_insert(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _o: u128,
+        _v: Vec<u8>,
+    ) -> Result<(), AbortReason> {
         self.op("range-insert", ())
     }
-    fn range_remove(&mut self, _rep: u32, _index: u32) -> Result<(), AbortReason> {
+    fn range_remove(&mut self, _site: u32, _element: u32, _index: u32) -> Result<(), AbortReason> {
         self.op("range-remove", ())
     }
     fn bucket_drop(&mut self, _rep: u32) -> Result<(), AbortReason> {
@@ -136,10 +164,10 @@ impl KernelHost for StubHost {
     fn clock_ms(&self) -> u64 {
         0
     }
-    fn seal(&mut self, _rep: u32) -> Result<(), AbortReason> {
+    fn seal(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
         self.op("seal", ())
     }
-    fn open_seal(&mut self, _rep: u32) -> Result<Drawn, AbortReason> {
+    fn open_seal(&mut self, _site: u32, _element: u32) -> Result<Drawn, AbortReason> {
         self.log.lock().unwrap().push(Host("open-seal"));
         Ok(Drawn::Ready([0; 32]))
     }
@@ -218,35 +246,35 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "cell-get",
             |p| {
-                let _ = meter::cell_get(p, 0);
+                let _ = meter::cell_get(p, 0, 0);
             },
             vec![Host("cell-get"), Charge(5)],
         ),
         (
             "cell-seal",
             |p| {
-                let _ = meter::seal(p, 0);
+                let _ = meter::seal(p, 0, 0);
             },
             vec![Host("seal"), Charge(8)],
         ),
         (
             "cell-open-seal",
             |p| {
-                let _ = meter::open_seal(p, 0);
+                let _ = meter::open_seal(p, 0, 0);
             },
             vec![Host("open-seal"), Charge(32)],
         ),
         (
             "cell-set",
             |p| {
-                let _ = meter::cell_set(p, 0, vec![0; 5]);
+                let _ = meter::cell_set(p, 0, 0, vec![0; 5]);
             },
             vec![Charge(5), Host("cell-set")],
         ),
         (
             "cell-clear",
             |p| {
-                let _ = meter::cell_clear(p, 0);
+                let _ = meter::cell_clear(p, 0, 0);
             },
             vec![Host("cell-clear")],
         ),
@@ -260,14 +288,14 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "amount-balance",
             |p| {
-                let _ = meter::cell_balance(p, 0);
+                let _ = meter::cell_balance(p, 0, 0);
             },
             vec![Host("balance"), Charge(AMOUNT)],
         ),
         (
             "cell-take",
             |p| {
-                let _ = meter::cell_take(p, 0, 1);
+                let _ = meter::cell_take(p, 0, 0, 1);
             },
             vec![Charge(AMOUNT), Host("cell-take")],
         ),
@@ -288,7 +316,7 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "cell-instance-take",
             |p| {
-                let _ = meter::instance_range_take(p, 0, &[1, 2, 3]);
+                let _ = meter::instance_range_take(p, 0, 0, &[1, 2, 3]);
             },
             vec![
                 Charge(24),
@@ -300,7 +328,7 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "cell-instance-put",
             |p| {
-                let _ = meter::instance_range_put(p, 0, 1, vec![0; 5]);
+                let _ = meter::instance_range_put(p, 0, 0, 1, vec![0; 5]);
             },
             vec![
                 Charge(5),
@@ -340,35 +368,35 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "cell-put",
             |p| {
-                let _ = meter::cell_put(p, 0, 1);
+                let _ = meter::cell_put(p, 0, 0, 1);
             },
             vec![Host("cell-put")],
         ),
         (
             "cell-reserve-take",
             |p| {
-                let _ = meter::reserve_take(p, 0);
+                let _ = meter::reserve_take(p, 0, 0);
             },
             vec![Host("reserve-take")],
         ),
         (
             "range-count",
             |p| {
-                let _ = meter::range_count(p, 0);
+                let _ = meter::range_count(p, 0, 0);
             },
             vec![Host("range-count"), Host("take-scan-debt"), Charge(3)],
         ),
         (
             "range-covered",
             |p| {
-                let _ = meter::range_covered(p, 0);
+                let _ = meter::range_covered(p, 0, 0);
             },
             vec![Host("range-covered"), Host("take-scan-debt"), Charge(3)],
         ),
         (
             "range-order",
             |p| {
-                let _ = meter::range_order(p, 0, 0);
+                let _ = meter::range_order(p, 0, 0, 0);
             },
             vec![
                 Host("range-order"),
@@ -380,7 +408,7 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "range-entry",
             |p| {
-                let _ = meter::range_entry(p, 0, 0);
+                let _ = meter::range_entry(p, 0, 0, 0);
             },
             vec![
                 Host("range-entry"),
@@ -392,7 +420,7 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "range-set",
             |p| {
-                let _ = meter::range_set(p, 0, 0, vec![0; 5]);
+                let _ = meter::range_set(p, 0, 0, 0, vec![0; 5]);
             },
             vec![
                 Charge(5),
@@ -404,7 +432,7 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "range-insert",
             |p| {
-                let _ = meter::range_insert(p, 0, 1, vec![0; 5]);
+                let _ = meter::range_insert(p, 0, 0, 1, vec![0; 5]);
             },
             vec![
                 Charge(AMOUNT + 5),
@@ -416,7 +444,7 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "range-remove",
             |p| {
-                let _ = meter::range_remove(p, 0, 0);
+                let _ = meter::range_remove(p, 0, 0, 0);
             },
             vec![Host("range-remove"), Host("take-scan-debt"), Charge(3)],
         ),
@@ -503,14 +531,14 @@ fn a_refusal_charges_no_result_bytes() {
     // scan ask, which is owed whether the call refused or not.
     let mut probe = Probe::refusing();
     assert_eq!(
-        meter::cell_get(&mut probe, 0),
+        meter::cell_get(&mut probe, 0, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
     assert_eq!(probe.steps(), vec![Host("cell-get")]);
 
     let mut probe = Probe::refusing();
     assert_eq!(
-        meter::cell_balance(&mut probe, 0),
+        meter::cell_balance(&mut probe, 0, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
     assert_eq!(probe.steps(), vec![Host("balance")]);
@@ -518,7 +546,7 @@ fn a_refusal_charges_no_result_bytes() {
     let mut probe = Probe::refusing();
     probe.host.scan_debt = 3;
     assert_eq!(
-        meter::range_entry(&mut probe, 0, 0),
+        meter::range_entry(&mut probe, 0, 0, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
     assert_eq!(
@@ -534,7 +562,7 @@ fn exhaustion_stops_the_sequence_where_it_lands() {
     let mut probe = Probe::new(0);
     probe.remaining = Some(4);
     assert_eq!(
-        meter::cell_set(&mut probe, 0, vec![0; 5]),
+        meter::cell_set(&mut probe, 0, 0, vec![0; 5]),
         Err(MeterError::Exhausted)
     );
     assert_eq!(probe.steps(), vec![Charge(5)]);

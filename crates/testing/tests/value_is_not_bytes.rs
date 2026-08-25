@@ -110,10 +110,10 @@ fn forge(
         panic!("a handle and a scalar: {args:?}");
     };
     let (rep, amount) = (*rep, u128::from(*amount));
-    if let Err(trap) = session.write_cell_set(rep, encode_amount(amount).to_vec()) {
+    if let Err(trap) = session.write_cell_set(rep, 0, encode_amount(amount).to_vec()) {
         return (session, Invoked::Aborted(trap.into()));
     }
-    match session.cell_take(rep, amount) {
+    match session.cell_take(rep, 0, amount) {
         Ok(bucket) => (
             session,
             Invoked::Produced {
@@ -200,10 +200,10 @@ fn alias_body(
         panic!("two handles and a scalar: {args:?}");
     };
     let (value, bytes, amount) = (*value, *bytes, u128::from(*amount));
-    if let Err(trap) = session.write_cell_set(bytes, encode_amount(amount).to_vec()) {
+    if let Err(trap) = session.write_cell_set(bytes, 0, encode_amount(amount).to_vec()) {
         return (session, Invoked::Aborted(trap.into()));
     }
-    match session.cell_take(value, amount) {
+    match session.cell_take(value, 0, amount) {
         Ok(bucket) => (
             session,
             Invoked::Produced {
@@ -275,7 +275,7 @@ fn two_faced_body(
     };
     let (rep, amount) = (*rep, u128::from(*amount));
     match export {
-        "fill" => match session.write_cell_set(rep, encode_amount(amount).to_vec()) {
+        "fill" => match session.write_cell_set(rep, 0, encode_amount(amount).to_vec()) {
             Ok(()) => (
                 session,
                 Invoked::Produced {
@@ -285,7 +285,7 @@ fn two_faced_body(
             ),
             Err(trap) => (session, Invoked::Aborted(trap.into())),
         },
-        "drain" => match session.cell_take(rep, amount) {
+        "drain" => match session.cell_take(rep, 0, amount) {
             Ok(bucket) => (
                 session,
                 Invoked::Produced {
@@ -386,11 +386,11 @@ fn impostor_body(
             // as bytes like any record.
             let rule = RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(ATTACKER)))
                 .expect("a rule within the caps");
-            if let Err(trap) = session.write_cell_set(*auth, rule.0) {
+            if let Err(trap) = session.write_cell_set(*auth, 0, rule.0) {
                 return (session, Invoked::Aborted(trap.into()));
             }
             // Possession is the half that is not: a vault holds value.
-            if let Err(trap) = session.write_cell_set(*vault, encode_amount(1).to_vec()) {
+            if let Err(trap) = session.write_cell_set(*vault, 0, encode_amount(1).to_vec()) {
                 return (session, Invoked::Aborted(trap.into()));
             }
             (
@@ -448,7 +448,7 @@ fn treasury_body(
     let [GuestArg::Handle { rep, .. }, GuestArg::U64(amount)] = args else {
         panic!("a handle and an amount: {args:?}");
     };
-    match session.cell_take(*rep, u128::from(*amount)) {
+    match session.cell_take(*rep, 0, u128::from(*amount)) {
         Ok(bucket) => (
             session,
             Invoked::Produced {
@@ -540,7 +540,7 @@ fn silent_body(
     let [GuestArg::Handle { rep, .. }, GuestArg::Bucket(funds)] = args else {
         panic!("a handle and an edge: {args:?}");
     };
-    match session.cell_put(*rep, *funds) {
+    match session.cell_put(*rep, 0, *funds) {
         Ok(()) => (
             session,
             Invoked::Produced {

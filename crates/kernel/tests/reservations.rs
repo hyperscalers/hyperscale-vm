@@ -128,9 +128,9 @@ fn a_reservation_nobody_took_leaves_the_cell_whole() {
 #[test]
 fn a_partly_taken_hold_debits_only_what_was_taken() {
     let (mut session, sink) = session(100, &[30, 40]);
-    let funds = session.reserve_take(0).expect("the first grant is held");
+    let funds = session.reserve_take(0, 0).expect("the first grant is held");
     session
-        .cell_put(sink, funds)
+        .cell_put(sink, 0, funds)
         .expect("into the sink it goes");
 
     let (outcome, settled, left) = finish(session);
@@ -145,9 +145,9 @@ fn a_partly_taken_hold_debits_only_what_was_taken() {
 fn a_fully_taken_hold_settles_the_whole_of_it() {
     let (mut session, sink) = session(100, &[30, 40]);
     for rep in 0..2 {
-        let funds = session.reserve_take(rep).expect("the grant is held");
+        let funds = session.reserve_take(rep, 0).expect("the grant is held");
         session
-            .cell_put(sink, funds)
+            .cell_put(sink, 0, funds)
             .expect("into the sink it goes");
     }
 

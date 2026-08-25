@@ -97,15 +97,15 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
         });
         match (reserve, delta) {
             (Some(reserve), Some(delta)) => {
-                let funds = session.reserve_take(reserve).unwrap();
-                session.cell_put(delta, funds).unwrap();
+                let funds = session.reserve_take(reserve, 0).unwrap();
+                session.cell_put(delta, 0, funds).unwrap();
             }
             // Taken through the bucket and burned: a debit with no
             // destination is value the transaction lost, which is not
             // what this fixture is about.
             (None, Some(delta)) => {
                 session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-                let taken = session.cell_take(delta, sub).unwrap();
+                let taken = session.cell_take(delta, 0, sub).unwrap();
                 session.burn(taken).unwrap();
             }
             _ => {}
@@ -579,7 +579,7 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
             .map(|rep| u32::try_from(rep).unwrap());
         if let Some(rep) = rep {
             // One byte: a legal write, an illegal amount cell.
-            session.write_cell_set(rep, vec![7]).unwrap();
+            session.write_cell_set(rep, 0, vec![7]).unwrap();
         }
         let delta = session
             .capabilities()
@@ -587,7 +587,7 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
             .position(|c| matches!(c, Capability::Delta(_)))
             .map(|rep| u32::try_from(rep).unwrap());
         if let Some(rep) = delta {
-            session.delta_add(rep, 1).unwrap();
+            session.delta_add(rep, 0, 1).unwrap();
         }
         RunResult::Completed {
             session,
@@ -654,14 +654,14 @@ fn an_exclusive_debit_past_a_hold_loses_to_the_reserver() {
                 // The whole balance, exclusively — which the hold
                 // standing on the cell leaves none of.
                 Capability::Amount(_) => {
-                    let funds = session.cell_take(rep, 100).unwrap();
+                    let funds = session.cell_take(rep, 0, 100).unwrap();
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
                     session.burn(funds).unwrap();
                 }
                 Capability::Reserve { .. } => {
-                    let funds = session.reserve_take(rep).unwrap();
+                    let funds = session.reserve_take(rep, 0).unwrap();
                     session
-                        .cell_put(delta.expect("the reserver has somewhere to file"), funds)
+                        .cell_put(delta.expect("the reserver has somewhere to file"), 0, funds)
                         .unwrap();
                 }
                 _ => {}
@@ -733,15 +733,15 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
             match capability {
                 Capability::Write(_) => {
                     session
-                        .write_cell_set(rep, encode_amount(10).to_vec())
+                        .write_cell_set(rep, 0, encode_amount(10).to_vec())
                         .unwrap();
                 }
                 // Taken, not merely read: an undercut reservation is only
                 // a loss for a transaction that meant to spend it.
                 Capability::Reserve { .. } => {
-                    let funds = session.reserve_take(rep).unwrap();
+                    let funds = session.reserve_take(rep, 0).unwrap();
                     session
-                        .cell_put(delta.expect("the reserver has somewhere to file"), funds)
+                        .cell_put(delta.expect("the reserver has somewhere to file"), 0, funds)
                         .unwrap();
                 }
                 _ => {}
@@ -805,8 +805,8 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
                 .position(|c| matches!(c, Capability::Delta(_)))
                 .map(|rep| u32::try_from(rep).unwrap())
                 .expect("a delta capability");
-            session.delta_add(rep, u128::MAX).unwrap();
-            session.delta_add(rep, u128::MAX).unwrap();
+            session.delta_add(rep, 0, u128::MAX).unwrap();
+            session.delta_add(rep, 0, u128::MAX).unwrap();
         }
         RunResult::Completed {
             session,
@@ -903,10 +903,10 @@ fn a_transaction_that_lost_value_aborts_beside_one_that_did_not() {
         if entry.tx == tx(0x01) {
             session.grant_issuance(RESOURCE, ResourceKind::Fungible);
             let minted = session.mint(500).unwrap();
-            session.cell_put(0, minted).unwrap();
+            session.cell_put(0, 0, minted).unwrap();
         } else {
             // A credit with no mint behind it and no bucket to fund it.
-            session.delta_add(0, 500).unwrap();
+            session.delta_add(0, 0, 500).unwrap();
         }
         RunResult::Completed {
             session,
