@@ -6,11 +6,12 @@
 //! mechanism is closed at both ends — one resource says who may move it,
 //! and no holder of it, however written, can decline to be asked.
 //!
-//! Two entries and the difference between them is the whole design.
-//! `Share` grants `withdraw = issued(Registered)`, so a holder
-//! moves it exactly while the register says so — a standing fact about
-//! the mover, read as one leaf under their own prefix, with no proof
-//! presented and nothing about the caller consulted. `Registered` grants
+//! Two resources and the difference between them is the whole design.
+//! `Share` puts both directions of a movement on the register, so it
+//! leaves a holder exactly while the register says so and reaches only
+//! somebody the register admits — standing facts about the two parties,
+//! each read as one leaf under their own prefix, with no proof presented
+//! and nothing about the caller consulted. `Registered` grants
 //! `withdraw = nobody`, so the entry itself can never leave the holder it
 //! was issued to: a credential somebody can hand on is a register
 //! somebody else can join without the registrar.
@@ -52,9 +53,17 @@ pub mod security {
     #[resource(grants(withdraw = nobody), display_digits = 0)]
     struct Registered;
 
-    /// The share class. Movable by a registered holder and nobody else,
-    /// wherever it is held and through whatever package holds it.
-    #[resource(grants(withdraw = issued(Registered)))]
+    /// The share class. Moved by a registered holder to a registered
+    /// holder and by nobody else, wherever it is held and through
+    /// whatever package holds it.
+    ///
+    /// Two entries over one register, and they are two authorizations
+    /// rather than a relation between the parties: neither names the
+    /// other side of the edge, so what each says is that the party whose
+    /// vault moves is on the register. "Alice may send to Bob but not to
+    /// Carol" is not spellable here and belongs to whoever keeps the
+    /// register.
+    #[resource(grants(withdraw = issued(Registered), deposit = issued(Registered)))]
     struct Share;
 
     /// The same issuer's unrestricted class: recallable, and free to

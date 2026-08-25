@@ -1614,7 +1614,12 @@ fn inject_movement_rules(
                 behaviour,
             }),
         })?;
-        frame.conditions.push(resolved);
+        // Two entries can seal one rule — a resource putting both
+        // directions on one register does — and a rule asked twice is
+        // one question wherever the duplicate came from.
+        if !frame.conditions.contains(&resolved) {
+            frame.conditions.push(resolved);
+        }
     }
     Ok(())
 }

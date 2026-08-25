@@ -7,15 +7,15 @@ instantiate() — infallible
       1  write self.config
       2  requires self.resource[self-issued(fungible["registered"]), granting withdraw to nobody] is absent
       3  write self.resource[self-issued(fungible["registered"]), granting withdraw to nobody]
-      4  requires self.resource[self-issued(fungible["share"]), granting withdraw to whoever holds the issuer's "registered" badge] is absent
-      5  write self.resource[self-issued(fungible["share"]), granting withdraw to whoever holds the issuer's "registered" badge]
+      4  requires self.resource[self-issued(fungible["share"]), granting withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge] is absent
+      5  write self.resource[self-issued(fungible["share"]), granting withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge]
       6  requires self.resource[self-issued(fungible["bearer"]), granting recall to configuration field 0] is absent
       7  write self.resource[self-issued(fungible["bearer"]), granting recall to configuration field 0]
   exports  handle for clause 1, handle for clause 3, handle for clause 5, handle for clause 7, self.record
 
 issue(u128) — infallible
-  issues   "share" fungible, granting withdraw to whoever holds the issuer's "registered" badge
-  yields   edge 0 = self-issued(fungible["share"]), granting withdraw to whoever holds the issuer's "registered" badge
+  issues   "share" fungible, granting withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge
+  yields   edge 0 = self-issued(fungible["share"]), granting withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge
   exports  arg0, the issuer
 
 issue-bearer(u128) — infallible

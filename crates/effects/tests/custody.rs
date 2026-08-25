@@ -58,6 +58,22 @@ fn governed() -> ResourceAddr {
     governed_meta().address(&TestHasher)
 }
 
+/// The same shape from the other end: a resource whose entry governs who
+/// may be credited rather than who may debit.
+fn admitting_meta() -> ResourceMeta {
+    let mut rules = ResourceGrants::new();
+    rules.set(
+        GrantedBehaviour::Deposit,
+        sealed(&StoredRule::held(BADGE, Holding::Balance)),
+    );
+    ResourceMeta {
+        namespace: ISSUER,
+        kind: ResourceKind::Fungible,
+        material: vec![b"admitting".to_vec()],
+        rules,
+    }
+}
+
 /// A custodian holding the governed resource, and a second asset beside
 /// it so a movement can happen with no account in the transaction.
 fn custody_world() -> (Records, ComponentAddr) {
@@ -185,7 +201,9 @@ fn a_component_answers_for_its_own_vault() {
 /// bidirectional access has to answer for both, so a resource governing
 /// only withdrawals ends up governing deposits too and the two collapse
 /// into one. A method that says it only receives is asked only what a
-/// recipient is asked.
+/// recipient is asked — which for a withdraw-governed resource is
+/// nothing, and for a deposit-governed one is the recipient's own
+/// credential.
 #[test]
 fn a_credit_is_asked_only_what_a_recipient_is_asked() {
     use hyperscale_vm_effects::vocabulary::VAULT;
@@ -200,8 +218,8 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
             material: vec![resource],
         })
     };
-    let asset = || Expr::Literal(Value::Address(governed().address()));
-    let receiving = |mode: ModeExpr| {
+    let receiving = |asset: ResourceAddr, mode: ModeExpr| {
+        let asset = || Expr::Literal(Value::Address(asset.address()));
         let mut package = PackageMetadata::default();
         package.methods.insert(
             "receive".into(),
@@ -219,16 +237,18 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
         package
     };
 
-    let admitted = |mode: ModeExpr, name: &str| {
+    let admitted = |meta: ResourceMeta, mode: ModeExpr, name: &str| {
         let mut chain = world();
-        chain.packages.publish_unchecked(pkg(name), receiving(mode));
-        let meta = InstanceMeta {
+        chain
+            .packages
+            .publish_unchecked(pkg(name), receiving(meta.address(&TestHasher), mode));
+        let instance = InstanceMeta {
             package: pkg(name),
             config: Vec::new(),
             salt: Hash32([0x5D; 32]),
         };
-        let target = meta.address(&TestHasher);
-        chain.instances.create(&TestHasher, meta);
+        let target = instance.address(&TestHasher);
+        chain.instances.create(&TestHasher, instance);
         let env = EnvelopeTree {
             root: IntentDecl {
                 graph: ManifestGraph {
@@ -244,7 +264,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
             root_bindings: Vec::new(),
             subintents: Vec::new(),
             instances: Vec::new(),
-            resources: vec![governed_meta()],
+            resources: vec![meta],
         };
         let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
             .expect("the receiving method admits");
@@ -262,7 +282,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
 
     // The governed resource grants `Withdraw` and nothing else, so a
     // credit earns no requirement from it at all.
-    let (receiver, credited) = admitted(ModeExpr::Credit, "receiver");
+    let (receiver, credited) = admitted(governed_meta(), ModeExpr::Credit, "receiver");
     assert!(
         !wants_credential(receiver, &credited),
         "a credit is not asked for a withdrawal credential: {credited:?}",
@@ -271,9 +291,28 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
     // The same cell, the same resource, one word different: a
     // bidirectional access has to answer for the debit it might make,
     // so a withdraw-only credential ends up gating the credit too.
-    let (both_ways, both) = admitted(ModeExpr::Delta, "bidirectional");
+    let (both_ways, both) = admitted(governed_meta(), ModeExpr::Delta, "bidirectional");
     assert!(
         wants_credential(both_ways, &both),
         "a delta answers for both directions, so it carries the withdrawal's: {both:?}",
+    );
+
+    // And the mirror. A resource governing who may *receive* asks the
+    // credit and leaves the reservation alone, which is the same
+    // sentence read from the other end: each direction answers for the
+    // movement it makes.
+    let (credited, asked) = admitted(admitting_meta(), ModeExpr::Credit, "recipient");
+    assert!(
+        wants_credential(credited, &asked),
+        "a credit is asked for the deposit credential: {asked:?}",
+    );
+    let (debited, unasked) = admitted(
+        admitting_meta(),
+        ModeExpr::Reserve(Expr::Literal(Value::U128(1))),
+        "sender",
+    );
+    assert!(
+        !wants_credential(debited, &unasked),
+        "and a reservation, which only debits, is not: {unasked:?}",
     );
 }

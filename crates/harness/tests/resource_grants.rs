@@ -13,9 +13,9 @@ use std::sync::LazyLock;
 use hyperscale_vm_effects::{
     EnvelopeTree, GrantedBehaviour, Hasher, Holding, PackageHash, PrefixShardResolver, Presented,
     Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher,
-    admit_tree, holdings_collection, never, route_tree,
+    Totality, admit_tree, holdings_collection, never, route_tree,
 };
-use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
+use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
 use hyperscale_vm_manifest_builder::{EnvelopeBuilder, TypedError};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, account};
@@ -321,6 +321,30 @@ fn a_forbidden_movement_refuses_at_admission() -> Result<()> {
     Ok(())
 }
 
+/// A resource no vault may hold refuses the graph that would file it,
+/// on the same terms and in the other direction.
+///
+/// Whether a resource may come to rest at all is decidable from the
+/// entry, without state and without a body — so the refusal is the
+/// graph's rather than a condition nothing could meet, and the composer
+/// hears it before a fee is assured. What it leaves reachable is
+/// everything a transient obligation is made of: minted, carried across
+/// an edge, and consumed inside the transaction that made it.
+#[test]
+fn a_resource_no_vault_may_hold_refuses_at_admission() -> Result<()> {
+    let tree = admitted_tree(sealed(&never()), STRANGER)?;
+    let identity = tree.hash(&TestHasher);
+    let chain = world();
+    let refusal = admit_tree(&tree, HOLDER, identity, &chain, &TestHasher)
+        .expect_err("a credit the entry forbids is refused");
+    let said = refusal.to_string();
+    assert!(
+        said.contains("grants Deposit to nobody"),
+        "the refusal names the direction it refused, not the other one: {said}"
+    );
+    Ok(())
+}
+
 /// A withdrawal credential governs withdrawals, and leaves receiving
 /// alone.
 ///
@@ -485,4 +509,109 @@ fn a_credential_naming_an_instance_admits_its_holder_alone() -> Result<()> {
     );
     assert_eq!(amount_of(&end, vault(HOLDER, governed(entry))), 100);
     Ok(())
+}
+
+/// A resource whose entry governs who may be credited rather than who
+/// may debit.
+fn admitting_meta(entry: RuleBytes) -> ResourceMeta {
+    let mut rules = ResourceGrants::new();
+    rules.set(GrantedBehaviour::Deposit, entry);
+    ResourceMeta {
+        namespace: MINTER,
+        kind: ResourceKind::Fungible,
+        material: vec![b"admitting".to_vec()],
+        rules,
+    }
+}
+
+fn admitting(entry: RuleBytes) -> ResourceAddr {
+    admitting_meta(entry).address(&TestHasher)
+}
+
+/// [`HOLDER`] sends the deposit-governed resource to `recipient`, in the
+/// same ordinary transfer a package that declared nothing composes.
+fn admitted_tree(entry: RuleBytes, recipient: PrincipalAddr) -> Result<EnvelopeTree> {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let build = |b: &mut _| -> std::result::Result<(), TypedError> {
+        let caller = account::authorize(b, HOLDER)?;
+        let funds = account::withdraw(b, caller, admitting(entry.clone()), 40)?;
+        account::deposit(b, recipient, funds)
+    };
+    build(&mut root).context("the transfer types against the account")?;
+    env.resource(admitting_meta(entry));
+    env.seal(root).context("the root grants")?;
+    env.build().context("the tree builds")
+}
+
+/// A deposit credential governs the crediting side, and a transfer to a
+/// party who does not hold it writes nothing under them.
+///
+/// The half of the seam that cannot be a gate. A credit lands on
+/// `deposit`, which is `#[total]` and may turn no caller away, so the
+/// requirement is a fact about the recipient judged against committed
+/// state before any body runs — and the transfer aborts whole rather
+/// than landing somewhere for an issuer to sweep afterwards. The sender
+/// is charged, which is right: they built a transfer to somebody who
+/// cannot receive.
+#[test]
+fn a_deposit_credential_governs_who_may_be_credited() -> Result<()> {
+    let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
+    let asset = admitting(entry.clone());
+
+    // The recipient is on the register.
+    let mut store = MemoryStore::new();
+    seed_vault(&mut store, HOLDER, asset, 100);
+    seed_vault(&mut store, STRANGER, BADGE, 1);
+    let sent = batch_entry(&admitted_tree(entry.clone(), STRANGER)?, HOLDER)?;
+    let (outcome, end) = run(&store, std::slice::from_ref(&sent));
+    assert!(
+        matches!(
+            outcome.receipts[&sent.tx].outcome,
+            Outcome::Completed { .. }
+        ),
+        "a credited holder of the credential receives: {:?}",
+        outcome.receipts[&sent.tx].outcome,
+    );
+    assert_eq!(amount_of(&end, vault(STRANGER, asset)), 40);
+
+    // And is not.
+    let mut store = MemoryStore::new();
+    seed_vault(&mut store, HOLDER, asset, 100);
+    let refused = batch_entry(&admitted_tree(entry, STRANGER)?, HOLDER)?;
+    let (outcome, end) = run(&store, std::slice::from_ref(&refused));
+    assert_eq!(
+        outcome.receipts[&refused.tx].outcome,
+        Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(vault(STRANGER, BADGE)),
+                required: Presence::Present,
+            }
+        },
+        "the recipient's own credential is what the credit is asked for",
+    );
+    assert!(
+        !cells(&end)
+            .keys()
+            .any(|key| key.owner == STRANGER.address()),
+        "and nothing lands under them: no leaf, no quarantine, nothing to sweep",
+    );
+    assert_eq!(amount_of(&end, vault(HOLDER, asset)), 100);
+    Ok(())
+}
+
+/// Injection does not unmake a total method.
+///
+/// `deposit` carries a condition it never declared, and stays the method
+/// whose mark says it turns no caller away — because a condition is
+/// judged against committed state before the body runs, where a gate
+/// would refuse a caller for presenting a proof the manifest never
+/// showed them was wanted.
+#[test]
+fn a_credit_requirement_leaves_the_total_mark_standing() {
+    assert_eq!(
+        account::metadata().methods["deposit"].totality,
+        Totality::Total,
+        "the account's deposit is total, and injection is what it has to survive",
+    );
 }
