@@ -42,7 +42,7 @@ use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
 use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleExpr, RuleLeaf, always, never};
 use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, Totality};
 use crate::types::{EdgeContent, SlotId, Value, u256_decimal};
-use crate::vocabulary::{AUTH, CLAIMS, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
+use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 
 /// The whole package: its tables, then every method it declares.
 #[must_use]
@@ -556,7 +556,6 @@ impl Names<'_> {
     fn slot(&self, slot: SlotId) -> String {
         let vocabulary = match slot {
             VAULT => Some("vault"),
-            CLAIMS => Some("claims"),
             HALT => Some("halt"),
             CONFIG => Some("config"),
             AUTH => Some("auth"),

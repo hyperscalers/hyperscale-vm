@@ -110,22 +110,24 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
     };
     let open = Vec::new;
     vec![
+        // Where a resource lands is the holder's own choice, so setting
+        // it takes the same gate spending does; retiring and being paid
+        // take none, because what may happen there is the resource's
+        // answer rather than this package's.
+        ("account", "accept", this(), vec![]),
         (
             "account",
             "authorize",
             governs(auth_cell()),
             vec![Expr::SelfAddr],
         ),
-        // Retiring is ungated for the reason being paid is: what may
-        // happen is the resource's own entry's answer, injected at
-        // admission, and a gate written here would be a second opinion.
         ("account", "burn", open(), vec![]),
         ("account", "burn-nf", open(), vec![]),
-        ("account", "cancel", governs(own_cell(0)), vec![]),
-        ("account", "confirm", governs(own_cell(1)), vec![]),
+        ("account", "cancel", governs(own_cell(2)), vec![]),
+        ("account", "confirm", governs(own_cell(3)), vec![]),
         ("account", "deposit", open(), vec![]),
         ("account", "deposit-nf", open(), vec![]),
-        ("account", "freeze", governs(own_cell(0)), vec![]),
+        ("account", "freeze", governs(own_cell(2)), vec![]),
         (
             "account",
             "present-badge",
@@ -142,7 +144,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         // whoever wants a replacement enacted is whoever proposed it, and
         // it is a node in their own transaction.
         ("account", "promote", open(), vec![]),
-        ("account", "propose", governs(own_cell(0)), vec![]),
+        ("account", "propose", governs(own_cell(2)), vec![]),
         (
             "account",
             "recall",
@@ -152,7 +154,9 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
             })],
             vec![],
         ),
+        ("account", "refuse", this(), vec![]),
         ("account", "securify", this(), vec![]),
+        ("account", "sweep", this(), vec![]),
         ("account", "withdraw", this(), vec![]),
         ("account", "withdraw-nf", this(), vec![]),
         ("amm", "add-liquidity", open(), vec![]),

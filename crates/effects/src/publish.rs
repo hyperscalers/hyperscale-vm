@@ -24,7 +24,7 @@ use crate::signature::{AbiParam, Issuance, MAX_ISSUANCES_PER_SIGNATURE, MethodSi
 use crate::types::{
     MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId, Value, value_within_width,
 };
-use crate::vocabulary::{AUTH, CLAIMS, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
+use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
 
 /// Why a signature is refused at publish: the composed verdict of every
@@ -896,20 +896,6 @@ fn vocabulary_shape(
                 ),
             "holds a fungible balance: one leaf, keyed by the resource it holds, \
              denominated in that resource",
-        ),
-        CLAIMS => (
-            point
-                && keyed_by_what_it_holds
-                && matches!(
-                    mode,
-                    ModeExpr::Read
-                        | ModeExpr::Write
-                        | ModeExpr::Delta
-                        | ModeExpr::Credit
-                        | ModeExpr::Reserve(_)
-                ),
-            "is the delivery fallback beside a vault, and holds value on the same \
-             terms: one leaf, keyed by the resource it holds and denominated in it",
         ),
         // Instances are a quantity too, and the interval they sit in is
         // the holdings of exactly one resource.
@@ -3043,7 +3029,7 @@ mod tests {
     fn a_mint_no_condition_justifies_is_refused() {
         let auth_cell = || Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            slot: SlotId(4),
+            slot: AUTH,
             material: vec![],
         };
         let read = |target| Clause::Effect {
@@ -3818,12 +3804,11 @@ mod tests {
             ModeExpr::Delta,
             ModeExpr::Reserve(Expr::Arg(0)),
         ];
-        // A vault and the delivery cell beside it are keyed by the
-        // resource they hold and say so in every mode they are reached
-        // in — a read included, because a read of a cell that says
-        // nothing is a read of bytes, and a vault has no byte surface
-        // for one to come through.
-        for slot in [VAULT, CLAIMS] {
+        // A vault is keyed by the resource it holds and says so in
+        // every mode it is reached in — a read included, because a read
+        // of a cell that says nothing is a read of bytes, and a vault
+        // has no byte surface for one to come through.
+        for slot in [VAULT] {
             for mode in moves.clone() {
                 let keyed = || own_point(slot, vec![a_resource()]);
                 assert_eq!(
@@ -4340,9 +4325,7 @@ mod tests {
             ..MethodSignature::default()
         };
         // Everything below the base the vocabulary has not spoken for.
-        let assigned = [
-            VAULT, CLAIMS, CONFIG, AUTH, RESOURCE, NF_VAULT, INSTANCE, HALT,
-        ];
+        let assigned = [VAULT, CONFIG, AUTH, RESOURCE, NF_VAULT, INSTANCE, HALT];
         for slot in (0..PACKAGE_SLOT_BASE).map(SlotId) {
             if assigned.contains(&slot) {
                 continue;

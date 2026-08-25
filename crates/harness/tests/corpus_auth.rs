@@ -242,9 +242,9 @@ fn seed_authority(
     delay_ms: u64,
 ) {
     store.write(auth(owner), governing.in_cell());
-    store.write(own_cell(owner, 0), replaces.in_cell());
-    store.write(own_cell(owner, 1), enacts.in_cell());
-    store.write(own_cell(owner, 3), delay_ms.to_le_bytes().to_vec());
+    store.write(own_cell(owner, 2), replaces.in_cell());
+    store.write(own_cell(owner, 3), enacts.in_cell());
+    store.write(own_cell(owner, 5), delay_ms.to_le_bytes().to_vec());
 }
 
 /// The replacement `owner` has waiting, as the account writes it.
@@ -255,7 +255,7 @@ fn seed_pending(store: &mut MemoryStore, owner: PrincipalAddr, at_ms: u64, rule:
         recovery: rule.clone(),
         confirmation: rule.clone(),
     };
-    store.write(own_cell(owner, 2), account::encode_pending(&pending));
+    store.write(own_cell(owner, 4), account::encode_pending(&pending));
 }
 
 /// The rule nobody satisfies, as a freeze writes it.
@@ -280,9 +280,9 @@ fn recovered_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
     store.write(auth(ALICE), rule_of(ALICE).in_cell());
-    store.write(own_cell(ALICE, 0), rule_of(BOB).in_cell());
-    store.write(own_cell(ALICE, 1), rule_of(MAKER).in_cell());
-    store.write(own_cell(ALICE, 3), DAY_MS.to_le_bytes().to_vec());
+    store.write(own_cell(ALICE, 2), rule_of(BOB).in_cell());
+    store.write(own_cell(ALICE, 3), rule_of(MAKER).in_cell());
+    store.write(own_cell(ALICE, 5), DAY_MS.to_le_bytes().to_vec());
     store
 }
 
@@ -372,8 +372,8 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     let mut waiting = MemoryStore::new();
     seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &rule_of(BOB));
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 2)),
-        Some(&waiting.cell(own_cell(ALICE, 2))),
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&waiting.cell(own_cell(ALICE, 4))),
         "the guest's spliced frame is the codec's encoding, byte for byte"
     );
     assert_eq!(
@@ -480,7 +480,7 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
         "the governing rule is exactly what securify wrote"
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
         Some(&Some(Vec::new())),
         "and what a cancel leaves is no replacement at all"
     );
@@ -627,7 +627,7 @@ fn a_freeze_keeps_the_proposal_it_finds_pending() {
         "the freeze closes the governing rule"
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
         None,
         "and leaves the replacement waiting exactly where it was"
     );
@@ -911,8 +911,8 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     let mut replaced = MemoryStore::new();
     seed_pending(&mut replaced, ALICE, later + DAY_MS, &rule_of(MAKER));
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 2)),
-        Some(&replaced.cell(own_cell(ALICE, 2))),
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&replaced.cell(own_cell(ALICE, 4))),
         "one replacement waiting, restarted from the replacing clock"
     );
 

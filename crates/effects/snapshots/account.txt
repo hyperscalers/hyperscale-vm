@@ -1,8 +1,10 @@
 state
-     16  recovery — one leaf, holding [u8]
-     17  confirmation — one leaf, holding [u8]
-     18  pending — one leaf, holding pending
-     19  delay_ms — one leaf, holding u64
+     16  refused — a leaf per key, holding [u8; 1]
+     17  quarantine — a leaf per key, holding u128
+     18  recovery — one leaf, holding [u8]
+     19  confirmation — one leaf, holding [u8]
+     20  pending — one leaf, holding pending
+     21  delay_ms — one leaf, holding u64
 events
       0  withdrawn
       1  deposited
@@ -10,6 +12,12 @@ types
   deposited = { amount: u128 }
   pending = { effective_at_ms: u64, primary: [u8], recovery: [u8], confirmation: [u8] }
   withdrawn = { amount: u128 }
+
+accept(resource-address) — infallible
+  declares
+      0  requires claim self
+      1  write self.refused[arg0]
+  exports  handle for clause 1
 
 authorize() — infallible
   declares
@@ -43,9 +51,10 @@ confirm() — infallible
 
 deposit(bucket) — total
   declares
-      0  credit self.claims[resource-of(arg0)] holding resource-of(arg0)
+      0  read self.refused[resource-of(arg0)]
       1  credit self.vault[resource-of(arg0)] holding resource-of(arg0)
-  exports  handle for clause 1, edge arg0
+      2  credit self.quarantine[resource-of(arg0)] holding resource-of(arg0)
+  exports  handle for clause 0, handle for clause 1, handle for clause 2, edge arg0
 
 deposit-nf(nf-bucket) — infallible
   declares
@@ -98,6 +107,12 @@ recall(resource-address, u128) — infallible
   yields   edge 0 = arg0
   exports  handle for clause 1, arg1
 
+refuse(resource-address) — infallible
+  declares
+      0  requires claim self
+      1  write self.refused[arg0]
+  exports  handle for clause 1
+
 securify(rule, rule, rule, u64) — infallible
   declares
       0  requires claim self
@@ -107,6 +122,13 @@ securify(rule, rule, rule, u64) — infallible
       4  write self.confirmation
       5  write self.delay_ms
   exports  handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, arg0, arg1, arg2, arg3
+
+sweep(resource-address, u128) — infallible
+  declares
+      0  requires claim self
+      1  reserve arg1 self.quarantine[arg0] holding arg0
+  yields   edge 0 = arg0
+  exports  handle for clause 1
 
 withdraw(resource-address, u128) — infallible
   declares

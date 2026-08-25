@@ -4,12 +4,12 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
-use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG};
+use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
     EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash,
     PrefixShardResolver, Presented, Records, Routing, RuleBytes, ShardId, ShardResolver, SlotId,
     StarShape, StoredRule, TestHasher, Value, admit, child_key, classify as classify_star,
-    collection_id, route,
+    collection_id, package_slot, route,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
 use hyperscale_vm_harness::driver::{Lanes, test_hash};
@@ -70,11 +70,23 @@ pub fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
 }
 
-pub fn claims(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
+/// The account's own quarantine vault for a resource — its second
+/// declared slot, and a package's cell rather than the protocol's.
+pub fn quarantine(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
     child_key(
         &TestHasher,
         owner,
-        CLAIMS,
+        package_slot(1),
+        &[Value::Address(resource.into()).canonical_bytes()],
+    )
+}
+
+/// The flag saying this account sends the resource there instead.
+pub fn refused(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
+    child_key(
+        &TestHasher,
+        owner,
+        package_slot(0),
         &[Value::Address(resource.into()).canonical_bytes()],
     )
 }

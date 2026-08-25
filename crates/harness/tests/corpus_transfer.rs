@@ -4,10 +4,11 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_effects::vocabulary::{CLAIMS, VAULT};
+use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     AbiParam, Clause, Constraint, Expr, Hash32, InstanceMeta, ManifestGraph, MethodSignature,
-    ModeExpr, PackageMetadata, ParamType, ShardId, SlotId, TargetExpr, TestHasher, Totality,
+    ModeExpr, PackageMetadata, ParamType, ShardId, SlotId, TargetExpr, TestHasher, Totality, Value,
+    child_key, package_slot,
 };
 use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
@@ -15,7 +16,9 @@ use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::check_method;
 use hyperscale_vm_stdlib::account;
-use hyperscale_vm_types::{EffectSet, EffectTarget, Event, Mode, Outcome, TxHash, encode_amount};
+use hyperscale_vm_types::{
+    Address, EffectSet, EffectTarget, Event, Mode, Outcome, SubstateKey, TxHash, encode_amount,
+};
 use wasmtime::Result;
 
 mod common;
@@ -39,7 +42,29 @@ fn mirror_meta() -> InstanceMeta {
 /// about the resulting call can come from a table of known method names,
 /// and nothing can come from a convention that a method's first clause is
 /// its first handle: if either were true the credit would land on the
-/// claims cell instead of the vault.
+/// decoy cell instead of the vault.
+/// The flag the borrowed body reads before it picks a destination. Its
+/// contents do not matter here — an absent cell reads as "not refused",
+/// which is the path the case is about.
+const FLAG: SlotId = package_slot(0);
+
+/// The mirror's own second slot, which is where the unbound clause lands.
+///
+/// A package's own rather than the protocol's: what the case is about is
+/// that the *named* clause takes the handle, so the decoy only has to be
+/// a second value cell somewhere this package could put one.
+const DECOY: SlotId = package_slot(1);
+
+/// The decoy leaf under `owner`, keyed by what it would have held.
+fn decoy(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
+    child_key(
+        &TestHasher,
+        owner,
+        DECOY,
+        &[Value::Address(resource.into()).canonical_bytes()],
+    )
+}
+
 fn mirror_metadata() -> PackageMetadata {
     let self_child = |slot: SlotId, material: Vec<Expr>| Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
@@ -53,12 +78,28 @@ fn mirror_metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Bucket],
-            abi: vec![AbiParam::Handle { clause: 1, site: 0 }, AbiParam::Bucket(0)],
+            // The bindings name clauses out of order on purpose: the
+            // export's second site is what the body credits, and this
+            // says that site is clause 2. If a handle resolved by
+            // position the credit would land on the decoy instead.
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Handle { clause: 2, site: 0 },
+                AbiParam::Handle { clause: 1, site: 0 },
+                AbiParam::Bucket(0),
+            ],
             effects: vec![
                 Clause::Effect {
                     reach: None,
                     guard: None,
-                    target: TargetExpr::Point(self_child(CLAIMS, vec![resource_of_arg0()])),
+                    target: TargetExpr::Point(self_child(FLAG, vec![resource_of_arg0()])),
+                    mode: ModeExpr::Read,
+                    denomination: None,
+                },
+                Clause::Effect {
+                    reach: None,
+                    guard: None,
+                    target: TargetExpr::Point(self_child(DECOY, vec![resource_of_arg0()])),
                     mode: ModeExpr::Delta,
                     denomination: Some(Box::new(resource_of_arg0())),
                 },
@@ -112,7 +153,7 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() {
         "the bound clause's cell takes the credit"
     );
     assert!(
-        receipt.delta.movements.get(&claims(dana, RES_X)).is_none(),
+        receipt.delta.movements.get(&decoy(dana, RES_X)).is_none(),
         "the unbound clause is declared and untouched"
     );
 }
@@ -197,24 +238,27 @@ fn transfer_profile_and_provision_shape_are_exact() {
                 // deposit that answered for a debit would be asked for
                 // the sender's credential as well as its own.
                 point(vault(BOB, RES_X), Mode::Credit),
-                point(claims(BOB, RES_X), Mode::Credit),
+                point(quarantine(BOB, RES_X), Mode::Credit),
+                point(refused(BOB, RES_X), Mode::Read),
             ]),
         ),
     ]);
     assert_eq!(routing.per_shard, expected);
 
     // The acceptance test, executable: the balance movement stays
-    // commutative on both sides, and what provisions is exactly the
-    // sender's rule cell — absent for a virtual account, and the read
-    // is what carries that absence to the counterpart.
+    // commutative on both sides — both credits and one reservation, and
+    // no read of a balance anywhere. What provisions is one leaf per
+    // side and neither is a balance: the sender's rule cell, absent for
+    // a virtual account, where the read is what carries that absence to
+    // the counterpart; and the recipient's own flag, which is what lets
+    // a deposit pick a destination without ever refusing one.
     assert_eq!(
         routing.per_shard[&shard_of(ALICE)].provision_targets(),
         std::iter::once(EffectTarget::Point(auth(ALICE))).collect()
     );
-    assert!(
-        routing.per_shard[&shard_of(BOB)]
-            .provision_targets()
-            .is_empty()
+    assert_eq!(
+        routing.per_shard[&shard_of(BOB)].provision_targets(),
+        std::iter::once(EffectTarget::Point(refused(BOB, RES_X))).collect()
     );
 }
 

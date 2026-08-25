@@ -85,7 +85,7 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/aliased_slot.rs");
     refuse.compile_fail("tests/refusals/denominated_slot.rs");
     refuse.compile_fail("tests/refusals/mixed_pinning.rs");
-    refuse.compile_fail("tests/refusals/claims_cell.rs");
+    refuse.compile_fail("tests/refusals/protocol_slot.rs");
     refuse.compile_fail("tests/refusals/mode_mix.rs");
     refuse.compile_fail("tests/refusals/presence_mix.rs");
     refuse.compile_fail("tests/refusals/reassigned_key.rs");

@@ -117,11 +117,18 @@ fn swap_profile_and_provision_shape_are_exact() {
         .into_iter()
         .collect()
     );
-    // The user's side provisions exactly the sign-in's rule cell; her
-    // balance movement stays commutative.
+    // The user's side provisions the sign-in's rule cell and the flag
+    // her deposit reads to pick a destination; her balance movement
+    // stays commutative, which is what the credits say and what the
+    // reads beside them do not change.
     assert_eq!(
         routing.per_shard[&shard_of(ALICE)].provision_targets(),
-        std::iter::once(EffectTarget::Point(auth(ALICE))).collect()
+        [
+            EffectTarget::Point(auth(ALICE)),
+            EffectTarget::Point(refused(ALICE, RES_Y)),
+        ]
+        .into_iter()
+        .collect()
     );
 }
 

@@ -1,0 +1,5 @@
+error: slot 1 is the protocol's own — a fungible balance cell, reached by `vault(resource)` — and every owner has it already. A package's own slots start at 16 and are numbered by declaration order, so this field needs no slot at all
+  --> tests/refusals/protocol_slot.rs:15:9
+   |
+15 |         #[slot(1)]
+   |         ^

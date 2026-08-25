@@ -27,8 +27,8 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
-    SubstateKey,
+    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, PrincipalAddr,
+    ResourceAddr, SubstateKey,
 };
 
 /// The badge the governed resource's withdraw entry names.
@@ -128,6 +128,42 @@ fn credential(owner: impl Into<Address>) -> SubstateKey {
         VAULT,
         &[Value::Address(BADGE.address()).canonical_bytes()],
     )
+}
+
+/// The custodian paying `holder`, so the value lands in an account —
+/// which keeps two families of vaults rather than one.
+fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
+    EnvelopeTree {
+        root: IntentDecl {
+            graph: ManifestGraph {
+                nodes: vec![
+                    GraphNode {
+                        target: custodian.into(),
+                        method: "withdraw".into(),
+                        args: vec![GraphArg::Literal(Value::U128(40))],
+                        evidence: BTreeSet::default(),
+                    },
+                    GraphNode {
+                        target: holder.into(),
+                        method: "deposit".into(),
+                        args: vec![GraphArg::Edge {
+                            edge: EdgeRef {
+                                producer: 0,
+                                output: 0,
+                            },
+                            constraints: Vec::new(),
+                        }],
+                        evidence: BTreeSet::default(),
+                    },
+                ],
+            },
+            params: Vec::new(),
+        },
+        root_bindings: Vec::new(),
+        subintents: Vec::new(),
+        instances: Vec::new(),
+        resources: Vec::new(),
+    }
 }
 
 /// A round trip through the custodian's own vault and back into it.
@@ -261,6 +297,62 @@ fn a_halt_binds_the_component_holding_the_value() {
             mode: Mode::Read,
         }),
         "and the leaf is provisioned by the same declaration that requires it",
+    );
+}
+
+/// A halt is keyed by the holder and the resource, never by the slot —
+/// so it covers every cell that holder keeps the resource in.
+///
+/// The property the fence rests on. If the flag were per-slot, a holder
+/// would keep a second family of vaults at a second slot and carry on
+/// moving. An account is exactly such a holder: its deposit reaches its
+/// protocol vault and its own quarantine, two families at two slots, and
+/// both answer to the one leaf.
+#[test]
+fn a_halt_covers_every_slot_the_holder_keeps_the_resource_in() {
+    let (chain, custodian) = custody_world_over(freezable());
+    let mut env = paid_out(custodian, ALICE);
+    env.resources = vec![freezable_meta()];
+    let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
+        .expect("the payout admits");
+    let declaration = admitted.admitted.declaration();
+
+    // Two of the recipient's own cells take the value, at two different
+    // slots — which is the shape that would defeat a per-slot flag.
+    let landed: BTreeSet<EffectTarget> = declaration
+        .ordered
+        .iter()
+        .filter(|access| {
+            access.holds == Some(freezable()) && access.effect.target.owner() == ALICE.address()
+        })
+        .map(|access| access.effect.target)
+        .collect();
+    assert_eq!(
+        landed.len(),
+        2,
+        "a deposit reaches the vault and the quarantine"
+    );
+
+    // And one leaf answers for all of them.
+    let asked: BTreeSet<EffectTarget> = declaration
+        .conditions
+        .iter()
+        .flat_map(Rule::leaves)
+        .filter_map(|leaf| match leaf {
+            JudgedLeaf::Presence { target, .. } => Some(*target),
+            _ => None,
+        })
+        .filter(|target| target.owner() == ALICE.address())
+        .collect();
+    assert_eq!(
+        asked,
+        BTreeSet::from([EffectTarget::Point(child_key(
+            &TestHasher,
+            ALICE,
+            HALT,
+            &[Value::Address(freezable().address()).canonical_bytes()],
+        ))]),
+        "one flag answers for the holder, whatever slot they keep it at",
     );
 }
 

@@ -16,7 +16,7 @@
 //! elsewhere in the workspace means the SDK's output inherits every one of
 //! those tests without restating them.
 
-use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, RESOURCE, VAULT};
+use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, RESOURCE, VAULT};
 use hyperscale_vm_effects::{PACKAGE_SLOT_BASE, PackageMetadata, ParamType, SlotId};
 use hyperscale_vm_fixtures::{amm as amm_package, book as book_package};
 use hyperscale_vm_sdk::sym::{
@@ -69,6 +69,42 @@ fn account() -> Blueprint {
                 t.output(&resource);
             },
         )
+        // Where a resource lands is the holder's own choice, and setting
+        // it takes the same gate spending does — one write of the flag
+        // the deposit reads.
+        .method("accept", &[ParamType::Resource], |t: &mut Trace| {
+            let resource: Sym<Addr> = t.arg(0);
+            let holder = t.self_addr();
+            let rule = t.claim(&holder);
+            t.guarded_by(rule);
+            t.point(&holder.child(own(0), &[resource.cast()])).write();
+            t.bind_handle();
+        })
+        .method("refuse", &[ParamType::Resource], |t: &mut Trace| {
+            let resource: Sym<Addr> = t.arg(0);
+            let holder = t.self_addr();
+            let rule = t.claim(&holder);
+            t.guarded_by(rule);
+            t.point(&holder.child(own(0), &[resource.cast()])).write();
+            t.bind_handle();
+        })
+        // And taking it back out is the holder's alone, on `withdraw`'s
+        // terms: what sits there is theirs and was only ever put aside.
+        .method(
+            "sweep",
+            &[ParamType::Resource, ParamType::U128],
+            |t: &mut Trace| {
+                let resource: Sym<Addr> = t.arg(0);
+                let amount: Sym<U128> = t.arg(1);
+                let holder = t.self_addr();
+                let rule = t.claim(&holder);
+                t.guarded_by(rule);
+                let cell = holder.child(own(1), &[resource.clone().cast()]);
+                t.point(&cell).holding(&resource).reserve(&amount);
+                t.bind_handle();
+                t.output(&resource);
+            },
+        )
         // Retiring what a caller hands over: the resource is the edge's,
         // so the declaration names the parameter and nothing else — the
         // entry that admits it is that resource's own and is injected
@@ -86,18 +122,20 @@ fn account() -> Blueprint {
             let resource = funds.resource();
             let holder = t.self_addr();
 
-            // The guaranteed-delivery fallback and the vault beside it,
-            // both keyed by the arriving bucket's resource. The fallback
-            // is declared first because the body states it first: the
-            // credit consumes the edge, so it comes after every read of
-            // what the edge carries.
-            let claims = holder.child(CLAIMS, &[resource.clone().cast()]);
+            // The flag first, because the body reads it before it picks
+            // a destination — and both destinations after it, because a
+            // total method materializes every handle it declares or
+            // none, so which one the body fills is not the
+            // declaration's business.
+            let refused = holder.child(own(0), &[resource.clone().cast()]);
             let vault = holder.child(VAULT, &[resource.clone().cast()]);
+            let quarantine = holder.child(own(1), &[resource.clone().cast()]);
+            t.point(&refused).read();
             // Both credits: a deposit only ever pays in, and saying so is
             // what keeps a resource governing withdrawals from asking
             // this method for a withdrawal credential.
-            t.point(&claims).holding(&resource).credit();
             t.point(&vault).holding(&resource).credit();
+            t.point(&quarantine).holding(&resource).credit();
         })
         // The sign-in's whole body is its gate's read: the cell the
         // account's stored rule lives in.
@@ -125,9 +163,9 @@ fn account() -> Blueprint {
                 let rule = t.claim(&holder);
                 t.guarded_by(rule);
                 t.point(&holder.child(AUTH, &[])).create();
-                t.point(&holder.child(own(0), &[])).write();
-                t.point(&holder.child(own(1), &[])).write();
+                t.point(&holder.child(own(2), &[])).write();
                 t.point(&holder.child(own(3), &[])).write();
+                t.point(&holder.child(own(5), &[])).write();
             },
         )
         .method(
@@ -135,36 +173,36 @@ fn account() -> Blueprint {
             &[ParamType::Rule, ParamType::Rule, ParamType::Rule],
             |t: &mut Trace| {
                 let holder = t.self_addr();
-                t.point(&holder.child(own(0), &[])).read();
+                t.point(&holder.child(own(2), &[])).read();
                 t.governed_by();
-                t.point(&holder.child(own(3), &[])).read();
-                t.point(&holder.child(own(2), &[])).write();
+                t.point(&holder.child(own(5), &[])).read();
+                t.point(&holder.child(own(4), &[])).write();
             },
         )
         .method("promote", &[], |t: &mut Trace| {
             let holder = t.self_addr();
-            t.point(&holder.child(own(2), &[])).write();
+            t.point(&holder.child(own(4), &[])).write();
             t.point(&holder.child(AUTH, &[])).write();
-            t.point(&holder.child(own(0), &[])).write();
-            t.point(&holder.child(own(1), &[])).write();
+            t.point(&holder.child(own(2), &[])).write();
+            t.point(&holder.child(own(3), &[])).write();
         })
         .method("cancel", &[], |t: &mut Trace| {
             let holder = t.self_addr();
-            t.point(&holder.child(own(0), &[])).read();
+            t.point(&holder.child(own(2), &[])).read();
             t.governed_by();
-            t.point(&holder.child(own(2), &[])).write();
+            t.point(&holder.child(own(4), &[])).write();
         })
         .method("confirm", &[], |t: &mut Trace| {
             let holder = t.self_addr();
-            t.point(&holder.child(own(2), &[])).write();
+            t.point(&holder.child(own(4), &[])).write();
             t.point(&holder.child(AUTH, &[])).write();
-            t.point(&holder.child(own(0), &[])).write();
-            t.point(&holder.child(own(1), &[])).write();
-            t.governed_by_what_it_writes(own(1));
+            t.point(&holder.child(own(2), &[])).write();
+            t.point(&holder.child(own(3), &[])).write();
+            t.governed_by_what_it_writes(own(3));
         })
         .method("freeze", &[], |t: &mut Trace| {
             let holder = t.self_addr();
-            t.point(&holder.child(own(0), &[])).read();
+            t.point(&holder.child(own(2), &[])).read();
             t.governed_by();
             t.point(&holder.child(AUTH, &[])).write();
         })
@@ -448,7 +486,7 @@ fn every_authored_role_is_reachable_from_the_sdk() {
     // are silently covering less than they read as covering. A package
     // traced from its own module needs no entry — there is no second
     // declaration left to cover.
-    let named = [VAULT, CLAIMS, CONFIG, book_package::ASKS];
+    let named = [VAULT, CONFIG, own(1), book_package::ASKS];
     assert_eq!(
         named.len(),
         4,

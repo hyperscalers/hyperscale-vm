@@ -105,9 +105,7 @@ mod wit;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::vocabulary::{
-    AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT,
-};
+use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use hyperscale_vm_effects::{
     MAX_RULE_DEPTH, PACKAGE_SLOT_BASE, ResourceKind, Rule, SlotId, well_formed,
 };
@@ -371,23 +369,22 @@ fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
 /// their keys without consulting any metadata, so they are reached by
 /// accessor and declared by nobody. A field that lands on one is a
 /// package putting its own value where a protocol read will look for
-/// something else — and the shape is no defence, because `VAULT` and
-/// `CLAIMS` are both a keyed vault, so the band check could see nothing
-/// in a misnumbered pool side to disagree with. Refusing the band
-/// outright is what makes the claims cell unreachable except through
-/// `claims()`.
+/// something else — and the shape is no defence, because a package's own
+/// keyed vault is the same shape as the protocol's, so the band check
+/// would find nothing in a misnumbered pool side to disagree with.
+/// Refusing the band outright is what makes the difference legible.
 fn protocol_band(slot: u16) -> Result<(), String> {
     if slot >= PACKAGE_SLOT_BASE {
         return Ok(());
     }
     let cell = match SlotId(slot) {
         VAULT => "a fungible balance cell, reached by `vault(resource)`",
-        CLAIMS => "the delivery fallback beside a vault, reached by `claims(resource)`",
         CONFIG => "the creation-fixed configuration leaf, reached by `config()`",
         AUTH => "the stored authority cell, reached by `auth()`",
         RESOURCE => "a resource's record under its issuer",
         NF_VAULT => "a holder's non-fungible instances, reached by `holdings(resource)`",
         INSTANCE => "a non-fungible instance's data",
+        HALT => "a holder's halt flag, written by an issuer the resource admits",
         _ => "unassigned",
     };
     Err(format!(
@@ -1071,13 +1068,6 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
     };
     let mut cells = BTreeMap::from([
         ("vault".to_owned(), vault()),
-        (
-            "claims".to_owned(),
-            Field {
-                slot: CLAIMS.0,
-                ..vault()
-            },
-        ),
         (
             "holdings".to_owned(),
             Field {

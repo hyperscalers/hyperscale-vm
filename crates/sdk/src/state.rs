@@ -488,12 +488,21 @@ impl LeafShape for bool {
 /// through this impl, and is a defect in state on the same terms a
 /// malformed address is.
 impl Cellular for bool {
+    /// Total over any bytes, which is the one scalar decode that is.
+    ///
+    /// Every other cell type traps on bytes it cannot mean, and that is
+    /// right for one the kernel builds: a malformed address is a defect
+    /// and the trap is the deterministic answer to it. A boolean cell is
+    /// written only by a body's own [`to_cell`](Cellular::to_cell), so
+    /// the bytes it could not mean are that package's own bug — and
+    /// trapping on them would cost the vocabulary something it needs
+    /// more, since a `#[total]` method may not trap and would therefore
+    /// be unable to read a stored flag at all.
+    ///
+    /// So the reading is a widening rather than a check: absent and zero
+    /// are false, anything else is true.
     fn from_cell(cell: &[u8]) -> Self {
-        match cell {
-            [] | [0] => false,
-            [1] => true,
-            other => panic!("a boolean cell holds one of two bytes, not {other:?}"),
-        }
+        cell.first().is_some_and(|byte| *byte != 0)
     }
 
     fn to_cell(&self) -> Vec<u8> {

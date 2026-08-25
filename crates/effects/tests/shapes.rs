@@ -8,8 +8,8 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 
 use common::{
-    ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, auth, book, claims, config_leaf,
-    effect_set, pkg, pool, resolver, shard_of, vault, wide_account_metadata, world,
+    ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, auth, book, config_leaf, effect_set,
+    pkg, pool, quarantine, refused, resolver, shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
     AdmissionError, Composed, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
@@ -93,8 +93,12 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
                     mode: Mode::Credit,
                 },
                 Effect {
-                    target: EffectTarget::Point(claims(BOB, usdc)),
+                    target: EffectTarget::Point(quarantine(BOB, usdc)),
                     mode: Mode::Credit,
+                },
+                Effect {
+                    target: EffectTarget::Point(refused(BOB, usdc)),
+                    mode: Mode::Read,
                 },
             ]),
         ),
@@ -156,8 +160,12 @@ fn swap_writes_both_reserves_and_reads_the_config() {
                     mode: Mode::Credit,
                 },
                 Effect {
-                    target: EffectTarget::Point(claims(ALICE, RES_Y)),
+                    target: EffectTarget::Point(quarantine(ALICE, RES_Y)),
                     mode: Mode::Credit,
+                },
+                Effect {
+                    target: EffectTarget::Point(refused(ALICE, RES_Y)),
+                    mode: Mode::Read,
                 },
             ]),
         ),
@@ -248,6 +256,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // one entry per cell each side of the fill provisions
 fn order_book_fill_declares_a_capped_price_interval() {
     let chain = world();
     let graph = ManifestGraph {
@@ -313,8 +322,12 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     mode: Mode::Credit,
                 },
                 Effect {
-                    target: EffectTarget::Point(claims(BOB, BASE)),
+                    target: EffectTarget::Point(quarantine(BOB, BASE)),
                     mode: Mode::Credit,
+                },
+                Effect {
+                    target: EffectTarget::Point(refused(BOB, BASE)),
+                    mode: Mode::Read,
                 },
                 // The unspent quote comes back to the same vault the
                 // reservation was taken from.
@@ -323,8 +336,12 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     mode: Mode::Credit,
                 },
                 Effect {
-                    target: EffectTarget::Point(claims(BOB, QUOTE)),
+                    target: EffectTarget::Point(quarantine(BOB, QUOTE)),
                     mode: Mode::Credit,
+                },
+                Effect {
+                    target: EffectTarget::Point(refused(BOB, QUOTE)),
+                    mode: Mode::Read,
                 },
             ]),
         ),
@@ -394,15 +411,16 @@ fn a_declared_superset_evaluates_without_error() {
     let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = route(&admitted, &resolver());
     let set = &routing.per_shard[&shard_of(alice)];
-    // The exact effect and the never-touched superset both routed; two
-    // more are the deposit that consumes the withdrawal, and the last is
-    // the fence's read of the target's own configuration leaf.
+    // The exact effect and the never-touched superset both routed; three
+    // more are the deposit that consumes the withdrawal — where it may
+    // land, where else it may land, and the flag that picks — and the
+    // last is the fence's read of the target's own configuration leaf.
     assert!(set.contains(&Effect {
         target: EffectTarget::Point(vault(alice, RES_X)),
         mode: Mode::Reserve { amount: 1 },
     }));
     assert!(set.contains(&fence_read(alice)));
-    assert_eq!(set.len(), 5);
+    assert_eq!(set.len(), 6);
 }
 
 /// A presented instance record is the whole of instantiation: the swap

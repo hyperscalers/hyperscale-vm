@@ -377,9 +377,12 @@ mod tests {
         let mut meta = PackageMetadata::default();
         meta.methods.insert(
             "peek".into(),
+            // Two of the package's own slots, so neither is the
+            // configuration leaf the instantiation fence already reads —
+            // which would fold into one effect and prove nothing.
             method(vec![
-                self_point(SlotId(1), ModeExpr::Read),
-                self_point(SlotId(2), ModeExpr::Read),
+                self_point(package_slot(0), ModeExpr::Read),
+                self_point(package_slot(1), ModeExpr::Read),
             ]),
         );
         chain.packages.publish_unchecked(pkg("oracle"), meta);
@@ -393,7 +396,7 @@ mod tests {
         // the store knows.
         let declared = routing.per_shard.values().next().unwrap();
         assert_eq!(own_effects(declared, instance_of("oracle")), 2);
-        for slot in [SlotId(1), SlotId(2)] {
+        for slot in [package_slot(0), package_slot(1)] {
             assert!(declared.contains(&Effect {
                 target: point(instance_of("oracle"), slot),
                 mode: Mode::Read,

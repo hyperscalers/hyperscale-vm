@@ -59,6 +59,13 @@ use common::world::*;
 /// address derived from one moves with it. The addresses under the
 /// rendering changed; what each shard is asked to provision did not.
 ///
+/// And again, this time because the vocabulary shrank rather than grew:
+/// the delivery cell beside a vault is gone, so every slot above it
+/// renumbers and every key derived from one moves. What replaces it is
+/// the account's own — a flag saying where a deposit lands and a
+/// quarantine for what it refuses — which is a package's cell rather
+/// than the protocol's, since only the account itself reaches it.
+///
 /// The swap and fill pins carry the instantiation fence: admission reads
 /// the configuration leaf of every component a node targets, so the
 /// owning shard is a participant and provisions the leaf. Transfer and
@@ -90,13 +97,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "28c989292fba524f821714a871aa882cf7b1fda37970e6739b7588332ba9d5ca";
+const PIN_TRANSFER: &str = "5ca05dceccff4764f18ee59c18c6ea096e46f91133bd7084e5d40adca9865541";
 
-const PIN_SWAP: &str = "b8987dca756594f52d4a2a4c55caebbd4907a488a158f50d03f0138b881a0c7e";
+const PIN_SWAP: &str = "be87bb6b8bd36425a4858fe4704d435fa9d0e5e29a185ba735a41ff00f85d65f";
 
-const PIN_FILL: &str = "8306c8f8e2bd639d3947979b9cdc098eaa667f14eec598e6e3b7ef693e56b254";
+const PIN_FILL: &str = "581542a1dd21c3487b1d749eafcf4b6dbe6e5838bdb49cee11bbdb0723ea10a3";
 
-const PIN_PROPOSE: &str = "430134a54e9e22d85aab11ed5a44cf0e8b3c3f917e9ac72b1abb309323c00cd1";
+const PIN_PROPOSE: &str = "5c730c8e7a238ce7d1b3ccc2d6cf763a4d31ce447e1402da1d351085d8879f34";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

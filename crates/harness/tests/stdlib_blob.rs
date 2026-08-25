@@ -16,7 +16,7 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::{
     Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, Value, child_key,
-    collection_id, order_key,
+    collection_id, order_key, package_slot,
 };
 use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, SHIPPED as FIXTURES, lottery};
 use hyperscale_vm_harness::dual::DualGuest;
@@ -68,8 +68,24 @@ fn entering(mut host: KernelSession, who: Address) -> KernelSession {
     host
 }
 
+/// The recipient's own cells a deposit reaches beside their vault: the
+/// flag it reads to pick a destination, and the quarantine it picks when
+/// the flag is set. Absent here, which is what "not refused" is.
+fn recipient_cells() -> (SubstateKey, SubstateKey) {
+    let keyed = |slot| {
+        child_key(
+            &TestHasher,
+            RECIPIENT,
+            slot,
+            &[Value::Address(RESOURCE.address()).canonical_bytes()],
+        )
+    };
+    (keyed(package_slot(0)), keyed(package_slot(1)))
+}
+
 fn session() -> KernelSession {
     let (sender, recipient) = keys();
+    let (refused, quarantine) = recipient_cells();
     let mut declared = EffectSet::new();
     declared
         .insert(Effect {
@@ -83,12 +99,27 @@ fn session() -> KernelSession {
             mode: Mode::Delta,
         })
         .unwrap();
+    declared
+        .insert(Effect {
+            target: EffectTarget::Point(quarantine),
+            mode: Mode::Delta,
+        })
+        .unwrap();
+    declared
+        .insert(Effect {
+            target: EffectTarget::Point(refused),
+            mode: Mode::Read,
+        })
+        .unwrap();
     let mut store = MemoryStore::new();
     store.write(sender, encode_amount(500).to_vec());
-    // Both cells the transfer moves between hold the same resource,
-    // which is what makes the credit a transfer rather than a
-    // conversion.
-    let denominations: Vec<_> = declared.iter().map(|_| Some(RESOURCE)).collect();
+    // Every value cell the transfer moves between holds the same
+    // resource, which is what makes the credit a transfer rather than a
+    // conversion; the flag holds none, being a fact rather than value.
+    let denominations: Vec<_> = declared
+        .iter()
+        .map(|effect| (effect.target != EffectTarget::Point(refused)).then_some(RESOURCE))
+        .collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &Declaration {
@@ -155,12 +186,17 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
 
     let blessed_host = entering(blessed.session, RECIPIENT);
     let reference_host = entering(reference.session, RECIPIENT);
+    let (refused, quarantine) = recipient_cells();
     let recipient_rep = rep_of(&blessed_host, &Capability::Delta(recipient));
+    let flag_rep = rep_of(&blessed_host, &Capability::Read(refused));
+    let quarantine_rep = rep_of(&blessed_host, &Capability::Delta(quarantine));
     let mut dual = ACCOUNT.instantiate_pair(FUEL, blessed_host, reference_host)?;
     dual.invoke_both(
         "deposit",
         &[
+            CVal::Borrow(flag_rep, HandleKind::Site),
             CVal::Borrow(recipient_rep, HandleKind::Site),
+            CVal::Borrow(quarantine_rep, HandleKind::Site),
             CVal::Own(funds),
         ],
     )?;

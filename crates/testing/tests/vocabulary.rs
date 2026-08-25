@@ -236,19 +236,26 @@ fn a_boolean_is_a_cell_the_vocabulary_admits() {
     assert_eq!(receipt.delta.cells.get(&flag), Some(&Some(vec![1])));
 }
 
-/// And a cell holding neither of the two bytes is a defect in state, on
-/// the same terms a malformed address is.
+/// And a cell holding neither of the two bytes reads as true rather
+/// than trapping — the one scalar decode that is total.
+///
+/// Every other cell type traps on bytes it cannot mean, and that is
+/// right for one the kernel builds. A boolean cell is written only by a
+/// body's own `to_cell`, so the bytes it could not mean are that
+/// package's own bug — and trapping on them would cost the vocabulary
+/// something it needs more, since a `#[total]` method may not trap and
+/// would therefore be unable to read a stored flag at all. The account's
+/// deposit reads one to pick a destination, which is what makes the
+/// widening load-bearing rather than a convenience.
 #[test]
-fn a_boolean_cell_holding_neither_byte_is_a_defect() {
+fn a_boolean_cell_holding_neither_byte_reads_as_set() {
     let flag = key(6);
     let mut store = MemoryStore::new();
     store.write(flag, vec![2]);
     let session = session(store, vec![point(flag, Mode::Read)]);
 
-    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        with_kernel(session, || Slot::<bool>::at(Handle::at(0, 0)).get())
-    }));
-    assert!(read.is_err(), "a third byte is not a boolean");
+    let (_, read) = with_kernel(session, || Slot::<bool>::at(Handle::at(0, 0)).get());
+    assert!(read, "anything but absent or zero is set");
 }
 
 /// An interval walks its entries in order, and writes land in the store.

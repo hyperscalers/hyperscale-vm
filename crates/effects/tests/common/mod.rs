@@ -2,11 +2,12 @@
 //! instance world they resolve in.
 #![allow(dead_code, unused_imports)] // shared between test binaries; each uses a subset
 
-pub use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG, VAULT};
+pub use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Clause, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache,
     MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
     Records, ShardId, ShardResolver, SlotId, TargetExpr, TestHasher, Totality, Value, child_key,
+    package_slot,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, payouts};
@@ -153,12 +154,25 @@ pub fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> Substat
     )
 }
 
+/// The account's own quarantine vault for a resource — its second
+/// declared slot, and a package's cell rather than the protocol's.
 #[must_use]
-pub fn claims(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
+pub fn quarantine(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
     child_key(
         &TestHasher,
         owner,
-        CLAIMS,
+        package_slot(1),
+        &[Value::Address(resource.into()).canonical_bytes()],
+    )
+}
+
+/// The flag saying this account sends the resource there instead.
+#[must_use]
+pub fn refused(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey {
+    child_key(
+        &TestHasher,
+        owner,
+        package_slot(0),
         &[Value::Address(resource.into()).canonical_bytes()],
     )
 }
