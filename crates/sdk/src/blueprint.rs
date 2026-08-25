@@ -1,7 +1,7 @@
 //! Assembling traced declarations into the metadata routing reads.
 //!
 //! A [`Blueprint`] is the SDK's unit of authorship: a set of named methods,
-//! each with its declared parameters and its traced effect signature. Its
+//! each with its sockets and its traced effect signature. Its
 //! [`Blueprint::metadata`] is a [`PackageMetadata`] — the exact structure
 //! [`hyperscale_vm_effects::route`] consults, with nothing SDK-shaped left
 //! in it.

@@ -3,7 +3,7 @@
 //!
 //! The other lanes compare two runtimes on artifacts both of them accept.
 //! This one asserts the implication that makes those comparisons mean
-//! something — a deployable artifact `vm-ref` cannot decode is a hole in
+//! something — a deployable artifact `vm-ref` cannot decode is a socket in
 //! the profile whether or not any fixture happens to exercise it, and the
 //! surfaces drift apart as the validator and the spec evolve. Asserting
 //! the implication structurally is what keeps them from doing so quietly.

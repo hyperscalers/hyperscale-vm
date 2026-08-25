@@ -196,7 +196,7 @@ impl Printer<'_> {
     fn arg(&mut self, arg: &GraphArg) -> Result<String, TextError> {
         match arg {
             GraphArg::Literal(value) => self.value(value),
-            GraphArg::Param(position) => Ok(format!("${position}")),
+            GraphArg::Socket(position) => Ok(format!("${position}")),
             GraphArg::Edge { edge, constraints } => {
                 let (name, shown) = self
                     .bindings
@@ -332,7 +332,7 @@ fn edge_types(
                             EdgeContent::Fungible
                         },
                     }),
-                GraphArg::Param(_) => None,
+                GraphArg::Socket(_) => None,
             };
             known.push(value.is_some());
             values.push(value.unwrap_or_else(unknown));

@@ -1,8 +1,8 @@
 //! How Rust values become bound node arguments.
 //!
 //! Scalars and addresses become literals; a [`Bucket`] becomes the edge it
-//! stands for, carrying its derived resource type; a [`Param`] becomes the enclosing
-//! intent's yield parameter. [`Value`] is the escape hatch for the literal
+//! stands for, carrying its derived resource type; a [`SocketRef`] becomes the enclosing
+//! intent's socket. [`Value`] is the escape hatch for the literal
 //! kinds no plain Rust type maps to — keys, tuples, lists. Both traits are
 //! sealed: the set of things that can bind is the signed form's, not the
 //! caller's, and growing it is a change to this crate rather than an impl
@@ -13,7 +13,7 @@ use hyperscale_vm_types::{
     Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 
-use crate::builder::{Bucket, GraphBuilder, Param};
+use crate::builder::{Bucket, GraphBuilder, SocketRef};
 
 mod sealed {
     /// The sealing marker for [`Arg`](super::Arg) and
@@ -52,7 +52,7 @@ impl Arg for Address {
 }
 
 /// An address argument binds whatever class it carries: a method's
-/// declared parameter kind is `address`, and which class belongs at a
+/// socket kind is `address`, and which class belongs at a
 /// given position is the package's business, not the argument list's. So a
 /// typed address binds like an untyped one rather than needing to forget
 /// its class first — a class newtype and a position over several of them
@@ -146,28 +146,28 @@ impl Arg for Bucket {
     }
 }
 
-impl sealed::Sealed for Param {}
-impl Arg for Param {
+impl sealed::Sealed for SocketRef {}
+impl Arg for SocketRef {
     fn bind(self, _builder: &GraphBuilder) -> GraphArg {
-        GraphArg::Param(self.0)
+        GraphArg::Socket(self.0)
     }
 }
 
 /// An argument that fills a declared bucket parameter.
 ///
 /// Exactly the two things a bucket position admits: an edge the author
-/// holds, and the hole a composition will bind one to. Naming the pair is
+/// holds, and the socket a composition will fill. Naming the pair is
 /// what lets a wrapper over a method taking funds be called from inside an
 /// intent, where the funds arrive from another intent's graph.
 pub trait BucketArg: Arg {}
 
 impl BucketArg for Bucket {}
-impl BucketArg for Param {}
+impl BucketArg for SocketRef {}
 
 /// An argument that fills a declared address parameter.
 ///
 /// Every class, and every position over several of them, because a
-/// declared parameter kind is `address` and which class belongs at a
+/// socket kind is `address` and which class belongs at a
 /// position is the package's business. A wrapper over such a position
 /// therefore widens to this rather than to one class: narrowing to
 /// resources would make an address parameter that means a holder

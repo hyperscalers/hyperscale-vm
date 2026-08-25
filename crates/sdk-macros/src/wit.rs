@@ -62,7 +62,7 @@ pub enum Shape {
 
 /// One parameter of a generated export.
 #[derive(Clone, Debug)]
-pub struct Param {
+pub struct Socket {
     /// The parameter's name in the component type.
     pub name: String,
     /// What it carries.
@@ -75,7 +75,7 @@ pub struct Export {
     /// The published method name, which is what a manifest node writes.
     pub name: String,
     /// The parameters, in the order the binding builds them.
-    pub params: Vec<Param>,
+    pub params: Vec<Socket>,
     /// How many value edges the method hands back, in output order.
     pub outputs: usize,
     /// Whether the method answers with a value beside its edges.

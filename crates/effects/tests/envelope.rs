@@ -5,11 +5,11 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    AdmissionError, AdmittedTree, Bounds, ChainRecords, Constraint, EdgeContent, EdgeRef,
-    EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl, MAX_VALUE_DEPTH,
-    MAX_YIELD_PARAMS, ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput, PackageHash,
-    PrefixShardResolver, Records, ResourceKind, ShardResolver, Subintent, TestHasher, Value,
-    YieldBinding, YieldParam, admit, admit_tree, child_key, nullifier_key, route_tree,
+    AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Constraint, EdgeContent, EdgeRef,
+    EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl, MAX_SOCKETS,
+    MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput, PackageHash,
+    PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket, Subintent, TestHasher,
+    Value, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -55,7 +55,7 @@ fn withdraw(
 }
 
 fn deposit_param(target: impl Into<CallTarget>, param: u32) -> GraphNode {
-    GraphNode::new(target, "deposit", vec![GraphArg::Param(param)])
+    GraphNode::new(target, "deposit", vec![GraphArg::Socket(param)])
 }
 
 /// The two-signer composition: the root withdraws X and deposits the
@@ -70,12 +70,12 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
                     deposit_param(ALICE, 0),
                 ],
             },
-            params: vec![YieldParam::Edge {
+            sockets: vec![Socket::Value {
                 resource: RES_Y,
                 constraints: vec![Constraint::MinAmount(10)],
             }],
         },
-        root_bindings: vec![YieldBinding::Edge {
+        root_bindings: vec![Binding::Value {
             intent: 1,
             edge: EdgeRef {
                 producer: 1,
@@ -91,13 +91,13 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
                         deposit_param(BOB, 0),
                     ],
                 },
-                params: vec![YieldParam::Edge {
+                sockets: vec![Socket::Value {
                     resource: RES_X,
                     constraints: vec![Constraint::MinAmount(100)],
                 }],
             },
             signer: BOB,
-            bindings: vec![YieldBinding::Edge {
+            bindings: vec![Binding::Value {
                 intent: 0,
                 edge: EdgeRef {
                     producer: 1,
@@ -227,13 +227,13 @@ fn identities_differ_while_subintent_hashes_agree() {
 fn the_declaration_hash_covers_params_and_constraints() {
     let decl = composed_tree(100).subintents[0].decl.clone();
     let mut reconstrained = decl.clone();
-    reconstrained.params[0] = YieldParam::Edge {
+    reconstrained.sockets[0] = Socket::Value {
         resource: RES_X,
         constraints: vec![Constraint::MinAmount(101)],
     };
     assert_ne!(decl.hash(&TestHasher), reconstrained.hash(&TestHasher));
     let mut retyped = decl.clone();
-    retyped.params[0] = YieldParam::Edge {
+    retyped.sockets[0] = Socket::Value {
         resource: RES_Y,
         constraints: Vec::new(),
     };
@@ -241,8 +241,8 @@ fn the_declaration_hash_covers_params_and_constraints() {
 }
 
 /// The same binding, naming another node of the same intent.
-const fn rebind(binding: YieldBinding, producer: u32) -> YieldBinding {
-    YieldBinding::Edge {
+const fn rebind(binding: Binding, producer: u32) -> Binding {
+    Binding::Value {
         intent: binding.intent(),
         edge: EdgeRef {
             producer,
@@ -266,15 +266,15 @@ fn mutual_yields_with_no_order_are_a_cycle() {
 #[test]
 fn a_yielded_resource_must_match_the_declared_type() {
     let mut tree = composed_tree(100);
-    tree.subintents[0].decl.params[0] = YieldParam::Edge {
+    tree.subintents[0].decl.sockets[0] = Socket::Value {
         resource: RES_Y,
         constraints: Vec::new(),
     };
     assert_eq!(
         admit_composed(&tree),
-        Err(AdmissionError::YieldResourceMismatch {
+        Err(AdmissionError::SocketResourceMismatch {
             intent: 1,
-            param: 0
+            socket: 0
         })
     );
 }
@@ -300,12 +300,12 @@ fn a_yielded_edge_is_judged_by_its_kind() {
             graph: ManifestGraph {
                 nodes: vec![authorize(ALICE), withdraw(ALICE, RES_X, 100), consumer],
             },
-            params: vec![YieldParam::Edge {
+            sockets: vec![Socket::Value {
                 resource: RES_Y,
                 constraints: vec![],
             }],
         },
-        root_bindings: vec![YieldBinding::Edge {
+        root_bindings: vec![Binding::Value {
             intent: 1,
             edge: EdgeRef {
                 producer: 1,
@@ -321,13 +321,13 @@ fn a_yielded_edge_is_judged_by_its_kind() {
                         deposit_param(BOB, 0),
                     ],
                 },
-                params: vec![YieldParam::Edge {
+                sockets: vec![Socket::Value {
                     resource: RES_X,
                     constraints: vec![],
                 }],
             },
             signer: BOB,
-            bindings: vec![YieldBinding::Edge {
+            bindings: vec![Binding::Value {
                 intent: 0,
                 edge: EdgeRef {
                     producer: 1,
@@ -354,13 +354,13 @@ fn a_yielded_edge_is_judged_by_its_kind() {
     let right = nf_tree(GraphNode::new(
         ALICE,
         "deposit-nf",
-        vec![GraphArg::Param(0)],
+        vec![GraphArg::Socket(0)],
     ));
     admit_composed(&right).expect("an NF yield binds an NF parameter");
 
     // And a fungible yield into `deposit-nf` refuses the other way.
     let mut crossed = composed_tree(100);
-    crossed.root.graph.nodes[2] = GraphNode::new(ALICE, "deposit-nf", vec![GraphArg::Param(0)]);
+    crossed.root.graph.nodes[2] = GraphNode::new(ALICE, "deposit-nf", vec![GraphArg::Socket(0)]);
     assert!(matches!(
         admit_composed(&crossed),
         Err(AdmissionError::ResourceKindMismatch {
@@ -376,9 +376,9 @@ fn param_consumption_is_exactly_once() {
     unused.subintents[0].decl.graph.nodes[2] = withdraw(BOB, RES_Y, 1);
     assert_eq!(
         admit_composed(&unused),
-        Err(AdmissionError::UnusedYieldParam {
+        Err(AdmissionError::UnreachedSocket {
             intent: 1,
-            param: 0
+            socket: 0
         })
     );
 
@@ -390,9 +390,9 @@ fn param_consumption_is_exactly_once() {
         .push(deposit_param(BOB, 0));
     assert_eq!(
         admit_composed(&reused),
-        Err(AdmissionError::YieldParamReused {
+        Err(AdmissionError::SocketReused {
             intent: 1,
-            param: 0
+            socket: 0
         })
     );
 }
@@ -411,7 +411,7 @@ fn bindings_must_cover_the_declared_params() {
     );
 
     let mut dangling = composed_tree(100);
-    dangling.root_bindings[0] = YieldBinding::Edge {
+    dangling.root_bindings[0] = Binding::Value {
         intent: 7,
         edge: EdgeRef {
             producer: 0,
@@ -420,9 +420,9 @@ fn bindings_must_cover_the_declared_params() {
     };
     assert_eq!(
         admit_composed(&dangling),
-        Err(AdmissionError::UnknownYieldSource {
+        Err(AdmissionError::UnknownBinding {
             intent: 0,
-            param: 0
+            socket: 0
         })
     );
 }
@@ -465,15 +465,15 @@ fn an_intent_cannot_declare_unbounded_yield_params() {
     // `u32` — so the cap is what makes those positions expressible by
     // construction rather than by hope.
     let mut tree = composed_tree(100);
-    let param = tree.subintents[0].decl.params[0].clone();
+    let param = tree.subintents[0].decl.sockets[0].clone();
     let binding = tree.subintents[0].bindings[0];
-    for _ in 0..MAX_YIELD_PARAMS {
-        tree.subintents[0].decl.params.push(param.clone());
+    for _ in 0..MAX_SOCKETS {
+        tree.subintents[0].decl.sockets.push(param.clone());
         tree.subintents[0].bindings.push(binding);
     }
     assert_eq!(
         admit_composed(&tree),
-        Err(AdmissionError::TooManyYieldParams { intent: 1 })
+        Err(AdmissionError::TooManySockets { intent: 1 })
     );
 }
 
@@ -486,12 +486,12 @@ fn a_yield_param_cannot_bind_a_value_parameter() {
     tree.subintents[0].decl.graph.nodes[2] = GraphNode::bearing(
         BOB,
         "withdraw",
-        vec![GraphArg::Param(0), GraphArg::Literal(Value::U128(1))],
+        vec![GraphArg::Socket(0), GraphArg::Literal(Value::U128(1))],
         0,
     );
     assert_eq!(
         admit_composed(&tree),
-        Err(AdmissionError::ParamForValueParam { node: 5, param: 0 })
+        Err(AdmissionError::SocketForValueParam { node: 5, param: 0 })
     );
 }
 
@@ -503,7 +503,7 @@ fn a_bare_graph_admits_no_params() {
     };
     assert_eq!(
         admit(&graph, ALICE, &chain, &TestHasher),
-        Err(AdmissionError::UnboundParam { node: 0, param: 0 })
+        Err(AdmissionError::UnknownSocket { node: 0, socket: 0 })
     );
 }
 
@@ -580,7 +580,7 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     // the encoding dropped or a list length it did not frame would both
     // read as the same composition.
     let mut retargeted = tree.clone();
-    retargeted.root_bindings[0] = YieldBinding::Edge {
+    retargeted.root_bindings[0] = Binding::Value {
         intent: retargeted.root_bindings[0].intent().wrapping_add(1),
         edge: EdgeRef {
             producer: retargeted.root_bindings[0].producer(),
@@ -595,7 +595,7 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     assert_ne!(tree.hash(&TestHasher), extended.hash(&TestHasher));
 
     let mut resliced = tree.clone();
-    resliced.root_bindings[0] = YieldBinding::Edge {
+    resliced.root_bindings[0] = Binding::Value {
         intent: resliced.root_bindings[0].intent(),
         edge: EdgeRef {
             producer: resliced.root_bindings[0].producer(),
@@ -618,7 +618,7 @@ proptest! {
     ) {
         let chain = world();
         let mut tree = composed_tree(100);
-        let binding = YieldBinding::Edge {
+        let binding = Binding::Value {
         intent, edge: EdgeRef { producer, output } };
         if on_subintent {
             tree.subintents[0].bindings[0] = binding;
@@ -700,7 +700,7 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
                     evidence: BTreeSet::new(),
                 }],
             },
-            params: Vec::new(),
+            sockets: Vec::new(),
         },
         root_bindings: Vec::new(),
         subintents: Vec::new(),

@@ -26,7 +26,7 @@ use crate::dsl::{
     Clause, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, PresentedGrants, Reach,
     evaluate_declaration, evaluate_expr, supports,
 };
-use crate::envelope::{YieldBinding, YieldParam};
+use crate::envelope::{Binding, Socket};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, ResolveError};
@@ -46,12 +46,12 @@ use crate::signature::{AbiParam, Issued, MethodSignature, ParamType};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::{CONFIG, HALT, VAULT};
 
-/// The bound on yield parameters one intent may declare. A wire bound.
+/// The bound on sockets one intent may declare. A wire bound.
 ///
 /// An intent binds one edge per parameter, so this bounds the binding
 /// vector too — which is what makes every parameter position expressible
 /// as a `u32` index by construction rather than by hope.
-pub const MAX_YIELD_PARAMS: usize = 32;
+pub const MAX_SOCKETS: usize = 32;
 
 /// Why admission rejected a graph or an envelope tree.
 ///
@@ -179,58 +179,60 @@ pub enum AdmissionError {
         /// The offending subintent's index.
         index: u32,
     },
-    /// An intent whose bindings do not match its declared parameters.
+    /// An intent whose bindings do not match its sockets.
     #[error("intent {intent} declares {expected} parameters, binds {found}")]
     BindingArity {
         /// The intent: `0` is the root, `i + 1` is subintent `i`.
         intent: u32,
-        /// Declared parameter count.
+        /// How many sockets it declared.
         expected: usize,
-        /// Bound yield edge count.
+        /// How many bindings the composition supplied.
         found: usize,
     },
-    /// A yield binding naming an intent or node that does not exist.
-    #[error("intent {intent} parameter {param} binds a nonexistent yield source")]
-    UnknownYieldSource {
+    /// A binding naming an intent or node that does not exist.
+    #[error("intent {intent} socket {socket} is filled from nowhere")]
+    UnknownBinding {
         /// The consuming intent.
         intent: u32,
-        /// The parameter position.
-        param: u32,
+        /// Its position in the declaration.
+        socket: u32,
     },
-    /// A yield edge carrying a different resource than the parameter
-    /// declares.
-    #[error("intent {intent} parameter {param}: yielded resource differs from the declared type")]
-    YieldResourceMismatch {
+    /// A value socket filled with an edge carrying some other resource
+    /// than the shape it was declared with.
+    #[error("intent {intent} socket {socket}: what fills it carries another resource")]
+    SocketResourceMismatch {
         /// The consuming intent.
         intent: u32,
-        /// The parameter position.
-        param: u32,
+        /// Its position in the declaration.
+        socket: u32,
     },
-    /// A declared parameter no node argument consumes — the yielded
-    /// bucket would dangle.
-    #[error("intent {intent} parameter {param} is never consumed")]
-    UnusedYieldParam {
+    /// A socket no node of the declaring graph reaches, so nothing
+    /// would consume what the composition puts in it.
+    #[error("intent {intent} socket {socket} is never reached")]
+    UnreachedSocket {
         /// The declaring intent.
         intent: u32,
-        /// The parameter position.
-        param: u32,
+        /// Its position in the declaration.
+        socket: u32,
     },
-    /// A declared parameter consumed by more than one node argument.
-    #[error("intent {intent} parameter {param} is consumed twice")]
-    YieldParamReused {
+    /// A value socket consumed by more than one node argument. An
+    /// authority socket is not held to it: a claim presented twice says
+    /// nothing presenting it once does not.
+    #[error("intent {intent} socket {socket} is consumed twice")]
+    SocketReused {
         /// The declaring intent.
         intent: u32,
-        /// The parameter position.
-        param: u32,
+        /// Its position in the declaration.
+        socket: u32,
     },
-    /// A parameter reference past the intent's declared parameters — in
-    /// a bare graph, any parameter reference at all.
-    #[error("node {node} references parameter {param}, which is not declared")]
-    UnboundParam {
+    /// A socket reference past what the intent declared — in a bare
+    /// graph, any socket reference at all.
+    #[error("node {node} references socket {socket}, which is not declared")]
+    UnknownSocket {
         /// The consuming node.
         node: u32,
-        /// The referenced parameter.
-        param: u32,
+        /// The socket it named.
+        socket: u32,
     },
     /// Yield edges admitting no execution order: intents wait on each
     /// other's outputs in a cycle.
@@ -276,18 +278,18 @@ pub enum AdmissionError {
         /// The behaviour the entry governs.
         behaviour: GrantedBehaviour,
     },
-    /// A proof hole bound to a node that does not mint the claim the
+    /// A proof socket bound to a node that does not mint the claim the
     /// declaration named.
     ///
-    /// What makes a declared hole worth signing: the signer says which
+    /// What makes a socket worth signing: the signer says which
     /// authority they are asking for, and a composition that supplies
     /// some other one is refused rather than quietly presenting it.
-    #[error("node {node} presents parameter {param}, whose binding mints no such claim")]
-    YieldClaimMismatch {
+    #[error("node {node} presents socket {socket}, which is filled by no such claim")]
+    SocketClaimMismatch {
         /// The presenting node.
         node: u32,
-        /// The parameter it presented.
-        param: u32,
+        /// The socket it presented.
+        socket: u32,
     },
     /// Evidence that does not satisfy what the node must present.
     ///
@@ -371,7 +373,7 @@ pub enum AdmissionError {
     /// A call target that does not resolve to a method.
     #[error(transparent)]
     Resolve(#[from] ResolveError),
-    /// An argument count differing from the declared parameters.
+    /// An argument count differing from the sockets.
     #[error("node {node} passes {found} arguments, method takes {expected}")]
     ArityMismatch {
         /// The offending node.
@@ -553,15 +555,15 @@ pub enum AdmissionError {
         #[source]
         source: EvalError,
     },
-    /// An intent declaring more yield parameters than [`MAX_YIELD_PARAMS`].
-    #[error("intent {intent} declares more than {MAX_YIELD_PARAMS} yield parameters")]
-    TooManyYieldParams {
+    /// An intent declaring more sockets than [`MAX_SOCKETS`].
+    #[error("intent {intent} declares more than {MAX_SOCKETS} sockets")]
+    TooManySockets {
         /// The declaring intent.
         intent: u32,
     },
-    /// A yield parameter bound to a method parameter that is not a bucket.
-    #[error("node {node} argument {param}: a yield parameter cannot bind a value parameter")]
-    ParamForValueParam {
+    /// A socket bound to a method parameter that is not a bucket.
+    #[error("node {node} argument {param}: a socket cannot bind a value parameter")]
+    SocketForValueParam {
         /// The offending node.
         node: u32,
         /// The parameter position.
@@ -719,7 +721,7 @@ pub fn admit_presenting(
     admit_intents(
         &[IntentView {
             graph,
-            params: &[],
+            sockets: &[],
             bindings: &[],
             signer: Some(composer),
         }],
@@ -835,8 +837,8 @@ pub(crate) fn check_constraints(
 /// One intent as the shared admission checker consumes it.
 pub(crate) struct IntentView<'a> {
     pub graph: &'a ManifestGraph,
-    pub params: &'a [YieldParam],
-    pub bindings: &'a [YieldBinding],
+    pub sockets: &'a [Socket],
+    pub bindings: &'a [Binding],
     /// Whose signature this intent carries, and so whose identity its
     /// proof names. A bare graph is unsigned and produces none.
     pub signer: Option<PrincipalAddr>,
@@ -915,40 +917,40 @@ pub(crate) fn admit_intents(
 }
 
 /// Bindings and parameter consumption, intent by intent: one binding
-/// per declared parameter, every binding naming a real source, every
+/// per socket, every binding naming a real source, every
 /// parameter consumed by exactly one node argument.
 fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
     for (index, intent) in intents.iter().enumerate() {
-        if intent.params.len() > MAX_YIELD_PARAMS {
-            return Err(AdmissionError::TooManyYieldParams {
+        if intent.sockets.len() > MAX_SOCKETS {
+            return Err(AdmissionError::TooManySockets {
                 intent: u32::try_from(index).expect("intents are bounded by MAX_SUBINTENTS"),
             });
         }
         let intent_index = u32::try_from(index).expect("intents are bounded by MAX_SUBINTENTS");
-        if intent.bindings.len() != intent.params.len() {
+        if intent.bindings.len() != intent.sockets.len() {
             return Err(AdmissionError::BindingArity {
                 intent: intent_index,
-                expected: intent.params.len(),
+                expected: intent.sockets.len(),
                 found: intent.bindings.len(),
             });
         }
         for (position, binding) in intent.bindings.iter().enumerate() {
-            let param = u32::try_from(position).expect("bounded by MAX_YIELD_PARAMS");
+            let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
             let source = usize::try_from(binding.intent())
                 .ok()
                 .and_then(|source| intents.get(source));
             let producer = usize::try_from(binding.producer()).unwrap_or(usize::MAX);
             if source.is_none_or(|source| producer >= source.graph.nodes.len()) {
-                return Err(AdmissionError::UnknownYieldSource {
+                return Err(AdmissionError::UnknownBinding {
                     intent: intent_index,
-                    param,
+                    socket,
                 });
             }
         }
-        let mut uses = vec![0u32; intent.params.len()];
+        let mut uses = vec![0u32; intent.sockets.len()];
         for node in &intent.graph.nodes {
-            for param in node.holes() {
-                if let Some(count) = usize::try_from(param)
+            for socket in node.sockets() {
+                if let Some(count) = usize::try_from(socket)
                     .ok()
                     .and_then(|position| uses.get_mut(position))
                 {
@@ -957,21 +959,21 @@ fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
             }
         }
         for (position, count) in uses.iter().enumerate() {
-            let param = u32::try_from(position).expect("bounded by MAX_YIELD_PARAMS");
+            let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
             if *count == 0 {
-                return Err(AdmissionError::UnusedYieldParam {
+                return Err(AdmissionError::UnreachedSocket {
                     intent: intent_index,
-                    param,
+                    socket,
                 });
             }
-            // Value is linear and a proof is not: an edge fills one
+            // Value is conserved and authority is not: an edge fills one
             // argument, and presenting a claim twice says nothing
             // presenting it once does not.
-            let edge = matches!(intent.params.get(position), Some(YieldParam::Edge { .. }));
-            if edge && *count > 1 {
-                return Err(AdmissionError::YieldParamReused {
+            let value = matches!(intent.sockets.get(position), Some(Socket::Value { .. }));
+            if value && *count > 1 {
+                return Err(AdmissionError::SocketReused {
                     intent: intent_index,
-                    param,
+                    socket,
                 });
             }
         }
@@ -1005,12 +1007,12 @@ fn interleave(
             let Some(node) = intent.graph.nodes.get(next) else {
                 continue;
             };
-            // Every hole this node reaches, whichever way it reaches
+            // Every socket this node reaches, whichever way it reaches
             // one: an argument consuming a yielded edge, and evidence
             // presenting a yielded proof. Both are dependencies on
             // another intent's node, and a proof left out of this scan
             // would let a node present a claim minted after it ran.
-            for param in node.holes() {
+            for param in node.sockets() {
                 // An out-of-range parameter carries no dependency; the
                 // node check below rejects it.
                 let Some(binding) = usize::try_from(param)
@@ -1364,7 +1366,7 @@ impl Lower<'_> {
         })))
     }
 
-    /// Bind the node's arguments against its declared parameters: a
+    /// Bind the node's arguments against its sockets: a
     /// literal for a value parameter, an edge or a yield binding for a
     /// bucket one.
     fn bind_args(
@@ -1426,7 +1428,7 @@ impl Lower<'_> {
                     bound.push(value);
                     inputs.push(input);
                 }
-                GraphArg::Param(reference) => {
+                GraphArg::Socket(reference) => {
                     let (value, input) = self.bind_yielded(
                         intent_index,
                         *reference,
@@ -1457,9 +1459,9 @@ impl Lower<'_> {
         }
     }
 
-    /// Bind the edge a declared hole was filled with.
+    /// Bind the edge a socket was filled with.
     ///
-    /// The hole types what may arrive and the composition names what
+    /// The socket types what may arrive and the composition names what
     /// did, so both are checked here: the parameter's declared resource
     /// against the edge's, and the declaring intent's own constraints
     /// against it as if it were an ordinary argument.
@@ -1475,40 +1477,43 @@ impl Lower<'_> {
         let reference = &reference;
 
         let Some((decl, binding)) = usize::try_from(*reference).ok().and_then(|position| {
-            Some((intent.params.get(position)?, intent.bindings.get(position)?))
+            Some((
+                intent.sockets.get(position)?,
+                intent.bindings.get(position)?,
+            ))
         }) else {
-            return Err(AdmissionError::UnboundParam {
+            return Err(AdmissionError::UnknownSocket {
                 node: node_index,
-                param: *reference,
+                socket: *reference,
             });
         };
         if !param.is_edge() {
-            return Err(AdmissionError::ParamForValueParam {
+            return Err(AdmissionError::SocketForValueParam {
                 node: node_index,
                 param: param_index,
             });
         }
         let intent_at = u32::try_from(intent_index).expect("intents are bounded by MAX_SUBINTENTS");
         let (
-            YieldParam::Edge {
+            Socket::Value {
                 resource: declared,
                 constraints,
             },
-            YieldBinding::Edge {
+            Binding::Value {
                 intent: source_intent,
                 edge,
             },
-        ) = (decl, binding)
+        ) = (decl, *binding)
         else {
-            // A hole typed for a proof fills no argument: an
+            // A socket shaped for authority fills no argument: an
             // argument takes value, and a proof is not value.
-            return Err(AdmissionError::ParamForValueParam {
+            return Err(AdmissionError::SocketForValueParam {
                 node: node_index,
                 param: param_index,
             });
         };
         let source_intent =
-            usize::try_from(*source_intent).map_err(|_| AdmissionError::TooManyNodes)?;
+            usize::try_from(source_intent).map_err(|_| AdmissionError::TooManyNodes)?;
         let producer = usize::try_from(edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
         let source = self.flat_of[source_intent][producer];
         let declared = *declared;
@@ -1523,9 +1528,9 @@ impl Lower<'_> {
                 if resource == declared {
                     Ok(())
                 } else {
-                    Err(AdmissionError::YieldResourceMismatch {
+                    Err(AdmissionError::SocketResourceMismatch {
                         intent: intent_at,
-                        param: *reference,
+                        socket: *reference,
                     })
                 }
             },
@@ -1614,24 +1619,24 @@ impl Lower<'_> {
                         })?;
                     evidence.extend_from_slice(claims);
                 }
-                EvidenceRef::Param(reference) => {
-                    // A hole the declaration typed and the composition
+                EvidenceRef::Socket(reference) => {
+                    // A socket the declaration typed and the composition
                     // filled. What is presented is the claim the
                     // *declaration* named — never whatever else the
                     // minting node happened to mint — so a composition
                     // cannot hand an intent authority its signer never
                     // asked for.
-                    let Some((YieldParam::Proof(wanted), YieldBinding::Proof { intent, producer })) =
+                    let Some((Socket::Authority(wanted), Binding::Authority { intent, producer })) =
                         usize::try_from(*reference).ok().and_then(|position| {
                             Some((
-                                intent.params.get(position)?,
+                                intent.sockets.get(position)?,
                                 *intent.bindings.get(position)?,
                             ))
                         })
                     else {
-                        return Err(AdmissionError::UnboundParam {
+                        return Err(AdmissionError::UnknownSocket {
                             node: node_index,
-                            param: *reference,
+                            socket: *reference,
                         });
                     };
                     let source = usize::try_from(intent)
@@ -1639,11 +1644,11 @@ impl Lower<'_> {
                         .and_then(|source| self.flat_of.get(source))
                         .and_then(|flat| usize::try_from(producer).ok().and_then(|at| flat.get(at)))
                         .and_then(|flat| usize::try_from(*flat).ok())
-                        .ok_or(AdmissionError::UnboundParam {
+                        .ok_or(AdmissionError::UnknownSocket {
                             node: node_index,
-                            param: *reference,
+                            socket: *reference,
                         })?;
-                    // The interleave orders a node after every hole it
+                    // The interleave orders a node after every socket it
                     // reaches, so the minting node has been judged and
                     // its claims are in hand.
                     let minted = self
@@ -1654,9 +1659,9 @@ impl Lower<'_> {
                             producer,
                         })?;
                     if !minted.contains(wanted) {
-                        return Err(AdmissionError::YieldClaimMismatch {
+                        return Err(AdmissionError::SocketClaimMismatch {
                             node: node_index,
-                            param: *reference,
+                            socket: *reference,
                         });
                     }
                     evidence.push(*wanted);

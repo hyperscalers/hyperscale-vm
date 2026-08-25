@@ -10,7 +10,7 @@
 
 use crate::lower::{Lowered, Need, flag_ident, handle_ident, value_ident};
 use crate::term::Term;
-use crate::wit::{Param, Shape};
+use crate::wit::{Shape, Socket};
 use crate::{is_address, is_named};
 
 /// What one export parameter carries.
@@ -39,7 +39,7 @@ pub enum Carries {
 /// to bind for the body to read it.
 pub struct Binding {
     /// The parameter the WIT document declares.
-    pub param: Param,
+    pub param: Socket,
     /// The identifier the parameter arrives under.
     pub ident: syn::Ident,
     /// What it carries.
@@ -298,7 +298,7 @@ fn same_shape(a: &Shape, b: &Shape) -> bool {
     }
 }
 
-/// The author's own name for the `index`-th declared parameter, with a
+/// The author's own name for the `index`-th socket, with a
 /// stand-in for an edge past the list.
 fn param_ident(index: u32, params: &[(String, syn::Type)]) -> syn::Ident {
     crate::syntax::param_ident(index, params)
@@ -322,7 +322,7 @@ pub fn bindings(
 
     for (position, site) in lowered.handles.iter().copied().enumerate() {
         bindings.push(Binding {
-            param: Param {
+            param: Socket {
                 name: format!("handle-{position}"),
                 shape: Shape::Handle,
             },
@@ -333,7 +333,7 @@ pub fn bindings(
 
     for position in 0..lowered.flags.len() {
         bindings.push(Binding {
-            param: Param {
+            param: Socket {
                 name: format!("flag-{position}"),
                 shape: Shape::Flag,
             },
@@ -359,7 +359,7 @@ pub fn bindings(
             },
         };
         bindings.push(Binding {
-            param: Param {
+            param: Socket {
                 name: format!("value-{position}"),
                 shape,
             },

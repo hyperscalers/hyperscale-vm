@@ -41,7 +41,7 @@ pub mod signing;
 pub mod typed;
 
 pub use args::{AddressArg, Arg, Args, BucketArg};
-pub use builder::{Bucket, BuildError, GraphBuilder, Param};
+pub use builder::{Bucket, BuildError, GraphBuilder, SocketRef};
 pub use envelope::{EnvelopeBuilder, EnvelopeError, IntentBuilder, YieldSink, YieldSource};
 pub use preflight::{Authority, PreflightError, Report, Required, preflight, preflight_tree};
 pub use render::{Names, render};

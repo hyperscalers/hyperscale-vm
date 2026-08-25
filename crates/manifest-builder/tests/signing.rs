@@ -114,7 +114,7 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
     let tree = EnvelopeTree {
         root: IntentDecl {
             graph,
-            params: Vec::new(),
+            sockets: Vec::new(),
         },
         root_bindings: Vec::new(),
         subintents: Vec::new(),
@@ -150,7 +150,7 @@ fn the_signature_covers_what_the_envelope_says() {
     let tree = EnvelopeTree {
         root: IntentDecl {
             graph: builder.build().expect("every output is consumed"),
-            params: Vec::new(),
+            sockets: Vec::new(),
         },
         root_bindings: Vec::new(),
         subintents: Vec::new(),

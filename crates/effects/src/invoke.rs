@@ -1,7 +1,7 @@
 //! The lowered form of a manifest node: which export to call, and where
 //! each of its ABI arguments comes from.
 //!
-//! A method's declared parameters have no arity relation to its guest ABI
+//! A method's sockets have no arity relation to its guest ABI
 //! — the capability table mediates, so one declared bucket and two
 //! declared effects can become two ABI arguments of which one is a handle
 //! for the vault's delta and the other the bucket's bytes. The
@@ -71,7 +71,7 @@ pub enum CallArg {
     /// The absences are the reason this is a list rather than a span.
     /// Two sites in one body may be guarded differently, and a site that
     /// dropped what did not fire would answer at a length the site
-    /// beside it does not share — so a hole reads as a hole.
+    /// beside it does not share — so a socket reads as a socket.
     Site {
         /// One entry per element, at its position in the transaction's
         /// materialized table.
@@ -114,7 +114,7 @@ pub struct EdgeBound {
     pub source: u32,
     /// Which of the producer's outputs the edge carries.
     pub output: u32,
-    /// The consuming node's declared parameter the edge is bound to —
+    /// The consuming node's socket the edge is bound to —
     /// what a refusal names, since the signer wrote the bound against a
     /// parameter and not against an ABI position.
     pub param: u32,
@@ -161,7 +161,7 @@ pub struct NodeCall {
     pub export: String,
     /// One entry per exported parameter, in the export's own order.
     pub args: Vec<CallArg>,
-    /// Every value edge the node consumes, in its declared parameter
+    /// Every value edge the node consumes, in its socket
     /// order, each with the bound its consumer signed. Checked before
     /// the invocation.
     pub edges: Vec<EdgeBound>,

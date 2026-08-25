@@ -55,11 +55,10 @@ pub enum GraphArg {
         /// The consumer's declared constraints on it.
         constraints: Vec<Constraint>,
     },
-    /// Consumption of the enclosing intent's declared yield parameter —
-    /// a typed hole the composition binds to another intent's output
-    /// edge. Only meaningful inside an envelope tree; a bare graph
-    /// admits no parameters.
-    Param(u32),
+    /// The edge filling the enclosing intent's `n`-th socket, which the
+    /// composition binds to another intent's output. Only meaningful
+    /// inside an envelope tree; a bare graph declares no sockets.
+    Socket(u32),
 }
 
 /// The bound on identities one call may present as evidence.
@@ -90,16 +89,16 @@ pub enum EvidenceRef {
     /// refuses, that node aborts the transaction, so a consumer only ever
     /// runs in a world where the producer succeeded.
     Node(u32),
-    /// The proof bound to this intent's `n`-th declared parameter — the
-    /// one way authority crosses an intent boundary.
+    /// The proof filling this intent's `n`-th socket — the one way
+    /// authority crosses an intent boundary.
     ///
     /// A node reference names a node of the same intent, and a signer
-    /// signs their own intent whole, so nothing about an intent can
-    /// reach a proof somebody else's node mints. A declared hole can:
-    /// the declaration names the claim it wants and the composition
-    /// names the node that mints it, so the signer signs which authority
-    /// they asked for and the composer answers for finding it.
-    Param(u32),
+    /// signs their own intent whole, so nothing inside an intent can
+    /// reach a proof somebody else's node mints. A socket can: the
+    /// declaration shapes it with the claim it wants and the composition
+    /// names the node that mints one, so the signer signs which
+    /// authority they asked for and the composer answers for finding it.
+    Socket(u32),
 }
 
 /// A method invocation node.
@@ -124,32 +123,29 @@ pub struct GraphNode {
 }
 
 impl GraphNode {
-    /// Every declared parameter this node reaches, whichever way it
-    /// reaches one.
+    /// Every socket this node names, whichever channel names it.
     ///
     /// The two channels a node takes from outside its own graph are
     /// parallel by construction — an argument is a literal, an edge or a
-    /// hole, and evidence is a signature, a node or a hole — and what
-    /// they share is exactly this: a hole makes the node depend on
-    /// whatever the composition bound it to. Ordering and use-counting
-    /// both ask it, so it is asked in one place.
-    pub fn holes(&self) -> impl Iterator<Item = u32> + '_ {
+    /// socket, and evidence is a signature, a node or a socket — and
+    /// what they share is exactly this: a socket makes the node depend
+    /// on whatever the composition bound it to. Ordering and use
+    /// counting both ask it, so it is asked in one place.
+    pub fn sockets(&self) -> impl Iterator<Item = u32> + '_ {
         let args = self.args.iter().filter_map(|arg| match arg {
-            GraphArg::Param(param) => Some(*param),
+            GraphArg::Socket(socket) => Some(*socket),
             GraphArg::Literal(_) | GraphArg::Edge { .. } => None,
         });
         let presented = self
             .evidence
             .iter()
             .filter_map(|reference| match reference {
-                EvidenceRef::Param(param) => Some(*param),
+                EvidenceRef::Socket(socket) => Some(*socket),
                 EvidenceRef::IntentSignature | EvidenceRef::Node(_) => None,
             });
         args.chain(presented)
     }
-}
 
-impl GraphNode {
     /// A call presenting no evidence — what a method admitting anyone
     /// takes.
     #[must_use]

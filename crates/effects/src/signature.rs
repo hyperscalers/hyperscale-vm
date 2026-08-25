@@ -411,7 +411,7 @@ pub struct MethodSignature {
     /// How the guest's ABI parameters are built, one entry per exported
     /// parameter in the export's own order.
     ///
-    /// A declared parameter list has no arity relation to the ABI: the
+    /// A socket list has no arity relation to the ABI: the
     /// capability table mediates, so a method declaring one bucket and two
     /// effects can export two arguments of which one is a handle for the
     /// first effect's target and the other the bucket's bytes. Nothing

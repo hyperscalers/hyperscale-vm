@@ -43,7 +43,7 @@ pub mod types;
 pub mod vectors;
 pub mod vocabulary;
 
-pub use admission::{AdmissionError, Admitted, MAX_YIELD_PARAMS, admit, admit_presenting};
+pub use admission::{AdmissionError, Admitted, MAX_SOCKETS, admit, admit_presenting};
 pub use artifact::{
     ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, declaration_hash,
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
@@ -57,9 +57,8 @@ pub use dsl::{
     self_child, supports,
 };
 pub use envelope::{
-    AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_SLOT, Subintent,
-    SubintentHash, SubintentRecord, YieldBinding, YieldParam, admit_tree, encode_tree,
-    nullifier_key, route_tree,
+    AdmittedTree, Binding, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_SLOT, Socket,
+    Subintent, SubintentHash, SubintentRecord, admit_tree, encode_tree, nullifier_key, route_tree,
 };
 pub use explain::{explain, explain_method};
 pub use footprint::{

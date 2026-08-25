@@ -2500,7 +2500,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// The author's own name for the `index`-th declared parameter.
+    /// The author's own name for the `index`-th socket.
     fn param_ident(&self, index: u32) -> syn::Ident {
         crate::syntax::param_ident(index, self.params)
             .unwrap_or_else(|| value_ident(index as usize))
@@ -4700,14 +4700,14 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-/// Whether a declared parameter is a non-fungible value edge, which
+/// Whether a socket is a non-fungible value edge, which
 /// carries named instances where a fungible one carries an amount.
 fn is_nf_bucket(ty: &syn::Type) -> bool {
     matches!(ty, syn::Type::Path(path)
         if path.path.segments.last().is_some_and(|s| s.ident == "NfBucket"))
 }
 
-/// Whether a declared parameter is a value edge, which is the one kind
+/// Whether a socket is a value edge, which is the one kind
 /// the guest holds as a type of its own rather than as a plain value.
 fn is_bucket(ty: &syn::Type) -> bool {
     matches!(ty, syn::Type::Path(path)

@@ -72,7 +72,7 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
         .expect("the subintent declares one parameter");
     env.bind(wants_y, paid_y);
     env.bind(wants_x, paid_x);
-    env.build().expect("every hole is bound")
+    env.build().expect("every socket is bound")
 }
 
 /// Admit and route one envelope into its batch entry, plus the manifest

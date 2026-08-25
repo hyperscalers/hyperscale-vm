@@ -2,11 +2,11 @@
 //! signed subintents over typed yield edges, and the nullifier
 //! vocabulary that makes a committed subintent once-only.
 //!
-//! A subintent's signer signs an [`IntentDecl`] — a graph over declared
-//! yield parameters, each a typed hole for a value edge the composition
-//! supplies. The composer binds every hole to another intent's output
-//! edge and signs the whole envelope; nothing about the tree is
-//! renegotiated at admission. [`admit_tree`] flattens the tree into one
+//! A subintent's signer signs an [`IntentDecl`] — a graph over the
+//! sockets it declares, each shaped for something the composition
+//! supplies: a value edge, or a proof. The composer fills every socket
+//! from another intent's node and signs the whole envelope; nothing
+//! about the tree is renegotiated at admission. [`admit_tree`] flattens the tree into one
 //! routing manifest: intents keep their author order, yield edges
 //! interleave them deterministically, and a composition whose yields
 //! admit no execution order is rejected — acyclicity is judged at yield
@@ -30,7 +30,7 @@ use hyperscale_vm_types::{
 
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
-    AdmissionError, Admitted, IntentView, MAX_YIELD_PARAMS, admit_intents, check_instance_values,
+    AdmissionError, Admitted, IntentView, MAX_SOCKETS, admit_intents, check_instance_values,
     check_value_depth,
 };
 use crate::dsl::PresentedGrants;
@@ -56,37 +56,40 @@ pub const NULLIFIER_SLOT: SlotId = SlotId(0xFFFF);
 // build can refuse outright.
 const _: () = assert!(NULLIFIER_SLOT.0 > PACKAGE_SLOT_BASE);
 
-/// A typed inbound yield an intent declares a hole for.
+/// A shaped opening an intent declares for something it cannot supply
+/// itself, which the composition carrying it fills.
 ///
-/// Two things cross an intent boundary, and both cross as a hole the
-/// declaration types and the composition fills. **The declaration says
-/// what**, and its signer signs that; **the composition says whose**,
-/// and nothing about it is signed by the party who declared the hole.
-/// That split is the whole of what makes a subintent composable without
-/// its signer having met the composer.
+/// Shaped, which is what the name is for: the declaration says what may
+/// arrive, and a binding that does not fit is refused rather than
+/// accepted and dealt with. Two things cross an intent boundary and
+/// both cross this way — **the declaration says what**, and its signer
+/// signs that; **the composition says whose**, and nothing about it is
+/// signed by the party who declared the socket. That split is the whole
+/// of what makes a subintent composable without its signer having met
+/// the composer.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-pub enum YieldParam {
+pub enum Socket {
     /// A value edge carrying exactly this resource, under the declaring
     /// intent's own constraints.
-    Edge {
-        /// The resource the yielded edge must carry.
+    Value {
+        /// The resource the edge must carry.
         resource: ResourceAddr,
-        /// The declaring intent's constraints on the yielded edge — the
-        /// same language that constrains ordinary graph edges.
+        /// The declaring intent's constraints on it — the same language
+        /// that constrains ordinary graph edges.
         constraints: Vec<Constraint>,
     },
     /// A proof carrying exactly this claim, which this intent's own
-    /// nodes present through [`EvidenceRef::Param`].
+    /// nodes present through [`EvidenceRef::Socket`].
     ///
     /// The claim is the declaration's, so a holder signs *which
     /// authority they are asking for* and never who supplies it — and
     /// admission presents that claim alone, never whatever else the
     /// minting node happened to mint, so a composition cannot smuggle
     /// authority into an intent its signer never offered.
-    Proof(Presented),
+    Authority(Presented),
 }
 
-/// One intent's declared form: a graph over typed yield parameters.
+/// One intent's declared form: a graph over typed sockets.
 ///
 /// The root intent and every subintent share this shape; a subintent's
 /// signer signs exactly this, so [`IntentDecl::hash`] is the subintent's
@@ -96,12 +99,13 @@ pub enum YieldParam {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct IntentDecl {
     /// The intent's invocation graph; arguments may reference the
-    /// declared parameters via [`GraphArg::Param`].
+    /// sockets via [`GraphArg::Socket`].
     pub graph: ManifestGraph,
-    /// The declared yield parameters, each consumed by exactly one node
-    /// argument.
-    #[hbor(max = MAX_YIELD_PARAMS)]
-    pub params: Vec<YieldParam>,
+    /// The sockets this intent declares. A value socket is consumed by
+    /// exactly one node argument; an authority socket is presented by as
+    /// many nodes as ask for it.
+    #[hbor(max = MAX_SOCKETS)]
+    pub sockets: Vec<Socket>,
 }
 
 /// A signed subintent's identity: the hash of its declaration.
@@ -114,8 +118,8 @@ const DOMAIN_ENVELOPE_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
 
 impl IntentDecl {
     /// The declaration's identity through the hasher seam: the graph
-    /// hash plus every declared parameter with its constraints, each
-    /// parameter one part carrying its canonical encoding.
+    /// hash plus every socket it declares, each one part carrying its
+    /// canonical encoding.
     ///
     /// # Panics
     ///
@@ -125,33 +129,33 @@ impl IntentDecl {
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> SubintentHash {
         let graph = self.graph.hash(hasher);
-        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(1 + self.params.len());
+        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(1 + self.sockets.len());
         parts.push(graph.0.0.to_vec());
-        for param in &self.params {
-            parts.push(to_vec(param).expect("a yield parameter is shallow"));
+        for socket in &self.sockets {
+            parts.push(to_vec(socket).expect("a socket is shallow"));
         }
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
         SubintentHash(hasher.hash(DOMAIN_SUBINTENT, &refs))
     }
 }
 
-/// What a composition binds one declared hole to.
+/// What a composition puts in one socket.
 ///
 /// The composer's choice, covered by the envelope identity and never by
 /// the declaring intent's own hash — which is what lets one signed
-/// subintent be carried by any composition that can fill its holes.
+/// subintent be carried by any composition that can fill its sockets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub enum YieldBinding {
+pub enum Binding {
     /// The `output`-th edge of node `producer` inside `intent`.
-    Edge {
+    Value {
         /// The producing intent: `0` names the root, `i + 1` names
         /// subintent `i`.
         intent: u32,
         /// The produced edge within that intent's graph.
         edge: EdgeRef,
     },
-    /// The claims node `producer` of `intent` mints.
-    Proof {
+    /// The claim node `producer` of `intent` mints.
+    Authority {
         /// The producing intent, numbered as above.
         intent: u32,
         /// The minting node within that intent's graph.
@@ -159,12 +163,12 @@ pub enum YieldBinding {
     },
 }
 
-impl YieldBinding {
+impl Binding {
     /// The intent whose node this binding names.
     #[must_use]
     pub const fn intent(self) -> u32 {
         match self {
-            Self::Edge { intent, .. } | Self::Proof { intent, .. } => intent,
+            Self::Value { intent, .. } | Self::Authority { intent, .. } => intent,
         }
     }
 
@@ -172,8 +176,8 @@ impl YieldBinding {
     #[must_use]
     pub const fn producer(self) -> u32 {
         match self {
-            Self::Edge { edge, .. } => edge.producer,
-            Self::Proof { producer, .. } => producer,
+            Self::Value { edge, .. } => edge.producer,
+            Self::Authority { producer, .. } => producer,
         }
     }
 }
@@ -181,18 +185,17 @@ impl YieldBinding {
 /// A subintent bound into an envelope.
 ///
 /// Carries the signed declaration, the signer's account prefix, and one
-/// yield binding per declared parameter. The bindings are the
-/// composer's choice and are covered by the envelope identity, never by
-/// the subintent's own hash.
+/// binding per socket. The bindings are the composer's choice and are
+/// covered by the envelope identity, never by the subintent's own hash.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct Subintent {
     /// What the subintent's signer signed.
     pub decl: IntentDecl,
     /// The signer's account prefix — the owner of the nullifier.
     pub signer: PrincipalAddr,
-    /// The composition's binding for each declared parameter.
-    #[hbor(max = MAX_YIELD_PARAMS)]
-    pub bindings: Vec<YieldBinding>,
+    /// The composition's binding for each socket.
+    #[hbor(max = MAX_SOCKETS)]
+    pub bindings: Vec<Binding>,
 }
 
 /// The bound envelope tree admission runs over: the composer's root
@@ -202,8 +205,8 @@ pub struct EnvelopeTree {
     /// The composer's own intent.
     pub root: IntentDecl,
     /// The composition's binding for each root parameter.
-    #[hbor(max = MAX_YIELD_PARAMS)]
-    pub root_bindings: Vec<YieldBinding>,
+    #[hbor(max = MAX_SOCKETS)]
+    pub root_bindings: Vec<Binding>,
     /// The bound subintents, in envelope order.
     #[hbor(max = MAX_SUBINTENTS)]
     pub subintents: Vec<Subintent>,
@@ -359,14 +362,14 @@ pub fn admit_tree(
     let mut views = Vec::with_capacity(1 + tree.subintents.len());
     views.push(IntentView {
         graph: &tree.root.graph,
-        params: &tree.root.params,
+        sockets: &tree.root.sockets,
         bindings: &tree.root_bindings,
         signer: Some(composer),
     });
     for subintent in &tree.subintents {
         views.push(IntentView {
             graph: &subintent.decl.graph,
-            params: &subintent.decl.params,
+            sockets: &subintent.decl.sockets,
             bindings: &subintent.bindings,
             signer: Some(subintent.signer),
         });

@@ -143,8 +143,8 @@ impl Bucket {
     }
 }
 
-/// The enclosing intent's declared yield parameter, by position — the
-/// typed hole an envelope binds to another intent's exported edge.
+/// The enclosing intent's declared socket, by position — the
+/// typed socket an envelope binds to another intent's exported edge.
 ///
 /// Not tied to a builder: the parameter's declaration lives on the
 /// [`IntentDecl`], and whether the position exists and is consumed exactly
@@ -153,7 +153,7 @@ impl Bucket {
 ///
 /// [`IntentDecl`]: hyperscale_vm_effects::IntentDecl
 #[derive(Debug)]
-pub struct Param(
+pub struct SocketRef(
     /// The parameter position within the enclosing intent's declaration.
     pub u32,
 );
@@ -412,7 +412,7 @@ impl GraphBuilder {
     }
 
     /// Consume an output as a yield edge: bound by the enclosing
-    /// envelope's [`YieldBinding`] to another intent's declared parameter,
+    /// envelope's [`Binding`] to another intent's socket,
     /// rather than by a node of this graph.
     ///
     /// # Panics
@@ -421,7 +421,7 @@ impl GraphBuilder {
     /// consuming parameter's declaration, and accepting them here would
     /// drop them silently — and on a bucket minted by a different builder.
     ///
-    /// [`YieldBinding`]: hyperscale_vm_effects::YieldBinding
+    /// [`Binding`]: hyperscale_vm_effects::Binding
     #[allow(
         clippy::needless_pass_by_value,
         reason = "taking the bucket by value is the consumption; a borrow would let it be spent twice"
@@ -518,7 +518,7 @@ mod tests {
     };
     use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
 
-    use super::{BuildError, GraphBuilder, Param};
+    use super::{BuildError, GraphBuilder, SocketRef};
 
     const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
     const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -601,9 +601,9 @@ mod tests {
                 output: 0,
             }
         );
-        let [] = b.call(ALICE, "deposit", (Param(0),));
+        let [] = b.call(ALICE, "deposit", (SocketRef(0),));
         let graph = b.build().unwrap();
-        assert_eq!(graph.nodes[1].args, vec![GraphArg::Param(0)]);
+        assert_eq!(graph.nodes[1].args, vec![GraphArg::Socket(0)]);
     }
 
     #[test]

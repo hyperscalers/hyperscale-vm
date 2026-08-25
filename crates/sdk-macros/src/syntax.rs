@@ -3,7 +3,7 @@
 //! One copy per reading, because two copies of a reader is how the walks
 //! start seeing different programs.
 
-/// The author's own name for the `index`-th declared parameter, or
+/// The author's own name for the `index`-th socket, or
 /// `None` past the list — each caller supplies its own stand-in, and the
 /// divergence is visible at the call sites rather than buried in two
 /// same-named helpers.

@@ -211,16 +211,8 @@ fn a_composition_names_every_signer_it_needs() {
     let paid_y = sub.export(funds);
     account::deposit(&mut sub, BOB, taken).unwrap();
 
-    let [wants_y] = env
-        .seal(root)
-        .unwrap()
-        .try_into()
-        .expect("one declared parameter");
-    let [wants_x] = env
-        .seal(sub)
-        .unwrap()
-        .try_into()
-        .expect("one declared parameter");
+    let [wants_y] = env.seal(root).unwrap().try_into().expect("one socket");
+    let [wants_x] = env.seal(sub).unwrap().try_into().expect("one socket");
     env.bind(wants_y, paid_y);
     env.bind(wants_x, paid_x);
     let tree = env.build().unwrap();

@@ -12,7 +12,7 @@ use hyperscale_vm_effects::{
     TestHasher, admit_tree,
 };
 use hyperscale_vm_manifest_builder::{
-    EnvelopeBuilder, EnvelopeError, IntentBuilder, Param, YieldSink,
+    EnvelopeBuilder, EnvelopeError, IntentBuilder, SocketRef, YieldSink,
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr, ResourceAddr};
@@ -42,7 +42,7 @@ fn admits(tree: &EnvelopeTree) {
 
 /// The single sink of an intent declaring one parameter.
 fn only(sinks: Vec<YieldSink>) -> YieldSink {
-    let [sink] = sinks.try_into().expect("one declared parameter");
+    let [sink] = sinks.try_into().expect("one socket");
     sink
 }
 
@@ -78,7 +78,7 @@ fn a_composed_swap_admits() {
     let tree = swap(100, 10).unwrap();
     assert_eq!(tree.subintents.len(), 1);
     assert_eq!(tree.subintents[0].signer, BOB);
-    // The wiring the author never wrote: each side's hole names the other
+    // The wiring the author never wrote: each side's socket names the other
     // intent's exported edge.
     assert_eq!(tree.root_bindings[0].intent(), 1);
     assert_eq!(tree.subintents[0].bindings[0].intent(), 0);
@@ -92,7 +92,8 @@ fn payment_request(amount: u128) -> IntentDecl {
     let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE);
     let incoming = decl.declare(RES_X, [Constraint::MinAmount(amount)]);
     account::deposit(&mut decl, BOB, incoming).unwrap();
-    decl.into_decl().expect("the request consumes its own hole")
+    decl.into_decl()
+        .expect("the request consumes its own socket")
 }
 
 #[test]
@@ -129,9 +130,9 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
     env.seal(root).unwrap();
     assert_eq!(
         env.build(),
-        Err(EnvelopeError::UnboundYieldParam {
+        Err(EnvelopeError::UnfilledSocket {
             intent: 1,
-            param: 0
+            socket: 0
         })
     );
 }
@@ -139,18 +140,20 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
 #[test]
 fn a_presented_declaration_that_discharges_nothing_is_refused() {
     let chain = world();
-    // A declaration carrying a hole its own graph never consumes. Its
+    // A declaration carrying a socket its own graph never consumes. Its
     // signer cannot be made to have signed something else, so the only
     // place left to decline it is here, before a composer signs an
     // envelope around it.
     let mut malformed = payment_request(100);
-    malformed.params.push(payment_request(50).params.remove(0));
+    malformed
+        .sockets
+        .push(payment_request(50).sockets.remove(0));
     let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     assert!(matches!(
         env.present(BOB, malformed),
-        Err(EnvelopeError::UnusedYieldParam {
+        Err(EnvelopeError::UnreachedSocket {
             intent: 1,
-            param: 1
+            socket: 1
         })
     ));
 }
@@ -167,9 +170,9 @@ fn a_hole_the_graph_never_consumes_is_refused() {
     account::deposit(&mut root, ALICE, funds).unwrap();
     assert!(matches!(
         env.seal(root),
-        Err(EnvelopeError::UnusedYieldParam {
+        Err(EnvelopeError::UnreachedSocket {
             intent: 0,
-            param: 0
+            socket: 0
         })
     ));
 }
@@ -181,13 +184,13 @@ fn a_hole_two_arguments_consume_is_refused() {
     let taken = root.declare(RES_Y, []);
     account::deposit(&mut root, ALICE, taken).unwrap();
     // One yielded edge cannot be two deposits; the second reference is a
-    // `Param` the tier did not mint.
-    account::deposit(&mut root, ALICE, Param(0)).unwrap();
+    // `Socket` the tier did not mint.
+    account::deposit(&mut root, ALICE, SocketRef(0)).unwrap();
     assert!(matches!(
         env.seal(root),
-        Err(EnvelopeError::YieldParamReused {
+        Err(EnvelopeError::SocketReused {
             intent: 0,
-            param: 0
+            socket: 0
         })
     ));
 }
@@ -196,12 +199,12 @@ fn a_hole_two_arguments_consume_is_refused() {
 fn a_parameter_the_intent_never_declared_is_refused() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
-    account::deposit(&mut root, ALICE, Param(3)).unwrap();
+    account::deposit(&mut root, ALICE, SocketRef(3)).unwrap();
     assert!(matches!(
         env.seal(root),
-        Err(EnvelopeError::UnboundParam {
+        Err(EnvelopeError::UnknownSocket {
             intent: 0,
-            param: 3
+            socket: 3
         })
     ));
 }
@@ -217,9 +220,9 @@ fn a_hole_the_composition_never_bound_is_refused() {
     // never discharged its own.
     assert_eq!(
         env.build(),
-        Err(EnvelopeError::UnboundYieldParam {
+        Err(EnvelopeError::UnfilledSocket {
             intent: 0,
-            param: 0
+            socket: 0
         })
     );
 }
@@ -257,7 +260,7 @@ fn a_handle_from_another_envelope_is_refused() {
 
 proptest! {
     /// The tier's whole contract, over compositions of growing width: a
-    /// composer paying each of several counterparties, every side's hole
+    /// composer paying each of several counterparties, every side's socket
     /// bound to the other's export.
     #[test]
     fn composed_envelopes_admit(
@@ -289,7 +292,7 @@ proptest! {
             env.bind(wants, paid.remove(0));
         }
 
-        let tree = env.build().expect("every hole is bound");
+        let tree = env.build().expect("every socket is bound");
         admits(&tree);
     }
 }
@@ -319,7 +322,7 @@ fn note_meta() -> ResourceMeta {
 /// A holder's request, signed before any composer exists: whoever brings
 /// the desk's approval may have the note moved.
 ///
-/// The hole is the whole of what the holder undertakes. They name the
+/// The socket is the whole of what the holder undertakes. They name the
 /// *claim* — the desk's — and leave whose node supplies it to whoever
 /// composes, so the declaration means one thing however it is later
 /// carried and the signer never has to have met the composer.
@@ -337,7 +340,8 @@ fn note_request(approver: Presented) -> IntentDecl {
         .one()
         .unwrap();
     account::deposit(&mut decl, BOB, funds).unwrap();
-    decl.into_decl().expect("the request presents its own hole")
+    decl.into_decl()
+        .expect("the request presents its own socket")
 }
 
 /// The composition that fills it: the desk signs in and offers the claim
@@ -355,7 +359,7 @@ fn approved(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
 }
 
 /// A proof crosses an intent boundary the only way one can: through a
-/// hole the declaration typed and the composition filled.
+/// socket the declaration typed and the composition filled.
 ///
 /// Which is what makes the posture composable at all. The note's entry
 /// asks about the transaction rather than about the holder, so somebody
@@ -393,7 +397,7 @@ fn a_declared_hole_carries_a_proof_across_an_intent_boundary() {
 /// And a composition that binds a node minting some other claim is
 /// refused, rather than quietly presenting it.
 ///
-/// The declaration is what makes the hole worth signing: the holder
+/// The declaration is what makes the socket worth signing: the holder
 /// asked for the desk's approval, so a claim on anybody else is not the
 /// authority they undertook to accept — however the composer wired it.
 #[test]
@@ -403,6 +407,6 @@ fn a_hole_bound_to_the_wrong_claim_is_refused() {
     let chain = world();
     assert_eq!(
         admit_tree(&tree, DESK, tree.hash(&TestHasher), &chain, &TestHasher),
-        Err(AdmissionError::YieldClaimMismatch { node: 2, param: 0 }),
+        Err(AdmissionError::SocketClaimMismatch { node: 2, socket: 0 }),
     );
 }

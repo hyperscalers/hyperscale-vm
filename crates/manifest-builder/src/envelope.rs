@@ -1,21 +1,21 @@
-//! The envelope tier: intents composed along typed yield edges.
+//! The envelope tier: intents composed along the sockets they declare.
 //!
-//! A composition is edge addition *between* graphs. Each intent is written
-//! on its own — an [`IntentBuilder`] is a [`TypedBuilder`] that can also
-//! declare typed holes and export edges — and the [`EnvelopeBuilder`]
-//! joins them by wiring one intent's export to another's hole. Nothing an
-//! intent contains is rewritten to make a composition fit, which is what
-//! lets a subintent's signer sign a declaration and have it mean the same
-//! thing in whatever envelope later carries it.
+//! A composition is addition *between* graphs. Each intent is written on
+//! its own — an [`IntentBuilder`] is a [`TypedBuilder`] that can also
+//! declare sockets and offer what fills them — and the
+//! [`EnvelopeBuilder`] joins them by wiring one intent's offering to
+//! another's socket. Nothing an intent contains is rewritten to make a
+//! composition fit, which is what lets a subintent's signer sign a
+//! declaration and have it mean the same thing in whatever envelope
+//! later carries it.
 //!
 //! The wiring is done from handles rather than from indices. Declaring a
-//! parameter answers with the [`Param`] the intent's own graph must
-//! consume; the composition's side of the same declaration is a
+//! socket answers with the [`SocketRef`] the intent's own graph names it
+//! by; the composition's side of the same declaration is a
 //! [`YieldSink`], which arrives when the intent enters an envelope.
-//! Exporting answers with a [`YieldSource`]. Sinks and sources are affine,
-//! so a hole takes one source and a source fills one hole, and both name
-//! the intent they came from, so a binding cannot reach an intent or an
-//! edge that does not exist.
+//! Exporting or offering answers with a [`YieldSource`]. Both name the
+//! intent they came from, so a binding cannot reach an intent or a node
+//! that does not exist.
 //!
 //! An intent enters an envelope one of two ways, and both hand back sinks
 //! the same way. [`EnvelopeBuilder::seal`] takes one the composer wrote.
@@ -25,20 +25,22 @@
 //! it would not survive a rebuild.
 //!
 //! What is left is arithmetic over declarations, which the builder checks
-//! when it emits: every intent sealed, every declared parameter consumed
-//! exactly once inside its graph and bound exactly once outside it.
+//! when it emits: every intent sealed, every socket reached inside its
+//! graph and filled exactly once outside it. Reached *once* where it
+//! carries value, which is conserved, and as often as asked where it
+//! carries authority, which is not.
 
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
-    ChainRecords, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, Hasher, InstanceMeta, IntentDecl,
-    MAX_YIELD_PARAMS, ManifestGraph, Presented, ResourceMeta, Subintent, YieldBinding, YieldParam,
+    Binding, ChainRecords, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, Hasher, InstanceMeta,
+    IntentDecl, MAX_SOCKETS, ManifestGraph, Presented, ResourceMeta, Socket, Subintent,
 };
 use hyperscale_vm_types::{CallTarget, MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
-use crate::builder::{Bucket, Param};
+use crate::builder::{Bucket, SocketRef};
 use crate::typed::{Proof, TypedBuilder, TypedError, graph_records};
 
 /// Why an envelope could not be composed.
@@ -57,43 +59,45 @@ pub enum EnvelopeError {
         /// The intent: `0` is the root, `i + 1` is subintent `i`.
         intent: u32,
     },
-    /// A declared parameter no node argument consumes — the yielded
-    /// bucket would dangle.
-    #[error("intent {intent} parameter {param} is never consumed")]
-    UnusedYieldParam {
+    /// A socket no node of the declaring graph reaches, so nothing
+    /// would consume what the composition puts in it.
+    #[error("intent {intent} socket {socket} is never reached")]
+    UnreachedSocket {
         /// The declaring intent.
         intent: u32,
-        /// The parameter position.
-        param: u32,
+        /// Its position in the declaration.
+        socket: u32,
     },
-    /// A declared parameter consumed by more than one node argument.
-    #[error("intent {intent} parameter {param} is consumed twice")]
-    YieldParamReused {
+    /// A value socket consumed by more than one node argument. An
+    /// authority socket is not held to it: a claim presented twice says
+    /// nothing presenting it once does not.
+    #[error("intent {intent} socket {socket} is consumed twice")]
+    SocketReused {
         /// The declaring intent.
         intent: u32,
-        /// The parameter position.
-        param: u32,
+        /// Its position in the declaration.
+        socket: u32,
     },
-    /// A parameter reference past what the intent declared — reachable
-    /// only from a [`Param`] the tier did not mint.
-    #[error("intent {intent} references parameter {param}, which it does not declare")]
-    UnboundParam {
+    /// A socket reference past what the intent declared — reachable only
+    /// from a [`SocketRef`] the tier did not mint.
+    #[error("intent {intent} references socket {socket}, which it does not declare")]
+    UnknownSocket {
         /// The referencing intent.
         intent: u32,
-        /// The referenced parameter.
-        param: u32,
+        /// The socket it named.
+        socket: u32,
     },
-    /// A declared parameter the composition never bound to a source.
-    #[error("intent {intent} parameter {param} is bound to no yield")]
-    UnboundYieldParam {
+    /// A socket the composition never filled.
+    #[error("intent {intent} socket {socket} is filled by nothing")]
+    UnfilledSocket {
         /// The declaring intent.
         intent: u32,
-        /// The parameter position.
-        param: u32,
+        /// Its position in the declaration.
+        socket: u32,
     },
-    /// An intent declaring more yield parameters than admission accepts.
-    #[error("intent {intent} declares more than {MAX_YIELD_PARAMS} yield parameters")]
-    TooManyYieldParams {
+    /// An intent declaring more sockets than admission accepts.
+    #[error("intent {intent} declares more than {MAX_SOCKETS} sockets")]
+    TooManySockets {
         /// The declaring intent.
         intent: u32,
     },
@@ -109,10 +113,10 @@ pub enum EnvelopeError {
 /// cannot be wired into another's slots.
 static NEXT_ENVELOPE: AtomicU64 = AtomicU64::new(0);
 
-/// One intent's declared parameter, as the composition names it — the
-/// hole side of a declaration, which a binding fills.
+/// One intent's socket, as the composition names it — the
+/// socket side of a declaration, which a binding fills.
 ///
-/// Affine like the [`Param`] it is declared beside: one hole takes one
+/// Affine like the [`Socket`] it is declared beside: one socket takes one
 /// source, so binding the same parameter twice has no spelling.
 #[derive(Debug)]
 pub struct YieldSink {
@@ -122,9 +126,9 @@ pub struct YieldSink {
 }
 
 /// What one intent exported, as the composition names it — the source
-/// side of a hole.
+/// side of a socket.
 ///
-/// An edge fills exactly one hole, because value is linear. A proof
+/// An edge fills exactly one socket, because value is linear. A proof
 /// fills as many as ask for it, because presenting a claim twice says
 /// nothing presenting it once does not — so it answers by value rather
 /// than being consumed.
@@ -143,7 +147,7 @@ enum Yielded {
 }
 
 /// One intent under construction: a [`TypedBuilder`] that also declares
-/// typed holes and exports edges.
+/// sockets and exports edges.
 ///
 /// Dereferences to the builder underneath, so every call reads exactly as
 /// it does outside a composition — the wrappers take `&mut` to this and
@@ -152,14 +156,14 @@ pub struct IntentBuilder<'a> {
     graph: TypedBuilder<'a>,
     envelope: u64,
     intent: u32,
-    params: Vec<YieldParam>,
+    sockets: Vec<Socket>,
 }
 
 impl<'a> IntentBuilder<'a> {
     /// An intent written to be signed on its own and handed to a composer
     /// afterwards — a declaration that exists before any envelope does.
     ///
-    /// Its holes are bound by whoever presents it, so nothing here mints a
+    /// Its sockets are filled by whoever presents it, so nothing here mints a
     /// [`YieldSink`]: those come from [`EnvelopeBuilder::present`], on the
     /// composing side, where the intent this declaration will be is known.
     #[must_use]
@@ -172,60 +176,60 @@ impl<'a> IntentBuilder<'a> {
             graph: TypedBuilder::new(chain, hasher, signer),
             envelope: NEXT_ENVELOPE.fetch_add(1, Ordering::Relaxed),
             intent: 0,
-            params: Vec::new(),
+            sockets: Vec::new(),
         }
     }
 
-    /// Declare a typed hole: an edge the composition must bind, carrying
+    /// Declare a socket: an edge the composition must bind, carrying
     /// `resource` and satisfying `constraints`.
     ///
-    /// The [`Param`] is this intent's own obligation — its graph must
+    /// The [`Socket`] is this intent's own obligation — its graph must
     /// consume it exactly once. The composition's obligation to bind the
-    /// hole is discharged against a [`YieldSink`], which arrives when the
+    /// socket is discharged against a [`YieldSink`], which arrives when the
     /// intent enters an envelope rather than here, so that an intent
     /// written and one presented hand back sinks the same way.
     ///
     /// # Panics
     ///
-    /// Past a `u32` of declarations, far beyond [`MAX_YIELD_PARAMS`],
+    /// Past a `u32` of declarations, far beyond [`MAX_SOCKETS`],
     /// which [`EnvelopeBuilder::seal`] enforces as an error.
     pub fn declare(
         &mut self,
         resource: impl Into<ResourceAddr>,
         constraints: impl IntoIterator<Item = Constraint>,
-    ) -> Param {
+    ) -> SocketRef {
         let position =
-            u32::try_from(self.params.len()).expect("parameters are bounded by MAX_YIELD_PARAMS");
-        self.params.push(YieldParam::Edge {
+            u32::try_from(self.sockets.len()).expect("parameters are bounded by MAX_SOCKETS");
+        self.sockets.push(Socket::Value {
             resource: resource.into(),
             constraints: constraints.into_iter().collect(),
         });
-        Param(position)
+        SocketRef(position)
     }
 
-    /// Declare a hole for a proof carrying `claim`, answering the
+    /// Declare a socket for a proof carrying `claim`, answering the
     /// [`Proof`] this intent's own calls present it as.
     ///
     /// The one way authority crosses an intent boundary. A node
     /// reference names a node of this intent, and a signer signs their
     /// own intent whole, so nothing here can reach a proof somebody
-    /// else's node mints — but a declared hole names the *claim* and
+    /// else's node mints — but a socket names the *claim* and
     /// leaves whose node supplies it to whoever composes. So a holder
     /// signs "an approval from the desk goes here" and never meets the
     /// composition that finds one.
     ///
     /// # Panics
     ///
-    /// Past a `u32` of parameters, far beyond the [`MAX_YIELD_PARAMS`]
+    /// Past a `u32` of parameters, far beyond the [`MAX_SOCKETS`]
     /// the declaration is held to when it is sealed.
     pub fn declare_proof(&mut self, claim: Presented) -> Proof {
         let position =
-            u32::try_from(self.params.len()).expect("parameters are bounded by MAX_YIELD_PARAMS");
+            u32::try_from(self.sockets.len()).expect("parameters are bounded by MAX_SOCKETS");
         // The claim's own subject, where a call can be made against it:
         // an identity is callable and a badge is not, which is the same
         // reading the address class gives everywhere.
         let acting = CallTarget::try_from(claim.subject).ok();
-        self.params.push(YieldParam::Proof(claim));
+        self.sockets.push(Socket::Authority(claim));
         Proof::yielded(position, acting)
     }
 
@@ -241,17 +245,17 @@ impl<'a> IntentBuilder<'a> {
     /// Build the graph and check that every parameter this intent declared
     /// is consumed by exactly one of its own node arguments.
     fn finish(self, intent: u32) -> Result<IntentDecl, EnvelopeError> {
-        if self.params.len() > MAX_YIELD_PARAMS {
-            return Err(EnvelopeError::TooManyYieldParams { intent });
+        if self.sockets.len() > MAX_SOCKETS {
+            return Err(EnvelopeError::TooManySockets { intent });
         }
-        let params = self.params;
+        let sockets = self.sockets;
         let graph = self.graph.build()?;
-        check_params(&graph, &params, intent)?;
-        Ok(IntentDecl { graph, params })
+        check_sockets(&graph, &sockets, intent)?;
+        Ok(IntentDecl { graph, sockets })
     }
 
     /// Consume an output as this intent's yield edge, for the composition
-    /// to bind to some intent's declared parameter.
+    /// to bind to some intent's socket.
     ///
     /// # Panics
     ///
@@ -267,16 +271,16 @@ impl<'a> IntentBuilder<'a> {
     }
 
     /// Offer a proof this intent's own node minted, for some other
-    /// intent's declared hole.
+    /// intent's declared socket.
     ///
     /// Nothing is consumed and nothing is exported from the graph: the
     /// node stands where it stood, and what crosses is the claim it
-    /// mints. So one minting node answers every hole that asks for it.
+    /// mints. So one minting node answers every socket that asks for it.
     ///
     /// # Panics
     ///
-    /// On a proof that is itself a yielded one: a hole cannot fill a
-    /// hole, and the composition that filled this one is the one that
+    /// On a proof that is itself a yielded one: a socket cannot fill a
+    /// socket, and the composition that filled this one is the one that
     /// would have to offer it.
     #[must_use]
     pub fn offer(&self, proof: Proof) -> YieldSource {
@@ -315,9 +319,9 @@ pub struct EnvelopeBuilder<'a> {
     /// Sealed declarations by slot — `0` is the root — `None` until the
     /// intent is sealed.
     intents: Vec<Option<IntentDecl>>,
-    /// The bound source of each declared parameter, by intent and
+    /// The bound source of each socket, by intent and
     /// position.
-    bindings: BTreeMap<(u32, u32), YieldBinding>,
+    bindings: BTreeMap<(u32, u32), Binding>,
     /// The creation-fixed records the tree carries for targets beyond
     /// the genesis registry.
     presented: Vec<InstanceMeta>,
@@ -351,7 +355,7 @@ impl<'a> EnvelopeBuilder<'a> {
             graph: TypedBuilder::new(chain, hasher, signer),
             envelope: id,
             intent: 0,
-            params: Vec::new(),
+            sockets: Vec::new(),
         };
         (envelope, root)
     }
@@ -389,7 +393,7 @@ impl<'a> EnvelopeBuilder<'a> {
             graph: TypedBuilder::new(self.chain, self.hasher, signer),
             envelope: self.id,
             intent,
-            params: Vec::new(),
+            sockets: Vec::new(),
         }
     }
 
@@ -397,7 +401,7 @@ impl<'a> EnvelopeBuilder<'a> {
     /// [`YieldSink`] per parameter it declares, in declaration order.
     ///
     /// This is what a subintent is for. The signer put their name to a
-    /// graph over typed holes before any composer existed; the composition
+    /// graph over sockets before any composer existed; the composition
     /// supplies the sources and alters nothing, so the signature that
     /// already covers the declaration still covers it — which is why the
     /// declaration is stored exactly as handed over rather than rebuilt.
@@ -422,11 +426,11 @@ impl<'a> EnvelopeBuilder<'a> {
         decl: IntentDecl,
     ) -> Result<Vec<YieldSink>, EnvelopeError> {
         let intent = u32::try_from(self.intents.len()).expect("intents fit an index");
-        if decl.params.len() > MAX_YIELD_PARAMS {
-            return Err(EnvelopeError::TooManyYieldParams { intent });
+        if decl.sockets.len() > MAX_SOCKETS {
+            return Err(EnvelopeError::TooManySockets { intent });
         }
-        check_params(&decl.graph, &decl.params, intent)?;
-        let sinks = self.sinks(intent, decl.params.len());
+        check_sockets(&decl.graph, &decl.sockets, intent)?;
+        let sinks = self.sinks(intent, decl.sockets.len());
         self.carry(&decl.graph);
         self.signers.push(signer);
         self.intents.push(Some(decl));
@@ -438,9 +442,9 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// [`EnvelopeError::UnusedYieldParam`], [`EnvelopeError::YieldParamReused`]
-    /// or [`EnvelopeError::UnboundParam`] for a declaration its graph does
-    /// not discharge; [`EnvelopeError::TooManyYieldParams`]; or the graph's
+    /// [`EnvelopeError::UnreachedSocket`], [`EnvelopeError::SocketReused`]
+    /// or [`EnvelopeError::UnknownSocket`] for a declaration its graph does
+    /// not discharge; [`EnvelopeError::TooManySockets`]; or the graph's
     /// own refusal.
     ///
     /// # Panics
@@ -458,7 +462,7 @@ impl<'a> EnvelopeBuilder<'a> {
             "an intent is sealed into the envelope once"
         );
         let decl = intent.finish(index)?;
-        let sinks = self.sinks(index, decl.params.len());
+        let sinks = self.sinks(index, decl.sockets.len());
         self.carry(&decl.graph);
         self.intents[slot] = Some(decl);
         Ok(sinks)
@@ -480,18 +484,18 @@ impl<'a> EnvelopeBuilder<'a> {
         }
     }
 
-    /// One sink per declared parameter of `intent`, in declaration order.
+    /// One sink per socket of `intent`, in declaration order.
     fn sinks(&self, intent: u32, params: usize) -> Vec<YieldSink> {
         (0..params)
             .map(|position| YieldSink {
                 envelope: self.id,
                 intent,
-                position: u32::try_from(position).expect("bounded by MAX_YIELD_PARAMS"),
+                position: u32::try_from(position).expect("bounded by MAX_SOCKETS"),
             })
             .collect()
     }
 
-    /// Bind a declared hole to the edge that will fill it.
+    /// Bind a socket to the edge that will fill it.
     ///
     /// The whole of composition: an edge is added between two graphs and
     /// neither is touched.
@@ -509,11 +513,11 @@ impl<'a> EnvelopeBuilder<'a> {
             "a yield is bound within the envelope that minted it"
         );
         let binding = match source.yielded {
-            Yielded::Edge(edge) => YieldBinding::Edge {
+            Yielded::Edge(edge) => Binding::Value {
                 intent: source.intent,
                 edge,
             },
-            Yielded::Proof(producer) => YieldBinding::Proof {
+            Yielded::Proof(producer) => Binding::Authority {
                 intent: source.intent,
                 producer,
             },
@@ -521,12 +525,12 @@ impl<'a> EnvelopeBuilder<'a> {
         self.bindings.insert((sink.intent, sink.position), binding);
     }
 
-    /// Emit the tree: every intent sealed, every declared parameter bound.
+    /// Emit the tree: every intent sealed, every socket bound.
     ///
     /// # Errors
     ///
     /// [`EnvelopeError::UnsealedIntent`] for an intent still under
-    /// construction; [`EnvelopeError::UnboundYieldParam`] for a hole the
+    /// construction; [`EnvelopeError::UnfilledSocket`] for a socket the
     /// composition left open; [`EnvelopeError::TooManySubintents`].
     ///
     /// # Panics
@@ -541,14 +545,14 @@ impl<'a> EnvelopeBuilder<'a> {
         for (slot, sealed) in self.intents.into_iter().enumerate() {
             let intent = u32::try_from(slot).expect("minted indices fit");
             let decl = sealed.ok_or(EnvelopeError::UnsealedIntent { intent })?;
-            let mut bindings = Vec::with_capacity(decl.params.len());
-            for position in 0..decl.params.len() {
-                let param = u32::try_from(position).expect("bounded by MAX_YIELD_PARAMS");
+            let mut bindings = Vec::with_capacity(decl.sockets.len());
+            for position in 0..decl.sockets.len() {
+                let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
                 bindings.push(
                     *self
                         .bindings
-                        .get(&(intent, param))
-                        .ok_or(EnvelopeError::UnboundYieldParam { intent, param })?,
+                        .get(&(intent, socket))
+                        .ok_or(EnvelopeError::UnfilledSocket { intent, socket })?,
                 );
             }
             decls.push(decl);
@@ -579,37 +583,37 @@ impl<'a> EnvelopeBuilder<'a> {
     }
 }
 
-/// Check that each of an intent's declared parameters is consumed by
+/// Check that each of an intent's sockets is consumed by
 /// exactly one of its own node arguments — admission's own count, run
 /// against the intent that declared them.
-fn check_params(
+fn check_sockets(
     graph: &ManifestGraph,
-    declared: &[YieldParam],
+    declared: &[Socket],
     intent: u32,
 ) -> Result<(), EnvelopeError> {
     let mut uses = vec![0u32; declared.len()];
     for node in &graph.nodes {
-        for position in node.holes() {
+        for position in node.sockets() {
             let slot = usize::try_from(position)
                 .ok()
                 .and_then(|position| uses.get_mut(position))
-                .ok_or(EnvelopeError::UnboundParam {
+                .ok_or(EnvelopeError::UnknownSocket {
                     intent,
-                    param: position,
+                    socket: position,
                 })?;
             *slot += 1;
         }
     }
     for (position, count) in uses.iter().enumerate() {
-        let param = u32::try_from(position).expect("bounded by MAX_YIELD_PARAMS");
+        let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
         if *count == 0 {
-            return Err(EnvelopeError::UnusedYieldParam { intent, param });
+            return Err(EnvelopeError::UnreachedSocket { intent, socket });
         }
         // Value is conserved and authority is not: an edge fills one
         // argument, and a claim presented twice says nothing presenting
         // it once does not.
-        if matches!(declared.get(position), Some(YieldParam::Edge { .. })) && *count > 1 {
-            return Err(EnvelopeError::YieldParamReused { intent, param });
+        if matches!(declared.get(position), Some(Socket::Value { .. })) && *count > 1 {
+            return Err(EnvelopeError::SocketReused { intent, socket });
         }
     }
     Ok(())

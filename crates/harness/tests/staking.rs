@@ -255,7 +255,7 @@ const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
             graph,
-            params: Vec::new(),
+            sockets: Vec::new(),
         },
         root_bindings: Vec::new(),
         subintents: Vec::new(),

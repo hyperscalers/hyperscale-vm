@@ -67,7 +67,7 @@ pub enum TypedError {
         /// The method requested.
         method: String,
     },
-    /// An argument count differing from the declared parameters.
+    /// An argument count differing from the sockets.
     #[error("`{method}` takes {expected} arguments, {found} passed")]
     ArityMismatch {
         /// The method called.
@@ -105,9 +105,9 @@ pub enum TypedError {
         /// The parameter position.
         param: u32,
     },
-    /// A yield parameter where the method declares a value.
-    #[error("`{method}` argument {param}: a yield parameter cannot bind a value parameter")]
-    ParamForValueParam {
+    /// A socket where the method declares a value.
+    #[error("`{method}` argument {param}: a socket cannot bind a value parameter")]
+    SocketForValueParam {
         /// The method called.
         method: String,
         /// The parameter position.
@@ -180,7 +180,7 @@ pub enum TypedError {
 #[must_use = "an unpresented proof authorizes nothing"]
 pub struct Proof {
     /// How the presenting node names it: a node of the same intent, or
-    /// a hole this intent declared for a proof from outside it.
+    /// a socket this intent declared for a proof from outside it.
     reference: EvidenceRef,
     /// The identity it carries, where that is something a call can be
     /// made against.
@@ -199,11 +199,11 @@ impl Proof {
         self.acting
     }
 
-    /// The proof a declared hole will be filled with, presented as this
+    /// The proof a socket will be filled with, presented as this
     /// intent's `position`-th parameter.
     pub(crate) const fn yielded(position: u32, acting: Option<CallTarget>) -> Self {
         Self {
-            reference: EvidenceRef::Param(position),
+            reference: EvidenceRef::Socket(position),
             acting,
         }
     }
@@ -433,7 +433,7 @@ impl<'a> TypedBuilder<'a> {
     /// signature the target's package declares.
     ///
     /// The arguments are bound before anything is appended and judged
-    /// against the declared parameters, so a refusal here leaves the
+    /// against the sockets, so a refusal here leaves the
     /// builder exactly as it was — the handles it was passed are spent,
     /// as consuming them by value already said, but no node claims them.
     ///
@@ -833,7 +833,7 @@ impl<'a> TypedBuilder<'a> {
 /// nothing at construction determines it.
 ///
 /// This is admission's own per-argument check, run against the same
-/// declared parameters, one graph earlier.
+/// sockets, one graph earlier.
 fn type_args(
     method: &str,
     args: &[GraphArg],
@@ -889,9 +889,9 @@ fn type_args(
                     },
                 })
             }
-            GraphArg::Param(_) => {
+            GraphArg::Socket(_) => {
                 if !param.is_edge() {
-                    return Err(TypedError::ParamForValueParam {
+                    return Err(TypedError::SocketForValueParam {
                         method: method(),
                         param: index,
                     });
@@ -1120,7 +1120,7 @@ fn governing(
         let arg = usize::try_from(*param).ok().and_then(|at| args.get(at))?;
         let resource = match arg {
             GraphArg::Edge { constraints, .. } => edge_resource(constraints),
-            GraphArg::Literal(_) | GraphArg::Param(_) => None,
+            GraphArg::Literal(_) | GraphArg::Socket(_) => None,
         }?;
         Some((resource, Some(GrantedBehaviour::Burn)))
     });

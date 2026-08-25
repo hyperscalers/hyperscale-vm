@@ -147,7 +147,7 @@ fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> EnvelopeTree
                     },
                 ],
             },
-            params: Vec::new(),
+            sockets: Vec::new(),
         },
         root_bindings: Vec::new(),
         subintents: Vec::new(),

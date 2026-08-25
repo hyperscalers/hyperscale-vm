@@ -213,7 +213,7 @@ pub enum AbiError {
     /// the guest would receive one edge's bytes under two names.
     #[error("parameter {param} is a bucket carried by {carried} ABI parameters")]
     BucketCarriedTwice {
-        /// The declared parameter.
+        /// The socket.
         param: u32,
         /// How many ABI parameters name it.
         carried: u32,
@@ -543,7 +543,7 @@ pub enum DeclarationError {
     /// indexes.
     #[error("{found} denominations against {expected} parameters")]
     DenominationArity {
-        /// The declared parameter count.
+        /// The socket count.
         expected: usize,
         /// The denomination count.
         found: usize,

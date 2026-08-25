@@ -8,7 +8,7 @@ use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
 };
 use hyperscale_vm_fixtures::{amm, payouts};
-use hyperscale_vm_manifest_builder::{GraphBuilder, Names, Param, TypedBuilder, render};
+use hyperscale_vm_manifest_builder::{GraphBuilder, Names, SocketRef, TypedBuilder, render};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr, TextError};
 
@@ -194,12 +194,12 @@ fn a_yield_parameter_renders_as_the_hole_it_is() {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (XRD, 100u128));
     let _ = b.export(funds);
-    let [] = b.call(ALICE, "deposit", (Param(0),));
+    let [] = b.call(ALICE, "deposit", (SocketRef(0),));
     let graph = b.build().unwrap();
 
     let text = render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap();
     // The exported edge has no consumer in this graph, so nothing names
-    // its binding; the hole the composition will fill is `$0`.
+    // its binding; the socket the composition will fill is `$0`.
     assert!(text.ends_with("alice.deposit($0);\n"), "{text}");
 }
 
