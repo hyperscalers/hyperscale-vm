@@ -10,11 +10,12 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, RES_X, payouts, pkg, resolver, shard_of, vault, world};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, AdmissionError, Clause, Constraint, EdgeRef, EvalError, EvidenceRef, Expr, GraphArg,
-    GraphNode, Hash32, InstanceMeta, JudgedLeaf, MAX_VALUE_DEPTH, ManifestGraph, MethodSignature,
-    ModeExpr, PackageMetadata, ParamType, Presented, Records, ResourceKind, Rule, RuleExpr,
-    RuleLeaf, SlotRef, TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id,
-    holdings_entry, route,
+    AbiParam, AdmissionError, Clause, Constraint, EdgeRef, EvalError, EvidenceRef, Expr,
+    GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta, JudgedLeaf, MAX_VALUE_DEPTH,
+    ManifestGraph, MethodSignature, ModeExpr, PackageMetadata, ParamType, Presented,
+    PresentedGrants, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes,
+    RuleExpr, RuleLeaf, SlotRef, StoredRule, TargetExpr, TestHasher, Totality, Value, admit,
+    admit_presenting, child_key, fresh_id, holdings_entry, route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
@@ -1183,5 +1184,139 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
             &TestHasher
         ),
         Err(AdmissionError::UnexpectedEvidence { node: 0 })
+    );
+}
+
+/// The entry admitting a reach comes from the reached resource's own
+/// record, and an unpresented record admits nothing.
+///
+/// The asymmetry with an issuance is the honest one. An issuance
+/// governs a resource the *declaration* derives, so re-derivation is
+/// the address itself; a reach governs one a **caller** named, so the
+/// presented record is what makes the rule trustworthy — and withholding
+/// it withholds the capability rather than opening it, which is the safe
+/// direction for an authority.
+/// The record of a resource whose `Recall` entry names [`ALICE`].
+fn seizable_meta() -> ResourceMeta {
+    let mut rules = ResourceGrants::new();
+    rules.set(
+        GrantedBehaviour::Recall,
+        RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(ALICE)))
+            .expect("a rule within the caps encodes"),
+    );
+    ResourceMeta {
+        namespace: Address::new([0x6A; 31], AddressClass::Component),
+        kind: ResourceKind::Fungible,
+        material: vec![b"seized".to_vec()],
+        rules,
+    }
+}
+
+/// A world holding a package whose one method reaches value under a
+/// prefix the caller names, at a slot the caller names, keyed by the
+/// resource whose entry admits it.
+fn bailiff_world() -> (Records, ComponentAddr) {
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "seize".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            params: vec![ParamType::Address, ParamType::U64, ParamType::Resource],
+            abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
+            outputs: vec![Expr::Arg(2)],
+            effects: vec![Clause::Effect {
+                reach: Some(GrantedBehaviour::Recall),
+                guard: None,
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::Arg(0)),
+                    slot: SlotRef::Reached(Box::new(Expr::Arg(1))),
+                    material: vec![Expr::Arg(2)],
+                }),
+                mode: ModeExpr::Reserve(Expr::Literal(Value::U128(10))),
+                denomination: Some(Box::new(Expr::Arg(2))),
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    let mut chain = setup();
+    chain.packages.publish_unchecked(pkg("bailiff"), package);
+    let meta = InstanceMeta {
+        package: pkg("bailiff"),
+        config: vec![],
+        salt: Hash32([0xB1; 32]),
+    };
+    let issuer = meta.address(&TestHasher);
+    chain.instances.create(&TestHasher, meta);
+    (chain, issuer)
+}
+
+#[test]
+fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
+    let record = seizable_meta();
+    let seized = record.address(&TestHasher);
+    let (chain, issuer) = bailiff_world();
+    let graph = |evidence: BTreeSet<EvidenceRef>| ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE.into(),
+                method: "authorize".into(),
+                args: vec![],
+                evidence: [EvidenceRef::IntentSignature].into(),
+            },
+            GraphNode {
+                target: issuer.into(),
+                method: "seize".into(),
+                args: vec![
+                    GraphArg::Literal(Value::Address(BOB.address())),
+                    GraphArg::Literal(Value::U64(u64::from(VAULT.0))),
+                    GraphArg::Literal(Value::Address(seized.address())),
+                ],
+                evidence,
+            },
+            GraphNode {
+                target: ALICE.into(),
+                method: "deposit".into(),
+                args: vec![GraphArg::Edge {
+                    edge: EdgeRef {
+                        producer: 1,
+                        output: 0,
+                    },
+                    constraints: Vec::new(),
+                }],
+                evidence: BTreeSet::default(),
+            },
+        ],
+    };
+    let presented = PresentedGrants::from_presented(&TestHasher, std::slice::from_ref(&record));
+    let reaching = [EvidenceRef::Node(0)].into();
+
+    // The record's entry names Alice, and her claim is what the frame
+    // demands — injected, never declared, so the package says nothing
+    // about it and cannot say otherwise.
+    let admitted = admit_presenting(&graph(reaching), ALICE, &chain, &presented, &TestHasher)
+        .expect("the reach admits the party the entry names");
+    assert_eq!(
+        admitted.calls()[1].requires,
+        vec![Rule::Require(JudgedLeaf::Claim(Presented::of_subject(
+            ALICE
+        )))],
+        "the entry is the frame's condition, and the only one",
+    );
+
+    // Withheld: there is nothing to resolve the entry against, and an
+    // absent authority withholds.
+    assert_eq!(
+        admit_presenting(
+            &graph([EvidenceRef::Node(0)].into()),
+            ALICE,
+            &chain,
+            PresentedGrants::none(),
+            &TestHasher
+        ),
+        Err(AdmissionError::ReachUnadmitted {
+            node: 1,
+            resource: seized,
+            behaviour: GrantedBehaviour::Recall,
+        }),
     );
 }

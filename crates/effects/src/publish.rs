@@ -989,31 +989,6 @@ fn vocabulary_shape(
     Some((shaped, wanted))
 }
 
-/// Whether `resource` is a denomination this signature states — at a
-/// parameter position, or on one of its own clauses.
-///
-/// What ties a granted gate to the value it governs. Syntactic, because
-/// this runs at publish where no arguments exist: the same standard the
-/// target comparison holds to, and what keeps a caller's choice of
-/// resource a choice of which rule governs rather than of what it says.
-fn denominates(signature: &MethodSignature, flat: &[&Clause], resource: &Expr) -> bool {
-    signature
-        .denominations
-        .iter()
-        .flatten()
-        .any(|named| named == resource)
-        || flat.iter().any(|clause| {
-            matches!(
-                clause,
-                Clause::Effect {
-            reach: None,
-                    denomination: Some(named),
-                    ..
-                } if named.as_ref() == resource
-            )
-        })
-}
-
 /// Whether two clauses' guards are each other's negation, so no
 /// evaluation declares both.
 ///
@@ -1380,7 +1355,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     for (index, clause) in flat.iter().enumerate() {
         judge_access(u32::try_from(index).unwrap_or(u32::MAX), clause, &flat)?;
     }
-    check_conditions(signature, &flat)
+    check_conditions(&flat)
 }
 
 /// Whether this frame is the one that brings its issued resource into
@@ -1529,7 +1504,7 @@ fn check_agreement(flat: &[&Clause]) -> Result<(), DeclarationError> {
 /// shape. Guards compare syntactically, the same standard the
 /// presence pass holds to: an unguarded access backs any condition, a
 /// guarded one backs a condition under the same guard.
-fn check_conditions(signature: &MethodSignature, flat: &[&Clause]) -> Result<(), DeclarationError> {
+fn check_conditions(flat: &[&Clause]) -> Result<(), DeclarationError> {
     let declares =
         |target: &TargetExpr, under: Option<&Expr>, admits: &dyn Fn(&ModeExpr) -> bool| {
             flat.iter().any(|clause| {
@@ -1565,19 +1540,6 @@ fn check_conditions(signature: &MethodSignature, flat: &[&Clause]) -> Result<(),
                     }
                     if !declares(target, under, &coherent) {
                         return Err(DeclarationError::ConditionUndeclared { clause });
-                    }
-                }
-                // A grant leaf is the one condition a caller may name,
-                // because the rule is the resource's own commitment and
-                // naming it chooses which rule governs rather than what it
-                // says. That holds only while the resource governed is
-                // the resource moved: a gate over one argument beside an
-                // effect denominated in another is a rule a caller
-                // satisfies with a resource of their own, over value it
-                // says nothing about.
-                RuleLeaf::Granted { resource, .. } => {
-                    if !denominates(signature, flat, resource) {
-                        return Err(DeclarationError::GrantOverAnother { clause });
                     }
                 }
                 RuleLeaf::Stored { cell, .. } => {
@@ -1997,9 +1959,7 @@ fn check_rule_bounds(rule: &RuleExpr) -> Result<(), SignatureBoundsError> {
     }
     match rule {
         RuleExpr::Require(RuleLeaf::Claim(claim)) => check_expr_bounds(claim, 0),
-        RuleExpr::Require(
-            RuleLeaf::Stored { cell, .. } | RuleLeaf::Granted { resource: cell, .. },
-        ) => check_expr_bounds(cell, 0),
+        RuleExpr::Require(RuleLeaf::Stored { cell, .. }) => check_expr_bounds(cell, 0),
         RuleExpr::Require(RuleLeaf::Presence { target, .. }) => check_target_bounds(target),
         RuleExpr::CountOf { rules, .. } => rules.iter().try_for_each(check_rule_bounds),
     }
@@ -2915,62 +2875,6 @@ mod tests {
                 RuleExpr::Require(RuleLeaf::Stored { cell: Expr::Arg(0) })
             )]),
             Err(DeclarationError::CallerNamedCondition { clause: 0 })
-        );
-    }
-
-    /// A grant leaf is the one condition a caller may name, and what
-    /// makes that safe is the resource governed being the resource
-    /// moved. Naming one the method never denominates lets a caller
-    /// bring a resource of their own — granting themselves — and
-    /// satisfy a gate over value it says nothing about.
-    #[test]
-    fn a_sealed_gate_over_a_resource_the_method_never_moves_is_refused() {
-        let vault = |resource: Expr| Clause::Effect {
-            reach: None,
-            guard: None,
-            target: TargetExpr::Point(Expr::ChildKey {
-                owner: Box::new(Expr::SelfAddr),
-                slot: SlotRef::Fixed(VAULT),
-                material: vec![resource.clone()],
-            }),
-            mode: ModeExpr::Delta,
-            denomination: Some(Box::new(resource)),
-        };
-        let granted = |resource: Expr| Clause::Requires {
-            guard: None,
-            rule: RuleExpr::Require(RuleLeaf::Granted {
-                resource,
-                behaviour: GrantedBehaviour::Recall,
-            }),
-        };
-        let declared = |clauses: Vec<Clause>| {
-            check_declarations(&MethodSignature {
-                params: vec![ParamType::Resource, ParamType::Resource],
-                effects: clauses,
-                ..MethodSignature::default()
-            })
-        };
-
-        // The account's own recall: the gate and the movement name one
-        // argument, so the caller chooses which rule governs and the
-        // rule governs what they chose.
-        assert_eq!(
-            declared(vec![granted(Expr::Arg(0)), vault(Expr::Arg(0))]),
-            Ok(())
-        );
-
-        // The same gate over value it does not govern.
-        assert_eq!(
-            declared(vec![granted(Expr::Arg(0)), vault(Expr::Arg(1))]),
-            Err(DeclarationError::GrantOverAnother { clause: 0 })
-        );
-
-        // And a gate beside no movement at all: a granted behaviour is
-        // about what happens to the resource, so a method that touches
-        // none of it has nothing for the rule to be read over.
-        assert_eq!(
-            declared(vec![granted(Expr::Arg(0))]),
-            Err(DeclarationError::GrantOverAnother { clause: 0 })
         );
     }
 

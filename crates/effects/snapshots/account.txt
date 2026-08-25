@@ -100,13 +100,6 @@ propose(rule, rule, rule) — infallible
       3  write self.pending
   exports  handle for clause 2, handle for clause 3, arg0, arg1, arg2
 
-recall(resource-address, u128) — infallible
-  declares
-      0  requires the recall rule arg0 grants
-      1  delta self.vault[arg0] holding arg0
-  yields   edge 0 = arg0
-  exports  handle for clause 1, arg1
-
 refuse(resource-address) — infallible
   declares
       0  requires claim self

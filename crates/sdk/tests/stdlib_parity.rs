@@ -52,23 +52,6 @@ fn account() -> Blueprint {
                 t.output(&resource);
             },
         )
-        .method(
-            "recall",
-            &[ParamType::Resource, ParamType::U128],
-            |t: &mut Trace| {
-                let resource: Sym<Addr> = t.arg(0);
-                let _amount: Sym<U128> = t.arg(1);
-                let holder = t.self_addr();
-
-                // The gate is the resource's own granted rule, resolved
-                // at admission from the presented record.
-                let rule = t.granted(GrantedBehaviour::Recall, &resource);
-                t.guarded_by(rule);
-                let vault = holder.child(VAULT, &[resource.clone().cast()]);
-                t.point(&vault).holding(&resource).delta();
-                t.output(&resource);
-            },
-        )
         // Where a resource lands is the holder's own choice, and setting
         // it takes the same gate spending does — one write of the flag
         // the deposit reads.

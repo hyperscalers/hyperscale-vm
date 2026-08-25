@@ -25,7 +25,7 @@ use crate::presented::Presented;
 use crate::resource::{
     GrantedBehaviour, GrantsExpr, GrantsResolveError, ResourceGrants, ResourceKind, ResourceMeta,
 };
-use crate::rule::{Rule, RuleExpr, RuleLeaf, SealedLeaf, never};
+use crate::rule::{Rule, RuleExpr, RuleLeaf};
 use crate::types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_ITEMS, PACKAGE_SLOT_BASE, SlotId,
     Value, child_key, collection_id, granting_resource_address, order_key,
@@ -804,19 +804,6 @@ pub enum EvalError {
     /// the instance issuing it.
     #[error(transparent)]
     GrantsUnresolvable(#[from] GrantsResolveError),
-    /// A grant leaf naming a resource whose record the envelope never
-    /// presented — there is nothing to verify a rule against.
-    #[error("the granted rules of {0:?} were not presented")]
-    GrantsUnpresented(ResourceAddr),
-    /// A grant leaf naming a behaviour the resource never granted. An
-    /// absent entry denies, and the deny is spoken here where a caller
-    /// can read it.
-    #[error("the resource grants no {0:?} rule, which denies")]
-    GrantsNobody(GrantedBehaviour),
-    /// A presented granted rule that does not decode under the
-    /// vocabulary's caps, or a grafted tree past them.
-    #[error("a granted rule does not decode within the vocabulary's caps")]
-    GrantRuleMalformed,
     /// A target's record that does not encode under the vocabulary's
     /// caps. Nothing admission resolves a target with can be one — a
     /// record is checked by re-encoding it — so this is spoken as a
@@ -1642,78 +1629,28 @@ fn eval_condition(
     bindings: &[Value],
     budget: &Budget<'_>,
 ) -> Result<Option<Rule<JudgedLeaf>>, EvalError> {
-    {
-        {
-            let rule = rule.try_graft(&mut |leaf| match leaf {
-                RuleLeaf::Presence { target, expect } => Ok(Rule::Require(JudgedLeaf::Presence {
-                    target: eval_target(target, inputs, hasher, bindings, budget)?,
-                    expect: *expect,
-                })),
-                RuleLeaf::Claim(expr) => {
-                    let value = eval_expr(expr, inputs, hasher, bindings, 0, budget)?;
-                    Presented::of(&value)
-                        .map(|claim| Rule::Require(JudgedLeaf::Claim(claim)))
-                        .ok_or_else(|| EvalError::TypeMismatch {
-                            expected: "claim",
-                            found: value.kind(),
-                        })
-                }
-                RuleLeaf::Stored { cell } => Ok(Rule::Require(JudgedLeaf::Stored {
-                    cell: as_key(&*eval_expr(cell, inputs, hasher, bindings, 0, budget)?)?,
-                })),
-                // The grant leaf stands for the tree its resource
-                // commits to: resolve the address, read the rule off the
-                // presented record the address verifies, and graft it in
-                // place — no cell read anywhere in the path.
-                RuleLeaf::Granted {
-                    resource,
-                    behaviour,
-                } => {
-                    let value = eval_expr(resource, inputs, hasher, bindings, 0, budget)?;
-                    let Value::Address(address) = *value else {
-                        return Err(EvalError::TypeMismatch {
-                            expected: "resource address",
-                            found: value.kind(),
-                        });
-                    };
-                    let address =
-                        ResourceAddr::try_from(address).map_err(EvalError::NotAResource)?;
-                    let rules = inputs
-                        .grants
-                        .rules(address)
-                        .ok_or(EvalError::GrantsUnpresented(address))?;
-                    let sealed = rules
-                        .get(*behaviour)
-                        .ok_or(EvalError::GrantsNobody(*behaviour))?
-                        .decode()
-                        .map_err(|_| EvalError::GrantRuleMalformed)?;
-                    // Nobody may is a refusal rather than a rule nothing
-                    // meets, so a caller reads why. Everyone may grafts to
-                    // the top element and the tree it lands in collapses
-                    // on its own, which is what lets a granted leaf sit
-                    // anywhere a leaf may.
-                    if sealed == never() {
-                        return Err(EvalError::GrantsNobody(*behaviour));
-                    }
-                    Ok(sealed.map_leaves(&mut |leaf| match leaf {
-                        SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
-                        // A holding is about the mover, resolved against
-                        // the access's owner where the movement is
-                        // declared, never against a caller's evidence
-                        // here — and an actor question's rule reads no
-                        // holding, refused at the seal.
-                        SealedLeaf::Held { .. } => Err(EvalError::GrantRuleMalformed),
-                    })?)
-                }
-            })?;
-            // A graft can deepen what a map never could, so the spliced
-            // tree meets the vocabulary's caps again here.
-            if !rule.within_caps(0) {
-                return Err(EvalError::GrantRuleMalformed);
-            }
-            Ok(Some(rule))
+    // Leaf for leaf, so the tree the signature declared is the tree the
+    // kernel judges: the shape is fixed at publish and only the leaves
+    // evaluate, which is what lets the authored caps stand for both.
+    rule.map_leaves(&mut |leaf| match leaf {
+        RuleLeaf::Presence { target, expect } => Ok(JudgedLeaf::Presence {
+            target: eval_target(target, inputs, hasher, bindings, budget)?,
+            expect: *expect,
+        }),
+        RuleLeaf::Claim(expr) => {
+            let value = eval_expr(expr, inputs, hasher, bindings, 0, budget)?;
+            Presented::of(&value)
+                .map(JudgedLeaf::Claim)
+                .ok_or_else(|| EvalError::TypeMismatch {
+                    expected: "claim",
+                    found: value.kind(),
+                })
         }
-    }
+        RuleLeaf::Stored { cell } => Ok(JudgedLeaf::Stored {
+            cell: as_key(&*eval_expr(cell, inputs, hasher, bindings, 0, budget)?)?,
+        }),
+    })
+    .map(Some)
 }
 
 fn eval_target(

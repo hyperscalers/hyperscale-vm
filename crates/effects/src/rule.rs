@@ -25,7 +25,7 @@ use hyperscale_vm_types::{Presence, ResourceAddr};
 
 use crate::dsl::{Expr, TargetExpr};
 use crate::presented::Presented;
-use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
+use crate::resource::{GrantsExpr, ResourceKind};
 
 /// The bound on a rule's nesting depth: a lone identity is one, a
 /// threshold one more than its deepest branch.
@@ -215,20 +215,6 @@ pub enum RuleLeaf {
         /// requires nothing and is refused at publish.
         expect: Presence,
     },
-    /// The rule a resource's own address grants for one behaviour,
-    /// resolved at admission from the presented record whose derivation
-    /// the address commits — no cell read anywhere in the path.
-    ///
-    /// An unpresented record refuses the call, and so does an absent
-    /// behaviour: the granted set is the address's own claim, and a
-    /// behaviour it never granted is one nobody holds.
-    Granted {
-        /// The resource whose granted rules govern, evaluated over the
-        /// method's own inputs.
-        resource: Expr,
-        /// The behaviour selecting the granted rule.
-        behaviour: GrantedBehaviour,
-    },
 }
 
 impl RuleLeaf {
@@ -252,12 +238,6 @@ impl RuleLeaf {
             Self::Claim(expr) => expr.reads_call_inputs(),
             Self::Stored { cell } => cell.reads_call_inputs(),
             Self::Presence { target, .. } => target.reads_call_inputs(),
-            // A caller may name the resource: the rule is the address's
-            // own commitment, verified by re-derivation, so the namer
-            // chooses which granted rule governs and never what it says
-            // — unlike a named claim, which its namer can present, or a
-            // named cell, which holds whatever admits them.
-            Self::Granted { .. } => false,
         }
     }
 }
@@ -498,33 +478,6 @@ impl<L> Rule<L> {
                 rules: rules
                     .iter()
                     .map(|rule| rule.map_leaves(map))
-                    .collect::<Result<_, _>>()?,
-            },
-        })
-    }
-
-    /// Replace every leaf with a whole rule, keeping the tree above it.
-    ///
-    /// What a leaf that *names* a rule resolves through: a grant leaf
-    /// stands for the tree its resource commits to, and grafting is how
-    /// that tree takes the leaf's place under whatever threshold held
-    /// it. The caller re-checks the grafted tree against the caps — a
-    /// graft can deepen what a map never could.
-    ///
-    /// # Errors
-    ///
-    /// Whatever `graft` refuses a leaf with, unchanged.
-    pub fn try_graft<T, E>(
-        &self,
-        graft: &mut impl FnMut(&L) -> Result<Rule<T>, E>,
-    ) -> Result<Rule<T>, E> {
-        Ok(match self {
-            Self::Require(leaf) => graft(leaf)?,
-            Self::CountOf { count, rules } => Rule::CountOf {
-                count: *count,
-                rules: rules
-                    .iter()
-                    .map(|rule| rule.try_graft(graft))
                     .collect::<Result<_, _>>()?,
             },
         })

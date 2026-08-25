@@ -7,8 +7,8 @@
 
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
-    Clause, Expr, GrantedBehaviour, GrantsExpr, PACKAGE_SLOT_BASE, PackageMetadata, ResourceKind,
-    RuleExpr, RuleLeaf, SlotId, SlotRef, TargetExpr, Value, check_abi, check_declarations,
+    Clause, Expr, GrantsExpr, PACKAGE_SLOT_BASE, PackageMetadata, ResourceKind, RuleExpr, RuleLeaf,
+    SlotId, SlotRef, TargetExpr, Value, check_abi, check_declarations,
 };
 use hyperscale_vm_fixtures::DECLARED as FIXTURES;
 use hyperscale_vm_stdlib::DECLARED as PROTOCOL;
@@ -145,15 +145,6 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         // it is a node in their own transaction.
         ("account", "promote", open(), vec![]),
         ("account", "propose", governs(own_cell(2)), vec![]),
-        (
-            "account",
-            "recall",
-            vec![RuleExpr::Require(RuleLeaf::Granted {
-                resource: Expr::Arg(0),
-                behaviour: GrantedBehaviour::Recall,
-            })],
-            vec![],
-        ),
         ("account", "refuse", this(), vec![]),
         ("account", "securify", this(), vec![]),
         ("account", "sweep", this(), vec![]),

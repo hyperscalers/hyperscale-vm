@@ -289,14 +289,6 @@ impl Names<'_> {
                         Presence::Present => "present",
                     }
                 ),
-                RuleLeaf::Granted {
-                    resource,
-                    behaviour,
-                } => format!(
-                    "the {} rule {} grants",
-                    behaviour_name(*behaviour),
-                    self.expr(resource, ATOM)
-                ),
             },
             Rule::CountOf { count, rules } => {
                 let branches: Vec<String> = rules.iter().map(|rule| self.rule(rule)).collect();
@@ -1040,10 +1032,7 @@ mod tests {
                     count: 2,
                     rules: vec![
                         Rule::Require(RuleLeaf::Claim(Expr::Config(0))),
-                        Rule::Require(RuleLeaf::Granted {
-                            resource: Expr::Arg(0),
-                            behaviour: GrantedBehaviour::Recall,
-                        }),
+                        Rule::Require(RuleLeaf::Claim(Expr::Arg(0))),
                         Rule::Require(RuleLeaf::Stored {
                             cell: Expr::SelfAddr,
                         }),
@@ -1052,10 +1041,7 @@ mod tests {
             }]),
         );
         assert!(
-            text.contains(
-                "requires 2 of (claim config.x, the recall rule arg0 grants, \
-                 the rule stored at self)"
-            ),
+            text.contains("requires 2 of (claim config.x, claim arg0, the rule stored at self)"),
             "{text}"
         );
     }

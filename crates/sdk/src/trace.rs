@@ -723,17 +723,6 @@ impl Trace {
         Requirement(RuleExpr::claim(self.lower(identity.expr().clone())))
     }
 
-    /// The requirement standing for the rule `resource`'s own address
-    /// grants for `behaviour` — resolved at admission from the presented
-    /// record the address verifies, with no cell read anywhere.
-    #[must_use]
-    pub fn granted(&self, behaviour: GrantedBehaviour, resource: &Sym<Addr>) -> Requirement {
-        Requirement(RuleExpr::Require(RuleLeaf::Granted {
-            resource: self.lower(resource.expr().clone()),
-            behaviour,
-        }))
-    }
-
     /// The requirement that `count` of `branches` are met.
     ///
     /// One constructor for the whole algebra: a count of one is
