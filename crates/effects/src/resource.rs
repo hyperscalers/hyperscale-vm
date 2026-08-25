@@ -17,9 +17,8 @@ use crate::hash::{Hash32, Hasher};
 use crate::presented::Presented;
 use crate::rule::{GrantClaim, GrantRuleExpr, Holding, SealedLeaf, StoredRule, always, never};
 use crate::types::{
-    Value, child_key, collection_id, granting_resource_address, native_address, resource_address,
+    Value, child_key, collection_id, genesis_publisher, granting_resource_address, resource_address,
 };
-use crate::vocabulary::GENESIS_PUBLISHER;
 pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
 
 /// What a resource is: divisible value, or named instances.
@@ -720,8 +719,12 @@ impl ResourceMeta {
 /// unmintable.
 #[must_use]
 pub fn xrd(hasher: &dyn Hasher) -> ResourceAddr {
-    let publisher = native_address(hasher, GENESIS_PUBLISHER);
-    resource_address(hasher, publisher, ResourceKind::Fungible, &[])
+    resource_address(
+        hasher,
+        genesis_publisher(hasher),
+        ResourceKind::Fungible,
+        &[],
+    )
 }
 
 /// The record cell for `resource` under `issuer`: the canonical child at
@@ -845,14 +848,12 @@ mod tests {
     use hyperscale_vm_types::{Address, AddressClass, ResourceAddr};
 
     use super::{
-        GrantedBehaviour, ResourceKind, ResourceRecord, always, holdings_collection,
-        instance_data_key, never, resource_record_key,
+        GrantedBehaviour, ResourceKind, ResourceRecord, always, genesis_publisher,
+        holdings_collection, instance_data_key, never, resource_record_key,
     };
     use crate::hash::TestHasher;
     use crate::presented::Presented;
     use crate::rule::{Holding, StoredRule};
-    use crate::types::native_address;
-    use crate::vocabulary::GENESIS_PUBLISHER;
 
     #[test]
     fn records_round_trip_canonically() {
@@ -877,7 +878,7 @@ mod tests {
 
     #[test]
     fn record_keys_separate_by_issuer_and_resource() {
-        let publisher = native_address(&TestHasher, GENESIS_PUBLISHER);
+        let publisher = genesis_publisher(&TestHasher);
         let xrd = super::xrd(&TestHasher);
         let other_issuer = Address::new([7; 31], AddressClass::Component);
         let other_resource = Address::new([8; 31], AddressClass::Resource);

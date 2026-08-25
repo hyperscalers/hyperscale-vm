@@ -1,5 +1,5 @@
 //! The protocol's own names: the slots an engine derives keys for, and
-//! the native roles an address can carry.
+//! the account method its own flows call.
 //!
 //! Nothing here belongs to a package. A package's slots, its caps and
 //! the signatures its guest executes travel with the package; what is
@@ -13,10 +13,7 @@
 //! ([`PACKAGE_SLOT_BASE`](crate::PACKAGE_SLOT_BASE)) rather than a table
 //! every package adds a line to.
 
-use crate::types::{NativeRole, SlotId};
-
-/// The publisher the protocol's own packages sit under.
-pub const GENESIS_PUBLISHER: NativeRole = NativeRole(2);
+use crate::types::SlotId;
 
 /// A fungible balance cell under its holder.
 pub const VAULT: SlotId = SlotId(1);

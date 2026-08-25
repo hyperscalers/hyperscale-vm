@@ -16,12 +16,12 @@ pub mod staking;
 
 use std::sync::LazyLock;
 
-use hyperscale_vm_effects::vocabulary::GENESIS_PUBLISHER as GENESIS_PUBLISHER_ROLE;
+pub use hyperscale_vm_effects::genesis_publisher;
 use hyperscale_vm_effects::{
-    DeclaredPackages, Hasher, PackageHash, PackageMetadata, attach_metadata, native_address,
-    package_hash, package_key,
+    DeclaredPackages, Hasher, PackageHash, PackageMetadata, attach_metadata, package_hash,
+    package_key,
 };
-use hyperscale_vm_types::{NativeAddr, StateWrites};
+use hyperscale_vm_types::StateWrites;
 pub use instantiate::instantiate;
 
 /// The componentized account guest: reservation-backed `withdraw` and
@@ -44,18 +44,6 @@ pub const STAKING_COMPONENT: &[u8] = include_bytes!("../blobs/staking.component.
 #[must_use]
 pub fn staking_package_hash(hasher: &dyn Hasher) -> PackageHash {
     package_hash(hasher, STAKING_COMPONENT)
-}
-
-/// The prefix genesis publishes the stdlib packages under.
-///
-/// A native address: it names a protocol role, and only a *principal*
-/// address derives from a key. So no signer reaches this prefix — nothing
-/// can publish beside the protocol's own packages or spend from where
-/// they sit — and the code they hold moves with the protocol version
-/// rather than with anything a transaction can say.
-#[must_use]
-pub fn genesis_publisher(hasher: &dyn Hasher) -> NativeAddr {
-    native_address(hasher, GENESIS_PUBLISHER_ROLE)
 }
 
 /// The stdlib account package as a publishable artifact: the committed

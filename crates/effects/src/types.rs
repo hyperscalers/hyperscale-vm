@@ -91,21 +91,6 @@ pub const fn package_slot(n: u16) -> SlotId {
     SlotId(PACKAGE_SLOT_BASE + n)
 }
 
-/// A protocol-defined role a native address names.
-///
-/// The register is closed and fail-closed like the class tags: a value is
-/// assigned or it is not an address, and adding one is a protocol version
-/// change. Where a class tag is wire-visible and a slot is internal to
-/// a derivation, both are halves of one namespace policy.
-///
-/// A number is derivation material — the address is a hash over it — so
-/// it names one role for as long as the protocol runs and is never
-/// reassigned. The sequence has gaps for that reason, and a gap is not a
-/// free number.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
-#[hbor(transparent)]
-pub struct NativeRole(pub u16);
-
 const DOMAIN_CHILD: &[u8] = b"hyperscale-vm/child-key";
 const DOMAIN_COLLECTION: &[u8] = b"hyperscale-vm/collection-id";
 const DOMAIN_ORDER: &[u8] = b"hyperscale-vm/order-key";
@@ -113,7 +98,7 @@ const DOMAIN_PRINCIPAL: &[u8] = b"hyperscale-vm/principal-address";
 const DOMAIN_COMPONENT: &[u8] = b"hyperscale-vm/component-address";
 const DOMAIN_PACKAGE_ADDRESS: &[u8] = b"hyperscale-vm/package-address";
 const DOMAIN_RESOURCE: &[u8] = b"hyperscale-vm/resource-address";
-const DOMAIN_NATIVE: &[u8] = b"hyperscale-vm/native-address";
+const DOMAIN_GENESIS_PUBLISHER: &[u8] = b"hyperscale-vm/genesis-publisher";
 const DOMAIN_INSTANCE_CONFIG: &[u8] = b"hyperscale-vm/instance-config";
 
 /// The canonical child key for slot-bound state under `owner`.
@@ -330,16 +315,20 @@ pub fn granting_resource_address(
     .expect("both resource classes are resource classes")
 }
 
-/// The address of a protocol role.
+/// The prefix the protocol's own packages and issues sit under.
 ///
-/// Derived rather than picked, so a well-known address is uniformly
-/// distributed across the prefix space like every other and lands on no
-/// shard by preference. What the address names is the role; the code
-/// behind it moves with the protocol version.
+/// The sole native address, and the only owner in the system no key
+/// reaches: a signer derives a principal, so nothing can publish beside
+/// the protocol's packages or spend from where they sit. What sits here
+/// moves with the protocol version rather than with anything a
+/// transaction can say.
+///
+/// Derived rather than picked, so it is uniformly distributed across the
+/// prefix space like every other address and lands on no shard by
+/// preference.
 #[must_use]
-pub fn native_address(hasher: &dyn Hasher, role: NativeRole) -> NativeAddr {
-    let role_bytes = role.0.to_le_bytes();
-    NativeAddr::new(body(hasher.hash(DOMAIN_NATIVE, &[&role_bytes])))
+pub fn genesis_publisher(hasher: &dyn Hasher) -> NativeAddr {
+    NativeAddr::new(body(hasher.hash(DOMAIN_GENESIS_PUBLISHER, &[])))
 }
 
 /// The commitment an instance's address carries to its creation-fixed
@@ -637,8 +626,8 @@ mod tests {
 
     use super::{
         Address, EdgeContent, LocalKey, MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS,
-        MAX_VALUE_WIRE_DEPTH, NativeRole, SchemeId, SlotId, SubstateKey, Value, child_key,
-        component_address, config_hash, granting_resource_address, native_address, package_address,
+        MAX_VALUE_WIRE_DEPTH, SchemeId, SlotId, SubstateKey, Value, child_key, component_address,
+        config_hash, genesis_publisher, granting_resource_address, package_address,
         principal_address, resource_address, to_vec, u256_decimal,
     };
     use crate::auth::RuleBytes;
@@ -795,8 +784,8 @@ mod tests {
                 "package/content = 94cb538bce2c0a6cf61a9fff32d805fb229e1db7174679c17d404686430e4103",
                 "resource/minted = 35e2ddac0061bd4baedfd4c17865b7fdb9c43ff09bcdc667577a354a98e7a104",
                 "resource/minted-nf = ce323aed0de4701b5e19461095919d188c93222c950ac229058846d5fe9c3604",
-                "native/genesis-publisher = dca99635de8cbff5c1f6b5fccaaa14489bdf24ac9f2b1be31e576da9a31c5305",
-                "resource/xrd = d683b9db3acf0dc13756bad11d8011cc5d6eacd723a678b5b44f6707d5a56404",
+                "native/genesis-publisher = 6d1236624522c3f1332ef8e17ace07f875ead2e7f8ecd4f9a32a39d13c2c5205",
+                "resource/xrd = 25147b7a63227c9bf8ce275d2a7c7f99fc08084bca07e0ec6af617e60661ce04",
             ]
         );
     }
@@ -964,6 +953,8 @@ mod tests {
     fn the_class_domains_do_not_share_a_preimage() {
         // Each derivation hashes under its own domain, so no two classes
         // can be made to agree on a body by feeding them equal material.
+        // The native address takes none, and must land clear of them all
+        // the same.
         let package = PackageHash(Hash32([0x11; 32]));
         let bodies = [
             principal_address(&TestHasher, SchemeId(0x11), &[0x11; 32]).body(),
@@ -976,7 +967,7 @@ mod tests {
                 &[vec![0x11; 32]],
             )
             .body(),
-            native_address(&TestHasher, NativeRole(0x11)).body(),
+            genesis_publisher(&TestHasher).body(),
         ];
         let unique: BTreeSet<[u8; 31]> = bodies.iter().copied().collect();
         assert_eq!(unique.len(), bodies.len());
