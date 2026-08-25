@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use hyperscale_vm_effects::{SCAN_SEEK_ENTRIES, distinct_ids};
 use hyperscale_vm_types::{AMOUNT_CELL_BYTES, Address, CollectionId};
 
-use super::{Capability, Held, Interval, KernelSession, Op, SessionTrap};
+use super::{Held, Interval, KernelSession, Op, SessionTrap};
 use crate::store::WorkingStore;
 
 /// What one interval scan costs before any entry is counted, in the
@@ -82,26 +82,22 @@ impl KernelSession {
     /// added later cannot forget to ask, because there is no other way to
     /// reach the interval it would act on.
     ///
-    /// The point arms are unreachable — no operation admitting an
-    /// interval is granted by a point capability — and answer as the
-    /// refusal they would be rather than as a panic.
+    /// A point capability has no interval, and none is granted an
+    /// operation that admits one — so the refusal is unreachable and
+    /// answers as one rather than as a panic.
     fn acting_interval(
         &self,
         site: u32,
         element: u32,
         attempted: Op,
     ) -> Result<Interval, SessionTrap> {
-        match self.acting(site, element, attempted)? {
-            Capability::RangeRead(interval)
-            | Capability::RangeWrite(interval)
-            | Capability::InstanceRange(interval) => Ok(interval),
-            held => Err(SessionTrap::WrongMode {
-                site,
-                element,
-                held,
-                attempted,
-            }),
-        }
+        let held = self.acting(site, element, attempted)?;
+        held.interval().ok_or(SessionTrap::WrongMode {
+            site,
+            element,
+            held,
+            attempted,
+        })
     }
 
     /// The interval a walk reads over, whichever mode carries it.

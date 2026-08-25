@@ -41,7 +41,7 @@ use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, Drawn, EffectSet, EffectTarget, LEAF_KEY_BYTES, ResourceAddr,
     SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, TxHash,
 };
-pub use materialize::{Capability, Interval, MaterializeError};
+pub use materialize::{Capability, Interval, MaterializeError, Settlement};
 pub use permit::{Op, permits};
 use ranges::Ranges;
 pub use ranges::SCAN_SEEK_BYTES;
@@ -509,33 +509,23 @@ impl KernelSession {
     /// The cell a point operation acts on, once its capability has been
     /// held to it.
     ///
-    /// The interval arms are unreachable — no operation admitting an
-    /// interval resolves through here — and answer as the refusal they
-    /// would be rather than as a panic, on the terms every other handle
-    /// refusal does.
+    /// An interval capability has no cell, and no operation admitting one
+    /// resolves through here — so the arm answers as the refusal it would
+    /// be rather than as a panic, on the terms every other handle refusal
+    /// does.
     fn acting_key(
         &self,
         site: u32,
         element: u32,
         attempted: Op,
     ) -> Result<SubstateKey, SessionTrap> {
-        match self.acting(site, element, attempted)? {
-            Capability::Read(key)
-            | Capability::Write(key)
-            | Capability::Amount(key)
-            | Capability::AmountRead(key)
-            | Capability::Delta(key)
-            | Capability::Credit(key)
-            | Capability::Reserve { key, .. } => Ok(key),
-            held @ (Capability::RangeRead(_)
-            | Capability::RangeWrite(_)
-            | Capability::InstanceRange(_)) => Err(SessionTrap::WrongMode {
-                site,
-                element,
-                held,
-                attempted,
-            }),
-        }
+        let held = self.acting(site, element, attempted)?;
+        held.key().ok_or(SessionTrap::WrongMode {
+            site,
+            element,
+            held,
+            attempted,
+        })
     }
 
     /// Lend one declared site, answering the rep it is reached at.
@@ -846,10 +836,10 @@ impl KernelSession {
         // it to the credit and not to the debit.
         let held = self.acting(site, element, Op::Take)?;
         let resource = self.value_of(site, element)?;
-        let key = match held {
+        let key = match Self::settling(site, element, held, Op::Take)? {
             // The exclusive hold performs the read-modify-write, so a
             // debit past what the cell holds is refused at the call.
-            Capability::Amount(key) => {
+            Settlement::Immediate(key) => {
                 self.amount_cell(key)?
                     .checked_sub(amount)
                     .ok_or(SessionTrap::CellUnderflow)?;
@@ -858,15 +848,7 @@ impl KernelSession {
             // The commutative movement queues, so whether the cell
             // covered it is the fold's question and an over-take is
             // infeasible at settle rather than a refusal here.
-            Capability::Delta(key) => key,
-            held => {
-                return Err(SessionTrap::WrongMode {
-                    site,
-                    element,
-                    held,
-                    attempted: Op::Take,
-                });
-            }
+            Settlement::Queued(key) => key,
         };
         self.store.queue_delta(key, DeltaOp::Sub(amount))?;
         Ok(self.open_bucket(Held::Amount(amount), resource))
@@ -889,10 +871,10 @@ impl KernelSession {
         let held = self.acting(site, element, Op::Put)?;
         self.judge_credit(site, element, funds)?;
         let amount = self.bucket_amount(funds)?;
-        let key = match held {
+        let key = match Self::settling(site, element, held, Op::Put)? {
             // The exclusive hold performs the read-modify-write, so a
             // credit past the width an amount has is refused at the call.
-            Capability::Amount(key) => {
+            Settlement::Immediate(key) => {
                 self.amount_cell(key)?
                     .checked_add(amount)
                     .ok_or(SessionTrap::CellOverflow)?;
@@ -900,18 +882,33 @@ impl KernelSession {
             }
             // A credit answers this and a delta answers it too: what the
             // narrower mode gave up is the other direction, not this one.
-            Capability::Delta(key) | Capability::Credit(key) => key,
-            held => {
-                return Err(SessionTrap::WrongMode {
-                    site,
-                    element,
-                    held,
-                    attempted: Op::Put,
-                });
-            }
+            Settlement::Queued(key) => key,
         };
         self.store.queue_delta(key, DeltaOp::Add(amount))?;
         self.take_bucket(funds).map(|_| ())
+    }
+
+    /// When a movement through the capability just held moves, and
+    /// against which cell.
+    ///
+    /// Only the value modes settle, and only those admit a movement — so
+    /// the refusal is unreachable and answers as one rather than as a
+    /// panic, on the terms [`Self::acting_key`] states.
+    const fn settling(
+        site: u32,
+        element: u32,
+        held: Capability,
+        attempted: Op,
+    ) -> Result<Settlement, SessionTrap> {
+        match held.settlement() {
+            Some(settlement) => Ok(settlement),
+            None => Err(SessionTrap::WrongMode {
+                site,
+                element,
+                held,
+                attempted,
+            }),
+        }
     }
 
     /// A declared cell's contents as an amount, as this transaction has
@@ -1190,30 +1187,20 @@ mod tests {
     /// Built rather than materialized from a declaration: what is under
     /// test is what a capability grants, and reaching each of the ten
     /// through a signature that produces it would test the materializer
-    /// instead.
+    /// instead. Built by [`Capability::forms`], so a mode added to the
+    /// enum has to take a place in what the matrix asks.
     fn every_capability() -> [Capability; 10] {
-        let interval = Interval {
-            owner: Address::new([9; 31], AddressClass::Component),
-            collection: CollectionId([4; 16]),
-            lo: 0,
-            hi: 100,
-            cap: 8,
-        };
-        [
-            Capability::Read(key(1)),
-            Capability::Write(key(1)),
-            Capability::Amount(key(1)),
-            Capability::AmountRead(key(1)),
-            Capability::Delta(key(1)),
-            Capability::Credit(key(1)),
-            Capability::Reserve {
-                key: key(1),
-                amount: 5,
+        Capability::forms(
+            key(1),
+            5,
+            Interval {
+                owner: Address::new([9; 31], AddressClass::Component),
+                collection: CollectionId([4; 16]),
+                lo: 0,
+                hi: 100,
+                cap: 8,
             },
-            Capability::RangeRead(interval),
-            Capability::RangeWrite(interval),
-            Capability::InstanceRange(interval),
-        ]
+        )
     }
 
     /// A session holding exactly `held`, reachable at rep zero.
@@ -1260,6 +1247,9 @@ mod tests {
     /// of `permits` by itself.
     #[test]
     fn every_capability_grants_exactly_what_the_table_says() {
+        for (position, held) in every_capability().into_iter().enumerate() {
+            assert_eq!(held.form(), position, "the matrix covers each form once");
+        }
         for held in every_capability() {
             for op in Op::ALL {
                 let mut session = holding(held);

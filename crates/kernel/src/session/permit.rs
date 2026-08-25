@@ -6,9 +6,11 @@
 //! to ask, because the capability it would act through is reached only
 //! through the check.
 //!
-//! The table is total over both axes, which is what makes it testable: a
-//! mode added to [`Capability`] or an operation added to [`Op`] is an
-//! unhandled arm rather than a silent permit.
+//! The table is total over both axes, which is what makes it testable.
+//! An operation added to [`Op`] is an unhandled arm in [`permits`]; a
+//! mode added to [`Capability`] is one in [`describe`] and in
+//! `Capability::form`, which is what puts it in front of the matrix
+//! rather than leaving it a pairing nobody asked.
 
 use super::materialize::Capability;
 
@@ -50,8 +52,8 @@ pub enum Op {
 impl Op {
     /// Every operation, which is what makes the table testable in full:
     /// a matrix over this and [`Capability`] is the whole of what the
-    /// kernel permits, and an operation added without a row shows up as
-    /// an unhandled arm below.
+    /// kernel permits, and an operation added without a row in
+    /// [`permits`] does not compile.
     pub const ALL: [Self; 13] = [
         Self::Read,
         Self::Write,

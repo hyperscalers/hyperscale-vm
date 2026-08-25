@@ -102,6 +102,120 @@ pub enum Capability {
     InstanceRange(Interval),
 }
 
+/// When a movement through a capability is judged.
+///
+/// The whole of what separates the two value modes once permission has
+/// been decided: the exclusive hold reads, arithmetises and writes back,
+/// so a movement past what the cell holds is refused at the call; the
+/// commutative movement queues and leaves the question to the fold,
+/// where it is one floor among every other transaction's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Settlement {
+    /// Performed now, against the cell's current contents.
+    Immediate(SubstateKey),
+    /// Queued for the movement fold.
+    Queued(SubstateKey),
+}
+
+impl Capability {
+    /// The cell this capability holds, where it holds one.
+    ///
+    /// `None` for the interval forms, which name a span of a collection
+    /// rather than a leaf — the one distinction a point operation and an
+    /// interval operation still have to make after permission.
+    #[must_use]
+    pub const fn key(&self) -> Option<SubstateKey> {
+        match *self {
+            Self::Read(key)
+            | Self::Write(key)
+            | Self::Amount(key)
+            | Self::AmountRead(key)
+            | Self::Delta(key)
+            | Self::Credit(key)
+            | Self::Reserve { key, .. } => Some(key),
+            Self::RangeRead(_) | Self::RangeWrite(_) | Self::InstanceRange(_) => None,
+        }
+    }
+
+    /// The interval this capability holds, where it holds one.
+    #[must_use]
+    pub const fn interval(&self) -> Option<Interval> {
+        match *self {
+            Self::RangeRead(interval)
+            | Self::RangeWrite(interval)
+            | Self::InstanceRange(interval) => Some(interval),
+            Self::Read(_)
+            | Self::Write(_)
+            | Self::Amount(_)
+            | Self::AmountRead(_)
+            | Self::Delta(_)
+            | Self::Credit(_)
+            | Self::Reserve { .. } => None,
+        }
+    }
+
+    /// When a movement through this capability is judged, and against
+    /// which cell.
+    #[must_use]
+    pub const fn settlement(&self) -> Option<Settlement> {
+        match *self {
+            Self::Amount(key) => Some(Settlement::Immediate(key)),
+            Self::Delta(key) | Self::Credit(key) => Some(Settlement::Queued(key)),
+            Self::Read(_)
+            | Self::Write(_)
+            | Self::AmountRead(_)
+            | Self::Reserve { .. }
+            | Self::RangeRead(_)
+            | Self::RangeWrite(_)
+            | Self::InstanceRange(_) => None,
+        }
+    }
+
+    /// Every form, over one cell and one interval — the rows the
+    /// permission matrix asks its questions of.
+    ///
+    /// Beside the enum rather than in the test that consumes it, so that
+    /// what the matrix covers is written where a form is added.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub const fn forms(key: SubstateKey, amount: u128, interval: Interval) -> [Self; 10] {
+        [
+            Self::Read(key),
+            Self::Write(key),
+            Self::Amount(key),
+            Self::AmountRead(key),
+            Self::Delta(key),
+            Self::Credit(key),
+            Self::Reserve { key, amount },
+            Self::RangeRead(interval),
+            Self::RangeWrite(interval),
+            Self::InstanceRange(interval),
+        ]
+    }
+
+    /// Where this form sits in [`Capability::forms`].
+    ///
+    /// Total over the enum, which is what makes that array total: a form
+    /// added without a place here does not compile, and one added
+    /// without widening the array does not fit its length.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub const fn form(&self) -> usize {
+        match self {
+            Self::Read(_) => 0,
+            Self::Write(_) => 1,
+            Self::Amount(_) => 2,
+            Self::AmountRead(_) => 3,
+            Self::Delta(_) => 4,
+            Self::Credit(_) => 5,
+            Self::Reserve { .. } => 6,
+            Self::RangeRead(_) => 7,
+            Self::RangeWrite(_) => 8,
+            Self::InstanceRange(_) => 9,
+        }
+    }
+}
+
 /// Why materialization refused a declared effect set — each an abort
 /// before any guest execution.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
