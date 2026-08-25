@@ -87,7 +87,7 @@ pub struct Trace {
     /// [`Trace::bind_handle`] names.
     last_clause: Option<u32>,
     /// The position in the open loop's body of the site most recently
-    /// declared there, which is the one [`Trace::bind_run`] names.
+    /// declared there, which is the one [`Trace::bind_looped`] names.
     last_site: Option<u32>,
     /// The resource this method may issue: its mark and its kind.
     /// The slot of the rule cell this method is gated on and also
@@ -147,7 +147,7 @@ impl Trace {
         lowered
     }
 
-    /// Lower a run of key material, in the order it is folded.
+    /// Lower a sequence of key material, in the order it is folded.
     fn lower_all(&self, material: &[Sym<Opaque>]) -> Vec<Expr> {
         material
             .iter()
@@ -543,19 +543,19 @@ impl Trace {
         });
     }
 
-    /// Bind the run covering the site just declared inside a `for-each`
-    /// as the next of the guest's handle parameters.
+    /// Bind the site just declared inside a `for-each` as the next of
+    /// the guest's handle parameters.
     ///
     /// One parameter for the whole expansion, so the export's arity is a
     /// function of the signature whether or not a site sits under a loop
     /// — the width the loop maps over is the instance's, and the guest
-    /// asks the run for it.
+    /// asks the site for it.
     ///
     /// # Panics
     ///
     /// If no `for-each` is open, if one is open more than one deep, or if
     /// the clause just declared inside it is not an access.
-    pub fn bind_run(&mut self) {
+    pub fn bind_looped(&mut self) {
         assert_eq!(
             self.depth(),
             1,

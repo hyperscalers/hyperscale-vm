@@ -632,7 +632,7 @@ pub fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>
 }
 
 /// As [`graph`], against a world a test extended: an instance whose
-/// configuration names something only a run can produce — an instance id
+/// configuration names something only execution can produce — an instance id
 /// — is registered by the test rather than by the shared fixture.
 pub fn graph_in(
     world: &Records,

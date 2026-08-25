@@ -118,7 +118,7 @@ fn every_shape_the_gate_can_demand_deploys_and_decodes() {
 }
 
 /// A component whose exports end every way the call convention folds: a
-/// scalar observation, one edge, a run of edges, the value a method
+/// scalar observation, one edge, a sequence of edges, the value a method
 /// answers with — alone and ahead of an edge — and the refusal channel
 /// over each of them.
 fn result_component() -> Vec<u8> {

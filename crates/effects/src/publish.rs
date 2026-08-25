@@ -132,24 +132,30 @@ pub enum AbiError {
         /// The clause it names.
         clause: u32,
     },
-    /// A run binding naming a clause that is not a `for-each`.
+    /// A handle binding naming a site of a clause that is not a
+    /// `for-each`.
     ///
-    /// A run covers a site's expansions, and a clause that does not
-    /// expand has none — its capability is the single handle a
-    /// [`AbiParam::Handle`] binding names.
-    #[error("ABI parameter {position} runs clause {clause}, which is not a `for-each`")]
+    /// Only a loop has sites past its first: a plain clause is one
+    /// access of its own, named at site zero.
+    #[error(
+        "ABI parameter {position} borrows site {site} of clause {clause}, which is not a `for-each`"
+    )]
     NotALoop {
+        /// The site within that clause.
+        site: u32,
         /// The ABI parameter position.
         position: u32,
         /// The clause it names.
         clause: u32,
     },
-    /// A run binding naming a body position that declares no access.
+    /// A handle binding naming a body position that declares no access.
     ///
     /// A condition declares no capability, and a nested loop's own
     /// expansions are not addressable by an index over the outer one's
-    /// elements — so neither backs a run.
-    #[error("ABI parameter {position} runs site {site} of clause {clause}, which is not an access")]
+    /// elements — so neither backs a site.
+    #[error(
+        "ABI parameter {position} borrows site {site} of clause {clause}, which is not an access"
+    )]
     NotALoopedAccess {
         /// The ABI parameter position.
         position: u32,
@@ -214,13 +220,13 @@ pub enum AbiError {
     },
 }
 
-/// Judge one run binding: a run names a site inside a loop, so both
-/// halves of the name are checked.
+/// Judge one handle binding onto a site inside a loop, so both halves of
+/// the name are checked.
 ///
 /// Anything else is a binding nothing could resolve — a condition
 /// declares no capability, and a nested loop's own expansions are not
 /// addressable by an index over the outer one's elements.
-fn check_run(
+fn looped_site(
     signature: &MethodSignature,
     position: u32,
     clause: u32,
@@ -230,7 +236,11 @@ fn check_run(
         .ok()
         .and_then(|index| signature.effects.get(index));
     let Some(Clause::ForEach { body, .. }) = declared else {
-        return Err(AbiError::NotALoop { position, clause });
+        return Err(AbiError::NotALoop {
+            position,
+            clause,
+            site,
+        });
     };
     let inside = usize::try_from(site).ok().and_then(|index| body.get(index));
     if matches!(inside, Some(Clause::Effect { .. })) {
@@ -287,7 +297,7 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
                             clause: *clause,
                         });
                     }
-                    _ => check_run(signature, position, *clause, *site)?,
+                    _ => looped_site(signature, position, *clause, *site)?,
                 }
                 if !borrowed.insert((*clause, *site)) {
                     return Err(AbiError::SiteBorrowedTwice {

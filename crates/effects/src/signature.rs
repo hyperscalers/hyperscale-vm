@@ -172,7 +172,7 @@ pub enum AbiParam {
     /// site of its own, named at site zero.
     ///
     /// The width is the instance's rather than the signature's, which is
-    /// why one parameter covers a whole site and not a run of them — a
+    /// why one parameter covers a whole site and not one element of it — a
     /// body's arity stays a function of what it declares, and the list a
     /// loop maps over stays the configuration's business. An element the
     /// site's guard did not fire for reads absent at its index rather

@@ -1758,7 +1758,7 @@ fn bind_site(
             ));
         }
         declaration
-            .run(clause, site)
+            .elements(clause, site)
             .ok_or_else(|| format!("clause {clause} has no site {site} to run"))?
             .to_vec()
     } else {

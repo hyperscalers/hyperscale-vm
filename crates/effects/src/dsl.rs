@@ -1003,7 +1003,7 @@ pub struct Declaration {
     /// as `(start, len)` pairs in clause order.
     ///
     /// A different index space from `ordered` itself: these count
-    /// top-level clauses, whose `for-each` expansions occupy runs of the
+    /// top-level clauses, whose `for-each` expansions occupy spans of the
     /// flattened table.
     ///
     /// A clause contributes one entry unless it is a `for-each`, which
@@ -1052,8 +1052,8 @@ pub struct Declaration {
     /// site's guard did not fire, or the body clause declares no access
     /// of its own. A top-level `for-each` files its rows whether or not
     /// its *own* guard fired: one whose did not mapped over no elements,
-    /// so its rows are empty and a run over any of its sites covers
-    /// nothing. Recorded rather than computed from
+    /// so its rows are empty and any of its sites covers nothing.
+    /// Recorded rather than computed from
     /// [`Declaration::clause_spans`]: the flattened order alone cannot
     /// say which element or which site produced an entry, and a stride
     /// over it would be wrong the moment two sites are guarded
@@ -1104,16 +1104,16 @@ impl Declaration {
         }
     }
 
-    /// The entries a run over `site` of top-level `for-each` clause
-    /// `clause` covers: one per element of the list it mapped, at the
-    /// position in [`Declaration::ordered`] that expansion produced, or
-    /// absent where it produced none.
+    /// The elements `site` of top-level `for-each` clause `clause`
+    /// covers: one per element of the list it mapped, at the position in
+    /// [`Declaration::ordered`] that expansion produced, or absent where
+    /// it produced none.
     ///
     /// `None` where the clause is not a top-level `for-each` or the site
     /// is past its body — both of which the publish gate has already
     /// refused, so reaching one here is a defect rather than a package.
     #[must_use]
-    pub fn run(&self, clause: u32, site: u32) -> Option<&[Option<u32>]> {
+    pub fn elements(&self, clause: u32, site: u32) -> Option<&[Option<u32>]> {
         self.expansions
             .get(&clause)?
             .get(usize::try_from(site).ok()?)
@@ -1278,7 +1278,7 @@ impl<'a> Budget<'a> {
 /// body's clauses landed in the flattened order.
 ///
 /// The body is walked clause by clause rather than in one call, because
-/// what a run needs is which *site* produced an entry — and the
+/// what a site needs is which *body position* produced an entry — and the
 /// flattened order on its own cannot say. A clause that declares no
 /// access of its own records nothing: a condition, a nested loop, or an
 /// effect whose guard did not fire, all of which read absent at this
@@ -1354,7 +1354,7 @@ fn eval_clauses(
         }
         if !taken {
             // A loop whose guard did not fire mapped over no elements,
-            // which is the expansion it has: a run of none rather than
+            // which is the expansion it has: a site of none rather than
             // no run, so a binding that names it reads what a list of
             // none leaves rather than refusing the call.
             if let Clause::ForEach { body, .. } = clause
@@ -2719,7 +2719,7 @@ mod tests {
     #[test]
     fn a_foreach_records_where_each_expansion_landed() {
         // Three elements over a body of two sites, the second guarded on
-        // the element itself: what a run over site 1 covers is three
+        // the element itself: what site 1 covers is three
         // entries, two of them absent, aligned with site 0's three.
         let args = [Value::List(vec![
             Value::U64(0),
@@ -2764,24 +2764,24 @@ mod tests {
         // The bare site fired every time; the guarded one only for the
         // element that is not zero.
         assert_eq!(
-            declaration.run(0, 0),
+            declaration.elements(0, 0),
             Some([Some(0), Some(1), Some(3)].as_slice())
         );
         assert_eq!(
-            declaration.run(0, 1),
+            declaration.elements(0, 1),
             Some([None, Some(2), None].as_slice())
         );
         // A site the body does not have, and a clause that is not a loop.
-        assert_eq!(declaration.run(0, 2), None);
-        assert_eq!(declaration.run(1, 0), None);
+        assert_eq!(declaration.elements(0, 2), None);
+        assert_eq!(declaration.elements(1, 0), None);
     }
 
     #[test]
-    fn a_guarded_out_foreach_files_a_run_of_none() {
+    fn a_guarded_out_foreach_files_a_site_of_none() {
         // The loop's own guard, not the body's: what it maps over is
-        // nothing, so every site over it covers nothing — a run of none
-        // rather than no run at all, which is what a binding naming it
-        // resolves through.
+        // nothing, so every site over it covers nothing — a width of
+        // none rather than no site at all, which is what a binding naming
+        // it resolves through.
         let args = [Value::List(vec![Value::U64(1), Value::U64(2)])];
         let ins = inputs(&args, &[]);
         let clauses = [Clause::ForEach {
@@ -2802,9 +2802,9 @@ mod tests {
 
         assert_eq!(declaration.clause_taken, vec![false]);
         assert!(declaration.ordered.is_empty());
-        assert_eq!(declaration.run(0, 0), Some([].as_slice()));
+        assert_eq!(declaration.elements(0, 0), Some([].as_slice()));
         // And still nothing for a site the body does not have.
-        assert_eq!(declaration.run(0, 1), None);
+        assert_eq!(declaration.elements(0, 1), None);
     }
 
     #[test]
@@ -2839,7 +2839,7 @@ mod tests {
         let declaration = evaluate_declaration(&clauses, &ins, &TestHasher).unwrap();
 
         assert_eq!(declaration.ordered.len(), 2);
-        assert_eq!(declaration.run(0, 0), Some([None, None].as_slice()));
+        assert_eq!(declaration.elements(0, 0), Some([None, None].as_slice()));
         assert!(
             declaration.expansions.len() == 1,
             "only the outer loop files a map"

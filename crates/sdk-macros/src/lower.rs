@@ -156,9 +156,9 @@ pub struct Site {
     /// How many `for-each` binders enclosed the access that opened this
     /// site; zero for a clause the method declares directly.
     ///
-    /// What decides whether the export takes one capability or the whole
-    /// expansion as a run — and, for a run, which loop's index its
-    /// entries are named by.
+    /// What decides whether the site the export takes is one element
+    /// wide or as wide as the loop's expansion — and, where it is a
+    /// loop's, which loop's index its elements are named by.
     pub binder: usize,
     /// The condition this site's clause is declared under, or `None` for
     /// a clause declared always.
@@ -333,13 +333,13 @@ pub struct Lowered {
     /// be the clauses' rather than the order the body first reached for
     /// one — a nested access would otherwise number them apart.
     pub handles: BTreeSet<usize>,
-    /// The sites the export takes as runs rather than as single
-    /// capabilities: those a `for-each` body declared, whose width is
-    /// the instance's rather than the signature's.
+    /// The sites a `for-each` body declared, whose width is the
+    /// instance's rather than the signature's.
     ///
-    /// A subset of [`Lowered::handles`], because a run is a capability
-    /// parameter like any other — what differs is what it covers.
-    pub runs: BTreeSet<usize>,
+    /// A subset of [`Lowered::handles`], because a looped site is a
+    /// handle parameter like any other — what differs is how many
+    /// elements it covers and how the binding names it.
+    pub looped: BTreeSet<usize>,
     /// The values the export takes, in the order the body needs them.
     pub values: Vec<Need>,
     /// How many fresh ids the body draws.
@@ -639,9 +639,9 @@ pub fn handle_ident(site: usize) -> syn::Ident {
     syn::Ident::new(&format!("__capability_{site}"), Span::call_site())
 }
 
-/// The generated name of the element index a run at binder depth
+/// The generated name of the element index a site at binder depth
 /// `depth` is walked by.
-pub fn run_index_ident(depth: usize) -> syn::Ident {
+pub fn element_index_ident(depth: usize) -> syn::Ident {
     syn::Ident::new(&format!("__element_{depth}"), Span::call_site())
 }
 
@@ -672,7 +672,7 @@ pub struct Lowerer<'a> {
     /// elements are both binding zero, so a body writing the same cell
     /// in each spells one target twice, and the floor tells the sites one
     /// loop opened from the sites around it. The list is what an element
-    /// read as a value reads out of: the run is walked by the element's
+    /// read as a value reads out of: the site is walked by the element's
     /// index, so the same index into the same list is the same element.
     binders: Vec<(usize, Term)>,
     /// The conditions the walk is under, innermost last, each already
@@ -1492,7 +1492,7 @@ impl<'a> Lowerer<'a> {
     ///
     /// [`Lowerer::lower_held`]'s general form. What the two cost differs
     /// with what they read: a singleton is one evaluation and one
-    /// capability, and this is a clause per instance and the run over
+    /// capability, and this is a clause per instance and the site over
     /// them — so a body that knows it holds one keeps saying so.
     fn lower_each(&mut self, issued: &Resource, call: &syn::ExprCall) -> Eval {
         if let Some(refused) = self.instance_record(issued, "read", call.func.span()) {
@@ -1694,7 +1694,7 @@ impl<'a> Lowerer<'a> {
     /// An edge the body produced knows its own ids, so a call about it
     /// reaches the very sites the mint opened. An edge whose instances
     /// are the caller's names them only at evaluation, which is what
-    /// makes its width a run's rather than a signature's.
+    /// makes its width the instance's rather than the signature's.
     fn named_ids(edge: &Term) -> Option<&[Term]> {
         let Term::NfBucket { ids, .. } = edge else {
             return None;
@@ -1710,8 +1710,8 @@ impl<'a> Lowerer<'a> {
     /// filed ends with them.
     ///
     /// The one instance the edge carries, on the terms the read takes
-    /// it: clearing the cells of several would need a run of handles no
-    /// export parameter holds. The cell is required present, which is
+    /// it: clearing the cells of several would need a site no export
+    /// parameter holds. The cell is required present, which is
     /// the mint's own door read the other way round — so a burn of an
     /// instance nothing minted is refused before the body runs, and a
     /// burn of one this body minted is refused where it is written.
@@ -2133,7 +2133,7 @@ impl<'a> Lowerer<'a> {
                 quote!((#(#fields),*))
             }
             // An element read as a value is read out of the list its loop
-            // maps over, at the index the run is walked by: the two
+            // maps over, at the index the site is walked by: the two
             // indices are the same by construction, so the element the
             // body reads is the element the clause beside it declared.
             Term::Binding(depth) => {
@@ -2146,7 +2146,7 @@ impl<'a> Lowerer<'a> {
                     return quote!(::core::unimplemented!());
                 };
                 let held = self.need(&Need::Derived(list));
-                let at = run_index_ident(depth);
+                let at = element_index_ident(depth);
                 quote!(#held[#at as usize])
             }
             Term::NfBucket { .. } => {
@@ -2287,8 +2287,8 @@ impl<'a> Lowerer<'a> {
                  that loop's site — and outside the loop there is no element to name",
             );
         }
-        self.out.runs.insert(site);
-        let at = run_index_ident(binder - 1);
+        self.out.looped.insert(site);
+        let at = element_index_ident(binder - 1);
         quote!(#ident.handle(#at))
     }
 
@@ -2616,7 +2616,7 @@ impl<'a> Lowerer<'a> {
         // declares nothing at all.
         //
         // Nor inside a `for-each`, whose clause count is the instance's
-        // rather than the signature's: a run of verdicts as wide as a
+        // rather than the signature's: a verdict per element of a
         // configuration occupies no fixed export parameter.
         let taken = declares_under(&then_nodes, &self.out.sites, &then_path);
         let untaken = otherwise
@@ -2635,7 +2635,7 @@ impl<'a> Lowerer<'a> {
             self.push_node(node);
         }
         // A verdict crosses as a parameter only where the loop it sits in
-        // is none: inside one it is the run's answer, which is already
+        // is none: inside one it is the site's answer, which is already
         // beside the capability the arm declares.
         if flag == Some(Polarity::Taken) && self.binders.is_empty() {
             self.push_node(Node::BindGuard);
@@ -2651,22 +2651,22 @@ impl<'a> Lowerer<'a> {
 
         let cond = match flag {
             // Inside a loop the verdict is the element's, so it is the
-            // run that reports it: a site's entry is declared exactly
-            // where this arm's guard fired, which is the same question
-            // the flag answers at top level.
+            // site that reports it: an element is declared exactly where
+            // this arm's guard fired, which is the same question the flag
+            // answers at top level.
             Some(polarity) if !self.binders.is_empty() => {
                 let verdict = guarded
-                    .filter(|site| self.out.runs.contains(site))
+                    .filter(|site| self.out.looped.contains(site))
                     .map(|site| {
-                        let run = handle_ident(site);
-                        let at = run_index_ident(self.depth() - 1);
-                        quote!(#run.declared(#at))
+                        let held = handle_ident(site);
+                        let at = element_index_ident(self.depth() - 1);
+                        quote!(#held.declared(#at))
                     });
                 match (verdict, polarity) {
                     (Some(verdict), Polarity::Taken) => verdict,
                     (Some(verdict), Polarity::Untaken) => quote!(!#verdict),
                     // The arm declares a clause the body never operates
-                    // through, so there is no run to read the verdict off
+                    // through, so there is no site to read the verdict off
                     // and the condition is the author's own — which reads
                     // the element, and is refused where it does.
                     (None, _) => self.value(cond.code),
@@ -4272,17 +4272,17 @@ impl<'a> Lowerer<'a> {
             return quote!(for #pat in #list { #(#statements)* });
         };
 
-        // A run covers one site of one loop, walked by that loop's
-        // element — so a loop inside another expands to a width the
-        // outer element decides, and there is no parameter its sites
+        // A handle parameter covers one site of one loop, walked by that
+        // loop's element — so a loop inside another expands to a width
+        // the outer element decides, and there is no parameter its sites
         // could occupy. Hard, because a declaration nothing can execute
         // is not one to publish.
         if self.depth() > 0 {
             self.error(
                 loop_.for_token.span,
                 "a `for-each` inside another expands to a width the outer element \
-                 decides, and a run covers one site of one loop — so the clauses this \
-                 declares are ones no export could reach",
+                 decides, and a handle parameter covers one site of one loop — so the \
+                 clauses this declares are ones no export could reach",
             );
         }
 
@@ -4291,7 +4291,7 @@ impl<'a> Lowerer<'a> {
         self.scopes.push(Vec::new());
         self.locals.push(BTreeMap::new());
         self.binders.push((opened, list_term.clone()));
-        // Deferred, because the loop the guest runs is over the run's
+        // Deferred, because the loop the guest runs is over the site's
         // indices and binds no element: the name is the declaration's,
         // and a body reading it as a value is refused where it does
         // rather than emitted against a local nothing declares.
@@ -4315,7 +4315,7 @@ impl<'a> Lowerer<'a> {
             body,
         });
 
-        self.run_walk(
+        self.element_walk(
             opened,
             depth,
             loop_.for_token.span,
@@ -4325,36 +4325,36 @@ impl<'a> Lowerer<'a> {
 
     /// The loop the guest runs over a `for-each`'s expansions.
     ///
-    /// The width is the run's, so the guest walks what the declaration
+    /// The width is the site's, so the guest walks what the declaration
     /// produced rather than a list it does not hold — the element itself
     /// is evaluated where the declaration is, and the body reaches it
     /// only as a key. `opened` is the site count before the body was
     /// walked, which is what tells the loop's own sites from the ones
     /// around it.
-    fn run_walk(
+    fn element_walk(
         &mut self,
         opened: usize,
         depth: usize,
         span: Span,
         body: &TokenStream,
     ) -> TokenStream {
-        let Some(run) = (opened..self.out.sites.len())
-            .find(|site| self.out.runs.contains(site))
+        let Some(site) = (opened..self.out.sites.len())
+            .find(|site| self.out.looped.contains(site))
             .map(handle_ident)
         else {
             self.error(
                 span,
-                "this loop's body declares no access, so there is no run for the guest \
+                "this loop's body declares no access, so there is no site for the guest \
                  to walk and no element for it to read",
             );
             return quote!(::core::unimplemented!());
         };
-        let at = run_index_ident(depth);
-        quote!(for #at in 0..#run.len() { #body })
+        let at = element_index_ident(depth);
+        quote!(for #at in 0..#site.len() { #body })
     }
 
     /// Declare one clause per instance an edge carries, and emit the
-    /// loop the guest runs over the run those expansions lend.
+    /// loop the guest runs over the site those expansions lend.
     ///
     /// The `for-each` a general instance call is: the ids are a list the
     /// declaration evaluates off the edge, and the element is the id
@@ -4366,14 +4366,14 @@ impl<'a> Lowerer<'a> {
         F: FnOnce(&mut Self, Term) -> TokenStream,
     {
         // The loop this opens is a loop like any other, so it is one a
-        // `for-each` cannot already be open around: a run covers one
-        // site of one loop.
+        // `for-each` cannot already be open around: a handle parameter
+        // covers one site of one loop.
         if self.depth() > 0 {
             self.error(
                 span,
                 "this reaches every instance the edge carries, which is a `for-each` of \
-                 its own — and a run covers one site of one loop, so it cannot sit \
-                 inside another",
+                 its own — and a handle parameter covers one site of one loop, so it \
+                 cannot sit inside another",
             );
         }
 
@@ -4390,7 +4390,7 @@ impl<'a> Lowerer<'a> {
             depth,
             body: inner,
         });
-        self.run_walk(opened, depth, span, &statements)
+        self.element_walk(opened, depth, span, &statements)
     }
 }
 
@@ -4509,35 +4509,35 @@ mod tests {
     #[test]
     fn a_loop_over_a_configured_list_executes() {
         // The control the refusals in `tests/refusals` are read against:
-        // a body whose every access under the loop sits on a run.
+        // a body whose every access under the loop sits on a looped site.
         let lowered =
             lowered("{ for &side in &self.config().sides { self.owed.at(side).set(1); } }");
-        assert_eq!(lowered.runs.len(), 1);
+        assert_eq!(lowered.looped.len(), 1);
         assert_eq!(lowered.sites.len(), 1);
     }
 
     #[test]
-    fn two_loops_over_one_field_run_apart() {
+    fn two_loops_over_one_field_stay_apart() {
         // Their elements are both binding zero, so the two bodies spell
         // one target — and the leaves they name are the two lists', which
-        // are not the same leaves. One run each.
+        // are not the same leaves. One site each.
         let lowered = lowered(
             "{ for &side in &self.config().sides { self.owed.at(side).set(1); } \
                for &other in &self.config().others { self.owed.at(other).set(2); } }",
         );
-        assert_eq!(lowered.runs.len(), 2, "one run per loop");
-        assert_eq!(lowered.sites.len(), 2, "and one site per run");
+        assert_eq!(lowered.looped.len(), 2, "one looped site per loop");
+        assert_eq!(lowered.sites.len(), 2, "and no site outside one");
     }
 
     #[test]
     fn one_leaf_reached_twice_in_a_loop_is_one_site() {
         // The dedup a loop keeps: two reaches of one leaf inside one body
-        // are one clause, and therefore one entry of one run.
+        // are one clause, and therefore one element of one site.
         let lowered = lowered(
             "{ for &side in &self.config().sides { \
                self.owed.at(side).set(1); self.owed.at(side).set(2); } }",
         );
-        assert_eq!(lowered.runs.len(), 1);
+        assert_eq!(lowered.looped.len(), 1);
         assert_eq!(lowered.sites.len(), 1);
     }
 

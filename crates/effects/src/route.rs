@@ -624,9 +624,9 @@ mod tests {
     }
 
     #[test]
-    fn a_guarded_out_loop_lends_a_run_of_none() {
+    fn a_guarded_out_loop_lends_a_site_of_none() {
         // The absence rides the argument, as it does for a handle on a
-        // clause that was guarded out: the export takes its run either
+        // clause that was guarded out: the export takes its site either
         // way, and what a loop that never ran covers is nothing. A
         // refusal here would make a body that declares a conditional
         // loop uncallable exactly when the condition does not hold.

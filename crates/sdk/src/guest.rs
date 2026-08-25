@@ -8,22 +8,22 @@
 //!
 //! # Handles are reps, not borrows
 //!
-//! The kernel materializes one handle per declared clause and passes them
-//! in the export's parameter order, so what a body holds is an index into
-//! a table the kernel owns. The accessors take that index and reconstruct
+//! The kernel lends one site per declared handle parameter and passes
+//! them in the export's parameter order, so what a body holds is an
+//! index into a table the kernel owns, and the element it names within
+//! it. The accessors take that index and reconstruct
 //! the borrow around it for the duration of one call — a handle a body
 //! never owns and can never drop, which is what the canonical ABI's
 //! `borrow` means and what keeps `state`'s types free of the lifetime a
 //! stored borrow would put on every contract signature.
 //!
-//! # A single form and a run's form, and nothing else to choose between
+//! # One accessor per world function, and nothing to choose between
 //!
-//! Every accessor below has two arms: the cell a body named directly,
-//! and the entry of a run at an element index. What the capability
-//! behind either one grants is the kernel's answer, held at the
-//! operation — so nothing here refuses, and there is no arm a totality
-//! scan could read as a fault. At each generated call site the variant
-//! is fixed, and `#[inline(always)]` folds the discriminant away.
+//! Every accessor below names its site and the element of it the access
+//! covers, whether the declaration behind that site was one clause or a
+//! loop's expansion. What the capability at that element grants is the
+//! kernel's answer, held at the operation — so nothing here refuses, and
+//! there is no arm a totality scan could read as a fault.
 
 // The kernel world, generated once for every package that links this
 // crate. A guest names these types through its own world's `with`
@@ -410,7 +410,7 @@ pub fn entry_remove(handle: Handle, index: u32) {
     kernel::state::site_remove(&site(handle.site), handle.element, index)
 }
 
-/// How many elements a run's site mapped over.
+/// How many elements the site covers.
 ///
 /// The element count rather than the count of expansions that fired, so
 /// a body walks the same indices whichever of its sites it is reading —
@@ -422,7 +422,7 @@ pub fn site_len(rep: u32) -> u32 {
     kernel::state::site_len(&site(rep))
 }
 
-/// Whether a run's site declared anything for the element at `index`.
+/// Whether the site declared anything for the element at `index`.
 #[must_use]
 #[inline(always)]
 pub fn site_declared(rep: u32, index: u32) -> bool {

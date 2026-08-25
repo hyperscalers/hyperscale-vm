@@ -492,7 +492,7 @@ fn an_edge_of_any_width_is_read_and_retired_whole_in_both_lanes() {
 /// A `for-each` executed through its run, in both lanes.
 ///
 /// The declaration writes one clause per configured party and the guest
-/// walks the run those expansions materialised — so what the body
+/// walks the site those expansions materialised — so what the body
 /// touches is what the declaration said, at a width neither the
 /// signature nor the guest chose.
 #[test]
@@ -544,12 +544,12 @@ fn a_for_each_executes_through_its_run_in_both_lanes() {
     );
 }
 
-/// A run over denominated leaves, in both lanes.
+/// A loop over denominated leaves, in both lanes.
 ///
-/// The mode a run carries is the site's, so a loop over a family of
-/// vaults walks amount reads where the loop beside it walks plain
-/// cells — same width, same indices, a different resource type at the
-/// boundary. Which is the property nine run kinds exist for.
+/// The mode is the site's, so a loop over a family of vaults walks
+/// amount reads where the loop beside it walks plain cells — same
+/// width, same indices, a different resource type at the boundary, and
+/// one handle type lending all of it.
 #[test]
 fn a_run_over_vaults_reads_at_its_own_mode_in_both_lanes() {
     let run = |mut chain: Chain| {
@@ -598,15 +598,15 @@ fn accrued(chain: &Chain, shapes: grammar::Grammar, asset: ResourceAddr) -> u128
         })
 }
 
-/// Two runs of different modes under one loop, in both lanes.
+/// Two sites of different modes under one loop, in both lanes.
 ///
 /// The mode a site materialises is what its body does: the vault is read
 /// and moved out of, so it is lent as an amount cell; the leaf the fee
 /// lands in is only moved into, so it is lent as a delta. Both walk the
-/// same elements at the same indices, which is the property one run per
-/// site exists for.
+/// same elements at the same indices, which is the property one site per
+/// declared access exists for.
 #[test]
-fn two_runs_of_different_modes_walk_one_loop_in_both_lanes() {
+fn two_sites_of_different_modes_walk_one_loop_in_both_lanes() {
     let run = |mut chain: Chain| {
         chain.publish(grammar());
         let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
@@ -641,11 +641,11 @@ fn two_runs_of_different_modes_walk_one_loop_in_both_lanes() {
     assert_eq!(native, (650, 0, 50, 30), "the fee each vault could pay");
 }
 
-/// A run of reservations, in both lanes.
+/// A loop of reservations, in both lanes.
 ///
 /// A reserve is the one mode with nothing to read and no amount to name:
-/// the hold was judged and taken before the body ran, so what a run
-/// entry answers with is the grant. Per element, which is what makes the
+/// the hold was judged and taken before the body ran, so what an element
+/// answers with is the grant. Per element, which is what makes the
 /// feasibility the whole loop's rather than one clause's.
 #[test]
 fn a_run_of_reservations_grants_per_element_in_both_lanes() {
@@ -908,7 +908,7 @@ fn a_run_over_holdings_moves_instances_in_both_lanes() {
 ///
 /// What a `for-each` varies per element is the key its clause names, and
 /// a body that also needs the element itself reads it out of the list
-/// the loop maps over — at the index the run is walked by, which is the
+/// the loop maps over — at the index the site is walked by, which is the
 /// same index. So the number written and the leaf written to belong to
 /// one element rather than agreeing by convention.
 #[test]
@@ -990,8 +990,8 @@ fn a_run_covers_a_list_of_one_and_a_list_of_none_in_both_lanes() {
 
     assert_eq!(native, blessed, "lanes diverged");
     let (one, empty) = native;
-    assert_eq!(one, Some(3), "the single element the run covers");
-    assert_eq!(empty, None, "a run over nothing writes nothing");
+    assert_eq!(one, Some(3), "the single element the site covers");
+    assert_eq!(empty, None, "a site over nothing writes nothing");
 }
 
 /// The configuration record passed on whole, in both lanes.

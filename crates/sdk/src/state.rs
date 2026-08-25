@@ -1155,13 +1155,14 @@ pub struct Site {
 
 #[allow(clippy::inline_always)] // one import behind a dispatch its call site fixes
 impl Site {
-    /// The run at `rep`.
+    /// The site at `rep`.
     #[must_use]
     pub const fn at(rep: u32) -> Self {
         Self { rep }
     }
 
-    /// How many elements the site's loop mapped over.
+    /// How many elements the site covers: one for a plain access, and
+    /// as many as a `for-each` mapped over for a looped one.
     #[must_use]
     #[inline(always)]
     pub fn len(&self) -> u32 {
@@ -1171,7 +1172,8 @@ impl Site {
         return host::site_len(self.rep);
     }
 
-    /// Whether the loop mapped over no elements at all.
+    /// Whether the site covers no elements at all, which only a loop
+    /// that mapped over nothing does.
     #[must_use]
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
