@@ -58,6 +58,7 @@ fn own(slot: SlotId, material: Vec<Expr>) -> TargetExpr {
 
 const fn write(target: TargetExpr, denomination: Option<Box<Expr>>) -> Clause {
     Clause::Effect {
+        reach: None,
         guard: None,
         target,
         mode: ModeExpr::Write,
@@ -67,6 +68,7 @@ const fn write(target: TargetExpr, denomination: Option<Box<Expr>>) -> Clause {
 
 const fn read(target: TargetExpr, denomination: Option<Box<Expr>>) -> Clause {
     Clause::Effect {
+        reach: None,
         guard: None,
         target,
         mode: ModeExpr::Read,

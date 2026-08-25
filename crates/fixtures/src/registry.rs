@@ -58,6 +58,7 @@ pub fn metadata() -> PackageMetadata {
                 AbiParam::Derived(Expr::Arg(1)),
             ],
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target,
                 mode: ModeExpr::Write,
@@ -78,6 +79,7 @@ pub fn metadata() -> PackageMetadata {
                 AbiParam::Derived(Expr::Arg(1)),
             ],
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target,
                 mode: ModeExpr::Read,
@@ -94,6 +96,7 @@ pub fn metadata() -> PackageMetadata {
             params: vec![ParamType::U128],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Range {
                     owner: Expr::SelfAddr,

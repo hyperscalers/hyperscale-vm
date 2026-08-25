@@ -68,6 +68,7 @@ fn spreading(abi: Vec<AbiParam>) -> PackageMetadata {
                 guard: None,
                 list: Expr::Arg(0),
                 body: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),

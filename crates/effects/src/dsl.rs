@@ -623,6 +623,17 @@ pub enum Clause {
         /// expression would widen every clause in the tree to the size of
         /// the rare one that does.
         denomination: Option<Box<Expr>>,
+        /// The behaviour this access reaches a foreign prefix under,
+        /// where it reaches one.
+        ///
+        /// The justification rather than a flag, and the only thing that
+        /// lets a declaration name a cell that is not its own: the target
+        /// is keyed first by a resource, and the entry that resource
+        /// grants for this behaviour is injected at admission and judged
+        /// against what the call presented. Absent for every ordinary
+        /// access, which names its own instance's prefix and answers to
+        /// the movement entries instead.
+        reach: Option<GrantedBehaviour>,
     },
     /// One access set per element of a bounded input collection; inside
     /// the body, the element is the innermost [`Expr::Binding`].
@@ -706,6 +717,10 @@ pub enum EvalError {
     /// An argument index past the bound inputs.
     #[error("argument {0} out of range")]
     ArgOutOfRange(u32),
+    /// A reaching access whose target is keyed by nothing, so there is no
+    /// resource whose entry could admit it.
+    #[error("an access reaching a foreign prefix is keyed by no resource")]
+    UnkeyedReach,
     /// A configuration index past the instance's configuration.
     #[error("configuration field {0} out of range")]
     ConfigOutOfRange(u32),
@@ -972,6 +987,31 @@ pub struct DeclaredAccess {
     /// capability's rep — its index here — answer what the cell it is
     /// moving into holds.
     pub holds: Option<ResourceAddr>,
+    /// The behaviour this access reaches a foreign prefix under, carried
+    /// through from the clause that declared it.
+    ///
+    /// One field answering three questions that would otherwise be three
+    /// carve-outs: whether the access may name a prefix that is not the
+    /// frame's, whether it earns the movement requirements a holder's own
+    /// access earns — it does not, because every one of them would fire
+    /// against the party being reached — and which entry admits it.
+    pub reach: Option<Reach>,
+}
+
+/// What lets one access name a prefix that is not the declaring
+/// instance's own.
+///
+/// Both halves, because neither answers on its own: the behaviour says
+/// which of the reached resource's entries is asked, and the resource
+/// says whose. It is the resource the key was *derived from* rather than
+/// one read back out of it — a key is a hash and inverts to nothing — so
+/// the entry judged is always the entry of the thing actually reached.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reach {
+    /// The authority the reach is made under.
+    pub behaviour: GrantedBehaviour,
+    /// The resource whose entry for it admits the reach.
+    pub resource: ResourceAddr,
 }
 
 /// A signature evaluation's two views of the same declaration.
@@ -1086,6 +1126,7 @@ impl Declaration {
         let ordered: Vec<DeclaredAccess> = set
             .iter()
             .map(|effect| DeclaredAccess {
+                reach: None,
                 effect,
                 holds: None,
             })
@@ -1367,12 +1408,13 @@ fn eval_clauses(
         }
         match clause {
             Clause::Effect {
-                target,
+                target: declared,
                 mode,
                 denomination,
+                reach,
                 ..
             } => {
-                let target = eval_target(target, inputs, hasher, bindings, budget)?;
+                let target = eval_target(declared, inputs, hasher, bindings, budget)?;
                 let mode = eval_mode(mode, inputs, hasher, bindings, budget)?;
                 budget.charge()?;
                 // Evaluated beside the key it belongs to and kept parallel
@@ -1382,11 +1424,17 @@ fn eval_clauses(
                     .as_ref()
                     .map(|expr| eval_denomination(expr, inputs, hasher, bindings, budget))
                     .transpose()?;
+                // A reach is keyed first by the resource whose entry
+                // admits it — held to that shape at publish — so the
+                // resource is the first material term, evaluated here
+                // where the declaration is.
+                let reached = eval_reach(*reach, declared, inputs, hasher, bindings, budget)?;
                 let effect = Effect { target, mode };
                 out.set.insert(effect)?;
                 out.ordered.push(DeclaredAccess {
                     effect,
                     holds: held,
+                    reach: reached,
                 });
             }
             Clause::Requires { rule, .. } => {
@@ -1485,6 +1533,45 @@ fn eval_denomination(
         });
     };
     Ok(ResourceAddr::try_from(address)?)
+}
+
+/// The expression a target's key is derived from first, which for a
+/// reach is the resource whose entry admits it.
+/// The authority a reaching access acts under, over the resource its
+/// own key was derived from.
+///
+/// The resource is the first material term — held to that shape at
+/// publish — so what the entry is asked about is always what the access
+/// actually reaches.
+fn eval_reach(
+    reach: Option<GrantedBehaviour>,
+    declared: &TargetExpr,
+    inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    bindings: &[Value],
+    budget: &Budget<'_>,
+) -> Result<Option<Reach>, EvalError> {
+    let Some(behaviour) = reach else {
+        return Ok(None);
+    };
+    let keyed = keying_resource(declared).ok_or(EvalError::UnkeyedReach)?;
+    let resource = eval_denomination(keyed, inputs, hasher, bindings, budget)?;
+    Ok(Some(Reach {
+        behaviour,
+        resource,
+    }))
+}
+
+fn keying_resource(target: &TargetExpr) -> Option<&Expr> {
+    // A fresh key is minted under its owner rather than derived from
+    // anything, so it is keyed by nothing and can never be reached.
+    let material = match target {
+        TargetExpr::Point(Expr::ChildKey { material, .. })
+        | TargetExpr::Entry { material, .. }
+        | TargetExpr::Range { material, .. } => material,
+        TargetExpr::Point(_) => return None,
+    };
+    material.first()
 }
 
 fn eval_condition(
@@ -2440,6 +2527,7 @@ mod tests {
         let target = || TargetExpr::Point(Expr::Literal(Value::Key(key)));
         let clauses = vec![
             Clause::Effect {
+                reach: None,
                 guard: None,
                 target: target(),
                 mode: ModeExpr::Read,
@@ -2565,12 +2653,14 @@ mod tests {
         };
         let clauses = vec![
             Clause::Effect {
+                reach: None,
                 guard: None,
                 target: point(0xF0),
                 mode: ModeExpr::Write,
                 denomination: None,
             },
             Clause::Effect {
+                reach: None,
                 guard: None,
                 target: point(0x0F),
                 mode: ModeExpr::Write,
@@ -2579,6 +2669,7 @@ mod tests {
             // The same target as the first clause: a degenerate instance
             // configuration produces exactly this shape.
             Clause::Effect {
+                reach: None,
                 guard: None,
                 target: point(0xF0),
                 mode: ModeExpr::Write,
@@ -2687,6 +2778,7 @@ mod tests {
             guard: None,
             list: Expr::Arg(0),
             body: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::Field(Box::new(Expr::Binding(0)), 0)),
@@ -2739,12 +2831,14 @@ mod tests {
             list: Expr::Arg(0),
             body: vec![
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: vault(vec![Expr::Binding(0)]),
                     mode: ModeExpr::Write,
                     denomination: None,
                 },
                 Clause::Effect {
+                    reach: None,
                     guard: Some(Box::new(Expr::Eq(
                         Box::new(Expr::Binding(0)),
                         Box::new(Expr::Literal(Value::U64(1))),
@@ -2788,6 +2882,7 @@ mod tests {
             guard: Some(Box::new(Expr::Literal(Value::Bool(false)))),
             list: Expr::Arg(0),
             body: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
@@ -2825,6 +2920,7 @@ mod tests {
                 guard: None,
                 list: Expr::Arg(1),
                 body: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
@@ -2883,6 +2979,7 @@ mod tests {
         let args = [Value::List(vec![Value::U64(0)])];
         let ins = inputs(&args, &[]);
         let effect = Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
@@ -2956,6 +3053,7 @@ mod tests {
             guard: None,
             list: Expr::Arg(0),
             body: vec![Clause::Effect {
+                reach: None,
                 guard: Some(Box::new(Expr::Contains {
                     map: Box::new(table),
                     key: Box::new(Expr::Binding(0)),
@@ -3028,6 +3126,7 @@ mod tests {
             guard: None,
             list: Expr::Arg(0),
             body: vec![Clause::Effect {
+                reach: None,
                 guard: Some(Box::new(Expr::Contains {
                     map: Box::new(Expr::Literal(Value::List(vec![Value::Tuple(vec![
                         Value::U64(1),
@@ -3093,6 +3192,7 @@ mod tests {
                 guard: None,
                 list: Expr::Arg(0),
                 body: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
@@ -3133,6 +3233,7 @@ mod tests {
             guard: None,
             list: Expr::Arg(0),
             body: vec![Clause::Effect {
+                reach: None,
                 guard: Some(Box::new(Expr::Eq(
                     Box::new(Expr::Arg(1)),
                     Box::new(Expr::Arg(1)),
@@ -3198,6 +3299,7 @@ mod tests {
         let short = [Value::List(vec![Value::U64(0), Value::U64(1)])];
         let ins = inputs(&short, &[]);
         let mut clause = Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
@@ -3223,6 +3325,7 @@ mod tests {
         let ins = inputs(&args, &[]);
         let clauses = [
             Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Range {
                     owner: Expr::SelfAddr,
@@ -3236,6 +3339,7 @@ mod tests {
                 denomination: None,
             },
             Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
@@ -3263,6 +3367,7 @@ mod tests {
         }));
 
         let inverted = [Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
@@ -3291,6 +3396,7 @@ mod tests {
         let args = [resource_a.clone(), resource_b.clone()];
         let ins = inputs(&args, &[]);
         let entry_for = |slot: u32| Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Entry {
                 owner: Expr::SelfAddr,
@@ -3343,6 +3449,7 @@ mod tests {
         let args = [name_a.clone(), name_b.clone()];
         let ins = inputs(&args, &[]);
         let entry_for = |slot: u32| Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Entry {
                 owner: Expr::SelfAddr,
@@ -3585,6 +3692,7 @@ mod tests {
         ];
         let ins = inputs(&args, &[]);
         let clauses = [Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
@@ -3616,6 +3724,7 @@ mod tests {
         let args = [Value::Address(component)];
         let ins = inputs(&args, &[]);
         let clauses = [Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),

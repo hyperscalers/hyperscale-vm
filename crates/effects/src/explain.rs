@@ -42,7 +42,7 @@ use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
 use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleExpr, RuleLeaf, always, never};
 use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, Totality};
 use crate::types::{EdgeContent, SlotId, Value, u256_decimal};
-use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
+use crate::vocabulary::{AUTH, CLAIMS, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 
 /// The whole package: its tables, then every method it declares.
 #[must_use]
@@ -208,6 +208,7 @@ impl Names<'_> {
         };
         match clause {
             Clause::Effect {
+                reach,
                 guard: condition,
                 target,
                 mode,
@@ -216,9 +217,16 @@ impl Names<'_> {
                 let held = denomination.as_ref().map_or_else(String::new, |resource| {
                     format!(" holding {}", self.expr(resource, ATOM))
                 });
+                // A reach names whose authority lets it name somebody
+                // else's cell, which is the first thing a reader of the
+                // clause needs and the only reason the target is not the
+                // declaring instance's own.
+                let under = reach.map_or_else(String::new, |behaviour| {
+                    format!(", reaching under {}", behaviour_name(behaviour))
+                });
                 let _ = writeln!(
                     out,
-                    "{pad}{number:>3}  {}{} {}{held}",
+                    "{pad}{number:>3}  {}{} {}{held}{under}",
                     guard(condition),
                     self.mode(mode),
                     self.target(target)
@@ -549,6 +557,7 @@ impl Names<'_> {
         let vocabulary = match slot {
             VAULT => Some("vault"),
             CLAIMS => Some("claims"),
+            HALT => Some("halt"),
             CONFIG => Some("config"),
             AUTH => Some("auth"),
             RESOURCE => Some("resource"),
@@ -854,6 +863,7 @@ mod tests {
     /// position that takes an expression of any binding strength.
     fn guarded(condition: Expr) -> Clause {
         Clause::Effect {
+            reach: None,
             guard: Some(Box::new(condition)),
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
@@ -864,6 +874,7 @@ mod tests {
     /// One read of a point target.
     fn read(target: Expr) -> Clause {
         Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(target),
             mode: ModeExpr::Read,
@@ -976,6 +987,7 @@ mod tests {
         let text = rendered(
             "guarded",
             declaring(vec![Clause::Effect {
+                reach: None,
                 guard: Some(Box::new(Expr::Lt(
                     Box::new(Expr::Arg(0)),
                     Box::new(Expr::Config(0)),
@@ -1071,6 +1083,7 @@ mod tests {
         let text = rendered(
             "sweeps",
             declaring(vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Range {
                     owner: Expr::SelfAddr,

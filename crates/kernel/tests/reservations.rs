@@ -56,6 +56,7 @@ fn session(held: u128, reserves: &[u128]) -> (KernelSession, u32) {
     let mut ordered: Vec<DeclaredAccess> = reserves
         .iter()
         .map(|amount| DeclaredAccess {
+            reach: None,
             effect: Effect {
                 target: EffectTarget::Point(source),
                 mode: Mode::Reserve { amount: *amount },
@@ -64,6 +65,7 @@ fn session(held: u128, reserves: &[u128]) -> (KernelSession, u32) {
         })
         .collect();
     ordered.push(DeclaredAccess {
+        reach: None,
         effect: Effect {
             target: EffectTarget::Point(sink),
             mode: Mode::Delta,

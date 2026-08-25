@@ -62,6 +62,7 @@ fn writing(slot: SlotId, material: Vec<Expr>) -> PackageMetadata {
             ],
             effects: vec![
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),

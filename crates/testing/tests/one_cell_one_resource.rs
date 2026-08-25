@@ -38,6 +38,7 @@ fn pot(held: ResourceAddr) -> TargetExpr {
 
 fn holding(held: ResourceAddr, mode: ModeExpr) -> Clause {
     Clause::Effect {
+        reach: None,
         guard: None,
         target: pot(held),
         mode,

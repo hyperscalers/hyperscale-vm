@@ -599,6 +599,16 @@ impl<'a> TypedBuilder<'a> {
         // two of three means presenting two.
         let evidence = match (signature.requires_evidence(), proofs) {
             (false, []) => BTreeSet::new(),
+            // A method that issues, destroys or reaches earns its
+            // requirement from the resource rather than from its own
+            // declaration, so the signature says it admits anyone and
+            // the resource says otherwise. Ruling the proof out here
+            // would refuse the call before the party who decides has
+            // been asked.
+            (false, presented) if signature.may_earn_authority() => presented
+                .iter()
+                .map(|proof| EvidenceRef::Node(proof.node))
+                .collect(),
             (false, _) => {
                 return Err(TypedError::UnexpectedEvidence {
                     method: method.to_owned(),

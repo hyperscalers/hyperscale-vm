@@ -2684,7 +2684,10 @@ fn issuance(
     role: Role,
 ) -> syn::Item {
     let stub = quote!(::core::unimplemented!("a contract body runs on the guest"));
-    let mut methods = vec![record_creation(name, kind, &stub)];
+    let mut methods = vec![
+        record_creation(name, kind, &stub),
+        resource_address(name, &stub),
+    ];
     methods.extend(match kind {
         ResourceKind::Fungible => value_surface(name, &stub),
         ResourceKind::NonFungible => instance_surface(name, schema, &stub),
@@ -2703,6 +2706,20 @@ fn issuance(
 /// The record states only what the address cannot carry, which for a
 /// fungible resource is its display quantization and for a non-fungible
 /// one is nothing at all.
+fn resource_address(name: &str, stub: &TokenStream2) -> syn::ImplItemFn {
+    let doc = format!(
+        "The address `{name}` sits at: this instance's own, over the mark and the rules the \
+         declaration grants."
+    );
+    syn::parse_quote!(
+        #[doc = #doc]
+        #[must_use]
+        pub fn address() -> ::hyperscale_vm_sdk::ResourceAddr {
+            #stub
+        }
+    )
+}
+
 fn record_creation(name: &str, kind: ResourceKind, stub: &TokenStream2) -> syn::ImplItemFn {
     let doc = format!("Bring `{name}` itself into existence, by writing its record.");
     match kind {

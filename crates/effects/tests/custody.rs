@@ -19,11 +19,11 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, pkg, world};
-use hyperscale_vm_effects::vocabulary::VAULT;
+use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
     EdgeRef, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, Holding, InstanceMeta,
-    IntentDecl, JudgedLeaf, ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta,
-    Rule, RuleBytes, StoredRule, TestHasher, Value, admit_tree, child_key,
+    IntentDecl, JudgedLeaf, ManifestGraph, Presented, Records, ResourceGrants, ResourceKind,
+    ResourceMeta, Rule, RuleBytes, StoredRule, TestHasher, Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -74,9 +74,34 @@ fn admitting_meta() -> ResourceMeta {
     }
 }
 
+/// The same again, granting a halt: an issuer who can stop a holder
+/// moving it, and nothing else.
+fn freezable_meta() -> ResourceMeta {
+    let mut rules = ResourceGrants::new();
+    rules.set(
+        GrantedBehaviour::Freeze,
+        sealed(&StoredRule::claim(Presented::of_subject(ISSUER))),
+    );
+    ResourceMeta {
+        namespace: ISSUER,
+        kind: ResourceKind::Fungible,
+        material: vec![b"freezable".to_vec()],
+        rules,
+    }
+}
+
+fn freezable() -> ResourceAddr {
+    freezable_meta().address(&TestHasher)
+}
+
 /// A custodian holding the governed resource, and a second asset beside
 /// it so a movement can happen with no account in the transaction.
 fn custody_world() -> (Records, ComponentAddr) {
+    custody_world_over(governed())
+}
+
+/// The same, over whichever resource the case is about.
+fn custody_world_over(asset: ResourceAddr) -> (Records, ComponentAddr) {
     let mut chain = world();
     chain
         .packages
@@ -84,9 +109,9 @@ fn custody_world() -> (Records, ComponentAddr) {
     let meta = InstanceMeta {
         package: pkg("custodian"),
         config: vec![
-            Value::Address(governed().address()),
-            Value::Address(governed().address()),
-            Value::Address(governed().address()),
+            Value::Address(asset.address()),
+            Value::Address(asset.address()),
+            Value::Address(asset.address()),
         ],
         salt: Hash32([0x5C; 32]),
     };
@@ -194,6 +219,79 @@ fn a_component_answers_for_its_own_vault() {
     );
 }
 
+/// A halt on the custodian stops the custodian's own withdrawal, in a
+/// declaration that neither reads a halt leaf nor could be made to.
+///
+/// This is the case a holder-side fence cannot reach, and the reason the
+/// fence is injected rather than declared. A design where freezing meant
+/// "the account checks a flag" binds accounts and stops at the first
+/// deposit into any application — and the adversary picks where to
+/// stand, so a negative capability with a gap is defeated rather than
+/// partial. Here the read is admission's, keyed by the vault's own
+/// owner, so the component holding the value answers for itself.
+#[test]
+fn a_halt_binds_the_component_holding_the_value() {
+    let (chain, custodian) = custody_world_over(freezable());
+    let env = round_trip(custodian);
+    let mut env = env;
+    env.resources = vec![freezable_meta()];
+    let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
+        .expect("the custodian's own withdrawal admits");
+
+    let halted = EffectTarget::Point(child_key(
+        &TestHasher,
+        custodian,
+        HALT,
+        &[Value::Address(freezable().address()).canonical_bytes()],
+    ));
+    assert!(
+        admitted
+            .admitted
+            .declaration()
+            .conditions
+            .contains(&Rule::Require(JudgedLeaf::Presence {
+                target: halted,
+                expect: Presence::Absent,
+            })),
+        "every movement of a freezable resource requires the mover's flag absent",
+    );
+    assert!(
+        admitted.admitted.declaration().set.contains(&Effect {
+            target: halted,
+            mode: Mode::Read,
+        }),
+        "and the leaf is provisioned by the same declaration that requires it",
+    );
+}
+
+/// A resource whose issuer cannot halt anybody puts no read on the
+/// transfer path.
+///
+/// The unrestricted path pays nothing, which is what keeps the fence
+/// from being a tax on every holder of every resource: absence of the
+/// entry is absence of the leaf, the read and the condition alike.
+#[test]
+fn a_resource_granting_no_freeze_reads_no_halt_leaf() {
+    let (chain, custodian) = custody_world();
+    let env = round_trip(custodian);
+    let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
+        .expect("the governed resource moves on its own terms");
+
+    let would_be = EffectTarget::Point(child_key(
+        &TestHasher,
+        custodian,
+        HALT,
+        &[Value::Address(governed().address()).canonical_bytes()],
+    ));
+    assert!(
+        !admitted.admitted.declaration().set.contains(&Effect {
+            target: would_be,
+            mode: Mode::Read,
+        }),
+        "a resource nobody can halt costs its holders no halt read",
+    );
+}
+
 /// A declaration that carries its direction is judged on the movement it
 /// makes, and not on the one it gave up.
 ///
@@ -226,6 +324,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
             MethodSignature {
                 totality: Totality::Fallible,
                 effects: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: vault_of(asset()),
                     mode,

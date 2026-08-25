@@ -12,7 +12,7 @@
 //! runs before execution and never reads state. The macro's job is to say
 //! so at the line that did it.
 
-use hyperscale_vm_effects::{Issued, ResourceKind};
+use hyperscale_vm_effects::{GrantedBehaviour, Issued, ResourceKind};
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -27,6 +27,18 @@ pub fn emit_kind(kind: ResourceKind) -> TokenStream {
     match kind {
         ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::ResourceKind::Fungible),
         ResourceKind::NonFungible => quote!(::hyperscale_vm_sdk::ResourceKind::NonFungible),
+    }
+}
+
+/// A granted behaviour, as an authority a declaration acts under.
+pub fn emit_behaviour(behaviour: GrantedBehaviour) -> TokenStream {
+    match behaviour {
+        GrantedBehaviour::Mint => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Mint),
+        GrantedBehaviour::Burn => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Burn),
+        GrantedBehaviour::Withdraw => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Withdraw),
+        GrantedBehaviour::Deposit => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Deposit),
+        GrantedBehaviour::Freeze => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Freeze),
+        GrantedBehaviour::Recall => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Recall),
     }
 }
 

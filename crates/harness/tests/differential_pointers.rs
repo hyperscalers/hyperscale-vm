@@ -95,6 +95,7 @@ fn session() -> KernelSession {
             ordered: effects
                 .iter()
                 .map(|effect| DeclaredAccess {
+                    reach: None,
                     effect: *effect,
                     holds: Some(RESOURCE),
                 })

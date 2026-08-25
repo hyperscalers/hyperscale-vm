@@ -27,6 +27,7 @@ fn looped_mode(signature: &MethodSignature, clause: u32, site: u32) -> Option<&'
         return None;
     };
     let Clause::Effect {
+        reach: None,
         target,
         mode,
         denomination,

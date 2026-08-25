@@ -319,9 +319,9 @@ fn the_register_entry_is_soulbound() {
 ///
 /// `Mint` is here because every resource that is minted carries one:
 /// absence withholds, so a share class nobody could issue is spelled by
-/// leaving it out. It is the control for the rest — an authority entry
-/// beside the movement entries, leaving the class byte to follow what
-/// the entries *do*.
+/// leaving it out. `Freeze` is here because granting it is what puts the
+/// halt read on every movement of the share — and what puts the share in
+/// the class whose record cannot be withheld, so the read fails closed.
 #[test]
 fn the_guest_grants_what_these_cases_are_about() {
     let granted: BTreeSet<GrantedBehaviour> = security::metadata()
@@ -336,8 +336,10 @@ fn the_guest_grants_what_these_cases_are_about() {
             GrantedBehaviour::Mint,
             GrantedBehaviour::Withdraw,
             GrantedBehaviour::Deposit,
+            GrantedBehaviour::Freeze,
             GrantedBehaviour::Recall,
         ]),
-        "both movement entries to enforce and two authority entries to stay plain beside them",
+        "both movement entries to enforce, the halt that binds a component, and the two \
+         authority entries that stay plain beside them",
     );
 }

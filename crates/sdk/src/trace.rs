@@ -165,11 +165,13 @@ impl Trace {
         let guard = Some(Box::new(cond.clone()));
         match clause {
             Clause::Effect {
+                reach,
                 target,
                 mode,
                 denomination,
                 ..
             } => Clause::Effect {
+                reach,
                 guard,
                 target,
                 mode,
@@ -320,6 +322,7 @@ impl Trace {
             trace: self,
             target,
             denomination: None,
+            reach: None,
             shape: core::marker::PhantomData,
         }
     }
@@ -347,6 +350,7 @@ impl Trace {
             trace: self,
             target,
             denomination: None,
+            reach: None,
             shape: core::marker::PhantomData,
         }
     }
@@ -390,6 +394,7 @@ impl Trace {
             trace: self,
             target,
             denomination: None,
+            reach: None,
             shape: core::marker::PhantomData,
         }
     }
@@ -423,6 +428,7 @@ impl Trace {
             trace: self,
             target,
             denomination: None,
+            reach: None,
             shape: core::marker::PhantomData,
         }
     }
@@ -456,6 +462,7 @@ impl Trace {
             trace: self,
             target,
             denomination: None,
+            reach: None,
             shape: core::marker::PhantomData,
         }
     }
@@ -845,6 +852,7 @@ impl Trace {
         let scope = self.scopes.last().expect("the method scope stands");
         match scope.last() {
             Some(Clause::Effect {
+                reach: None,
                 target: TargetExpr::Point(cell),
                 ..
             }) => cell.clone(),
@@ -860,10 +868,15 @@ impl Trace {
         match (scope.get(len.wrapping_sub(2)), scope.get(len - 1)) {
             (
                 Some(Clause::Effect {
+                    reach: None,
                     target: TargetExpr::Point(cell),
                     ..
                 }),
-                Some(Clause::Effect { target, .. }),
+                Some(Clause::Effect {
+                    reach: None,
+                    target,
+                    ..
+                }),
             ) => (cell.clone(), target.clone()),
             _ => panic!("a custody gate declares its rule read and its possession read first"),
         }
@@ -958,6 +971,7 @@ impl Trace {
                 .iter()
                 .find_map(|clause| match clause {
                     Clause::Effect {
+                        reach: None,
                         target: TargetExpr::Point(cell),
                         mode: ModeExpr::Write,
                         ..
@@ -1032,17 +1046,34 @@ pub struct Access<'a, Shape> {
     trace: &'a mut Trace,
     target: TargetExpr,
     denomination: Option<Box<Expr>>,
+    reach: Option<GrantedBehaviour>,
     shape: core::marker::PhantomData<fn() -> Shape>,
 }
 
 impl<Shape> Access<'_, Shape> {
     fn declare(self, mode: ModeExpr) {
         self.trace.emit(Clause::Effect {
+            reach: self.reach,
             guard: None,
             target: self.target,
             mode,
             denomination: self.denomination,
         });
+    }
+
+    /// Declare that this access reaches a prefix that is not the
+    /// declaring instance's own, under `behaviour`.
+    ///
+    /// What the reach costs is shape: the target is keyed first by a
+    /// resource, and that resource's entry for `behaviour` is injected
+    /// at admission and judged against what the call presented. The
+    /// package writes down which authority it is acting under; who holds
+    /// that authority is the resource's answer and never this
+    /// declaration's.
+    #[must_use]
+    pub const fn reaching(mut self, behaviour: GrantedBehaviour) -> Self {
+        self.reach = Some(behaviour);
+        self
     }
 
     /// State what the accessed cell holds.
@@ -1419,6 +1450,7 @@ mod tests {
             panic!("expected a nested for-each")
         };
         let Clause::Effect {
+            reach: None,
             target: TargetExpr::Point(Expr::ChildKey { material, .. }),
             ..
         } = &body[0]
@@ -1456,6 +1488,7 @@ mod tests {
         assert!(matches!(
             &recorded.clauses[0],
             Clause::Effect {
+                reach: None,
                 target: TargetExpr::Range {
                     cap: Expr::Arg(1),
                     ..

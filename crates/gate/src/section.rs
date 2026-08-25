@@ -87,6 +87,7 @@ mod tests {
     fn signature_over(expr: Expr) -> MethodSignature {
         MethodSignature {
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Point(expr),
                 mode: ModeExpr::Write,
@@ -137,6 +138,7 @@ mod tests {
 
     fn nested_foreach(depth: usize) -> Clause {
         let mut clause = Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
@@ -170,6 +172,7 @@ mod tests {
     /// expression form, each target form, each mode, a guarded clause
     /// and the binding that reads its verdict, a nested for-each body, a
     /// call site, and a deep literal.
+    #[allow(clippy::too_many_lines)] // one arm per shape the vocabulary admits
     fn every_authored_shape() -> MethodSignature {
         MethodSignature {
             totality: Totality::Fallible,
@@ -205,6 +208,7 @@ mod tests {
             denominations: vec![None, None, None, None, Some(Expr::Config(2))],
             effects: vec![
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
@@ -215,6 +219,7 @@ mod tests {
                     denomination: None,
                 },
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Entry {
                         owner: Expr::Field(Box::new(Expr::Config(0)), 2),
@@ -229,6 +234,7 @@ mod tests {
                     denomination: None,
                 },
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Range {
                         owner: Expr::SelfAddr,
@@ -248,6 +254,7 @@ mod tests {
                         guard: None,
                         list: Expr::Binding(0),
                         body: vec![Clause::Effect {
+                            reach: None,
                             guard: None,
                             target: TargetExpr::Point(Expr::Lookup {
                                 map: Box::new(Expr::Binding(1)),
@@ -259,6 +266,7 @@ mod tests {
                     }],
                 },
                 Clause::Effect {
+                    reach: None,
                     guard: Some(Box::new(Expr::Not(Box::new(Expr::Eq(
                         Box::new(Expr::Arg(0)),
                         Box::new(Expr::Config(1)),
@@ -394,6 +402,7 @@ mod tests {
             };
         }
         let mut clause = Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
@@ -447,6 +456,7 @@ mod tests {
     #[test]
     fn a_clause_tree_wider_than_a_signature_can_declare_is_refused() {
         let effect = Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,

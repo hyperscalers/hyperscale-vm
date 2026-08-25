@@ -50,12 +50,14 @@ use common::world::*;
 /// encoded claims, so its bytes moved with them.
 ///
 /// Every vector moved again, and the answer is a derivation move rather
-/// than a routing one: a method declares a *list* of issuances rather
-/// than at most one, so every package's declaration encodes differently,
-/// every declaration hash moves, and every instance address derived from
-/// one moves with it. The addresses under the rendering changed; what
-/// each shard is asked to provision did not. A component founds every
-/// resource it declares, which is what the list is for.
+/// than a routing one. A method declares a *list* of issuances rather
+/// than at most one, so a component founds every resource it declares;
+/// it names the buckets it destroys on somebody else's behalf; and a
+/// clause says which authority lets it reach a prefix that is not its
+/// own. Each is a field on a declaration, so every package's declaration
+/// encodes differently, every declaration hash moves, and every instance
+/// address derived from one moves with it. The addresses under the
+/// rendering changed; what each shard is asked to provision did not.
 ///
 /// The swap and fill pins carry the instantiation fence: admission reads
 /// the configuration leaf of every component a node targets, so the
@@ -88,13 +90,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "f0685a4d54439f978543047bb37303a4351c083d1646b740eef19e2d9c80346f";
+const PIN_TRANSFER: &str = "28c989292fba524f821714a871aa882cf7b1fda37970e6739b7588332ba9d5ca";
 
-const PIN_SWAP: &str = "a734f7a11830769fbae0bd45ec12d7df64107e3e6c37a971e0ec0a6ba0fe33c0";
+const PIN_SWAP: &str = "b8987dca756594f52d4a2a4c55caebbd4907a488a158f50d03f0138b881a0c7e";
 
-const PIN_FILL: &str = "2b7137d2b4452ffe02b51b5f3a0bf7a37805c9251bd7d5ae39f547995bd90b9a";
+const PIN_FILL: &str = "8306c8f8e2bd639d3947979b9cdc098eaa667f14eec598e6e3b7ef693e56b254";
 
-const PIN_PROPOSE: &str = "56fbed79610f6a6a73836a79697d4ce55139416ff06076202e486b85584f8f59";
+const PIN_PROPOSE: &str = "430134a54e9e22d85aab11ed5a44cf0e8b3c3f917e9ac72b1abb309323c00cd1";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

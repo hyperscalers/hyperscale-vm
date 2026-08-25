@@ -34,7 +34,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod security {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Quantity};
+    use hyperscale_vm_sdk::state::{Bucket, Quantity, halt, unhalt};
 
     /// The register entry: one fungible unit per registered holder.
     ///
@@ -63,7 +63,12 @@ pub mod security {
     /// vault moves is on the register. "Alice may send to Bob but not to
     /// Carol" is not spellable here and belongs to whoever keeps the
     /// register.
-    #[resource(grants(mint = self, withdraw = issued(Registered), deposit = issued(Registered)))]
+    #[resource(grants(
+        mint = self,
+        withdraw = issued(Registered),
+        deposit = issued(Registered),
+        freeze = registrar
+    ))]
     struct Share;
 
     /// The same issuer's unrestricted class: recallable, and free to
@@ -106,6 +111,25 @@ pub mod security {
         /// Issue shares.
         pub fn issue(&mut self, amount: Quantity) -> Bucket {
             Share::mint(amount)
+        }
+
+        /// Stop `holder` moving the share class, wherever they hold it.
+        ///
+        /// The one cell this package writes under somebody else's
+        /// prefix, and it declares no gate of its own: what admits the
+        /// reach is the share's own `freeze` entry, injected where the
+        /// declaration is evaluated. A holder does not have to cooperate
+        /// and cannot be written to cooperate — which is the whole
+        /// difference from a fence a holder's package would have had to
+        /// declare.
+        pub fn freeze(&mut self, holder: Address) {
+            halt(holder, Share::address());
+        }
+
+        /// Let them move again. The flag's absence is the unfrozen
+        /// state, so lifting it is ending the cell.
+        pub fn release(&mut self, holder: Address) {
+            unhalt(holder, Share::address());
         }
 
         /// Issue the unrestricted class.

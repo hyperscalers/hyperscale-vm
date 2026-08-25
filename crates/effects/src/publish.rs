@@ -24,7 +24,7 @@ use crate::signature::{AbiParam, Issuance, MAX_ISSUANCES_PER_SIGNATURE, MethodSi
 use crate::types::{
     MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId, Value, value_within_width,
 };
-use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
+use crate::vocabulary::{AUTH, CLAIMS, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
 
 /// Why a signature is refused at publish: the composed verdict of every
@@ -423,6 +423,34 @@ pub enum DeclarationError {
     /// indices for one resource.
     #[error("this method issues one mark twice, and a mark names one grant")]
     IssuanceNamedTwice,
+    /// A reach declared under a behaviour that governs no foreign
+    /// prefix — a movement entry, which is about the holder rather than
+    /// about somebody reaching them.
+    #[error("clause {clause} reaches a foreign prefix under {behaviour:?}, which governs none")]
+    UnreachingBehaviour {
+        /// The offending clause.
+        clause: u32,
+        /// The behaviour named.
+        behaviour: GrantedBehaviour,
+    },
+    /// A reach whose target is the declaring instance's own prefix,
+    /// which needs no authority and would take the movement entries off
+    /// an ordinary access.
+    #[error("clause {clause} reaches under an authority and names its own prefix")]
+    ReachesItself {
+        /// The offending clause.
+        clause: u32,
+    },
+    /// A reach whose target is not keyed first by a resource, so there is
+    /// nothing whose entry could admit it.
+    #[error(
+        "clause {clause} reaches a foreign prefix and is not keyed first by the resource \
+         whose entry would admit it"
+    )]
+    UnkeyedReach {
+        /// The offending clause.
+        clause: u32,
+    },
     /// A total method that brings supply into or out of existence.
     #[error(
         "a total method promises a caller has nothing to hear back, and the entry admitting \
@@ -635,6 +663,47 @@ pub enum DeclarationError {
 /// a child key names its owner outright. Everything else — an argument, a
 /// configuration slot, a `for-each` binding, a literal — is another
 /// object's prefix, whatever the author meant by it.
+/// Judge a clause that reaches a prefix that is not the declaring
+/// instance's own.
+///
+/// Two things make the reach safe, and both are shape rather than
+/// review. **The owner is not this instance**, because a reach into
+/// one's own prefix is an ordinary access wearing an authority it does
+/// not need — and admitting it would put an injected entry where the
+/// movement entries belong. And **the target is keyed first by a
+/// resource**, which is the resource whose entry admits the reach: the
+/// key is derived from it, so naming a slot cannot name a cell holding
+/// something else, and the entry judged is always the entry of the thing
+/// actually reached.
+///
+/// The entry itself is injected at admission rather than declared here.
+/// A package will not gate itself on a rule it does not want, so the
+/// requirement comes from the resource — which is what makes omission
+/// inexpressible, on the same terms a movement requirement is.
+fn judge_reach(
+    clause: u32,
+    target: &TargetExpr,
+    behaviour: GrantedBehaviour,
+) -> Result<(), DeclarationError> {
+    if !behaviour.reaches_a_foreign_prefix() {
+        return Err(DeclarationError::UnreachingBehaviour { clause, behaviour });
+    }
+    if targets_own_prefix(target) {
+        return Err(DeclarationError::ReachesItself { clause });
+    }
+    let Some((_, material)) = slot_of(target) else {
+        return Err(DeclarationError::UnkeyedReach { clause });
+    };
+    let keyed_by_a_resource = material.first().is_some_and(|first| {
+        decided_class(first)
+            .is_none_or(|found| matches!(found, AddressClass::Resource | AddressClass::Restricted))
+    });
+    if !keyed_by_a_resource {
+        return Err(DeclarationError::UnkeyedReach { clause });
+    }
+    Ok(())
+}
+
 fn targets_own_prefix(target: &TargetExpr) -> bool {
     match target {
         TargetExpr::Point(key) => match key {
@@ -858,6 +927,16 @@ fn vocabulary_shape(
             point && bare && matches!(mode, ModeExpr::Read | ModeExpr::Write),
             "is the stored authority cell: one leaf, no material, read or rewritten whole",
         ),
+        // The halt flag's whole content is whether it is there, so it is
+        // written and ended rather than rewritten, and read by the
+        // condition every movement of a freezable resource carries. Keyed
+        // by the resource it halts and denominated in nothing: it holds a
+        // fact, not value.
+        HALT => (
+            point && keyed(1) && matches!(mode, ModeExpr::Read | ModeExpr::Write),
+            "is a holder's halt flag for one resource: one leaf, keyed by that resource, \
+             holding no value",
+        ),
         // A record and an instance's data are written when the thing
         // they describe comes into existence and not again, so creating
         // one and overwriting one are different declarations and the
@@ -898,6 +977,7 @@ fn denominates(signature: &MethodSignature, flat: &[&Clause], resource: &Expr) -
             matches!(
                 clause,
                 Clause::Effect {
+            reach: None,
                     denomination: Some(named),
                     ..
                 } if named.as_ref() == resource
@@ -972,11 +1052,20 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
         target,
         mode,
         denomination,
+        reach,
     } = access
     else {
         return Ok(());
     };
     let denomination = denomination.as_deref();
+    // A reach is the one thing that lets a declaration name a prefix
+    // that is not its own, and it pays for it in shape: the target is
+    // keyed first by a resource, which is what the injected entry
+    // resolves against and what makes naming a slot unable to name a
+    // cell holding something else.
+    if let Some(behaviour) = reach {
+        return judge_reach(clause, target, *behaviour);
+    }
     if !targets_own_prefix(target) {
         return Err(DeclarationError::ForeignPrefix { clause });
     }
@@ -1058,6 +1147,7 @@ pub fn seals(signature: &MethodSignature) -> bool {
             matches!(
                 clause,
                 Clause::Effect {
+            reach: None,
                     target: TargetExpr::Point(Expr::ChildKey { owner, slot, material }),
                     mode: ModeExpr::Write,
                     ..
@@ -1090,6 +1180,7 @@ pub fn seal_clauses() -> Vec<Clause> {
             target: leaf(),
             mode: ModeExpr::Write,
             denomination: None,
+            reach: None,
         },
     ]
 }
@@ -1138,6 +1229,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
                 || matches!(
                     clause,
                     Clause::Effect {
+                        reach: None,
                         mode: ModeExpr::Reserve(_),
                         ..
                     }
@@ -1270,6 +1362,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
 fn founds_its_resource(issuance: &Issuance, flat: &[&Clause]) -> bool {
     flat.iter().any(|clause| {
         let Clause::Effect {
+            reach: None,
             target:
                 TargetExpr::Point(Expr::ChildKey {
                     owner,
@@ -1373,6 +1466,7 @@ fn check_agreement(flat: &[&Clause]) -> Result<(), DeclarationError> {
     let mut holds: BTreeMap<Contents<'_>, bool> = BTreeMap::new();
     for (index, clause) in flat.iter().enumerate() {
         let Clause::Effect {
+            reach: None,
             target,
             denomination,
             ..
@@ -1401,16 +1495,17 @@ fn check_conditions(signature: &MethodSignature, flat: &[&Clause]) -> Result<(),
         |target: &TargetExpr, under: Option<&Expr>, admits: &dyn Fn(&ModeExpr) -> bool| {
             flat.iter().any(|clause| {
                 matches!(
-                    clause,
-                    Clause::Effect {
-                        guard,
-                        target: declared,
-                        mode,
-                        ..
-                    } if declared == target
-                        && admits(mode)
-                        && (guard.is_none() || guard.as_deref() == under)
-                )
+                        clause,
+                        Clause::Effect {
+                reach: None,
+                            guard,
+                            target: declared,
+                            mode,
+                            ..
+                        } if declared == target
+                            && admits(mode)
+                            && (guard.is_none() || guard.as_deref() == under)
+                    )
             })
         };
     let coherent = |mode: &ModeExpr| matches!(mode, ModeExpr::Read | ModeExpr::Write);
@@ -1791,6 +1886,7 @@ fn check_slot_contents(metadata: &PackageMetadata) -> Result<(), MetadataBoundsE
         let mut says: BTreeMap<Numbered, bool> = BTreeMap::new();
         for clause in signature.effects.iter().flat_map(Clause::effects) {
             let Clause::Effect {
+                reach: None,
                 target,
                 denomination,
                 ..
@@ -1907,6 +2003,7 @@ fn check_clause_bounds(
                 target,
                 mode,
                 denomination,
+                reach: _,
             } => {
                 if let Some(cond) = guard {
                     check_expr_bounds(cond, 0)?;
@@ -2375,6 +2472,7 @@ mod tests {
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Point(expr),
                 mode: ModeExpr::Write,
@@ -2412,6 +2510,7 @@ mod tests {
 
     fn nested_foreach(depth: usize) -> Clause {
         let mut clause = Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
@@ -2473,6 +2572,7 @@ mod tests {
             one_method(MethodSignature {
                 totality: Totality::Fallible,
                 effects: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Range {
                         owner: Expr::SelfAddr,
@@ -2497,6 +2597,7 @@ mod tests {
     #[test]
     fn a_clause_tree_wider_than_a_signature_can_declare_is_refused() {
         let effect = Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Read,
@@ -2565,6 +2666,7 @@ mod tests {
     /// so a table longer than its ceiling names entries nothing could
     fn clause() -> Clause {
         Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
             mode: ModeExpr::Delta,
@@ -2624,6 +2726,7 @@ mod tests {
             })
         };
         let access = |guard: Option<Expr>, mode| Clause::Effect {
+            reach: None,
             guard: guard.map(Box::new),
             target: cell(),
             mode,
@@ -2632,6 +2735,7 @@ mod tests {
         // The incoherent mode: a movement declares the cell, but a
         // movement cannot carry a judgment.
         let movement = || Clause::Effect {
+            reach: None,
             guard: None,
             target: cell(),
             mode: ModeExpr::Delta,
@@ -2728,6 +2832,7 @@ mod tests {
             })
         };
         let access = |guard: Option<Expr>, mode| Clause::Effect {
+            reach: None,
             guard: guard.map(Box::new),
             target: cell(),
             mode,
@@ -2782,6 +2887,7 @@ mod tests {
     #[test]
     fn a_sealed_gate_over_a_resource_the_method_never_moves_is_refused() {
         let vault = |resource: Expr| Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
@@ -2941,6 +3047,7 @@ mod tests {
             material: vec![],
         };
         let read = |target| Clause::Effect {
+            reach: None,
             guard: None,
             target,
             mode: ModeExpr::Read,
@@ -2958,6 +3065,7 @@ mod tests {
             })
         };
         let read_vault = |badge: Expr| Clause::Effect {
+            reach: None,
             guard: None,
             target: vault(badge.clone()),
             mode: ModeExpr::Read,
@@ -3190,6 +3298,7 @@ mod tests {
         assert_eq!(
             check_declarations(&total(MethodSignature {
                 effects: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
@@ -3215,6 +3324,7 @@ mod tests {
             check_declarations(&MethodSignature {
                 effects: vec![
                     Clause::Effect {
+                        reach: None,
                         guard: None,
                         target: target.clone(),
                         mode: ModeExpr::Write,
@@ -3284,6 +3394,7 @@ mod tests {
         // so it fires whenever any of them does.
         let declared = |conditions: Vec<Clause>| {
             let mut effects = vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: target(),
                 mode: ModeExpr::Write,
@@ -3356,6 +3467,7 @@ mod tests {
         };
         let declared = |conditions: Vec<Clause>| {
             let mut effects = vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: own_point(package_slot(0), vec![]),
                 mode: ModeExpr::Write,
@@ -3415,6 +3527,7 @@ mod tests {
         let declared = |target, mode, denomination: Option<Expr>| {
             check_declarations(&MethodSignature {
                 effects: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target,
                     mode,
@@ -3458,6 +3571,7 @@ mod tests {
     #[test]
     fn a_total_method_carries_no_guard() {
         let guarded = Clause::Effect {
+            reach: None,
             guard: Some(Box::new(Expr::Eq(
                 Box::new(Expr::Arg(0)),
                 Box::new(Expr::Config(0)),
@@ -3482,6 +3596,7 @@ mod tests {
                 totality: Totality::Total,
                 abi: vec![AbiParam::Guard(0)],
                 effects: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(Expr::SelfAddr),
                     mode: ModeExpr::Read,
@@ -3514,6 +3629,7 @@ mod tests {
             }),
         };
         let access = |material| Clause::Effect {
+            reach: None,
             guard: None,
             target: cell(material),
             mode: ModeExpr::Write,
@@ -3670,6 +3786,7 @@ mod tests {
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target,
                 mode,
@@ -3779,6 +3896,7 @@ mod tests {
             totality: Totality::Fallible,
             effects: vec![
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: target.clone(),
                     mode: ModeExpr::Write,
@@ -4094,6 +4212,7 @@ mod tests {
         };
         let write = || ModeExpr::Write;
         let effect = |target, mode, denomination: Option<Expr>| Clause::Effect {
+            reach: None,
             guard: None,
             target,
             mode,
@@ -4121,6 +4240,7 @@ mod tests {
         // Nor does a guard make them arms of one answer: what a cell
         // holds is not a question an execution answers.
         let guarded = |cond, denomination| Clause::Effect {
+            reach: None,
             guard: Some(Box::new(cond)),
             target: leaf(),
             mode: write(),
@@ -4207,6 +4327,7 @@ mod tests {
         let declaring = |slot| MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
@@ -4219,7 +4340,9 @@ mod tests {
             ..MethodSignature::default()
         };
         // Everything below the base the vocabulary has not spoken for.
-        let assigned = [VAULT, CLAIMS, CONFIG, AUTH, RESOURCE, NF_VAULT, INSTANCE];
+        let assigned = [
+            VAULT, CLAIMS, CONFIG, AUTH, RESOURCE, NF_VAULT, INSTANCE, HALT,
+        ];
         for slot in (0..PACKAGE_SLOT_BASE).map(SlotId) {
             if assigned.contains(&slot) {
                 continue;
@@ -4263,6 +4386,7 @@ mod tests {
         let declaring = |target: TargetExpr, mode: ModeExpr| MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target,
                 mode,
@@ -4322,6 +4446,7 @@ mod tests {
                 guard: None,
                 list: Expr::Arg(0),
                 body: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: child_of(Expr::Binding(0)),
                     mode: ModeExpr::Delta,

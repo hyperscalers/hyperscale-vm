@@ -2019,6 +2019,61 @@ pub fn file_instance(handle: Handle) {
     return host::cell_set(handle, &[1]);
 }
 
+/// Stop `holder` moving `resource`, by raising their halt flag for it.
+///
+/// The authoring spelling, rewritten by the lowering into the reaching
+/// access it declares — so the call site is where an author says which
+/// prefix they are naming and the declaration is where it is judged.
+/// Every movement of a resource its issuer can halt reads this leaf and
+/// requires it absent.
+///
+/// # Panics
+///
+/// Always, off the guest: a body runs where the lowering has rewritten
+/// it, and this stub exists so the name resolves.
+#[allow(clippy::needless_pass_by_value, unused_variables)]
+pub fn halt(holder: Address, resource: ResourceAddr) {
+    unimplemented!("{OFF_HOST}")
+}
+
+/// Let them move it again, by ending the flag.
+///
+/// # Panics
+///
+/// Always, off the guest, on [`halt`]'s terms.
+#[allow(clippy::needless_pass_by_value, unused_variables)]
+pub fn unhalt(holder: Address, resource: ResourceAddr) {
+    unimplemented!("{OFF_HOST}")
+}
+
+/// Raise the halt flag `handle` names: the holder stops moving that
+/// resource.
+///
+/// Called by generated code, never by an author. One byte, the same one
+/// a filed instance writes, because the flag's whole content is whether
+/// it is there — every movement of the resource reads it and requires it
+/// absent, so a value would be a second thing to disagree about.
+#[doc(hidden)]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always)]
+pub fn raise_halt(handle: Handle) {
+    #[cfg(component)]
+    return crate::guest::cell_set(handle, &[1]);
+    #[cfg(not(component))]
+    return host::cell_set(handle, &[1]);
+}
+
+/// End it, which is the only way a halt lifts.
+#[doc(hidden)]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always)]
+pub fn clear_halt(handle: Handle) {
+    #[cfg(component)]
+    return crate::guest::cell_clear(handle);
+    #[cfg(not(component))]
+    return host::cell_clear(handle);
+}
+
 /// End the instance data cell `handle` names.
 ///
 /// Called by generated code, never by an author. The mirror of

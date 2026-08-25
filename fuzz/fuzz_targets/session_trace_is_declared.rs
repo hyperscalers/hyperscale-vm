@@ -260,7 +260,11 @@ fn session(fx: &Fx) -> Option<KernelSession> {
             .declared
             .iter()
             .zip(denominations(fx))
-            .map(|(effect, holds)| DeclaredAccess { effect, holds })
+            .map(|(effect, holds)| DeclaredAccess {
+                effect,
+                holds,
+                reach: None,
+            })
             .collect(),
         ..Declaration::default()
     };

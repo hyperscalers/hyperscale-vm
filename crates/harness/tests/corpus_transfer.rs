@@ -56,12 +56,14 @@ fn mirror_metadata() -> PackageMetadata {
             abi: vec![AbiParam::Handle { clause: 1, site: 0 }, AbiParam::Bucket(0)],
             effects: vec![
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(self_child(CLAIMS, vec![resource_of_arg0()])),
                     mode: ModeExpr::Delta,
                     denomination: Some(Box::new(resource_of_arg0())),
                 },
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(self_child(VAULT, vec![resource_of_arg0()])),
                     mode: ModeExpr::Delta,

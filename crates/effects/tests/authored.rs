@@ -304,6 +304,11 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("registry", "bind", open(), vec![]),
         ("registry", "check", open(), vec![]),
         ("registry", "drain", open(), vec![]),
+        // The reach declares no gate of its own: what admits it is the
+        // share's own `freeze` entry, injected where the declaration is
+        // evaluated, so this table sees an open method and the resource
+        // sees the caller.
+        ("security", "freeze", open(), vec![]),
         ("security", "instantiate", open(), vec![]),
         ("security", "issue", open(), vec![]),
         ("security", "issue-bearer", open(), vec![]),
@@ -313,6 +318,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
             vec![RuleExpr::claim(Expr::Config(0))],
             vec![],
         ),
+        ("security", "release", open(), vec![]),
         ("shares", "deposit", open(), vec![]),
         ("shares", "instantiate", open(), vec![]),
         ("shares", "mint", open(), vec![]),
@@ -383,6 +389,7 @@ fn the_account_files_at_the_count_it_moves() {
             .iter()
             .find_map(|clause| match clause {
                 Clause::Effect {
+                    reach: None,
                     target: TargetExpr::Range { cap, .. },
                     ..
                 } => Some(cap.clone()),

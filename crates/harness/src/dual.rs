@@ -366,7 +366,11 @@ pub fn materialize(
             ordered: declared
                 .iter()
                 .zip(denominations.iter().copied())
-                .map(|(effect, holds)| DeclaredAccess { effect, holds })
+                .map(|(effect, holds)| DeclaredAccess {
+                    reach: None,
+                    effect,
+                    holds,
+                })
                 .collect(),
             ..Declaration::default()
         },

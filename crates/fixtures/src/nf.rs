@@ -75,6 +75,7 @@ fn creating_instance(minted_resource: &Expr, minted_id: &Expr) -> Vec<Clause> {
     };
     vec![
         Clause::Effect {
+            reach: None,
             guard: None,
             target: target(),
             mode: ModeExpr::Write,
@@ -106,6 +107,7 @@ fn creating_instance(minted_resource: &Expr, minted_id: &Expr) -> Vec<Clause> {
 /// each id's entry through the one range capability — so a move
 /// declares exactly the walk it performs.
 #[must_use]
+#[allow(clippy::too_many_lines)] // one signature per method of the surface
 pub fn metadata() -> PackageMetadata {
     let minted_resource = Expr::SelfResource {
         kind: ResourceKind::NonFungible,
@@ -148,6 +150,7 @@ pub fn metadata() -> PackageMetadata {
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: holdings_range(
                     Expr::ResourceOf(Box::new(Expr::Arg(0))),
@@ -178,6 +181,7 @@ pub fn metadata() -> PackageMetadata {
                 ids: Box::new(Expr::Arg(1)),
             }],
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: holdings_range(Expr::Arg(0), Expr::Len(Box::new(Expr::Arg(1)))),
                 mode: ModeExpr::Write,

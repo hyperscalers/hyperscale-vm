@@ -40,8 +40,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::vocabulary::{CONFIG, INSTANCE, RESOURCE};
-use hyperscale_vm_effects::{Issued, ResourceKind};
+use hyperscale_vm_effects::vocabulary::{CONFIG, HALT, INSTANCE, RESOURCE};
+use hyperscale_vm_effects::{GrantedBehaviour, Issued, ResourceKind};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
@@ -92,6 +92,13 @@ pub enum Target {
         slot: u16,
         /// The child-key material.
         material: Vec<Term>,
+        /// Whose prefix the leaf sits under, where it is not the
+        /// declaring instance's own.
+        ///
+        /// A reaching access says so here and says which authority it
+        /// acts under beside it; every ordinary one leaves both absent
+        /// and lands under `self`.
+        owner: Option<Term>,
     },
     /// One ordered-collection entry.
     Entry {
@@ -160,6 +167,9 @@ pub struct Site {
     /// wide or as wide as the loop's expansion — and, where it is a
     /// loop's, which loop's index its elements are named by.
     pub binder: usize,
+    /// The behaviour this site's access reaches a foreign prefix under,
+    /// where it reaches one.
+    pub reach: Option<GrantedBehaviour>,
     /// The condition this site's clause is declared under, or `None` for
     /// a clause declared always.
     ///
@@ -426,7 +436,8 @@ impl Lowered {
         self.sites.iter().find(|site| {
             matches!(
                 &site.target,
-                Target::Point { slot: at, material } if *at == slot && material.is_empty()
+                Target::Point { slot: at, material, owner: None }
+                    if *at == slot && material.is_empty()
             )
         })
     }
@@ -769,7 +780,7 @@ impl<'a> Lowerer<'a> {
     /// `site` is one, which is what makes `create` on it the record's.
     fn record_cell(&self, site: usize) -> Option<Term> {
         match self.out.sites.get(site).map(|s| &s.target) {
-            Some(Target::Point { slot, material }) if *slot == RESOURCE.0 => {
+            Some(Target::Point { slot, material, .. }) if *slot == RESOURCE.0 => {
                 material.first().cloned()
             }
             _ => None,
@@ -1051,6 +1062,18 @@ impl<'a> Lowerer<'a> {
         element: Option<syn::Type>,
         declared: Option<Term>,
     ) -> usize {
+        self.open_reaching(target, element, declared, None)
+    }
+
+    /// The same, for a site reaching a prefix that is not this
+    /// instance's own under `reach`.
+    fn open_reaching(
+        &mut self,
+        target: Target,
+        element: Option<syn::Type>,
+        declared: Option<Term>,
+        reach: Option<GrantedBehaviour>,
+    ) -> usize {
         // Only among the sites this loop opened: a clause belongs to the
         // scope that declared it, and two loops side by side spell their
         // elements the same way while naming different leaves.
@@ -1099,6 +1122,7 @@ impl<'a> Lowerer<'a> {
         });
         let binder = self.depth();
         self.out.sites.push(Site {
+            reach,
             target,
             ops: Vec::new(),
             element,
@@ -1354,6 +1378,7 @@ impl<'a> Lowerer<'a> {
         };
         let site = self.open(
             Target::Point {
+                owner: None,
                 slot: RESOURCE.0,
                 material: vec![Term::SelfResource(issued.kind, issued.mark.clone())],
             },
@@ -1382,6 +1407,7 @@ impl<'a> Lowerer<'a> {
     fn seal_record(&mut self, call: &syn::ExprMethodCall) -> Eval {
         let site = self.open(
             Target::Point {
+                owner: None,
                 slot: CONFIG.0,
                 material: vec![],
             },
@@ -1795,6 +1821,7 @@ impl<'a> Lowerer<'a> {
             .then(|| syn::parse_quote!(::core::option::Option<#mark>));
         self.open(
             Target::Point {
+                owner: None,
                 slot: INSTANCE.0,
                 material: vec![
                     Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone()),
@@ -1932,6 +1959,66 @@ impl<'a> Lowerer<'a> {
         let funds = self.value(destroyed.code);
         self.issuer(ResourceKind::Fungible, mark, Issued::Burned);
         Eval::plain(quote!(::hyperscale_vm_sdk::state::burn_granted(#funds)))
+    }
+
+    /// Lower `halt(holder, resource)` and `unhalt(..)` — the holder's
+    /// flag for one resource, under the holder's own prefix.
+    ///
+    /// The site is a reaching one, so the declaration carries the
+    /// authority it acts under and admission carries the entry. Nothing
+    /// here judges who may: a package writing this has said it is acting
+    /// as the resource's freezer, and whether it is, is the resource's
+    /// answer.
+    ///
+    /// Two calls rather than a cell a body reads: the flag's whole
+    /// content is whether it is there, so raising it and ending it are
+    /// the operations and there is nothing to get.
+    fn lower_halt(&mut self, raising: bool, call: &syn::ExprCall) -> Eval {
+        let spelling = if raising { "halt" } else { "unhalt" };
+        let named: Vec<&syn::Expr> = call.args.iter().collect();
+        let [holder, resource] = named[..] else {
+            self.error(
+                call.args.span(),
+                &format!(
+                    "`{spelling}` names the holder whose movement is stopped and the \
+                     resource it is stopped for"
+                ),
+            );
+            return Eval::absent(call.args.span(), "a halt naming neither party");
+        };
+        let holder = self.expr(holder);
+        let resource = self.expr(resource);
+        let (Val::Term(holder), Val::Term(resource)) = (holder.val, resource.val) else {
+            self.error(
+                call.args.span(),
+                &format!(
+                    "`{spelling}` names a holder and a resource the declaration can see — an \
+                     argument, a configuration field, or a resource this package issues"
+                ),
+            );
+            return Eval::absent(
+                call.args.span(),
+                "a halt over a value the lowering cannot see",
+            );
+        };
+        let site = self.open_reaching(
+            Target::Point {
+                owner: Some(holder),
+                slot: HALT.0,
+                material: vec![resource],
+            },
+            None,
+            None,
+            Some(GrantedBehaviour::Freeze),
+        );
+        self.record(site, Op::Set, None, call.span());
+        let handle = self.handle(site, call.span());
+        let body = if raising {
+            quote!(::hyperscale_vm_sdk::state::raise_halt(#handle))
+        } else {
+            quote!(::hyperscale_vm_sdk::state::clear_halt(#handle))
+        };
+        Eval::plain(body)
     }
 
     /// Lower `destroy(funds)` — value the caller handed over, retired
@@ -3399,12 +3486,33 @@ impl<'a> Lowerer<'a> {
                 ResourceKind::Fungible => self.lower_burn(&issued.mark, call),
             };
         }
+        // `halt(holder, resource)` — the one cell a package reaches under
+        // somebody else's prefix. What admits it is the resource's own
+        // `Freeze` entry, injected where the declaration is evaluated,
+        // so the package names the authority and the resource names who
+        // holds it.
+        if name == "halt" || name == "unhalt" {
+            return self.lower_halt(name == "halt", call);
+        }
         // `destroy(funds)` / `destroy_nf(funds)` — the holder's side of
         // supply leaving. What it destroys is the edge's own resource,
         // so the declaration names the parameter and the rule that
         // admits it is that resource's, not this instance's.
         if name == "destroy" || name == "destroy_nf" {
             return self.lower_destroy(&name, call);
+        }
+        // `Name::address()` — the resource the mark derives, as a body
+        // names it. The same derivation `issued(Name)` reaches from an
+        // attribute, so a gate and a body cannot mean two addresses.
+        if name == "address" {
+            let Some(issued) = self.issuing_mark(call, "address") else {
+                return Eval::absent(call.func.span(), "an undeclared resource");
+            };
+            let term = Term::SelfResource(issued.kind, issued.mark);
+            return Eval {
+                val: Val::Term(term.clone()),
+                code: Code::Term(term),
+            };
         }
         if name == "issued" {
             let Some(term) = self.declared_resource(call) else {
@@ -4043,6 +4151,7 @@ impl<'a> Lowerer<'a> {
                 if let Some(Val::Term(key)) = vals.first() {
                     let site = self.open(
                         Target::Point {
+                            owner: None,
                             slot,
                             material: vec![key.clone()],
                         },
@@ -4211,6 +4320,7 @@ impl<'a> Lowerer<'a> {
             (FieldKind::Cell, "vault") => {
                 let site = self.open(
                     Target::Point {
+                        owner: None,
                         slot,
                         material: declared.clone().into_iter().collect(),
                     },
@@ -4240,6 +4350,7 @@ impl<'a> Lowerer<'a> {
                 if let Some(op) = Op::from_method(method) {
                     let site = self.open(
                         Target::Point {
+                            owner: None,
                             slot,
                             material: vec![],
                         },

@@ -433,6 +433,32 @@ impl MethodSignature {
         self.required_rules().next().is_some()
     }
 
+    /// Whether admission may inject an authority requirement onto this
+    /// method's frame.
+    ///
+    /// The three things that earn one: bringing supply into existence,
+    /// taking it out, and reaching a prefix that is not this instance's
+    /// own. None of them is *declared* as a condition — the entry comes
+    /// from the resource, which is what makes omission inexpressible —
+    /// so a caller reading only [`requires_evidence`](Self::requires_evidence)
+    /// would conclude the method admits anyone and refuse to hand it a
+    /// proof it turns out to need.
+    ///
+    /// Answered from the signature alone and deliberately loose: whether
+    /// the entry actually demands anything depends on the resource and
+    /// on the instance, and the composer's job here is only to stop
+    /// ruling a proof out.
+    #[must_use]
+    pub fn may_earn_authority(&self) -> bool {
+        !self.issues.is_empty()
+            || !self.destroys.is_empty()
+            || self
+                .effects
+                .iter()
+                .flat_map(Clause::effects)
+                .any(|clause| matches!(clause, Clause::Effect { reach: Some(_), .. }))
+    }
+
     /// Whether judging this method reads a stored rule — which is what
     /// admits a signature as evidence: a signature signs in, and whether
     /// the key behind it still holds its account's authority is the

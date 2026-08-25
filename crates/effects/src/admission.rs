@@ -23,7 +23,7 @@ use hyperscale_vm_types::{
 };
 
 use crate::dsl::{
-    Clause, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, PresentedGrants,
+    Clause, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, PresentedGrants, Reach,
     evaluate_declaration, evaluate_expr, supports,
 };
 use crate::envelope::{YieldBinding, YieldParam};
@@ -44,7 +44,7 @@ use crate::route::FrameDeclaration;
 use crate::rule::{Holding, Rule, SealedLeaf, never};
 use crate::signature::{AbiParam, Issued, MethodSignature, ParamType};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
-use crate::vocabulary::{CONFIG, VAULT};
+use crate::vocabulary::{CONFIG, HALT, VAULT};
 
 /// The bound on yield parameters one intent may declare. A wire bound.
 ///
@@ -126,6 +126,18 @@ pub enum AdmissionError {
         node: u32,
         /// The resource the edge carries.
         resource: ResourceAddr,
+    },
+    /// A reach into a foreign prefix that nothing presented admits: no
+    /// record for the reached resource, or a record granting no entry for
+    /// the behaviour.
+    #[error("node {node}: nothing presented admits reaching {resource:?} under {behaviour:?}")]
+    ReachUnadmitted {
+        /// The offending node.
+        node: u32,
+        /// The resource whose entry would have admitted it.
+        resource: ResourceAddr,
+        /// The behaviour reached under.
+        behaviour: GrantedBehaviour,
     },
     /// A parameter declared destroyed that carries no value edge.
     #[error("node {node}: parameter {param} is destroyed and carries no value edge")]
@@ -1091,6 +1103,10 @@ impl Lower<'_> {
             })?;
         own_prefix_only(&frame, node.target.address(), node_index)?;
         let fence = self.fence(node.target, &mut frame)?;
+        // The reach's own entry before the movement entries, because a
+        // reaching access earns none of the latter and a reader should
+        // meet the authority that admitted it first.
+        inject_reach_rules(self.grants, &mut frame, node_index)?;
         inject_movement_rules(self.hasher, self.grants, &mut frame, node_index)?;
         // Issuance is an actor question like any other, so its entry
         // joins the frame's conditions and computed placement routes it
@@ -1294,6 +1310,7 @@ impl Lower<'_> {
         frame.ordered.push(DeclaredAccess {
             effect,
             holds: None,
+            reach: None,
         });
         Ok(Some(Rule::Require(JudgedLeaf::Presence {
             target: leaf,
@@ -1610,6 +1627,13 @@ fn own_prefix_only(
     node_index: u32,
 ) -> Result<(), AdmissionError> {
     for (position, access) in declaration.ordered.iter().enumerate() {
+        // A reaching access says which authority lets it name somebody
+        // else's prefix, and the entry that authority names is injected
+        // beside it — so the question here is only whether an access
+        // that claimed no authority stayed home.
+        if access.reach.is_some() {
+            continue;
+        }
         let owner = access.effect.target.owner();
         if owner != instance {
             return Err(AdmissionError::ForeignDeclaration {
@@ -1801,6 +1825,68 @@ fn inject_destruction_rules(
     Ok(granted)
 }
 
+/// Inject the entry admitting each access that reaches a foreign prefix.
+///
+/// The reach is issuer-initiated by construction — a declaration cannot
+/// name a stranger's cell without saying which authority lets it — so
+/// what governs it is the reached resource's own sealed rule and nothing
+/// else. The resource is the one the key is derived from, which is what
+/// makes the entry judged always the entry of the thing actually
+/// reached.
+///
+/// Absence withholds, and here that is the whole of the old refusal: a
+/// resource granting no entry for the behaviour is one nobody may reach
+/// a holder of, which is every resource until its issuer says otherwise.
+fn inject_reach_rules(
+    grants: &PresentedGrants,
+    frame: &mut Declaration,
+    node_index: u32,
+) -> Result<(), AdmissionError> {
+    let mut wanted: Vec<Reach> = Vec::new();
+    for access in &frame.ordered {
+        let Some(reach) = access.reach else {
+            continue;
+        };
+        if !wanted.contains(&reach) {
+            wanted.push(reach);
+        }
+    }
+    for Reach {
+        behaviour,
+        resource,
+    } in wanted
+    {
+        let rule = grants
+            .rules(resource)
+            .and_then(|rules| rules.get(behaviour))
+            .ok_or(AdmissionError::ReachUnadmitted {
+                node: node_index,
+                resource,
+                behaviour,
+            })?
+            .decode()
+            .map_err(|_| AdmissionError::IssuanceRuleMalformed {
+                node: node_index,
+                resource,
+                behaviour,
+            })?;
+        // An actor question's rule reads claims, refused at the seal
+        // otherwise, so nothing else can arrive.
+        let judged = rule.map_leaves(&mut |leaf| match leaf {
+            SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
+            SealedLeaf::Held { .. } => Err(AdmissionError::IssuanceRuleMalformed {
+                node: node_index,
+                resource,
+                behaviour,
+            }),
+        })?;
+        if !frame.conditions.contains(&judged) {
+            frame.conditions.push(judged);
+        }
+    }
+    Ok(())
+}
+
 /// Inject the movement requirements this frame's declared accesses earn.
 ///
 /// A package will not declare a rule it does not want, so the requirement
@@ -1830,6 +1916,17 @@ fn inject_movement_rules(
     // reservation carries its own.
     let mut wanted: Vec<(Address, ResourceAddr, GrantedBehaviour)> = Vec::new();
     for access in &frame.ordered {
+        // A reaching access earns none of them, and the exemption is the
+        // whole class rather than one entry: the party reached is by
+        // construction the party every injected requirement would fire
+        // against. A halt fence would make a frozen holder unrecallable,
+        // a withdraw requirement would leave a restricted resource
+        // recallable only from parties who did not need recalling, and a
+        // soulbound credential would be unrevocable — which would take
+        // revocation, the primary brake, with it.
+        if access.reach.is_some() {
+            continue;
+        }
         let Some(resource) = access.holds else {
             continue;
         };
@@ -1869,6 +1966,30 @@ fn inject_movement_rules(
             }
             continue;
         };
+        // A resource whose issuer can halt a holder is one whose every
+        // movement reads that holder's flag. Injected here rather than
+        // declared, on the same terms the movement entries are: a
+        // package will not declare a fence it does not want, and a
+        // component holding value declares no halt leaf and cannot be
+        // made to. Granting `Freeze` is what puts the resource in the
+        // class whose record cannot be withheld, so the read fails
+        // closed.
+        if rules.get(GrantedBehaviour::Freeze).is_some() {
+            let halted = EffectTarget::Point(child_key(
+                hasher,
+                owner,
+                HALT,
+                &[Value::Address(resource.address()).canonical_bytes()],
+            ));
+            declare_read(frame, halted);
+            let clear = Rule::Require(JudgedLeaf::Presence {
+                target: halted,
+                expect: Presence::Absent,
+            });
+            if !frame.conditions.contains(&clear) {
+                frame.conditions.push(clear);
+            }
+        }
         let Some(sealed) = rules.get(behaviour) else {
             continue;
         };
@@ -1975,6 +2096,7 @@ fn declare_read(frame: &mut Declaration, target: EffectTarget) {
         frame.ordered.push(DeclaredAccess {
             effect,
             holds: None,
+            reach: None,
         });
     }
 }

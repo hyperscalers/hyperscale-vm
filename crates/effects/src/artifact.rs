@@ -403,6 +403,7 @@ mod tests {
             MethodSignature {
                 totality: Totality::Fallible,
                 effects: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(expr),
                     mode: ModeExpr::Write,

@@ -83,6 +83,7 @@ pub(super) fn holding(ordered: &[Effect]) -> Vec<DeclaredAccess> {
     ordered
         .iter()
         .map(|effect| DeclaredAccess {
+            reach: None,
             effect: *effect,
             holds: value.contains(&holds_of(effect.target)).then_some(RESOURCE),
         })

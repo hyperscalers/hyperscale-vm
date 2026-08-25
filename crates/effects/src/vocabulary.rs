@@ -37,6 +37,23 @@ pub const NF_VAULT: SlotId = SlotId(6);
 /// A non-fungible instance's data cell under its issuer, keyed by the
 /// resource and the instance's id: written at mint, immutable after.
 pub const INSTANCE: SlotId = SlotId(7);
+/// A holder's halt flag for one resource, keyed by that resource:
+/// present where the issuer has stopped them moving it, absent
+/// otherwise.
+///
+/// The one piece of mutable state the behaviours need, and the reason it
+/// is needed is that a sealed rule cannot change: freezing is a fact
+/// about a holder at a moment, and the address commits facts about the
+/// resource forever. Non-directional, because a halt stops both ways at
+/// once.
+///
+/// One leaf per `(holder, resource)` rather than one collection per
+/// holder. Asking whether a collection holds an entry is one seek either
+/// way, so the read is not what decides it: a declaration over an
+/// interval is priced by the span it excludes and conflicts with every
+/// write to it, so one holder's unrelated resources would contend over a
+/// fact about one of them.
+pub const HALT: SlotId = SlotId(8);
 
 /// The method a rest policy deposits through.
 ///
@@ -47,7 +64,7 @@ pub const DEPOSIT_METHOD: &str = "deposit";
 
 #[cfg(test)]
 mod tests {
-    use super::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
+    use super::{AUTH, CLAIMS, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
     use crate::types::PACKAGE_SLOT_BASE;
 
     /// The band, held from the one side that can drift.
@@ -60,7 +77,9 @@ mod tests {
     /// the band every package numbers from.
     #[test]
     fn the_protocol_vocabulary_stays_under_the_package_band() {
-        for slot in [VAULT, CLAIMS, CONFIG, AUTH, RESOURCE, NF_VAULT, INSTANCE] {
+        for slot in [
+            VAULT, CLAIMS, CONFIG, AUTH, RESOURCE, NF_VAULT, INSTANCE, HALT,
+        ] {
             assert!(
                 slot.0 < PACKAGE_SLOT_BASE,
                 "{slot:?} reaches into the band packages number from"

@@ -183,6 +183,7 @@ fn is_reservation_shaped(signature: &MethodSignature) -> bool {
                 matches!(
                     clause,
                     Clause::Effect {
+                        reach: None,
                         mode: ModeExpr::Reserve(_),
                         ..
                     }

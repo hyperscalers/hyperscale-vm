@@ -206,6 +206,7 @@ fn a_move_of_more_instances_prices_above_fewer() {
     // and the cap is the count of the ids named.
     let moved = |ids: &[u64]| {
         let clauses = [Clause::Effect {
+            reach: None,
             guard: None,
             target: holdings_range(Expr::Arg(0), Expr::Len(Box::new(Expr::Arg(1)))),
             mode: ModeExpr::Write,

@@ -88,6 +88,7 @@ fn try_session(denominations: &[Option<ResourceAddr>]) -> Result<KernelSession, 
                 .iter()
                 .zip(denominations)
                 .map(|(effect, holds)| DeclaredAccess {
+                    reach: None,
                     effect: *effect,
                     holds: *holds,
                 })
@@ -151,6 +152,7 @@ fn every_producer_stamps_what_its_source_held() {
                 .iter()
                 .zip([Some(X), Some(X), Some(X), Some(Y)])
                 .map(|(effect, holds)| DeclaredAccess {
+                    reach: None,
                     effect: *effect,
                     holds,
                 })
@@ -233,6 +235,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
                 .iter()
                 .zip([Some(X), Some(Y)])
                 .map(|(effect, holds)| DeclaredAccess {
+                    reach: None,
                     effect: *effect,
                     holds,
                 })

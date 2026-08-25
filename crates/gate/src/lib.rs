@@ -794,6 +794,7 @@ mod tests {
         {
             let signature = wrong_kind.methods.get_mut("m").expect("declared");
             signature.effects = vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
@@ -847,6 +848,7 @@ mod tests {
         {
             let signature = sound.methods.get_mut("m").expect("declared");
             signature.effects = vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),

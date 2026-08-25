@@ -245,6 +245,19 @@ impl GrantedBehaviour {
         restates.then_some(GrantsResolveError::RestatesAbsence(self))
     }
 
+    /// Whether this behaviour governs somebody reaching into a holder's
+    /// prefix rather than the holder's own movement.
+    ///
+    /// The two the issuer initiates: taking value out of a prefix that
+    /// is not theirs, and writing the flag that halts one. Every other
+    /// behaviour is about the party whose own cell is moving, so a
+    /// declaration reaching under one of those would be claiming an
+    /// authority over the wrong question.
+    #[must_use]
+    pub const fn reaches_a_foreign_prefix(self) -> bool {
+        matches!(self, Self::Freeze | Self::Recall)
+    }
+
     /// Whether absence of this resource's rules would let a movement
     /// proceed that the rules forbid — the one question the address
     /// class answers without a lookup.

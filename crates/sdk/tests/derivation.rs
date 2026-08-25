@@ -159,6 +159,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
     assert_eq!(
         metadata.methods["bind"].effects,
         vec![Clause::Effect {
+            reach: None,
             guard: None,
             target: hashed_entry(),
             mode: ModeExpr::Write,
@@ -168,6 +169,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
     assert_eq!(
         metadata.methods["resolve"].effects,
         vec![Clause::Effect {
+            reach: None,
             guard: None,
             target: hashed_entry(),
             mode: ModeExpr::Read,
@@ -177,6 +179,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
     assert_eq!(
         metadata.methods["sweep"].effects,
         vec![Clause::Effect {
+            reach: None,
             guard: None,
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
@@ -298,7 +301,7 @@ fn a_stored_rate_folds_to_an_exclusive_write_never_a_movement() {
         .effects
         .iter()
         .map(|clause| match clause {
-            Clause::Effect { mode, .. } => mode.clone(),
+            Clause::Effect { reach: _, mode, .. } => mode.clone(),
             Clause::ForEach { .. } | Clause::Requires { .. } | Clause::Mints { .. } => {
                 panic!("the accrual maps over nothing and requires nothing")
             }
@@ -443,6 +446,7 @@ fn a_branch_the_declaration_can_read_guards_its_own_clauses() {
     assert!(credit.effects.iter().all(|clause| matches!(
         clause,
         Clause::Effect {
+            reach: _,
             mode: ModeExpr::Credit,
             ..
         }
@@ -975,7 +979,12 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
     // A compound key is a product, and it is the material rather than a
     // second collection.
     let paired = effects("paired");
-    let [Clause::Effect { target, .. }] = paired.as_slice() else {
+    let [
+        Clause::Effect {
+            reach: _, target, ..
+        },
+    ] = paired.as_slice()
+    else {
         panic!("one entry");
     };
     let TargetExpr::Entry { order, .. } = target else {
@@ -1001,6 +1010,7 @@ fn every_comparison_reaches_the_two_the_vocabulary_has() {
         .iter()
         .find_map(|clause| match clause {
             Clause::Effect {
+                reach: _,
                 target: TargetExpr::Point(Expr::ChildKey { material, .. }),
                 ..
             } => match material.as_slice() {
@@ -1067,7 +1077,12 @@ fn a_valueless_narrowing_is_a_key_not_a_denomination() {
     for method in ["seat", "page"] {
         let effects = &metadata.methods[method].effects;
         assert_eq!(effects.len(), 1, "{method} declares one clause");
-        let Clause::Effect { denomination, .. } = &effects[0] else {
+        let Clause::Effect {
+            reach: _,
+            denomination,
+            ..
+        } = &effects[0]
+        else {
             panic!("{method} declares an access");
         };
         assert!(denomination.is_none(), "{method} denominates nothing");
@@ -1221,6 +1236,7 @@ fn a_holdings_interval_is_denominated_by_its_narrowing() {
     let effects = &metadata.methods["pull"].effects;
     assert_eq!(effects.len(), 1, "pull declares one clause");
     let Clause::Effect {
+        reach: None,
         target,
         denomination,
         ..
@@ -1246,7 +1262,12 @@ fn a_spelled_count_lowers_to_the_length_projection() {
 
     let metadata = shelf::blueprint().metadata();
     let effects = &metadata.methods["window"].effects;
-    let Clause::Effect { target, .. } = &effects[0] else {
+    let Clause::Effect {
+        reach: None,
+        target,
+        ..
+    } = &effects[0]
+    else {
         panic!("window declares an access");
     };
     assert!(matches!(
@@ -1264,7 +1285,12 @@ fn a_spelled_sum_lowers_to_the_addition() {
 
     let metadata = shelf::blueprint().metadata();
     let effects = &metadata.methods["window-both"].effects;
-    let Clause::Effect { target, .. } = &effects[0] else {
+    let Clause::Effect {
+        reach: None,
+        target,
+        ..
+    } = &effects[0]
+    else {
         panic!("window-both declares an access");
     };
     let count = |arg| Box::new(Expr::Len(Box::new(Expr::Arg(arg))));
@@ -1283,7 +1309,12 @@ fn two_moves_through_one_interval_derive_the_summed_cap() {
 
     let metadata = shelf::blueprint().metadata();
     let effects = &metadata.methods["restock"].effects;
-    let Clause::Effect { target, .. } = &effects[0] else {
+    let Clause::Effect {
+        reach: None,
+        target,
+        ..
+    } = &effects[0]
+    else {
         panic!("restock declares an access");
     };
     let filed = Box::new(Expr::Len(Box::new(Expr::IdsOf(Box::new(Expr::Arg(1))))));

@@ -199,6 +199,7 @@ pub fn wide_account_metadata() -> PackageMetadata {
         .cloned()
         .collect();
     effects.push(Clause::Effect {
+        reach: None,
         guard: None,
         target: TargetExpr::Point(self_child(SlotId(99), vec![])),
         mode: ModeExpr::Write,

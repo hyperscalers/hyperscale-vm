@@ -23,12 +23,14 @@ fn spawner() -> PackageMetadata {
             totality: Totality::Fallible,
             effects: vec![
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(Expr::FreshKey { slot: 0 }),
                     mode: declared_write(),
                     denomination: None,
                 },
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Entry {
                         owner: Expr::SelfAddr,

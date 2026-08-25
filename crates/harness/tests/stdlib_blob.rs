@@ -96,7 +96,11 @@ fn session() -> KernelSession {
             ordered: declared
                 .iter()
                 .zip(denominations)
-                .map(|(effect, holds)| DeclaredAccess { effect, holds })
+                .map(|(effect, holds)| DeclaredAccess {
+                    reach: None,
+                    effect,
+                    holds,
+                })
                 .collect(),
             ..Declaration::default()
         },
@@ -464,6 +468,7 @@ fn lottery_session() -> KernelSession {
             ordered: declared
                 .iter()
                 .map(|effect| DeclaredAccess {
+                    reach: None,
                     effect,
                     holds: None,
                 })

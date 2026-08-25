@@ -398,6 +398,7 @@ mod instances {
             &Declaration {
                 set,
                 ordered: vec![DeclaredAccess {
+                    reach: None,
                     effect: interval,
                     holds: Some(TICKET),
                 }],

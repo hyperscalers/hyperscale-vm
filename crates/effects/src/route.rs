@@ -131,6 +131,7 @@ impl Routing {
             .insert(effect)
             .expect("only reserve amounts fold, and this is a write");
         self.declaration.ordered.push(DeclaredAccess {
+            reach: None,
             effect,
             holds: None,
         });
@@ -444,6 +445,7 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::U128],
                 effects: vec![Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
@@ -549,6 +551,7 @@ mod tests {
                         guard: None,
                         list: Expr::Config(0),
                         body: vec![Clause::Effect {
+                            reach: None,
                             guard: None,
                             target: TargetExpr::Point(Expr::ChildKey {
                                 owner: Box::new(Expr::SelfAddr),
@@ -597,6 +600,7 @@ mod tests {
                     guard: Some(Box::new(Expr::Config(1))),
                     list: Expr::Config(0),
                     body: vec![Clause::Effect {
+                        reach: None,
                         guard: None,
                         target: TargetExpr::Point(Expr::ChildKey {
                             owner: Box::new(Expr::SelfAddr),
@@ -687,6 +691,7 @@ mod tests {
                 totality: Totality::Fallible,
                 abi,
                 effects: vec![Clause::Effect {
+                    reach: None,
                     guard: Some(Box::new(Expr::Eq(
                         Box::new(Expr::Config(0)),
                         Box::new(Expr::Config(1)),
@@ -791,6 +796,7 @@ mod tests {
                     guard: None,
                     list: Expr::Config(0),
                     body: vec![Clause::Effect {
+                        reach: None,
                         guard: Some(Box::new(Expr::Eq(
                             Box::new(Expr::Binding(0)),
                             Box::new(Expr::Literal(Value::U64(2))),
@@ -1093,6 +1099,7 @@ mod tests {
                     totality: Totality::Fallible,
                     params: vec![ParamType::Address],
                     effects: vec![Clause::Effect {
+                        reach: None,
                         guard: None,
                         target: TargetExpr::Point(Expr::ChildKey {
                             owner: Box::new(owner),

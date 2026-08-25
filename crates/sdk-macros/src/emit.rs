@@ -11,7 +11,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::lower::{Lowered, Need, Node, Site, Target};
-use crate::term::{Op, Term, binding_ident, emit_issued, emit_kind, fresh_ident};
+use crate::term::{Op, Term, binding_ident, emit_behaviour, emit_issued, emit_kind, fresh_ident};
 
 /// The mode a site's operations fold to.
 ///
@@ -95,12 +95,38 @@ pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     }
 }
 
+/// Whose prefix a site's leaf sits under.
+///
+/// A reaching access names it; every other one lands under the declaring
+/// instance's, which is the only owner a declaration can name without an
+/// authority behind it. A reached owner arrives as whatever the body
+/// named it, which the DSL types opaquely — the evaluator checks the
+/// real kind where the key is derived, so a wrong one is a refused call
+/// rather than an unsound declaration.
+fn owning(owner: Option<&Term>) -> TokenStream {
+    owner.map_or_else(
+        || quote!(let __owner = __t.self_addr();),
+        |whose| {
+            let whose = whose.emit();
+            quote!(
+                let __owner: ::hyperscale_vm_sdk::sym::Sym<::hyperscale_vm_sdk::sym::Addr> =
+                    #whose.cast();
+            )
+        },
+    )
+}
+
 fn target(site: &Site) -> TokenStream {
     match &site.target {
-        Target::Point { slot, material } => {
+        Target::Point {
+            slot,
+            material,
+            owner,
+        } => {
             let material = material.iter().map(Term::emit);
+            let owner = owning(owner.as_ref());
             quote!(
-                let __owner = __t.self_addr();
+                #owner
                 let __key = __owner.child(
                     ::hyperscale_vm_sdk::SlotId(#slot),
                     &[#(#material),*],
@@ -227,7 +253,15 @@ fn node(node: &Node, lowered: &Lowered) -> TokenStream {
                     quote!(__t.bind_handle();)
                 }
             });
-            let declare = quote!({ #prelude #held #target __access #holding #call; #bind });
+            // A reaching access says which authority lets it name the
+            // prefix it named, and the entry that authority holds is
+            // injected where the declaration is evaluated.
+            let reaching = site.reach.map(|behaviour| {
+                let behaviour = emit_behaviour(behaviour);
+                quote!(.reaching(#behaviour))
+            });
+            let declare =
+                quote!({ #prelude #held #target __access #reaching #holding #call; #bind });
             // The condition the clause is declared under, where the cell
             // is only ever reached under one. It wraps the declaration
             // rather than nesting it: the tracer conjoins conditions and

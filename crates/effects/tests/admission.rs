@@ -331,6 +331,7 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
         material: vec![],
     };
     let read = |target| Clause::Effect {
+        reach: None,
         guard: None,
         target,
         mode: ModeExpr::Read,
@@ -1015,6 +1016,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
             totality: Totality::Fallible,
             effects: vec![
                 Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: TargetExpr::Point(auth_cell()),
                     mode: ModeExpr::Read,

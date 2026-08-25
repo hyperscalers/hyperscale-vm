@@ -1057,6 +1057,7 @@ mod tests {
         for (declared, target) in &targets {
             for (spelled, mode) in &modes {
                 let clause = Clause::Effect {
+                    reach: None,
                     guard: None,
                     target: declared.clone(),
                     mode: spelled.clone(),
@@ -1109,10 +1110,12 @@ mod tests {
                     set: declared(&[write]),
                     ordered: vec![
                         DeclaredAccess {
+                            reach: None,
                             effect: write,
                             holds: holds[0],
                         },
                         DeclaredAccess {
+                            reach: None,
                             effect: write,
                             holds: holds[1],
                         },
@@ -1173,10 +1176,12 @@ mod tests {
                     set: declared(&[wide, narrow]),
                     ordered: vec![
                         DeclaredAccess {
+                            reach: None,
                             effect: wide,
                             holds: Some(RESOURCE),
                         },
                         DeclaredAccess {
+                            reach: None,
                             effect: narrow,
                             holds: None,
                         },

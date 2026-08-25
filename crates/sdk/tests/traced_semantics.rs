@@ -214,7 +214,12 @@ fn planned(clauses: &[Clause], depth: usize) -> Vec<Planned> {
     let mut shapes = Vec::new();
     for clause in clauses {
         match clause {
-            Clause::Effect { target, mode, .. } => shapes.push(Planned {
+            Clause::Effect {
+                reach: _,
+                target,
+                mode,
+                ..
+            } => shapes.push(Planned {
                 mode: match mode {
                     ModeExpr::Read => ModeKind::Read,
                     ModeExpr::Delta => ModeKind::Delta,

@@ -497,6 +497,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
             ordered: point(cell(0xB), Mode::Write)
                 .iter()
                 .map(|effect| DeclaredAccess {
+                    reach: None,
                     effect,
                     holds: None,
                 })

@@ -58,6 +58,7 @@ pub const fn resource(byte: u8) -> ResourceAddr {
 
 pub fn self_point(slot: SlotId, mode: ModeExpr) -> Clause {
     Clause::Effect {
+        reach: None,
         guard: None,
         target: TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
@@ -185,6 +186,7 @@ pub fn payer_payee_world() -> (Records, Manifest) {
             totality: Totality::Fallible,
             params: vec![ParamType::Bucket],
             effects: vec![Clause::Effect {
+                reach: None,
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
