@@ -56,11 +56,13 @@ pub(super) struct Ranges {
     ///
     /// A scan truncates at the cap, so reads are bounded by construction;
     /// nothing truncates a write, so the budget is counted here or not at
-    /// all. Kept per handle rather than per collection because the cap is
-    /// a property of the declared interval, and cumulative across the
-    /// transaction rather than per scan — a write budget the invalidation
-    /// of a materialized interval must not refund.
-    written: BTreeMap<(u32, u32), BTreeSet<u128>>,
+    /// all. Keyed by the capability rather than by the site that reached
+    /// it, because the cap is a property of the declared interval: two
+    /// handle parameters may name one clause, and what the declaration
+    /// bought is one budget however many ways a body holds it. Cumulative
+    /// across the transaction rather than per scan — a write budget the
+    /// invalidation of a materialized interval must not refund.
+    written: BTreeMap<u32, BTreeSet<u128>>,
 }
 
 impl Ranges {
@@ -188,7 +190,8 @@ impl KernelSession {
         std::mem::replace(&mut self.ranges.scanned, 0)
     }
 
-    /// Charge one entry against `rep`'s declared write cap.
+    /// Charge one entry against the declared write cap of the capability
+    /// this element names.
     ///
     /// The budget counts distinct orders rather than operations: writing
     /// an entry this interval already changed is the same entry touched
@@ -201,8 +204,9 @@ impl KernelSession {
         order: u128,
         cap: u32,
     ) -> Result<(), SessionTrap> {
+        let rep = self.rep_at(site, element)?;
         let cap = usize::try_from(cap).unwrap_or(usize::MAX);
-        let written = self.ranges.written.entry((site, element)).or_default();
+        let written = self.ranges.written.entry(rep).or_default();
         if !written.contains(&order) && written.len() >= cap {
             return Err(SessionTrap::WriteCapExceeded {
                 cap: u32::try_from(cap).unwrap_or(u32::MAX),
@@ -573,6 +577,38 @@ mod tests {
         // Rewriting an entry the interval already changed is the same
         // entry touched again, not a new one.
         assert_eq!(session.range_insert(0, 0, 10, vec![9]), Ok(()));
+    }
+
+    #[test]
+    fn two_sites_naming_one_clause_spend_one_write_budget() {
+        // The cap is what the declaration bought, so it is the
+        // capability's and not the site's: an export binding one clause
+        // to two handle parameters holds one interval twice, and a
+        // budget kept per site would hand it the cap once each.
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 2,
+            },
+            mode: Mode::Write,
+        }]);
+        let mut session = session_over(MemoryStore::new(), &set);
+        let left = session.bind_site(vec![Some(0)]);
+        let right = session.bind_site(vec![Some(0)]);
+        assert_ne!(left, right, "two parameters, two sites");
+
+        assert_eq!(session.range_insert(left, 0, 10, vec![1]), Ok(()));
+        assert_eq!(session.range_insert(right, 0, 20, vec![2]), Ok(()));
+        assert_eq!(
+            session.range_insert(right, 0, 30, vec![3]),
+            Err(SessionTrap::WriteCapExceeded { cap: 2, order: 30 }),
+            "the second site spends the same two entries the first did"
+        );
     }
 
     #[test]

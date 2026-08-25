@@ -464,14 +464,22 @@ impl KernelSession {
     /// the diagnostic is the whole value: nothing was materialized here
     /// on purpose.
     fn at(&self, site: u32, element: u32) -> Result<Capability, SessionTrap> {
-        let rep = self
-            .entry(site, element)?
-            .ok_or(SessionTrap::UndeclaredBranch)?;
+        let rep = self.rep_at(site, element)?;
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.table.get(index))
             .copied()
             .ok_or(SessionTrap::UnknownHandle(rep))
+    }
+
+    /// Where in the table the capability one element names sits.
+    ///
+    /// The identity a per-capability budget is kept under: two handle
+    /// parameters may name one clause, so the site that reached it is
+    /// not what a rule about the declaration may key on.
+    fn rep_at(&self, site: u32, element: u32) -> Result<u32, SessionTrap> {
+        self.entry(site, element)?
+            .ok_or(SessionTrap::UndeclaredBranch)
     }
 
     /// The capability at `rep`, held to the operation it is about to
