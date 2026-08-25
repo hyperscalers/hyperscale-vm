@@ -24,6 +24,7 @@ mod buckets;
 #[cfg(test)]
 mod fixtures;
 mod materialize;
+mod permit;
 mod ranges;
 mod receipt;
 
@@ -38,6 +39,7 @@ use hyperscale_vm_types::{
     ResourceAddr, SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, TxHash,
 };
 pub use materialize::{Capability, Interval, MaterializeError};
+pub use permit::{Op, permits};
 use ranges::Ranges;
 pub use ranges::SCAN_SEEK_BYTES;
 pub use receipt::{DeltaMap, FinishError, Receipt, StateDelta};
@@ -57,10 +59,21 @@ pub enum SessionTrap {
     /// canonical ABI, kept as an honest error rather than a panic.
     #[error("unknown capability handle {0}")]
     UnknownHandle(u32),
-    /// A rep whose capability does not grant the operation — unreachable
-    /// through the typed world surface, kept as an honest error.
-    #[error("handle {0} does not grant this operation")]
-    WrongMode(u32),
+    /// A rep whose capability does not grant the operation.
+    ///
+    /// Carries both halves because the diagnostic is the whole value: a
+    /// rep alone says a body disagreed with its declaration without
+    /// saying how, and this is the only signal a body reaching past its
+    /// declaration gets.
+    #[error("handle {rep} holds {}, which does not grant {}", permit::describe(held), attempted.describe())]
+    WrongMode {
+        /// The rep the operation named.
+        rep: u32,
+        /// What the declaration materialized there.
+        held: Capability,
+        /// What the body tried to do through it.
+        attempted: Op,
+    },
     /// A cell resealed while its standing seal can still open.
     ///
     /// A seed is public the moment it rolls, and so is the word derived
@@ -211,7 +224,7 @@ impl From<SessionTrap> for AbortReason {
     fn from(trap: SessionTrap) -> Self {
         match trap {
             SessionTrap::UnknownHandle(_) => Self::HandleUnknown,
-            SessionTrap::WrongMode(_) => Self::HandleWrongMode,
+            SessionTrap::WrongMode { .. } => Self::HandleWrongMode,
             SessionTrap::NotASeal(_) => Self::MalformedSeal,
             SessionTrap::SealStanding(_) => Self::SealStanding,
             SessionTrap::UndeclaredBranch => Self::UndeclaredBranch,
@@ -429,6 +442,52 @@ impl KernelSession {
             .ok_or(SessionTrap::UnknownHandle(rep))
     }
 
+    /// The capability at `rep`, held to the operation it is about to
+    /// perform.
+    ///
+    /// The one place permission is decided. Every operation reaches its
+    /// capability through here, so an operation added later cannot act
+    /// through a mode that never granted it — there is no other way to
+    /// resolve a rep into something to act on.
+    fn acting(&self, rep: u32, attempted: Op) -> Result<Capability, SessionTrap> {
+        let held = self.capability(rep)?;
+        if permits(&held, attempted) {
+            Ok(held)
+        } else {
+            Err(SessionTrap::WrongMode {
+                rep,
+                held,
+                attempted,
+            })
+        }
+    }
+
+    /// The cell a point operation acts on, once its capability has been
+    /// held to it.
+    ///
+    /// The interval arms are unreachable — no operation admitting an
+    /// interval resolves through here — and answer as the refusal they
+    /// would be rather than as a panic, on the terms every other handle
+    /// refusal does.
+    fn acting_key(&self, rep: u32, attempted: Op) -> Result<SubstateKey, SessionTrap> {
+        match self.acting(rep, attempted)? {
+            Capability::Read(key)
+            | Capability::Write(key)
+            | Capability::Amount(key)
+            | Capability::AmountRead(key)
+            | Capability::Delta(key)
+            | Capability::Credit(key)
+            | Capability::Reserve { key, .. } => Ok(key),
+            held @ (Capability::RangeRead(_)
+            | Capability::RangeWrite(_)
+            | Capability::InstanceRange(_)) => Err(SessionTrap::WrongMode {
+                rep,
+                held,
+                attempted,
+            }),
+        }
+    }
+
     /// Lend one `for-each` site's expansion, answering the rep the run
     /// is reached at.
     ///
@@ -531,10 +590,8 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
-        match self.capability(rep)? {
-            Capability::Read(key) => Ok(self.store.read(key)?.unwrap_or_default()),
-            _ => Err(SessionTrap::WrongMode(rep)),
-        }
+        let key = self.acting_key(rep, Op::Read)?;
+        Ok(self.store.read(key)?.unwrap_or_default())
     }
 
     /// The read half of a write capability.
@@ -543,10 +600,8 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
-        match self.capability(rep)? {
-            Capability::Write(key) => Ok(self.store.read(key)?.unwrap_or_default()),
-            _ => Err(SessionTrap::WrongMode(rep)),
-        }
+        let key = self.acting_key(rep, Op::ReadExclusive)?;
+        Ok(self.store.read(key)?.unwrap_or_default())
     }
 
     /// What an amount cell holds.
@@ -560,9 +615,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn amount_cell_balance(&mut self, rep: u32) -> Result<u128, SessionTrap> {
-        let (Capability::Amount(key) | Capability::AmountRead(key)) = self.capability(rep)? else {
-            return Err(SessionTrap::WrongMode(rep));
-        };
+        let key = self.acting_key(rep, Op::Balance)?;
         self.amount_cell(key)
     }
 
@@ -572,10 +625,8 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), SessionTrap> {
-        match self.capability(rep)? {
-            Capability::Write(key) => Ok(self.store.write(key, value)?),
-            _ => Err(SessionTrap::WrongMode(rep)),
-        }
+        let key = self.acting_key(rep, Op::Write)?;
+        Ok(self.store.write(key, value)?)
     }
 
     /// Seal this cell on the epoch now running.
@@ -590,9 +641,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn seal(&mut self, rep: u32) -> Result<(), SessionTrap> {
-        let Capability::Write(key) = self.capability(rep)? else {
-            return Err(SessionTrap::WrongMode(rep));
-        };
+        let key = self.acting_key(rep, Op::Seal)?;
         // A leaf already under a seal takes another only where the
         // standing one will never open. A matured seed is public, and so
         // is the word it produces, so replacing a seal that can still
@@ -631,9 +680,7 @@ impl KernelSession {
     /// Any [`SessionTrap`], including [`SessionTrap::NotASeal`] for a
     /// leaf a guest wrote its own bytes over.
     pub fn open_seal(&mut self, rep: u32) -> Result<Drawn, SessionTrap> {
-        let Capability::Write(key) = self.capability(rep)? else {
-            return Err(SessionTrap::WrongMode(rep));
-        };
+        let key = self.acting_key(rep, Op::OpenSeal)?;
         let held = self.store.read(key)?.unwrap_or_default();
         let epoch = sealed_epoch(rep, &held)?;
         Ok(match self.matured_seed(epoch) {
@@ -662,13 +709,9 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_cell_clear(&mut self, rep: u32) -> Result<(), SessionTrap> {
-        match self.capability(rep)? {
-            Capability::Write(key) => {
-                self.store.remove(key)?;
-                Ok(())
-            }
-            _ => Err(SessionTrap::WrongMode(rep)),
-        }
+        let key = self.acting_key(rep, Op::Clear)?;
+        self.store.remove(key)?;
+        Ok(())
     }
 
     /// Credit a delta capability with no bucket behind the credit.
@@ -684,7 +727,8 @@ impl KernelSession {
     /// Any [`SessionTrap`].
     #[cfg(any(test, feature = "testing"))]
     pub fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), SessionTrap> {
-        self.delta(rep, amount, DeltaOp::Add)
+        let key = self.acting_key(rep, Op::Put)?;
+        self.delta(key, amount, DeltaOp::Add)
     }
 
     /// Debit a delta capability without producing the edge for it.
@@ -698,21 +742,19 @@ impl KernelSession {
     /// Any [`SessionTrap`].
     #[cfg(any(test, feature = "testing"))]
     pub fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), SessionTrap> {
-        self.delta(rep, amount, DeltaOp::Sub)
+        let key = self.acting_key(rep, Op::Take)?;
+        self.delta(key, amount, DeltaOp::Sub)
     }
 
+    /// Queue one commutative movement on a cell the caller has already
+    /// held its capability to.
     fn delta(
         &mut self,
-        rep: u32,
+        key: SubstateKey,
         amount: u128,
         op: fn(u128) -> DeltaOp,
     ) -> Result<(), SessionTrap> {
-        match self.capability(rep)? {
-            Capability::Delta(key) | Capability::Credit(key) => {
-                Ok(self.store.queue_delta(key, op(amount))?)
-            }
-            _ => Err(SessionTrap::WrongMode(rep)),
-        }
+        Ok(self.store.queue_delta(key, op(amount))?)
     }
 
     /// The reserved amount behind a reserve capability.
@@ -721,19 +763,24 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn reserve_amount(&mut self, rep: u32) -> Result<u128, SessionTrap> {
-        match self.capability(rep)? {
-            // The clause's own declared amount, not the folded hold: two
-            // reservations on one cell share a single held total, and a
-            // guest asking about its grant means its own share of it.
-            // The hold is still consulted — a capability whose hold never
-            // materialized is a defect whatever amount it declared.
-            Capability::Reserve { key, amount } => self
-                .store
-                .held_reservation(key, self.tx)
-                .map(|_| amount)
-                .ok_or(SessionTrap::ReservationMissing),
-            _ => Err(SessionTrap::WrongMode(rep)),
-        }
+        self.reserved(rep, Op::ReservedAmount)
+    }
+
+    /// The grant a reservation carries, held to the operation asking.
+    ///
+    /// The clause's own declared amount, not the folded hold: two
+    /// reservations on one cell share a single held total, and a guest
+    /// asking about its grant means its own share of it. The hold is
+    /// still consulted — a capability whose hold never materialized is a
+    /// defect whatever amount it declared.
+    fn reserved(&self, rep: u32, attempted: Op) -> Result<u128, SessionTrap> {
+        let Capability::Reserve { key, amount } = self.acting(rep, attempted)? else {
+            return Err(SessionTrap::ReservationMissing);
+        };
+        self.store
+            .held_reservation(key, self.tx)
+            .map(|_| amount)
+            .ok_or(SessionTrap::ReservationMissing)
     }
 
     /// Debit `amount` through a delta capability and hand the value out
@@ -749,13 +796,10 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
-        // The half a credit gave up. A declaration that named one is
-        // judged on the crediting movement alone, so taking through it
-        // would take under a requirement nobody asked for.
-        if matches!(self.capability(rep)?, Capability::Credit(_)) {
-            return Err(SessionTrap::WrongMode(rep));
-        }
-        self.delta(rep, amount, DeltaOp::Sub)?;
+        // A credit gave up this direction, which is why the table admits
+        // it to the credit and not to the debit.
+        let key = self.acting_key(rep, Op::Take)?;
+        self.delta(key, amount, DeltaOp::Sub)?;
         let resource = self.value_of(rep)?;
         Ok(self.open_bucket(Held::Amount(amount), resource))
     }
@@ -776,12 +820,10 @@ impl KernelSession {
         // bucket table exists to state.
         // A credit answers this and a delta answers it too: what the
         // narrower mode gave up is the other direction, not this one.
-        let (Capability::Delta(_) | Capability::Credit(_)) = self.capability(rep)? else {
-            return Err(SessionTrap::WrongMode(rep));
-        };
+        let key = self.acting_key(rep, Op::Put)?;
         self.judge_credit(rep, funds)?;
         let amount = self.bucket_amount(funds)?;
-        self.delta(rep, amount, DeltaOp::Add)?;
+        self.delta(key, amount, DeltaOp::Add)?;
         self.take_bucket(funds).map(|_| ())
     }
 
@@ -792,9 +834,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
-        let Capability::Amount(key) = self.capability(rep)? else {
-            return Err(SessionTrap::WrongMode(rep));
-        };
+        let key = self.acting_key(rep, Op::PutExclusive)?;
         self.judge_credit(rep, funds)?;
         let held = self.amount_cell(key)?;
         let amount = self.bucket_amount(funds)?;
@@ -835,9 +875,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
-        let Capability::Amount(key) = self.capability(rep)? else {
-            return Err(SessionTrap::WrongMode(rep));
-        };
+        let key = self.acting_key(rep, Op::TakeExclusive)?;
         let resource = self.value_of(rep)?;
         self.amount_cell(key)?
             .checked_sub(amount)
@@ -946,7 +984,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`].
     pub fn reserve_take(&mut self, rep: u32) -> Result<u32, SessionTrap> {
-        let amount = self.reserve_amount(rep)?;
+        let amount = self.reserved(rep, Op::TakeReserved)?;
         let resource = self.value_of(rep)?;
         if !self.taken.insert(rep) {
             return Err(SessionTrap::ReservationTaken);
@@ -1051,15 +1089,15 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_types::{
-        ABSENT_REP, AbortReason, Address, AddressClass, Drawn, Effect, EffectSet, EffectTarget,
-        MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode, SEAL_MATURITY_EPOCHS,
-        SEED_BYTES, SeedWindow, Seeded, SubstateKey, encode_amount,
+        ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Drawn, Effect, EffectSet,
+        EffectTarget, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode,
+        SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, encode_amount,
     };
 
     use super::fixtures::{
         declared, env, key, session_for, session_holding, session_over, session_under, tx,
     };
-    use super::{EnvInputs, KernelSession, SessionTrap, TxHash};
+    use super::{Capability, EnvInputs, Interval, KernelSession, Op, SessionTrap, TxHash, permits};
     use crate::ledger::AmountLedger;
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError};
@@ -1103,23 +1141,106 @@ mod tests {
         );
     }
 
+    /// Every mode the kernel materializes, one of each.
+    ///
+    /// Built rather than materialized from a declaration: what is under
+    /// test is what a capability grants, and reaching each of the ten
+    /// through a signature that produces it would test the materializer
+    /// instead.
+    fn every_capability() -> [Capability; 10] {
+        let interval = Interval {
+            owner: Address::new([9; 31], AddressClass::Component),
+            collection: CollectionId([4; 16]),
+            lo: 0,
+            hi: 100,
+            cap: 8,
+        };
+        [
+            Capability::Read(key(1)),
+            Capability::Write(key(1)),
+            Capability::Amount(key(1)),
+            Capability::AmountRead(key(1)),
+            Capability::Delta(key(1)),
+            Capability::Credit(key(1)),
+            Capability::Reserve {
+                key: key(1),
+                amount: 5,
+            },
+            Capability::RangeRead(interval),
+            Capability::RangeWrite(interval),
+            Capability::InstanceRange(interval),
+        ]
+    }
+
+    /// Perform `op` through the entry point that carries it, at rep 0.
+    ///
+    /// The arguments are whatever reaches the permission check; an
+    /// operation the capability grants may still fail for a reason of
+    /// its own, which is why the matrix asks only whether the refusal
+    /// was a mode refusal.
+    fn attempt(session: &mut KernelSession, op: Op) -> Result<(), SessionTrap> {
+        match op {
+            Op::Read => session.read_cell(0).map(|_| ()),
+            Op::ReadExclusive => session.write_cell_get(0).map(|_| ()),
+            Op::Write => session.write_cell_set(0, vec![1]),
+            Op::Clear => session.write_cell_clear(0),
+            Op::Seal => session.seal(0),
+            Op::OpenSeal => session.open_seal(0).map(|_| ()),
+            Op::Balance => session.amount_cell_balance(0).map(|_| ()),
+            Op::TakeExclusive => session.write_take(0, 1).map(|_| ()),
+            Op::PutExclusive => session.write_put(0, 0),
+            Op::Take => session.delta_take(0, 1).map(|_| ()),
+            Op::Put => session.delta_put(0, 0),
+            Op::ReservedAmount => session.reserve_amount(0).map(|_| ()),
+            Op::TakeReserved => session.reserve_take(0).map(|_| ()),
+            Op::ReadEntries => session.range_count(0).map(|_| ()),
+            Op::WriteEntries => session.range_set(0, 0, vec![1]),
+            Op::MoveInstances => session.range_take(0, &[1]).map(|_| ()),
+        }
+    }
+
+    /// The whole of what the kernel permits, asked through the entry
+    /// points a guest reaches rather than of the table alone: a row the
+    /// table admits and the operation refuses anyway would pass a test
+    /// of `permits` by itself.
     #[test]
-    fn a_capability_grants_only_its_own_operation() {
-        let set = declared(&[Effect {
-            target: EffectTarget::Point(key(1)),
-            mode: Mode::Read,
-        }]);
-        let mut session = session_over(MemoryStore::new(), &set);
-        // A read handle is not a write, a delta, a reserve, or an
-        // interval.
-        assert_eq!(session.write_cell_get(0), Err(SessionTrap::WrongMode(0)));
+    fn every_capability_grants_exactly_what_the_table_says() {
+        for held in every_capability() {
+            for op in Op::ALL {
+                let mut session = session_over(MemoryStore::new(), &declared(&[]));
+                session.table = vec![held];
+                let refused = matches!(
+                    attempt(&mut session, op),
+                    Err(SessionTrap::WrongMode { .. })
+                );
+                assert_eq!(
+                    refused,
+                    !permits(&held, op),
+                    "{held:?} against {op:?}: refused_as_wrong_mode={refused}"
+                );
+            }
+        }
+    }
+
+    /// And a refusal says which mode was held and what was asked of it,
+    /// because it is the only signal a body reaching past its own
+    /// declaration gets.
+    #[test]
+    fn a_mode_refusal_names_both_halves() {
+        let mut session = session_over(MemoryStore::new(), &declared(&[]));
+        session.table = vec![Capability::Read(key(1))];
         assert_eq!(
             session.write_cell_set(0, vec![1]),
-            Err(SessionTrap::WrongMode(0))
+            Err(SessionTrap::WrongMode {
+                rep: 0,
+                held: Capability::Read(key(1)),
+                attempted: Op::Write,
+            })
         );
-        assert_eq!(session.delta_add(0, 1), Err(SessionTrap::WrongMode(0)));
-        assert_eq!(session.reserve_amount(0), Err(SessionTrap::WrongMode(0)));
-        assert_eq!(session.range_count(0), Err(SessionTrap::WrongMode(0)));
+        assert_eq!(
+            session.write_cell_set(0, vec![1]).unwrap_err().to_string(),
+            "handle 0 holds a fresh read, which does not grant replace the cell's bytes"
+        );
     }
 
     #[test]
@@ -1314,8 +1435,20 @@ mod tests {
             mode: Mode::Read,
         }]);
         let mut session = session_under(MemoryStore::new(), &set, sealed_env(9));
-        assert_eq!(session.seal(0), Err(SessionTrap::WrongMode(0)));
-        assert_eq!(session.open_seal(0), Err(SessionTrap::WrongMode(0)));
+        assert!(matches!(
+            session.seal(0),
+            Err(SessionTrap::WrongMode {
+                attempted: Op::Seal,
+                ..
+            })
+        ));
+        assert!(matches!(
+            session.open_seal(0),
+            Err(SessionTrap::WrongMode {
+                attempted: Op::OpenSeal,
+                ..
+            })
+        ));
     }
 
     /// The two ways a seal fails to open are two answers, because a

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use hyperscale_vm_effects::{SCAN_SEEK_ENTRIES, distinct_ids};
 use hyperscale_vm_types::{AMOUNT_CELL_BYTES, Address, CollectionId};
 
-use super::{Capability, Held, Interval, KernelSession, SessionTrap};
+use super::{Capability, Held, Interval, KernelSession, Op, SessionTrap};
 use crate::store::WorkingStore;
 
 /// What one interval scan costs before any entry is counted, in the
@@ -71,40 +71,46 @@ impl Ranges {
 }
 
 impl KernelSession {
-    /// The interval a range handle names, whichever mode it carries.
+    /// The interval an operation acts over, once its capability has been
+    /// held to it.
     ///
-    /// For the questions both modes answer — how many entries, what is at
-    /// an index, which collection a scan belongs to.
-    fn interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
-        match self.capability(rep)? {
+    /// Every interval operation asks through here, so which modes admit
+    /// a walk and which admit a rewrite is the permission table's answer
+    /// rather than a check restated at each of them — and an operation
+    /// added later cannot forget to ask, because there is no other way to
+    /// reach the interval it would act on.
+    ///
+    /// The point arms are unreachable — no operation admitting an
+    /// interval is granted by a point capability — and answer as the
+    /// refusal they would be rather than as a panic.
+    fn acting_interval(&self, rep: u32, attempted: Op) -> Result<Interval, SessionTrap> {
+        match self.acting(rep, attempted)? {
             Capability::RangeRead(interval)
             | Capability::RangeWrite(interval)
             | Capability::InstanceRange(interval) => Ok(interval),
-            _ => Err(SessionTrap::WrongMode(rep)),
+            held => Err(SessionTrap::WrongMode {
+                rep,
+                held,
+                attempted,
+            }),
         }
     }
 
+    /// The interval a walk reads over, whichever mode carries it.
+    fn interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
+        self.acting_interval(rep, Op::ReadEntries)
+    }
+
     /// The interval a byte-writing handle names.
-    ///
-    /// Every entry rewrite asks through here, so the refusal a read
-    /// interval meets is stated once rather than repeated at each of
-    /// them — and a mutation added later cannot forget to ask, because
-    /// there is no other way to reach the interval it would change.
     fn write_interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
-        match self.capability(rep)? {
-            Capability::RangeWrite(interval) => Ok(interval),
-            _ => Err(SessionTrap::WrongMode(rep)),
-        }
+        self.acting_interval(rep, Op::WriteEntries)
     }
 
     /// The interval an instance-moving handle names — the same
     /// statement as [`Self::write_interval`], for the entries that are
     /// value rather than bytes.
     fn instance_interval(&self, rep: u32) -> Result<Interval, SessionTrap> {
-        match self.capability(rep)? {
-            Capability::InstanceRange(interval) => Ok(interval),
-            _ => Err(SessionTrap::WrongMode(rep)),
-        }
+        self.acting_interval(rep, Op::MoveInstances)
     }
 
     /// Read a run of entries, charging what it lifted to
@@ -458,7 +464,7 @@ mod tests {
     use super::super::fixtures::{
         RESOURCE, declared, env, hash, holding, session_holding, session_over, tx,
     };
-    use super::{Held, KernelSession, SCAN_SEEK_BYTES, SessionTrap};
+    use super::{Held, KernelSession, Op, SCAN_SEEK_BYTES, SessionTrap};
     use crate::overlay::OverlayStore;
     use crate::store::MemoryStore;
 
@@ -889,14 +895,18 @@ mod tests {
             mode: Mode::Read,
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
-        assert_eq!(
+        for outcome in [
             session.range_set(0, 0, vec![1]),
-            Err(SessionTrap::WrongMode(0))
-        );
-        assert_eq!(
             session.range_insert(0, 1, vec![1]),
-            Err(SessionTrap::WrongMode(0))
-        );
-        assert_eq!(session.range_remove(0, 0), Err(SessionTrap::WrongMode(0)));
+            session.range_remove(0, 0),
+        ] {
+            assert!(matches!(
+                outcome,
+                Err(SessionTrap::WrongMode {
+                    attempted: Op::WriteEntries,
+                    ..
+                })
+            ));
+        }
     }
 }
