@@ -2,13 +2,18 @@
 //! math, output floors, and the share vault's rounding.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Hash32, ManifestGraph, TestHasher, Value, admit, child_key,
+    AdmissionError, EnvelopeTree, Hash32, IntentDecl, ManifestGraph, Presented, TestHasher, Value,
+    child_key,
 };
 use hyperscale_vm_fixtures::{amm, shares};
 use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_kernel::MemoryStore;
+use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
 use hyperscale_vm_stdlib::account;
-use hyperscale_vm_types::{Address, EffectTarget, Mode, SubstateKey, TxHash, encode_amount};
+use hyperscale_vm_types::{
+    Address, EffectTarget, Mode, Outcome, Presence, SubstateKey, TxHash, UnmetCondition,
+    encode_amount,
+};
 
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
@@ -50,7 +55,7 @@ fn untraded_swap_graph() -> ManifestGraph {
 fn a_swap_paid_in_a_resource_the_pool_does_not_trade_is_refused() {
     let chain = world();
     let graph = untraded_swap_graph();
-    let refused = admit(&graph, ALICE, &chain, &TestHasher)
+    let refused = admit_here(&graph, ALICE, &chain)
         .expect_err("the pool trades a pair and this manifest pays neither side");
 
     let AdmissionError::WrongDenomination {
@@ -76,7 +81,7 @@ fn a_swap_paid_in_a_resource_the_pool_does_not_trade_is_refused() {
 fn a_swap_paid_in_either_side_of_the_pair_admits() {
     let chain = world();
     for graph in [swap_graph(300), reverse_swap_graph(300)] {
-        admit(&graph, ALICE, &chain, &TestHasher)
+        admit_here(&graph, ALICE, &chain)
             .expect("either side of the configured pair is one the declaration asks for");
     }
 }
@@ -364,4 +369,222 @@ fn a_configuration_reads_by_name_from_metadata() {
     );
     assert_eq!(named[0].1, &Value::Address(RES_X.address()));
     assert_eq!(named[1].1, &Value::Address(RES_Y.address()));
+}
+
+/// A trade of the register-mode class: Alice pays X and is paid in
+/// shares.
+fn register_swap_graph(min_out: u128) -> ManifestGraph {
+    graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, RES_X, 500)?;
+        let out = register_pool().swap(b, funds, min_out)?;
+        account::deposit(b, ALICE, out)
+    })
+}
+
+/// The venue stocked and both parties admitted, or the venue left off
+/// the register.
+fn register_store(venue_admitted: bool) -> MemoryStore {
+    let mut store = sealed_store();
+    store.write(vault(ALICE, RES_X), encode_amount(600).to_vec());
+    store.write(vault(ALICE, registered()), encode_amount(1).to_vec());
+    store.write(vault(register_pool(), RES_X), encode_amount(1_000).to_vec());
+    store.write(
+        vault(register_pool(), share()),
+        encode_amount(1_000).to_vec(),
+    );
+    if venue_admitted {
+        store.write(
+            vault(register_pool(), registered()),
+            encode_amount(1).to_vec(),
+        );
+    }
+    store
+}
+
+/// The restricted class trades through a real venue, and the venue is
+/// bound by the same entry the holder is.
+///
+/// Which is the whole of what a movement seam buys over a holder-side
+/// fence. The pool declares nothing about the register — its author
+/// never read the share's rules and could not have been made to — and
+/// both of its own movements are judged against them anyway, because
+/// the requirement is injected from the resource the edge carries and
+/// resolved against the vault's own owner. A design that bound accounts
+/// would have stopped at the first deposit into this pool.
+#[test]
+fn a_registered_venue_trades_the_restricted_class_on_both_runtimes() {
+    let world = world();
+    let graph = register_swap_graph(300);
+    let (results, end) = run_both(
+        &world,
+        &register_store(true),
+        &[(&graph, TxHash(Hash32([0x40; 32])))],
+    );
+    let TxResult::Completed(_) = &results[0] else {
+        panic!(
+            "a registered venue and a registered holder trade: {:?}",
+            results[0]
+        );
+    };
+
+    // The same curve the unrestricted pool runs: 30 bps on 500 in gives
+    // 498 effective, and 1000 * 498 / 1498 is 332 out. The rules govern
+    // who may move it and never how much moves.
+    assert_eq!(amount_of(&end, vault(ALICE, share())), 332);
+    assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 100);
+    assert_eq!(amount_of(&end, vault(register_pool(), share())), 668);
+    assert_eq!(amount_of(&end, vault(register_pool(), RES_X)), 1_500);
+}
+
+/// The same trade into a venue nobody admitted, refused where the pool's
+/// own vault moves.
+///
+/// The register is a standing fact about the party whose cell moves, so
+/// a venue is asked exactly as a holder is: the pool pays out of its own
+/// share vault, that debit earns the class's `withdraw` entry, and the
+/// entry names a badge the pool does not hold. Nothing about Alice
+/// changes between this and the case above — she is on the register in
+/// both — which is what pins the refusal on the venue.
+#[test]
+fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
+    let world = world();
+    let graph = register_swap_graph(300);
+    let (results, end) = run_both(
+        &world,
+        &register_store(false),
+        &[(&graph, TxHash(Hash32([0x41; 32])))],
+    );
+    // Named leaf and all: the venue's own register entry, asked to be
+    // present. Nothing about the refusal mentions the pool's code,
+    // because the pool's code says nothing about it.
+    assert_eq!(
+        results[0],
+        TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(vault(register_pool(), registered())),
+                required: Presence::Present,
+            },
+        }),
+        "a venue off the register moves none of the class",
+    );
+    // And nothing moved: the verdict lands before any body runs.
+    assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 600);
+    assert_eq!(amount_of(&end, vault(register_pool(), share())), 1_000);
+}
+
+/// The buyer's own intent: a trade of the approval-mode class, with a
+/// socket where the registrar's approval goes.
+///
+/// The holder signs *which authority they are asking for* and never who
+/// supplies it. Two of her nodes present it — the swap, whose debit is
+/// the pool's, and her own deposit, whose credit is hers — because a
+/// proof is not conserved and one claim answers every socket that asks
+/// for it.
+fn approval_request(approver: Presented) -> IntentDecl {
+    let chain = world();
+    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE);
+    let approval = decl.declare_proof(approver);
+    let alice = account::authorize(&mut decl, ALICE).expect("sign-in types");
+    let funds = account::withdraw(&mut decl, alice, RES_X, 500).expect("withdraw types");
+    let out = decl
+        .call_presenting(&[approval], approval_pool(), "swap", (funds, 300u128))
+        .expect("the swap types")
+        .one()
+        .expect("a swap answers with the bought side");
+    decl.call_presenting(&[approval], ALICE, "deposit", (out,))
+        .expect("the deposit types")
+        .none()
+        .expect("a deposit yields nothing");
+    decl.into_decl()
+        .expect("the request reaches its own socket")
+}
+
+/// The composition that fills it: the registrar signs in and offers the
+/// claim their own node mints.
+fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR);
+    let registrar = account::authorize(&mut root, REGISTRAR)?;
+    let offered = root.offer(registrar);
+    let [wants] = env
+        .present(ALICE, request)?
+        .try_into()
+        .expect("the request declares one socket");
+    env.seal(root)?;
+    env.bind(wants, offered);
+    env.build()
+}
+
+/// The venue holding no credential at all, and the class it trades
+/// stocked on both sides.
+fn approval_store() -> MemoryStore {
+    let mut store = sealed_store();
+    store.write(vault(ALICE, RES_X), encode_amount(600).to_vec());
+    store.write(vault(approval_pool(), RES_X), encode_amount(1_000).to_vec());
+    store.write(
+        vault(approval_pool(), approved()),
+        encode_amount(1_000).to_vec(),
+    );
+    store
+}
+
+/// The other posture, through the same venue: nobody holds a
+/// credential, and the trade is admitted because the registrar signed
+/// the transaction it happens in.
+///
+/// What it buys is a venue that never onboards. The register-mode class
+/// above needed the pool admitted before it could hold any, so the
+/// issuer had to pass on every venue as well as every holder; here the
+/// pool holds nothing of the issuer's and is bound just as tightly,
+/// because the entry asks about the transaction rather than about the
+/// party. One authoring word covers both — the subject is what decides
+/// which question is answerable.
+#[test]
+fn an_approved_trade_settles_through_a_venue_holding_no_credential() {
+    let world = world();
+    let request = approval_request(Presented::of_subject(REGISTRAR));
+    let signed = request.hash(&TestHasher);
+    let tree = approved_composition(request).expect("the registrar composes the approval");
+    assert_eq!(
+        tree.subintents[0].decl.hash(&TestHasher),
+        signed,
+        "nothing the composition did moved what the buyer signed",
+    );
+
+    let (outcome, end) =
+        run_both_tree(&world, &approval_store(), &tree, REGISTRAR).expect("the approval admits");
+    let tx = TxHash(tree.hash(&TestHasher).0);
+    assert!(
+        matches!(outcome.receipts[&tx].outcome, Outcome::Completed { .. }),
+        "the approved trade settles: {:?}",
+        outcome.receipts[&tx].outcome
+    );
+
+    // The same curve as the register-mode pool, over the same reserves.
+    assert_eq!(amount_of(&end, vault(ALICE, approved())), 332);
+    assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 100);
+    assert_eq!(amount_of(&end, vault(approval_pool(), approved())), 668);
+}
+
+/// The same trade with nobody's approval in it, refused at admission.
+///
+/// A claim leaf reads what the call presented and nothing else, so the
+/// verdict lands before any leg could have committed on it — and it
+/// costs the sender nothing, because a transaction that never becomes
+/// one is never included.
+#[test]
+fn an_unapproved_trade_never_becomes_a_transaction() {
+    let world = world();
+    let graph = graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, RES_X, 500)?;
+        let out = approval_pool().swap(b, funds, 300u128)?;
+        account::deposit(b, ALICE, out)
+    });
+    assert_eq!(
+        admit_here(&graph, ALICE, &world),
+        Err(AdmissionError::MissingEvidence { node: 2 }),
+        "the swap's debit is the pool's, and no claim on the registrar reached it",
+    );
 }

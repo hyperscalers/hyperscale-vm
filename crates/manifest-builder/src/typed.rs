@@ -636,15 +636,15 @@ impl<'a> TypedBuilder<'a> {
     /// signer's own identity, and a badge the signer holds. A claim on
     /// anything else — another party's identity, a component's — is one
     /// no composer can mint, and it is left for whoever can.
-    fn mint_earned(
-        &mut self,
+    fn earned(
+        &self,
         signature: &MethodSignature,
         target: CallTarget,
         record: &InstanceMeta,
         args: &[GraphArg],
         values: &[Value],
         known: &[bool],
-    ) -> Vec<Proof> {
+    ) -> Vec<Presented> {
         let budget = EvalBudget::default();
         let inputs = EvalInputs {
             self_addr: target.address(),
@@ -655,11 +655,7 @@ impl<'a> TypedBuilder<'a> {
             grants: PresentedGrants::none(),
             budget: &budget,
         };
-        let wanted = earned_claims(signature, args, &inputs, known, self.chain, self.hasher);
-        wanted
-            .into_iter()
-            .filter_map(|claim| self.present(claim))
-            .collect()
+        earned_claims(signature, args, &inputs, known, self.chain, self.hasher)
     }
 
     /// The node minting `claim`, composing one where this intent has
@@ -719,8 +715,18 @@ impl<'a> TypedBuilder<'a> {
         // node of its own. Only where the author presented nothing: a
         // proof they composed is one they meant, and a second beside it
         // would be the builder overruling them.
+        // What the resources this call moves and the authority it
+        // exercises demand of it — admission's own injection, mirrored,
+        // because none of it is anything the signature says. Computed
+        // whether or not the author presented something: it is what
+        // says a proof is wanted here, and where nothing can mint one
+        // it is still the answer.
+        let wanted = self.earned(signature, target, meta, &args, &values, &known);
         let earned = if proofs.is_empty() {
-            self.mint_earned(signature, target, meta, &args, &values, &known)
+            wanted
+                .iter()
+                .filter_map(|claim| self.present(*claim))
+                .collect()
         } else {
             Vec::new()
         };
@@ -741,14 +747,19 @@ impl<'a> TypedBuilder<'a> {
         // two of three means presenting two.
         let evidence = match (signature.requires_evidence(), proofs) {
             (false, []) if earned.is_empty() => BTreeSet::new(),
-            // A method that issues, destroys or reaches earns its
-            // requirement from the resource rather than from its own
-            // declaration, so the signature says it admits anyone and
-            // the resource says otherwise. Ruling the proof out here
-            // would refuse the call before the party who decides has
-            // been asked.
+            // A method that issues, destroys, reaches or moves value
+            // earns its requirement from the resource rather than from
+            // its own declaration, so the signature says it admits
+            // anyone and the resource says otherwise. Ruling the proof
+            // out here would refuse the call before the party who
+            // decides has been asked.
             (false, []) => earned.iter().map(|proof| proof.reference()).collect(),
-            (false, presented) if signature.may_earn_authority() => {
+            // An earned claim is the exact answer where there is one —
+            // the resource is in hand, so a movement's requirement is
+            // known rather than guessed. The signature's own loose
+            // reading stands beside it for the cases where the entry
+            // depends on something no record settles.
+            (false, presented) if !wanted.is_empty() || signature.may_earn_authority() => {
                 presented.iter().map(|proof| proof.reference()).collect()
             }
             (false, _) => {

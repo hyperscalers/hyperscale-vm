@@ -6,19 +6,20 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
-    AdmissionError, EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PACKAGE_SLOT_BASE,
-    PackageHash, PrefixShardResolver, Presented, Records, Routing, RuleBytes, ShardId,
-    ShardResolver, SlotId, StarShape, StoredRule, TestHasher, Value, admit, child_key,
-    classify as classify_star, collection_id, package_slot, route,
+    AdmissionError, Admitted, EnvelopeTree, EvidenceRef, Hash32, Hasher, InstanceMeta,
+    ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, Presented, PresentedGrants,
+    Records, Routing, RuleBytes, ShardId, ShardResolver, SlotId, StarShape, StoredRule, TestHasher,
+    Value, admit_presenting, admit_tree, child_key, classify as classify_star, collection_id,
+    package_slot, route, route_tree,
 };
-use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
-use hyperscale_vm_harness::driver::{Lanes, test_hash};
+use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
+use hyperscale_vm_harness::driver::{Lanes, run_lanes, test_hash};
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
-    BatchTx, EnvInputs, GuestBackend, GuestRunner, KernelSession, ManifestWalk, MemoryStore,
-    OverlayStore, Receipt, RunResult,
+    BatchOutcome, BatchTx, EnvInputs, GuestBackend, GuestRunner, KernelSession, ManifestWalk,
+    MemoryStore, OverlayStore, Receipt, RunResult,
 };
-use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError, graph_records};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     AbortReason, Address, CollectionId, ComponentAddr, Effect, EffectSet, EffectTarget, EntryKey,
@@ -35,6 +36,10 @@ pub const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
 pub const MAKER: PrincipalAddr = PrincipalAddr::new([0x50; 31]);
 
 pub const TAKER: PrincipalAddr = PrincipalAddr::new([0x60; 31]);
+
+/// Who keeps the register the restricted share classes are governed by,
+/// and whose signature an approval-gated movement asks for.
+pub const REGISTRAR: PrincipalAddr = PrincipalAddr::new([0x70; 31]);
 
 pub const RES_X: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
@@ -153,6 +158,9 @@ pub fn world() -> Records {
     chain
         .packages
         .publish_unchecked(pkg("shares"), shares::metadata());
+    chain
+        .packages
+        .publish_unchecked(pkg("security"), security::metadata());
     chain.instances.serve_principals(pkg("account"));
     for meta in world_instances() {
         chain.instances.create(&TestHasher, meta);
@@ -174,6 +182,9 @@ pub fn world_instances() -> Vec<InstanceMeta> {
         gated_meta(RES_X.address(), 10),
         lottery_meta(),
         shares_meta(),
+        issuer_meta(),
+        register_pool_meta(),
+        approval_pool_meta(),
     ]
 }
 
@@ -355,6 +366,84 @@ pub fn lottery_addr() -> lottery::Lottery {
     lottery::Lottery::at(lottery_meta().address(&TestHasher))
 }
 
+/// The registrar's terms, which every derived resource address folds.
+pub const fn terms() -> security::Terms {
+    security::Terms {
+        registrar: REGISTRAR.address(),
+    }
+}
+
+/// The share issuer: the package that writes the movement rules down.
+pub fn issuer_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("security"),
+        config: vec![Value::Address(REGISTRAR.address())],
+        salt: Hash32([12; 32]),
+    }
+}
+
+/// The issuer instance.
+pub fn issuer() -> security::Security {
+    security::Security::at(issuer_meta().address(&TestHasher))
+}
+
+/// The register entry: soulbound, one unit per admitted holder.
+pub fn registered() -> ResourceAddr {
+    issuer().issued_registered(&TestHasher, terms())
+}
+
+/// The register-mode share class, moved by whoever the register holds.
+pub fn share() -> ResourceAddr {
+    issuer().issued_share(&TestHasher, terms())
+}
+
+/// The approval-mode share class, moved in whatever transaction the
+/// registrar signed.
+pub fn approved() -> ResourceAddr {
+    issuer().issued_approved(&TestHasher, terms())
+}
+
+/// A pool trading the register-mode class against a plain resource.
+///
+/// A venue rather than an account, which is the whole of what it is
+/// here to show: the pool declares nothing about the register and holds
+/// the share class anyway, so both of its own movements are judged
+/// against an entry its author never read.
+pub fn register_pool_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("amm"),
+        config: vec![
+            Value::Address(share().address()),
+            Value::Address(RES_X.address()),
+            Value::U128(30 * (1_000_000_000_000_000_000 / 10_000)),
+        ],
+        salt: Hash32([13; 32]),
+    }
+}
+
+/// The register-mode pool.
+pub fn register_pool() -> amm::Amm {
+    amm::Amm::at(register_pool_meta().address(&TestHasher))
+}
+
+/// The same venue over the approval-mode class.
+pub fn approval_pool_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("amm"),
+        config: vec![
+            Value::Address(approved().address()),
+            Value::Address(RES_X.address()),
+            Value::U128(30 * (1_000_000_000_000_000_000 / 10_000)),
+        ],
+        salt: Hash32([14; 32]),
+    }
+}
+
+/// The approval-mode pool.
+pub fn approval_pool() -> amm::Amm {
+    amm::Amm::at(approval_pool_meta().address(&TestHasher))
+}
+
 /// Which guest each published package runs.
 ///
 /// `mirror` is the same account code under a second content address, so
@@ -368,6 +457,7 @@ pub const PACKAGES: &[(&str, &str)] = &[
     ("nf", "nf"),
     ("lottery", "lottery"),
     ("shares", "shares"),
+    ("security", "security"),
     ("mirror", "account"),
 ];
 
@@ -464,7 +554,7 @@ pub fn execute_manifest(
         signer,
         clock_ms,
     } = under;
-    let admitted = match admit(graph, signer, world, &TestHasher) {
+    let admitted = match admit_here(graph, signer, world) {
         Ok(admitted) => admitted,
         // A verdict on what a node presented is admission's, and a lane
         // reports it rather than failing: nothing about it is a defect
@@ -548,8 +638,26 @@ pub fn shard_of(address: impl Into<Address>) -> ShardId {
     PrefixShardResolver { bits: 8 }.shard_of(address.into())
 }
 
+/// Admit `graph` over the records its own calls need.
+///
+/// A resource whose entries can stop a movement binds by its own
+/// address, and the address is the hash of the rules — so admission
+/// needs the preimage, and nothing on chain hands it over, because a
+/// record is committed under its issuer. The composer finds them off
+/// the graph and presents them, which is what a wallet does and what
+/// every path into admission here does with it.
+pub fn admit_here(
+    graph: &ManifestGraph,
+    signer: PrincipalAddr,
+    world: &Records,
+) -> Result<Admitted, AdmissionError> {
+    let records = graph_records(graph, world, &TestHasher);
+    let grants = PresentedGrants::from_presented(&TestHasher, &records);
+    admit_presenting(graph, signer, world, &grants, &TestHasher)
+}
+
 pub fn sharded_routing(world: &Records, graph: &ManifestGraph) -> Routing {
-    let admitted = admit(graph, composer(graph), world, &TestHasher).expect("admits");
+    let admitted = admit_here(graph, composer(graph), world).expect("admits");
     let first = route(&admitted, &PrefixShardResolver { bits: 8 });
     let second = route(&admitted, &PrefixShardResolver { bits: 8 });
     assert_eq!(first, second, "route is a function over the corpus");
@@ -580,7 +688,7 @@ pub fn routing_fingerprint(routing: &Routing) -> String {
 
 /// The star the classifier reads off a graph's admitted form.
 pub fn star_of(world: &Records, graph: &ManifestGraph) -> StarShape {
-    let admitted = admit(graph, composer(graph), world, &TestHasher).expect("admits");
+    let admitted = admit_here(graph, composer(graph), world).expect("admits");
     classify_star(admitted.manifest(), world, &PrefixShardResolver { bits: 8 })
 }
 
@@ -590,6 +698,37 @@ pub fn run_both(
     transactions: &[(&ManifestGraph, TxHash)],
 ) -> (Vec<TxResult>, MemoryStore) {
     run_both_signed(world, store, transactions, None)
+}
+
+/// Admit, route and execute one envelope tree on both lanes.
+///
+/// The tree's own path rather than the bare graph's: an envelope carries
+/// its bindings and its records itself, so nothing is attached here, and
+/// the nullifier of every bound subintent rides the batch entry that
+/// makes it once-only.
+///
+/// # Errors
+///
+/// Admission's verdict on the composition, reached before any lane runs.
+pub fn run_both_tree(
+    world: &Records,
+    store: &MemoryStore,
+    tree: &EnvelopeTree,
+    composer: PrincipalAddr,
+) -> Result<(BatchOutcome, MemoryStore), AdmissionError> {
+    let identity = tree.hash(&TestHasher);
+    let admitted = admit_tree(tree, composer, identity, world, &TestHasher)?;
+    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
+    let entry = BatchTx::new(TxHash(identity.0), routing.declaration().clone(), env())
+        .with_calls(routing.calls)
+        .with_nullifiers(
+            admitted
+                .subintents
+                .iter()
+                .map(|record| record.nullifier)
+                .collect(),
+        );
+    Ok(run_lanes(&LANES, store, &[entry]))
 }
 
 /// As [`run_both`], with one signature riding every graph — how a test
