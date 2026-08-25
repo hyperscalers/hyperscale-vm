@@ -1,8 +1,9 @@
 /// The contract world: the only imports a contract component may name.
 /// Capability granularity is not in this surface — it comes from which
-/// handles the kernel materializes per transaction, and each mode of the
-/// effect lattice is its own resource type, so an undeclared mode is as
-/// inexpressible as an undeclared key: there is no handle type to receive.
+/// sites the kernel lends per transaction. There is no constructor for
+/// one, so an undeclared key is inexpressible; what a body may do
+/// through a site it was lent is the capability's own answer, held by
+/// the kernel at every operation rather than by the handle's type.
 ///
 /// What a contract *exports* is not declared here — each package owns its
 /// own world — but the shapes admitted there are fixed and worth naming
@@ -15,7 +16,7 @@
 /// gate holds each signature's totality mark to whichever its export is.
 package hyperscale:kernel;
 
-/// Declared-state access, one resource per mode.
+/// Declared-state access: one borrowed site, one owned bucket.
 interface state {
     use math.{wide};
 
@@ -79,19 +80,18 @@ interface state {
     ///
     /// One resource for every mode and every width, because a handle
     /// type answers which table its rep indexes and nothing else: every
-    /// site indexes the one the declaration materialized. What a body
-    /// may do through one is the capability's own answer, held by the
-    /// kernel at every operation — so a mode that grants no `set`
-    /// refuses one, on the same terms it refuses a key that was never
-    /// declared.
+    /// site indexes the one the declaration lent. What a body may do
+    /// through one is the capability's own answer, held by the kernel at
+    /// every operation — so a mode that grants no `set` refuses one, on
+    /// the same terms it refuses a key that was never declared.
     ///
     /// A site has a width. A plain access is one element wide; a
     /// `for-each` access is as wide as the collection its loop mapped
     /// over, whose width is the instance's rather than the signature's —
-    /// which is why one parameter covers a whole site instead of a run
-    /// of them. Every operation names the element it acts on, and one a
-    /// guard did not fire for is refused by its own name rather than
-    /// shortening the walk.
+    /// which is why one parameter covers a whole site instead of one
+    /// element of it. Every operation names the element it acts on, and
+    /// one a guard did not fire for is refused by its own name rather
+    /// than shortening the walk.
     ///
     /// The world has no constructor for it, which is what makes the
     /// declared set the reachable set.
@@ -150,8 +150,10 @@ interface state {
     /// bytes it is stored as — the width is the protocol's, and a cell
     /// that holds value has no byte surface for a body to read one
     /// through. The one question about a balance that cannot change it,
-    /// which is why every value mode answers it: a method that only asks
-    /// contends with nobody.
+    /// and the reason a read of value is a mode at all: a method that
+    /// only asks contends with nobody. Answered by the two modes that
+    /// hold the cell exclusively; a commutative movement gave up reading
+    /// it, which is what makes it commutative.
     site-balance: func(s: borrow<site>, element: u32) -> amount;
 
     /// Debit the amount cell and hand the value out.
@@ -258,10 +260,10 @@ interface state {
     /// Create `amount` of the resource this invocation issues.
     ///
     /// The one place a bucket appears with no cell debited behind it.
-    /// What a body may issue is fixed before it runs, by the declaration
-    /// the grant was read off — and the grant is the invocation's rather
-    /// than a handle's, so an invocation that declared no such output is
-    /// refused here whatever its body asks for.
+    /// What a body may issue is fixed before it runs, by the issuance
+    /// its own signature declares — and the grant is the invocation's
+    /// rather than a handle's, so an invocation whose signature declares
+    /// none is refused here whatever its body asks for.
     mint: func(amount: amount) -> own<bucket>;
 
     /// Create the named instances of the resource this invocation issues.

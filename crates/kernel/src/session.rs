@@ -2,9 +2,12 @@
 //! mode operations behind the world's handles, and the receipt.
 //!
 //! A session is built from a declared effect set. Materialization turns
-//! each declared effect into one [`Capability`] — the table the runtimes'
-//! handle reps index — judging and holding reservations as it goes, so an
-//! infeasible reservation aborts before any guest runs. During execution
+//! each declared effect into one [`Capability`], judging and holding
+//! reservations as it goes, so an infeasible reservation aborts before
+//! any guest runs. What the runtimes' handle reps index is the *site*
+//! table beside it: one site per handle parameter, each covering the
+//! elements the declaration resolved, and each element naming a position
+//! in the capability table. During execution
 //! the engines' host adapters delegate every world operation here; each
 //! refusal is a deterministic message, identical on every replica because
 //! the session itself generates it on both runtimes.
@@ -14,11 +17,11 @@
 //! reservations, verifies every recorded access against the declared set,
 //! and only then produces the receipt — outcome, state delta, fuel.
 //!
-//! The four machines a session interleaves each live beside it:
+//! The five machines a session interleaves each live beside it:
 //! [`materialize`] judges the declaration into the capability table,
-//! [`buckets`] is the linearity ledger for value in flight, [`ranges`]
-//! holds the interval scan cache and its budgets, and [`receipt`] folds
-//! what committed.
+//! [`permit`] decides what each capability grants, [`buckets`] is the
+//! linearity ledger for value in flight, [`ranges`] holds the interval
+//! scan cache and its budgets, and [`receipt`] folds what committed.
 
 mod buckets;
 #[cfg(test)]
@@ -926,9 +929,9 @@ impl KernelSession {
     /// Create `amount` of what this invocation issues, as a bucket.
     ///
     /// The one bucket with no cell behind it. What an invocation may
-    /// issue is its own grant, read off the outputs its declaration
-    /// names, so there is nothing for a body to hold and nothing for it
-    /// to name.
+    /// issue is its own grant, read off the issuance its signature
+    /// declares, so there is nothing for a body to hold and nothing for
+    /// it to name.
     ///
     /// # Errors
     ///

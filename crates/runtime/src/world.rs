@@ -1,13 +1,13 @@
 //! The `hyperscale:kernel` world, host side.
 //!
 //! [`add_kernel_to_linker`] wires the world's four interfaces — `state`,
-//! `env`, `crypto`, `events` — against a [`KernelHost`] implementation. The
-//! state interface carries one resource per access mode; the kernel materializes
-//! handles per transaction ([`wasmtime::component::Resource`] values whose
-//! rep indexes the host's declared-set table), and the world has no handle
-//! constructor, so the declared set is the reachable set and an undeclared
-//! *mode* is as inexpressible as an undeclared key — the canonical ABI
-//! rejects a wrong-typed handle before any host code runs.
+//! `env`, `crypto`, `events` — against a [`KernelHost`] implementation.
+//! The state interface carries two resources; the kernel lends sites per
+//! transaction ([`wasmtime::component::Resource`] values whose rep
+//! indexes the host's own site table), and the world has no constructor
+//! for one, so the declared set is the reachable set. Which operations a
+//! site admits is not in its type: the kernel holds the capability at
+//! that element to the operation, and refuses there.
 //!
 //! Every function crossing bytes charges the boundary supplement against
 //! the store's fuel. The cost model — prices, per-function byte counts,
