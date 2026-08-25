@@ -90,6 +90,16 @@ pub enum EvidenceRef {
     /// refuses, that node aborts the transaction, so a consumer only ever
     /// runs in a world where the producer succeeded.
     Node(u32),
+    /// The proof bound to this intent's `n`-th declared parameter — the
+    /// one way authority crosses an intent boundary.
+    ///
+    /// A node reference names a node of the same intent, and a signer
+    /// signs their own intent whole, so nothing about an intent can
+    /// reach a proof somebody else's node mints. A declared hole can:
+    /// the declaration names the claim it wants and the composition
+    /// names the node that mints it, so the signer signs which authority
+    /// they asked for and the composer answers for finding it.
+    Param(u32),
 }
 
 /// A method invocation node.
@@ -111,6 +121,32 @@ pub struct GraphNode {
     /// and admission refuses either mismatch.
     #[hbor(max = MAX_EVIDENCE_PER_NODE)]
     pub evidence: BTreeSet<EvidenceRef>,
+}
+
+impl GraphNode {
+    /// Every declared parameter this node reaches, whichever way it
+    /// reaches one.
+    ///
+    /// The two channels a node takes from outside its own graph are
+    /// parallel by construction — an argument is a literal, an edge or a
+    /// hole, and evidence is a signature, a node or a hole — and what
+    /// they share is exactly this: a hole makes the node depend on
+    /// whatever the composition bound it to. Ordering and use-counting
+    /// both ask it, so it is asked in one place.
+    pub fn holes(&self) -> impl Iterator<Item = u32> + '_ {
+        let args = self.args.iter().filter_map(|arg| match arg {
+            GraphArg::Param(param) => Some(*param),
+            GraphArg::Literal(_) | GraphArg::Edge { .. } => None,
+        });
+        let presented = self
+            .evidence
+            .iter()
+            .filter_map(|reference| match reference {
+                EvidenceRef::Param(param) => Some(*param),
+                EvidenceRef::IntentSignature | EvidenceRef::Node(_) => None,
+            });
+        args.chain(presented)
+    }
 }
 
 impl GraphNode {

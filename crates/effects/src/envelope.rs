@@ -38,6 +38,7 @@ use crate::graph::{Constraint, EdgeRef, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::InstanceMeta;
 use crate::manifest::ManifestHash;
+use crate::presented::Presented;
 use crate::records::{ChainRecords, Composed};
 use crate::resource::ResourceMeta;
 use crate::route::{Routing, ShardResolver, route};
@@ -55,16 +56,34 @@ pub const NULLIFIER_SLOT: SlotId = SlotId(0xFFFF);
 // build can refuse outright.
 const _: () = assert!(NULLIFIER_SLOT.0 > PACKAGE_SLOT_BASE);
 
-/// A typed inbound yield edge an intent declares: the composition must
-/// bind an edge carrying exactly this resource, under the declaring
-/// intent's own constraints.
+/// A typed inbound yield an intent declares a hole for.
+///
+/// Two things cross an intent boundary, and both cross as a hole the
+/// declaration types and the composition fills. **The declaration says
+/// what**, and its signer signs that; **the composition says whose**,
+/// and nothing about it is signed by the party who declared the hole.
+/// That split is the whole of what makes a subintent composable without
+/// its signer having met the composer.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-pub struct YieldParam {
-    /// The resource the yielded edge must carry.
-    pub resource: ResourceAddr,
-    /// The declaring intent's constraints on the yielded edge — the same
-    /// language that constrains ordinary graph edges.
-    pub constraints: Vec<Constraint>,
+pub enum YieldParam {
+    /// A value edge carrying exactly this resource, under the declaring
+    /// intent's own constraints.
+    Edge {
+        /// The resource the yielded edge must carry.
+        resource: ResourceAddr,
+        /// The declaring intent's constraints on the yielded edge — the
+        /// same language that constrains ordinary graph edges.
+        constraints: Vec<Constraint>,
+    },
+    /// A proof carrying exactly this claim, which this intent's own
+    /// nodes present through [`EvidenceRef::Param`].
+    ///
+    /// The claim is the declaration's, so a holder signs *which
+    /// authority they are asking for* and never who supplies it — and
+    /// admission presents that claim alone, never whatever else the
+    /// minting node happened to mint, so a composition cannot smuggle
+    /// authority into an intent its signer never offered.
+    Proof(Presented),
 }
 
 /// One intent's declared form: a graph over typed yield parameters.
@@ -116,16 +135,47 @@ impl IntentDecl {
     }
 }
 
-/// One typed yield edge: the `output`-th edge of node `producer` inside
-/// intent `intent`, bound to a declared parameter of the consuming
-/// intent.
+/// What a composition binds one declared hole to.
+///
+/// The composer's choice, covered by the envelope identity and never by
+/// the declaring intent's own hash — which is what lets one signed
+/// subintent be carried by any composition that can fill its holes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub struct YieldBinding {
-    /// The producing intent: `0` names the root, `i + 1` names
-    /// subintent `i`.
-    pub intent: u32,
-    /// The produced edge within that intent's graph.
-    pub edge: EdgeRef,
+pub enum YieldBinding {
+    /// The `output`-th edge of node `producer` inside `intent`.
+    Edge {
+        /// The producing intent: `0` names the root, `i + 1` names
+        /// subintent `i`.
+        intent: u32,
+        /// The produced edge within that intent's graph.
+        edge: EdgeRef,
+    },
+    /// The claims node `producer` of `intent` mints.
+    Proof {
+        /// The producing intent, numbered as above.
+        intent: u32,
+        /// The minting node within that intent's graph.
+        producer: u32,
+    },
+}
+
+impl YieldBinding {
+    /// The intent whose node this binding names.
+    #[must_use]
+    pub const fn intent(self) -> u32 {
+        match self {
+            Self::Edge { intent, .. } | Self::Proof { intent, .. } => intent,
+        }
+    }
+
+    /// The node within it.
+    #[must_use]
+    pub const fn producer(self) -> u32 {
+        match self {
+            Self::Edge { edge, .. } => edge.producer,
+            Self::Proof { producer, .. } => producer,
+        }
+    }
 }
 
 /// A subintent bound into an envelope.

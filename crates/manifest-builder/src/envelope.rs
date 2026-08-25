@@ -33,13 +33,13 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
-    ChainRecords, Constraint, EdgeRef, EnvelopeTree, GraphArg, Hasher, InstanceMeta, IntentDecl,
-    MAX_YIELD_PARAMS, ManifestGraph, ResourceMeta, Subintent, YieldBinding, YieldParam,
+    ChainRecords, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, Hasher, InstanceMeta, IntentDecl,
+    MAX_YIELD_PARAMS, ManifestGraph, Presented, ResourceMeta, Subintent, YieldBinding, YieldParam,
 };
-use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{CallTarget, MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
 use crate::builder::{Bucket, Param};
-use crate::typed::{TypedBuilder, TypedError, graph_records};
+use crate::typed::{Proof, TypedBuilder, TypedError, graph_records};
 
 /// Why an envelope could not be composed.
 ///
@@ -121,13 +121,25 @@ pub struct YieldSink {
     position: u32,
 }
 
-/// An edge one intent exported, as the composition names it — the source
-/// side, which fills exactly one hole.
-#[derive(Debug)]
+/// What one intent exported, as the composition names it — the source
+/// side of a hole.
+///
+/// An edge fills exactly one hole, because value is linear. A proof
+/// fills as many as ask for it, because presenting a claim twice says
+/// nothing presenting it once does not — so it answers by value rather
+/// than being consumed.
+#[derive(Clone, Copy, Debug)]
 pub struct YieldSource {
     envelope: u64,
     intent: u32,
-    edge: EdgeRef,
+    yielded: Yielded,
+}
+
+/// Which of the two a source names.
+#[derive(Clone, Copy, Debug)]
+enum Yielded {
+    Edge(EdgeRef),
+    Proof(u32),
 }
 
 /// One intent under construction: a [`TypedBuilder`] that also declares
@@ -184,11 +196,37 @@ impl<'a> IntentBuilder<'a> {
     ) -> Param {
         let position =
             u32::try_from(self.params.len()).expect("parameters are bounded by MAX_YIELD_PARAMS");
-        self.params.push(YieldParam {
+        self.params.push(YieldParam::Edge {
             resource: resource.into(),
             constraints: constraints.into_iter().collect(),
         });
         Param(position)
+    }
+
+    /// Declare a hole for a proof carrying `claim`, answering the
+    /// [`Proof`] this intent's own calls present it as.
+    ///
+    /// The one way authority crosses an intent boundary. A node
+    /// reference names a node of this intent, and a signer signs their
+    /// own intent whole, so nothing here can reach a proof somebody
+    /// else's node mints — but a declared hole names the *claim* and
+    /// leaves whose node supplies it to whoever composes. So a holder
+    /// signs "an approval from the desk goes here" and never meets the
+    /// composition that finds one.
+    ///
+    /// # Panics
+    ///
+    /// Past a `u32` of parameters, far beyond the [`MAX_YIELD_PARAMS`]
+    /// the declaration is held to when it is sealed.
+    pub fn declare_proof(&mut self, claim: Presented) -> Proof {
+        let position =
+            u32::try_from(self.params.len()).expect("parameters are bounded by MAX_YIELD_PARAMS");
+        // The claim's own subject, where a call can be made against it:
+        // an identity is callable and a badge is not, which is the same
+        // reading the address class gives everywhere.
+        let acting = CallTarget::try_from(claim.subject).ok();
+        self.params.push(YieldParam::Proof(claim));
+        Proof::yielded(position, acting)
     }
 
     /// The declaration, for its signer to sign and hand on.
@@ -208,7 +246,7 @@ impl<'a> IntentBuilder<'a> {
         }
         let params = self.params;
         let graph = self.graph.build()?;
-        check_params(&graph, params.len(), intent)?;
+        check_params(&graph, &params, intent)?;
         Ok(IntentDecl { graph, params })
     }
 
@@ -224,7 +262,31 @@ impl<'a> IntentBuilder<'a> {
         YieldSource {
             envelope: self.envelope,
             intent: self.intent,
-            edge,
+            yielded: Yielded::Edge(edge),
+        }
+    }
+
+    /// Offer a proof this intent's own node minted, for some other
+    /// intent's declared hole.
+    ///
+    /// Nothing is consumed and nothing is exported from the graph: the
+    /// node stands where it stood, and what crosses is the claim it
+    /// mints. So one minting node answers every hole that asks for it.
+    ///
+    /// # Panics
+    ///
+    /// On a proof that is itself a yielded one: a hole cannot fill a
+    /// hole, and the composition that filled this one is the one that
+    /// would have to offer it.
+    #[must_use]
+    pub fn offer(&self, proof: Proof) -> YieldSource {
+        let EvidenceRef::Node(producer) = proof.reference() else {
+            panic!("a yielded proof is not this intent's to offer");
+        };
+        YieldSource {
+            envelope: self.envelope,
+            intent: self.intent,
+            yielded: Yielded::Proof(producer),
         }
     }
 }
@@ -363,7 +425,7 @@ impl<'a> EnvelopeBuilder<'a> {
         if decl.params.len() > MAX_YIELD_PARAMS {
             return Err(EnvelopeError::TooManyYieldParams { intent });
         }
-        check_params(&decl.graph, decl.params.len(), intent)?;
+        check_params(&decl.graph, &decl.params, intent)?;
         let sinks = self.sinks(intent, decl.params.len());
         self.carry(&decl.graph);
         self.signers.push(signer);
@@ -446,13 +508,17 @@ impl<'a> EnvelopeBuilder<'a> {
             sink.envelope == self.id && source.envelope == self.id,
             "a yield is bound within the envelope that minted it"
         );
-        self.bindings.insert(
-            (sink.intent, sink.position),
-            YieldBinding {
+        let binding = match source.yielded {
+            Yielded::Edge(edge) => YieldBinding::Edge {
                 intent: source.intent,
-                edge: source.edge,
+                edge,
             },
-        );
+            Yielded::Proof(producer) => YieldBinding::Proof {
+                intent: source.intent,
+                producer,
+            },
+        };
+        self.bindings.insert((sink.intent, sink.position), binding);
     }
 
     /// Emit the tree: every intent sealed, every declared parameter bound.
@@ -516,29 +582,34 @@ impl<'a> EnvelopeBuilder<'a> {
 /// Check that each of an intent's declared parameters is consumed by
 /// exactly one of its own node arguments — admission's own count, run
 /// against the intent that declared them.
-fn check_params(graph: &ManifestGraph, declared: usize, intent: u32) -> Result<(), EnvelopeError> {
-    let mut uses = vec![0u32; declared];
+fn check_params(
+    graph: &ManifestGraph,
+    declared: &[YieldParam],
+    intent: u32,
+) -> Result<(), EnvelopeError> {
+    let mut uses = vec![0u32; declared.len()];
     for node in &graph.nodes {
-        for arg in &node.args {
-            let GraphArg::Param(position) = arg else {
-                continue;
-            };
-            let slot = usize::try_from(*position)
+        for position in node.holes() {
+            let slot = usize::try_from(position)
                 .ok()
                 .and_then(|position| uses.get_mut(position))
                 .ok_or(EnvelopeError::UnboundParam {
                     intent,
-                    param: *position,
+                    param: position,
                 })?;
             *slot += 1;
         }
     }
     for (position, count) in uses.iter().enumerate() {
         let param = u32::try_from(position).expect("bounded by MAX_YIELD_PARAMS");
-        match count {
-            0 => return Err(EnvelopeError::UnusedYieldParam { intent, param }),
-            1 => {}
-            _ => return Err(EnvelopeError::YieldParamReused { intent, param }),
+        if *count == 0 {
+            return Err(EnvelopeError::UnusedYieldParam { intent, param });
+        }
+        // Value is conserved and authority is not: an edge fills one
+        // argument, and a claim presented twice says nothing presenting
+        // it once does not.
+        if matches!(declared.get(position), Some(YieldParam::Edge { .. })) && *count > 1 {
+            return Err(EnvelopeError::YieldParamReused { intent, param });
         }
     }
     Ok(())

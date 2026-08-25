@@ -276,6 +276,19 @@ pub enum AdmissionError {
         /// The behaviour the entry governs.
         behaviour: GrantedBehaviour,
     },
+    /// A proof hole bound to a node that does not mint the claim the
+    /// declaration named.
+    ///
+    /// What makes a declared hole worth signing: the signer says which
+    /// authority they are asking for, and a composition that supplies
+    /// some other one is refused rather than quietly presenting it.
+    #[error("node {node} presents parameter {param}, whose binding mints no such claim")]
+    YieldClaimMismatch {
+        /// The presenting node.
+        node: u32,
+        /// The parameter it presented.
+        param: u32,
+    },
     /// Evidence that does not satisfy what the node must present.
     ///
     /// Reached here rather than in the walk for every rule this stage
@@ -921,10 +934,10 @@ fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
         }
         for (position, binding) in intent.bindings.iter().enumerate() {
             let param = u32::try_from(position).expect("bounded by MAX_YIELD_PARAMS");
-            let source = usize::try_from(binding.intent)
+            let source = usize::try_from(binding.intent())
                 .ok()
                 .and_then(|source| intents.get(source));
-            let producer = usize::try_from(binding.edge.producer).unwrap_or(usize::MAX);
+            let producer = usize::try_from(binding.producer()).unwrap_or(usize::MAX);
             if source.is_none_or(|source| producer >= source.graph.nodes.len()) {
                 return Err(AdmissionError::UnknownYieldSource {
                     intent: intent_index,
@@ -934,11 +947,10 @@ fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
         }
         let mut uses = vec![0u32; intent.params.len()];
         for node in &intent.graph.nodes {
-            for arg in &node.args {
-                if let GraphArg::Param(param) = arg
-                    && let Some(count) = usize::try_from(*param)
-                        .ok()
-                        .and_then(|position| uses.get_mut(position))
+            for param in node.holes() {
+                if let Some(count) = usize::try_from(param)
+                    .ok()
+                    .and_then(|position| uses.get_mut(position))
                 {
                     *count += 1;
                 }
@@ -946,20 +958,21 @@ fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
         }
         for (position, count) in uses.iter().enumerate() {
             let param = u32::try_from(position).expect("bounded by MAX_YIELD_PARAMS");
-            match count {
-                0 => {
-                    return Err(AdmissionError::UnusedYieldParam {
-                        intent: intent_index,
-                        param,
-                    });
-                }
-                1 => {}
-                _ => {
-                    return Err(AdmissionError::YieldParamReused {
-                        intent: intent_index,
-                        param,
-                    });
-                }
+            if *count == 0 {
+                return Err(AdmissionError::UnusedYieldParam {
+                    intent: intent_index,
+                    param,
+                });
+            }
+            // Value is linear and a proof is not: an edge fills one
+            // argument, and presenting a claim twice says nothing
+            // presenting it once does not.
+            let edge = matches!(intent.params.get(position), Some(YieldParam::Edge { .. }));
+            if edge && *count > 1 {
+                return Err(AdmissionError::YieldParamReused {
+                    intent: intent_index,
+                    param,
+                });
             }
         }
     }
@@ -992,20 +1005,22 @@ fn interleave(
             let Some(node) = intent.graph.nodes.get(next) else {
                 continue;
             };
-            for arg in &node.args {
-                let GraphArg::Param(param) = arg else {
-                    continue;
-                };
+            // Every hole this node reaches, whichever way it reaches
+            // one: an argument consuming a yielded edge, and evidence
+            // presenting a yielded proof. Both are dependencies on
+            // another intent's node, and a proof left out of this scan
+            // would let a node present a claim minted after it ran.
+            for param in node.holes() {
                 // An out-of-range parameter carries no dependency; the
                 // node check below rejects it.
-                let Some(binding) = usize::try_from(*param)
+                let Some(binding) = usize::try_from(param)
                     .ok()
                     .and_then(|position| intent.bindings.get(position))
                 else {
                     continue;
                 };
-                let source = usize::try_from(binding.intent).unwrap_or(usize::MAX);
-                let producer = usize::try_from(binding.edge.producer).unwrap_or(usize::MAX);
+                let source = usize::try_from(binding.intent()).unwrap_or(usize::MAX);
+                let producer = usize::try_from(binding.producer()).unwrap_or(usize::MAX);
                 if cursor
                     .get(source)
                     .is_none_or(|&emitted| producer >= emitted)
@@ -1360,7 +1375,6 @@ impl Lower<'_> {
         signature: &MethodSignature,
         node_index: u32,
     ) -> Result<(Vec<Value>, Vec<NodeInput>), AdmissionError> {
-        let intent = &self.intents[intent_index];
         let mut bound = Vec::with_capacity(node.args.len());
         let mut inputs = Vec::with_capacity(node.args.len());
         for (position, (arg, param)) in node.args.iter().zip(&signature.params).enumerate() {
@@ -1413,46 +1427,11 @@ impl Lower<'_> {
                     inputs.push(input);
                 }
                 GraphArg::Param(reference) => {
-                    let Some((decl, binding)) =
-                        usize::try_from(*reference).ok().and_then(|position| {
-                            Some((intent.params.get(position)?, intent.bindings.get(position)?))
-                        })
-                    else {
-                        return Err(AdmissionError::UnboundParam {
-                            node: node_index,
-                            param: *reference,
-                        });
-                    };
-                    if !param.is_edge() {
-                        return Err(AdmissionError::ParamForValueParam {
-                            node: node_index,
-                            param: param_index,
-                        });
-                    }
-                    let source_intent = usize::try_from(binding.intent)
-                        .map_err(|_| AdmissionError::TooManyNodes)?;
-                    let producer = usize::try_from(binding.edge.producer)
-                        .map_err(|_| AdmissionError::TooManyNodes)?;
-                    let source = self.flat_of[source_intent][producer];
-                    let intent_at =
-                        u32::try_from(intent_index).expect("intents are bounded by MAX_SUBINTENTS");
-                    let (value, input) = bind_edge(
-                        &self.outputs,
-                        &mut self.consumed,
-                        (source, binding.edge.output),
-                        &decl.constraints,
+                    let (value, input) = self.bind_yielded(
+                        intent_index,
+                        *reference,
                         *param,
                         (node_index, param_index),
-                        |resource| {
-                            if resource == decl.resource {
-                                Ok(())
-                            } else {
-                                Err(AdmissionError::YieldResourceMismatch {
-                                    intent: intent_at,
-                                    param: *reference,
-                                })
-                            }
-                        },
                     )?;
                     bound.push(value);
                     inputs.push(input);
@@ -1476,6 +1455,82 @@ impl Lower<'_> {
                 requires.push(rule.clone());
             }
         }
+    }
+
+    /// Bind the edge a declared hole was filled with.
+    ///
+    /// The hole types what may arrive and the composition names what
+    /// did, so both are checked here: the parameter's declared resource
+    /// against the edge's, and the declaring intent's own constraints
+    /// against it as if it were an ordinary argument.
+    fn bind_yielded(
+        &mut self,
+        intent_index: usize,
+        reference: u32,
+        param: ParamType,
+        at: (u32, u32),
+    ) -> Result<(Value, NodeInput), AdmissionError> {
+        let intent = &self.intents[intent_index];
+        let (node_index, param_index) = at;
+        let reference = &reference;
+
+        let Some((decl, binding)) = usize::try_from(*reference).ok().and_then(|position| {
+            Some((intent.params.get(position)?, intent.bindings.get(position)?))
+        }) else {
+            return Err(AdmissionError::UnboundParam {
+                node: node_index,
+                param: *reference,
+            });
+        };
+        if !param.is_edge() {
+            return Err(AdmissionError::ParamForValueParam {
+                node: node_index,
+                param: param_index,
+            });
+        }
+        let intent_at = u32::try_from(intent_index).expect("intents are bounded by MAX_SUBINTENTS");
+        let (
+            YieldParam::Edge {
+                resource: declared,
+                constraints,
+            },
+            YieldBinding::Edge {
+                intent: source_intent,
+                edge,
+            },
+        ) = (decl, binding)
+        else {
+            // A hole typed for a proof fills no argument: an
+            // argument takes value, and a proof is not value.
+            return Err(AdmissionError::ParamForValueParam {
+                node: node_index,
+                param: param_index,
+            });
+        };
+        let source_intent =
+            usize::try_from(*source_intent).map_err(|_| AdmissionError::TooManyNodes)?;
+        let producer = usize::try_from(edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
+        let source = self.flat_of[source_intent][producer];
+        let declared = *declared;
+        let (value, input) = bind_edge(
+            &self.outputs,
+            &mut self.consumed,
+            (source, edge.output),
+            constraints,
+            param,
+            (node_index, param_index),
+            |resource| {
+                if resource == declared {
+                    Ok(())
+                } else {
+                    Err(AdmissionError::YieldResourceMismatch {
+                        intent: intent_at,
+                        param: *reference,
+                    })
+                }
+            },
+        )?;
+        Ok((value, input))
     }
 
     /// Resolve the node's presented evidence against its own intent.
@@ -1559,32 +1614,91 @@ impl Lower<'_> {
                         })?;
                     evidence.extend_from_slice(claims);
                 }
-            }
-        }
-        // What this node presented is signed content and a claim leaf
-        // reads nothing else, so a rule made of them alone is decided
-        // here — before anything routes, and before any leg could have
-        // committed on the strength of it. The walk judges it again over
-        // the same set, where it cannot fail: that redundancy is what
-        // lets a total frame carry one at all.
-        for rule in required
-            .iter()
-            .filter(|rule| rule.judged() == Judged::AtAdmission)
-        {
-            let judged = rule.map_leaves(&mut |leaf| match leaf {
-                JudgedLeaf::Claim(claim) => Ok(SealedLeaf::Claim(*claim)),
-                // A rule this stage judges reads claims alone, which is
-                // what put it here.
-                JudgedLeaf::Presence { .. } | JudgedLeaf::Stored { .. } => {
-                    Err(AdmissionError::EvidenceUnsatisfied { node: node_index })
+                EvidenceRef::Param(reference) => {
+                    // A hole the declaration typed and the composition
+                    // filled. What is presented is the claim the
+                    // *declaration* named — never whatever else the
+                    // minting node happened to mint — so a composition
+                    // cannot hand an intent authority its signer never
+                    // asked for.
+                    let Some((YieldParam::Proof(wanted), YieldBinding::Proof { intent, producer })) =
+                        usize::try_from(*reference).ok().and_then(|position| {
+                            Some((
+                                intent.params.get(position)?,
+                                *intent.bindings.get(position)?,
+                            ))
+                        })
+                    else {
+                        return Err(AdmissionError::UnboundParam {
+                            node: node_index,
+                            param: *reference,
+                        });
+                    };
+                    let source = usize::try_from(intent)
+                        .ok()
+                        .and_then(|source| self.flat_of.get(source))
+                        .and_then(|flat| usize::try_from(producer).ok().and_then(|at| flat.get(at)))
+                        .and_then(|flat| usize::try_from(*flat).ok())
+                        .ok_or(AdmissionError::UnboundParam {
+                            node: node_index,
+                            param: *reference,
+                        })?;
+                    // The interleave orders a node after every hole it
+                    // reaches, so the minting node has been judged and
+                    // its claims are in hand.
+                    let minted = self
+                        .minted
+                        .get(source)
+                        .ok_or(AdmissionError::ForwardProof {
+                            node: node_index,
+                            producer,
+                        })?;
+                    if !minted.contains(wanted) {
+                        return Err(AdmissionError::YieldClaimMismatch {
+                            node: node_index,
+                            param: *reference,
+                        });
+                    }
+                    evidence.push(*wanted);
                 }
-            })?;
-            if !judged.satisfied_by(&evidence) {
-                return Err(AdmissionError::EvidenceUnsatisfied { node: node_index });
             }
         }
+        judge_presented(&required, &evidence, node_index)?;
         Ok(evidence)
     }
+}
+
+/// Judge every rule this stage can decide, against what the node
+/// presented.
+///
+/// What a node presented is signed content and a claim leaf reads
+/// nothing else, so a rule made of them alone is decided here — before
+/// anything routes, and before any leg could have committed on the
+/// strength of it. The walk judges it again over the same set, where it
+/// cannot fail: that redundancy is what lets a frame whose caller
+/// commits without waiting carry one at all.
+fn judge_presented(
+    required: &[&Rule<JudgedLeaf>],
+    evidence: &[Presented],
+    node_index: u32,
+) -> Result<(), AdmissionError> {
+    for rule in required
+        .iter()
+        .filter(|rule| rule.judged() == Judged::AtAdmission)
+    {
+        let judged = rule.map_leaves(&mut |leaf| match leaf {
+            JudgedLeaf::Claim(claim) => Ok(SealedLeaf::Claim(*claim)),
+            // A rule this stage judges reads claims alone, which is what
+            // put it here.
+            JudgedLeaf::Presence { .. } | JudgedLeaf::Stored { .. } => {
+                Err(AdmissionError::EvidenceUnsatisfied { node: node_index })
+            }
+        })?;
+        if !judged.satisfied_by(evidence) {
+            return Err(AdmissionError::EvidenceUnsatisfied { node: node_index });
+        }
+    }
+    Ok(())
 }
 
 /// Judge the denominations against the bound arguments.

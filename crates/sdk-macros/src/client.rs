@@ -289,7 +289,14 @@ fn wrapper(
         && matches!(method.shape, Shape::Guarded { on_self: true, .. });
     let (receiver, target) = match (serves, from_proof) {
         (Serves::Instances, _) => (quote!(self,), quote!(self.0)),
-        (Serves::Principals, true) => (quote!(), quote!(proof.target())),
+        (Serves::Principals, true) => (
+            quote!(),
+            quote!(proof.acting().ok_or(
+                ::hyperscale_vm_sdk::client::TypedError::YieldedForSelf {
+                    method: #published.to_owned(),
+                }
+            )?),
+        ),
         (Serves::Principals, false) => (quote!(), quote!(who)),
     };
     let who = matches!((serves, from_proof), (Serves::Principals, false))

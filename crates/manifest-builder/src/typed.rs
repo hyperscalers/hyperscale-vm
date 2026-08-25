@@ -149,6 +149,18 @@ pub enum TypedError {
         /// The method called.
         method: String,
     },
+    /// A yielded proof named as the actor for a gate on the target's own
+    /// identity.
+    ///
+    /// Such a call takes its target from the proof, and a yielded one
+    /// carries whatever claim the declaration named — which may be a
+    /// badge, and a badge is nothing to call. Where the claim *is* an
+    /// identity the call is written as it always was.
+    #[error("`{method}` acts as the proof it is given, and a yielded proof names no target")]
+    YieldedForSelf {
+        /// The method called.
+        method: String,
+    },
     /// The graph's own structural refusal, reached at [`TypedBuilder::build`].
     #[error(transparent)]
     Build(#[from] BuildError),
@@ -167,16 +179,38 @@ pub enum TypedError {
 #[derive(Clone, Copy, Debug)]
 #[must_use = "an unpresented proof authorizes nothing"]
 pub struct Proof {
-    node: u32,
-    target: CallTarget,
+    /// How the presenting node names it: a node of the same intent, or
+    /// a hole this intent declared for a proof from outside it.
+    reference: EvidenceRef,
+    /// The identity it carries, where that is something a call can be
+    /// made against.
+    ///
+    /// A node proof carries its own target, which is always callable. A
+    /// yielded one carries whatever claim the declaration named — an
+    /// identity, or a badge, and a badge is nothing to call.
+    acting: Option<CallTarget>,
 }
 
 impl Proof {
-    /// The instance whose identity this proof carries — the authorizing
-    /// node's target.
+    /// The instance whose identity this proof carries, where it names
+    /// one a call can be made against.
     #[must_use]
-    pub const fn target(&self) -> CallTarget {
-        self.target
+    pub const fn acting(&self) -> Option<CallTarget> {
+        self.acting
+    }
+
+    /// The proof a declared hole will be filled with, presented as this
+    /// intent's `position`-th parameter.
+    pub(crate) const fn yielded(position: u32, acting: Option<CallTarget>) -> Self {
+        Self {
+            reference: EvidenceRef::Param(position),
+            acting,
+        }
+    }
+
+    /// How a node presents it.
+    pub(crate) const fn reference(self) -> EvidenceRef {
+        self.reference
     }
 }
 
@@ -557,7 +591,10 @@ impl<'a> TypedBuilder<'a> {
         }
         let (node, outputs) = self.append(target, method, args, proofs)?;
         outputs.none()?;
-        Ok(Proof { node, target })
+        Ok(Proof {
+            reference: EvidenceRef::Node(node),
+            acting: Some(target),
+        })
     }
 
     /// The instance and package a target's call resolves through, held
@@ -710,14 +747,10 @@ impl<'a> TypedBuilder<'a> {
             // the resource says otherwise. Ruling the proof out here
             // would refuse the call before the party who decides has
             // been asked.
-            (false, []) => earned
-                .iter()
-                .map(|proof| EvidenceRef::Node(proof.node))
-                .collect(),
-            (false, presented) if signature.may_earn_authority() => presented
-                .iter()
-                .map(|proof| EvidenceRef::Node(proof.node))
-                .collect(),
+            (false, []) => earned.iter().map(|proof| proof.reference()).collect(),
+            (false, presented) if signature.may_earn_authority() => {
+                presented.iter().map(|proof| proof.reference()).collect()
+            }
             (false, _) => {
                 return Err(TypedError::UnexpectedEvidence {
                     method: method.to_owned(),
@@ -734,10 +767,7 @@ impl<'a> TypedBuilder<'a> {
                 }
                 BTreeSet::from([EvidenceRef::IntentSignature])
             }
-            (true, presented) => presented
-                .iter()
-                .map(|proof| EvidenceRef::Node(proof.node))
-                .collect(),
+            (true, presented) => presented.iter().map(|proof| proof.reference()).collect(),
         };
         let outputs = resources.len();
         let producer = self

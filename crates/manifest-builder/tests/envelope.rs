@@ -7,13 +7,15 @@
 //! composition is which graph it crosses.
 
 use hyperscale_vm_effects::{
-    Constraint, EnvelopeTree, Hasher, IntentDecl, PackageHash, Records, TestHasher, admit_tree,
+    AdmissionError, Constraint, EnvelopeTree, GrantedBehaviour, Hasher, IntentDecl, PackageHash,
+    Presented, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, StoredRule,
+    TestHasher, admit_tree,
 };
 use hyperscale_vm_manifest_builder::{
     EnvelopeBuilder, EnvelopeError, IntentBuilder, Param, YieldSink,
 };
 use hyperscale_vm_stdlib::account;
-use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr, ResourceAddr};
 use proptest::prelude::{prop, proptest};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -78,8 +80,8 @@ fn a_composed_swap_admits() {
     assert_eq!(tree.subintents[0].signer, BOB);
     // The wiring the author never wrote: each side's hole names the other
     // intent's exported edge.
-    assert_eq!(tree.root_bindings[0].intent, 1);
-    assert_eq!(tree.subintents[0].bindings[0].intent, 0);
+    assert_eq!(tree.root_bindings[0].intent(), 1);
+    assert_eq!(tree.subintents[0].bindings[0].intent(), 0);
     admits(&tree);
 }
 
@@ -111,7 +113,7 @@ fn a_presented_declaration_is_carried_verbatim() {
 
     assert_eq!(tree.subintents[0].decl.hash(&TestHasher), signed);
     assert_eq!(tree.subintents[0].signer, BOB);
-    assert_eq!(tree.subintents[0].bindings[0].intent, 0);
+    assert_eq!(tree.subintents[0].bindings[0].intent(), 0);
     admits(&tree);
 }
 
@@ -290,4 +292,117 @@ proptest! {
         let tree = env.build().expect("every hole is bound");
         admits(&tree);
     }
+}
+
+/// The party whose approval the note's own entry names.
+const DESK: PrincipalAddr = PrincipalAddr::new([0x30; 31]);
+/// Whose namespace the note sits in — an issuer whose code never runs
+/// here, because nothing about a movement involves the minter.
+const MINTER: Address = Address::new([0x6A; 31], AddressClass::Component);
+
+/// A note that moves only in a transaction the desk signed.
+fn note_meta() -> ResourceMeta {
+    let mut rules = ResourceGrants::new();
+    rules.set(
+        GrantedBehaviour::Withdraw,
+        RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(DESK)))
+            .expect("a rule within the caps encodes"),
+    );
+    ResourceMeta {
+        namespace: MINTER,
+        kind: ResourceKind::Fungible,
+        material: vec![b"note".to_vec()],
+        rules,
+    }
+}
+
+/// A holder's request, signed before any composer exists: whoever brings
+/// the desk's approval may have the note moved.
+///
+/// The hole is the whole of what the holder undertakes. They name the
+/// *claim* — the desk's — and leave whose node supplies it to whoever
+/// composes, so the declaration means one thing however it is later
+/// carried and the signer never has to have met the composer.
+fn note_request(approver: Presented) -> IntentDecl {
+    let chain = world();
+    let note = note_meta().address(&TestHasher);
+    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, BOB);
+    let approval = decl.declare_proof(approver);
+    let bob = account::authorize(&mut decl, BOB).unwrap();
+    // Two proofs at one node: the holder's own gate takes theirs, and
+    // the note's injected entry takes the desk's.
+    let funds = decl
+        .call_presenting(&[bob, approval], BOB, "withdraw", (note, 40u128))
+        .unwrap()
+        .one()
+        .unwrap();
+    account::deposit(&mut decl, BOB, funds).unwrap();
+    decl.into_decl().expect("the request presents its own hole")
+}
+
+/// The composition that fills it: the desk signs in and offers the claim
+/// its own node mints.
+fn approved(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK);
+    let desk = account::authorize(&mut root, DESK)?;
+    let offered = root.offer(desk);
+    let wants = only(env.present(BOB, request)?);
+    env.seal(root)?;
+    env.bind(wants, offered);
+    env.resource(note_meta());
+    env.build()
+}
+
+/// A proof crosses an intent boundary the only way one can: through a
+/// hole the declaration typed and the composition filled.
+///
+/// Which is what makes the posture composable at all. The note's entry
+/// asks about the transaction rather than about the holder, so somebody
+/// has to present the desk's claim at the node that debits — and that
+/// node is inside an intent the desk did not write and cannot touch.
+/// The holder signs the shape of the authority they are asking for; the
+/// desk answers for finding it, and pays.
+#[test]
+fn a_declared_hole_carries_a_proof_across_an_intent_boundary() {
+    let request = note_request(Presented::of_subject(DESK));
+    let signed = request.hash(&TestHasher);
+    let tree = approved(request).expect("the desk composes the approval");
+
+    assert_eq!(
+        tree.subintents[0].decl.hash(&TestHasher),
+        signed,
+        "nothing the composition did moved what the holder signed",
+    );
+    let chain = world();
+    let admitted = admit_tree(&tree, DESK, tree.hash(&TestHasher), &chain, &TestHasher)
+        .expect("the approval satisfies the note's own entry");
+    // The withdrawing node carries both claims: the holder's own, and
+    // the desk's — which reached it from another intent entirely.
+    let withdrawing = admitted
+        .admitted
+        .manifest()
+        .nodes
+        .iter()
+        .find(|node| node.method == "withdraw")
+        .expect("the request withdraws");
+    assert!(withdrawing.evidence.contains(&Presented::of_subject(DESK)));
+    assert!(withdrawing.evidence.contains(&Presented::of_subject(BOB)));
+}
+
+/// And a composition that binds a node minting some other claim is
+/// refused, rather than quietly presenting it.
+///
+/// The declaration is what makes the hole worth signing: the holder
+/// asked for the desk's approval, so a claim on anybody else is not the
+/// authority they undertook to accept — however the composer wired it.
+#[test]
+fn a_hole_bound_to_the_wrong_claim_is_refused() {
+    let request = note_request(Presented::of_subject(ALICE));
+    let tree = approved(request).expect("the composition still builds");
+    let chain = world();
+    assert_eq!(
+        admit_tree(&tree, DESK, tree.hash(&TestHasher), &chain, &TestHasher),
+        Err(AdmissionError::YieldClaimMismatch { node: 2, param: 0 }),
+    );
 }

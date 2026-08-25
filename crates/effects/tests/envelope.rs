@@ -70,12 +70,12 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
                     deposit_param(ALICE, 0),
                 ],
             },
-            params: vec![YieldParam {
+            params: vec![YieldParam::Edge {
                 resource: RES_Y,
                 constraints: vec![Constraint::MinAmount(10)],
             }],
         },
-        root_bindings: vec![YieldBinding {
+        root_bindings: vec![YieldBinding::Edge {
             intent: 1,
             edge: EdgeRef {
                 producer: 1,
@@ -91,13 +91,13 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
                         deposit_param(BOB, 0),
                     ],
                 },
-                params: vec![YieldParam {
+                params: vec![YieldParam::Edge {
                     resource: RES_X,
                     constraints: vec![Constraint::MinAmount(100)],
                 }],
             },
             signer: BOB,
-            bindings: vec![YieldBinding {
+            bindings: vec![YieldBinding::Edge {
                 intent: 0,
                 edge: EdgeRef {
                     producer: 1,
@@ -227,11 +227,28 @@ fn identities_differ_while_subintent_hashes_agree() {
 fn the_declaration_hash_covers_params_and_constraints() {
     let decl = composed_tree(100).subintents[0].decl.clone();
     let mut reconstrained = decl.clone();
-    reconstrained.params[0].constraints = vec![Constraint::MinAmount(101)];
+    reconstrained.params[0] = YieldParam::Edge {
+        resource: RES_X,
+        constraints: vec![Constraint::MinAmount(101)],
+    };
     assert_ne!(decl.hash(&TestHasher), reconstrained.hash(&TestHasher));
     let mut retyped = decl.clone();
-    retyped.params[0].resource = RES_Y;
+    retyped.params[0] = YieldParam::Edge {
+        resource: RES_Y,
+        constraints: Vec::new(),
+    };
     assert_ne!(decl.hash(&TestHasher), retyped.hash(&TestHasher));
+}
+
+/// The same binding, naming another node of the same intent.
+const fn rebind(binding: YieldBinding, producer: u32) -> YieldBinding {
+    YieldBinding::Edge {
+        intent: binding.intent(),
+        edge: EdgeRef {
+            producer,
+            output: 0,
+        },
+    }
 }
 
 #[test]
@@ -241,15 +258,18 @@ fn mutual_yields_with_no_order_are_a_cycle() {
     let mut tree = composed_tree(100);
     tree.root.graph.nodes = vec![deposit_param(ALICE, 0)];
     tree.subintents[0].decl.graph.nodes = vec![deposit_param(BOB, 0)];
-    tree.root_bindings[0].edge.producer = 0;
-    tree.subintents[0].bindings[0].edge.producer = 0;
+    tree.root_bindings[0] = rebind(tree.root_bindings[0], 0);
+    tree.subintents[0].bindings[0] = rebind(tree.subintents[0].bindings[0], 0);
     assert_eq!(admit_composed(&tree), Err(AdmissionError::CyclicYields));
 }
 
 #[test]
 fn a_yielded_resource_must_match_the_declared_type() {
     let mut tree = composed_tree(100);
-    tree.subintents[0].decl.params[0].resource = RES_Y;
+    tree.subintents[0].decl.params[0] = YieldParam::Edge {
+        resource: RES_Y,
+        constraints: Vec::new(),
+    };
     assert_eq!(
         admit_composed(&tree),
         Err(AdmissionError::YieldResourceMismatch {
@@ -280,12 +300,12 @@ fn a_yielded_edge_is_judged_by_its_kind() {
             graph: ManifestGraph {
                 nodes: vec![authorize(ALICE), withdraw(ALICE, RES_X, 100), consumer],
             },
-            params: vec![YieldParam {
+            params: vec![YieldParam::Edge {
                 resource: RES_Y,
                 constraints: vec![],
             }],
         },
-        root_bindings: vec![YieldBinding {
+        root_bindings: vec![YieldBinding::Edge {
             intent: 1,
             edge: EdgeRef {
                 producer: 1,
@@ -301,13 +321,13 @@ fn a_yielded_edge_is_judged_by_its_kind() {
                         deposit_param(BOB, 0),
                     ],
                 },
-                params: vec![YieldParam {
+                params: vec![YieldParam::Edge {
                     resource: RES_X,
                     constraints: vec![],
                 }],
             },
             signer: BOB,
-            bindings: vec![YieldBinding {
+            bindings: vec![YieldBinding::Edge {
                 intent: 0,
                 edge: EdgeRef {
                     producer: 1,
@@ -391,7 +411,13 @@ fn bindings_must_cover_the_declared_params() {
     );
 
     let mut dangling = composed_tree(100);
-    dangling.root_bindings[0].intent = 7;
+    dangling.root_bindings[0] = YieldBinding::Edge {
+        intent: 7,
+        edge: EdgeRef {
+            producer: 0,
+            output: 0,
+        },
+    };
     assert_eq!(
         admit_composed(&dangling),
         Err(AdmissionError::UnknownYieldSource {
@@ -533,10 +559,7 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     // composer's, and only the envelope identity covers them.
     let tree = composed_tree(100);
     let mut rebound = tree.clone();
-    rebound.root_bindings[0].edge = EdgeRef {
-        producer: 2,
-        output: 0,
-    };
+    rebound.root_bindings[0] = rebind(rebound.root_bindings[0], 2);
     assert_ne!(tree.hash(&TestHasher), rebound.hash(&TestHasher));
     assert_eq!(
         tree.subintents[0].decl.hash(&TestHasher),
@@ -548,10 +571,8 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     assert_ne!(tree.hash(&TestHasher), resigned.hash(&TestHasher));
 
     let mut rebound_subintent = tree.clone();
-    rebound_subintent.subintents[0].bindings[0].edge = EdgeRef {
-        producer: 2,
-        output: 0,
-    };
+    rebound_subintent.subintents[0].bindings[0] =
+        rebind(rebound_subintent.subintents[0].bindings[0], 2);
     assert_ne!(tree.hash(&TestHasher), rebound_subintent.hash(&TestHasher));
 
     // Every field of a binding, and the count of them: bindings encode to
@@ -559,7 +580,13 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     // the encoding dropped or a list length it did not frame would both
     // read as the same composition.
     let mut retargeted = tree.clone();
-    retargeted.root_bindings[0].intent = retargeted.root_bindings[0].intent.wrapping_add(1);
+    retargeted.root_bindings[0] = YieldBinding::Edge {
+        intent: retargeted.root_bindings[0].intent().wrapping_add(1),
+        edge: EdgeRef {
+            producer: retargeted.root_bindings[0].producer(),
+            output: 0,
+        },
+    };
     assert_ne!(tree.hash(&TestHasher), retargeted.hash(&TestHasher));
 
     let mut extended = tree.clone();
@@ -568,7 +595,13 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     assert_ne!(tree.hash(&TestHasher), extended.hash(&TestHasher));
 
     let mut resliced = tree.clone();
-    resliced.root_bindings[0].edge.output += 1;
+    resliced.root_bindings[0] = YieldBinding::Edge {
+        intent: resliced.root_bindings[0].intent(),
+        edge: EdgeRef {
+            producer: resliced.root_bindings[0].producer(),
+            output: 1,
+        },
+    };
     assert_ne!(tree.hash(&TestHasher), resliced.hash(&TestHasher));
 }
 
@@ -585,7 +618,8 @@ proptest! {
     ) {
         let chain = world();
         let mut tree = composed_tree(100);
-        let binding = YieldBinding { intent, edge: EdgeRef { producer, output } };
+        let binding = YieldBinding::Edge {
+        intent, edge: EdgeRef { producer, output } };
         if on_subintent {
             tree.subintents[0].bindings[0] = binding;
         } else {
