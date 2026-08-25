@@ -43,7 +43,7 @@ pub use {
     engine::{blessed_config, blessed_engine},
     fuel::blessed_operator_cost,
     world::{
-        Amount, Bucket, Capability, HostRefusal, Issuer, Run, Wide, WitDrawn, WitRounding,
+        Amount, Bucket, Capability, HostRefusal, Run, Wide, WitDrawn, WitRounding,
         add_kernel_to_linker,
     },
 };

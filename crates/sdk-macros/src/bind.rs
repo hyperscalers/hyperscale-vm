@@ -36,8 +36,6 @@ pub enum Carries {
     },
     /// A branch's verdict, as the declaration reached it.
     Flag,
-    /// This invocation's authority to issue.
-    Issuer,
 }
 
 /// One export parameter: what the world calls it, and what a target has
@@ -295,7 +293,6 @@ fn same_shape(a: &Shape, b: &Shape) -> bool {
         | (Shape::Ids(_), Shape::Ids(_))
         | (Shape::Flag, Shape::Flag)
         | (Shape::Bucket, Shape::Bucket)
-        | (Shape::Issuer, Shape::Issuer)
         | (Shape::Handle, Shape::Handle)
         | (Shape::Run, Shape::Run) => true,
         (Shape::Cell(left), Shape::Cell(right)) => {
@@ -376,17 +373,6 @@ pub fn bindings(
             },
             ident: value_ident(position),
             carries,
-        });
-    }
-
-    if lowered.issues.is_some() {
-        bindings.push(Binding {
-            param: Param {
-                name: "issuer".to_owned(),
-                shape: Shape::Issuer,
-            },
-            ident: syn::Ident::new("__issuer_handle", proc_macro2::Span::call_site()),
-            carries: Carries::Issuer,
         });
     }
 

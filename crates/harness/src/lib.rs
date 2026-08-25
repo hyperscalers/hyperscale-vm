@@ -76,10 +76,10 @@ pub mod fixtures {
         fn amount_cell_balance(&mut self, _rep: u32) -> Result<u128, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn burn(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
+        fn burn(&mut self, _funds: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn mint_instances(&mut self, _rep: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
+        fn mint_instances(&mut self, _ids: &[u64]) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn range_take(&mut self, _rep: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
@@ -103,7 +103,7 @@ pub mod fixtures {
         fn cell_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn mint(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
+        fn mint(&mut self, _amount: u128) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn cell_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {

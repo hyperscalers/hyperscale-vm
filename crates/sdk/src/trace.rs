@@ -623,7 +623,8 @@ impl Trace {
         self.values.push(AbiParam::Bucket(index));
     }
 
-    /// Bind this method's issuance grant, for the resource `mark` names.
+    /// Record this method's issuance grant, for the resource `mark`
+    /// names.
     ///
     /// Called by generated code where a body issues or destroys. The mark
     /// is the material separating one of the instance's own resources
@@ -631,13 +632,16 @@ impl Trace {
     /// declaration and cannot be another instance's; the kind and the
     /// rules the mark grants ride with it because the grant's derivation
     /// folds both.
+    ///
+    /// No binding follows it: the grant is the invocation's, so nothing
+    /// crosses the boundary to say so and the export's parameter list is
+    /// the same whether a method issues or not.
     pub fn bind_issuer(&mut self, kind: ResourceKind, mark: &[u8]) {
         self.issues = Some(Issuance {
             mark: mark.to_vec(),
             kind,
             grants: self.grants_for(mark),
         });
-        self.values.push(AbiParam::Issuer);
     }
 
     /// Bind a value evaluated over this method's bound inputs.

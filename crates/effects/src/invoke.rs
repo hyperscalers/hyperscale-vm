@@ -109,12 +109,6 @@ pub enum CallArg {
     /// make of it: what crosses is a list of ids, and the framing a
     /// guest would otherwise decode is the kernel's own business.
     Ids(Vec<u64>),
-    /// This invocation's authority to issue.
-    ///
-    /// Carries nothing: the grant is that it exists, and which resource
-    /// the value it creates is denominated in is what [`NodeCall::outputs`]
-    /// already says.
-    Issuer,
 }
 
 /// One edge a node consumes, with the bound its consumer signed.

@@ -304,10 +304,10 @@ fn run_blessed(
             HandleKind::Capability => {
                 call1::<CapabilityResource>(&mut store, &instance, export, *rep)
             }
-            // Nothing this fixture exports takes value, issues any, or
-            // runs a `for-each` site; the bucket lane drives the first
-            // two, and the corpus drives the third.
-            HandleKind::Bucket | HandleKind::Issuer | HandleKind::Run => {
+            // Nothing this fixture exports takes value or runs a
+            // `for-each` site; the bucket lane drives the first and the
+            // corpus drives the second.
+            HandleKind::Bucket | HandleKind::Run => {
                 return Err(format_err!("{kind:?} is not lowered by this fixture"));
             }
         },

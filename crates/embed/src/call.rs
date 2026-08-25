@@ -43,9 +43,6 @@ pub enum GuestArg<'a> {
     /// table, and the kernel's rep is not reachable from the caller again
     /// unless the guest hands it back.
     Bucket(u32),
-    /// This invocation's authority to issue, granted from the method's
-    /// own declared outputs.
-    Issuer,
 }
 
 /// How one invocation ended.

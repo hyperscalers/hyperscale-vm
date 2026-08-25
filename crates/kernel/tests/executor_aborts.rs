@@ -15,7 +15,7 @@ use hyperscale_vm_kernel::{
     execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
@@ -106,7 +106,7 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
             (None, Some(delta)) => {
                 session.grant_issuance(RESOURCE, ResourceKind::Fungible);
                 let taken = session.cell_take(delta, sub).unwrap();
-                session.burn(ISSUER_REP, taken).unwrap();
+                session.burn(taken).unwrap();
             }
             _ => {}
         }
@@ -656,7 +656,7 @@ fn an_exclusive_debit_past_a_hold_loses_to_the_reserver() {
                 Capability::Amount(_) => {
                     let funds = session.cell_take(rep, 100).unwrap();
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-                    session.burn(ISSUER_REP, funds).unwrap();
+                    session.burn(funds).unwrap();
                 }
                 Capability::Reserve { .. } => {
                     let funds = session.reserve_take(rep).unwrap();
@@ -902,7 +902,7 @@ fn a_transaction_that_lost_value_aborts_beside_one_that_did_not() {
     let run = |entry: &BatchTx, mut session: KernelSession| {
         if entry.tx == tx(0x01) {
             session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-            let minted = session.mint(ISSUER_REP, 500).unwrap();
+            let minted = session.mint(500).unwrap();
             session.cell_put(0, minted).unwrap();
         } else {
             // A credit with no mint behind it and no bucket to fund it.

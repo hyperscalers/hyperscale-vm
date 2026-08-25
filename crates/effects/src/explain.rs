@@ -489,7 +489,6 @@ impl Names<'_> {
         match param {
             AbiParam::Handle(clause) => format!("handle for clause {clause}"),
             AbiParam::Bucket(position) => format!("edge arg{position}"),
-            AbiParam::Issuer => "the issuer".to_owned(),
             AbiParam::Guard(clause) => format!("whether clause {clause} was declared"),
             AbiParam::Run { clause, site } => format!("the run over clause {clause} site {site}"),
             AbiParam::Derived(expr) => self.expr(expr, SELECT),

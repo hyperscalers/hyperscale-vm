@@ -26,7 +26,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MaterializeError, MemoryStore, OverlayStore};
 use hyperscale_vm_types::math::U256;
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
@@ -247,9 +247,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
 
     let taken = session.range_take(0, &[10]).expect("the holder has it");
     session.grant_issuance(X, ResourceKind::NonFungible);
-    let minted = session
-        .mint_instances(ISSUER_REP, &[99])
-        .expect("the grant mints");
+    let minted = session.mint_instances(&[99]).expect("the grant mints");
 
     for (name, funds) in [("range-take", taken), ("mint-instances", minted)] {
         assert_eq!(
@@ -339,10 +337,10 @@ fn a_grant_burns_only_what_it_issues() {
     let foreign = session.cell_take(0, 100).expect("the debit is queued");
     session.grant_issuance(Y, ResourceKind::Fungible);
 
-    let issued = session.mint(ISSUER_REP, 5).expect("the grant mints");
-    assert_eq!(session.burn(ISSUER_REP, issued), Ok(()));
+    let issued = session.mint(5).expect("the grant mints");
+    assert_eq!(session.burn(issued), Ok(()));
     assert_eq!(
-        session.burn(ISSUER_REP, foreign).map_err(AbortReason::from),
+        session.burn(foreign).map_err(AbortReason::from),
         Err(AbortReason::WrongResource)
     );
 }
@@ -354,19 +352,17 @@ fn a_grant_mints_only_its_own_kind() {
     let mut fungible = session(&[Some(X), Some(Y)]);
     fungible.grant_issuance(Y, ResourceKind::Fungible);
     assert_eq!(
-        fungible
-            .mint_instances(ISSUER_REP, &[1])
-            .map_err(AbortReason::from),
+        fungible.mint_instances(&[1]).map_err(AbortReason::from),
         Err(AbortReason::WrongIssuanceKind)
     );
 
     let mut non_fungible = session(&[Some(X), Some(Y)]);
     non_fungible.grant_issuance(X, ResourceKind::NonFungible);
     assert_eq!(
-        non_fungible.mint(ISSUER_REP, 5).map_err(AbortReason::from),
+        non_fungible.mint(5).map_err(AbortReason::from),
         Err(AbortReason::WrongIssuanceKind)
     );
-    assert!(non_fungible.mint_instances(ISSUER_REP, &[1]).is_ok());
+    assert!(non_fungible.mint_instances(&[1]).is_ok());
 }
 
 /// Value a grant mints carries what the grant names, so it credits the
@@ -375,13 +371,13 @@ fn a_grant_mints_only_its_own_kind() {
 fn minted_value_lands_only_in_its_own_cell() {
     let mut session = session(&[Some(X), Some(Y)]);
     session.grant_issuance(Y, ResourceKind::Fungible);
-    let minted = session.mint(ISSUER_REP, 5).expect("the grant mints");
+    let minted = session.mint(5).expect("the grant mints");
 
     assert_eq!(
         session.cell_put(0, minted).map_err(AbortReason::from),
         Err(AbortReason::WrongResource)
     );
-    let minted = session.mint(ISSUER_REP, 5).expect("the grant mints");
+    let minted = session.mint(5).expect("the grant mints");
     assert_eq!(session.cell_put(1, minted), Ok(()));
 }
 

@@ -55,7 +55,7 @@ instantiate() — infallible
       7  requires self.instance[self-issued(non-fungible["owner-badge"]), 0] is absent
       8  write self.instance[self-issued(non-fungible["owner-badge"]), 0]
   yields   edge 0 = edge(self-issued(non-fungible["owner-badge"]) × [0])
-  exports  handle for clause 2, handle for clause 4, handle for clause 6, handle for clause 8, self.record, the issuer
+  exports  handle for clause 2, handle for clause 4, handle for clause 6, handle for clause 8, self.record
 
 register-validator(u64, bytes, bytes) — infallible
   declares
@@ -70,7 +70,7 @@ stake(bucket) — infallible
   declares
       0  credit self.vault[config.staked_resource] holding config.staked_resource
   yields   edge 0 = self-issued(fungible["stake-unit"])
-  exports  handle for clause 0, edge arg0, the issuer
+  exports  handle for clause 0, edge arg0
 
 unjail(u64) — infallible
   declares
@@ -82,4 +82,4 @@ unjail(u64) — infallible
 unstake(bucket) — infallible
   takes    arg0 carrying self-issued(fungible["stake-unit"])
   issues   "stake-unit" fungible
-  exports  edge arg0, the issuer
+  exports  edge arg0

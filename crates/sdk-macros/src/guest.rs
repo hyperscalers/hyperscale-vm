@@ -106,10 +106,6 @@ pub fn method(
                     let mut #name = ::hyperscale_vm_sdk::state::#kind::held(#ident);
                 ));
             }
-            Carries::Issuer => {
-                signature.push(quote!(#ident: &Issuer));
-                prologue.push(quote!(let __issuer = #ident.handle();));
-            }
             Carries::Value { narrow } => match shape {
                 Shape::Scalar => signature.push(quote!(#ident: u64)),
                 Shape::Flag => signature.push(quote!(#ident: bool)),
@@ -145,7 +141,7 @@ pub fn method(
                         let #ident: #ty = ::core::convert::Into::into(#ident);
                     ));
                 }
-                Shape::Handle | Shape::Run | Shape::Bucket | Shape::Issuer => {
+                Shape::Handle | Shape::Run | Shape::Bucket => {
                     unreachable!("a value binding is never a handle")
                 }
             },

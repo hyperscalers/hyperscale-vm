@@ -212,8 +212,6 @@ impl From<Ordering> for WitOrdering {
 /// the one whose handle table entry the guest can discard — which is why
 /// it is the only one whose destructor does anything.
 pub struct Bucket;
-/// Host-side marker for the `issuer` resource.
-pub struct Issuer;
 /// Host-side marker for the `access` resource.
 ///
 /// One marker for every mode: a handle type says which table its rep
@@ -268,7 +266,6 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             store.data_mut().bucket_drop(rep).map_err(host_trap)
         },
     )?;
-    state.resource("issuer", ResourceType::host::<Issuer>(), |_, _| Ok(()))?;
     state.resource("capability", ResourceType::host::<Capability>(), |_, _| {
         Ok(())
     })?;
@@ -399,21 +396,21 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     )?;
     state.func_wrap(
         "mint",
-        |mut store: StoreContextMut<'_, T>, (i, amount): (Resource<Issuer>, Amount)| {
-            let rep = meter::mint(&mut Port(&mut store), i.rep(), amount.into()).map_err(fault)?;
+        |mut store: StoreContextMut<'_, T>, (amount,): (Amount,)| {
+            let rep = meter::mint(&mut Port(&mut store), amount.into()).map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
     state.func_wrap(
         "burn",
-        |mut store: StoreContextMut<'_, T>, (i, funds): (Resource<Issuer>, Resource<Bucket>)| {
-            meter::burn(&mut Port(&mut store), i.rep(), funds.rep()).map_err(fault)
+        |mut store: StoreContextMut<'_, T>, (funds,): (Resource<Bucket>,)| {
+            meter::burn(&mut Port(&mut store), funds.rep()).map_err(fault)
         },
     )?;
     state.func_wrap(
         "mint-instances",
-        |mut store: StoreContextMut<'_, T>, (i, ids): (Resource<Issuer>, Vec<u64>)| {
-            let rep = meter::mint_instances(&mut Port(&mut store), i.rep(), &ids).map_err(fault)?;
+        |mut store: StoreContextMut<'_, T>, (ids,): (Vec<u64>,)| {
+            let rep = meter::mint_instances(&mut Port(&mut store), &ids).map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;

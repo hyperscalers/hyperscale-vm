@@ -17,9 +17,9 @@ use hyperscale::kernel::state::{
 struct Nf;
 
 impl Guest for Nf {
-    fn mint(data: &Capability, id: u64, i: &Issuer) -> Bucket {
+    fn mint(data: &Capability, id: u64) -> Bucket {
         capability_set(data, &id.to_le_bytes());
-        mint_instances(i, &[id])
+        mint_instances(&[id])
     }
 
     fn deposit(holdings: &Capability, funds: Bucket) {
@@ -30,8 +30,8 @@ impl Guest for Nf {
         capability_instance_take(holdings, &ids)
     }
 
-    fn burn(funds: Bucket, i: &Issuer) {
-        burn(i, funds);
+    fn burn(funds: Bucket) {
+        burn(funds);
     }
 
     fn operate() {

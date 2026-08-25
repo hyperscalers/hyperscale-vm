@@ -16,16 +16,15 @@ instantiate() — infallible
 issue(u128) — infallible
   issues   "share" fungible, granting withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge
   yields   edge 0 = self-issued(fungible["share"]), granting withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge
-  exports  arg0, the issuer
+  exports  arg0
 
 issue-bearer(u128) — infallible
   issues   "bearer" fungible, granting recall to configuration field 0
   yields   edge 0 = self-issued(fungible["bearer"]), granting recall to configuration field 0
-  exports  arg0, the issuer
+  exports  arg0
 
 register() — infallible
   issues   "registered" fungible, granting withdraw to nobody
   declares
       0  requires claim config.registrar
   yields   edge 0 = self-issued(fungible["registered"]), granting withdraw to nobody
-  exports  the issuer

@@ -75,15 +75,6 @@ interface state {
     /// noticing that value was dropped is what a handle buys.
     resource bucket;
 
-    /// The authority to create value.
-    ///
-    /// Granted to an invocation whose method declares an output the
-    /// instance issues itself, and to no other — so a body that never
-    /// said it produces what it issues has no handle to name and cannot.
-    /// The grant carries no resource: which one the value is denominated
-    /// in is what the method's declared outputs say.
-    resource issuer;
-
     /// One declared access, borrowed for the call that acts through it.
     ///
     /// One resource for every mode, because a handle type answers which
@@ -276,25 +267,26 @@ interface state {
 
     /// Create `amount` of the resource this invocation issues.
     ///
-    /// The one place a bucket appears with no cell debited behind it, and
-    /// the reason it needs a handle rather than a function: what a body
-    /// may issue is fixed before it runs, by the declaration the grant
-    /// was read off.
-    mint: func(i: borrow<issuer>, amount: amount) -> own<bucket>;
+    /// The one place a bucket appears with no cell debited behind it.
+    /// What a body may issue is fixed before it runs, by the declaration
+    /// the grant was read off — and the grant is the invocation's rather
+    /// than a handle's, so an invocation that declared no such output is
+    /// refused here whatever its body asks for.
+    mint: func(amount: amount) -> own<bucket>;
 
     /// Create the named instances of the resource this invocation issues.
     ///
     /// The same grant and the same terms as a quantity, for the value
     /// that is counted by name rather than by amount. Traps on a
     /// repeated id and on more than one edge may carry.
-    mint-instances: func(i: borrow<issuer>, ids: list<u64>) -> own<bucket>;
+    mint-instances: func(ids: list<u64>) -> own<bucket>;
 
     /// Destroy what this invocation issues, consuming the bucket.
     ///
     /// The inverse of the two above and under the same grant: bringing
     /// value out of existence is as declared as bringing it in, which is
     /// what keeps a body from simply forgetting it.
-    burn: func(i: borrow<issuer>, funds: own<bucket>);
+    burn: func(funds: own<bucket>);
 
     /// How many elements the site's loop mapped over.
     run-len: func(r: borrow<run>) -> u32;

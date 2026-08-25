@@ -69,13 +69,13 @@ impl KernelHost for StubHost {
     fn amount_cell_balance(&mut self, _rep: u32) -> Result<u128, AbortReason> {
         self.op("balance", 7)
     }
-    fn burn(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
+    fn burn(&mut self, _funds: u32) -> Result<(), AbortReason> {
         self.op("burn", ())
     }
-    fn mint(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
+    fn mint(&mut self, _amount: u128) -> Result<u32, AbortReason> {
         self.op("mint", 1)
     }
-    fn mint_instances(&mut self, _rep: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
+    fn mint_instances(&mut self, _ids: &[u64]) -> Result<u32, AbortReason> {
         self.op("mint-instances", 1)
     }
     fn range_take(&mut self, _rep: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
@@ -253,7 +253,7 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "mint",
             |p| {
-                let _ = meter::mint(p, 0, 1);
+                let _ = meter::mint(p, 1);
             },
             vec![Charge(AMOUNT), Host("mint")],
         ),
@@ -274,14 +274,14 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "burn",
             |p| {
-                let _ = meter::burn(p, 0, 1);
+                let _ = meter::burn(p, 1);
             },
             vec![Host("burn")],
         ),
         (
             "mint-instances",
             |p| {
-                let _ = meter::mint_instances(p, 0, &[1, 2, 3]);
+                let _ = meter::mint_instances(p, &[1, 2, 3]);
             },
             vec![Charge(24), Host("mint-instances")],
         ),

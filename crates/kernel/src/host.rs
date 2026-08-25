@@ -54,11 +54,11 @@ impl KernelHost for KernelSession {
     fn amount_cell_balance(&mut self, rep: u32) -> Result<u128, AbortReason> {
         self.amount_cell_balance(rep).map_err(Into::into)
     }
-    fn burn(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
-        refused(Self::burn(self, rep, funds))
+    fn burn(&mut self, funds: u32) -> Result<(), AbortReason> {
+        refused(Self::burn(self, funds))
     }
-    fn mint_instances(&mut self, rep: u32, ids: &[u64]) -> Result<u32, AbortReason> {
-        refused(Self::mint_instances(self, rep, ids))
+    fn mint_instances(&mut self, ids: &[u64]) -> Result<u32, AbortReason> {
+        refused(Self::mint_instances(self, ids))
     }
     fn range_take(&mut self, rep: u32, ids: &[u64]) -> Result<u32, AbortReason> {
         refused(Self::range_take(self, rep, ids))
@@ -81,8 +81,8 @@ impl KernelHost for KernelSession {
     fn cell_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
         refused(Self::cell_put(self, rep, funds))
     }
-    fn mint(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
-        refused(Self::mint(self, rep, amount))
+    fn mint(&mut self, amount: u128) -> Result<u32, AbortReason> {
+        refused(Self::mint(self, amount))
     }
     fn cell_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
         refused(Self::cell_take(self, rep, amount))

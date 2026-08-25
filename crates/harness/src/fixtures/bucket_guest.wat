@@ -1,12 +1,11 @@
 (component
   (import "hyperscale:kernel/state" (instance $state
     (export "bucket" (type $bk (sub resource)))
-    (export "issuer" (type $is (sub resource)))
     (export "capability" (type $ac (sub resource)))
     (type $amt_decl (record (field "low" u64) (field "high" u64)))
     (export "amount" (type $amt (eq $amt_decl)))
     (export "capability-get" (func (param "c" (borrow $ac)) (result (list u8))))
-    (export "mint" (func (param "i" (borrow $is)) (param "amount" $amt) (result (own $bk))))
+    (export "mint" (func (param "amount" $amt) (result (own $bk))))
     (export "capability-take" (func (param "c" (borrow $ac)) (param "amount" $amt) (result (own $bk))))
     (export "capability-put" (func (param "c" (borrow $ac)) (param "funds" (own $bk))))
     (export "bucket-amount" (func (param "b" (borrow $bk)) (result $amt)))
@@ -18,7 +17,6 @@
     (export "capability-reserve-take" (func (param "c" (borrow $ac)) (result (own $bk))))))
 
   (alias export $state "bucket" (type $bucket))
-  (alias export $state "issuer" (type $issuer))
   (alias export $state "capability" (type $rcell))
   (alias export $state "capability" (type $wcell))
   (alias export $state "capability" (type $dcell))
@@ -72,7 +70,6 @@
   (core func $reserve_take_l (canon lower (func $reserve_take)))
   (core func $drop_bucket (canon resource.drop $bucket))
   (core func $drop_read (canon resource.drop $rcell))
-  (core func $drop_issuer (canon resource.drop $issuer))
   (core func $drop_write (canon resource.drop $wcell))
   (core func $drop_delta (canon resource.drop $dcell))
   (core func $drop_reserve (canon resource.drop $vcell))
@@ -80,7 +77,7 @@
   (core module $m
     (import "env" "mem" (memory 1 1))
     (import "k" "read-get" (func $read_get (param i32 i32)))
-    (import "k" "issue" (func $issue (param i32 i64 i64) (result i32)))
+    (import "k" "issue" (func $issue (param i64 i64) (result i32)))
     (import "k" "write-take" (func $write_take (param i32 i64 i64) (result i32)))
     (import "k" "write-put" (func $write_put (param i32 i32)))
     (import "k" "bucket-amount" (func $bucket_amount (param i32 i32)))
@@ -95,7 +92,6 @@
     (import "k" "reserve-take" (func $reserve_take (param i32) (result i32)))
     (import "k" "drop-bucket" (func $drop_bucket (param i32)))
     (import "k" "drop-read" (func $drop_read (param i32)))
-    (import "k" "drop-issuer" (func $drop_issuer (param i32)))
     (import "k" "drop-write" (func $drop_write (param i32)))
     (import "k" "drop-delta" (func $drop_delta (param i32)))
     (import "k" "drop-reserve" (func $drop_reserve (param i32)))
@@ -125,13 +121,10 @@
       local.get 0
       call $drop_bucket)
 
-    (func (export "issue") (param i32 i64) (result i32)
+    (func (export "issue") (param i64) (result i32)
       local.get 0
-      local.get 1
       i64.const 0
-      call $issue
-      local.get 0
-      call $drop_issuer)
+      call $issue)
 
     ;; Take the named instances out of the interval and hand them on: the
     ;; removal and the edge are one operation, so a body cannot pass on
@@ -334,7 +327,6 @@
       (export "reserve-take" (func $reserve_take_l))
       (export "drop-bucket" (func $drop_bucket))
       (export "drop-read" (func $drop_read))
-      (export "drop-issuer" (func $drop_issuer))
       (export "drop-write" (func $drop_write))
       (export "drop-delta" (func $drop_delta))
       (export "drop-reserve" (func $drop_reserve))))))
@@ -351,7 +343,7 @@
     (param "b" (own $bucket)) (result u64)
     (canon lift (core func $i "discard")))
   (func (export "issue")
-    (param "i" (borrow $issuer)) (param "amount" u64) (result (own $bucket))
+    (param "amount" u64) (result (own $bucket))
     (canon lift (core func $i "issue")))
   (func (export "take-two")
     (param "d" (borrow $dcell)) (param "w" (borrow $wcell))

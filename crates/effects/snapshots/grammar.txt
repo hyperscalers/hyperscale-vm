@@ -113,7 +113,7 @@ seat(u64, u64) — infallible
       1  write self.instance[self-issued(non-fungible["seat"]), arg0]
       2  write self.noted
   yields   edge 0 = edge(self-issued(non-fungible["seat"]) × [arg0])
-  exports  handle for clause 1, handle for clause 2, arg1, arg0, the issuer
+  exports  handle for clause 1, handle for clause 2, arg1, arg0
 
 seated(nf-bucket) — infallible
   takes    arg0 carrying self-issued(non-fungible["seat"])
@@ -207,7 +207,7 @@ unseat(nf-bucket) — infallible
       0  for each of ids-of(arg0)
         1  requires self.instance[self-issued(non-fungible["seat"]), element] is present
         2  write self.instance[self-issued(non-fungible["seat"]), element]
-  exports  the run over clause 0 site 1, edge arg0, the issuer
+  exports  the run over clause 0 site 1, edge arg0
 
 widest() — infallible
   declares

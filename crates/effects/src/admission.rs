@@ -1870,7 +1870,6 @@ fn lower_call(
                     }
                 }
             }
-            AbiParam::Issuer => CallArg::Issuer,
             AbiParam::Derived(expr) => {
                 let value =
                     evaluate_expr(expr, inputs, hasher).map_err(|source| AdmissionError::Eval {

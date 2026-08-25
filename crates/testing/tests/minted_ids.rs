@@ -9,12 +9,11 @@
 //! comes back, before anything downstream can file or consume it.
 
 use hyperscale_vm_effects::{
-    AbiParam, Expr, GrantsExpr, Issuance, MethodSignature, PackageMetadata, ResourceKind, Totality,
-    Value,
+    Expr, GrantsExpr, Issuance, MethodSignature, PackageMetadata, ResourceKind, Totality, Value,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, PrincipalAddr, account, principal};
-use hyperscale_vm_types::{AbortReason, ComponentAddr, ISSUER_REP};
+use hyperscale_vm_types::{AbortReason, ComponentAddr};
 
 const MINTER: PrincipalAddr = principal(0x41);
 
@@ -36,7 +35,7 @@ fn issuer() -> PackageMetadata {
                 kind: ResourceKind::NonFungible,
                 grants: GrantsExpr::new(),
             }),
-            abi: vec![AbiParam::Issuer],
+            abi: vec![],
             outputs: vec![Expr::NfBucket {
                 resource: Box::new(Expr::SelfResource {
                     kind: ResourceKind::NonFungible,
@@ -68,7 +67,7 @@ fn miscast_issuer() -> PackageMetadata {
                 kind: ResourceKind::NonFungible,
                 grants: GrantsExpr::new(),
             }),
-            abi: vec![AbiParam::Issuer],
+            abi: vec![],
             outputs: vec![Expr::SelfResource {
                 kind: ResourceKind::NonFungible,
                 material: vec![Expr::Literal(Value::Bytes(BADGE.to_vec()))],
@@ -87,10 +86,10 @@ fn body<const MINTED: u64>(
     args: &[GuestArg<'_>],
 ) -> (KernelSession, Invoked) {
     assert_eq!(export, "mint");
-    let [GuestArg::Issuer] = args else {
+    let [] = args else {
         panic!("the grant alone: {args:?}");
     };
-    match session.mint_instances(ISSUER_REP, &[MINTED]) {
+    match session.mint_instances(&[MINTED]) {
         Ok(rep) => (
             session,
             Invoked::Produced {

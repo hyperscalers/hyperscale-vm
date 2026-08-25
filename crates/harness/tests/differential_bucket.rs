@@ -17,8 +17,8 @@ use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore};
 use hyperscale_vm_ref::{CVal, HandleKind};
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, ISSUER_REP,
-    Mode, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode,
+    Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::{bail, format_err};
@@ -31,7 +31,7 @@ use wat::parse_str;
 /// which is the thing the conservation check exists to refuse.
 fn minted(session: &mut KernelSession, amount: u128) -> u32 {
     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-    session.mint(ISSUER_REP, amount).expect("the grant mints")
+    session.mint(amount).expect("the grant mints")
 }
 
 const FUEL: u64 = 1_000_000_000;
@@ -345,12 +345,13 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
     let probe = build();
     // Every capability crosses as one resource, whichever mode it
     // carries; what the mode still decides is which table position the
-    // fixture is naming.
-    let (rep, kind) = match take.cell(fx) {
-        None => (ISSUER_REP, HandleKind::Issuer),
-        Some((key, mode)) => (rep_of(&probe, key, mode), HandleKind::Capability),
-    };
-    let mut args = vec![CVal::Borrow(rep, kind)];
+    // fixture is naming. A mint names none — the grant is the
+    // invocation's, so nothing crosses to stand for it.
+    let mut args: Vec<CVal> = take
+        .cell(fx)
+        .map(|(key, mode)| CVal::Borrow(rep_of(&probe, key, mode), HandleKind::Capability))
+        .into_iter()
+        .collect();
     args.extend(take.amount().map(CVal::U64));
 
     let mut dual = GUEST.instantiate(FUEL, build)?;
@@ -372,7 +373,7 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
             // what this fixture is about is where the value went.
             for session in [&mut blessed, &mut reference] {
                 session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-                session.burn(ISSUER_REP, rep)?;
+                session.burn(rep)?;
             }
             Took::Value(value)
         }
@@ -675,7 +676,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
     // the split divided is still accounted for on both sides of it.
     for session in [&mut blessed, &mut reference] {
         session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-        session.burn(ISSUER_REP, came_off)?;
+        session.burn(came_off)?;
     }
     let (receipt, _) = blessed.finish(vec![], 0).expect("the oracle is clean");
     let left = receipt

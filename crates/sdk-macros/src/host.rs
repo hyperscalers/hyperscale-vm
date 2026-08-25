@@ -62,9 +62,6 @@ pub fn arm(
                     let mut #name = ::hyperscale_vm_sdk::host::#reader(__args, #position);
                 )
             }
-            Carries::Issuer => quote!(
-                let __issuer = ::hyperscale_vm_sdk::host::issuer(__args, #position);
-            ),
             Carries::Value { narrow } => match param.shape {
                 Shape::Scalar => quote!(
                     let #ident = ::hyperscale_vm_sdk::host::scalar(__args, #position);
@@ -93,7 +90,7 @@ pub fn arm(
                         ::hyperscale_vm_sdk::host::ids(__args, #position).to_vec(),
                     );
                 ),
-                Shape::Handle | Shape::Run | Shape::Bucket | Shape::Issuer => {
+                Shape::Handle | Shape::Run | Shape::Bucket => {
                     unreachable!("a value binding is never a handle")
                 }
             },

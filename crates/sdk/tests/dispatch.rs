@@ -14,8 +14,8 @@ use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, Ov
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::host::{GuestArg, Invoked};
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, ISSUER_REP,
-    Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// A bucket of `amount`, minted rather than conjured.
@@ -25,7 +25,7 @@ use hyperscale_vm_types::{
 /// which is the thing the conservation check exists to refuse.
 fn minted(session: &mut KernelSession, amount: u128) -> u32 {
     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-    session.mint(ISSUER_REP, amount).expect("the grant mints")
+    session.mint(amount).expect("the grant mints")
 }
 
 const OWNER: Address = Address::new([0x21; 31], AddressClass::Component);

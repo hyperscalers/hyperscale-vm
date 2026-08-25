@@ -92,7 +92,7 @@ mod through_the_session {
     use hyperscale_vm_effects::{Declaration, Hasher};
     use hyperscale_vm_kernel::{EnvInputs, KernelSession, OverlayStore, SupplyDelta, SupplyLedger};
     use hyperscale_vm_types::{
-        AbortReason, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Outcome, ResourceAddr,
+        AbortReason, Effect, EffectSet, EffectTarget, Mode, Outcome, ResourceAddr,
     };
 
     use super::{Hash32, MemoryStore, ResourceKind, TestHasher, TxHash, encode_amount, vault};
@@ -138,7 +138,7 @@ mod through_the_session {
     #[test]
     fn a_mint_is_what_the_receipt_reports_and_the_ledger_takes() {
         let mut session = session();
-        let minted = session.mint(ISSUER_REP, 500).expect("the grant mints");
+        let minted = session.mint(500).expect("the grant mints");
         session.cell_put(0, minted).expect("into its own vault");
 
         let supply = completed(session);
@@ -157,7 +157,7 @@ mod through_the_session {
         let mut ledger = SupplyLedger::new();
 
         let mut minting = session();
-        let minted = minting.mint(ISSUER_REP, 500).expect("the grant mints");
+        let minted = minting.mint(500).expect("the grant mints");
         minting.cell_put(0, minted).expect("into its own vault");
         completed(minting).apply(&mut ledger).expect("credited");
 
@@ -168,7 +168,7 @@ mod through_the_session {
         held.write(vault(1, UNIT.address()), encode_amount(500).to_vec());
         let mut burning = session_over(held);
         let taken = burning.cell_take(0, 500).expect("the debit is queued");
-        burning.burn(ISSUER_REP, taken).expect("the grant burns");
+        burning.burn(taken).expect("the grant burns");
         let supply = completed(burning);
         assert_eq!(supply.burned(UNIT), 500);
         supply.apply(&mut ledger).expect("debited");
@@ -184,8 +184,8 @@ mod through_the_session {
     #[test]
     fn a_mint_and_a_burn_in_one_transaction_are_both_recorded() {
         let mut session = session();
-        let minted = session.mint(ISSUER_REP, 500).expect("the grant mints");
-        session.burn(ISSUER_REP, minted).expect("the grant burns");
+        let minted = session.mint(500).expect("the grant mints");
+        session.burn(minted).expect("the grant burns");
 
         let supply = completed(session);
         assert_eq!((supply.minted(UNIT), supply.burned(UNIT)), (500, 500));
@@ -203,7 +203,7 @@ mod through_the_session {
     fn an_aborted_mint_moves_no_supply() {
         let mut session = session();
         // Minted, and never landed in a cell: the account cannot balance.
-        let minted = session.mint(ISSUER_REP, 500).expect("the grant mints");
+        let minted = session.mint(500).expect("the grant mints");
         let _ = minted;
 
         let (receipt, _) = session
@@ -323,7 +323,7 @@ mod through_the_session {
     #[test]
     fn value_moving_between_cells_moves_no_supply() {
         let mut session = session();
-        let minted = session.mint(ISSUER_REP, 500).expect("the grant mints");
+        let minted = session.mint(500).expect("the grant mints");
         session.cell_put(0, minted).expect("into its own vault");
         let moved = session.cell_take(0, 200).expect("out again");
         session.cell_put(0, moved).expect("and back");

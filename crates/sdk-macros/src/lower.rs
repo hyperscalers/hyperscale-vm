@@ -1285,13 +1285,13 @@ impl<'a> Lowerer<'a> {
             |a| self.expr(a).code,
         );
         let amount = self.value(amount);
-        let grant = self.issuer(ResourceKind::Fungible, &issued.mark);
+        self.issuer(ResourceKind::Fungible, &issued.mark);
         Eval {
             val: Val::Produced(Term::SelfResource(
                 ResourceKind::Fungible,
                 issued.mark.clone(),
             )),
-            code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#grant, #amount))),
+            code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#amount))),
         }
     }
 
@@ -1753,10 +1753,10 @@ impl<'a> Lowerer<'a> {
             })
         };
         let funds = self.value(destroyed);
-        let grant = self.issuer(ResourceKind::NonFungible, &issued.mark);
+        self.issuer(ResourceKind::NonFungible, &issued.mark);
         Eval::plain(quote!({
             #cleared
-            ::hyperscale_vm_sdk::state::burn_nf_granted(#grant, #funds)
+            ::hyperscale_vm_sdk::state::burn_nf_granted(#funds)
         }))
     }
 
@@ -1860,7 +1860,7 @@ impl<'a> Lowerer<'a> {
             quote!(::hyperscale_vm_sdk::state::file_instance(#handle);)
         };
         let id_value = self.value(eval.code);
-        let grant = self.issuer(ResourceKind::NonFungible, &issued.mark);
+        self.issuer(ResourceKind::NonFungible, &issued.mark);
         let produced = Term::NfBucket {
             resource: Box::new(resource_term),
             ids: Box::new(Term::List(vec![id])),
@@ -1869,7 +1869,7 @@ impl<'a> Lowerer<'a> {
             val: Val::Produced(produced),
             code: Code::Rust(quote!({
                 #file
-                ::hyperscale_vm_sdk::state::mint_nf_granted(#grant, #id_value)
+                ::hyperscale_vm_sdk::state::mint_nf_granted(#id_value)
             })),
         }
     }
@@ -1911,8 +1911,8 @@ impl<'a> Lowerer<'a> {
             ),
         }
         let funds = self.value(destroyed.code);
-        let grant = self.issuer(ResourceKind::Fungible, mark);
-        Eval::plain(quote!(::hyperscale_vm_sdk::state::burn_granted(#grant, #funds)))
+        self.issuer(ResourceKind::Fungible, mark);
+        Eval::plain(quote!(::hyperscale_vm_sdk::state::burn_granted(#funds)))
     }
 
     /// Fix what the edge at `param` carries.
@@ -2252,9 +2252,11 @@ impl<'a> Lowerer<'a> {
             .unwrap_or_else(|| value_ident(index as usize))
     }
 
-    /// Bind this method's issuance grant as an export parameter, and
-    /// answer the rep the issue call takes.
-    fn issuer(&mut self, kind: ResourceKind, mark: &[u8]) -> TokenStream {
+    /// Record this method's issuance grant.
+    ///
+    /// No parameter follows it: the grant is the invocation's, read off
+    /// the outputs the declaration names, so nothing crosses to say so.
+    fn issuer(&mut self, kind: ResourceKind, mark: &[u8]) {
         assert!(
             self.out
                 .issues
@@ -2263,7 +2265,6 @@ impl<'a> Lowerer<'a> {
             "a method holds one issuance grant, and two of its calls named two resources"
         );
         self.out.issues = Some((kind, mark.to_vec()));
-        quote!(__issuer)
     }
 
     /// Bind the handle for `site` as an export parameter, and answer the

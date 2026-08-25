@@ -87,11 +87,7 @@ pub fn metadata() -> PackageMetadata {
                 grants: GrantsExpr::new(),
             }),
             params: vec![],
-            abi: vec![
-                AbiParam::Handle(0),
-                AbiParam::Derived(minted_id.clone()),
-                AbiParam::Issuer,
-            ],
+            abi: vec![AbiParam::Handle(0), AbiParam::Derived(minted_id.clone())],
             outputs: vec![Expr::NfBucket {
                 resource: Box::new(minted_resource.clone()),
                 ids: Box::new(Expr::List(vec![minted_id.clone()])),
@@ -155,7 +151,7 @@ pub fn metadata() -> PackageMetadata {
                 grants: GrantsExpr::new(),
             }),
             params: vec![ParamType::NfBucket],
-            abi: vec![AbiParam::Bucket(0), AbiParam::Issuer],
+            abi: vec![AbiParam::Bucket(0)],
             ..MethodSignature::default()
         },
     );

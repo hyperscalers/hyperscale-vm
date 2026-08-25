@@ -35,7 +35,7 @@ const FUEL: u64 = 1_000_000_000;
 const HANDLE_KINDS: &[&str] = &["capability", "run"];
 
 /// A component whose exports take every parameter shape the gate can
-/// demand: a borrow of each state resource plus the issuance grant, an
+/// demand: a borrow of each state resource, an
 /// owned bucket, and the derived values — verdict, scalar, bytes, and
 /// the address record.
 fn vocabulary_component() -> Vec<u8> {
@@ -58,11 +58,9 @@ fn vocabulary_component() -> Vec<u8> {
         r#"(component
              (import "hyperscale:kernel/state" (instance $state
                {resources}
-               (export "bucket" (type $bk (sub resource)))
-               (export "issuer" (type $is (sub resource)))))
+               (export "bucket" (type $bk (sub resource)))))
              {aliases}
              (alias export $state "bucket" (type $bucket))
-             (alias export $state "issuer" (type $issuer))
              (type $addr_decl (record
                (field "a" u64) (field "b" u64) (field "c" u64) (field "d" u64)))
              (import "address" (type $address (eq $addr_decl)))
@@ -70,7 +68,6 @@ fn vocabulary_component() -> Vec<u8> {
 
              (core module $m
                (func (export "handles") (param {core_params}))
-               (func (export "grant") (param i32))
                (func (export "edge") (param i32))
                (func (export "values") (param i32 i64 i32 i32 i64 i64 i64 i64))
                (memory (export "mem") 1 1)
@@ -80,8 +77,6 @@ fn vocabulary_component() -> Vec<u8> {
 
              (func (export "handles") {params}
                (canon lift (core func $i "handles")))
-             (func (export "grant") (param "authority" (borrow $issuer))
-               (canon lift (core func $i "grant")))
              (func (export "edge") (param "funds" (own $bucket))
                (canon lift (core func $i "edge")))
              (func (export "values")
@@ -112,7 +107,6 @@ fn every_shape_the_gate_can_demand_deploys_and_decodes() {
         })
         .collect();
     assert_eq!(exports["handles"].params, handles);
-    assert_eq!(exports["grant"].params, vec![ExportParam::Issuer]);
     assert_eq!(exports["edge"].params, vec![ExportParam::Bucket]);
     assert_eq!(
         exports["values"].params,

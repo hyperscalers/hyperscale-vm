@@ -179,12 +179,6 @@ pub enum AbiParam {
     /// depends on what the producing node handed back, which does not
     /// exist until that node runs.
     Bucket(u32),
-    /// This invocation's authority to issue.
-    ///
-    /// Granted by the walk from the method's own declared outputs, so a
-    /// binding naming one where the signature issues nothing is a
-    /// package asking for a handle nothing would hand it.
-    Issuer,
     /// Whether the clause this names was declared: the guard's own
     /// verdict, as a `bool` the export takes.
     ///

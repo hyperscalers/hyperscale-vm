@@ -160,13 +160,9 @@ pub fn cell_clear<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<()
 /// `mint`. Charges its amount argument and nothing for the handle it
 /// yields: a bucket crosses as a table index, where the amount it carries
 /// never crosses at all — here and for every take below.
-pub fn mint<P: HostAccess + FuelSink>(
-    port: &mut P,
-    issuer: u32,
-    amount: u128,
-) -> Result<u32, MeterError> {
+pub fn mint<P: HostAccess + FuelSink>(port: &mut P, amount: u128) -> Result<u32, MeterError> {
     charge(port, AMOUNT_BOUNDARY_BYTES)?;
-    refused(port.host().mint(issuer, amount))
+    refused(port.host().mint(amount))
 }
 
 /// `access.balance`: one figure, whichever value mode
@@ -178,22 +174,17 @@ pub fn cell_balance<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<
 }
 
 /// `burn`.
-pub fn burn<P: HostAccess + FuelSink>(
-    port: &mut P,
-    issuer: u32,
-    funds: u32,
-) -> Result<(), MeterError> {
-    refused(port.host().burn(issuer, funds))
+pub fn burn<P: HostAccess + FuelSink>(port: &mut P, funds: u32) -> Result<(), MeterError> {
+    refused(port.host().burn(funds))
 }
 
 /// `mint-instances`.
 pub fn mint_instances<P: HostAccess + FuelSink>(
     port: &mut P,
-    issuer: u32,
     ids: &[u64],
 ) -> Result<u32, MeterError> {
     charge(port, ids.len() * 8)?;
-    refused(port.host().mint_instances(issuer, ids))
+    refused(port.host().mint_instances(ids))
 }
 
 /// `access.instance-take`.

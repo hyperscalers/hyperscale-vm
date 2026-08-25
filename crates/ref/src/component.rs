@@ -23,7 +23,7 @@ use hyperscale_vm_embed::meter::{
 };
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked, KernelHost};
 use hyperscale_vm_types::math::{Rounding, U256};
-use hyperscale_vm_types::{AbortReason, Drawn, ISSUER_REP, SEED_BYTES};
+use hyperscale_vm_types::{AbortReason, Drawn, SEED_BYTES};
 use wasmparser::{
     CanonicalFunction, CanonicalOption, ComponentAlias, ComponentDefinedType,
     ComponentExternalKind, ComponentType, ComponentTypeRef, ComponentValType, ExternalKind,
@@ -49,8 +49,6 @@ pub enum HandleKind {
     /// `bucket`: the world's only owned resource, and so the only one a
     /// guest can keep past a call or discard.
     Bucket,
-    /// `issuer`: the authority to create value, granted per invocation.
-    Issuer,
     /// `access`: one declared access, whichever mode the capability at
     /// its rep carries.
     Capability,
@@ -65,7 +63,6 @@ impl HandleKind {
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "bucket" => Some(Self::Bucket),
-            "issuer" => Some(Self::Issuer),
             "capability" => Some(Self::Capability),
             "run" => Some(Self::Run),
             _ => None,
@@ -119,7 +116,6 @@ impl From<&GuestArg<'_>> for CVal {
             GuestArg::Bytes(bytes) => Self::Bytes(bytes.to_vec()),
             GuestArg::Ids(ids) => Self::Ids(ids.to_vec()),
             GuestArg::Bucket(rep) => Self::Own(*rep),
-            GuestArg::Issuer => Self::Borrow(ISSUER_REP, HandleKind::Issuer),
         }
     }
 }
@@ -180,6 +176,9 @@ const fn host_params(op: HostFn) -> usize {
         | HostFn::ReserveTake
         | HostFn::CellClear
         | HostFn::Seal
+        // The grant is the invocation's, so a burn names the bucket it
+        // consumes and nothing else.
+        | HostFn::IssuerBurn
         // A run's own two questions name the run and, for the second,
         // the element beside it: neither is an operation with a single
         // form to count from.
@@ -188,21 +187,21 @@ const fn host_params(op: HostFn) -> usize {
         | HostFn::CellBalance
         | HostFn::Remove
         | HostFn::CellPut
+        | HostFn::IssuerMintInstances
         | HostFn::BucketAmount
         | HostFn::BucketPut
-        | HostFn::IssuerBurn
         | HostFn::OpenSeal
-        | HostFn::RunDeclared => 2,
+        | HostFn::RunDeclared
+        // A mint names the amount alone, on the same terms.
+        | HostFn::IssuerMint => 2,
         HostFn::CellSet
         | HostFn::CellTake
-        | HostFn::IssuerMint
         | HostFn::BucketTake
         | HostFn::Order
         | HostFn::Entry
         | HostFn::Hash
         | HostFn::Emit
-        | HostFn::InstanceTake
-        | HostFn::IssuerMintInstances => 3,
+        | HostFn::InstanceTake => 3,
         HostFn::InstancePut | HostFn::EntrySet => 4,
         HostFn::Insert => 5,
         // A `wide` flattens to four `i64`s, and a result wider
@@ -2049,29 +2048,25 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
                     HostFn::IssuerBurn => {
-                        let rep = self.resolve_handle(args[0], HandleKind::Issuer)?;
-                        let funds = self.consume_bucket(args[1])?;
+                        let funds = self.consume_bucket(args[0])?;
                         meter::burn(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
                             },
-                            rep,
                             funds,
                         )
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
                     HostFn::IssuerMintInstances => {
-                        let rep = self.resolve_handle(args[0], HandleKind::Issuer)?;
                         let mem = self.mem_opt(id)?;
-                        let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
+                        let ids = Self::read_guest_ids(store, mem, args[0], args[1])?;
                         let minted = meter::mint_instances(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
                             },
-                            rep,
                             &ids,
                         )
                         .map_err(meter_fault)?;
@@ -2266,14 +2261,12 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::IssuerMint => {
-                        let rep = self.resolve_handle(args[0], HandleKind::Issuer)?;
-                        let amount = flat_amount(args[1], args[2]);
+                        let amount = flat_amount(args[0], args[1]);
                         let bucket = meter::mint(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
                             },
-                            rep,
                             amount,
                         )
                         .map_err(meter_fault)?;

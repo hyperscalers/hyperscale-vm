@@ -27,8 +27,6 @@ pub enum ExportParam {
     Handle,
     /// `borrow<run>`: one `for-each` site's whole expansion.
     Run,
-    /// `borrow<issuer>`: this invocation's authority to create value.
-    Issuer,
     /// `own<bucket>`: a value edge the call transfers into the guest.
     Bucket,
     /// `list<u8>`: keys, opaque values, and every other byte-shaped one.
@@ -53,7 +51,7 @@ impl ExportParam {
     #[must_use]
     pub const fn is_resource(&self) -> bool {
         match self {
-            Self::Handle | Self::Run | Self::Issuer | Self::Bucket => true,
+            Self::Handle | Self::Run | Self::Bucket => true,
             Self::Bytes | Self::U64 | Self::Flag | Self::Address | Self::Other => false,
         }
     }
@@ -271,7 +269,6 @@ fn param_shape(
             Some(ComponentDefinedType::Borrow(resource)) => resources
                 .get(&resource.resource())
                 .map_or(ExportParam::Other, |name| match name.as_str() {
-                    "issuer" => ExportParam::Issuer,
                     "capability" => ExportParam::Handle,
                     "run" => ExportParam::Run,
                     _ => ExportParam::Other,

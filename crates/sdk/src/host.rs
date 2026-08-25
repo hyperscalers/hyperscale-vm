@@ -35,7 +35,7 @@ use core::cell::RefCell;
 
 use hyperscale_vm_embed::KernelHost;
 pub use hyperscale_vm_embed::{GuestArg, Invoked};
-use hyperscale_vm_types::{AbortReason, Address, Drawn, ISSUER_REP, math};
+use hyperscale_vm_types::{AbortReason, Address, Drawn, math};
 
 use crate::handle::Handle;
 use crate::num::{Rounding, Wide};
@@ -287,20 +287,20 @@ pub fn reserve_take(handle: Handle) -> u32 {
 
 /// Issue `value` of the resource this invocation was granted.
 #[must_use]
-pub fn mint(rep: u32, value: u128) -> u32 {
-    settled(kernel(|k| k.mint(rep, value)))
+pub fn mint(value: u128) -> u32 {
+    settled(kernel(|k| k.mint(value)))
 }
 
 /// Create the named instances of the resource this invocation was
 /// granted.
 #[must_use]
-pub fn mint_instances(rep: u32, ids: &[u64]) -> u32 {
-    settled(kernel(|k| k.mint_instances(rep, ids)))
+pub fn mint_instances(ids: &[u64]) -> u32 {
+    settled(kernel(|k| k.mint_instances(ids)))
 }
 
 /// Destroy what the bucket at `funds` carries, against the grant at `rep`.
-pub fn burn(rep: u32, funds: u32) {
-    settled(kernel(|k| k.burn(rep, funds)));
+pub fn burn(funds: u32) {
+    settled(kernel(|k| k.burn(funds)));
 }
 
 /// A wide word as the arithmetic's own type.
@@ -662,18 +662,6 @@ pub fn edge(args: &[GuestArg<'_>], at: usize) -> Bucket {
 pub fn nf_edge(args: &[GuestArg<'_>], at: usize) -> NfBucket {
     match *arg(args, at) {
         GuestArg::Bucket(rep) => NfBucket::at(rep),
-        _ => refuse(AbortReason::AbiViolation),
-    }
-}
-
-/// This invocation's issuance grant.
-///
-/// A rep the world fixes rather than a table position, because an
-/// invocation is granted at most one.
-#[must_use]
-pub fn issuer(args: &[GuestArg<'_>], at: usize) -> u32 {
-    match *arg(args, at) {
-        GuestArg::Issuer => ISSUER_REP,
         _ => refuse(AbortReason::AbiViolation),
     }
 }

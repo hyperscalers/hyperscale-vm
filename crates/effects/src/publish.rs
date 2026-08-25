@@ -295,14 +295,6 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
             AbiParam::Run { clause, site } => {
                 check_run(signature, position, *clause, *site)?;
             }
-            // The grant is the method's own declaration, so a binding
-            // that names one where nothing is issued asks for a handle
-            // the walk would not hand over.
-            AbiParam::Issuer => {
-                if signature.issues.is_none() {
-                    return Err(AbiError::IssuerWithoutIssuedOutput { position });
-                }
-            }
             AbiParam::Bucket(param) => {
                 let slot = usize::try_from(*param).map_err(|_| AbiError::NoSuchParam {
                     position,

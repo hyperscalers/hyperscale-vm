@@ -337,14 +337,6 @@ fn check_abi_against_export(
                     )));
                 }
             }
-            AbiParam::Issuer => {
-                if *param != ExportParam::Issuer {
-                    return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} is an issuance \
-                         grant, but the export takes {param:?}"
-                    )));
-                }
-            }
             AbiParam::Run { clause, site } => {
                 if *param != ExportParam::Run {
                     return Err(GateError(format!(

@@ -12,12 +12,12 @@
 //! its handle type is the same one the linker registers.
 
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
-use hyperscale_vm_types::{ADDRESS_WORDS, Address, ISSUER_REP};
+use hyperscale_vm_types::{ADDRESS_WORDS, Address};
 use wasmtime::component::{Instance, Resource, ResourceAny, Val};
 use wasmtime::{AsContextMut, Error, Result, Store};
 
 use crate::abort::{CallError, classify, exhausted};
-use crate::world::{Bucket, Capability, Issuer, Run};
+use crate::world::{Bucket, Capability, Run};
 
 /// An address as the world's `record address`: four little-endian words.
 ///
@@ -118,10 +118,6 @@ pub fn call_export<T: 'static>(
             GuestArg::Ids(ids) => Val::List(ids.iter().copied().map(Val::U64).collect()),
             GuestArg::Bucket(rep) => Val::Resource(ResourceAny::try_from_resource(
                 Resource::<Bucket>::new_own(*rep),
-                store.as_context_mut(),
-            )?),
-            GuestArg::Issuer => Val::Resource(ResourceAny::try_from_resource(
-                Resource::<Issuer>::new_own(ISSUER_REP),
                 store.as_context_mut(),
             )?),
         });

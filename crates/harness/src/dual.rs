@@ -21,7 +21,7 @@ use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
 };
 use hyperscale_vm_runtime::{
-    Bucket, Capability as CapabilityResource, HostRefusal, InstantiationCharges, Issuer, Run,
+    Bucket, Capability as CapabilityResource, HostRefusal, InstantiationCharges, Run,
     add_kernel_to_linker, blessed_engine, classify, instantiate_charged, instantiation_charges,
     validate_component,
 };
@@ -302,9 +302,6 @@ fn borrow(store: &mut Store<KernelSession>, rep: u32, kind: HandleKind) -> Resul
         HandleKind::Run => ResourceAny::try_from_resource(Resource::<Run>::new_own(rep), store),
         HandleKind::Bucket => {
             ResourceAny::try_from_resource(Resource::<Bucket>::new_own(rep), store)
-        }
-        HandleKind::Issuer => {
-            ResourceAny::try_from_resource(Resource::<Issuer>::new_own(rep), store)
         }
     }
 }

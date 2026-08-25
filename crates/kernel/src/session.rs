@@ -35,8 +35,8 @@ pub use buckets::Held;
 use hyperscale_vm_effects::{ResourceKind, distinct_ids};
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, Drawn, EffectSet, EffectTarget, ISSUER_REP, LEAF_KEY_BYTES,
-    ResourceAddr, SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, TxHash,
+    ABSENT_REP, AbortReason, Address, Drawn, EffectSet, EffectTarget, LEAF_KEY_BYTES, ResourceAddr,
+    SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, TxHash,
 };
 pub use materialize::{Capability, Interval, MaterializeError};
 pub use permit::{Op, permits};
@@ -869,16 +869,17 @@ impl KernelSession {
 
     /// Create `amount` of what this invocation issues, as a bucket.
     ///
-    /// The one bucket with no cell behind it. `rep` names the grant, of
-    /// which an invocation has at most one — the handle's whole content
-    /// is that it exists.
+    /// The one bucket with no cell behind it. What an invocation may
+    /// issue is its own grant, read off the outputs its declaration
+    /// names, so there is nothing for a body to hold and nothing for it
+    /// to name.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`], including a mint against a grant this
     /// invocation was never given.
-    pub fn mint(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
-        let resource = self.issued(rep, ResourceKind::Fungible)?;
+    pub fn mint(&mut self, amount: u128) -> Result<u32, SessionTrap> {
+        let resource = self.issued(ResourceKind::Fungible)?;
         self.supply.mint(resource, amount)?;
         Ok(self.open_bucket(Held::Amount(amount), resource))
     }
@@ -889,8 +890,8 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`], including a mint against a grant this
     /// invocation was never given.
-    pub fn mint_instances(&mut self, rep: u32, ids: &[u64]) -> Result<u32, SessionTrap> {
-        let resource = self.issued(rep, ResourceKind::NonFungible)?;
+    pub fn mint_instances(&mut self, ids: &[u64]) -> Result<u32, SessionTrap> {
+        let resource = self.issued(ResourceKind::NonFungible)?;
         let named = distinct_ids(ids).ok_or(SessionTrap::MalformedIdSet)?;
         let instances: BTreeSet<u128> = named.into_iter().map(u128::from).collect();
         // An instance's supply is its existence: what a non-fungible
@@ -905,10 +906,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`], including a burn by an invocation granted
     /// nothing.
-    pub fn burn(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
-        if rep != ISSUER_REP {
-            return Err(SessionTrap::UnknownHandle(rep));
-        }
+    pub fn burn(&mut self, funds: u32) -> Result<(), SessionTrap> {
         let Some((resource, _)) = self.issuance else {
             return Err(SessionTrap::IssuanceUngranted);
         };
@@ -944,10 +942,7 @@ impl KernelSession {
     /// The grant's address commits its kind, so a mint of the other
     /// kind is not a variant of the resource — it is an operation on a
     /// resource this invocation was never granted.
-    fn issued(&self, rep: u32, kind: ResourceKind) -> Result<ResourceAddr, SessionTrap> {
-        if rep != ISSUER_REP {
-            return Err(SessionTrap::UnknownHandle(rep));
-        }
+    fn issued(&self, kind: ResourceKind) -> Result<ResourceAddr, SessionTrap> {
         let Some((resource, granted)) = self.issuance else {
             return Err(SessionTrap::IssuanceUngranted);
         };

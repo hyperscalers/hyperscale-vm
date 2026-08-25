@@ -13,7 +13,7 @@ deposit(bucket) — fallible
       0  write self.vault[config.asset] holding config.asset
       1  write self.supply
   yields   edge 0 = self-issued(fungible["unit"])
-  exports  handle for clause 0, handle for clause 1, edge arg0, the issuer
+  exports  handle for clause 0, handle for clause 1, edge arg0
 
 instantiate() — infallible
   declares
@@ -31,7 +31,7 @@ mint(u128, bucket) — fallible
       1  write self.supply
   yields   edge 0 = self-issued(fungible["unit"])
   yields   edge 1 = resource-of(arg1)
-  exports  handle for clause 0, handle for clause 1, arg0, edge arg1, the issuer
+  exports  handle for clause 0, handle for clause 1, arg0, edge arg1
 
 redeem(bucket) — fallible
   takes    arg0 carrying self-issued(fungible["unit"])
@@ -40,7 +40,7 @@ redeem(bucket) — fallible
       0  write self.vault[config.asset] holding config.asset
       1  write self.supply
   yields   edge 0 = config.asset
-  exports  handle for clause 0, handle for clause 1, edge arg0, the issuer
+  exports  handle for clause 0, handle for clause 1, edge arg0
 
 withdraw(u128, bucket) — fallible
   takes    arg1 carrying self-issued(fungible["unit"])
@@ -50,4 +50,4 @@ withdraw(u128, bucket) — fallible
       1  write self.supply
   yields   edge 0 = config.asset
   yields   edge 1 = resource-of(arg1)
-  exports  handle for clause 0, handle for clause 1, arg0, edge arg1, the issuer
+  exports  handle for clause 0, handle for clause 1, arg0, edge arg1

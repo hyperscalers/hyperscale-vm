@@ -172,7 +172,6 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
                     args.push(GuestArg::Run { rep });
                 }
                 CallArg::Bool(taken) => args.push(GuestArg::Bool(*taken)),
-                CallArg::Issuer => args.push(GuestArg::Issuer),
                 CallArg::U64(scalar) => args.push(GuestArg::U64(*scalar)),
                 CallArg::Address(address) => args.push(GuestArg::Address(*address)),
                 CallArg::Bytes(bytes) => args.push(GuestArg::Bytes(bytes)),

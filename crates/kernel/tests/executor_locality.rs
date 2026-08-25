@@ -17,8 +17,8 @@ use hyperscale_vm_kernel::{
     WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, ISSUER_REP, Mode, Movement,
-    Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement, Outcome,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// The one answer a fixture guest hands back, so a receipt depends on
@@ -344,10 +344,10 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
                     // credit and burning after the debit, so the fixture
                     // moves value rather than conjuring it.
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-                    let minted = session.mint(ISSUER_REP, credit).unwrap();
+                    let minted = session.mint(credit).unwrap();
                     session.cell_put(rep, minted).unwrap();
                     let taken = session.cell_take(rep, debit).unwrap();
-                    session.burn(ISSUER_REP, taken).unwrap();
+                    session.burn(taken).unwrap();
                 }
                 Capability::Read(_) => {
                     let cell = session.cell_get(rep).unwrap();

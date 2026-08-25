@@ -6,11 +6,11 @@ package test:guest;
 world nf {
     import hyperscale:kernel/state;
 
-    use hyperscale:kernel/state.{bucket, issuer, capability};
+    use hyperscale:kernel/state.{bucket, capability};
 
     /// Mint one instance: write its data cell and produce the instance
     /// under this method's own issuance grant.
-    export mint: func(data: borrow<capability>, id: u64, i: borrow<issuer>) -> own<bucket>;
+    export mint: func(data: borrow<capability>, id: u64) -> own<bucket>;
 
     /// File the arriving instances as holdings entries.
     export deposit: func(holdings: borrow<capability>, funds: own<bucket>);
@@ -20,7 +20,7 @@ world nf {
     export withdraw: func(holdings: borrow<capability>, ids: list<u64>) -> own<bucket>;
 
     /// Destroy the instances the edge carries; they stop existing.
-    export burn: func(funds: own<bucket>, i: borrow<issuer>);
+    export burn: func(funds: own<bucket>);
 
     /// Nothing but its own gate: opens for whoever presents the identity
     /// the configured badge resource names.

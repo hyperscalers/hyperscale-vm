@@ -61,8 +61,6 @@ pub enum Shape {
     Ids(Box<syn::Type>),
     /// `own<bucket>`: a value edge the call transfers to the guest.
     Bucket,
-    /// `borrow<issuer>`: this invocation's authority to create value.
-    Issuer,
 }
 
 /// One parameter of a generated export.
@@ -101,7 +99,6 @@ impl Shape {
             Self::Cell(_) => "list<u8>".to_owned(),
             Self::Ids(_) => "list<u64>".to_owned(),
             Self::Bucket => format!("own<{BUCKET}>"),
-            Self::Issuer => "borrow<issuer>".to_owned(),
         }
     }
 }
@@ -132,7 +129,6 @@ fn imported(exports: &[Export]) -> Vec<&'static str> {
                 Shape::Handle => "capability",
                 Shape::Run => "run",
                 Shape::Bucket => "bucket",
-                Shape::Issuer => "issuer",
                 _ => continue,
             };
             if !named.contains(&resource) {

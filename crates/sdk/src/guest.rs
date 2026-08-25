@@ -43,7 +43,7 @@ use core::mem::ManuallyDrop;
 
 pub use bindings::hyperscale::kernel;
 use hyperscale_vm_types::{Drawn, SEED_BYTES};
-use kernel::state::{Capability, Issuer, Run};
+use kernel::state::{Capability, Run};
 
 use crate::Address;
 pub use crate::handle::Handle;
@@ -216,7 +216,6 @@ macro_rules! borrows {
 }
 
 borrows! {
-    issuer -> Issuer,
     capability -> Capability,
     run -> Run,
 }
@@ -338,21 +337,21 @@ pub fn reserve_take(handle: Handle) -> kernel::state::Bucket {
 /// Create `value` of what this invocation issues.
 #[must_use]
 #[inline(always)]
-pub fn mint(rep: u32, value: u128) -> kernel::state::Bucket {
-    kernel::state::mint(&issuer(rep), amount(value))
+pub fn mint(value: u128) -> kernel::state::Bucket {
+    kernel::state::mint(amount(value))
 }
 
 /// Create the named instances of what this invocation issues.
 #[must_use]
 #[inline(always)]
-pub fn mint_instances(rep: u32, ids: &[u64]) -> kernel::state::Bucket {
-    kernel::state::mint_instances(&issuer(rep), ids)
+pub fn mint_instances(ids: &[u64]) -> kernel::state::Bucket {
+    kernel::state::mint_instances(ids)
 }
 
 /// Destroy what this invocation issues, consuming the bucket.
 #[inline(always)]
-pub fn burn(rep: u32, funds: kernel::state::Bucket) {
-    kernel::state::burn(&issuer(rep), funds);
+pub fn burn(funds: kernel::state::Bucket) {
+    kernel::state::burn(funds);
 }
 
 /// Entries currently in this interval, bounded by its declared cap.

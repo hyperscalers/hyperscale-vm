@@ -28,8 +28,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
-    EntryKey, ISSUER_REP, Mode, Movement, Outcome, ResourceAddr, SubstateKey, TxHash,
-    encode_amount,
+    EntryKey, Mode, Movement, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// The one answer a fixture guest hands back, so a receipt depends on
@@ -256,11 +255,11 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                     // comes from somewhere, and a mint is the somewhere a
                     // fixture has.
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-                    if let Ok(minted) = session.mint(ISSUER_REP, seed % 40) {
+                    if let Ok(minted) = session.mint(seed % 40) {
                         let _ = session.cell_put(rep, minted);
                     }
                     if let Ok(taken) = session.cell_take(rep, seed % 17) {
-                        let _ = session.burn(ISSUER_REP, taken);
+                        let _ = session.burn(taken);
                     }
                 }
                 // Only the crediting half, which is the whole of what
@@ -269,7 +268,7 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 // conserves.
                 Capability::Credit(_) => {
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-                    if let Ok(minted) = session.mint(ISSUER_REP, seed % 40) {
+                    if let Ok(minted) = session.mint(seed % 40) {
                         let _ = session.cell_put(rep, minted);
                     }
                 }
@@ -464,11 +463,11 @@ fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
             match capability {
                 Capability::Delta(_) => {
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-                    if let Ok(minted) = session.mint(ISSUER_REP, seed % 40 + 17) {
+                    if let Ok(minted) = session.mint(seed % 40 + 17) {
                         let _ = session.cell_put(rep, minted);
                     }
                     if let Ok(taken) = session.cell_take(rep, seed % 17) {
-                        let _ = session.burn(ISSUER_REP, taken);
+                        let _ = session.burn(taken);
                     }
                 }
                 Capability::Reserve { .. } => {
@@ -513,7 +512,7 @@ fn outbound_runner(
                     let debit = debits.get(&id).map_or(0, |(_, debit)| *debit);
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
                     if let Ok(taken) = session.cell_take(rep, debit) {
-                        let _ = session.burn(ISSUER_REP, taken);
+                        let _ = session.burn(taken);
                     }
                 }
                 Capability::Read(_) => {

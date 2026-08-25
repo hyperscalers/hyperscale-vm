@@ -1950,18 +1950,18 @@ pub fn take_reservation(handle: Handle) -> Bucket {
 
 /// Create `amount` under this invocation's issuance grant.
 ///
-/// Called by generated code, never by an author: the grant is a handle
-/// the kernel lowered against the method's own declared outputs, and
+/// Called by generated code, never by an author: the grant is the
+/// invocation's own, read off the declaration against the method's own declared outputs, and
 /// which resource it creates is what the mark already fixed.
 #[doc(hidden)]
 #[must_use]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
-pub fn mint_granted(grant: u32, quantity: Quantity) -> Bucket {
+pub fn mint_granted(quantity: Quantity) -> Bucket {
     #[cfg(component)]
-    return Bucket::held(crate::guest::mint(grant, quantity.subunits()));
+    return Bucket::held(crate::guest::mint(quantity.subunits()));
     #[cfg(not(component))]
-    return Bucket::at(host::mint(grant, quantity.subunits()));
+    return Bucket::at(host::mint(quantity.subunits()));
 }
 
 /// Create the named instance of the granted resource, as an edge.
@@ -1979,11 +1979,11 @@ pub fn mint_granted(grant: u32, quantity: Quantity) -> Bucket {
 #[must_use]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
-pub fn mint_nf_granted(grant: u32, id: u64) -> NfBucket {
+pub fn mint_nf_granted(id: u64) -> NfBucket {
     #[cfg(component)]
-    return NfBucket::held(crate::guest::mint_instances(grant, &[id]));
+    return NfBucket::held(crate::guest::mint_instances(&[id]));
     #[cfg(not(component))]
-    return NfBucket::at(host::mint_instances(grant, &[id]));
+    return NfBucket::at(host::mint_instances(&[id]));
 }
 
 /// File one minted instance's data cell: the presence marker, written
@@ -2032,12 +2032,12 @@ pub fn clear_instance(handle: Handle) {
 #[doc(hidden)]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always, clippy::needless_pass_by_value)]
-pub fn burn_granted(grant: u32, funds: Bucket) {
+pub fn burn_granted(funds: Bucket) {
     let _ = &funds;
     #[cfg(component)]
-    return crate::guest::burn(grant, funds.into_handle());
+    return crate::guest::burn(funds.into_handle());
     #[cfg(not(component))]
-    return host::burn(grant, funds.rep());
+    return host::burn(funds.rep());
 }
 
 /// Destroy the instances at `funds` against the grant at `grant`.
@@ -2049,12 +2049,12 @@ pub fn burn_granted(grant: u32, funds: Bucket) {
 #[doc(hidden)]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always, clippy::needless_pass_by_value)]
-pub fn burn_nf_granted(grant: u32, funds: NfBucket) {
+pub fn burn_nf_granted(funds: NfBucket) {
     let _ = &funds;
     #[cfg(component)]
-    return crate::guest::burn(grant, funds.into_handle());
+    return crate::guest::burn(funds.into_handle());
     #[cfg(not(component))]
-    return host::burn(grant, funds.rep());
+    return host::burn(funds.rep());
 }
 
 /// A 128-bit order key packed from a primary dimension over a tiebreaker.
