@@ -100,14 +100,6 @@ pub fn check_signature(
 /// cache without one.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AbiError {
-    /// An issuance grant bound by a method that declares no issued
-    /// resource. The walk grants one from the declaration, so there would
-    /// be nothing to hand over.
-    #[error("ABI parameter {position} takes an issuance grant, but nothing is issued")]
-    IssuerWithoutIssuedOutput {
-        /// The ABI parameter position.
-        position: u32,
-    },
     /// A handle binding naming an effect clause the signature does not
     /// declare.
     #[error("ABI parameter {position} names effect clause {clause}, past the {declared} declared")]
@@ -164,6 +156,23 @@ pub enum AbiError {
         /// The `for-each` clause it names.
         clause: u32,
         /// The body position it names.
+        site: u32,
+    },
+    /// One declared site borrowed by two handle parameters.
+    ///
+    /// The mirror of [`AbiError::BucketCarriedTwice`], and refused for a
+    /// stronger reason than redundancy: what a declaration bought is one
+    /// capability, and the budgets the kernel keeps against it — a write
+    /// interval's cap, a reservation's single take — are the
+    /// capability's. A body holding one twice would be asking for them
+    /// twice.
+    #[error("ABI parameter {position} borrows site {site} of clause {clause}, already borrowed")]
+    SiteBorrowedTwice {
+        /// The ABI parameter position.
+        position: u32,
+        /// The clause it names.
+        clause: u32,
+        /// The site within that clause.
         site: u32,
     },
     /// A bucket binding naming a parameter the signature does not declare.
@@ -253,6 +262,7 @@ fn check_run(
 pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
     let bound = |count: usize| u32::try_from(count).unwrap_or(u32::MAX);
     let mut carried = vec![0u32; signature.params.len()];
+    let mut borrowed = BTreeSet::new();
     for (index, binding) in signature.abi.iter().enumerate() {
         let position = bound(index);
         match binding {
@@ -278,6 +288,13 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
                         });
                     }
                     _ => check_run(signature, position, *clause, *site)?,
+                }
+                if !borrowed.insert((*clause, *site)) {
+                    return Err(AbiError::SiteBorrowedTwice {
+                        position,
+                        clause: *clause,
+                        site: *site,
+                    });
                 }
             }
             AbiParam::Guard(clause) => {
@@ -2842,6 +2859,36 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn a_declared_site_is_borrowed_at_most_once() {
+        // Two parameters onto one clause hand a body the same capability
+        // twice, and the budgets the kernel keeps against it — a write
+        // interval's cap, a reservation's single take — are the
+        // capability's, not the parameter's.
+        assert_eq!(
+            check_abi(&signature(
+                vec![],
+                vec![
+                    AbiParam::Handle { clause: 0, site: 0 },
+                    AbiParam::Handle { clause: 0, site: 0 },
+                ],
+            )),
+            Err(AbiError::SiteBorrowedTwice {
+                position: 1,
+                clause: 0,
+                site: 0,
+            })
+        );
+        // And one borrow of it admits, so the refusal is the repetition.
+        assert_eq!(
+            check_abi(&signature(
+                vec![],
+                vec![AbiParam::Handle { clause: 0, site: 0 }],
+            )),
+            Ok(())
+        );
     }
 
     #[test]
