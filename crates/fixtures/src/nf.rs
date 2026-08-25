@@ -9,15 +9,55 @@
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::INSTANCE;
 use hyperscale_vm_effects::{
-    AbiParam, Expr, GrantsExpr, Issuance, MethodSignature, PackageMetadata, ParamType,
-    ResourceKind, RuleExpr, RuleLeaf, Totality, Value, holdings_range,
+    AbiParam, Expr, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, Hasher, Issuance,
+    Issued, MethodSignature, PackageMetadata, ParamType, ResourceKind, RuleExpr, RuleLeaf,
+    Totality, Value, granting_issued_resource, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
-use hyperscale_vm_types::{ComponentAddr, Presence, ResourceAddr};
+use hyperscale_vm_types::{Address, ComponentAddr, Presence, ResourceAddr};
 
 /// The mark the issuer's one resource is declared under, and what
 /// separates it from anything else the instance might issue.
 pub const BADGE: &[u8] = b"badge";
+
+/// What the badge's address grants: the issuer may mint it and burn it,
+/// and nobody else may do either.
+///
+/// Both entries, because absence withholds — a resource granting no
+/// `Mint` is one nothing may ever mint. Naming the issuing instance is
+/// what reproduces an issuer-only supply: the frame's own claim
+/// satisfies it, so no proof is presented and none is demanded.
+///
+/// Public because the badge's address is a hash of these: a caller
+/// deriving it through the granting-nothing form would name an address
+/// nothing is ever minted at.
+#[must_use]
+pub fn badge_grants() -> GrantsExpr {
+    let mut grants = GrantsExpr::new();
+    for behaviour in [GrantedBehaviour::Mint, GrantedBehaviour::Burn] {
+        grants.set(behaviour, GrantRuleExpr::Require(GrantClaim::SelfAddr));
+    }
+    grants
+}
+
+/// The address the badge sits at, derived against its issuer.
+///
+/// The one derivation, so a fixture asking where an instance landed and
+/// the mint that put it there cannot answer differently.
+///
+/// # Panics
+///
+/// Never in practice: the badge's own entries name the issuing instance
+/// and nothing a configuration could withhold, so they resolve against
+/// any issuer.
+#[must_use]
+pub fn badge(hasher: &dyn Hasher, issuer: impl Into<Address>) -> ResourceAddr {
+    let issuer = issuer.into();
+    let rules = badge_grants()
+        .resolve(hasher, issuer, &[])
+        .expect("the badge's own grants name nothing configuration could withhold");
+    granting_issued_resource(hasher, issuer, ResourceKind::NonFungible, &rules, BADGE)
+}
 
 /// The mint's declaration: the instance-data write, and the one-way
 /// door beside it. A mint creates; it never lands on an instance that
@@ -70,7 +110,7 @@ pub fn metadata() -> PackageMetadata {
     let minted_resource = Expr::SelfResource {
         kind: ResourceKind::NonFungible,
         material: vec![Expr::Literal(Value::Bytes(BADGE.to_vec()))],
-        grants: GrantsExpr::new(),
+        grants: badge_grants(),
     };
     let minted_id = Expr::FreshId { slot: 0 };
     let mut methods = PackageMetadata::default();
@@ -84,7 +124,8 @@ pub fn metadata() -> PackageMetadata {
             issues: Some(Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
-                grants: GrantsExpr::new(),
+                direction: Issued::Minted,
+                grants: badge_grants(),
             }),
             params: vec![],
             abi: vec![
@@ -154,7 +195,8 @@ pub fn metadata() -> PackageMetadata {
             issues: Some(Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
-                grants: GrantsExpr::new(),
+                direction: Issued::Burned,
+                grants: badge_grants(),
             }),
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Bucket(0)],

@@ -43,15 +43,15 @@ deactivate-validator(u64) — infallible
   exports  arg0
 
 instantiate() — infallible
-  issues   "owner-badge" non-fungible
+  mints    "owner-badge" non-fungible
   declares
       0  requires claim config.founder
       1  requires self.config is absent
       2  write self.config
       3  requires self.resource[self-issued(non-fungible["owner-badge"])] is absent
       4  write self.resource[self-issued(non-fungible["owner-badge"])]
-      5  requires self.resource[self-issued(fungible["stake-unit"])] is absent
-      6  write self.resource[self-issued(fungible["stake-unit"])]
+      5  requires self.resource[self-issued(fungible["stake-unit"]), granting mint to the issuer and burn to the issuer] is absent
+      6  write self.resource[self-issued(fungible["stake-unit"]), granting mint to the issuer and burn to the issuer]
       7  requires self.instance[self-issued(non-fungible["owner-badge"]), 0] is absent
       8  write self.instance[self-issued(non-fungible["owner-badge"]), 0]
   yields   edge 0 = edge(self-issued(non-fungible["owner-badge"]) × [0])
@@ -66,10 +66,10 @@ register-validator(u64, bytes, bytes) — infallible
 
 stake(bucket) — infallible
   takes    arg0 carrying config.staked_resource
-  issues   "stake-unit" fungible
+  mints    "stake-unit" fungible, granting mint to the issuer and burn to the issuer
   declares
       0  credit self.vault[config.staked_resource] holding config.staked_resource
-  yields   edge 0 = self-issued(fungible["stake-unit"])
+  yields   edge 0 = self-issued(fungible["stake-unit"]), granting mint to the issuer and burn to the issuer
   exports  handle for clause 0, edge arg0
 
 unjail(u64) — infallible
@@ -80,6 +80,6 @@ unjail(u64) — infallible
   exports  arg0
 
 unstake(bucket) — infallible
-  takes    arg0 carrying self-issued(fungible["stake-unit"])
-  issues   "stake-unit" fungible
+  takes    arg0 carrying self-issued(fungible["stake-unit"]), granting mint to the issuer and burn to the issuer
+  burns    "stake-unit" fungible, granting mint to the issuer and burn to the issuer
   exports  edge arg0

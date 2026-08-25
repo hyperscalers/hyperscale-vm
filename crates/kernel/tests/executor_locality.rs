@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, ResourceKind, SlotId, SubintentHash, TestHasher, child_key,
-    nullifier_key,
+    Declaration, Hash32, Hasher, IssuanceGrant, Issued, ResourceKind, SlotId, SubintentHash,
+    TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, RunResult,
@@ -343,7 +343,11 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
                     // Both ways through the bucket, minting behind the
                     // credit and burning after the debit, so the fixture
                     // moves value rather than conjuring it.
-                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    session.grant_issuance(IssuanceGrant {
+                        resource: RESOURCE,
+                        kind: ResourceKind::Fungible,
+                        direction: Issued::Either,
+                    });
                     let minted = session.mint(credit).unwrap();
                     session.cell_put(rep, 0, minted).unwrap();
                     let taken = session.cell_take(rep, 0, debit).unwrap();

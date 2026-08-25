@@ -33,7 +33,9 @@ enum Verdict {
     /// live bucket carries anything.
     InFlight,
     /// Supply, which is its own behaviour rather than a movement of an
-    /// existing holding.
+    /// existing holding — judged against the resource's own authority
+    /// entry, injected onto the issuing frame and answered where every
+    /// actor question is.
     OwnBehaviour,
 }
 
@@ -64,7 +66,9 @@ const VERDICTS: &[(&str, Verdict)] = &[
     ("bucket-take", InFlight),
     ("bucket-split", InFlight),
     ("bucket-put", InFlight),
-    // Supply, under the resource's own entries.
+    // Supply, under the resource's own entries — and the entry each
+    // reaches is the direction it takes, so a burn-only declaration is
+    // never asked who may mint.
     ("mint", OwnBehaviour),
     ("mint-instances", OwnBehaviour),
     ("burn", OwnBehaviour),

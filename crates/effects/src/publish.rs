@@ -16,11 +16,11 @@ use crate::dsl::{
 };
 use crate::instance::MAX_CONFIG_FIELDS;
 use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
-use crate::resource::{GrantsExpr, holdings_entry};
+use crate::resource::{GrantedBehaviour, GrantsExpr, holdings_entry};
 use crate::rule::{
     GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule, RuleExpr, RuleLeaf, always, never,
 };
-use crate::signature::{AbiParam, MethodSignature};
+use crate::signature::{AbiParam, Issuance, MethodSignature};
 use crate::types::{
     MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId, Value, value_within_width,
 };
@@ -419,6 +419,16 @@ pub enum DeclarationError {
     /// An issuance whose mark names nothing.
     #[error("the issued resource carries no mark, and a mark is a resource's own name")]
     UnmarkedIssuance,
+    /// A frame issuing a resource whose own grants withhold the
+    /// direction it takes. Absence withholds, so a resource nothing may
+    /// mint is spelled by granting no `Mint` entry — and a body minting
+    /// one is an author who wrote the withholding and the mint together.
+    #[error(
+        "this method's body reaches {0:?}, and the resource it names grants no entry for it \
+         — an absent entry withholds the capability, so a resource that is issued carries a \
+         rule saying who may"
+    )]
+    IssuanceUnadmitted(GrantedBehaviour),
     /// A mint no condition justifies: minting one's own identity takes
     /// satisfying one's own stored rule, and letting a declaration mint
     /// without one would be forgeable identity.
@@ -1158,12 +1168,70 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     {
         return Err(DeclarationError::UnmarkedIssuance);
     }
+    // And a resource is issued only where its own address says who may.
+    // Decidable here because the grants a mint derives through ride the
+    // declaration itself, so the author is told where they wrote the
+    // pair rather than a caller told where they met it.
+    if let Some(issuance) = &signature.issues
+        && !founds_its_resource(issuance, &flat)
+    {
+        for behaviour in issuance.direction.behaviours() {
+            if issuance.grants.get(*behaviour).is_none() {
+                return Err(DeclarationError::IssuanceUnadmitted(*behaviour));
+            }
+        }
+    }
     // And at the third position a signature names resources.
     judge_outputs(&signature.outputs)?;
     for (index, clause) in flat.iter().enumerate() {
         judge_access(u32::try_from(index).unwrap_or(u32::MAX), clause, &flat)?;
     }
     check_conditions(signature, &flat)
+}
+
+/// Whether this frame is the one that brings its issued resource into
+/// existence.
+///
+/// Founding is not minting. A resource's record is written where the
+/// resource comes into being and never again — the `RESOURCE` slot
+/// admits no second write, held by the shape table above — so a supply
+/// stated at that one call is the supply the resource comes up holding
+/// and the door is what caps it. That is what makes capped supply an
+/// *absent* `Mint` entry rather than an unspellable one: without the
+/// exemption, creating the supply would itself be the minting the
+/// absence forbids, and a capped resource could only ever hold nothing.
+///
+/// Read off the declaration rather than declared, on the terms the
+/// instantiation fence is read off one: the frame that writes the leaf
+/// is the creation, and a frame cannot claim to be it without doing it.
+fn founds_its_resource(issuance: &Issuance, flat: &[&Clause]) -> bool {
+    flat.iter().any(|clause| {
+        let Clause::Effect {
+            target:
+                TargetExpr::Point(Expr::ChildKey {
+                    owner,
+                    slot,
+                    material,
+                }),
+            mode: ModeExpr::Write,
+            ..
+        } = clause
+        else {
+            return false;
+        };
+        matches!(**owner, Expr::SelfAddr)
+            && *slot == RESOURCE
+            && matches!(
+                material.as_slice(),
+                [Expr::SelfResource { kind, material, grants }]
+                    if *kind == issuance.kind
+                        && *grants == issuance.grants
+                        && matches!(
+                            material.as_slice(),
+                            [Expr::Literal(Value::Bytes(mark))] if *mark == issuance.mark
+                        )
+            )
+    })
 }
 
 /// The agreement pass: two clauses reaching one target say the same
@@ -1957,6 +2025,8 @@ mod tests {
 
     use super::*;
     use crate::metadata::{SlotKind, SlotShape};
+    use crate::rule::GrantRuleExpr;
+    use crate::signature::Issued;
 
     /// Metadata declaring `types` and nothing else, which is what the
     /// shape door reads.
@@ -2228,7 +2298,7 @@ mod tests {
     use crate::envelope::NULLIFIER_SLOT;
     use crate::metadata::PACKAGE_SLOT;
     use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
-    use crate::signature::{Issuance, ParamType, Totality};
+    use crate::signature::{ParamType, Totality};
     use crate::types::{Value, package_slot};
 
     /// A signature whose only effect points at `expr`.
@@ -2702,13 +2772,93 @@ mod tests {
                 issues: Some(Issuance {
                     mark: mark.to_vec(),
                     kind: ResourceKind::Fungible,
-                    grants: GrantsExpr::new(),
+                    direction: Issued::Minted,
+                    grants: minting(),
                 }),
                 ..MethodSignature::default()
             })
         };
         assert_eq!(issues(b"unit"), Ok(()));
         assert_eq!(issues(b""), Err(DeclarationError::UnmarkedIssuance));
+    }
+
+    /// The entry a resource grants for the direction its issuer takes.
+    fn minting() -> GrantsExpr {
+        let mut grants = GrantsExpr::new();
+        grants.set(
+            GrantedBehaviour::Mint,
+            GrantRuleExpr::Require(GrantClaim::SelfAddr),
+        );
+        grants
+    }
+
+    /// Absence withholds, so a resource nobody may mint is one granting
+    /// no `Mint` entry — and a body that mints one is an author who
+    /// wrote the withholding and the mint together. Refused here, where
+    /// they wrote it, rather than left for a caller to meet.
+    ///
+    /// Exhaustive over the directions on purpose: issuance acts through
+    /// no site, so it inherits nothing from the capability matrix and
+    /// every arm this refusal has is one this case has to name.
+    #[test]
+    fn issuing_a_resource_whose_entry_withholds_it_is_refused() {
+        let issues = |direction, grants: GrantsExpr| {
+            check_declarations(&MethodSignature {
+                issues: Some(Issuance {
+                    mark: b"unit".to_vec(),
+                    kind: ResourceKind::Fungible,
+                    direction,
+                    grants,
+                }),
+                ..MethodSignature::default()
+            })
+        };
+        let burning = || {
+            let mut grants = GrantsExpr::new();
+            grants.set(
+                GrantedBehaviour::Burn,
+                GrantRuleExpr::Require(GrantClaim::SelfAddr),
+            );
+            grants
+        };
+        let both = || {
+            let mut grants = minting();
+            grants.set(
+                GrantedBehaviour::Burn,
+                GrantRuleExpr::Require(GrantClaim::SelfAddr),
+            );
+            grants
+        };
+
+        assert_eq!(issues(Issued::Minted, minting()), Ok(()));
+        assert_eq!(issues(Issued::Burned, burning()), Ok(()));
+        assert_eq!(issues(Issued::Either, both()), Ok(()));
+
+        // A capped supply is exactly the absent `Mint` entry, so a body
+        // minting one meets the refusal however else the resource is
+        // granted.
+        for grants in [GrantsExpr::new(), burning()] {
+            assert_eq!(
+                issues(Issued::Minted, grants),
+                Err(DeclarationError::IssuanceUnadmitted(GrantedBehaviour::Mint))
+            );
+        }
+        for grants in [GrantsExpr::new(), minting()] {
+            assert_eq!(
+                issues(Issued::Burned, grants),
+                Err(DeclarationError::IssuanceUnadmitted(GrantedBehaviour::Burn))
+            );
+        }
+        // A body reaching both ways answers to both entries, and the
+        // first one missing is the one it hears about.
+        assert_eq!(
+            issues(Issued::Either, minting()),
+            Err(DeclarationError::IssuanceUnadmitted(GrantedBehaviour::Burn))
+        );
+        assert_eq!(
+            issues(Issued::Either, burning()),
+            Err(DeclarationError::IssuanceUnadmitted(GrantedBehaviour::Mint))
+        );
     }
 
     /// A mint is justified by a condition the same declaration carries,

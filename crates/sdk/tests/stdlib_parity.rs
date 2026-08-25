@@ -22,7 +22,9 @@ use hyperscale_vm_fixtures::{amm as amm_package, book as book_package};
 use hyperscale_vm_sdk::sym::{
     Addr, Bucket, Sym, U64, U128, eq, lit_u64, pack, select, self_record,
 };
-use hyperscale_vm_sdk::{Blueprint, GrantedBehaviour, ResourceKind, Trace};
+use hyperscale_vm_sdk::{
+    Blueprint, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, ResourceKind, Trace,
+};
 use hyperscale_vm_stdlib::account as account_package;
 
 /// One of the account's own cells, by its offset in the package band.
@@ -160,6 +162,26 @@ fn account() -> Blueprint {
 /// The mark the pool issues its liquidity claims under.
 const SHARE: &[u8] = b"share";
 
+/// What a mark its issuer may mint and burn grants, which is what the
+/// derived side registers for every mark a body issues.
+///
+/// Registered per method rather than per blueprint, because the address
+/// folds these rules and every site naming the mark has to fold the
+/// same ones — which is the discipline `Trace::grant` exists to keep.
+fn issuer_only(directions: &[GrantedBehaviour]) -> GrantsExpr {
+    let mut grants = GrantsExpr::new();
+    for behaviour in directions {
+        grants.set(*behaviour, GrantRuleExpr::Require(GrantClaim::SelfAddr));
+    }
+    grants
+}
+
+/// The share's own entries: minted where liquidity arrives, burned where
+/// it leaves.
+fn share_grants() -> GrantsExpr {
+    issuer_only(&[GrantedBehaviour::Mint, GrantedBehaviour::Burn])
+}
+
 /// The constant-product pool.
 fn amm() -> Blueprint {
     Blueprint::builder()
@@ -171,6 +193,7 @@ fn amm() -> Blueprint {
                 // by what arrived, so the pair a pool funds is the pair
                 // it was created over and a third resource is refused
                 // where the parameters are judged.
+                t.grant(SHARE, share_grants());
                 let x: Sym<Addr> = t.config(0);
                 let y: Sym<Addr> = t.config(1);
                 let pool = t.self_addr();
@@ -191,6 +214,7 @@ fn amm() -> Blueprint {
         .method("remove-liquidity", &[ParamType::Bucket], |t: &mut Trace| {
             // What comes back is the pool's own claim, which is the
             // one resource a redemption can be priced in.
+            t.grant(SHARE, share_grants());
             let x: Sym<Addr> = t.config(0);
             let y: Sym<Addr> = t.config(1);
             let pool = t.self_addr();
@@ -249,6 +273,7 @@ fn amm() -> Blueprint {
             // bytes evaluated rather than supplied. The pool's own mark
             // is founded in the same call, because a resource a body
             // mints has to exist before a body runs.
+            t.grant(SHARE, share_grants());
             let pool = t.self_addr();
             t.point(&pool.child(CONFIG, &[])).create();
             t.bind_handle();

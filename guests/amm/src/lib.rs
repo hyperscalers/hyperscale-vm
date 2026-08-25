@@ -24,7 +24,7 @@ pub mod amm {
     /// The pair sits in the protocol's vault cells, which name no owner
     /// but the instance — so a provider's stake is a resource they hold
     /// rather than a row this package keeps about them.
-    #[resource]
+    #[resource(grants(mint = self, burn = self))]
     struct Share;
 
     /// The pool's creation-fixed configuration: the pair it trades and

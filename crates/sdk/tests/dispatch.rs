@@ -8,7 +8,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, ResourceKind, SlotId, TestHasher, Value, child_key,
+    Declaration, Hash32, Hasher, IssuanceGrant, Issued, ResourceKind, SlotId, TestHasher, Value,
+    child_key,
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_sdk::blueprint;
@@ -24,7 +25,11 @@ use hyperscale_vm_types::{
 /// bucket from nothing hands the session value no supply accounts for,
 /// which is the thing the conservation check exists to refuse.
 fn minted(session: &mut KernelSession, amount: u128) -> u32 {
-    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+    session.grant_issuance(IssuanceGrant {
+        resource: RESOURCE,
+        kind: ResourceKind::Fungible,
+        direction: Issued::Either,
+    });
     session.mint(amount).expect("the grant mints")
 }
 

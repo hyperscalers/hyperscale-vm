@@ -62,7 +62,7 @@ pub mod shares {
     /// The claim on the vault a depositor takes away: the resource
     /// this instance issues against what it holds, so a share names the
     /// pool that owes it and no coordination fixes which pool that is.
-    #[resource]
+    #[resource(grants(mint = self, burn = self))]
     struct Unit;
 
     /// What the vault is denominated in.

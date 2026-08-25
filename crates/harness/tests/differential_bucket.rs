@@ -11,7 +11,9 @@
 
 use std::sync::LazyLock;
 
-use hyperscale_vm_effects::{Hash32, ResourceKind, SlotId, TestHasher, child_key};
+use hyperscale_vm_effects::{
+    Hash32, IssuanceGrant, Issued, ResourceKind, SlotId, TestHasher, child_key,
+};
 use hyperscale_vm_harness::dual::{DualGuest, DualOutcome, materialize, rep_where};
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore};
@@ -30,7 +32,11 @@ use wat::parse_str;
 /// bucket from nothing hands the session value no supply accounts for,
 /// which is the thing the conservation check exists to refuse.
 fn minted(session: &mut KernelSession, amount: u128) -> u32 {
-    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+    session.grant_issuance(IssuanceGrant {
+        resource: RESOURCE,
+        kind: ResourceKind::Fungible,
+        direction: Issued::Either,
+    });
     session.mint(amount).expect("the grant mints")
 }
 
@@ -338,7 +344,11 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
         let mut host = session_of(fx);
         host.enter_invocation(ISSUER);
         if take.granted() {
-            host.grant_issuance(ISSUED, ResourceKind::Fungible);
+            host.grant_issuance(IssuanceGrant {
+                resource: ISSUED,
+                kind: ResourceKind::Fungible,
+                direction: Issued::Either,
+            });
         }
         host
     };
@@ -372,7 +382,11 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
             // nothing accounts for is value the transaction lost, and
             // what this fixture is about is where the value went.
             for session in [&mut blessed, &mut reference] {
-                session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                session.grant_issuance(IssuanceGrant {
+                    resource: RESOURCE,
+                    kind: ResourceKind::Fungible,
+                    direction: Issued::Either,
+                });
                 session.burn(rep)?;
             }
             Took::Value(value)
@@ -672,7 +686,11 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
     // The half that came off is burned rather than lifted away, so what
     // the split divided is still accounted for on both sides of it.
     for session in [&mut blessed, &mut reference] {
-        session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+        session.grant_issuance(IssuanceGrant {
+            resource: RESOURCE,
+            kind: ResourceKind::Fungible,
+            direction: Issued::Either,
+        });
         session.burn(came_off)?;
     }
     let (receipt, _) = blessed.finish(vec![], 0).expect("the oracle is clean");

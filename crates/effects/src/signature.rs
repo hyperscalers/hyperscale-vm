@@ -5,7 +5,7 @@ use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr};
 
 use crate::dsl::{Clause, Expr};
-use crate::resource::{GrantsExpr, ResourceKind};
+use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
 use crate::rule::{RuleExpr, RuleLeaf, StoredRule};
 use crate::types::{MAX_IDS_PER_EDGE, Value};
 
@@ -256,19 +256,76 @@ impl Totality {
     }
 }
 
-/// The resource a method's issuance grant is over: the mark deriving it
-/// and the kind it is.
+/// Which directions a declared issuance takes.
+///
+/// Two entries cannot be independent over one undirected grant: a
+/// burn-only frame asked the mint rule would be held to an authority it
+/// never uses, and a mint-only frame asked the burn rule likewise. So
+/// the declaration says which, read off the body that issues — the same
+/// way a credit-only access is told from one that also debits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub enum Issued {
+    /// Brings supply into existence and never takes it out.
+    Minted,
+    /// Takes supply out and never brings it in.
+    Burned,
+    /// Both, through one grant over one resource.
+    Either,
+}
+
+impl Issued {
+    /// The behaviours a frame declaring this direction is held to.
+    #[must_use]
+    pub const fn behaviours(self) -> &'static [GrantedBehaviour] {
+        match self {
+            Self::Minted => &[GrantedBehaviour::Mint],
+            Self::Burned => &[GrantedBehaviour::Burn],
+            Self::Either => &[GrantedBehaviour::Mint, GrantedBehaviour::Burn],
+        }
+    }
+
+    /// Whether this direction brings supply into existence.
+    #[must_use]
+    pub const fn mints(self) -> bool {
+        matches!(self, Self::Minted | Self::Either)
+    }
+
+    /// Whether this direction takes supply out of existence.
+    #[must_use]
+    pub const fn burns(self) -> bool {
+        matches!(self, Self::Burned | Self::Either)
+    }
+
+    /// The direction a body reaching both ways takes, folded one call at
+    /// a time.
+    #[must_use]
+    pub const fn with(self, also: Self) -> Self {
+        match (self, also) {
+            (Self::Minted, Self::Minted) => Self::Minted,
+            (Self::Burned, Self::Burned) => Self::Burned,
+            _ => Self::Either,
+        }
+    }
+}
+
+/// The resource a method's issuance grant is over: the mark deriving it,
+/// the kind it is, and which way it goes.
 ///
 /// The kind travels with the mark because the derivation folds it — the
 /// grant's address is a function of both — and because a burn-only
 /// method has no output projection to read a kind from, so nothing else
-/// in the signature could say it.
+/// in the signature could say it. The direction travels for the same
+/// reason: it is the body's fact, and a burn has nothing else to read it
+/// off.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct Issuance {
     /// The material separating this resource from the instance's others.
     pub mark: Vec<u8>,
     /// What the resource is, folded into its derivation.
     pub kind: ResourceKind,
+    /// Which way this frame's issuance goes, and therefore which of the
+    /// resource's authority entries it is held to.
+    pub direction: Issued,
     /// The rules the resource's address grants, resolved against the
     /// instance issuing them where the grant is derived.
     ///

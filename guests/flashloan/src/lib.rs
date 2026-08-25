@@ -42,7 +42,7 @@ pub mod flashloan {
     /// transaction: one subunit per subunit lent.
     ///
     /// Whole units, because an obligation is counted rather than priced.
-    #[resource(grants(deposit = nobody), display_digits = 0)]
+    #[resource(grants(mint = self, burn = self, deposit = nobody), display_digits = 0)]
     struct Debt;
 
     /// What the pool lends.

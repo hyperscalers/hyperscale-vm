@@ -395,6 +395,17 @@ impl GrantsExpr {
         }
     }
 
+    /// What is declared for `behaviour`, where anything is. An absent
+    /// entry withholds the capability, which is what makes capped supply
+    /// the absence of a `Mint` entry rather than a field beside one.
+    #[must_use]
+    pub fn get(&self, behaviour: GrantedBehaviour) -> Option<&GrantRuleExpr> {
+        self.0
+            .binary_search_by_key(&behaviour, |(b, _)| *b)
+            .ok()
+            .map(|index| &self.0[index].1)
+    }
+
     /// Every behaviour granted here, with the rule declared for it.
     pub fn iter(&self) -> impl Iterator<Item = (GrantedBehaviour, &GrantRuleExpr)> {
         self.0.iter().map(|(behaviour, rule)| (*behaviour, rule))

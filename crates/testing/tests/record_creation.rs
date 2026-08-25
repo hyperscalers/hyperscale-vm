@@ -29,7 +29,7 @@ mod issuer {
 
     /// A fielded mark: the instance's data cell holds this record, in
     /// the encoding the mark itself declares.
-    #[resource(non_fungible)]
+    #[resource(non_fungible, grants(mint = self))]
     struct Seat {
         operator: u64,
         label: String,

@@ -12,25 +12,25 @@ errors
 add-liquidity(bucket, bucket) — fallible
   takes    arg0 carrying config.x
   takes    arg1 carrying config.y
-  issues   "share" fungible
+  mints    "share" fungible, granting mint to the issuer and burn to the issuer
   declares
       0  write self.vault[config.x] holding config.x
       1  write self.vault[config.y] holding config.y
       2  write self.supply
-  yields   edge 0 = self-issued(fungible["share"])
+  yields   edge 0 = self-issued(fungible["share"]), granting mint to the issuer and burn to the issuer
   exports  handle for clause 0, handle for clause 1, handle for clause 2, edge arg0, edge arg1
 
 instantiate() — infallible
   declares
       0  requires self.config is absent
       1  write self.config
-      2  requires self.resource[self-issued(fungible["share"])] is absent
-      3  write self.resource[self-issued(fungible["share"])]
+      2  requires self.resource[self-issued(fungible["share"]), granting mint to the issuer and burn to the issuer] is absent
+      3  write self.resource[self-issued(fungible["share"]), granting mint to the issuer and burn to the issuer]
   exports  handle for clause 1, handle for clause 3, self.record
 
 remove-liquidity(bucket) — fallible
-  takes    arg0 carrying self-issued(fungible["share"])
-  issues   "share" fungible
+  takes    arg0 carrying self-issued(fungible["share"]), granting mint to the issuer and burn to the issuer
+  burns    "share" fungible, granting mint to the issuer and burn to the issuer
   declares
       0  write self.vault[config.x] holding config.x
       1  write self.vault[config.y] holding config.y

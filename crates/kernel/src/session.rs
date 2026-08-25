@@ -35,7 +35,7 @@ use std::collections::BTreeSet;
 
 use buckets::Buckets;
 pub use buckets::Held;
-use hyperscale_vm_effects::{ResourceKind, distinct_ids};
+use hyperscale_vm_effects::{IssuanceGrant, ResourceKind, distinct_ids};
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, Drawn, EffectSet, EffectTarget, LEAF_KEY_BYTES, ResourceAddr,
@@ -373,14 +373,13 @@ pub struct KernelSession {
     supply: SupplyDelta,
     /// Whether the executing invocation may create value.
     ///
-    /// One bit rather than a table of resources. What a grant fixes is
-    /// *whether* a body may bring a bucket into existence with no cell
-    /// debited behind it; which resource that value is denominated in is
-    /// the method's declared outputs' answer, wherever the question is
-    /// asked. The bit reaches the guest as a handle all the same, so it
-    /// is visible in the export's own type and a body that was granted
-    /// nothing has nothing to name.
-    issuance: Option<(ResourceAddr, ResourceKind)>,
+    /// One grant rather than a table of resources, and it carries which
+    /// way it goes: a body may bring a bucket into existence with no
+    /// cell debited behind it, take one out of existence, or both, and
+    /// which of those its declaration claimed is what holds it. Which
+    /// resource the value is denominated in is the grant's own answer,
+    /// wherever the question is asked.
+    issuance: Option<IssuanceGrant>,
     /// Every site this invocation can act through, flattened: one entry
     /// per element of each site, in the order they were bound.
     ///
@@ -966,9 +965,11 @@ impl KernelSession {
     /// Any [`SessionTrap`], including a burn by an invocation granted
     /// nothing.
     pub fn burn(&mut self, funds: u32) -> Result<(), SessionTrap> {
-        let Some((resource, _)) = self.issuance else {
-            return Err(SessionTrap::IssuanceUngranted);
-        };
+        let resource = self
+            .issuance
+            .filter(|grant| grant.direction.burns())
+            .ok_or(SessionTrap::IssuanceUngranted)?
+            .resource;
         // A grant names one resource, so what it destroys is that one:
         // burning through another instance's grant would be destroying
         // value this invocation has no authority over.
@@ -984,31 +985,41 @@ impl KernelSession {
         self.take_bucket(funds).map(|_| ())
     }
 
-    /// Grant the executing invocation authority over one resource: to
-    /// mint it and to burn it, which are two directions of one right.
+    /// Grant the executing invocation the issuance its declaration
+    /// claimed: one resource, and the directions that declaration takes.
     ///
     /// Read off the method's own declaration by whoever entered the node;
-    /// entering the next one takes it away again. The resource and its
-    /// kind are the grant's whole content — what a body may bring into
-    /// or out of existence is fixed before it runs, and there is no
-    /// second one it could name.
-    pub const fn grant_issuance(&mut self, resource: ResourceAddr, kind: ResourceKind) {
-        self.issuance = Some((resource, kind));
+    /// entering the next one takes it away again. Whether the caller was
+    /// entitled to it is already settled — the resource's own entry was
+    /// judged before the body ran — so what this holds a body to is the
+    /// narrower question of whether its code does what its signature
+    /// said.
+    pub const fn grant_issuance(&mut self, grant: IssuanceGrant) {
+        self.issuance = Some(grant);
     }
 
-    /// The granted resource, held to the kind the operation creates.
+    /// The granted resource, held to the kind the operation creates and
+    /// to the direction the declaration claimed.
     ///
-    /// The grant's address commits its kind, so a mint of the other
-    /// kind is not a variant of the resource — it is an operation on a
-    /// resource this invocation was never granted.
+    /// The grant's address commits its kind, so a mint of the other kind
+    /// is not a variant of the resource — it is an operation on a
+    /// resource this invocation was never granted. The direction is the
+    /// same refusal read the other way: a burn-only declaration was
+    /// judged against the burn entry alone, so minting through it is a
+    /// right nobody granted.
     fn issued(&self, kind: ResourceKind) -> Result<ResourceAddr, SessionTrap> {
-        let Some((resource, granted)) = self.issuance else {
-            return Err(SessionTrap::IssuanceUngranted);
-        };
-        if granted != kind {
+        let grant = self.minting()?;
+        if grant.kind != kind {
             return Err(SessionTrap::WrongIssuanceKind);
         }
-        Ok(resource)
+        Ok(grant.resource)
+    }
+
+    /// The grant, where it brings supply into existence.
+    fn minting(&self) -> Result<IssuanceGrant, SessionTrap> {
+        self.issuance
+            .filter(|grant| grant.direction.mints())
+            .ok_or(SessionTrap::IssuanceUngranted)
     }
 
     /// Take the reservation this capability holds, as a bucket.

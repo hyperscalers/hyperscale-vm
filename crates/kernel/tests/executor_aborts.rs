@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, DeclaredAccess, Hash32, Hasher, ResourceKind, SlotId, SubintentHash, TestHasher,
-    child_key, nullifier_key,
+    Declaration, DeclaredAccess, Hash32, Hasher, IssuanceGrant, Issued, ResourceKind, SlotId,
+    SubintentHash, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
@@ -104,7 +104,11 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
             // destination is value the transaction lost, which is not
             // what this fixture is about.
             (None, Some(delta)) => {
-                session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                session.grant_issuance(IssuanceGrant {
+                    resource: RESOURCE,
+                    kind: ResourceKind::Fungible,
+                    direction: Issued::Either,
+                });
                 let taken = session.cell_take(delta, 0, sub).unwrap();
                 session.burn(taken).unwrap();
             }
@@ -655,7 +659,11 @@ fn an_exclusive_debit_past_a_hold_loses_to_the_reserver() {
                 // standing on the cell leaves none of.
                 Capability::Amount(_) => {
                     let funds = session.cell_take(rep, 0, 100).unwrap();
-                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    session.grant_issuance(IssuanceGrant {
+                        resource: RESOURCE,
+                        kind: ResourceKind::Fungible,
+                        direction: Issued::Either,
+                    });
                     session.burn(funds).unwrap();
                 }
                 Capability::Reserve { .. } => {
@@ -901,7 +909,11 @@ fn a_transaction_that_lost_value_aborts_beside_one_that_did_not() {
     ];
     let run = |entry: &BatchTx, mut session: KernelSession| {
         if entry.tx == tx(0x01) {
-            session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+            session.grant_issuance(IssuanceGrant {
+                resource: RESOURCE,
+                kind: ResourceKind::Fungible,
+                direction: Issued::Either,
+            });
             let minted = session.mint(500).unwrap();
             session.cell_put(0, 0, minted).unwrap();
         } else {

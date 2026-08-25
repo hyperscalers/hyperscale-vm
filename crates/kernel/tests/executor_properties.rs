@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, ResourceKind, SlotId, TestHasher, child_key,
+    Declaration, Hash32, Hasher, IssuanceGrant, Issued, ResourceKind, SlotId, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
@@ -254,7 +254,11 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                     // after the debit: value a transaction hands a cell
                     // comes from somewhere, and a mint is the somewhere a
                     // fixture has.
-                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    session.grant_issuance(IssuanceGrant {
+                        resource: RESOURCE,
+                        kind: ResourceKind::Fungible,
+                        direction: Issued::Either,
+                    });
                     if let Ok(minted) = session.mint(seed % 40) {
                         let _ = session.cell_put(rep, 0, minted);
                     }
@@ -267,7 +271,11 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 // refused here, and the property is that the cell still
                 // conserves.
                 Capability::Credit(_) => {
-                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    session.grant_issuance(IssuanceGrant {
+                        resource: RESOURCE,
+                        kind: ResourceKind::Fungible,
+                        direction: Issued::Either,
+                    });
                     if let Ok(minted) = session.mint(seed % 40) {
                         let _ = session.cell_put(rep, 0, minted);
                     }
@@ -462,7 +470,11 @@ fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
             let rep = u32::try_from(rep).expect("small table");
             match capability {
                 Capability::Delta(_) => {
-                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    session.grant_issuance(IssuanceGrant {
+                        resource: RESOURCE,
+                        kind: ResourceKind::Fungible,
+                        direction: Issued::Either,
+                    });
                     if let Ok(minted) = session.mint(seed % 40 + 17) {
                         let _ = session.cell_put(rep, 0, minted);
                     }
@@ -510,7 +522,11 @@ fn outbound_runner(
                     // a shard owning nothing judges nothing — which is
                     // what the debit is for.
                     let debit = debits.get(&id).map_or(0, |(_, debit)| *debit);
-                    session.grant_issuance(RESOURCE, ResourceKind::Fungible);
+                    session.grant_issuance(IssuanceGrant {
+                        resource: RESOURCE,
+                        kind: ResourceKind::Fungible,
+                        direction: Issued::Either,
+                    });
                     if let Ok(taken) = session.cell_take(rep, 0, debit) {
                         let _ = session.burn(taken);
                     }

@@ -7,7 +7,7 @@
 
 use hyperscale_vm_effects::{
     Constraint, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, Records,
-    ResourceKind, TestHasher, Value, admit, footprint, resource_address, route,
+    TestHasher, Value, admit, footprint, route,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, EnvelopeBuilder, PreflightError, TypedBuilder, preflight, preflight_tree,
@@ -44,13 +44,12 @@ fn pool() -> staking::Staking {
 }
 
 /// The pool's owner badge — the identity its operator surface admits.
+///
+/// Through the package's own derivation rather than a restatement of
+/// it: the address folds the rules the mark grants, so a copy here would
+/// name a vacant sibling the moment the badge grants anything.
 fn badge() -> ResourceAddr {
-    resource_address(
-        &TestHasher,
-        pool(),
-        ResourceKind::NonFungible,
-        &[Value::Bytes(staking::OWNER_BADGE.to_vec()).canonical_bytes()],
-    )
+    pool().issued_owner_badge(&TestHasher)
 }
 
 fn world() -> Records {

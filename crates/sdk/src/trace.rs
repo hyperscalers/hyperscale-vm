@@ -32,7 +32,7 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
-    AbiParam, Clause, Expr, GrantedBehaviour, GrantsExpr, Issuance, MAX_CLAUSE_DEPTH,
+    AbiParam, Clause, Expr, GrantedBehaviour, GrantsExpr, Issuance, Issued, MAX_CLAUSE_DEPTH,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, ResourceKind,
     RuleExpr, RuleLeaf, SlotId, TargetExpr, Totality, Value, well_formed,
 };
@@ -633,13 +633,19 @@ impl Trace {
     /// rules the mark grants ride with it because the grant's derivation
     /// folds both.
     ///
+    /// The direction is the body's own fact, folded across every issuing
+    /// call the walk found: what a frame declares it does is what the
+    /// resource's entries hold it to, so a burn-only method is never
+    /// asked who may mint.
+    ///
     /// No binding follows it: the grant is the invocation's, so nothing
     /// crosses the boundary to say so and the export's parameter list is
     /// the same whether a method issues or not.
-    pub fn bind_issuer(&mut self, kind: ResourceKind, mark: &[u8]) {
+    pub fn bind_issuer(&mut self, kind: ResourceKind, mark: &[u8], direction: Issued) {
         self.issues = Some(Issuance {
             mark: mark.to_vec(),
             kind,
+            direction,
             grants: self.grants_for(mark),
         });
     }

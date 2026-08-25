@@ -89,7 +89,7 @@ fn supply_tracks_cells_through_transfers_and_cross_shard_legs() {
 mod through_the_session {
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{Declaration, Hasher};
+    use hyperscale_vm_effects::{Declaration, Hasher, IssuanceGrant, Issued};
     use hyperscale_vm_kernel::{EnvInputs, KernelSession, OverlayStore, SupplyDelta, SupplyLedger};
     use hyperscale_vm_types::{
         AbortReason, Effect, EffectSet, EffectTarget, Mode, Outcome, ResourceAddr,
@@ -125,7 +125,11 @@ mod through_the_session {
             hash,
         )
         .expect("one unheld delta cell materializes");
-        session.grant_issuance(UNIT, ResourceKind::Fungible);
+        session.grant_issuance(IssuanceGrant {
+            resource: UNIT,
+            kind: ResourceKind::Fungible,
+            direction: Issued::Either,
+        });
         session
     }
 

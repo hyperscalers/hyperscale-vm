@@ -192,8 +192,8 @@ pub fn nobody() -> RuleBytes {
 }
 
 pub use hyperscale_vm_effects::{
-    GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, LeafForm, ParamType, ResourceKind,
-    RuleBytes, SlotId, SlotKind, encode_metadata,
+    GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, Issued, LeafForm, ParamType,
+    ResourceKind, RuleBytes, SlotId, SlotKind, encode_metadata,
 };
 /// Author a package from one module.
 ///

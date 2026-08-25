@@ -7,9 +7,9 @@ use std::sync::{Arc, LazyLock};
 use hyperscale_vm_effects::vocabulary::{AUTH, CLAIMS, CONFIG};
 use hyperscale_vm_effects::{
     EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash,
-    PrefixShardResolver, Presented, Records, ResourceKind, Routing, RuleBytes, ShardId,
-    ShardResolver, SlotId, StarShape, StoredRule, TestHasher, Value, admit, child_key,
-    classify as classify_star, collection_id, issued_resource, route,
+    PrefixShardResolver, Presented, Records, Routing, RuleBytes, ShardId, ShardResolver, SlotId,
+    StarShape, StoredRule, TestHasher, Value, admit, child_key, classify as classify_star,
+    collection_id, route,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
 use hyperscale_vm_harness::driver::{Lanes, test_hash};
@@ -299,12 +299,7 @@ pub fn nf_issuer() -> ComponentAddr {
 /// The resource the issuer mints: its own provenance, under its own
 /// declared mark.
 pub fn nf_resource() -> ResourceAddr {
-    issued_resource(
-        &TestHasher,
-        nf_issuer().address(),
-        ResourceKind::NonFungible,
-        nf::BADGE,
-    )
+    nf::badge(&TestHasher, nf_issuer().address())
 }
 
 pub fn nf_holder_meta(salt: u8) -> InstanceMeta {

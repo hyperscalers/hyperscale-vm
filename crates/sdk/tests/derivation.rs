@@ -16,7 +16,10 @@
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
 
-use hyperscale_vm_effects::{Clause, GrantsExpr, ModeExpr, ResourceKind, RuleExpr};
+use hyperscale_vm_effects::{
+    Clause, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, ModeExpr, ResourceKind,
+    RuleExpr,
+};
 use hyperscale_vm_sdk::blueprint;
 
 /// Control-flow spellings of one access set, each beside its straight-line
@@ -251,7 +254,7 @@ mod issuer {
     #[resource(non_fungible)]
     struct OwnerBadge;
 
-    #[resource]
+    #[resource(grants(mint = self))]
     struct Unit;
 
     #[state]
@@ -315,12 +318,17 @@ fn an_instance_issues_resources_its_own_address_derives() {
     // Every issue is a declared one, and the mark is the declaration's
     // own name: what separates the unit from the badge is material the
     // author wrote down rather than the absence of any.
+    let mut issuer_mints = GrantsExpr::new();
+    issuer_mints.set(
+        GrantedBehaviour::Mint,
+        GrantRuleExpr::Require(GrantClaim::SelfAddr),
+    );
     assert_eq!(
         metadata.methods["stake"].outputs,
         vec![Expr::SelfResource {
             kind: ResourceKind::Fungible,
             material: vec![Expr::Literal(Value::Bytes(b"unit".to_vec()))],
-            grants: GrantsExpr::new(),
+            grants: issuer_mints,
         }],
     );
     // The badge is the same derivation over its own mark — and its own

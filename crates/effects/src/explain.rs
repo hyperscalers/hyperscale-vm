@@ -40,7 +40,7 @@ use crate::envelope::NULLIFIER_SLOT;
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
 use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleExpr, RuleLeaf, always, never};
-use crate::signature::{AbiParam, Issuance, MethodSignature, Totality};
+use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, Totality};
 use crate::types::{EdgeContent, SlotId, Value, u256_decimal};
 use crate::vocabulary::{AUTH, CLAIMS, CONFIG, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 
@@ -146,10 +146,24 @@ impl Names<'_> {
             );
         }
         if let Some(issuance) = issues {
-            let Issuance { mark, kind, grants } = issuance;
+            let Issuance {
+                mark,
+                kind,
+                direction,
+                grants,
+            } = issuance;
+            // The label is the direction: what a frame may do with its
+            // grant is which of the resource's authority entries it
+            // answers to, so a reader should not have to find it in a
+            // clause further down.
             let _ = writeln!(
                 out,
-                "  issues   {} {}{}",
+                "  {}{} {}{}",
+                match direction {
+                    Issued::Minted => "mints    ",
+                    Issued::Burned => "burns    ",
+                    Issued::Either => "issues   ",
+                },
                 bytes(mark),
                 resource_kind(*kind),
                 grants_of(grants)

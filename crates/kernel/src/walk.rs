@@ -178,10 +178,12 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
         }
 
         // Issuance is one node's, read off the issuance its signature
-        // declares: a method naming a resource derived from its own
-        // address is a method saying it issues one.
-        if let Some((resource, kind)) = call.issues {
-            session.grant_issuance(resource, kind);
+        // declares. Who may is already settled: the resource's own entry
+        // was injected onto this frame and judged with the rest of its
+        // gate, so a body that reaches here reaches a right somebody
+        // granted.
+        if let Some(grant) = call.issues {
+            session.grant_issuance(grant);
         }
 
         let invoked = self.backend.invoke(

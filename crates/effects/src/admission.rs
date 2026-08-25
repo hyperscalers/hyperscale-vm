@@ -30,7 +30,7 @@ use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, ResolveError};
-use crate::invoke::{CallArg, EdgeBound, NodeCall};
+use crate::invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall};
 use crate::manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{PackageHash, PackageMetadata};
 use crate::presented::Presented;
@@ -38,6 +38,7 @@ use crate::publish::{CheckedSignature, seals};
 use crate::records::ChainRecords;
 use crate::resource::{
     GrantedBehaviour, ResourceKind, granting_issued_resource, holdings_collection,
+    resource_record_key,
 };
 use crate::route::FrameDeclaration;
 use crate::rule::{Holding, Rule, SealedLeaf, never};
@@ -97,6 +98,32 @@ pub enum AdmissionError {
         node: u32,
         /// The resource whose record is missing.
         resource: ResourceAddr,
+    },
+    /// A frame issuing a resource whose resolved grants withhold the
+    /// direction it takes.
+    ///
+    /// Refused at publish where the author wrote the pair, so reaching
+    /// this is metadata that never met that door. Judged here anyway
+    /// because absence is the whole spelling of nobody-may: an entry that
+    /// said it outright is refused at the seal.
+    #[error("node {node}: {resource:?} grants no {behaviour:?} entry, so nobody may")]
+    IssuanceUnadmitted {
+        /// The offending node.
+        node: u32,
+        /// The resource the frame issues.
+        resource: ResourceAddr,
+        /// The direction its body takes.
+        behaviour: GrantedBehaviour,
+    },
+    /// An issuance rule whose bytes are not an authority rule.
+    #[error("node {node}: {resource:?} has a {behaviour:?} rule that does not decode")]
+    IssuanceRuleMalformed {
+        /// The offending node.
+        node: u32,
+        /// The resource the frame issues.
+        resource: ResourceAddr,
+        /// Which entry it was.
+        behaviour: GrantedBehaviour,
     },
     /// A movement rule whose bytes are not a movement rule.
     #[error("node {node}: {resource:?} has a {behaviour:?} rule that does not decode")]
@@ -1025,6 +1052,18 @@ impl Lower<'_> {
         own_prefix_only(&frame, node.target.address(), node_index)?;
         let fence = self.fence(node.target, &mut frame)?;
         inject_movement_rules(self.hasher, self.grants, &mut frame, node_index)?;
+        // Issuance is an actor question like any other, so its entry
+        // joins the frame's conditions and computed placement routes it
+        // to the call. Before evidence, because what a caller must
+        // present is a property of the conditions the frame carries.
+        let issues = inject_issuance_rules(
+            self.hasher,
+            signature,
+            node.target.address(),
+            &meta.config,
+            &mut frame,
+            node_index,
+        )?;
         // Evidence last, because what a call must present is a property
         // of the declaration this node actually evaluated rather than of
         // the clause list its signature was written with: a guard that
@@ -1067,6 +1106,7 @@ impl Lower<'_> {
                 node_outputs: &node_outputs,
                 evidence: &evidence,
                 requires,
+                issues,
                 inputs: &eval_inputs,
                 hasher: self.hasher,
             },
@@ -1531,6 +1571,106 @@ fn own_prefix_only(
     Ok(())
 }
 
+/// Resolve the resource this frame issues, and inject the authority
+/// entries its direction is held to.
+///
+/// The entry comes from the declaration rather than from a presented
+/// record, and the asymmetry with a movement entry is the honest one: a
+/// movement rule governs a resource a *caller* named, so the presented
+/// record is what makes it trustworthy; an issuance rule governs one the
+/// *declaration* derives, and re-derivation is the address itself.
+///
+/// **A frame speaks for itself.** An entry the executing instance's own
+/// claim already satisfies is not appended at all — which reproduces the
+/// derivation gate exactly, leaves a rule naming a badge meaning
+/// delegated issuance, and costs the ordinary issuer nothing. The
+/// extension is this entry's alone and never the node's evidence: a
+/// claim on the target minted into that set would satisfy every
+/// `Claim(SelfAddr)` gate standing beside it, which is the shape an
+/// account's own spending gates take.
+fn inject_issuance_rules(
+    hasher: &dyn Hasher,
+    signature: &MethodSignature,
+    target: Address,
+    config: &[Value],
+    frame: &mut Declaration,
+    node_index: u32,
+) -> Result<Option<IssuanceGrant>, AdmissionError> {
+    let Some(issuance) = &signature.issues else {
+        return Ok(None);
+    };
+    // The rules the mark grants ride the grant's own address, so what a
+    // body issues is what a gate naming the same resource resolves to.
+    let rules = issuance
+        .grants
+        .resolve(hasher, target, config)
+        .map_err(|source| AdmissionError::Eval {
+            node: node_index,
+            source: source.into(),
+        })?;
+    let resource = granting_issued_resource(hasher, target, issuance.kind, &rules, &issuance.mark);
+    let grant = IssuanceGrant {
+        resource,
+        kind: issuance.kind,
+        direction: issuance.direction,
+    };
+    // A frame that creates the resource's record is the frame founding
+    // its supply, and founding is not minting: the record's own
+    // absent-door is the cap, so a resource granting no `Mint` entry
+    // comes up holding what its creation says and can never hold more.
+    // Read off the declaration rather than declared, on the terms the
+    // instantiation fence is — a node that writes the leaf is the
+    // creation itself.
+    let record = EffectTarget::Point(resource_record_key(hasher, target, resource));
+    let founding = frame
+        .ordered
+        .iter()
+        .any(|access| access.effect.target == record && access.effect.mode == Mode::Write);
+    if founding {
+        return Ok(Some(grant));
+    }
+    // A resource is not an acting identity, so a target that issues one
+    // is callable and names a claim.
+    let own = Presented::of_address(target).ok_or(AdmissionError::IssuanceUnadmitted {
+        node: node_index,
+        resource,
+        behaviour: GrantedBehaviour::Mint,
+    })?;
+    for behaviour in issuance.direction.behaviours() {
+        let sealed = rules
+            .get(*behaviour)
+            .ok_or(AdmissionError::IssuanceUnadmitted {
+                node: node_index,
+                resource,
+                behaviour: *behaviour,
+            })?;
+        let rule = sealed
+            .decode()
+            .map_err(|_| AdmissionError::IssuanceRuleMalformed {
+                node: node_index,
+                resource,
+                behaviour: *behaviour,
+            })?;
+        if rule.satisfied_by(&[own]) {
+            continue;
+        }
+        // An actor question's rule reads claims, refused at the seal
+        // otherwise, so nothing else can arrive.
+        let judged = rule.map_leaves(&mut |leaf| match leaf {
+            SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
+            SealedLeaf::Held { .. } => Err(AdmissionError::IssuanceRuleMalformed {
+                node: node_index,
+                resource,
+                behaviour: *behaviour,
+            }),
+        })?;
+        if !frame.conditions.contains(&judged) {
+            frame.conditions.push(judged);
+        }
+    }
+    Ok(Some(grant))
+}
+
 /// Inject the movement requirements this frame's declared accesses earn.
 ///
 /// A package will not declare a rule it does not want, so the requirement
@@ -1720,6 +1860,10 @@ struct Lowering<'a> {
     node_outputs: &'a [(ResourceAddr, EdgeContent)],
     evidence: &'a [Presented],
     requires: Vec<Rule<JudgedLeaf>>,
+    /// The resource this node issues, already derived where its entries
+    /// were injected — so the address a rule was resolved against and
+    /// the address the grant carries are one derivation.
+    issues: Option<IssuanceGrant>,
     inputs: &'a EvalInputs<'a>,
     hasher: &'a dyn Hasher,
 }
@@ -1822,6 +1966,7 @@ fn lower_call(
         node_outputs,
         evidence,
         requires,
+        issues,
         inputs,
         hasher,
     } = lowering;
@@ -1888,26 +2033,7 @@ fn lower_call(
             .iter()
             .map(|(_, content)| content.clone())
             .collect(),
-        issues: signature
-            .issues
-            .as_ref()
-            .map(|issuance| -> Result<_, AdmissionError> {
-                // The rules the mark grants ride the grant's own address,
-                // so what a body mints is what a gate naming the same
-                // resource resolves to.
-                let rules = issuance
-                    .grants
-                    .resolve(hasher, target, &inputs.record.config)
-                    .map_err(|source| AdmissionError::Eval {
-                        node: node_index,
-                        source: source.into(),
-                    })?;
-                Ok((
-                    granting_issued_resource(hasher, target, issuance.kind, &rules, &issuance.mark),
-                    issuance.kind,
-                ))
-            })
-            .transpose()?,
+        issues,
         evidence: evidence.to_vec(),
         requires,
     })

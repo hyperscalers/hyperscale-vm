@@ -50,7 +50,7 @@ pub mod security {
     /// Soulbound: `withdraw = nobody` refuses every debit of it at
     /// admission, so it leaves a holder only when the registrar takes it
     /// back.
-    #[resource(grants(withdraw = nobody), display_digits = 0)]
+    #[resource(grants(mint = self, withdraw = nobody), display_digits = 0)]
     struct Registered;
 
     /// The share class. Moved by a registered holder to a registered
@@ -63,7 +63,7 @@ pub mod security {
     /// vault moves is on the register. "Alice may send to Bob but not to
     /// Carol" is not spellable here and belongs to whoever keeps the
     /// register.
-    #[resource(grants(withdraw = issued(Registered), deposit = issued(Registered)))]
+    #[resource(grants(mint = self, withdraw = issued(Registered), deposit = issued(Registered)))]
     struct Share;
 
     /// The same issuer's unrestricted class: recallable, and free to
@@ -73,7 +73,7 @@ pub mod security {
     /// withholds the capability rather than permitting a movement — so
     /// granting one leaves the address plain, and a holder of this pays
     /// nothing on the transfer path.
-    #[resource(grants(recall = registrar))]
+    #[resource(grants(mint = self, recall = registrar))]
     struct Bearer;
 
     /// Who keeps the register.

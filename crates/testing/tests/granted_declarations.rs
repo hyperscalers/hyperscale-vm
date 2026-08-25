@@ -25,13 +25,15 @@ mod mill {
     /// The badge the token's granted recall rule names. It grants
     /// nothing itself, which is what a grant leaf may name: a leaf
     /// derives through the granting-nothing form, so a badge is nameable
-    /// before anything grants against it.
+    /// before anything grants against it. Granting nothing costs it no
+    /// supply — the one instance it comes up holding is founded where
+    /// its record is written, which no `Mint` entry governs.
     #[resource(non_fungible, initial(0))]
     struct OwnerBadge;
 
     /// A token whose holders can be recalled from, by whoever holds the
     /// badge — a rule its address commits and no cell holds.
-    #[resource(grants(recall = issued(OwnerBadge, 0)))]
+    #[resource(grants(mint = self, recall = issued(OwnerBadge, 0)))]
     struct Token;
 
     #[state]
@@ -68,7 +70,7 @@ mod hall {
     /// — the same reading the gate below is written with, on both sides
     /// of the table: `recall` asks what the caller presented, `withdraw`
     /// asks what the mover holds.
-    #[resource(grants(recall = issued(Warden), withdraw = issued(Warden)))]
+    #[resource(grants(mint = self, recall = issued(Warden), withdraw = issued(Warden)))]
     struct Seat;
 
     #[state]
@@ -112,8 +114,10 @@ fn a_badge_named_without_an_instance_means_any_of_it_at_every_site() {
         grants
             .iter()
             .find_map(|(behaviour, rule)| match rule {
-                Rule::Require(GrantClaim::SelfBadge { mark, kind, .. }) if behaviour == wanted => {
-                    Some((*kind, mark.clone()))
+                Rule::Require(GrantClaim::SelfBadge { mark, kind, rules })
+                    if behaviour == wanted =>
+                {
+                    Some((*kind, mark.clone(), rules.clone()))
                 }
                 _ => None,
             })
@@ -148,11 +152,17 @@ fn a_badge_named_without_an_instance_means_any_of_it_at_every_site() {
     let resolved = grants
         .resolve(&TestHasher, issuer, &[])
         .expect("the seat's rules resolve against its issuer");
+    // Through the rules the leaf itself carries: a badge's address is
+    // the hash of what it grants, so a leaf deriving it any other way
+    // would name an address nothing is ever minted at.
     let badge = granting_issued_resource(
         &TestHasher,
         issuer,
         ResourceKind::NonFungible,
-        &ResourceGrants::new(),
+        &sealed
+            .2
+            .resolve(&TestHasher, issuer, &[])
+            .expect("the warden's own rules resolve against its issuer"),
         &sealed.1,
     );
     let asks = |behaviour| {
@@ -176,6 +186,9 @@ fn a_badge_named_without_an_instance_means_any_of_it_at_every_site() {
 /// here from the protocol's own types rather than from the macro's — so
 /// agreement is between two derivations rather than one restated.
 fn declared_rules(instance: impl Into<Address>) -> ResourceGrants {
+    let instance = instance.into();
+    // The badge grants nothing: its one instance is founded where its
+    // record is written, which no `Mint` entry governs.
     let badge = issued_resource(
         &TestHasher,
         instance,
@@ -183,6 +196,16 @@ fn declared_rules(instance: impl Into<Address>) -> ResourceGrants {
         mill::OWNER_BADGE,
     );
     let mut rules = ResourceGrants::new();
+    // The token, unlike the badge, is minted by a method of its own —
+    // so it carries the entry saying who may, and absence would have
+    // withheld the capability outright.
+    rules.set(
+        GrantedBehaviour::Mint,
+        RuleBytes::try_from(&StoredRule::claim(
+            Presented::of_address(instance).expect("an instance names a claim"),
+        ))
+        .expect("a rule within the caps encodes"),
+    );
     rules.set(
         GrantedBehaviour::Recall,
         RuleBytes::try_from(&StoredRule::claim(Presented::of_instance(badge, 0)))

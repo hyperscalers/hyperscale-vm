@@ -12,7 +12,7 @@
 //! runs before execution and never reads state. The macro's job is to say
 //! so at the line that did it.
 
-use hyperscale_vm_effects::ResourceKind;
+use hyperscale_vm_effects::{Issued, ResourceKind};
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -27,6 +27,15 @@ pub fn emit_kind(kind: ResourceKind) -> TokenStream {
     match kind {
         ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::ResourceKind::Fungible),
         ResourceKind::NonFungible => quote!(::hyperscale_vm_sdk::ResourceKind::NonFungible),
+    }
+}
+
+/// The direction an issuance takes, as the declaration spells it.
+pub fn emit_issued(direction: Issued) -> TokenStream {
+    match direction {
+        Issued::Minted => quote!(::hyperscale_vm_sdk::Issued::Minted),
+        Issued::Burned => quote!(::hyperscale_vm_sdk::Issued::Burned),
+        Issued::Either => quote!(::hyperscale_vm_sdk::Issued::Either),
     }
 }
 

@@ -9,7 +9,8 @@
 //! comes back, before anything downstream can file or consume it.
 
 use hyperscale_vm_effects::{
-    Expr, GrantsExpr, Issuance, MethodSignature, PackageMetadata, ResourceKind, Totality, Value,
+    Expr, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, Issuance, Issued,
+    MethodSignature, PackageMetadata, ResourceKind, Totality, Value,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, PrincipalAddr, account, principal};
@@ -23,6 +24,18 @@ const DECLARED: u64 = 7;
 /// The mark the issuer's resource is declared under.
 const BADGE: &[u8] = b"badge";
 
+/// What the badge grants: its issuer may mint it, and nobody else may.
+/// Absence would withhold the capability, so a resource that is minted
+/// carries an entry saying who.
+fn badge_grants() -> GrantsExpr {
+    let mut grants = GrantsExpr::new();
+    grants.set(
+        GrantedBehaviour::Mint,
+        GrantRuleExpr::Require(GrantClaim::SelfAddr),
+    );
+    grants
+}
+
 /// One mint method, declaring instance [`DECLARED`] as its output.
 fn issuer() -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
@@ -33,14 +46,15 @@ fn issuer() -> PackageMetadata {
             issues: Some(Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
-                grants: GrantsExpr::new(),
+                direction: Issued::Minted,
+                grants: badge_grants(),
             }),
             abi: vec![],
             outputs: vec![Expr::NfBucket {
                 resource: Box::new(Expr::SelfResource {
                     kind: ResourceKind::NonFungible,
                     material: vec![Expr::Literal(Value::Bytes(BADGE.to_vec()))],
-                    grants: GrantsExpr::new(),
+                    grants: badge_grants(),
                 }),
                 ids: Box::new(Expr::List(vec![Expr::Literal(Value::U64(DECLARED))])),
             }],
@@ -65,13 +79,14 @@ fn miscast_issuer() -> PackageMetadata {
             issues: Some(Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
-                grants: GrantsExpr::new(),
+                direction: Issued::Minted,
+                grants: badge_grants(),
             }),
             abi: vec![],
             outputs: vec![Expr::SelfResource {
                 kind: ResourceKind::NonFungible,
                 material: vec![Expr::Literal(Value::Bytes(BADGE.to_vec()))],
-                grants: GrantsExpr::new(),
+                grants: badge_grants(),
             }],
             ..MethodSignature::default()
         },

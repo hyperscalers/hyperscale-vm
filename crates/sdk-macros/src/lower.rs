@@ -40,8 +40,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::ResourceKind;
 use hyperscale_vm_effects::vocabulary::{CONFIG, INSTANCE, RESOURCE};
+use hyperscale_vm_effects::{Issued, ResourceKind};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
@@ -347,9 +347,14 @@ pub struct Lowered {
     /// The branches whose verdict the export takes, in the order they
     /// were declared, each saying which arm's clause its flag names.
     pub flags: Vec<Polarity>,
-    /// The resource the body issues, where it issues one — its kind and
-    /// its mark — and so whether the export takes the grant.
-    pub issues: Option<(ResourceKind, Vec<u8>)>,
+    /// The resource the body issues, where it issues one — its kind, its
+    /// mark and which way the body moves it — and so whether the export
+    /// takes the grant.
+    ///
+    /// The direction is the body's own fact: a burn has no output
+    /// projection to read one from, and a frame asked the entry it never
+    /// uses would be held to an authority it does not exercise.
+    pub issues: Option<(ResourceKind, Vec<u8>, Issued)>,
     /// The rewritten statements, executing against materialized handles.
     pub body: TokenStream,
     /// The value edges the body ends with, each as the expression that
@@ -1285,7 +1290,7 @@ impl<'a> Lowerer<'a> {
             |a| self.expr(a).code,
         );
         let amount = self.value(amount);
-        self.issuer(ResourceKind::Fungible, &issued.mark);
+        self.issuer(ResourceKind::Fungible, &issued.mark, Issued::Minted);
         Eval {
             val: Val::Produced(Term::SelfResource(
                 ResourceKind::Fungible,
@@ -1753,7 +1758,7 @@ impl<'a> Lowerer<'a> {
             })
         };
         let funds = self.value(destroyed);
-        self.issuer(ResourceKind::NonFungible, &issued.mark);
+        self.issuer(ResourceKind::NonFungible, &issued.mark, Issued::Burned);
         Eval::plain(quote!({
             #cleared
             ::hyperscale_vm_sdk::state::burn_nf_granted(#funds)
@@ -1860,7 +1865,7 @@ impl<'a> Lowerer<'a> {
             quote!(::hyperscale_vm_sdk::state::file_instance(#handle);)
         };
         let id_value = self.value(eval.code);
-        self.issuer(ResourceKind::NonFungible, &issued.mark);
+        self.issuer(ResourceKind::NonFungible, &issued.mark, Issued::Minted);
         let produced = Term::NfBucket {
             resource: Box::new(resource_term),
             ids: Box::new(Term::List(vec![id])),
@@ -1911,7 +1916,7 @@ impl<'a> Lowerer<'a> {
             ),
         }
         let funds = self.value(destroyed.code);
-        self.issuer(ResourceKind::Fungible, mark);
+        self.issuer(ResourceKind::Fungible, mark, Issued::Burned);
         Eval::plain(quote!(::hyperscale_vm_sdk::state::burn_granted(#funds)))
     }
 
@@ -2256,15 +2261,23 @@ impl<'a> Lowerer<'a> {
     ///
     /// No parameter follows it: the grant is the invocation's, read off
     /// the outputs the declaration names, so nothing crosses to say so.
-    fn issuer(&mut self, kind: ResourceKind, mark: &[u8]) {
+    fn issuer(&mut self, kind: ResourceKind, mark: &[u8], direction: Issued) {
         assert!(
             self.out
                 .issues
                 .as_ref()
-                .is_none_or(|(k, m)| *k == kind && m == mark),
+                .is_none_or(|(k, m, _)| *k == kind && m == mark),
             "a method holds one issuance grant, and two of its calls named two resources"
         );
-        self.out.issues = Some((kind, mark.to_vec()));
+        // A body reaching both ways through one grant takes both
+        // entries, folded call by call rather than decided by whichever
+        // one the walk saw last.
+        let taken = self
+            .out
+            .issues
+            .as_ref()
+            .map_or(direction, |(_, _, held)| held.with(direction));
+        self.out.issues = Some((kind, mark.to_vec(), taken));
     }
 
     /// Bind the handle for `site` as an export parameter, and answer the

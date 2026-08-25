@@ -56,7 +56,7 @@ pub mod grammar {
 
     /// A mark carrying a schema: what one of its instances holds, in the
     /// encoding the mark itself declares.
-    #[resource(non_fungible)]
+    #[resource(non_fungible, grants(mint = self, burn = self))]
     struct Seat {
         holder: u64,
     }

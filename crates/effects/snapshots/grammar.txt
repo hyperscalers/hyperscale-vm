@@ -53,8 +53,8 @@ instantiate() — infallible
   declares
       0  requires self.config is absent
       1  write self.config
-      2  requires self.resource[self-issued(non-fungible["seat"])] is absent
-      3  write self.resource[self-issued(non-fungible["seat"])]
+      2  requires self.resource[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer] is absent
+      3  write self.resource[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer]
   exports  handle for clause 1, handle for clause 3, self.record
 
 jot(u64, u64) — infallible
@@ -90,8 +90,8 @@ raise() — infallible, answers
 
 reseat(u64, u64) — infallible
   declares
-      0  requires self.instance[self-issued(non-fungible["seat"]), arg0] is present
-      1  write self.instance[self-issued(non-fungible["seat"]), arg0]
+      0  requires self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, arg0] is present
+      1  write self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, arg0]
       2  write self.noted
   exports  handle for clause 1, handle for clause 2, arg1
 
@@ -107,18 +107,18 @@ scheduled(u64) — infallible
   exports  handle for clause 0, arg0 in config.tiers
 
 seat(u64, u64) — infallible
-  issues   "seat" non-fungible
+  mints    "seat" non-fungible, granting mint to the issuer and burn to the issuer
   declares
-      0  requires self.instance[self-issued(non-fungible["seat"]), arg0] is absent
-      1  write self.instance[self-issued(non-fungible["seat"]), arg0]
+      0  requires self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, arg0] is absent
+      1  write self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, arg0]
       2  write self.noted
-  yields   edge 0 = edge(self-issued(non-fungible["seat"]) × [arg0])
+  yields   edge 0 = edge(self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer × [arg0])
   exports  handle for clause 1, handle for clause 2, arg1, arg0
 
 seated(nf-bucket) — infallible
-  takes    arg0 carrying self-issued(non-fungible["seat"])
+  takes    arg0 carrying self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer
   declares
-      0  read self.instance[self-issued(non-fungible["seat"]), only(ids-of(arg0))]
+      0  read self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, only(ids-of(arg0))]
       1  write self.noted
   yields   edge 0 = edge(resource-of(arg0) × ids-of(arg0))
   exports  handle for clause 0, handle for clause 1, edge arg0
@@ -151,10 +151,10 @@ stow(nf-bucket) — infallible
   exports  handle for clause 0, edge arg0
 
 survey(nf-bucket) — infallible
-  takes    arg0 carrying self-issued(non-fungible["seat"])
+  takes    arg0 carrying self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer
   declares
       0  for each of ids-of(arg0)
-        1  read self.instance[self-issued(non-fungible["seat"]), element]
+        1  read self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, element]
       2  write self.noted
   yields   edge 0 = edge(resource-of(arg0) × ids-of(arg0))
   exports  handle for clause 0 site 0, handle for clause 1, edge arg0
@@ -201,12 +201,12 @@ tally-plainly(u64) — infallible
   exports  handle for clause 0, arg0
 
 unseat(nf-bucket) — infallible
-  takes    arg0 carrying self-issued(non-fungible["seat"])
-  issues   "seat" non-fungible
+  takes    arg0 carrying self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer
+  burns    "seat" non-fungible, granting mint to the issuer and burn to the issuer
   declares
       0  for each of ids-of(arg0)
-        1  requires self.instance[self-issued(non-fungible["seat"]), element] is present
-        2  write self.instance[self-issued(non-fungible["seat"]), element]
+        1  requires self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, element] is present
+        2  write self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, element]
   exports  handle for clause 0 site 1, edge arg0
 
 widest() — infallible

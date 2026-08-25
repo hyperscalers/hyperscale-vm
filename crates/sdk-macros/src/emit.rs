@@ -11,7 +11,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::lower::{Lowered, Need, Node, Site, Target};
-use crate::term::{Op, Term, binding_ident, emit_kind, fresh_ident};
+use crate::term::{Op, Term, binding_ident, emit_issued, emit_kind, fresh_ident};
 
 /// The mode a site's operations fold to.
 ///
@@ -303,10 +303,11 @@ pub fn declaration(
     });
     // The grant binds after the values, which is where the export takes
     // it: the binding's order is the export's parameter order.
-    let issuer = lowered.issues.as_ref().map(|(kind, mark)| {
+    let issuer = lowered.issues.as_ref().map(|(kind, mark, direction)| {
         let kind = emit_kind(*kind);
+        let direction = emit_issued(*direction);
         let bytes = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
-        quote!(__t.bind_issuer(#kind, #bytes);)
+        quote!(__t.bind_issuer(#kind, #bytes, #direction);)
     });
     let fallible = declines.then(|| quote!(__t.fallible();));
     let answers = lowered.answer.is_some().then(|| quote!(__t.answers();));

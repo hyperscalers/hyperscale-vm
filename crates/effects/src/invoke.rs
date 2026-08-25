@@ -20,6 +20,7 @@ use crate::metadata::PackageHash;
 use crate::presented::Presented;
 use crate::resource::ResourceKind;
 use crate::rule::Rule;
+use crate::signature::Issued;
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE};
 
 impl ResourceKind {
@@ -126,6 +127,25 @@ pub struct EdgeBound {
     pub bounds: Bounds,
 }
 
+/// What a node's issuance grant names: one resource, the shape it takes,
+/// and which way this frame moves it.
+///
+/// Derived at admission from the mark the signature carries against the
+/// target's own address, beside the entries that decide who may — one
+/// resolution, so the address a rule was judged against and the address
+/// an edge is stamped with cannot differ. The kind is what holds each
+/// operation to the one shape the grant's address commits; the direction
+/// is what holds a body to the half its declaration claimed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IssuanceGrant {
+    /// The resource issued.
+    pub resource: ResourceAddr,
+    /// The shape its address commits.
+    pub kind: ResourceKind,
+    /// Which way this frame's declaration says it goes.
+    pub direction: Issued,
+}
+
 /// One manifest node lowered to the invocation it performs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeCall {
@@ -151,18 +171,14 @@ pub struct NodeCall {
     /// as the cell its ids frame — and the ids are the declaration's, so
     /// the walk holds the produced edge to exactly them.
     pub outputs: Vec<EdgeContent>,
-    /// The resource this node's method may bring into being, where its
-    /// declaration says it brings one, with the kind its derivation
-    /// folded.
+    /// The resource this node's method brings into or out of existence,
+    /// where its declaration says it does.
     ///
-    /// Evaluated at routing from the mark the signature carries, against
-    /// the target's own address — so an instance can issue what its own
-    /// address derives and nothing else, which is the whole of what
-    /// grants the authority. Carrying the address rather than a bit is
-    /// what lets an issued edge be stamped with what it holds; carrying
-    /// the kind beside it is what lets the session hold each mint
-    /// operation to the one shape the grant's address commits.
-    pub issues: Option<(ResourceAddr, ResourceKind)>,
+    /// Names the resource; it does not confer the right. Who may issue
+    /// is the resource's own sealed entry, injected onto the frame at
+    /// admission and judged where every other actor question is — so a
+    /// failed requirement aborts before the grant is ever reached.
+    pub issues: Option<IssuanceGrant>,
     /// The claims this call presents, resolved from the signed evidence
     /// the manifest node names.
     pub evidence: Vec<Presented>,

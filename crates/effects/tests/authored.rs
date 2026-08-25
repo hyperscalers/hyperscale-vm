@@ -97,6 +97,10 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         material: vec![],
     };
     let this = || vec![RuleExpr::claim(Expr::SelfAddr)];
+    // The pool's operator badge grants nothing: its one instance is
+    // founded where its record is written, and no `Mint` entry governs
+    // a founding — so the supply is one, forever, and the address says
+    // so without anyone reading the pool's methods.
     let owner_badge = || {
         vec![RuleExpr::claim(Expr::SelfResource {
             kind: ResourceKind::NonFungible,

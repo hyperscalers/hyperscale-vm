@@ -48,7 +48,7 @@ pub mod staking {
     /// A delegation's receipt: the resource the pool issues against what
     /// is staked with it, so a holder's units name the pool that owes
     /// them and two pools can never share one stake unit.
-    #[resource]
+    #[resource(grants(mint = self, burn = self))]
     struct StakeUnit;
 
     /// The pool's creation-fixed configuration: what a delegation is

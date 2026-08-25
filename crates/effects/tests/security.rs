@@ -316,6 +316,12 @@ fn the_register_entry_is_soulbound() {
 
 /// The behaviours the guest's own declaration grants, so the fixture
 /// above cannot pass against a declaration that stopped granting them.
+///
+/// `Mint` is here because every resource that is minted carries one:
+/// absence withholds, so a share class nobody could issue is spelled by
+/// leaving it out. It is the control for the rest — an authority entry
+/// beside the movement entries, leaving the class byte to follow what
+/// the entries *do*.
 #[test]
 fn the_guest_grants_what_these_cases_are_about() {
     let granted: BTreeSet<GrantedBehaviour> = security::metadata()
@@ -327,10 +333,11 @@ fn the_guest_grants_what_these_cases_are_about() {
     assert_eq!(
         granted,
         BTreeSet::from([
+            GrantedBehaviour::Mint,
             GrantedBehaviour::Withdraw,
             GrantedBehaviour::Deposit,
             GrantedBehaviour::Recall,
         ]),
-        "both movement entries to enforce and an authority entry to stay plain beside them",
+        "both movement entries to enforce and two authority entries to stay plain beside them",
     );
 }
