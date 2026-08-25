@@ -2,13 +2,14 @@
 //! manifest.
 //!
 //! One checker serves both signed forms. A bare graph is the degenerate
-//! envelope — a single intent with no parameters and no subintents — and a
-//! composed tree is several intents joined by typed yield edges, so
-//! [`admit_intents`] takes a slice of [`IntentView`] and everything below
-//! it is shape-agnostic: bindings and parameter consumption per intent,
-//! a deterministic interleave along the yield edges, then one pass over
-//! the flattened node order checking arity, kinds, linearity, and
-//! constraints.
+//! envelope — a single intent with no sockets and no subintents — and a
+//! composed tree is several intents joined through the sockets they
+//! declare, each carrying a value edge or a proof. So [`admit_intents`]
+//! takes a slice of [`IntentView`] and everything below it is
+//! shape-agnostic: bindings and socket consumption per intent, a
+//! deterministic interleave over the sockets each node reaches, then one
+//! pass over the flattened node order checking arity, kinds, linearity,
+//! and constraints.
 //!
 //! Nothing here reads state. Verdicts are a pure function of the signed
 //! form and content-addressed metadata, which is what lets every node

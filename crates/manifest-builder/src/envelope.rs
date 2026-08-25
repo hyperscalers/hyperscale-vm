@@ -309,7 +309,7 @@ impl DerefMut for IntentBuilder<'_> {
     }
 }
 
-/// A composition of intents over typed yield edges.
+/// A composition of intents, joined through the sockets they declare.
 pub struct EnvelopeBuilder<'a> {
     chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,

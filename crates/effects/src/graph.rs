@@ -72,9 +72,11 @@ pub const MAX_EVIDENCE_PER_NODE: usize = 8;
 ///
 /// Evidence is presented, never ambient: a node names what it hands its
 /// callee, so a call into one package cannot carry authority the author
-/// meant for another. Both sources are scoped to the node's own intent:
-/// a signature proof to the intent whose signature produced it, a node
-/// proof to the intent whose node minted it.
+/// meant for another. Two of the three sources are scoped to the node's
+/// own intent — a signature proof to the intent whose signature produced
+/// it, a node proof to the intent whose node minted it. A socket is the
+/// one that is not, which is why the declaration shapes it and the
+/// composition answers for what fills it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum EvidenceRef {
     /// The proof the enclosing intent's own signature produces, carrying

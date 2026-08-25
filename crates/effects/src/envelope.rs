@@ -1,16 +1,21 @@
 //! The bound envelope tree: a root intent composed with separately
-//! signed subintents over typed yield edges, and the nullifier
-//! vocabulary that makes a committed subintent once-only.
+//! signed subintents through the sockets they declare, and the
+//! nullifier vocabulary that makes a committed subintent once-only.
 //!
 //! A subintent's signer signs an [`IntentDecl`] — a graph over the
-//! sockets it declares, each shaped for something the composition
-//! supplies: a value edge, or a proof. The composer fills every socket
-//! from another intent's node and signs the whole envelope; nothing
-//! about the tree is renegotiated at admission. [`admit_tree`] flattens the tree into one
-//! routing manifest: intents keep their author order, yield edges
-//! interleave them deterministically, and a composition whose yields
-//! admit no execution order is rejected — acyclicity is judged at yield
-//! granularity.
+//! sockets it declares. A socket carries either of the two things that
+//! cross an intent boundary: a value edge, which exactly one node
+//! argument consumes, or a proof, which as many of the intent's nodes
+//! present as ask for it. The composer fills every socket from another
+//! intent's node and signs the whole envelope; nothing about the tree
+//! is renegotiated at admission.
+//!
+//! [`admit_tree`] flattens the tree into one routing manifest: intents
+//! keep their author order and their sockets interleave them
+//! deterministically, so a node lands after whatever fills every socket
+//! it reaches — the ones its arguments consume and the ones its
+//! evidence presents alike. A composition admitting no such order is
+//! rejected.
 //!
 //! Committing a subintent writes a kernel nullifier substate at the
 //! canonical address `signer_prefix | H(nullifier_role, subintent_hash)`
@@ -95,7 +100,7 @@ pub enum Socket {
 /// signer signs exactly this, so [`IntentDecl::hash`] is the subintent's
 /// identity whatever composition later carries it. Outputs the graph
 /// does not consume internally are the intent's yields — the composition
-/// must consume every one.
+/// must bind every one to some intent's socket.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct IntentDecl {
     /// The intent's invocation graph; arguments may reference the
@@ -308,8 +313,8 @@ pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
 }
 
 /// Admit a bound envelope tree: validate every intent, interleave the
-/// tree into one flattened manifest along its yield edges, and derive
-/// the subintent nullifier records.
+/// tree into one flattened manifest over the sockets its intents
+/// declare, and derive the subintent nullifier records.
 ///
 /// `identity` is the signed envelope's hash — the root of every fresh
 /// derivation. Distinct signed envelopes never mint the same fresh key,

@@ -3,8 +3,9 @@
 //! judges is judged here first.
 //!
 //! The world is two accounts and the resources they trade, which is all a
-//! composition needs: a yield edge is an edge, and what makes it a
-//! composition is which graph it crosses.
+//! composition needs: what fills a socket is an ordinary edge or an
+//! ordinary proof, and what makes it a composition is which graph it
+//! crosses.
 
 use hyperscale_vm_effects::{
     AdmissionError, Constraint, EnvelopeTree, GrantedBehaviour, Hasher, IntentDecl, PackageHash,

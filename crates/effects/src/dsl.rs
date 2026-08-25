@@ -172,7 +172,7 @@ pub fn self_child(slot: SlotId, material: Vec<Expr>) -> Expr {
 ///
 /// A reaching access is the one place the constant gives way. A package
 /// holds value at any slot of its own, so an issuer's reach that listed
-/// slots would leave every bespoke vault unreachable, which is the socket
+/// slots would leave every bespoke vault unreachable, which is the gap
 /// the reach exists to close. What keeps a caller-chosen slot from being
 /// a cell nobody judged is that the table's judgment is restated where
 /// the slot finally has a value.

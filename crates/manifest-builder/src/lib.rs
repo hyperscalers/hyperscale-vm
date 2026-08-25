@@ -17,10 +17,11 @@
 //! stop being the author's claims, and an edge whose type the producing
 //! signature determines asserts that type by itself.
 //!
-//! Above the graph, an [`EnvelopeBuilder`] composes intents along typed
-//! yield edges — ones the composer writes, and ones somebody else already
-//! signed — and [`preflight`] answers what the chain will make of the
-//! result before any of it is signed.
+//! Above the graph, an [`EnvelopeBuilder`] composes intents through the
+//! sockets they declare — ones the composer writes, and ones somebody
+//! else already signed — wiring an edge or a proof into each, and
+//! [`preflight`] answers what the chain will make of the result before
+//! any of it is signed.
 //!
 //! The builder sits strictly on the client side of the trust boundary.
 //! It renders no judgement; admission re-derives every property it

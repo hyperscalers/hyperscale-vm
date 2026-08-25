@@ -1,6 +1,6 @@
 //! Envelope tree admission: composed intents flatten deterministically
-//! along their yield edges, the nullifier vocabulary derives canonical
-//! addresses, and every malformed composition rejects exactly.
+//! over the sockets they declare, the nullifier vocabulary derives
+//! canonical addresses, and every malformed composition rejects exactly.
 
 use std::collections::BTreeSet;
 
