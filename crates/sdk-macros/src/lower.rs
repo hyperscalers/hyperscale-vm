@@ -2083,7 +2083,7 @@ impl<'a> Lowerer<'a> {
             (
                 syn::parse_quote!(::hyperscale_vm_sdk::state::NfVault),
                 Target::Range {
-                    slot: SlotRef::Told(slot),
+                    slot: SlotRef::Reached(slot),
                     owner: Some(holder),
                     material: vec![resource.clone()],
                     lo: Term::LitU128(0),
@@ -2096,7 +2096,7 @@ impl<'a> Lowerer<'a> {
                 syn::parse_quote!(::hyperscale_vm_sdk::state::Vault),
                 Target::Point {
                     owner: Some(holder),
-                    slot: SlotRef::Told(slot),
+                    slot: SlotRef::Reached(slot),
                     material: vec![resource.clone()],
                 },
             )

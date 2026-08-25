@@ -408,15 +408,15 @@ pub fn fresh_ident(site: usize) -> syn::Ident {
 /// The slot a target's key is derived under.
 ///
 /// Written down on every ordinary access — a package numbers its own
-/// slots and the vocabulary numbers the rest — and told on a reaching
-/// one, where the cell is under somebody else's prefix and only the
-/// caller knows which slot they keep it at.
+/// slots and the vocabulary numbers the rest — and named by an argument
+/// on a reaching one, where the cell is under somebody else's prefix and
+/// only the caller knows which slot they keep it at.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SlotRef {
     /// The slot the declaration names.
     Fixed(u16),
-    /// The slot a reaching access was told.
-    Told(Term),
+    /// The slot a reaching access takes from an argument.
+    Reached(Term),
 }
 
 impl SlotRef {
@@ -424,7 +424,7 @@ impl SlotRef {
     pub const fn fixed(&self) -> Option<u16> {
         match self {
             Self::Fixed(slot) => Some(*slot),
-            Self::Told(_) => None,
+            Self::Reached(_) => None,
         }
     }
 
@@ -432,7 +432,7 @@ impl SlotRef {
     pub fn emit(&self) -> TokenStream {
         match self {
             Self::Fixed(slot) => quote!(::hyperscale_vm_sdk::SlotId(#slot)),
-            Self::Told(term) => {
+            Self::Reached(term) => {
                 let term = term.emit();
                 quote!(&#term.cast::<::hyperscale_vm_sdk::U64>())
             }

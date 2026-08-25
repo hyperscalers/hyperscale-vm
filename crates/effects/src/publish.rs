@@ -453,9 +453,11 @@ pub enum DeclarationError {
     },
     /// A slot named by an argument on a clause that reaches nothing —
     /// where the shape table has a constant to dispatch on and expects
-    /// one.
+    /// one. Only a reach makes [`SlotRef::Reached`] admissible.
+    ///
+    /// [`SlotRef::Reached`]: crate::dsl::SlotRef::Reached
     #[error("clause {clause} takes its slot from an argument and reaches no foreign prefix")]
-    UntoldSlot {
+    SlotWithoutReach {
         /// The clause's index in the signature's preorder.
         clause: u32,
     },
@@ -1078,7 +1080,7 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
         // else: everywhere else the slot is the constant the per-slot
         // shape table dispatches on.
         if slot_of(target).is_some_and(|(slot, _)| slot.fixed().is_none()) {
-            return Err(DeclarationError::UntoldSlot { clause });
+            return Err(DeclarationError::SlotWithoutReach { clause });
         }
     }
     // What this write says about the leaf's presence: a `Holds` on the
@@ -4663,7 +4665,7 @@ mod tests {
         };
         assert_eq!(
             check_declarations(&untold),
-            Err(DeclarationError::UntoldSlot { clause: 0 })
+            Err(DeclarationError::SlotWithoutReach { clause: 0 })
         );
     }
 }
