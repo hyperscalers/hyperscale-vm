@@ -107,7 +107,7 @@ fn a_badge_named_without_an_instance_means_any_of_it_at_every_site() {
     // And what each sealed rule names, in the derivation's.
     let grants = &issue
         .issues
-        .as_ref()
+        .first()
         .expect("the method issues the seat")
         .grants;
     let named = |wanted| {

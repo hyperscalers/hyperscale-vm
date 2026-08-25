@@ -103,7 +103,9 @@ pub use rule::{
     MAX_RULE_WIRE_DEPTH, NOBODY_BYTES, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule, always,
     never, well_formed,
 };
-pub use signature::{AbiParam, Issuance, Issued, MethodSignature, ParamType, Totality};
+pub use signature::{
+    AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MethodSignature, ParamType, Totality,
+};
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};
 pub use types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, NativeRole,

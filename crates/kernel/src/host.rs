@@ -54,8 +54,8 @@ impl KernelHost for KernelSession {
     fn burn(&mut self, funds: u32) -> Result<(), AbortReason> {
         refused(Self::burn(self, funds))
     }
-    fn mint_instances(&mut self, ids: &[u64]) -> Result<u32, AbortReason> {
-        refused(Self::mint_instances(self, ids))
+    fn mint_instances(&mut self, grant: u32, ids: &[u64]) -> Result<u32, AbortReason> {
+        refused(Self::mint_instances(self, grant, ids))
     }
     fn site_instance_take(
         &mut self,
@@ -89,8 +89,8 @@ impl KernelHost for KernelSession {
     fn site_put(&mut self, site: u32, element: u32, funds: u32) -> Result<(), AbortReason> {
         refused(Self::cell_put(self, site, element, funds))
     }
-    fn mint(&mut self, amount: u128) -> Result<u32, AbortReason> {
-        refused(Self::mint(self, amount))
+    fn mint(&mut self, grant: u32, amount: u128) -> Result<u32, AbortReason> {
+        refused(Self::mint(self, grant, amount))
     }
     fn site_take(&mut self, site: u32, element: u32, amount: u128) -> Result<u32, AbortReason> {
         refused(Self::cell_take(self, site, element, amount))

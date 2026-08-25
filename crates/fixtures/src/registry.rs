@@ -50,7 +50,7 @@ pub fn metadata() -> PackageMetadata {
         "bind".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: None,
+            issues: Vec::new(),
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
                 AbiParam::Handle { clause: 0, site: 0 },
@@ -71,7 +71,7 @@ pub fn metadata() -> PackageMetadata {
         "check".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: None,
+            issues: Vec::new(),
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
                 AbiParam::Handle { clause: 0, site: 0 },
@@ -90,7 +90,7 @@ pub fn metadata() -> PackageMetadata {
         "drain".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: None,
+            issues: Vec::new(),
             params: vec![ParamType::U128],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
             effects: vec![Clause::Effect {

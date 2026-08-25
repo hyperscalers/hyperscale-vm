@@ -1595,80 +1595,82 @@ fn inject_issuance_rules(
     config: &[Value],
     frame: &mut Declaration,
     node_index: u32,
-) -> Result<Option<IssuanceGrant>, AdmissionError> {
-    let Some(issuance) = &signature.issues else {
-        return Ok(None);
-    };
-    // The rules the mark grants ride the grant's own address, so what a
-    // body issues is what a gate naming the same resource resolves to.
-    let rules = issuance
-        .grants
-        .resolve(hasher, target, config)
-        .map_err(|source| AdmissionError::Eval {
-            node: node_index,
-            source: source.into(),
-        })?;
-    let resource = granting_issued_resource(hasher, target, issuance.kind, &rules, &issuance.mark);
-    let grant = IssuanceGrant {
-        resource,
-        kind: issuance.kind,
-        direction: issuance.direction,
-    };
-    // A frame that creates the resource's record is the frame founding
-    // its supply, and founding is not minting: the record's own
-    // absent-door is the cap, so a resource granting no `Mint` entry
-    // comes up holding what its creation says and can never hold more.
-    // Read off the declaration rather than declared, on the terms the
-    // instantiation fence is — a node that writes the leaf is the
-    // creation itself.
-    let record = EffectTarget::Point(resource_record_key(hasher, target, resource));
-    let founding = frame
-        .ordered
-        .iter()
-        .any(|access| access.effect.target == record && access.effect.mode == Mode::Write);
-    if founding {
-        return Ok(Some(grant));
-    }
-    // A resource is not an acting identity, so a target that issues one
-    // is callable and names a claim.
-    let own = Presented::of_address(target).ok_or(AdmissionError::IssuanceUnadmitted {
-        node: node_index,
-        resource,
-        behaviour: GrantedBehaviour::Mint,
-    })?;
-    for behaviour in issuance.direction.behaviours() {
-        let sealed = rules
-            .get(*behaviour)
-            .ok_or(AdmissionError::IssuanceUnadmitted {
+) -> Result<Vec<IssuanceGrant>, AdmissionError> {
+    let mut granted = Vec::with_capacity(signature.issues.len());
+    for issuance in &signature.issues {
+        // The rules the mark grants ride the grant's own address, so what
+        // a body issues is what a gate naming the same resource resolves
+        // to.
+        let rules = issuance
+            .grants
+            .resolve(hasher, target, config)
+            .map_err(|source| AdmissionError::Eval {
                 node: node_index,
-                resource,
-                behaviour: *behaviour,
+                source: source.into(),
             })?;
-        let rule = sealed
-            .decode()
-            .map_err(|_| AdmissionError::IssuanceRuleMalformed {
-                node: node_index,
-                resource,
-                behaviour: *behaviour,
-            })?;
-        if rule.satisfied_by(&[own]) {
+        let resource =
+            granting_issued_resource(hasher, target, issuance.kind, &rules, &issuance.mark);
+        granted.push(IssuanceGrant {
+            resource,
+            kind: issuance.kind,
+            direction: issuance.direction,
+        });
+        // A frame that creates the resource's record is the frame
+        // founding its supply, and founding is not minting: the record's
+        // own absent-door is the cap, so a resource granting no `Mint`
+        // entry comes up holding what its creation says and can never
+        // hold more. Read off the declaration rather than declared, on
+        // the terms the instantiation fence is — a node that writes the
+        // leaf is the creation itself.
+        let record = EffectTarget::Point(resource_record_key(hasher, target, resource));
+        let founding = frame
+            .ordered
+            .iter()
+            .any(|access| access.effect.target == record && access.effect.mode == Mode::Write);
+        if founding {
             continue;
         }
-        // An actor question's rule reads claims, refused at the seal
-        // otherwise, so nothing else can arrive.
-        let judged = rule.map_leaves(&mut |leaf| match leaf {
-            SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
-            SealedLeaf::Held { .. } => Err(AdmissionError::IssuanceRuleMalformed {
-                node: node_index,
-                resource,
-                behaviour: *behaviour,
-            }),
+        // A resource is not an acting identity, so a target that issues
+        // one is callable and names a claim.
+        let own = Presented::of_address(target).ok_or(AdmissionError::IssuanceUnadmitted {
+            node: node_index,
+            resource,
+            behaviour: GrantedBehaviour::Mint,
         })?;
-        if !frame.conditions.contains(&judged) {
-            frame.conditions.push(judged);
+        for behaviour in issuance.direction.behaviours() {
+            let sealed = rules
+                .get(*behaviour)
+                .ok_or(AdmissionError::IssuanceUnadmitted {
+                    node: node_index,
+                    resource,
+                    behaviour: *behaviour,
+                })?;
+            let rule = sealed
+                .decode()
+                .map_err(|_| AdmissionError::IssuanceRuleMalformed {
+                    node: node_index,
+                    resource,
+                    behaviour: *behaviour,
+                })?;
+            if rule.satisfied_by(&[own]) {
+                continue;
+            }
+            // An actor question's rule reads claims, refused at the seal
+            // otherwise, so nothing else can arrive.
+            let judged = rule.map_leaves(&mut |leaf| match leaf {
+                SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
+                SealedLeaf::Held { .. } => Err(AdmissionError::IssuanceRuleMalformed {
+                    node: node_index,
+                    resource,
+                    behaviour: *behaviour,
+                }),
+            })?;
+            if !frame.conditions.contains(&judged) {
+                frame.conditions.push(judged);
+            }
         }
     }
-    Ok(Some(grant))
+    Ok(granted)
 }
 
 /// Inject the movement requirements this frame's declared accesses earn.
@@ -1863,7 +1865,7 @@ struct Lowering<'a> {
     /// The resource this node issues, already derived where its entries
     /// were injected — so the address a rule was resolved against and
     /// the address the grant carries are one derivation.
-    issues: Option<IssuanceGrant>,
+    issues: Vec<IssuanceGrant>,
     inputs: &'a EvalInputs<'a>,
     hasher: &'a dyn Hasher,
 }

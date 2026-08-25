@@ -256,6 +256,14 @@ impl Totality {
     }
 }
 
+/// The bound on how many resources one method may issue.
+///
+/// A component founds every resource it declares in the one call that
+/// makes it actual, so the ceiling is the marks a package may declare
+/// rather than anything a method chooses — and the cost of each is a
+/// derivation at admission, which is what this bounds.
+pub const MAX_ISSUANCES_PER_SIGNATURE: usize = 16;
+
 /// Which directions a declared issuance takes.
 ///
 /// Two entries cannot be independent over one undirected grant: a
@@ -348,15 +356,17 @@ pub struct MethodSignature {
     /// locally and offers no veto, so it must be one that cannot come
     /// back with a refusal or a trap for the core to have to answer.
     pub totality: Totality,
-    /// The resource this method may bring into or out of existence,
-    /// where it may.
+    /// The resources this method may bring into or out of existence,
+    /// in the order a body's own calls name them.
     ///
-    /// A mark rather than an address: it is the material separating one
+    /// Marks rather than addresses: a mark is the material separating one
     /// of the instance's own resources from its others, so naming another
     /// instance's is not something this field can say. The walk grants
-    /// the issuance handle against it, and the gate holds the export to
-    /// taking one exactly when it is present.
-    pub issues: Option<Issuance>,
+    /// each against the target, and the position here is the index the
+    /// export passes — so a component founding three resources says
+    /// which of them each call means.
+    #[hbor(max = MAX_ISSUANCES_PER_SIGNATURE)]
+    pub issues: Vec<Issuance>,
     /// The method's parameter kinds, in order; admission types every node
     /// against them.
     pub params: Vec<ParamType>,

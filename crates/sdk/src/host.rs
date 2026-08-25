@@ -271,17 +271,17 @@ pub fn reserve_take(handle: Handle) -> u32 {
     settled(kernel(|k| k.site_reserve_take(site, element)))
 }
 
-/// Issue `value` of the resource this invocation was granted.
+/// Issue `value` of the resource the grant at `grant` names.
 #[must_use]
-pub fn mint(value: u128) -> u32 {
-    settled(kernel(|k| k.mint(value)))
+pub fn mint(grant: u32, value: u128) -> u32 {
+    settled(kernel(|k| k.mint(grant, value)))
 }
 
-/// Create the named instances of the resource this invocation was
-/// granted.
+/// Create the named instances of the resource the grant at `grant`
+/// names.
 #[must_use]
-pub fn mint_instances(ids: &[u64]) -> u32 {
-    settled(kernel(|k| k.mint_instances(ids)))
+pub fn mint_instances(grant: u32, ids: &[u64]) -> u32 {
+    settled(kernel(|k| k.mint_instances(grant, ids)))
 }
 
 /// Destroy what the bucket at `funds` carries, against the grant at `rep`.

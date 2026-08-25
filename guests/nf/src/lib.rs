@@ -19,7 +19,10 @@ struct Nf;
 impl Guest for Nf {
     fn mint(data: &Site, id: u64) -> Bucket {
         site_set(data, 0, &id.to_le_bytes());
-        mint_instances(&[id])
+        // The one issuance this method declares, so index zero — the
+        // hand-authored twin of what the lowering computes for a body
+        // that writes the mark instead.
+        mint_instances(0, &[id])
     }
 
     fn deposit(holdings: &Site, funds: Bucket) {

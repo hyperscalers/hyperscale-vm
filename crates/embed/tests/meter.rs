@@ -69,10 +69,10 @@ impl KernelHost for StubHost {
     fn burn(&mut self, _funds: u32) -> Result<(), AbortReason> {
         self.op("burn", ())
     }
-    fn mint(&mut self, _amount: u128) -> Result<u32, AbortReason> {
+    fn mint(&mut self, _grant: u32, _amount: u128) -> Result<u32, AbortReason> {
         self.op("mint", 1)
     }
-    fn mint_instances(&mut self, _ids: &[u64]) -> Result<u32, AbortReason> {
+    fn mint_instances(&mut self, _grant: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
         self.op("mint-instances", 1)
     }
     fn site_instance_take(
@@ -278,7 +278,7 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "mint",
             |p| {
-                let _ = meter::mint(p, 1);
+                let _ = meter::mint(p, 0, 1);
             },
             vec![Charge(AMOUNT), Host("mint")],
         ),
@@ -306,7 +306,7 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "mint-instances",
             |p| {
-                let _ = meter::mint_instances(p, &[1, 2, 3]);
+                let _ = meter::mint_instances(p, 0, &[1, 2, 3]);
             },
             vec![Charge(24), Host("mint-instances")],
         ),

@@ -1700,23 +1700,39 @@ fn instantiate_method(resources: &[Resource], gate: Option<&syn::Attribute>) -> 
         };
         quote!(#name::__record(#stated);)
     });
-    // The supply, where a mark states one: the node that makes the
-    // component actual is the node that issues what it comes up
-    // holding, so the two are one invocation and the edge leaves with
+    // The supply each mark states: the node that makes the component
+    // actual is the node that founds what it comes up holding, so every
+    // one of them is this invocation's and their edges leave with
     // whoever composed the bring-up.
-    let supplied = resources
+    //
+    // Founding is not minting — the record write beside each is the
+    // creation, and no `Mint` entry governs it — which is what lets a
+    // component come up holding a supply nothing may ever add to.
+    let supplied: Vec<_> = resources
         .iter()
-        .find_map(|resource| Some((resource, resource.initial.as_ref()?)));
-    let (returns, supply) = match supplied {
-        Some((resource, initial)) => {
-            let name = syn::Ident::new(&resource.name, Span::call_site());
-            let edge = match resource.kind {
-                ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::state::Bucket),
-                ResourceKind::NonFungible => quote!(::hyperscale_vm_sdk::state::NfBucket),
-            };
-            (quote!(-> #edge), quote!(#name::mint(#initial)))
+        .filter_map(|resource| Some((resource, resource.initial.as_ref()?)))
+        .collect();
+    let edges = supplied.iter().map(|(resource, _)| match resource.kind {
+        ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::state::Bucket),
+        ResourceKind::NonFungible => quote!(::hyperscale_vm_sdk::state::NfBucket),
+    });
+    let founds = supplied.iter().map(|(resource, initial)| {
+        let name = syn::Ident::new(&resource.name, Span::call_site());
+        // A balance is founded in subunits and an instance by its id, so
+        // the literal a mark states means whichever its kind takes.
+        match resource.kind {
+            ResourceKind::Fungible => quote!(#name::mint(
+                ::hyperscale_vm_sdk::state::Quantity::from_subunits(#initial)
+            )),
+            ResourceKind::NonFungible => quote!(#name::mint(#initial)),
         }
-        None => (quote!(), quote!()),
+    });
+    let (returns, supply) = match supplied.len() {
+        0 => (quote!(), quote!()),
+        1 => (quote!(-> #(#edges)*), quote!(#(#founds)*)),
+        // Several leave as a tuple, the shape any method handing back
+        // more than one edge already takes.
+        _ => (quote!(-> (#(#edges),*)), quote!((#(#founds),*))),
     };
     let name = syn::Ident::new(INSTANTIATE, Span::call_site());
     syn::parse_quote!(
@@ -2044,26 +2060,6 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
             },
         )
         .collect();
-    // The kernel grants one issuance per invocation, and bringing a
-    // component up is one invocation — so a component brings one thing
-    // into existence, and a second initial supply is a second grant the
-    // node it would ride has no room for.
-    let mut supplied = declared.iter().filter(|r| r.initial.is_some());
-    if let (Some(first), Some(second)) = (supplied.next(), supplied.next()) {
-        return Err(syn::Error::new(
-            second
-                .initial
-                .as_ref()
-                .expect("filtered on a stated supply")
-                .span(),
-            format!(
-                "`{}` already states the supply this component comes up holding, and \
-                 a body brings one thing into existence. Mint `{}` through a method \
-                 of your own, called once the component is actual",
-                first.name, second.name,
-            ),
-        ));
-    }
     Ok(declared)
 }
 

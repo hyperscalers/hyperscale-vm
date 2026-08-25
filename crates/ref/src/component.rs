@@ -174,16 +174,19 @@ const fn host_params(op: HostFn) -> usize {
         | HostFn::SiteClear
         | HostFn::SiteSeal
         | HostFn::SiteDeclared
-        | HostFn::Mint
-        | HostFn::MintInstances
         | HostFn::BucketAmount
         | HostFn::BucketPut => 2,
+        // An issue names the grant it draws on before what it creates —
+        // an amount flattening to two, an id list to a pointer and a
+        // count.
         HostFn::SiteGet
         | HostFn::SiteBalance
         | HostFn::SiteRemove
         | HostFn::SitePut
         | HostFn::SiteOpenSeal
         | HostFn::BucketTake
+        | HostFn::Mint
+        | HostFn::MintInstances
         | HostFn::Hash
         | HostFn::Emit => 3,
         HostFn::SiteSet
@@ -2017,13 +2020,15 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::MintInstances => {
+                        let grant = args[0].as_i32().cast_unsigned();
                         let mem = self.mem_opt(id)?;
-                        let ids = Self::read_guest_ids(store, mem, args[0], args[1])?;
+                        let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
                         let minted = meter::mint_instances(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
                             },
+                            grant,
                             &ids,
                         )
                         .map_err(meter_fault)?;
@@ -2220,12 +2225,14 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::Mint => {
-                        let amount = flat_amount(args[0], args[1]);
+                        let grant = args[0].as_i32().cast_unsigned();
+                        let amount = flat_amount(args[1], args[2]);
                         let bucket = meter::mint(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
                             },
+                            grant,
                             amount,
                         )
                         .map_err(meter_fault)?;

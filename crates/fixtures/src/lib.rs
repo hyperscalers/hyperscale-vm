@@ -31,6 +31,7 @@
 
 pub mod amm;
 pub mod book;
+pub mod capped;
 pub mod custodian;
 pub mod flashloan;
 pub mod grammar;
@@ -167,6 +168,10 @@ packages! {
     perp => (PERP_COMPONENT, perp_artifact, perp_package_hash, "perp.component.wasm");
     // The registry, hand-authored alongside its declaration.
     registry;
+    // Capped supply, deflationary supply, and delegated minting — the
+    // three shapes that need issuance to be a rule rather than a fact
+    // about the issuer's address.
+    capped;
     // The share class whose holders are a register, and the register
     // entry itself. The declaring end of the movement seam, where the
     // custodian is the declaring-nothing end.

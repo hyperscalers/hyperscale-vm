@@ -121,12 +121,12 @@ pub fn metadata() -> PackageMetadata {
             // The pool's own resource, by the mark that separates it from
             // the instance's others — which is what the grant is for and
             // what makes another issuer's inexpressible here.
-            issues: Some(Issuance {
+            issues: vec![Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
                 direction: Issued::Minted,
                 grants: badge_grants(),
-            }),
+            }],
             params: vec![],
             abi: vec![
                 AbiParam::Handle { clause: 0, site: 0 },
@@ -144,7 +144,7 @@ pub fn metadata() -> PackageMetadata {
         "deposit".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: None,
+            issues: Vec::new(),
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
             effects: vec![Clause::Effect {
@@ -167,7 +167,7 @@ pub fn metadata() -> PackageMetadata {
         "withdraw".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: None,
+            issues: Vec::new(),
             params: vec![ParamType::Address, ParamType::Ids],
             abi: vec![
                 AbiParam::Handle { clause: 0, site: 0 },
@@ -192,12 +192,12 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             // Bringing value out of existence is as declared as bringing
             // it in, and under the same grant.
-            issues: Some(Issuance {
+            issues: vec![Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
                 direction: Issued::Burned,
                 grants: badge_grants(),
-            }),
+            }],
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Bucket(0)],
             ..MethodSignature::default()
@@ -211,7 +211,7 @@ pub fn metadata() -> PackageMetadata {
             MethodSignature {
                 totality: Totality::Infallible,
                 effects: vec![Clause::Requires { guard: None, rule }],
-                issues: None,
+                issues: Vec::new(),
                 ..MethodSignature::default()
             },
         );

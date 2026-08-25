@@ -173,7 +173,7 @@ mod tests {
     fn every_authored_shape() -> MethodSignature {
         MethodSignature {
             totality: Totality::Fallible,
-            issues: None,
+            issues: Vec::new(),
             abi: vec![AbiParam::Guard(0)],
             params: vec![
                 ParamType::U64,

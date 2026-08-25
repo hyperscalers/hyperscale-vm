@@ -177,14 +177,12 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
             }
         }
 
-        // Issuance is one node's, read off the issuance its signature
-        // declares. Who may is already settled: the resource's own entry
-        // was injected onto this frame and judged with the rest of its
-        // gate, so a body that reaches here reaches a right somebody
-        // granted.
-        if let Some(grant) = call.issues {
-            session.grant_issuance(grant);
-        }
+        // Issuance is one node's, read off the issuances its signature
+        // declares — in that order, which is the index its body names.
+        // Who may is already settled: each resource's own entry was
+        // injected onto this frame and judged with the rest of its gate,
+        // so a body that reaches here reaches rights somebody granted.
+        session.grant_issuance(call.issues.clone());
 
         let invoked = self.backend.invoke(
             session,

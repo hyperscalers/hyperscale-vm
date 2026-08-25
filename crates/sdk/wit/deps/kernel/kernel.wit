@@ -257,27 +257,31 @@ interface state {
     /// receipt — and reading it is the one thing that cannot create any.
     bucket-amount: func(b: borrow<bucket>) -> amount;
 
-    /// Create `amount` of the resource this invocation issues.
+    /// Create `amount` of the resource `grant` names.
     ///
     /// The one place a bucket appears with no cell debited behind it.
-    /// What a body may issue is fixed before it runs, by the issuance
-    /// its own signature declares — and the grant is the invocation's
-    /// rather than a handle's, so an invocation whose signature declares
-    /// none is refused here whatever its body asks for.
-    mint: func(amount: amount) -> own<bucket>;
+    /// What a body may issue is fixed before it runs, by the issuances
+    /// its own signature declares — `grant` indexes that list, so a
+    /// component founding three resources names which of them each call
+    /// means, and an index past what the signature declared is refused
+    /// here whatever the body asks for.
+    mint: func(grant: u32, amount: amount) -> own<bucket>;
 
-    /// Create the named instances of the resource this invocation issues.
+    /// Create the named instances of the resource `grant` names.
     ///
-    /// The same grant and the same terms as a quantity, for the value
+    /// The same grants and the same terms as a quantity, for the value
     /// that is counted by name rather than by amount. Traps on a
     /// repeated id and on more than one edge may carry.
-    mint-instances: func(ids: list<u64>) -> own<bucket>;
+    mint-instances: func(grant: u32, ids: list<u64>) -> own<bucket>;
 
-    /// Destroy what this invocation issues, consuming the bucket.
+    /// Destroy value this invocation was granted, consuming the bucket.
     ///
-    /// The inverse of the two above and under the same grant: bringing
-    /// value out of existence is as declared as bringing it in, which is
-    /// what keeps a body from simply forgetting it.
+    /// The inverse of the two above and under the same grants, and the
+    /// one that names none: a bucket carries the resource it holds, and
+    /// a mark names one grant, so at most one of the invocation's can be
+    /// the bucket's. Bringing value out of existence stays as declared
+    /// as bringing it in, which is what keeps a body from simply
+    /// forgetting it.
     burn: func(funds: own<bucket>);
 
     /// How many elements this site covers.

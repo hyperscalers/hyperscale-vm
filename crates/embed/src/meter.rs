@@ -155,9 +155,13 @@ pub fn site_clear<P: HostAccess + FuelSink>(
 /// `state.mint`. Charges its amount argument and nothing for the bucket
 /// it yields: a bucket crosses as a table index, where the amount it
 /// carries never crosses at all — here and for every take below.
-pub fn mint<P: HostAccess + FuelSink>(port: &mut P, amount: u128) -> Result<u32, MeterError> {
+pub fn mint<P: HostAccess + FuelSink>(
+    port: &mut P,
+    grant: u32,
+    amount: u128,
+) -> Result<u32, MeterError> {
     charge(port, AMOUNT_BOUNDARY_BYTES)?;
-    refused(port.host().mint(amount))
+    refused(port.host().mint(grant, amount))
 }
 
 /// `state.site-balance`: one figure, whichever of the two value modes
@@ -180,10 +184,11 @@ pub fn burn<P: HostAccess + FuelSink>(port: &mut P, funds: u32) -> Result<(), Me
 /// `state.mint-instances`.
 pub fn mint_instances<P: HostAccess + FuelSink>(
     port: &mut P,
+    grant: u32,
     ids: &[u64],
 ) -> Result<u32, MeterError> {
     charge(port, ids.len() * 8)?;
-    refused(port.host().mint_instances(ids))
+    refused(port.host().mint_instances(grant, ids))
 }
 
 /// `state.site-instance-take`.

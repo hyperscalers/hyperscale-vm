@@ -246,12 +246,12 @@ fn every_instance_producer_stamps_what_its_source_held() {
     .expect("two denominated intervals materialize");
 
     let taken = session.range_take(0, 0, &[10]).expect("the holder has it");
-    session.grant_issuance(IssuanceGrant {
+    session.grant_issuance(vec![IssuanceGrant {
         resource: X,
         kind: ResourceKind::NonFungible,
         direction: Issued::Either,
-    });
-    let minted = session.mint_instances(&[99]).expect("the grant mints");
+    }]);
+    let minted = session.mint_instances(0, &[99]).expect("the grant mints");
 
     for (name, funds) in [("range-take", taken), ("mint-instances", minted)] {
         assert_eq!(
@@ -332,26 +332,28 @@ fn a_cell_that_denominates_nothing_moves_nothing() {
     );
 }
 
-/// A grant names one resource, so it destroys that one.
+/// A burn names no grant and needs none: a mark names one grant, so at
+/// most one of an invocation's can be the bucket's.
 ///
-/// Burning through a grant is authority over the resource the grant
-/// names; passing another instance's value to it would be destroying
-/// value this invocation was never given authority over.
+/// What it destroys is value some grant of this invocation covers;
+/// passing another instance's value to it would be destroying value this
+/// invocation was never given authority over, and the refusal says
+/// exactly that — nothing granted it.
 #[test]
 fn a_grant_burns_only_what_it_issues() {
     let mut session = session(&[Some(X), Some(Y)]);
     let foreign = session.cell_take(0, 0, 100).expect("the debit is queued");
-    session.grant_issuance(IssuanceGrant {
+    session.grant_issuance(vec![IssuanceGrant {
         resource: Y,
         kind: ResourceKind::Fungible,
         direction: Issued::Either,
-    });
+    }]);
 
-    let issued = session.mint(5).expect("the grant mints");
+    let issued = session.mint(0, 5).expect("the grant mints");
     assert_eq!(session.burn(issued), Ok(()));
     assert_eq!(
         session.burn(foreign).map_err(AbortReason::from),
-        Err(AbortReason::WrongResource)
+        Err(AbortReason::IssuanceUngranted)
     );
 }
 
@@ -372,18 +374,18 @@ fn a_grant_burns_only_what_it_issues() {
 fn a_grant_reaches_only_the_direction_it_was_granted() {
     let granting = |direction| {
         let mut session = session(&[Some(X), Some(Y)]);
-        session.grant_issuance(IssuanceGrant {
+        session.grant_issuance(vec![IssuanceGrant {
             resource: Y,
             kind: ResourceKind::Fungible,
             direction,
-        });
+        }]);
         session
     };
 
     // Minted and never destroyed: the shape capped supply's opposite
     // takes, and the one a deflationary issuer inverts.
     let mut minting = granting(Issued::Minted);
-    let held = minting.mint(5).expect("the grant mints");
+    let held = minting.mint(0, 5).expect("the grant mints");
     assert_eq!(
         minting.burn(held).map_err(AbortReason::from),
         Err(AbortReason::IssuanceUngranted)
@@ -391,20 +393,20 @@ fn a_grant_reaches_only_the_direction_it_was_granted() {
 
     let mut burning = granting(Issued::Burned);
     assert_eq!(
-        burning.mint(5).map_err(AbortReason::from),
+        burning.mint(0, 5).map_err(AbortReason::from),
         Err(AbortReason::IssuanceUngranted)
     );
     // The non-fungible half of the same refusal, which reaches a
     // different session call and would otherwise be unpinned.
     let mut burning_instances = session(&[Some(X), Some(Y)]);
-    burning_instances.grant_issuance(IssuanceGrant {
+    burning_instances.grant_issuance(vec![IssuanceGrant {
         resource: X,
         kind: ResourceKind::NonFungible,
         direction: Issued::Burned,
-    });
+    }]);
     assert_eq!(
         burning_instances
-            .mint_instances(&[1])
+            .mint_instances(0, &[1])
             .map_err(AbortReason::from),
         Err(AbortReason::IssuanceUngranted)
     );
@@ -412,7 +414,7 @@ fn a_grant_reaches_only_the_direction_it_was_granted() {
     // And a frame declaring both reaches both, which is what a body that
     // mints and burns through one grant is held to.
     let mut either = granting(Issued::Either);
-    let held = either.mint(5).expect("the grant mints");
+    let held = either.mint(0, 5).expect("the grant mints");
     assert_eq!(either.burn(held), Ok(()));
 }
 
@@ -421,27 +423,27 @@ fn a_grant_reaches_only_the_direction_it_was_granted() {
 #[test]
 fn a_grant_mints_only_its_own_kind() {
     let mut fungible = session(&[Some(X), Some(Y)]);
-    fungible.grant_issuance(IssuanceGrant {
+    fungible.grant_issuance(vec![IssuanceGrant {
         resource: Y,
         kind: ResourceKind::Fungible,
         direction: Issued::Either,
-    });
+    }]);
     assert_eq!(
-        fungible.mint_instances(&[1]).map_err(AbortReason::from),
+        fungible.mint_instances(0, &[1]).map_err(AbortReason::from),
         Err(AbortReason::WrongIssuanceKind)
     );
 
     let mut non_fungible = session(&[Some(X), Some(Y)]);
-    non_fungible.grant_issuance(IssuanceGrant {
+    non_fungible.grant_issuance(vec![IssuanceGrant {
         resource: X,
         kind: ResourceKind::NonFungible,
         direction: Issued::Either,
-    });
+    }]);
     assert_eq!(
-        non_fungible.mint(5).map_err(AbortReason::from),
+        non_fungible.mint(0, 5).map_err(AbortReason::from),
         Err(AbortReason::WrongIssuanceKind)
     );
-    assert!(non_fungible.mint_instances(&[1]).is_ok());
+    assert!(non_fungible.mint_instances(0, &[1]).is_ok());
 }
 
 /// Value a grant mints carries what the grant names, so it credits the
@@ -449,18 +451,18 @@ fn a_grant_mints_only_its_own_kind() {
 #[test]
 fn minted_value_lands_only_in_its_own_cell() {
     let mut session = session(&[Some(X), Some(Y)]);
-    session.grant_issuance(IssuanceGrant {
+    session.grant_issuance(vec![IssuanceGrant {
         resource: Y,
         kind: ResourceKind::Fungible,
         direction: Issued::Either,
-    });
-    let minted = session.mint(5).expect("the grant mints");
+    }]);
+    let minted = session.mint(0, 5).expect("the grant mints");
 
     assert_eq!(
         session.cell_put(0, 0, minted).map_err(AbortReason::from),
         Err(AbortReason::WrongResource)
     );
-    let minted = session.mint(5).expect("the grant mints");
+    let minted = session.mint(0, 5).expect("the grant mints");
     assert_eq!(session.cell_put(1, 0, minted), Ok(()));
 }
 

@@ -145,7 +145,7 @@ impl Names<'_> {
                 self.expr(resource, ATOM)
             );
         }
-        if let Some(issuance) = issues {
+        for issuance in issues {
             let Issuance {
                 mark,
                 kind,

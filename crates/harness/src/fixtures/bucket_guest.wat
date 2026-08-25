@@ -5,7 +5,7 @@
     (type $amt_decl (record (field "low" u64) (field "high" u64)))
     (export "amount" (type $amt (eq $amt_decl)))
     (export "site-get" (func (param "c" (borrow $ac)) (param "element" u32) (result (list u8))))
-    (export "mint" (func (param "amount" $amt) (result (own $bk))))
+    (export "mint" (func (param "grant" u32) (param "amount" $amt) (result (own $bk))))
     (export "site-take" (func (param "c" (borrow $ac)) (param "element" u32) (param "amount" $amt) (result (own $bk))))
     (export "site-put" (func (param "c" (borrow $ac)) (param "element" u32) (param "funds" (own $bk))))
     (export "bucket-amount" (func (param "b" (borrow $bk)) (result $amt)))
@@ -77,7 +77,7 @@
   (core module $m
     (import "env" "mem" (memory 1 1))
     (import "k" "read-get" (func $read_get (param i32 i32 i32)))
-    (import "k" "issue" (func $issue (param i64 i64) (result i32)))
+    (import "k" "issue" (func $issue (param i32 i64 i64) (result i32)))
     (import "k" "write-take" (func $write_take (param i32 i32 i64 i64) (result i32)))
     (import "k" "write-put" (func $write_put (param i32 i32 i32)))
     (import "k" "bucket-amount" (func $bucket_amount (param i32 i32)))
@@ -122,7 +122,9 @@
       local.get 0
       call $drop_bucket)
 
+    ;; The one issuance a fixture declares, so the grant is index zero.
     (func (export "issue") (param i64) (result i32)
+      i32.const 0
       local.get 0
       i64.const 0
       call $issue)

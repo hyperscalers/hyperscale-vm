@@ -43,12 +43,12 @@ fn issuer() -> PackageMetadata {
         "mint".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: Some(Issuance {
+            issues: vec![Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
                 direction: Issued::Minted,
                 grants: badge_grants(),
-            }),
+            }],
             abi: vec![],
             outputs: vec![Expr::NfBucket {
                 resource: Box::new(Expr::SelfResource {
@@ -76,12 +76,12 @@ fn miscast_issuer() -> PackageMetadata {
         "mint".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: Some(Issuance {
+            issues: vec![Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
                 direction: Issued::Minted,
                 grants: badge_grants(),
-            }),
+            }],
             abi: vec![],
             outputs: vec![Expr::SelfResource {
                 kind: ResourceKind::NonFungible,
@@ -104,7 +104,7 @@ fn body<const MINTED: u64>(
     let [] = args else {
         panic!("the grant alone: {args:?}");
     };
-    match session.mint_instances(&[MINTED]) {
+    match session.mint_instances(0, &[MINTED]) {
         Ok(rep) => (
             session,
             Invoked::Produced {

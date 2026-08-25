@@ -1,0 +1,28 @@
+config
+      0  minter
+
+instantiate() — infallible
+  mints    "fixed" fungible
+  mints    "retired" fungible, granting burn to the issuer
+  declares
+      0  requires self.config is absent
+      1  write self.config
+      2  requires self.resource[self-issued(fungible["fixed"])] is absent
+      3  write self.resource[self-issued(fungible["fixed"])]
+      4  requires self.resource[self-issued(fungible["retired"]), granting burn to the issuer] is absent
+      5  write self.resource[self-issued(fungible["retired"]), granting burn to the issuer]
+      6  requires self.resource[self-issued(fungible["seat"]), granting mint to configuration field 0] is absent
+      7  write self.resource[self-issued(fungible["seat"]), granting mint to configuration field 0]
+  yields   edge 0 = self-issued(fungible["fixed"])
+  yields   edge 1 = self-issued(fungible["retired"]), granting burn to the issuer
+  exports  handle for clause 1, handle for clause 3, handle for clause 5, handle for clause 7, self.record
+
+issue(u128) — infallible
+  mints    "seat" fungible, granting mint to configuration field 0
+  yields   edge 0 = self-issued(fungible["seat"]), granting mint to configuration field 0
+  exports  arg0
+
+retire(bucket) — infallible
+  takes    arg0 carrying self-issued(fungible["retired"]), granting burn to the issuer
+  burns    "retired" fungible, granting burn to the issuer
+  exports  edge arg0

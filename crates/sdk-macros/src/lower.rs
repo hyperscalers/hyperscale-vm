@@ -347,14 +347,18 @@ pub struct Lowered {
     /// The branches whose verdict the export takes, in the order they
     /// were declared, each saying which arm's clause its flag names.
     pub flags: Vec<Polarity>,
-    /// The resource the body issues, where it issues one — its kind, its
-    /// mark and which way the body moves it — and so whether the export
-    /// takes the grant.
+    /// Every resource the body issues — its kind, its mark and which way
+    /// the body moves it — in the order the walk first reached each.
+    ///
+    /// The order is the index: the trace binds them in this order and
+    /// each call site passes its own position, so a component founding
+    /// three resources says which of them each call means and the two
+    /// halves cannot disagree.
     ///
     /// The direction is the body's own fact: a burn has no output
     /// projection to read one from, and a frame asked the entry it never
     /// uses would be held to an authority it does not exercise.
-    pub issues: Option<(ResourceKind, Vec<u8>, Issued)>,
+    pub issues: Vec<(ResourceKind, Vec<u8>, Issued)>,
     /// The rewritten statements, executing against materialized handles.
     pub body: TokenStream,
     /// The value edges the body ends with, each as the expression that
@@ -1000,7 +1004,7 @@ impl<'a> Lowerer<'a> {
             + self.scopes.iter().map(Vec::len).sum::<usize>()
             + self.out.denominations.len()
             + self.out.fresh
-            + usize::from(self.out.issues.is_some())
+            + self.out.issues.len()
     }
 
     fn bind(&mut self, name: String, slot: Slot) {
@@ -1290,13 +1294,13 @@ impl<'a> Lowerer<'a> {
             |a| self.expr(a).code,
         );
         let amount = self.value(amount);
-        self.issuer(ResourceKind::Fungible, &issued.mark, Issued::Minted);
+        let grant = self.issuer(ResourceKind::Fungible, &issued.mark, Issued::Minted);
         Eval {
             val: Val::Produced(Term::SelfResource(
                 ResourceKind::Fungible,
                 issued.mark.clone(),
             )),
-            code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#amount))),
+            code: Code::Rust(quote!(::hyperscale_vm_sdk::state::mint_granted(#grant, #amount))),
         }
     }
 
@@ -1759,6 +1763,9 @@ impl<'a> Lowerer<'a> {
         };
         let funds = self.value(destroyed);
         self.issuer(ResourceKind::NonFungible, &issued.mark, Issued::Burned);
+        // A burn names no grant: the edge carries the resource it holds,
+        // and a mark names one grant, so at most one of the invocation's
+        // can be the edge's.
         Eval::plain(quote!({
             #cleared
             ::hyperscale_vm_sdk::state::burn_nf_granted(#funds)
@@ -1865,7 +1872,7 @@ impl<'a> Lowerer<'a> {
             quote!(::hyperscale_vm_sdk::state::file_instance(#handle);)
         };
         let id_value = self.value(eval.code);
-        self.issuer(ResourceKind::NonFungible, &issued.mark, Issued::Minted);
+        let grant = self.issuer(ResourceKind::NonFungible, &issued.mark, Issued::Minted);
         let produced = Term::NfBucket {
             resource: Box::new(resource_term),
             ids: Box::new(Term::List(vec![id])),
@@ -1874,7 +1881,7 @@ impl<'a> Lowerer<'a> {
             val: Val::Produced(produced),
             code: Code::Rust(quote!({
                 #file
-                ::hyperscale_vm_sdk::state::mint_nf_granted(#id_value)
+                ::hyperscale_vm_sdk::state::mint_nf_granted(#grant, #id_value)
             })),
         }
     }
@@ -2261,23 +2268,26 @@ impl<'a> Lowerer<'a> {
     ///
     /// No parameter follows it: the grant is the invocation's, read off
     /// the outputs the declaration names, so nothing crosses to say so.
-    fn issuer(&mut self, kind: ResourceKind, mark: &[u8], direction: Issued) {
-        assert!(
-            self.out
-                .issues
-                .as_ref()
-                .is_none_or(|(k, m, _)| *k == kind && m == mark),
-            "a method holds one issuance grant, and two of its calls named two resources"
-        );
-        // A body reaching both ways through one grant takes both
-        // entries, folded call by call rather than decided by whichever
-        // one the walk saw last.
-        let taken = self
+    /// Record that this body issues `mark`, and answer the index the
+    /// grant occupies.
+    ///
+    /// One entry per mark however many calls name it: a body reaching
+    /// both ways through one grant takes both entries, folded call by
+    /// call rather than decided by whichever one the walk saw last.
+    fn issuer(&mut self, kind: ResourceKind, mark: &[u8], direction: Issued) -> u32 {
+        let held = self
             .out
             .issues
-            .as_ref()
-            .map_or(direction, |(_, _, held)| held.with(direction));
-        self.out.issues = Some((kind, mark.to_vec(), taken));
+            .iter()
+            .position(|(k, m, _)| *k == kind && m == mark);
+        let at = if let Some(at) = held {
+            self.out.issues[at].2 = self.out.issues[at].2.with(direction);
+            at
+        } else {
+            self.out.issues.push((kind, mark.to_vec(), direction));
+            self.out.issues.len() - 1
+        };
+        u32::try_from(at).unwrap_or(u32::MAX)
     }
 
     /// Bind the handle for `site` as an export parameter, and answer the

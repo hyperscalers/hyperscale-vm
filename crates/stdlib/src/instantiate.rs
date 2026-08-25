@@ -55,12 +55,26 @@ pub fn instantiate(
     } else {
         root.call(address, &seal, ())?
     };
-    // The kind decides which door the edge is filed through: a balance
-    // lands in a vault and an instance in the holdings interval, and the
-    // two share no accessor.
-    match signature.issues.as_ref().map(|issued| issued.kind) {
-        Some(ResourceKind::NonFungible) => account::deposit_nf(root, founder, outputs.one()?),
-        Some(ResourceKind::Fungible) => account::deposit(root, founder, outputs.one()?),
-        None => outputs.none(),
+    // One edge per supply the package states, and the kind decides which
+    // door each is filed through: a balance lands in a vault and an
+    // instance in the holdings interval, and the two share no accessor.
+    //
+    // Paired by position, which is what the seal's own declaration
+    // fixes: the founding order is the order its issuances are declared
+    // in, and the edges come back in that order.
+    let edges = outputs.into_vec();
+    if edges.len() != signature.issues.len() {
+        return Err(TypedError::OutputArity {
+            method: seal,
+            declared: edges.len(),
+            claimed: signature.issues.len(),
+        });
     }
+    for (issuance, edge) in signature.issues.iter().zip(edges) {
+        match issuance.kind {
+            ResourceKind::NonFungible => account::deposit_nf(root, founder, edge)?,
+            ResourceKind::Fungible => account::deposit(root, founder, edge)?,
+        }
+    }
+    Ok(())
 }

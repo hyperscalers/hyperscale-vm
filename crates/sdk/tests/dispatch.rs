@@ -25,12 +25,12 @@ use hyperscale_vm_types::{
 /// bucket from nothing hands the session value no supply accounts for,
 /// which is the thing the conservation check exists to refuse.
 fn minted(session: &mut KernelSession, amount: u128) -> u32 {
-    session.grant_issuance(IssuanceGrant {
+    session.grant_issuance(vec![IssuanceGrant {
         resource: RESOURCE,
         kind: ResourceKind::Fungible,
         direction: Issued::Either,
-    });
-    session.mint(amount).expect("the grant mints")
+    }]);
+    session.mint(0, amount).expect("the grant mints")
 }
 
 const OWNER: Address = Address::new([0x21; 31], AddressClass::Component);

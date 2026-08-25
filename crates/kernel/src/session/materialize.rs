@@ -412,7 +412,7 @@ impl KernelSession {
             supply: SupplyDelta::default(),
             cell_resources: ordered.iter().map(|access| access.holds).collect(),
             buckets: Buckets::default(),
-            issuance: None,
+            issuance: Vec::new(),
             // One width-one site per capability, in table order, so a
             // capability's rep is also the rep of the site that reaches
             // it. A session is actable the moment it exists; what a walk

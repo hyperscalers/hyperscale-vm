@@ -65,7 +65,7 @@ fn issuance(mark: &[u8]) -> Issuance {
     security::metadata()
         .methods
         .into_values()
-        .filter_map(|signature| signature.issues)
+        .flat_map(|signature| signature.issues)
         .find(|issuance| issuance.mark == mark)
         .expect("the guest issues this mark")
 }
@@ -327,7 +327,7 @@ fn the_guest_grants_what_these_cases_are_about() {
     let granted: BTreeSet<GrantedBehaviour> = security::metadata()
         .methods
         .values()
-        .filter_map(|signature| signature.issues.as_ref())
+        .flat_map(|signature| &signature.issues)
         .flat_map(|issuance| issuance.grants.iter().map(|(behaviour, _)| behaviour))
         .collect();
     assert_eq!(

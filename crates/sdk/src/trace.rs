@@ -93,7 +93,7 @@ pub struct Trace {
     /// The slot of the rule cell this method is gated on and also
     /// writes, which is lowered only once the body has been.
     pending_governed: Option<SlotId>,
-    issues: Option<Issuance>,
+    issues: Vec<Issuance>,
     /// Whether the method carries an error arm.
     totality: Totality,
     /// Whether the method hands back a value beside its edges.
@@ -117,7 +117,7 @@ impl Trace {
             last_clause: None,
             last_site: None,
             pending_governed: None,
-            issues: None,
+            issues: Vec::new(),
             totality: Totality::Infallible,
             answers: false,
         }
@@ -638,11 +638,15 @@ impl Trace {
     /// resource's entries hold it to, so a burn-only method is never
     /// asked who may mint.
     ///
-    /// No binding follows it: the grant is the invocation's, so nothing
-    /// crosses the boundary to say so and the export's parameter list is
-    /// the same whether a method issues or not.
+    /// Called once per mark the body issues, in the order the lowering
+    /// reached them — which is the index each of its calls passes, so a
+    /// component founding three resources says which of them it means.
+    ///
+    /// No binding follows it: the grants are the invocation's, so
+    /// nothing crosses the boundary to say so and the export's parameter
+    /// list is the same whether a method issues or not.
     pub fn bind_issuer(&mut self, kind: ResourceKind, mark: &[u8], direction: Issued) {
-        self.issues = Some(Issuance {
+        self.issues.push(Issuance {
             mark: mark.to_vec(),
             kind,
             direction,
@@ -1165,7 +1169,7 @@ pub(crate) struct Recorded {
     pub(crate) denominations: Vec<Option<Expr>>,
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,
-    pub(crate) issues: Option<Issuance>,
+    pub(crate) issues: Vec<Issuance>,
     pub(crate) totality: Totality,
 }
 

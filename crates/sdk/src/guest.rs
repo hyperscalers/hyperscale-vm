@@ -309,21 +309,21 @@ pub fn reserve_take(handle: Handle) -> kernel::state::Bucket {
     kernel::state::site_reserve_take(&site(handle.site), handle.element)
 }
 
-/// Create `value` of what this invocation issues.
+/// Create `value` of what the grant at `grant` names.
 #[must_use]
 #[inline(always)]
-pub fn mint(value: u128) -> kernel::state::Bucket {
-    kernel::state::mint(amount(value))
+pub fn mint(grant: u32, value: u128) -> kernel::state::Bucket {
+    kernel::state::mint(grant, amount(value))
 }
 
-/// Create the named instances of what this invocation issues.
+/// Create the named instances of what the grant at `grant` names.
 #[must_use]
 #[inline(always)]
-pub fn mint_instances(ids: &[u64]) -> kernel::state::Bucket {
-    kernel::state::mint_instances(ids)
+pub fn mint_instances(grant: u32, ids: &[u64]) -> kernel::state::Bucket {
+    kernel::state::mint_instances(grant, ids)
 }
 
-/// Destroy what this invocation issues, consuming the bucket.
+/// Destroy value this invocation was granted, consuming the bucket.
 #[inline(always)]
 pub fn burn(funds: kernel::state::Bucket) {
     kernel::state::burn(funds);

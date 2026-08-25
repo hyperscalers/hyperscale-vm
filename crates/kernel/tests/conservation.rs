@@ -125,11 +125,11 @@ mod through_the_session {
             hash,
         )
         .expect("one unheld delta cell materializes");
-        session.grant_issuance(IssuanceGrant {
+        session.grant_issuance(vec![IssuanceGrant {
             resource: UNIT,
             kind: ResourceKind::Fungible,
             direction: Issued::Either,
-        });
+        }]);
         session
     }
 
@@ -142,7 +142,7 @@ mod through_the_session {
     #[test]
     fn a_mint_is_what_the_receipt_reports_and_the_ledger_takes() {
         let mut session = session();
-        let minted = session.mint(500).expect("the grant mints");
+        let minted = session.mint(0, 500).expect("the grant mints");
         session.cell_put(0, 0, minted).expect("into its own vault");
 
         let supply = completed(session);
@@ -161,7 +161,7 @@ mod through_the_session {
         let mut ledger = SupplyLedger::new();
 
         let mut minting = session();
-        let minted = minting.mint(500).expect("the grant mints");
+        let minted = minting.mint(0, 500).expect("the grant mints");
         minting.cell_put(0, 0, minted).expect("into its own vault");
         completed(minting).apply(&mut ledger).expect("credited");
 
@@ -188,7 +188,7 @@ mod through_the_session {
     #[test]
     fn a_mint_and_a_burn_in_one_transaction_are_both_recorded() {
         let mut session = session();
-        let minted = session.mint(500).expect("the grant mints");
+        let minted = session.mint(0, 500).expect("the grant mints");
         session.burn(minted).expect("the grant burns");
 
         let supply = completed(session);
@@ -207,7 +207,7 @@ mod through_the_session {
     fn an_aborted_mint_moves_no_supply() {
         let mut session = session();
         // Minted, and never landed in a cell: the account cannot balance.
-        let minted = session.mint(500).expect("the grant mints");
+        let minted = session.mint(0, 500).expect("the grant mints");
         let _ = minted;
 
         let (receipt, _) = session
@@ -327,7 +327,7 @@ mod through_the_session {
     #[test]
     fn value_moving_between_cells_moves_no_supply() {
         let mut session = session();
-        let minted = session.mint(500).expect("the grant mints");
+        let minted = session.mint(0, 500).expect("the grant mints");
         session.cell_put(0, 0, minted).expect("into its own vault");
         let moved = session.cell_take(0, 0, 200).expect("out again");
         session.cell_put(0, 0, moved).expect("and back");

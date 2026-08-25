@@ -158,6 +158,12 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("book", "fill-asks", open(), vec![]),
         ("book", "instantiate", open(), vec![]),
         ("book", "place-ask", open(), vec![]),
+        // Every method open, and the issuer's side of the seam is bound
+        // anyway: what holds `issue` is the seat's own `mint` entry,
+        // injected at admission rather than declared here.
+        ("capped", "instantiate", open(), vec![]),
+        ("capped", "issue", open(), vec![]),
+        ("capped", "retire", open(), vec![]),
         // Every method open, which is the fixture's whole point: it
         // declares nothing about who may move what it holds, and is
         // bound anyway.

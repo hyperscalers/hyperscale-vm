@@ -81,7 +81,7 @@ pub mod fixtures {
         fn burn(&mut self, _funds: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn mint_instances(&mut self, _ids: &[u64]) -> Result<u32, AbortReason> {
+        fn mint_instances(&mut self, _grant: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn site_instance_take(
@@ -116,7 +116,7 @@ pub mod fixtures {
         fn site_put(&mut self, _site: u32, _element: u32, _funds: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn mint(&mut self, _amount: u128) -> Result<u32, AbortReason> {
+        fn mint(&mut self, _grant: u32, _amount: u128) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn site_take(

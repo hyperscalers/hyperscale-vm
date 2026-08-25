@@ -49,6 +49,14 @@ use common::world::*;
 /// that no longer decides what they are. The propose vector carries
 /// encoded claims, so its bytes moved with them.
 ///
+/// Every vector moved again, and the answer is a derivation move rather
+/// than a routing one: a method declares a *list* of issuances rather
+/// than at most one, so every package's declaration encodes differently,
+/// every declaration hash moves, and every instance address derived from
+/// one moves with it. The addresses under the rendering changed; what
+/// each shard is asked to provision did not. A component founds every
+/// resource it declares, which is what the list is for.
+///
 /// The swap and fill pins carry the instantiation fence: admission reads
 /// the configuration leaf of every component a node targets, so the
 /// owning shard is a participant and provisions the leaf. Transfer and
@@ -80,13 +88,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "687badc8f8d1613294a8a90dec97dffe523f9bf22b17d817e964c0d0f16e2b3b";
+const PIN_TRANSFER: &str = "f0685a4d54439f978543047bb37303a4351c083d1646b740eef19e2d9c80346f";
 
-const PIN_SWAP: &str = "af65bbe2864b7f7a67b25d66a4f9672973b30aec32575f2fc23f44e6b07345ca";
+const PIN_SWAP: &str = "a734f7a11830769fbae0bd45ec12d7df64107e3e6c37a971e0ec0a6ba0fe33c0";
 
-const PIN_FILL: &str = "b22899e2c3013cd2341c6c9e09bcabf5668487afa2eae8c24e69e1e46cf0da44";
+const PIN_FILL: &str = "2b7137d2b4452ffe02b51b5f3a0bf7a37805c9251bd7d5ae39f547995bd90b9a";
 
-const PIN_PROPOSE: &str = "7e91175255b64baf7b134345312bbc0c30e312023afb696aed238f55fd369282";
+const PIN_PROPOSE: &str = "56fbed79610f6a6a73836a79697d4ce55139416ff06076202e486b85584f8f59";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

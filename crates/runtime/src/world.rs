@@ -395,8 +395,8 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     )?;
     state.func_wrap(
         "mint",
-        |mut store: StoreContextMut<'_, T>, (amount,): (Amount,)| {
-            let rep = meter::mint(&mut Port(&mut store), amount.into()).map_err(fault)?;
+        |mut store: StoreContextMut<'_, T>, (grant, amount): (u32, Amount)| {
+            let rep = meter::mint(&mut Port(&mut store), grant, amount.into()).map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
@@ -408,8 +408,8 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     )?;
     state.func_wrap(
         "mint-instances",
-        |mut store: StoreContextMut<'_, T>, (ids,): (Vec<u64>,)| {
-            let rep = meter::mint_instances(&mut Port(&mut store), &ids).map_err(fault)?;
+        |mut store: StoreContextMut<'_, T>, (grant, ids): (u32, Vec<u64>)| {
+            let rep = meter::mint_instances(&mut Port(&mut store), grant, &ids).map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;

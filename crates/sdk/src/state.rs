@@ -1961,20 +1961,23 @@ pub fn take_reservation(handle: Handle) -> Bucket {
     return Bucket::at(host::reserve_take(handle));
 }
 
-/// Create `amount` under this invocation's issuance grant.
+/// Create `amount` under the invocation's issuance grant at `grant`.
 ///
-/// Called by generated code, never by an author: the grant is the
-/// invocation's own, read off the declaration against the method's own declared outputs, and
-/// which resource it creates is what the mark already fixed.
+/// Called by generated code, never by an author: the grants are the
+/// invocation's own, read off the declaration, and which resource each
+/// index names is what the mark already fixed. The index is the
+/// lowering's — a body writes the mark and the lowering finds its
+/// position — so the two cannot disagree about which resource a call
+/// meant.
 #[doc(hidden)]
 #[must_use]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
-pub fn mint_granted(quantity: Quantity) -> Bucket {
+pub fn mint_granted(grant: u32, quantity: Quantity) -> Bucket {
     #[cfg(component)]
-    return Bucket::held(crate::guest::mint(quantity.subunits()));
+    return Bucket::held(crate::guest::mint(grant, quantity.subunits()));
     #[cfg(not(component))]
-    return Bucket::at(host::mint(quantity.subunits()));
+    return Bucket::at(host::mint(grant, quantity.subunits()));
 }
 
 /// Create the named instance of the granted resource, as an edge.
@@ -1992,11 +1995,11 @@ pub fn mint_granted(quantity: Quantity) -> Bucket {
 #[must_use]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
-pub fn mint_nf_granted(id: u64) -> NfBucket {
+pub fn mint_nf_granted(grant: u32, id: u64) -> NfBucket {
     #[cfg(component)]
-    return NfBucket::held(crate::guest::mint_instances(&[id]));
+    return NfBucket::held(crate::guest::mint_instances(grant, &[id]));
     #[cfg(not(component))]
-    return NfBucket::at(host::mint_instances(&[id]));
+    return NfBucket::at(host::mint_instances(grant, &[id]));
 }
 
 /// File one minted instance's data cell: the presence marker, written
@@ -2036,12 +2039,12 @@ pub fn clear_instance(handle: Handle) {
     return host::cell_clear(handle);
 }
 
-/// Destroy the value at `funds` against the grant at `grant`.
+/// Destroy the value at `funds` against whichever grant covers it.
 ///
 /// Called by generated code, never by an author, on the same terms
-/// [`mint_granted`] is: the grant is a handle the kernel lowered against
-/// the method's own declaration, and which resource it destroys is what
-/// the mark already fixed.
+/// [`mint_granted`] is — and naming no index, because a bucket carries
+/// the resource it holds and a mark names one grant, so at most one of
+/// the invocation's can be the bucket's.
 #[doc(hidden)]
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always, clippy::needless_pass_by_value)]
@@ -2053,10 +2056,10 @@ pub fn burn_granted(funds: Bucket) {
     return host::burn(funds.rep());
 }
 
-/// Destroy the instances at `funds` against the grant at `grant`.
+/// Destroy the instances at `funds` against whichever grant covers them.
 ///
-/// [`burn_granted`] over a non-fungible edge: the same grant in the same
-/// direction, and what leaves circulation is the instances the edge
+/// [`burn_granted`] over a non-fungible edge: the same grants in the
+/// same direction, and what leaves circulation is the instances the edge
 /// carries rather than an amount. The data cell each of them filed is
 /// ended beside this, which is the burn's other half.
 #[doc(hidden)]

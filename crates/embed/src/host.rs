@@ -85,8 +85,9 @@ pub trait KernelHost: Send {
     ///
     /// # Errors
     ///
-    /// A deterministic refusal, including an invocation granted none.
-    fn mint(&mut self, amount: u128) -> Result<u32, AbortReason>;
+    /// A deterministic refusal, including an index naming no grant this
+    /// invocation holds.
+    fn mint(&mut self, grant: u32, amount: u128) -> Result<u32, AbortReason>;
 
     /// Debit the amount cell and hand the value out as a bucket, whose
     /// rep this returns.
@@ -100,20 +101,24 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn site_take(&mut self, site: u32, element: u32, amount: u128) -> Result<u32, AbortReason>;
 
-    /// Destroy what this invocation issues, consuming the bucket.
+    /// Destroy value this invocation was granted, consuming the bucket.
+    ///
+    /// Names no grant: the bucket carries the resource it holds, and a
+    /// mark names one grant, so at most one of the invocation's can be
+    /// the bucket's.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
     fn burn(&mut self, funds: u32) -> Result<(), AbortReason>;
 
-    /// Create the named instances under this invocation's grant; the
+    /// Create the named instances under the grant at `grant`; the
     /// bucket's rep.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn mint_instances(&mut self, ids: &[u64]) -> Result<u32, AbortReason>;
+    fn mint_instances(&mut self, grant: u32, ids: &[u64]) -> Result<u32, AbortReason>;
 
     /// Take the named entries as the instances they were; the bucket's
     /// rep.

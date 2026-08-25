@@ -20,7 +20,7 @@ use crate::resource::{GrantedBehaviour, GrantsExpr, holdings_entry};
 use crate::rule::{
     GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule, RuleExpr, RuleLeaf, always, never,
 };
-use crate::signature::{AbiParam, Issuance, MethodSignature};
+use crate::signature::{AbiParam, Issuance, MAX_ISSUANCES_PER_SIGNATURE, MethodSignature};
 use crate::types::{
     MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId, Value, value_within_width,
 };
@@ -419,6 +419,10 @@ pub enum DeclarationError {
     /// An issuance whose mark names nothing.
     #[error("the issued resource carries no mark, and a mark is a resource's own name")]
     UnmarkedIssuance,
+    /// One mark issued twice by one method, which would give its body two
+    /// indices for one resource.
+    #[error("this method issues one mark twice, and a mark names one grant")]
+    IssuanceNamedTwice,
     /// A frame issuing a resource whose own grants withhold the
     /// direction it takes. Absence withholds, so a resource nothing may
     /// mint is spelled by granting no `Mint` entry — and a body minting
@@ -1163,18 +1167,31 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // reached by saying less rather than by saying something.
     if signature
         .issues
-        .as_ref()
-        .is_some_and(|issuance| issuance.mark.is_empty())
+        .iter()
+        .any(|issuance| issuance.mark.is_empty())
     {
         return Err(DeclarationError::UnmarkedIssuance);
+    }
+    // One mark names one grant, so a method naming a mark twice would
+    // hand its body two indices for one resource and two entries to
+    // answer for. The list is the body's own order and nothing sorts it,
+    // so distinctness is what makes an index name one thing.
+    for (position, issuance) in signature.issues.iter().enumerate() {
+        if signature.issues[..position]
+            .iter()
+            .any(|earlier| earlier.mark == issuance.mark && earlier.kind == issuance.kind)
+        {
+            return Err(DeclarationError::IssuanceNamedTwice);
+        }
     }
     // And a resource is issued only where its own address says who may.
     // Decidable here because the grants a mint derives through ride the
     // declaration itself, so the author is told where they wrote the
     // pair rather than a caller told where they met it.
-    if let Some(issuance) = &signature.issues
-        && !founds_its_resource(issuance, &flat)
-    {
+    for issuance in &signature.issues {
+        if founds_its_resource(issuance, &flat) {
+            continue;
+        }
         for behaviour in issuance.direction.behaviours() {
             if issuance.grants.get(*behaviour).is_none() {
                 return Err(DeclarationError::IssuanceUnadmitted(*behaviour));
@@ -1581,6 +1598,9 @@ pub enum SignatureBoundsError {
     /// A granted entry spelled a way its behaviour does not admit.
     #[error("a granted behaviour does not admit the spelling its entry was written with")]
     UnadmittedGrant,
+    /// More issuances than one signature may carry.
+    #[error("a method issues more than {MAX_ISSUANCES_PER_SIGNATURE} resources")]
+    TooManyIssuances,
     /// A granted rule naming a badge whose own rules name a badge.
     #[error("a granted rule names a badge whose own rules name a badge")]
     BadgeChainTooDeep,
@@ -1816,7 +1836,10 @@ fn check_signature_bounds(signature: &MethodSignature) -> Result<(), SignatureBo
             check_expr_bounds(expr, 0)?;
         }
     }
-    if let Some(issuance) = &signature.issues {
+    if signature.issues.len() > MAX_ISSUANCES_PER_SIGNATURE {
+        return Err(SignatureBoundsError::TooManyIssuances);
+    }
+    for issuance in &signature.issues {
         check_grants_bounds(&issuance.grants)?;
     }
     let mut declared = 0usize;
@@ -2769,12 +2792,12 @@ mod tests {
     fn an_issuance_under_no_mark_is_refused() {
         let issues = |mark: &[u8]| {
             check_declarations(&MethodSignature {
-                issues: Some(Issuance {
+                issues: vec![Issuance {
                     mark: mark.to_vec(),
                     kind: ResourceKind::Fungible,
                     direction: Issued::Minted,
                     grants: minting(),
-                }),
+                }],
                 ..MethodSignature::default()
             })
         };
@@ -2804,12 +2827,12 @@ mod tests {
     fn issuing_a_resource_whose_entry_withholds_it_is_refused() {
         let issues = |direction, grants: GrantsExpr| {
             check_declarations(&MethodSignature {
-                issues: Some(Issuance {
+                issues: vec![Issuance {
                     mark: b"unit".to_vec(),
                     kind: ResourceKind::Fungible,
                     direction,
                     grants,
-                }),
+                }],
                 ..MethodSignature::default()
             })
         };

@@ -93,7 +93,7 @@ fn debt_record() -> ResourceMeta {
     let issuance = flashloan::metadata()
         .methods
         .into_values()
-        .filter_map(|signature| signature.issues)
+        .flat_map(|signature| signature.issues)
         .find(|issuance| issuance.mark == b"debt")
         .expect("the pool issues the obligation");
     ResourceMeta {

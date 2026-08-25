@@ -171,14 +171,15 @@ pub struct NodeCall {
     /// as the cell its ids frame — and the ids are the declaration's, so
     /// the walk holds the produced edge to exactly them.
     pub outputs: Vec<EdgeContent>,
-    /// The resource this node's method brings into or out of existence,
-    /// where its declaration says it does.
+    /// The resources this node's method brings into or out of existence,
+    /// in the order its declaration names them — which is the index its
+    /// body passes.
     ///
-    /// Names the resource; it does not confer the right. Who may issue
-    /// is the resource's own sealed entry, injected onto the frame at
+    /// Names the resources; it does not confer the rights. Who may issue
+    /// is each resource's own sealed entry, injected onto the frame at
     /// admission and judged where every other actor question is — so a
-    /// failed requirement aborts before the grant is ever reached.
-    pub issues: Option<IssuanceGrant>,
+    /// failed requirement aborts before any grant is reached.
+    pub issues: Vec<IssuanceGrant>,
     /// The claims this call presents, resolved from the signed evidence
     /// the manifest node names.
     pub evidence: Vec<Presented>,

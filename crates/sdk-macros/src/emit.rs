@@ -303,7 +303,9 @@ pub fn declaration(
     });
     // The grant binds after the values, which is where the export takes
     // it: the binding's order is the export's parameter order.
-    let issuer = lowered.issues.as_ref().map(|(kind, mark, direction)| {
+    // One binding per mark, in the order the lowering reached them —
+    // which is the index each of the body's own calls passes.
+    let issuer = lowered.issues.iter().map(|(kind, mark, direction)| {
         let kind = emit_kind(*kind);
         let direction = emit_issued(*direction);
         let bytes = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
@@ -324,7 +326,7 @@ pub fn declaration(
             #(#outputs)*
             #(#denominations)*
             #(#values)*
-            #issuer
+            #(#issuer)*
         }
     )
 }

@@ -234,6 +234,18 @@ impl Outputs {
         Ok(bucket)
     }
 
+    /// Every edge the call produced, in the order its declaration
+    /// yields them.
+    ///
+    /// What a caller wants where the arity is the callee's answer rather
+    /// than a number the call site knows — a bring-up founds one edge
+    /// per supply its package states, and the composer files each by the
+    /// kind of the resource it founds.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<Bucket> {
+        self.buckets
+    }
+
     /// Discharge a call that produces nothing.
     ///
     /// # Errors

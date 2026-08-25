@@ -184,7 +184,11 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn mint_instances(&mut self, _ids: &[u64]) -> std::result::Result<u32, AbortReason> {
+    fn mint_instances(
+        &mut self,
+        _grant: u32,
+        _ids: &[u64],
+    ) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
@@ -237,7 +241,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn mint(&mut self, _amount: u128) -> std::result::Result<u32, AbortReason> {
+    fn mint(&mut self, _grant: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
