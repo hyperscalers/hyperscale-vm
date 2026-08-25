@@ -10,7 +10,7 @@ use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::INSTANCE;
 use hyperscale_vm_effects::{
     AbiParam, Expr, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, Hasher, Issuance,
-    Issued, MethodSignature, PackageMetadata, ParamType, ResourceKind, RuleExpr, RuleLeaf,
+    Issued, MethodSignature, PackageMetadata, ParamType, ResourceKind, RuleExpr, RuleLeaf, SlotRef,
     Totality, Value, granting_issued_resource, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
@@ -69,7 +69,7 @@ fn creating_instance(minted_resource: &Expr, minted_id: &Expr) -> Vec<Clause> {
     let target = || {
         TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            slot: INSTANCE,
+            slot: SlotRef::Fixed(INSTANCE),
             material: vec![minted_resource.clone(), minted_id.clone()],
         })
     };

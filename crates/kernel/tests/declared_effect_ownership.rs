@@ -21,7 +21,7 @@ use std::sync::Arc;
 use hyperscale_vm_effects::{
     Clause, Declaration, Expr, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, ManifestGraph,
     MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
-    Records, SlotId, TargetExpr, TestHasher, Totality, Value, admit, child_key, route,
+    Records, SlotId, SlotRef, TargetExpr, TestHasher, Totality, Value, admit, child_key, route,
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_types::{
@@ -70,7 +70,7 @@ fn predator() -> PackageMetadata {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::Arg(0)),
-                    slot: VAULT,
+                    slot: SlotRef::Fixed(VAULT),
                     material: vec![Expr::Literal(Value::Address(XRD))],
                 }),
                 mode: ModeExpr::Delta,

@@ -8,7 +8,7 @@
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
     Clause, Expr, GrantedBehaviour, GrantsExpr, PACKAGE_SLOT_BASE, PackageMetadata, ResourceKind,
-    RuleExpr, RuleLeaf, SlotId, TargetExpr, Value, check_abi, check_declarations,
+    RuleExpr, RuleLeaf, SlotId, SlotRef, TargetExpr, Value, check_abi, check_declarations,
 };
 use hyperscale_vm_fixtures::DECLARED as FIXTURES;
 use hyperscale_vm_stdlib::DECLARED as PROTOCOL;
@@ -67,7 +67,7 @@ fn every_authored_signature_is_well_formed() {
 fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<Expr>)> {
     let auth_cell = || Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        slot: AUTH,
+        slot: SlotRef::Fixed(AUTH),
         material: vec![],
     };
     // The rule that governs a cell, built here from the protocol's own
@@ -93,7 +93,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
     };
     let own_cell = |offset: u16| Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        slot: SlotId(PACKAGE_SLOT_BASE + offset),
+        slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE + offset)),
         material: vec![],
     };
     let this = || vec![RuleExpr::claim(Expr::SelfAddr)];

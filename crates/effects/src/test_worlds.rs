@@ -3,7 +3,7 @@
 
 use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, ResourceAddr};
 
-use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
+use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
 use crate::hash::{Hash32, Hasher, TestHasher};
 use crate::instance::InstanceMeta;
 use crate::manifest::{Bounds, Manifest, Node, NodeInput};
@@ -62,7 +62,7 @@ pub fn self_point(slot: SlotId, mode: ModeExpr) -> Clause {
         guard: None,
         target: TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            slot,
+            slot: SlotRef::Fixed(slot),
             material: vec![],
         }),
         mode,
@@ -190,7 +190,7 @@ pub fn payer_payee_world() -> (Records, Manifest) {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: SlotId(2),
+                    slot: SlotRef::Fixed(SlotId(2)),
                     material: vec![],
                 }),
                 mode: ModeExpr::Delta,

@@ -7,7 +7,7 @@
 
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::{
-    AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, SlotId, Totality, Value,
+    AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, SlotId, SlotRef, Totality, Value,
     package_slot,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -37,7 +37,7 @@ pub fn metadata() -> PackageMetadata {
         (
             TargetExpr::Entry {
                 owner: Expr::SelfAddr,
-                collection: NAMES,
+                collection: SlotRef::Fixed(NAMES),
                 material: vec![],
                 order: order.clone(),
             },
@@ -100,7 +100,7 @@ pub fn metadata() -> PackageMetadata {
                 guard: None,
                 target: TargetExpr::Range {
                     owner: Expr::SelfAddr,
-                    collection: NAMES,
+                    collection: SlotRef::Fixed(NAMES),
                     material: vec![],
                     lo: Expr::Arg(0),
                     hi: Expr::Literal(Value::U128(u128::MAX)),

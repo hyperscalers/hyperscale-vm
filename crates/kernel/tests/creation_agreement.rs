@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
     Clause, Expr, GraphNode, Hash32, InstanceMeta, ManifestGraph, MethodSignature, ModeExpr,
-    PackageHash, PackageMetadata, PrefixShardResolver, Records, ShardResolver, SlotId, TargetExpr,
-    TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local, route,
+    PackageHash, PackageMetadata, PrefixShardResolver, Records, ShardResolver, SlotId, SlotRef,
+    TargetExpr, TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local, route,
 };
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_types::{Effect, EffectTarget, Mode, PrincipalAddr, SubstateKey};
@@ -34,7 +34,7 @@ fn spawner() -> PackageMetadata {
                     guard: None,
                     target: TargetExpr::Entry {
                         owner: Expr::SelfAddr,
-                        collection: SlotId(4),
+                        collection: SlotRef::Fixed(SlotId(4)),
                         material: vec![],
                         order: Expr::Pack {
                             hi: Box::new(Expr::Literal(Value::U64(99))),

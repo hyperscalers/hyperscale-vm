@@ -23,7 +23,7 @@ use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
     EdgeRef, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, Holding, InstanceMeta,
     IntentDecl, JudgedLeaf, ManifestGraph, Presented, Records, ResourceGrants, ResourceKind,
-    ResourceMeta, Rule, RuleBytes, StoredRule, TestHasher, Value, admit_tree, child_key,
+    ResourceMeta, Rule, RuleBytes, SlotRef, StoredRule, TestHasher, Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -404,7 +404,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
     let vault_of = |resource: Expr| {
         TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            slot: VAULT,
+            slot: SlotRef::Fixed(VAULT),
             material: vec![resource],
         })
     };

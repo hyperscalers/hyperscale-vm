@@ -13,8 +13,8 @@ use hyperscale_vm_effects::{
     AbiParam, AdmissionError, Clause, Constraint, EdgeRef, EvalError, EvidenceRef, Expr, GraphArg,
     GraphNode, Hash32, InstanceMeta, JudgedLeaf, MAX_VALUE_DEPTH, ManifestGraph, MethodSignature,
     ModeExpr, PackageMetadata, ParamType, Presented, Records, ResourceKind, Rule, RuleExpr,
-    RuleLeaf, TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id, holdings_entry,
-    route,
+    RuleLeaf, SlotRef, TargetExpr, TestHasher, Totality, Value, admit, child_key, fresh_id,
+    holdings_entry, route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
@@ -327,7 +327,7 @@ enum Presenting {
 fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, ComponentAddr) {
     let auth_cell = || Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        slot: AUTH,
+        slot: SlotRef::Fixed(AUTH),
         material: vec![],
     };
     let read = |target| Clause::Effect {
@@ -352,7 +352,7 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
     let vault = |badge: &Expr| {
         TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            slot: VAULT,
+            slot: SlotRef::Fixed(VAULT),
             material: vec![badge.clone()],
         })
     };
@@ -1006,7 +1006,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
 
     let auth_cell = || Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        slot: AUTH,
+        slot: SlotRef::Fixed(AUTH),
         material: vec![],
     };
     let mut package = PackageMetadata::default();
@@ -1128,7 +1128,7 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
                 rule: RuleExpr::Require(RuleLeaf::Stored {
                     cell: Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        slot: AUTH,
+                        slot: SlotRef::Fixed(AUTH),
                         material: vec![],
                     },
                 }),

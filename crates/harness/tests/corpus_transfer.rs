@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     AbiParam, Clause, Constraint, Expr, Hash32, InstanceMeta, ManifestGraph, MethodSignature,
-    ModeExpr, PackageMetadata, ParamType, ShardId, SlotId, TargetExpr, TestHasher, Totality, Value,
-    child_key, package_slot,
+    ModeExpr, PackageMetadata, ParamType, ShardId, SlotId, SlotRef, TargetExpr, TestHasher,
+    Totality, Value, child_key, package_slot,
 };
 use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
@@ -68,7 +68,7 @@ fn decoy(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey
 fn mirror_metadata() -> PackageMetadata {
     let self_child = |slot: SlotId, material: Vec<Expr>| Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        slot,
+        slot: SlotRef::Fixed(slot),
         material,
     };
     let resource_of_arg0 = || Expr::ResourceOf(Box::new(Expr::Arg(0)));

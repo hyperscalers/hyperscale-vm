@@ -182,7 +182,7 @@ mod tests {
 
     use super::{PrefixShardResolver, Routing, ShardResolver, route};
     use crate::admission::{AdmissionError, admit};
-    use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
+    use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
     use crate::graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
     use crate::hash::{Hash32, TestHasher};
     use crate::instance::{InstanceMeta, ResolveError};
@@ -452,7 +452,7 @@ mod tests {
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        slot: SlotId(1),
+                        slot: SlotRef::Fixed(SlotId(1)),
                         material: vec![],
                     }),
                     mode: ModeExpr::Reserve(Expr::Arg(0)),
@@ -558,7 +558,7 @@ mod tests {
                             guard: None,
                             target: TargetExpr::Point(Expr::ChildKey {
                                 owner: Box::new(Expr::SelfAddr),
-                                slot: package_slot(0),
+                                slot: SlotRef::Fixed(package_slot(0)),
                                 material: vec![Expr::Binding(0)],
                             }),
                             mode: ModeExpr::Write,
@@ -607,7 +607,7 @@ mod tests {
                         guard: None,
                         target: TargetExpr::Point(Expr::ChildKey {
                             owner: Box::new(Expr::SelfAddr),
-                            slot: package_slot(0),
+                            slot: SlotRef::Fixed(package_slot(0)),
                             material: vec![Expr::Binding(0)],
                         }),
                         mode: ModeExpr::Write,
@@ -701,7 +701,7 @@ mod tests {
                     ))),
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        slot: SlotId(1),
+                        slot: SlotRef::Fixed(SlotId(1)),
                         material: vec![],
                     }),
                     mode: ModeExpr::Write,
@@ -806,7 +806,7 @@ mod tests {
                         ))),
                         target: TargetExpr::Point(Expr::ChildKey {
                             owner: Box::new(Expr::SelfAddr),
-                            slot: SlotId(9),
+                            slot: SlotRef::Fixed(SlotId(9)),
                             material: vec![Expr::Binding(0)],
                         }),
                         mode: ModeExpr::Delta,
@@ -1106,7 +1106,7 @@ mod tests {
                         guard: None,
                         target: TargetExpr::Point(Expr::ChildKey {
                             owner: Box::new(owner),
-                            slot: SlotId(1),
+                            slot: SlotRef::Fixed(SlotId(1)),
                             material: vec![],
                         }),
                         mode: ModeExpr::Delta,

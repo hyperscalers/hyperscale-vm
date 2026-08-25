@@ -6,8 +6,8 @@ pub use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Clause, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache,
     MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
-    Records, ShardId, ShardResolver, SlotId, TargetExpr, TestHasher, Totality, Value, child_key,
-    package_slot,
+    Records, ShardId, ShardResolver, SlotId, SlotRef, TargetExpr, TestHasher, Totality, Value,
+    child_key, package_slot,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, payouts};
@@ -29,7 +29,7 @@ pub const QUOTE: ResourceAddr = ResourceAddr::new([0xE4; 31]);
 fn self_child(slot: SlotId, material: Vec<Expr>) -> Expr {
     Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        slot,
+        slot: SlotRef::Fixed(slot),
         material,
     }
 }

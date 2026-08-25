@@ -10,7 +10,7 @@ use common::{ALICE, account, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
     EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32,
     InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash, PresentedGrants, Records, SlotId,
-    TestHasher, Value, admit, evaluate_expr, route,
+    SlotRef, TestHasher, Value, admit, evaluate_expr, route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, ResourceAddr,
@@ -88,7 +88,7 @@ fn arb_expr() -> impl Strategy<Value = Expr> {
             (inner.clone(), 0u16..4, vec(inner.clone(), 0..3)).prop_map(
                 |(owner, role, material)| Expr::ChildKey {
                     owner: Box::new(owner),
-                    slot: SlotId(role),
+                    slot: SlotRef::Fixed(SlotId(role)),
                     material,
                 }
             ),

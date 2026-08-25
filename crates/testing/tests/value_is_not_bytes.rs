@@ -25,8 +25,8 @@
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, Presented,
-    RuleBytes, RuleExpr, RuleLeaf, SlotId, StoredRule, TargetExpr, TestHasher, Totality, Value,
-    xrd as protocol_xrd,
+    RuleBytes, RuleExpr, RuleLeaf, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Totality,
+    Value, xrd as protocol_xrd,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
@@ -51,7 +51,7 @@ fn xrd() -> Address {
 fn own(slot: SlotId, material: Vec<Expr>) -> TargetExpr {
     TargetExpr::Point(Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        slot,
+        slot: SlotRef::Fixed(slot),
         material,
     })
 }
@@ -359,7 +359,7 @@ fn impostor() -> PackageMetadata {
                     rule: RuleExpr::Require(RuleLeaf::Stored {
                         cell: Expr::ChildKey {
                             owner: Box::new(Expr::SelfAddr),
-                            slot: AUTH,
+                            slot: SlotRef::Fixed(AUTH),
                             material: vec![],
                         },
                     }),

@@ -12,7 +12,7 @@ use hyperscale_hbor::{
 use hyperscale_vm_types::{Address, AddressClass, CollectionId, ResourceAddr, SubstateKey};
 
 use crate::auth::RuleBytes;
-use crate::dsl::{Expr, TargetExpr};
+use crate::dsl::{Expr, SlotRef, TargetExpr};
 use crate::hash::{Hash32, Hasher};
 use crate::presented::Presented;
 use crate::rule::{GrantClaim, GrantRuleExpr, Holding, SealedLeaf, StoredRule, always, never};
@@ -163,6 +163,24 @@ impl ResourceRecord {
     }
 }
 
+/// What a declaration reaching a foreign prefix is allowed to name
+/// there.
+///
+/// The reach is admitted by the reached resource's own entry, so what it
+/// may touch is what that entry is about. A freeze entry is about the
+/// holder's halt flag, which the vocabulary fixes at one slot; a recall
+/// entry is about the value, which the holder keeps at whatever slot
+/// they like — so the first is pinned by its slot and the second by its
+/// denomination, which is the only thing that says a cell holds value at
+/// all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReachedCell {
+    /// The holder's halt flag, at the vocabulary's slot for it.
+    Halt,
+    /// Whatever cell the holder keeps the resource in.
+    Holding,
+}
+
 /// A behaviour a resource's granted rules govern.
 ///
 /// The set the address cannot answer by arithmetic: who may mint is the
@@ -244,17 +262,26 @@ impl GrantedBehaviour {
         restates.then_some(GrantsResolveError::RestatesAbsence(self))
     }
 
-    /// Whether this behaviour governs somebody reaching into a holder's
-    /// prefix rather than the holder's own movement.
+    /// The cell a declaration reaching a foreign prefix under this
+    /// behaviour may name, or nothing where the behaviour is not the
+    /// issuer's to reach with.
     ///
     /// The two the issuer initiates: taking value out of a prefix that
     /// is not theirs, and writing the flag that halts one. Every other
     /// behaviour is about the party whose own cell is moving, so a
     /// declaration reaching under one of those would be claiming an
     /// authority over the wrong question.
+    ///
+    /// Which cell, rather than only whether: an entry admits a reach for
+    /// what that entry is about, and without saying so one admitted
+    /// reach would be a licence to write any cell under the prefix.
     #[must_use]
-    pub const fn reaches_a_foreign_prefix(self) -> bool {
-        matches!(self, Self::Freeze | Self::Recall)
+    pub const fn reaches(self) -> Option<ReachedCell> {
+        match self {
+            Self::Freeze => Some(ReachedCell::Halt),
+            Self::Recall => Some(ReachedCell::Holding),
+            Self::Mint | Self::Burn | Self::Withdraw | Self::Deposit => None,
+        }
     }
 
     /// Whether absence of this resource's rules would let a movement
@@ -784,7 +811,7 @@ pub fn holdings_collection(
 pub fn holdings_range(resource: Expr, cap: Expr) -> TargetExpr {
     TargetExpr::Range {
         owner: Expr::SelfAddr,
-        collection: NF_VAULT,
+        collection: SlotRef::Fixed(NF_VAULT),
         material: vec![resource],
         lo: Expr::Literal(Value::U128(0)),
         hi: Expr::Literal(Value::U128(u128::MAX)),
@@ -804,7 +831,7 @@ pub fn holdings_range(resource: Expr, cap: Expr) -> TargetExpr {
 pub fn holdings_entry(resource: Expr, id: Expr) -> TargetExpr {
     TargetExpr::Entry {
         owner: Expr::SelfAddr,
-        collection: NF_VAULT,
+        collection: SlotRef::Fixed(NF_VAULT),
         material: vec![resource],
         order: id,
     }

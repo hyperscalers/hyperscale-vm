@@ -11,12 +11,12 @@ use hyperscale_hbor::{Resolution, ShapeFault};
 use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
 
 use crate::dsl::{
-    Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr,
+    Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr, SlotRef,
     TargetExpr, supports,
 };
 use crate::instance::MAX_CONFIG_FIELDS;
 use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
-use crate::resource::{GrantedBehaviour, GrantsExpr, holdings_entry};
+use crate::resource::{GrantedBehaviour, GrantsExpr, ReachedCell, holdings_entry};
 use crate::rule::{
     GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, Rule, RuleExpr, RuleLeaf, always, never,
 };
@@ -441,6 +441,24 @@ pub enum DeclarationError {
         /// The offending clause.
         clause: u32,
     },
+    /// A reach naming a cell the behaviour admitting it does not govern:
+    /// a freeze somewhere other than the holder's halt flag, or a recall
+    /// of a cell that holds no value.
+    #[error("clause {clause} reaches under {behaviour:?} and names a cell it does not govern")]
+    ReachesAnotherCell {
+        /// The clause's index in the signature's preorder.
+        clause: u32,
+        /// The behaviour the reach was declared under.
+        behaviour: GrantedBehaviour,
+    },
+    /// A slot named by an argument on a clause that reaches nothing —
+    /// where the shape table has a constant to dispatch on and expects
+    /// one.
+    #[error("clause {clause} takes its slot from an argument and reaches no foreign prefix")]
+    UntoldSlot {
+        /// The clause's index in the signature's preorder.
+        clause: u32,
+    },
     /// A reach whose target is not keyed first by a resource, so there is
     /// nothing whose entry could admit it.
     #[error(
@@ -666,15 +684,24 @@ pub enum DeclarationError {
 /// Judge a clause that reaches a prefix that is not the declaring
 /// instance's own.
 ///
-/// Two things make the reach safe, and both are shape rather than
-/// review. **The owner is not this instance**, because a reach into
+/// Three things make the reach safe, and all three are shape rather
+/// than review. **The owner is not this instance**, because a reach into
 /// one's own prefix is an ordinary access wearing an authority it does
 /// not need — and admitting it would put an injected entry where the
-/// movement entries belong. And **the target is keyed first by a
+/// movement entries belong. **The target is keyed first by a
 /// resource**, which is the resource whose entry admits the reach: the
 /// key is derived from it, so naming a slot cannot name a cell holding
 /// something else, and the entry judged is always the entry of the thing
-/// actually reached.
+/// actually reached. And **the cell is the one the behaviour is about**,
+/// because an entry admits a reach for what that entry governs — a
+/// freeze entry says who may raise the holder's flag, not who may write
+/// anything at all under their prefix.
+///
+/// Which cell that is is the behaviour's answer. A halt flag is one
+/// slot the vocabulary fixes, so it is named by its slot; a holding is
+/// wherever the holder keeps it, so it is named by its denomination —
+/// the only thing that says a cell holds value, and the thing every
+/// value cell already has to say.
 ///
 /// The entry itself is injected at admission rather than declared here.
 /// A package will not gate itself on a rule it does not want, so the
@@ -683,15 +710,16 @@ pub enum DeclarationError {
 fn judge_reach(
     clause: u32,
     target: &TargetExpr,
+    denomination: Option<&Expr>,
     behaviour: GrantedBehaviour,
 ) -> Result<(), DeclarationError> {
-    if !behaviour.reaches_a_foreign_prefix() {
+    let Some(reached) = behaviour.reaches() else {
         return Err(DeclarationError::UnreachingBehaviour { clause, behaviour });
-    }
+    };
     if targets_own_prefix(target) {
         return Err(DeclarationError::ReachesItself { clause });
     }
-    let Some((_, material)) = slot_of(target) else {
+    let Some((slot, material)) = slot_of(target) else {
         return Err(DeclarationError::UnkeyedReach { clause });
     };
     let keyed_by_a_resource = material.first().is_some_and(|first| {
@@ -700,6 +728,13 @@ fn judge_reach(
     });
     if !keyed_by_a_resource {
         return Err(DeclarationError::UnkeyedReach { clause });
+    }
+    let names_its_cell = match reached {
+        ReachedCell::Halt => slot.fixed() == Some(HALT),
+        ReachedCell::Holding => denomination.is_some(),
+    };
+    if !names_its_cell {
+        return Err(DeclarationError::ReachesAnotherCell { clause, behaviour });
     }
     Ok(())
 }
@@ -731,7 +766,7 @@ enum Contents<'a> {
     Leaf(&'a Expr),
     /// Every entry of one collection, as the owner and identity it hangs
     /// under.
-    Entries(&'a Expr, SlotId, &'a [Expr]),
+    Entries(&'a Expr, &'a SlotRef, &'a [Expr]),
 }
 
 /// Which cell's contents a clause is an answer about.
@@ -749,7 +784,7 @@ fn contents(target: &TargetExpr) -> Contents<'_> {
             collection,
             material,
             ..
-        } => Contents::Entries(owner, *collection, material),
+        } => Contents::Entries(owner, collection, material),
     }
 }
 
@@ -761,9 +796,9 @@ fn contents(target: &TargetExpr) -> Contents<'_> {
 /// answers `None` — it is a local id minted under the owner rather than
 /// a child of any slot, so there is nothing for the vocabulary to be
 /// about.
-fn slot_of(target: &TargetExpr) -> Option<(SlotId, &[Expr])> {
+fn slot_of(target: &TargetExpr) -> Option<(&SlotRef, &[Expr])> {
     match target {
-        TargetExpr::Point(Expr::ChildKey { slot, material, .. }) => Some((*slot, material)),
+        TargetExpr::Point(Expr::ChildKey { slot, material, .. }) => Some((slot, material)),
         TargetExpr::Point(_) => None,
         TargetExpr::Entry {
             collection,
@@ -774,7 +809,7 @@ fn slot_of(target: &TargetExpr) -> Option<(SlotId, &[Expr])> {
             collection,
             material,
             ..
-        } => Some((*collection, material)),
+        } => Some((collection, material)),
     }
 }
 
@@ -808,6 +843,14 @@ fn protocol_shape(
     requires: Option<Presence>,
 ) -> Result<(), DeclarationError> {
     let Some((slot, material)) = slot_of(target) else {
+        return Ok(());
+    };
+    // A slot an argument names has no constant to dispatch on, so the
+    // table has nothing to say about it here. What it would have said is
+    // said where the argument has a value, narrowed to the one sentence
+    // that survives not knowing which cell is meant: a reach names a
+    // cell value is kept at.
+    let Some(slot) = slot.fixed() else {
         return Ok(());
     };
     let reserved = || DeclarationError::ReservedSlot {
@@ -1050,10 +1093,18 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     // resolves against and what makes naming a slot unable to name a
     // cell holding something else.
     if let Some(behaviour) = reach {
-        return judge_reach(clause, target, *behaviour);
-    }
-    if !targets_own_prefix(target) {
-        return Err(DeclarationError::ForeignPrefix { clause });
+        judge_reach(clause, target, denomination, *behaviour)?;
+    } else {
+        if !targets_own_prefix(target) {
+            return Err(DeclarationError::ForeignPrefix { clause });
+        }
+        // A slot an argument names is what makes a reach total over the
+        // slots a holder keeps value at, and it is that and nothing
+        // else: everywhere else the slot is the constant the per-slot
+        // shape table dispatches on.
+        if slot_of(target).is_some_and(|(slot, _)| slot.fixed().is_none()) {
+            return Err(DeclarationError::UntoldSlot { clause });
+        }
     }
     // What this write says about the leaf's presence: a `Holds` on the
     // same target, firing whenever the write does. The one-way door a
@@ -1137,7 +1188,9 @@ pub fn seals(signature: &MethodSignature) -> bool {
                     target: TargetExpr::Point(Expr::ChildKey { owner, slot, material }),
                     mode: ModeExpr::Write,
                     ..
-                } if **owner == Expr::SelfAddr && *slot == CONFIG && material.is_empty()
+                } if **owner == Expr::SelfAddr
+                    && slot.fixed() == Some(CONFIG)
+                    && material.is_empty()
             )
         })
 }
@@ -1149,7 +1202,7 @@ pub fn seal_clauses() -> Vec<Clause> {
     let leaf = || {
         TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            slot: CONFIG,
+            slot: SlotRef::Fixed(CONFIG),
             material: Vec::new(),
         })
     };
@@ -1362,7 +1415,7 @@ fn founds_its_resource(issuance: &Issuance, flat: &[&Clause]) -> bool {
             return false;
         };
         matches!(**owner, Expr::SelfAddr)
-            && *slot == RESOURCE
+            && slot.fixed() == Some(RESOURCE)
             && matches!(
                 material.as_slice(),
                 [Expr::SelfResource { kind, material, grants }]
@@ -1585,7 +1638,7 @@ fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
             // A fungible badge: held when the badge-keyed vault is.
             badge => TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: VAULT,
+                slot: SlotRef::Fixed(VAULT),
                 material: vec![badge.clone()],
             }),
         };
@@ -1906,7 +1959,7 @@ fn check_slot_contents(metadata: &PackageMetadata) -> Result<(), MetadataBoundsE
 
 /// Which leaves a target's slot numbers, where it names one.
 fn numbered(target: &TargetExpr) -> Option<Numbered> {
-    let (slot, _) = slot_of(target)?;
+    let slot = slot_of(target)?.0.fixed()?;
     Some(match target {
         TargetExpr::Point(_) => Numbered::Cell(slot),
         TargetExpr::Entry { .. } | TargetExpr::Range { .. } => Numbered::Entries(slot),
@@ -2562,7 +2615,7 @@ mod tests {
                     guard: None,
                     target: TargetExpr::Range {
                         owner: Expr::SelfAddr,
-                        collection: SlotId(PACKAGE_SLOT_BASE),
+                        collection: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
                         material: vec![],
                         lo: Expr::Literal(Value::U128(0)),
                         hi: Expr::Literal(Value::U128(u128::MAX)),
@@ -2707,7 +2760,7 @@ mod tests {
         let cell = || {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: SlotId(PACKAGE_SLOT_BASE),
+                slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
                 material: vec![a_resource()],
             })
         };
@@ -2813,7 +2866,7 @@ mod tests {
         let cell = || {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: SlotId(PACKAGE_SLOT_BASE),
+                slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
                 material: vec![],
             })
         };
@@ -2877,7 +2930,7 @@ mod tests {
             guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: VAULT,
+                slot: SlotRef::Fixed(VAULT),
                 material: vec![resource.clone()],
             }),
             mode: ModeExpr::Delta,
@@ -3029,7 +3082,7 @@ mod tests {
     fn a_mint_no_condition_justifies_is_refused() {
         let auth_cell = || Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            slot: AUTH,
+            slot: SlotRef::Fixed(AUTH),
             material: vec![],
         };
         let read = |target| Clause::Effect {
@@ -3046,7 +3099,7 @@ mod tests {
         let vault = |badge: Expr| {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: VAULT,
+                slot: SlotRef::Fixed(VAULT),
                 material: vec![badge],
             })
         };
@@ -3288,7 +3341,7 @@ mod tests {
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        slot: SlotId(PACKAGE_SLOT_BASE),
+                        slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
                         material: vec![],
                     }),
                     mode: ModeExpr::Reserve(Expr::Literal(Value::U128(5))),
@@ -3329,18 +3382,18 @@ mod tests {
         };
         let point = TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            slot: SlotId(PACKAGE_SLOT_BASE),
+            slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
             material: vec![],
         });
         let entry = TargetExpr::Entry {
             owner: Expr::SelfAddr,
-            collection: SlotId(PACKAGE_SLOT_BASE),
+            collection: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
             material: vec![],
             order: Expr::Literal(Value::U128(7)),
         };
         let range = TargetExpr::Range {
             owner: Expr::SelfAddr,
-            collection: SlotId(PACKAGE_SLOT_BASE),
+            collection: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
             material: vec![],
             lo: Expr::Literal(Value::U128(0)),
             hi: Expr::Literal(Value::U128(u128::MAX)),
@@ -3365,7 +3418,7 @@ mod tests {
         let target = || {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: SlotId(PACKAGE_SLOT_BASE),
+                slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
                 material: vec![],
             })
         };
@@ -3524,7 +3577,7 @@ mod tests {
         };
         let entry = || TargetExpr::Entry {
             owner: Expr::SelfAddr,
-            collection: package_slot(0),
+            collection: SlotRef::Fixed(package_slot(0)),
             material: vec![a_resource()],
             order: Expr::Literal(Value::U128(1)),
         };
@@ -3603,7 +3656,7 @@ mod tests {
         let cell = |material| {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: SlotId(PACKAGE_SLOT_BASE),
+                slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
                 material,
             })
         };
@@ -3745,7 +3798,7 @@ mod tests {
     fn own_point(slot: SlotId, material: Vec<Expr>) -> TargetExpr {
         TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
-            slot,
+            slot: SlotRef::Fixed(slot),
             material,
         })
     }
@@ -3755,7 +3808,7 @@ mod tests {
     fn own_interval(slot: SlotId, material: Vec<Expr>) -> TargetExpr {
         TargetExpr::Range {
             owner: Expr::SelfAddr,
-            collection: slot,
+            collection: SlotRef::Fixed(slot),
             material,
             lo: Expr::Literal(Value::U128(0)),
             hi: Expr::Literal(Value::U128(u128::MAX)),
@@ -4246,7 +4299,7 @@ mod tests {
         // collection holds is the collection's.
         let interval = |hi| TargetExpr::Range {
             owner: Expr::SelfAddr,
-            collection: package_slot(1),
+            collection: SlotRef::Fixed(package_slot(1)),
             material: vec![a_resource()],
             lo: Expr::Literal(Value::U128(0)),
             hi: Expr::Literal(Value::U128(hi)),
@@ -4266,7 +4319,7 @@ mod tests {
                 effect(
                     TargetExpr::Entry {
                         owner: Expr::SelfAddr,
-                        collection: package_slot(1),
+                        collection: SlotRef::Fixed(package_slot(1)),
                         material: vec![a_resource()],
                         order: Expr::Literal(Value::U128(3)),
                     },
@@ -4316,7 +4369,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot,
+                    slot: SlotRef::Fixed(slot),
                     material: vec![],
                 }),
                 mode: ModeExpr::Read,
@@ -4380,13 +4433,13 @@ mod tests {
         let child_of = |owner: Expr| {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(owner),
-                slot: SlotId(PACKAGE_SLOT_BASE),
+                slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
                 material: vec![a_resource()],
             })
         };
         let entry_of = |slot: u16, order: u128| TargetExpr::Entry {
             owner: Expr::SelfAddr,
-            collection: SlotId(slot),
+            collection: SlotRef::Fixed(SlotId(slot)),
             material: vec![a_resource()],
             order: Expr::Literal(Value::U128(order)),
         };
@@ -4441,6 +4494,205 @@ mod tests {
         assert_eq!(
             check_declarations(&looped),
             Err(DeclarationError::ForeignPrefix { clause: 1 })
+        );
+    }
+
+    /// A signature declaring exactly one reaching clause.
+    fn one_reach(
+        behaviour: GrantedBehaviour,
+        target: TargetExpr,
+        mode: ModeExpr,
+        denomination: Option<Expr>,
+    ) -> MethodSignature {
+        MethodSignature {
+            totality: Totality::Fallible,
+            effects: vec![Clause::Effect {
+                reach: Some(behaviour),
+                guard: None,
+                target,
+                mode,
+                denomination: denomination.map(Box::new),
+            }],
+            ..MethodSignature::default()
+        }
+    }
+
+    /// A leaf under `owner`, at `slot` and keyed by `material`.
+    fn point_under(owner: Expr, slot: SlotRef, material: Vec<Expr>) -> TargetExpr {
+        TargetExpr::Point(Expr::ChildKey {
+            owner: Box::new(owner),
+            slot,
+            material,
+        })
+    }
+
+    /// The slot an argument names, which only a reach may take.
+    fn told() -> SlotRef {
+        SlotRef::Reached(Box::new(Expr::Arg(1)))
+    }
+
+    /// What a reach may say: the halt flag at the slot the vocabulary
+    /// keeps it at, and value wherever the holder keeps it.
+    ///
+    /// An entry admits a reach for what that entry is about, so the cell
+    /// is named two different ways — a halt flag by its slot, a holding
+    /// by its denomination, which is the only thing that says a cell
+    /// holds value at all.
+    #[test]
+    fn a_reach_names_the_cell_its_authority_governs() {
+        let holder = || Expr::Arg(0);
+        let take = || ModeExpr::Reserve(Expr::Arg(2));
+
+        assert_eq!(
+            check_declarations(&one_reach(
+                GrantedBehaviour::Freeze,
+                point_under(holder(), SlotRef::Fixed(HALT), vec![a_resource()]),
+                ModeExpr::Write,
+                None,
+            )),
+            Ok(())
+        );
+        // Value at the vocabulary's vault, or at whatever slot the
+        // caller says the holder keeps it in.
+        for slot in [SlotRef::Fixed(VAULT), told()] {
+            assert_eq!(
+                check_declarations(&one_reach(
+                    GrantedBehaviour::Recall,
+                    point_under(holder(), slot, vec![a_resource()]),
+                    take(),
+                    Some(a_resource()),
+                )),
+                Ok(())
+            );
+        }
+        // Instances the same way, over the interval holding them.
+        assert_eq!(
+            check_declarations(&one_reach(
+                GrantedBehaviour::Recall,
+                TargetExpr::Range {
+                    owner: holder(),
+                    collection: told(),
+                    material: vec![a_resource()],
+                    lo: Expr::Literal(Value::U128(0)),
+                    hi: Expr::Literal(Value::U128(u128::MAX)),
+                    cap: Expr::Literal(Value::U64(4)),
+                },
+                ModeExpr::Write,
+                Some(a_resource()),
+            )),
+            Ok(())
+        );
+
+        // A freeze entry admits raising the holder's flag, not writing
+        // whatever else sits under their prefix.
+        assert_eq!(
+            check_declarations(&one_reach(
+                GrantedBehaviour::Freeze,
+                point_under(holder(), told(), vec![a_resource()]),
+                ModeExpr::Write,
+                None,
+            )),
+            Err(DeclarationError::ReachesAnotherCell {
+                clause: 0,
+                behaviour: GrantedBehaviour::Freeze
+            })
+        );
+        // And a recall entry admits taking value, so the cell it names
+        // has to be one that holds some.
+        assert_eq!(
+            check_declarations(&one_reach(
+                GrantedBehaviour::Recall,
+                point_under(holder(), SlotRef::Fixed(HALT), vec![a_resource()]),
+                ModeExpr::Write,
+                None,
+            )),
+            Err(DeclarationError::ReachesAnotherCell {
+                clause: 0,
+                behaviour: GrantedBehaviour::Recall
+            })
+        );
+    }
+
+    /// The three things a reach has to be, refused one at a time.
+    ///
+    /// An authority that governs reaching at all, a prefix that is not
+    /// the declarer's own, and a key derived from the resource whose
+    /// entry admits it — plus the slot an argument names, which is the
+    /// reach's alone.
+    #[test]
+    fn a_reach_that_is_not_one_is_refused() {
+        let holder = || Expr::Arg(0);
+        let take = || ModeExpr::Reserve(Expr::Arg(2));
+
+        // A behaviour that is about the holder's own movement governs
+        // nobody reaching them.
+        for behaviour in [
+            GrantedBehaviour::Mint,
+            GrantedBehaviour::Burn,
+            GrantedBehaviour::Withdraw,
+            GrantedBehaviour::Deposit,
+        ] {
+            assert_eq!(
+                check_declarations(&one_reach(
+                    behaviour,
+                    point_under(holder(), SlotRef::Fixed(VAULT), vec![a_resource()]),
+                    take(),
+                    Some(a_resource()),
+                )),
+                Err(DeclarationError::UnreachingBehaviour {
+                    clause: 0,
+                    behaviour
+                })
+            );
+        }
+        // Its own prefix is an ordinary access wearing an authority it
+        // does not need.
+        assert_eq!(
+            check_declarations(&one_reach(
+                GrantedBehaviour::Freeze,
+                point_under(Expr::SelfAddr, SlotRef::Fixed(HALT), vec![a_resource()]),
+                ModeExpr::Write,
+                None,
+            )),
+            Err(DeclarationError::ReachesItself { clause: 0 })
+        );
+        // A key derived from nothing, and one derived from something
+        // that is not a resource: neither names an entry that could
+        // admit the reach.
+        for material in [
+            vec![],
+            vec![Expr::Literal(Value::Address(Address::new(
+                [9; 31],
+                AddressClass::Component,
+            )))],
+        ] {
+            assert_eq!(
+                check_declarations(&one_reach(
+                    GrantedBehaviour::Freeze,
+                    point_under(holder(), SlotRef::Fixed(HALT), material),
+                    ModeExpr::Write,
+                    None,
+                )),
+                Err(DeclarationError::UnkeyedReach { clause: 0 })
+            );
+        }
+        // And a slot an argument names, on a clause that reaches
+        // nothing: everywhere but a reach the shape table has a constant
+        // to dispatch on.
+        let untold = MethodSignature {
+            totality: Totality::Fallible,
+            effects: vec![Clause::Effect {
+                reach: None,
+                guard: None,
+                target: point_under(Expr::SelfAddr, told(), vec![a_resource()]),
+                mode: take(),
+                denomination: Some(Box::new(a_resource())),
+            }],
+            ..MethodSignature::default()
+        };
+        assert_eq!(
+            check_declarations(&untold),
+            Err(DeclarationError::UntoldSlot { clause: 0 })
         );
     }
 }

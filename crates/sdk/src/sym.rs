@@ -25,7 +25,7 @@
 
 use core::marker::PhantomData;
 
-use hyperscale_vm_effects::{Expr, ParamType, SlotId, Value};
+use hyperscale_vm_effects::{Expr, ParamType, SlotRef, Value};
 
 /// A symbolic value's static kind.
 pub trait Kind {
@@ -224,16 +224,27 @@ impl Sym<Seq> {
     }
 }
 
+/// A slot an argument names, for a declaration that reaches one.
+///
+/// The only way a slot becomes an expression, and it is deliberately
+/// narrow: everything else names a slot the package wrote down, where
+/// the per-slot shape table can judge it before anything runs.
+impl From<&Sym<U64>> for SlotRef {
+    fn from(slot: &Sym<U64>) -> Self {
+        Self::Reached(Box::new(slot.expr.clone()))
+    }
+}
+
 impl Sym<Addr> {
     /// The canonical child key `owner | H(slot, material…)`.
     ///
     /// Pure computation over the owner and the material, which is what lets
     /// a shard name another shard's key without reading it.
     #[must_use]
-    pub fn child(&self, slot: SlotId, material: &[Sym<Opaque>]) -> Sym<Key> {
+    pub fn child(&self, slot: impl Into<SlotRef>, material: &[Sym<Opaque>]) -> Sym<Key> {
         Sym::new(Expr::ChildKey {
             owner: Box::new(self.expr.clone()),
-            slot,
+            slot: slot.into(),
             material: material.iter().map(|m| m.expr.clone()).collect(),
         })
     }
@@ -452,9 +463,15 @@ pub fn expr_depth(expr: &Expr) -> usize {
         }
         Expr::SelfResource { material, .. } => material.iter().map(expr_depth).max().unwrap_or(0),
         Expr::ChildKey {
-            owner, material, ..
-        }
-        | Expr::OrderKey {
+            owner,
+            slot,
+            material,
+        } => material
+            .iter()
+            .chain(slot.reached())
+            .map(expr_depth)
+            .fold(expr_depth(owner), usize::max),
+        Expr::OrderKey {
             owner, material, ..
         } => material
             .iter()

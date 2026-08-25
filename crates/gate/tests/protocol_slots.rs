@@ -10,7 +10,7 @@ use hyperscale_vm_effects::envelope::NULLIFIER_SLOT;
 use hyperscale_vm_effects::vocabulary::{AUTH, INSTANCE, RESOURCE};
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, RuleExpr,
-    RuleLeaf, SlotId, TargetExpr, Value, seal_clauses,
+    RuleLeaf, SlotId, SlotRef, TargetExpr, Value, seal_clauses,
 };
 use hyperscale_vm_gate::{admit_package, attach_metadata};
 use hyperscale_vm_types::{Address, AddressClass, Presence};
@@ -66,7 +66,7 @@ fn writing(slot: SlotId, material: Vec<Expr>) -> PackageMetadata {
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        slot,
+                        slot: SlotRef::Fixed(slot),
                         material: material.clone(),
                     }),
                     mode: ModeExpr::Write,
@@ -79,7 +79,7 @@ fn writing(slot: SlotId, material: Vec<Expr>) -> PackageMetadata {
                     rule: RuleExpr::Require(RuleLeaf::Presence {
                         target: Box::new(TargetExpr::Point(Expr::ChildKey {
                             owner: Box::new(Expr::SelfAddr),
-                            slot,
+                            slot: SlotRef::Fixed(slot),
                             material,
                         })),
                         expect: Presence::Absent,

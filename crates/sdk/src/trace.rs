@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, GrantedBehaviour, GrantsExpr, Issuance, Issued, MAX_CLAUSE_DEPTH,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, ResourceKind,
-    RuleExpr, RuleLeaf, SlotId, TargetExpr, Totality, Value, well_formed,
+    RuleExpr, RuleLeaf, SlotId, SlotRef, TargetExpr, Totality, Value, well_formed,
 };
 use hyperscale_vm_types::Presence;
 
@@ -147,6 +147,15 @@ impl Trace {
             "expression nests {expr_depth} deep, past the {MAX_EXPR_DEPTH} the evaluator admits"
         );
         lowered
+    }
+
+    /// Lower the slot a key is derived under, where an argument names
+    /// it rather than the declaration.
+    fn lower_slot(&self, slot: SlotRef) -> SlotRef {
+        match slot {
+            SlotRef::Fixed(slot) => SlotRef::Fixed(slot),
+            SlotRef::Reached(expr) => SlotRef::Reached(Box::new(self.lower(*expr))),
+        }
     }
 
     /// Lower a sequence of key material, in the order it is folded.
@@ -336,13 +345,13 @@ impl Trace {
     pub fn entry(
         &mut self,
         owner: &Sym<Addr>,
-        collection: SlotId,
+        collection: impl Into<SlotRef>,
         material: &[Sym<Opaque>],
         order: &Sym<U128>,
     ) -> Access<'_, Leaf> {
         let target = TargetExpr::Entry {
             owner: self.lower(owner.expr().clone()),
-            collection,
+            collection: self.lower_slot(collection.into()),
             material: self.lower_all(material),
             order: self.lower(order.expr().clone()),
         };
@@ -382,7 +391,7 @@ impl Trace {
         let owner_expr = self.lower(owner.expr().clone());
         let target = TargetExpr::Entry {
             owner: owner_expr.clone(),
-            collection,
+            collection: SlotRef::Fixed(collection),
             material: vec![],
             order: Expr::OrderKey {
                 owner: Box::new(owner_expr),
@@ -418,7 +427,7 @@ impl Trace {
     ) -> Access<'_, Interval> {
         let target = TargetExpr::Range {
             owner: self.lower(owner.expr().clone()),
-            collection,
+            collection: SlotRef::Fixed(collection),
             material: vec![],
             lo: self.lower(cursor.expr().clone()),
             hi: Expr::Literal(Value::U128(u128::MAX)),
@@ -444,7 +453,7 @@ impl Trace {
     pub fn range(
         &mut self,
         owner: &Sym<Addr>,
-        collection: SlotId,
+        collection: impl Into<SlotRef>,
         material: &[Sym<Opaque>],
         lo: &Sym<U128>,
         hi: &Sym<U128>,
@@ -452,7 +461,7 @@ impl Trace {
     ) -> Access<'_, Interval> {
         let target = TargetExpr::Range {
             owner: self.lower(owner.expr().clone()),
-            collection,
+            collection: self.lower_slot(collection.into()),
             material: self.lower_all(material),
             lo: self.lower(lo.expr().clone()),
             hi: self.lower(hi.expr().clone()),
@@ -977,7 +986,7 @@ impl Trace {
                         ..
                     } if matches!(
                         cell,
-                        Expr::ChildKey { slot: at, .. } if *at == slot
+                        Expr::ChildKey { slot: at, .. } if at.fixed() == Some(slot)
                     ) =>
                     {
                         Some(cell.clone())
@@ -1229,6 +1238,13 @@ fn absolute(depth: usize) -> u32 {
 }
 
 /// Rewrite absolute binder marks into the evaluator's relative indices.
+fn rebind_slot(slot: SlotRef, depth: usize) -> SlotRef {
+    match slot {
+        SlotRef::Fixed(slot) => SlotRef::Fixed(slot),
+        SlotRef::Reached(expr) => SlotRef::Reached(Box::new(rebind(*expr, depth))),
+    }
+}
+
 fn rebind(expr: Expr, depth: usize) -> Expr {
     match expr {
         Expr::Binding(mark) => {
@@ -1288,7 +1304,7 @@ fn rebind(expr: Expr, depth: usize) -> Expr {
             material,
         } => Expr::ChildKey {
             owner: Box::new(rebind(*owner, depth)),
-            slot,
+            slot: rebind_slot(slot, depth),
             material: material.into_iter().map(|m| rebind(m, depth)).collect(),
         },
         Expr::OrderKey {

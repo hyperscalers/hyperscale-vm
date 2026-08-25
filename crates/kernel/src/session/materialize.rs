@@ -663,7 +663,7 @@ fn capability_for(effect: Effect, denominated: bool) -> Result<Capability, Mater
 mod tests {
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{Declaration, DeclaredAccess, JudgedLeaf, Rule};
+    use hyperscale_vm_effects::{Declaration, DeclaredAccess, JudgedLeaf, Rule, SlotRef};
     use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Presence, ResourceAddr,
         encode_amount,
@@ -1009,7 +1009,7 @@ mod tests {
             (
                 TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: package_slot(0),
+                    slot: SlotRef::Fixed(package_slot(0)),
                     material: vec![resource()],
                 }),
                 EffectTarget::Point(key(1)),
@@ -1017,7 +1017,7 @@ mod tests {
             (
                 TargetExpr::Entry {
                     owner: Expr::SelfAddr,
-                    collection: package_slot(1),
+                    collection: SlotRef::Fixed(package_slot(1)),
                     material: vec![resource()],
                     order: Expr::Literal(Value::U128(1)),
                 },
@@ -1030,7 +1030,7 @@ mod tests {
             (
                 TargetExpr::Range {
                     owner: Expr::SelfAddr,
-                    collection: package_slot(2),
+                    collection: SlotRef::Fixed(package_slot(2)),
                     material: vec![resource()],
                     lo: Expr::Literal(Value::U128(0)),
                     hi: Expr::Literal(Value::U128(u128::MAX)),

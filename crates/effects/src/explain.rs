@@ -35,13 +35,13 @@ use std::fmt::Write as _;
 use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
 use hyperscale_vm_types::{Address, Presence, SubstateKey};
 
-use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
+use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
 use crate::envelope::NULLIFIER_SLOT;
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
 use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleExpr, RuleLeaf, always, never};
 use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, Totality};
-use crate::types::{EdgeContent, SlotId, Value, u256_decimal};
+use crate::types::{EdgeContent, Value, u256_decimal};
 use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 
 /// The whole package: its tables, then every method it declares.
@@ -327,7 +327,7 @@ impl Names<'_> {
                 order,
             } => format!(
                 "{} at {}",
-                self.collection(owner, *collection, material),
+                self.collection(owner, collection, material),
                 self.expr(order, ATOM)
             ),
             TargetExpr::Range {
@@ -339,7 +339,7 @@ impl Names<'_> {
                 cap,
             } => format!(
                 "{} over {}..={}, at most {} entries",
-                self.collection(owner, *collection, material),
+                self.collection(owner, collection, material),
                 self.expr(lo, ATOM),
                 self.expr(hi, ATOM),
                 self.expr(cap, ATOM)
@@ -349,7 +349,7 @@ impl Names<'_> {
 
     /// A collection under an owner, at the material separating it from
     /// the slot's others.
-    fn collection(&self, owner: &Expr, slot: SlotId, material: &[Expr]) -> String {
+    fn collection(&self, owner: &Expr, slot: &SlotRef, material: &[Expr]) -> String {
         format!(
             "{}.{}{}",
             self.expr(owner, ATOM),
@@ -435,7 +435,7 @@ impl Names<'_> {
                 format!(
                     "{}.{}{}",
                     self.expr(owner, ATOM),
-                    self.slot(*slot),
+                    self.slot(slot),
                     self.material(material)
                 ),
                 ATOM,
@@ -451,7 +451,10 @@ impl Names<'_> {
                 slot,
                 material,
             } => (
-                format!("order-key({})", self.collection(owner, *slot, material)),
+                format!(
+                    "order-key({})",
+                    self.collection(owner, &SlotRef::Fixed(*slot), material)
+                ),
                 ATOM,
             ),
             Expr::Add(left, right) => (
@@ -553,7 +556,15 @@ impl Names<'_> {
 
     /// A role, by the reserved name or the package's own.
     /// A slot, by the protocol's name for it or the package's own.
-    fn slot(&self, slot: SlotId) -> String {
+    /// A slot the declaration wrote down, by the name it goes under —
+    /// or, where an argument names it, that argument, since a reach is
+    /// told which slot it is reaching and the reader is told the same
+    /// way.
+    fn slot(&self, slot: &SlotRef) -> String {
+        let slot = match slot {
+            SlotRef::Fixed(slot) => *slot,
+            SlotRef::Reached(expr) => return self.expr(expr, ATOM),
+        };
         let vocabulary = match slot {
             VAULT => Some("vault"),
             HALT => Some("halt"),
@@ -820,7 +831,7 @@ mod tests {
     use hyperscale_hbor::TypeShape;
     use hyperscale_vm_types::Presence;
 
-    use super::{explain, explain_method};
+    use super::{SlotRef, explain, explain_method};
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, self_child};
     use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape};
     use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
@@ -1086,7 +1097,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Range {
                     owner: Expr::SelfAddr,
-                    collection: package_slot(0),
+                    collection: SlotRef::Fixed(package_slot(0)),
                     material: vec![Expr::Arg(0)],
                     lo: Expr::Literal(Value::U128(0)),
                     hi: Expr::Literal(Value::U128(u128::MAX)),

@@ -18,7 +18,7 @@
 
 use hyperscale_vm_effects::{
     Clause, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, ModeExpr, ResourceKind,
-    RuleExpr,
+    RuleExpr, SlotRef,
 };
 use hyperscale_vm_sdk::blueprint;
 
@@ -148,7 +148,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
     let metadata = registry::blueprint().metadata();
     let hashed_entry = || TargetExpr::Entry {
         owner: Expr::SelfAddr,
-        collection: SlotId(16),
+        collection: SlotRef::Fixed(SlotId(16)),
         material: vec![],
         order: Expr::OrderKey {
             owner: Box::new(Expr::SelfAddr),
@@ -183,7 +183,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
             guard: None,
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
-                collection: SlotId(16),
+                collection: SlotRef::Fixed(SlotId(16)),
                 material: vec![],
                 lo: Expr::Arg(0),
                 hi: Expr::Literal(Value::U128(u128::MAX)),

@@ -369,7 +369,7 @@ fn check_abi_against_export(
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{
-        AbiParam, Clause, Expr, MethodSignature, PackageMetadata, RuleExpr, seal_clauses,
+        AbiParam, Clause, Expr, MethodSignature, PackageMetadata, RuleExpr, SlotRef, seal_clauses,
     };
     use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
     use hyperscale_vm_runtime::component_exports;
@@ -798,7 +798,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: package_slot(0),
+                    slot: SlotRef::Fixed(package_slot(0)),
                     material: vec![],
                 }),
                 mode: ModeExpr::Write,
@@ -852,7 +852,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: package_slot(0),
+                    slot: SlotRef::Fixed(package_slot(0)),
                     material: vec![held()],
                 }),
                 mode: ModeExpr::Delta,

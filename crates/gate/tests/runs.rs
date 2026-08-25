@@ -8,8 +8,8 @@
 //! happened to have.
 
 use hyperscale_vm_effects::{
-    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, TargetExpr,
-    package_slot, seal_clauses,
+    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, SlotRef,
+    TargetExpr, package_slot, seal_clauses,
 };
 use hyperscale_vm_gate::{admit_package, attach_metadata};
 use wat::parse_str;
@@ -72,7 +72,7 @@ fn spreading(abi: Vec<AbiParam>) -> PackageMetadata {
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        slot: package_slot(0),
+                        slot: SlotRef::Fixed(package_slot(0)),
                         material: vec![Expr::Binding(0)],
                     }),
                     mode: ModeExpr::Write,

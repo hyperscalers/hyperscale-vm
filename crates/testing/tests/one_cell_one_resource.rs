@@ -12,7 +12,7 @@
 //! withdrawal under the other reaches.
 
 use hyperscale_vm_effects::{
-    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, SlotId,
+    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, SlotId, SlotRef,
     TargetExpr, Totality, Value,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
@@ -31,7 +31,7 @@ const POT: SlotId = SlotId(16);
 fn pot(held: ResourceAddr) -> TargetExpr {
     TargetExpr::Point(Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        slot: POT,
+        slot: SlotRef::Fixed(POT),
         material: vec![Expr::Literal(Value::Address(held.address()))],
     })
 }

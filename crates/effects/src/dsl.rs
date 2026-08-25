@@ -27,9 +27,10 @@ use crate::resource::{
 };
 use crate::rule::{Rule, RuleExpr, RuleLeaf, SealedLeaf, never};
 use crate::types::{
-    EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_ITEMS, SlotId, Value, child_key, collection_id,
-    granting_resource_address, order_key,
+    EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_ITEMS, PACKAGE_SLOT_BASE, SlotId,
+    Value, child_key, collection_id, granting_resource_address, order_key,
 };
+use crate::vocabulary::{NF_VAULT, VAULT};
 
 /// The bound on any collection a `for-each` clause maps over.
 ///
@@ -157,8 +158,56 @@ pub const MAX_EFFECTS_PER_SIGNATURE: usize = 4096;
 pub fn self_child(slot: SlotId, material: Vec<Expr>) -> Expr {
     Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
-        slot,
+        slot: SlotRef::Fixed(slot),
         material,
+    }
+}
+
+/// Which slot a key is derived under: the one the declaration wrote
+/// down, or the one an argument names.
+///
+/// Fixed on every ordinary access, and that is what gives the per-slot
+/// shape table its footing — it dispatches on the constant, and the
+/// bands it refuses are refused before anything runs.
+///
+/// A reaching access is the one place the constant gives way. A package
+/// holds value at any slot of its own, so an issuer's reach that listed
+/// slots would leave every bespoke vault unreachable, which is the hole
+/// the reach exists to close. What keeps a caller-chosen slot from being
+/// a cell nobody judged is that the table's judgment is restated where
+/// the slot finally has a value.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+pub enum SlotRef {
+    /// The slot the declaration names.
+    Fixed(SlotId),
+    /// The slot this expression evaluates to, admissible only on an
+    /// access that declares the prefix it reaches.
+    Reached(Box<Expr>),
+}
+
+impl From<SlotId> for SlotRef {
+    fn from(slot: SlotId) -> Self {
+        Self::Fixed(slot)
+    }
+}
+
+impl SlotRef {
+    /// The slot where the declaration wrote one down.
+    #[must_use]
+    pub const fn fixed(&self) -> Option<SlotId> {
+        match self {
+            Self::Fixed(slot) => Some(*slot),
+            Self::Reached(_) => None,
+        }
+    }
+
+    /// The expression a reached slot is named by.
+    #[must_use]
+    pub const fn reached(&self) -> Option<&Expr> {
+        match self {
+            Self::Fixed(_) => None,
+            Self::Reached(expr) => Some(expr),
+        }
     }
 }
 
@@ -268,7 +317,7 @@ pub enum Expr {
         /// The owning address.
         owner: Box<Self>,
         /// The child's slot under the owner.
-        slot: SlotId,
+        slot: SlotRef,
         /// The address material, canonically encoded into the hash.
         material: Vec<Self>,
     },
@@ -420,9 +469,15 @@ impl Expr {
                 material: elements, ..
             } => children.extend(elements),
             Self::ChildKey {
-                owner, material, ..
+                owner,
+                slot,
+                material,
+            } => {
+                children.push(owner);
+                children.extend(slot.reached());
+                children.extend(material);
             }
-            | Self::OrderKey {
+            Self::OrderKey {
                 owner, material, ..
             } => {
                 children.push(owner);
@@ -483,7 +538,7 @@ pub enum TargetExpr {
         /// The collection's owner.
         owner: Expr,
         /// The collection's slot under the owner.
-        collection: SlotId,
+        collection: SlotRef,
         /// The material separating this collection from the slot's others,
         /// canonically encoded into its identity.
         material: Vec<Expr>,
@@ -495,7 +550,7 @@ pub enum TargetExpr {
         /// The collection's owner.
         owner: Expr,
         /// The collection's slot under the owner.
-        collection: SlotId,
+        collection: SlotRef,
         /// The material separating this collection from the slot's others,
         /// canonically encoded into its identity.
         material: Vec<Expr>,
@@ -524,23 +579,25 @@ impl TargetExpr {
             Self::Point(key) => parts.push(key),
             Self::Entry {
                 owner,
+                collection,
                 material,
                 order,
-                ..
             } => {
                 parts.push(owner);
+                parts.extend(collection.reached());
                 parts.extend(material);
                 parts.push(order);
             }
             Self::Range {
                 owner,
+                collection,
                 material,
                 lo,
                 hi,
                 cap,
-                ..
             } => {
                 parts.push(owner);
+                parts.extend(collection.reached());
                 parts.extend(material);
                 parts.push(lo);
                 parts.push(hi);
@@ -721,6 +778,10 @@ pub enum EvalError {
     /// resource whose entry could admit it.
     #[error("an access reaching a foreign prefix is keyed by no resource")]
     UnkeyedReach,
+    /// A slot an argument named that keeps no value, so no reach can be
+    /// about it.
+    #[error("slot {0} keeps no value, so nothing reaches it")]
+    UnreachableSlot(u64),
     /// A configuration index past the instance's configuration.
     #[error("configuration field {0} out of range")]
     ConfigOutOfRange(u32),
@@ -1675,13 +1736,7 @@ fn eval_target(
         } => {
             let owner = as_address(&*eval_expr(owner, inputs, hasher, bindings, 0, budget)?)?;
             let collection = eval_collection(
-                owner,
-                *collection,
-                material,
-                inputs,
-                hasher,
-                bindings,
-                budget,
+                owner, collection, material, inputs, hasher, bindings, budget,
             )?;
             let order = as_u128(&*eval_expr(order, inputs, hasher, bindings, 0, budget)?)?;
             Ok(EffectTarget::Entry {
@@ -1700,13 +1755,7 @@ fn eval_target(
         } => {
             let owner = as_address(&*eval_expr(owner, inputs, hasher, bindings, 0, budget)?)?;
             let collection = eval_collection(
-                owner,
-                *collection,
-                material,
-                inputs,
-                hasher,
-                bindings,
-                budget,
+                owner, collection, material, inputs, hasher, bindings, budget,
             )?;
             let lo = as_u128(&*eval_expr(lo, inputs, hasher, bindings, 0, budget)?)?;
             let hi = as_u128(&*eval_expr(hi, inputs, hasher, bindings, 0, budget)?)?;
@@ -1729,16 +1778,65 @@ fn eval_target(
 /// identity everything downstream compares.
 fn eval_collection(
     owner: Address,
-    slot: SlotId,
+    slot: &SlotRef,
     material: &[Expr],
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
     budget: &Budget<'_>,
 ) -> Result<CollectionId, EvalError> {
+    let slot = eval_slot(slot, false, inputs, hasher, bindings, 0, budget)?;
     let encoded = eval_material(material, inputs, hasher, bindings, 0, budget)?;
     budget.spend(WORK_PER_DERIVATION)?;
     Ok(collection_id(hasher, owner, slot, &encoded))
+}
+
+/// The slot a key is derived under, and — where an argument named it —
+/// the band that argument may reach.
+///
+/// This is the one place the per-slot shape table's judgment is
+/// restated. The table has its footing in the slot being a constant, so
+/// a slot that is not one is held here instead, and to the narrowest
+/// form of the same sentence: an argument may name a cell **value is
+/// kept at** and nothing else. Which is what a reach can be about — the
+/// authority admitting it is a resource's, and the only cells a
+/// resource's entries govern are the ones holding it.
+///
+/// So the vocabulary's two value cells, told apart by the shape asking
+/// (a balance is a leaf, instances are a collection), or one of the
+/// reached package's own slots. Everything below the package band that
+/// is not one of the two names a cell the kernel derives for its own
+/// purposes — a record, a configuration, a governing rule, a halt flag —
+/// and none of them holds value, so none of them is somebody's to reach.
+fn eval_slot(
+    slot: &SlotRef,
+    point: bool,
+    inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    bindings: &[Value],
+    depth: usize,
+    budget: &Budget<'_>,
+) -> Result<SlotId, EvalError> {
+    let expr = match slot {
+        SlotRef::Fixed(slot) => return Ok(*slot),
+        SlotRef::Reached(expr) => expr,
+    };
+    let named = as_u64(&*eval_expr(expr, inputs, hasher, bindings, depth, budget)?)?;
+    let slot = u16::try_from(named)
+        .map(SlotId)
+        .map_err(|_| EvalError::UnreachableSlot(named))?;
+    let holds_value = if slot.0 >= PACKAGE_SLOT_BASE {
+        slot.0 < KERNEL_SLOT_BASE
+    } else if point {
+        slot == VAULT
+    } else {
+        slot == NF_VAULT
+    };
+    if holds_value {
+        Ok(slot)
+    } else {
+        Err(EvalError::UnreachableSlot(named))
+    }
 }
 
 /// The address of a resource the target instance issues: the derivation
@@ -2029,7 +2127,7 @@ fn eval_expr<'a>(
         } => Value::Key(child_key(
             hasher,
             as_address(&*sub(owner)?)?,
-            *slot,
+            eval_slot(slot, true, inputs, hasher, bindings, deeper, budget)?,
             &material(parts)?,
         )),
         Expr::OrderKey {
@@ -2362,19 +2460,21 @@ mod tests {
     };
 
     use super::{
-        Clause, EvalBudget, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH,
-        MAX_FOREACH_ELEMENTS, MAX_VALUE_ITEMS, ModeExpr, TargetExpr, evaluate_declaration,
-        evaluate_effects, evaluate_expr, fresh_id, fresh_local,
+        Clause, EvalBudget, EvalError, EvalInputs, Expr, KERNEL_SLOT_BASE, MAX_CLAUSE_DEPTH,
+        MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_VALUE_ITEMS, ModeExpr, NF_VAULT,
+        PACKAGE_SLOT_BASE, SlotRef, TargetExpr, VAULT, evaluate_declaration, evaluate_effects,
+        evaluate_expr, fresh_id, fresh_local,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::instance::InstanceMeta;
     use crate::manifest::ManifestHash;
     use crate::metadata::PackageHash;
-    use crate::resource::{GrantsExpr, ResourceKind, issued_resource};
+    use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind, issued_resource};
     use crate::types::{
         EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_BYTES, SlotId, Value, child_key, collection_id,
         order_key,
     };
+    use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, RESOURCE};
 
     /// Every constructor, each subterm a distinct marker: the walk
     /// answers exactly the markers, in order. A new variant fails the
@@ -2382,6 +2482,7 @@ mod tests {
     /// arm quietly drops one of its variant's fields — the miss every
     /// structural walk would then share.
     #[test]
+    #[allow(clippy::too_many_lines)] // one row per constructor
     fn children_reach_every_subterm() {
         let leaf = |marker: u32| Expr::Arg(marker);
         let boxed = |marker: u32| Box::new(leaf(marker));
@@ -2432,8 +2533,16 @@ mod tests {
             (
                 Expr::ChildKey {
                     owner: boxed(1),
-                    slot: SlotId(0),
+                    slot: SlotRef::Fixed(SlotId(0)),
                     material: vec![leaf(2), leaf(3)],
+                },
+                vec![1, 2, 3],
+            ),
+            (
+                Expr::ChildKey {
+                    owner: boxed(1),
+                    slot: SlotRef::Reached(boxed(2)),
+                    material: vec![leaf(3)],
                 },
                 vec![1, 2, 3],
             ),
@@ -2510,6 +2619,87 @@ mod tests {
             evaluate_expr(&Expr::SelfRecord, &context, &TestHasher),
             Ok(Value::Bytes(context.record.leaf_bytes().unwrap()))
         );
+    }
+
+    /// A slot an argument names resolves to a cell value is kept at,
+    /// and to nothing else.
+    ///
+    /// The one place the per-slot shape table's judgment is restated,
+    /// so it is held to the same band from the other side: the
+    /// vocabulary's two value cells told apart by the shape asking, a
+    /// package's own slots, and a refusal everywhere else — the
+    /// vocabulary's other cells among them, since a record, a
+    /// configuration leaf, a governing rule and a halt flag hold no
+    /// value and so are nobody's to reach.
+    #[test]
+    fn a_slot_an_argument_names_reaches_value_and_nothing_else() {
+        let keyed = || {
+            vec![Expr::Literal(Value::Address(Address::new(
+                [7; 31],
+                AddressClass::Resource,
+            )))]
+        };
+        let reaching = |slot: u64, point: bool| {
+            let target = if point {
+                TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: SlotRef::Reached(Box::new(Expr::Arg(0))),
+                    material: keyed(),
+                })
+            } else {
+                TargetExpr::Range {
+                    owner: Expr::SelfAddr,
+                    collection: SlotRef::Reached(Box::new(Expr::Arg(0))),
+                    material: keyed(),
+                    lo: Expr::Literal(Value::U128(0)),
+                    hi: Expr::Literal(Value::U128(u128::MAX)),
+                    cap: Expr::Literal(Value::U64(1)),
+                }
+            };
+            let clauses = vec![Clause::Effect {
+                reach: Some(GrantedBehaviour::Recall),
+                guard: None,
+                target,
+                mode: ModeExpr::Read,
+                denomination: None,
+            }];
+            let args = [Value::U64(slot)];
+            let context = inputs(&args, &[]);
+            evaluate_declaration(&clauses, &context, &TestHasher).map(|_| ())
+        };
+
+        assert_eq!(reaching(u64::from(VAULT.0), true), Ok(()));
+        assert_eq!(reaching(u64::from(NF_VAULT.0), false), Ok(()));
+        assert_eq!(reaching(u64::from(PACKAGE_SLOT_BASE), true), Ok(()));
+        assert_eq!(reaching(u64::from(PACKAGE_SLOT_BASE), false), Ok(()));
+        assert_eq!(
+            reaching(u64::from(KERNEL_SLOT_BASE - 1), true),
+            Ok(()),
+            "the band a package numbers in runs to the kernel's"
+        );
+
+        // A balance is a leaf and instances are a collection, so each
+        // vocabulary cell is reachable only in the shape it has.
+        for (slot, point) in [(VAULT, false), (NF_VAULT, true)] {
+            assert_eq!(
+                reaching(u64::from(slot.0), point),
+                Err(EvalError::UnreachableSlot(u64::from(slot.0)))
+            );
+        }
+        // Every other cell the vocabulary names holds a fact rather than
+        // value, and the kernel's own band above holds neither.
+        for slot in [CONFIG, AUTH, RESOURCE, INSTANCE, HALT] {
+            for point in [true, false] {
+                assert_eq!(
+                    reaching(u64::from(slot.0), point),
+                    Err(EvalError::UnreachableSlot(u64::from(slot.0))),
+                    "{slot:?}"
+                );
+            }
+        }
+        for slot in [u64::from(KERNEL_SLOT_BASE), u64::from(u16::MAX), 1 << 20] {
+            assert_eq!(reaching(slot, true), Err(EvalError::UnreachableSlot(slot)));
+        }
     }
 
     /// A `Requires` clause evaluates into the declaration's condition
@@ -2782,7 +2972,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::Field(Box::new(Expr::Binding(0)), 0)),
-                    slot: SlotId(1),
+                    slot: SlotRef::Fixed(SlotId(1)),
                     material: vec![Expr::Field(Box::new(Expr::Binding(0)), 1)],
                 }),
                 mode: ModeExpr::Delta,
@@ -2822,7 +3012,7 @@ mod tests {
         let vault = |material: Vec<Expr>| {
             TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: SlotId(1),
+                slot: SlotRef::Fixed(SlotId(1)),
                 material,
             })
         };
@@ -2886,7 +3076,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: SlotId(1),
+                    slot: SlotRef::Fixed(SlotId(1)),
                     material: vec![Expr::Binding(0)],
                 }),
                 mode: ModeExpr::Write,
@@ -2924,7 +3114,7 @@ mod tests {
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        slot: SlotId(1),
+                        slot: SlotRef::Fixed(SlotId(1)),
                         material: vec![Expr::Binding(1), Expr::Binding(0)],
                     }),
                     mode: ModeExpr::Write,
@@ -2983,7 +3173,7 @@ mod tests {
             guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: SlotId(1),
+                slot: SlotRef::Fixed(SlotId(1)),
                 material: vec![],
             }),
             mode: ModeExpr::Read,
@@ -3060,7 +3250,7 @@ mod tests {
                 })),
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: SlotId(16),
+                    slot: SlotRef::Fixed(SlotId(16)),
                     material: vec![Expr::Binding(0)],
                 }),
                 mode: ModeExpr::Write,
@@ -3136,7 +3326,7 @@ mod tests {
                 })),
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: SlotId(16),
+                    slot: SlotRef::Fixed(SlotId(16)),
                     material: vec![Expr::Binding(0)],
                 }),
                 mode: ModeExpr::Write,
@@ -3196,7 +3386,7 @@ mod tests {
                     guard: None,
                     target: TargetExpr::Point(Expr::ChildKey {
                         owner: Box::new(Expr::SelfAddr),
-                        slot: SlotId(16),
+                        slot: SlotRef::Fixed(SlotId(16)),
                         material: vec![Expr::Binding(0), Expr::Literal(Value::Bytes(vec![0; len]))],
                     }),
                     mode: ModeExpr::Write,
@@ -3240,7 +3430,7 @@ mod tests {
                 ))),
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: SlotId(16),
+                    slot: SlotRef::Fixed(SlotId(16)),
                     material: vec![Expr::Binding(0)],
                 }),
                 mode: ModeExpr::Write,
@@ -3303,7 +3493,7 @@ mod tests {
             guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: SlotId(1),
+                slot: SlotRef::Fixed(SlotId(1)),
                 material: vec![],
             }),
             mode: ModeExpr::Read,
@@ -3329,7 +3519,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Range {
                     owner: Expr::SelfAddr,
-                    collection: SlotId(4),
+                    collection: SlotRef::Fixed(SlotId(4)),
                     material: vec![],
                     lo: Expr::Arg(0),
                     hi: Expr::Arg(1),
@@ -3343,7 +3533,7 @@ mod tests {
                 guard: None,
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::SelfAddr),
-                    slot: SlotId(9),
+                    slot: SlotRef::Fixed(SlotId(9)),
                     material: vec![],
                 }),
                 mode: ModeExpr::Read,
@@ -3371,7 +3561,7 @@ mod tests {
             guard: None,
             target: TargetExpr::Range {
                 owner: Expr::SelfAddr,
-                collection: SlotId(4),
+                collection: SlotRef::Fixed(SlotId(4)),
                 material: vec![],
                 lo: Expr::Arg(1),
                 hi: Expr::Arg(0),
@@ -3400,7 +3590,7 @@ mod tests {
             guard: None,
             target: TargetExpr::Entry {
                 owner: Expr::SelfAddr,
-                collection: SlotId(4),
+                collection: SlotRef::Fixed(SlotId(4)),
                 material: vec![Expr::Arg(slot)],
                 order: Expr::Literal(Value::U128(9)),
             },
@@ -3453,7 +3643,7 @@ mod tests {
             guard: None,
             target: TargetExpr::Entry {
                 owner: Expr::SelfAddr,
-                collection: SlotId(2),
+                collection: SlotRef::Fixed(SlotId(2)),
                 material: vec![],
                 order: Expr::OrderKey {
                     owner: Box::new(Expr::SelfAddr),
@@ -3696,7 +3886,7 @@ mod tests {
             guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: SlotId(1),
+                slot: SlotRef::Fixed(SlotId(1)),
                 material: vec![Expr::Arg(0)],
             }),
             mode: ModeExpr::Reserve(Expr::Arg(1)),
@@ -3728,7 +3918,7 @@ mod tests {
             guard: None,
             target: TargetExpr::Point(Expr::ChildKey {
                 owner: Box::new(Expr::SelfAddr),
-                slot: SlotId(1),
+                slot: SlotRef::Fixed(SlotId(1)),
                 material: vec![Expr::Arg(0)],
             }),
             mode: ModeExpr::Delta,
