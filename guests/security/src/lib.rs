@@ -23,6 +23,14 @@
 //! credential is soulbound whenever it is any good, that is the ordinary
 //! case rather than a corner of one.
 //!
+//! `Approved` is the same design in the other posture. Its entries name
+//! the registrar's own identity rather than the register entry, so a
+//! movement of it asks about the transaction instead of about the
+//! holder: not "is this party on the register" but "did the registrar
+//! sign this". One authoring word covers both, because the subject
+//! decides which question is answerable — a resource can be held and an
+//! identity can only be presented.
+//!
 //! `Bearer` is here to be the control. Same issuer, same shape, an
 //! authority entry and no movement one — so its address stays plain
 //! `Resource` while `Share`'s is `Restricted`, and the class byte is
@@ -73,6 +81,33 @@ pub mod security {
         recall = registrar
     ))]
     struct Share;
+
+    /// The same share class in the other posture: every movement
+    /// approved one at a time, rather than checked against a standing
+    /// register.
+    ///
+    /// The same two entries as `Share` with the subject swapped, and
+    /// that is the whole of the difference. A resource can be held, so
+    /// naming one asks a standing fact about the party whose vault
+    /// moves; an identity cannot be held, so naming one asks the only
+    /// other question there is — did this transaction carry a claim on
+    /// it. No second authoring word says which, and an integrator reads
+    /// the posture off the subject's own address class.
+    ///
+    /// What it buys is a venue that never onboards. A pool trading
+    /// `Share` has to be on the register before it can hold any, so the
+    /// issuer admits every venue as well as every holder; a pool
+    /// trading this holds none of the issuer's credentials and is bound
+    /// anyway, because the registrar signs the transaction the trade
+    /// happens in. What it costs is that the registrar is a party to
+    /// every movement, where a register is read once and moves nothing.
+    #[resource(grants(
+        mint = self,
+        withdraw = registrar,
+        deposit = registrar,
+        recall = registrar
+    ))]
+    struct Approved;
 
     /// The same issuer's unrestricted class: recallable, and free to
     /// move.
@@ -133,6 +168,11 @@ pub mod security {
         /// state, so lifting it is ending the cell.
         pub fn release(&mut self, holder: Address) {
             unhalt(holder, Share::address());
+        }
+
+        /// Issue the approval-gated class.
+        pub fn issue_approved(&mut self, amount: Quantity) -> Bucket {
+            Approved::mint(amount)
         }
 
         /// Issue the unrestricted class.

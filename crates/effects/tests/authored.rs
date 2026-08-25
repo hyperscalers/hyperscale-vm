@@ -307,6 +307,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("security", "freeze", open(), vec![]),
         ("security", "instantiate", open(), vec![]),
         ("security", "issue", open(), vec![]),
+        ("security", "issue-approved", open(), vec![]),
         ("security", "issue-bearer", open(), vec![]),
         ("security", "recall-shares", open(), vec![]),
         (
