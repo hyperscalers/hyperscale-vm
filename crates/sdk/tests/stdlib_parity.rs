@@ -69,6 +69,18 @@ fn account() -> Blueprint {
                 t.output(&resource);
             },
         )
+        // Retiring what a caller hands over: the resource is the edge's,
+        // so the declaration names the parameter and nothing else — the
+        // entry that admits it is that resource's own and is injected
+        // where the edge binds.
+        .method("burn", &[ParamType::Bucket], |t: &mut Trace| {
+            t.bind_destroyer(0);
+            t.bind_bucket(0);
+        })
+        .method("burn-nf", &[ParamType::NfBucket], |t: &mut Trace| {
+            t.bind_destroyer(0);
+            t.bind_bucket(0);
+        })
         .method("deposit", &[ParamType::Bucket], |t: &mut Trace| {
             let funds: Sym<Bucket> = t.arg(0);
             let resource = funds.resource();

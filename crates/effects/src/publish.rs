@@ -423,6 +423,26 @@ pub enum DeclarationError {
     /// indices for one resource.
     #[error("this method issues one mark twice, and a mark names one grant")]
     IssuanceNamedTwice,
+    /// A total method that brings supply into or out of existence.
+    #[error(
+        "a total method promises a caller has nothing to hear back, and the entry admitting \
+         an issuance or a destruction is a verdict they would"
+    )]
+    SupplyTotality,
+    /// A destroyed parameter that carries no value edge, so there is no
+    /// resource for the grant to be over.
+    #[error("parameter {param} is declared destroyed and carries no value edge")]
+    DestroysNoEdge {
+        /// The offending parameter.
+        param: u32,
+    },
+    /// One parameter destroyed twice, which would be two grants over one
+    /// bucket.
+    #[error("parameter {param} is declared destroyed twice, and one edge is one grant")]
+    DestroyedTwice {
+        /// The offending parameter.
+        param: u32,
+    },
     /// A frame issuing a resource whose own grants withhold the
     /// direction it takes. Absence withholds, so a resource nothing may
     /// mint is spelled by granting no `Mint` entry — and a body minting
@@ -1126,6 +1146,17 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     {
         return Err(DeclarationError::ConditionalTotality);
     }
+    // Supply authority is a verdict some caller hears, on the same terms
+    // a declared condition is: the entry that admits an issuance or a
+    // destruction reads what the call presented, so it is injected onto
+    // the frame as a gate rather than as a feasibility fact. A movement
+    // entry is not — every leaf it holds reads the store — which is why
+    // the mark survives beside one and not beside these.
+    if signature.totality.is_total()
+        && !(signature.issues.is_empty() && signature.destroys.is_empty())
+    {
+        return Err(DeclarationError::SupplyTotality);
+    }
     // A denomination is read at the position it indexes, so a list that
     // does not cover the parameters is one whose entries name positions
     // nobody agrees on. An empty list is the method that denominates
@@ -1182,6 +1213,21 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             .any(|earlier| earlier.mark == issuance.mark && earlier.kind == issuance.kind)
         {
             return Err(DeclarationError::IssuanceNamedTwice);
+        }
+    }
+    // A destroyed edge is a value edge, and named once: the grant is per
+    // bucket, so naming a parameter twice would be two grants over one
+    // and a position naming a value the method was never handed is a
+    // grant over nothing.
+    for (position, param) in signature.destroys.iter().enumerate() {
+        let kind = usize::try_from(*param)
+            .ok()
+            .and_then(|at| signature.params.get(at));
+        if !kind.is_some_and(|kind| kind.is_edge()) {
+            return Err(DeclarationError::DestroysNoEdge { param: *param });
+        }
+        if signature.destroys[..position].contains(param) {
+            return Err(DeclarationError::DestroyedTwice { param: *param });
         }
     }
     // And a resource is issued only where its own address says who may.

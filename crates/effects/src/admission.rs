@@ -42,7 +42,7 @@ use crate::resource::{
 };
 use crate::route::FrameDeclaration;
 use crate::rule::{Holding, Rule, SealedLeaf, never};
-use crate::signature::{AbiParam, MethodSignature, ParamType};
+use crate::signature::{AbiParam, Issued, MethodSignature, ParamType};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::{CONFIG, VAULT};
 
@@ -114,6 +114,26 @@ pub enum AdmissionError {
         resource: ResourceAddr,
         /// The direction its body takes.
         behaviour: GrantedBehaviour,
+    },
+    /// A frame destroying an edge whose resource admits no destruction:
+    /// no record presented, or a record granting no `Burn` entry.
+    ///
+    /// One verdict for both, because they say the same thing — nothing
+    /// this transaction can show admits destroying that resource.
+    #[error("node {node}: nothing presented admits destroying {resource:?}")]
+    DestructionUnadmitted {
+        /// The offending node.
+        node: u32,
+        /// The resource the edge carries.
+        resource: ResourceAddr,
+    },
+    /// A parameter declared destroyed that carries no value edge.
+    #[error("node {node}: parameter {param} is destroyed and carries no value edge")]
+    DestroysNoEdge {
+        /// The offending node.
+        node: u32,
+        /// The offending parameter.
+        param: u32,
     },
     /// An issuance rule whose bytes are not an authority rule.
     #[error("node {node}: {resource:?} has a {behaviour:?} rule that does not decode")]
@@ -618,6 +638,26 @@ pub fn admit(
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
+    admit_presenting(graph, composer, chain, PresentedGrants::none(), hasher)
+}
+
+/// The same, over resource records the composer presents.
+///
+/// A bare graph presents nothing, which is what every ungranted flow
+/// needs; a graph reaching a resource whose rules govern needs the
+/// record those rules derive, because the address is the hash of them
+/// and re-derivation is what makes a presented record trustworthy.
+///
+/// # Errors
+///
+/// [`AdmissionError`] on the same terms as [`admit`].
+pub fn admit_presenting(
+    graph: &ManifestGraph,
+    composer: PrincipalAddr,
+    chain: &dyn ChainRecords,
+    grants: &PresentedGrants,
+    hasher: &dyn Hasher,
+) -> Result<Admitted, AdmissionError> {
     check_value_depth(graph)?;
     let identity = graph.hash(hasher);
     admit_intents(
@@ -630,7 +670,7 @@ pub fn admit(
         identity,
         chain,
         &BTreeSet::new(),
-        PresentedGrants::none(),
+        grants,
         hasher,
     )
 }
@@ -1056,7 +1096,7 @@ impl Lower<'_> {
         // joins the frame's conditions and computed placement routes it
         // to the call. Before evidence, because what a caller must
         // present is a property of the conditions the frame carries.
-        let issues = inject_issuance_rules(
+        let mut issues = inject_issuance_rules(
             self.hasher,
             signature,
             node.target.address(),
@@ -1064,6 +1104,17 @@ impl Lower<'_> {
             &mut frame,
             node_index,
         )?;
+        // Appended after them, so the index a body passes to a mint is
+        // the position its own declaration fixed: a destruction names no
+        // index, since the bucket carries the resource it holds.
+        issues.extend(inject_destruction_rules(
+            self.grants,
+            signature,
+            &inputs,
+            &mut frame,
+            node.target.address(),
+            node_index,
+        )?);
         // Evidence last, because what a call must present is a property
         // of the declaration this node actually evaluated rather than of
         // the clause list its signature was written with: a guard that
@@ -1668,6 +1719,83 @@ fn inject_issuance_rules(
             if !frame.conditions.contains(&judged) {
                 frame.conditions.push(judged);
             }
+        }
+    }
+    Ok(granted)
+}
+
+/// Resolve the per-bucket grants this frame's declared destructions
+/// earn, and inject the entries admitting them.
+///
+/// The mirror of an issuance and not a case of one. An issuance governs
+/// a resource the *declaration* derives, so re-derivation is the address
+/// itself; a destruction governs one a **caller** named, so the
+/// presented record is what makes the rule trustworthy — the same reason
+/// a movement entry needs one.
+///
+/// Absence withholds, twice over: a resource whose record was not
+/// presented grants nothing here, and one granting no `Burn` entry is
+/// one nobody may destroy. Neither needs a class byte to tell it from a
+/// bypass, because withholding an authority is the safe direction —
+/// what the class exists for is the movement a missing record would
+/// otherwise let through.
+fn inject_destruction_rules(
+    grants: &PresentedGrants,
+    signature: &MethodSignature,
+    inputs: &[NodeInput],
+    frame: &mut Declaration,
+    evidence_of: Address,
+    node_index: u32,
+) -> Result<Vec<IssuanceGrant>, AdmissionError> {
+    let mut granted = Vec::with_capacity(signature.destroys.len());
+    for param in &signature.destroys {
+        let Some(NodeInput::Edge {
+            resource, content, ..
+        }) = usize::try_from(*param).ok().and_then(|at| inputs.get(at))
+        else {
+            return Err(AdmissionError::DestroysNoEdge {
+                node: node_index,
+                param: *param,
+            });
+        };
+        let refused = || AdmissionError::DestructionUnadmitted {
+            node: node_index,
+            resource: *resource,
+        };
+        let rule = grants
+            .rules(*resource)
+            .and_then(|rules| rules.get(GrantedBehaviour::Burn))
+            .ok_or_else(refused)?
+            .decode()
+            .map_err(|_| AdmissionError::IssuanceRuleMalformed {
+                node: node_index,
+                resource: *resource,
+                behaviour: GrantedBehaviour::Burn,
+            })?;
+        granted.push(IssuanceGrant {
+            resource: *resource,
+            kind: content.kind(),
+            direction: Issued::Burned,
+        });
+        // The frame speaks for itself here too, though it rarely is the
+        // party: an account destroying a token it holds is not the
+        // token's issuer, so a rule naming the issuer reaches the call
+        // and the caller answers for it.
+        if let Some(own) = Presented::of_address(evidence_of)
+            && rule.satisfied_by(&[own])
+        {
+            continue;
+        }
+        let judged = rule.map_leaves(&mut |leaf| match leaf {
+            SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
+            SealedLeaf::Held { .. } => Err(AdmissionError::IssuanceRuleMalformed {
+                node: node_index,
+                resource: *resource,
+                behaviour: GrantedBehaviour::Burn,
+            }),
+        })?;
+        if !frame.conditions.contains(&judged) {
+            frame.conditions.push(judged);
         }
     }
     Ok(granted)

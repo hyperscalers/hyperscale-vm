@@ -94,6 +94,7 @@ pub struct Trace {
     /// writes, which is lowered only once the body has been.
     pending_governed: Option<SlotId>,
     issues: Vec<Issuance>,
+    destroys: Vec<u32>,
     /// Whether the method carries an error arm.
     totality: Totality,
     /// Whether the method hands back a value beside its edges.
@@ -118,6 +119,7 @@ impl Trace {
             last_site: None,
             pending_governed: None,
             issues: Vec::new(),
+            destroys: Vec::new(),
             totality: Totality::Infallible,
             answers: false,
         }
@@ -654,6 +656,20 @@ impl Trace {
         });
     }
 
+    /// Record that this method destroys the edge at `param`.
+    ///
+    /// Called by generated code where a body destroys value it was
+    /// handed rather than value it issues. What separates the two is
+    /// whose resource it is: an issuance names a mark this instance
+    /// derives, and this names a parameter, so the resource is the
+    /// caller's to choose and the rule that admits it is the resource's
+    /// own — resolved at admission from the record the caller presented.
+    pub fn bind_destroyer(&mut self, param: u32) {
+        if !self.destroys.contains(&param) {
+            self.destroys.push(param);
+        }
+    }
+
     /// Bind a value evaluated over this method's bound inputs.
     pub fn bind_derived<K: Kind>(&mut self, value: &Sym<K>) {
         let expr = self.lower(value.expr().clone());
@@ -979,6 +995,7 @@ impl Trace {
             worst_case: self.worst_case,
             abi,
             issues: self.issues,
+            destroys: self.destroys,
             totality: self.totality,
         }
     }
@@ -1170,6 +1187,7 @@ pub(crate) struct Recorded {
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,
     pub(crate) issues: Vec<Issuance>,
+    pub(crate) destroys: Vec<u32>,
     pub(crate) totality: Totality,
 }
 

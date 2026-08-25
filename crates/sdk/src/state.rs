@@ -2056,6 +2056,43 @@ pub fn burn_granted(funds: Bucket) {
     return host::burn(funds.rep());
 }
 
+/// Destroy the value at `funds`, which is somebody else's to have
+/// issued.
+///
+/// The authored spelling a holder reaches, where `Name::burn` is the
+/// issuer's: what leaves existence is the edge's own resource rather
+/// than one this instance derives, so the rule that admits it is the
+/// resource's own `Burn` entry and the caller answers for it. A resource
+/// granting none is one nobody may destroy, which is the ordinary case.
+///
+/// The kernel call is the same either way — a bucket carries the
+/// resource it holds, so the grant is found rather than named.
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always, clippy::needless_pass_by_value)]
+pub fn destroy(funds: Bucket) {
+    let _ = &funds;
+    #[cfg(component)]
+    return crate::guest::burn(funds.into_handle());
+    #[cfg(not(component))]
+    return host::burn(funds.rep());
+}
+
+/// [`destroy`] over a non-fungible edge: the same rule, and what leaves
+/// circulation is the instances the edge carries.
+///
+/// The instance data cells stay where they are — they are the issuer's
+/// own state under the issuer's own prefix, and a holder destroying what
+/// they hold reaches neither.
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always, clippy::needless_pass_by_value)]
+pub fn destroy_nf(funds: NfBucket) {
+    let _ = &funds;
+    #[cfg(component)]
+    return crate::guest::burn(funds.into_handle());
+    #[cfg(not(component))]
+    return host::burn(funds.rep());
+}
+
 /// Destroy the instances at `funds` against whichever grant covers them.
 ///
 /// [`burn_granted`] over a non-fungible edge: the same grants in the

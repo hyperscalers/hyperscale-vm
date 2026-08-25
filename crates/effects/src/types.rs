@@ -612,6 +612,22 @@ pub enum EdgeContent {
     },
 }
 
+impl EdgeContent {
+    /// The resource kind an edge of this shape carries.
+    ///
+    /// The two are the same fact read from opposite ends — an edge's
+    /// shape is its resource's kind — so a grant built from an edge
+    /// reads it here rather than from a record the caller might not have
+    /// presented.
+    #[must_use]
+    pub const fn kind(&self) -> ResourceKind {
+        match self {
+            Self::Fungible => ResourceKind::Fungible,
+            Self::NonFungible { .. } => ResourceKind::NonFungible,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;

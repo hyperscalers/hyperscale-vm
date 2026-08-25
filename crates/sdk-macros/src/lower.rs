@@ -347,6 +347,13 @@ pub struct Lowered {
     /// The branches whose verdict the export takes, in the order they
     /// were declared, each saying which arm's clause its flag names.
     pub flags: Vec<Polarity>,
+    /// The bucket parameters the body destroys, in the order it reaches
+    /// them.
+    ///
+    /// Separate from `issues` because the resource is separate: an
+    /// issuance derives one this instance owns, and this names one a
+    /// caller chose.
+    pub destroys: Vec<u32>,
     /// Every resource the body issues — its kind, its mark and which way
     /// the body moves it — in the order the walk first reached each.
     ///
@@ -1927,6 +1934,40 @@ impl<'a> Lowerer<'a> {
         Eval::plain(quote!(::hyperscale_vm_sdk::state::burn_granted(#funds)))
     }
 
+    /// Lower `destroy(funds)` — value the caller handed over, retired
+    /// under its own resource's rule.
+    ///
+    /// The parameter is what the declaration can name, so an edge the
+    /// body produced or took from a cell is refused: the grant is per
+    /// bucket and resolved where the edge binds, and there is no bound
+    /// edge for one a body made up.
+    fn lower_destroy(&mut self, name: &str, call: &syn::ExprCall) -> Eval {
+        let Some(destroyed) = call.args.first().map(|a| self.expr(a)) else {
+            self.error(call.args.span(), "a destruction with nothing to destroy");
+            return Eval::absent(call.args.span(), "a destruction with no value");
+        };
+        let param = match Self::edge_resource(&destroyed) {
+            Some(Term::ResourceOf(inner)) => match *inner {
+                Term::Arg(param) => Some(param),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(param) = param else {
+            self.error(
+                call.args.span(),
+                "`destroy` retires value the caller handed over, so it names a bucket \
+                 parameter — what a body issues is retired by its own mark's `burn`, under \
+                 the grant that made it",
+            );
+            return Eval::absent(call.args.span(), "a destruction of an unnamed edge");
+        };
+        self.out.destroys.push(param);
+        let funds = self.value(destroyed.code);
+        let spelling = syn::Ident::new(name, call.func.span());
+        Eval::plain(quote!(::hyperscale_vm_sdk::state::#spelling(#funds)))
+    }
+
     /// Fix what the edge at `param` carries.
     ///
     /// One parameter credited to two cells with different keys is a
@@ -3357,6 +3398,13 @@ impl<'a> Lowerer<'a> {
                 ResourceKind::NonFungible => self.lower_burn_nf(&issued, call),
                 ResourceKind::Fungible => self.lower_burn(&issued.mark, call),
             };
+        }
+        // `destroy(funds)` / `destroy_nf(funds)` — the holder's side of
+        // supply leaving. What it destroys is the edge's own resource,
+        // so the declaration names the parameter and the rule that
+        // admits it is that resource's, not this instance's.
+        if name == "destroy" || name == "destroy_nf" {
+            return self.lower_destroy(&name, call);
         }
         if name == "issued" {
             let Some(term) = self.declared_resource(call) else {

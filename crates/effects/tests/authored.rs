@@ -116,6 +116,11 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
             governs(auth_cell()),
             vec![Expr::SelfAddr],
         ),
+        // Retiring is ungated for the reason being paid is: what may
+        // happen is the resource's own entry's answer, injected at
+        // admission, and a gate written here would be a second opinion.
+        ("account", "burn", open(), vec![]),
+        ("account", "burn-nf", open(), vec![]),
         ("account", "cancel", governs(own_cell(0)), vec![]),
         ("account", "confirm", governs(own_cell(1)), vec![]),
         ("account", "deposit", open(), vec![]),

@@ -21,7 +21,9 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint(principals)]
 pub mod account {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Ids, NfBucket, Quantity, RuleBytes, clock_ms};
+    use hyperscale_vm_sdk::state::{
+        Bucket, Cell, Ids, NfBucket, Quantity, RuleBytes, clock_ms, destroy, destroy_nf,
+    };
     use hyperscale_vm_sdk::{Address, ResourceAddr, nobody};
 
     /// Funds left the account.
@@ -103,6 +105,28 @@ pub mod account {
             self.claims(funds.resource()).declared_credit();
             self.vault(funds.resource()).put(funds);
             Deposited { amount: credited }.emit();
+        }
+
+        /// Retire what the caller hands over.
+        ///
+        /// Not the issuer's burn and not this account's authority: what
+        /// leaves existence is the edge's own resource, so the rule that
+        /// admits it is that resource's own `Burn` entry, injected at
+        /// admission and answered by whoever the issuer named. A
+        /// resource granting none is one this method cannot destroy,
+        /// which is every resource until its issuer says otherwise.
+        ///
+        /// Ungated here for the same reason `deposit` is: what may
+        /// happen is the resource's answer rather than this package's,
+        /// and a gate written here would be a second opinion that could
+        /// disagree with it.
+        pub fn burn(&mut self, funds: Bucket) {
+            destroy(funds);
+        }
+
+        /// The same, over instances.
+        pub fn burn_nf(&mut self, instances: NfBucket) {
+            destroy_nf(instances);
         }
 
         /// Nothing but its own gate: the kernel judges the stored rule

@@ -168,6 +168,18 @@ impl InstanceRegistry {
         }
     }
 
+    /// Every component this registry answers for, with the record its
+    /// address derives.
+    ///
+    /// Principals are not among them: a principal's address derives from
+    /// a key and its record is the one the registry supplies for all of
+    /// them, so there is no per-address record to walk.
+    pub fn components(&self) -> impl Iterator<Item = (Address, &InstanceMeta)> {
+        self.instances
+            .iter()
+            .map(|(address, meta)| (*address, meta.as_ref()))
+    }
+
     /// Bind the package that serves every principal address.
     ///
     /// The protocol's own account blueprint, resolved by class rather

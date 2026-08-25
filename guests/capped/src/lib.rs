@@ -22,6 +22,11 @@
 //! independent rather than two directions of one right: a resource can
 //! be destroyed by an authority that could never create it.
 //!
+//! `Circulating` carries the same entry open to anyone, which is the
+//! other half of that: destroying is the *holder's* where minting is the
+//! issuer's, so it happens through the holder's own account and this
+//! package is not in the path at all.
+//!
 //! `Seat` carries `mint` naming a configured badge, and nothing else.
 //! Minting is a credential rather than a fact about the issuer's
 //! address, so whoever holds the badge mints and the component's own
@@ -51,6 +56,16 @@ pub mod capped {
     /// grant.
     #[resource(initial(500), grants(burn = self), display_digits = 0)]
     struct Retired;
+
+    /// Founded in full, and destroyed by whoever holds it.
+    ///
+    /// The deflationary token: `burn = anyone` is an entry rather than a
+    /// permission the kernel hands out, so retiring it goes through the
+    /// holder's own account and the issuer is not a party to it. Absence
+    /// of the entry is what makes that the exception — `Fixed` beside it
+    /// grants none, and nobody may destroy it at all.
+    #[resource(initial(1_000), grants(burn = anyone), display_digits = 0)]
+    struct Circulating;
 
     /// Minted by whoever holds the configured badge, and by nobody else.
     ///

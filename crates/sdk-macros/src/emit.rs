@@ -311,6 +311,11 @@ pub fn declaration(
         let bytes = syn::LitByteStr::new(mark, proc_macro2::Span::call_site());
         quote!(__t.bind_issuer(#kind, #bytes, #direction);)
     });
+    // One binding per bucket the body retires on somebody else's behalf.
+    let destroyer = lowered
+        .destroys
+        .iter()
+        .map(|param| quote!(__t.bind_destroyer(#param);));
     let fallible = declines.then(|| quote!(__t.fallible();));
     let answers = lowered.answer.is_some().then(|| quote!(__t.answers();));
     let total = total.then(|| quote!(__t.total();));
@@ -327,6 +332,7 @@ pub fn declaration(
             #(#denominations)*
             #(#values)*
             #(#issuer)*
+            #(#destroyer)*
         }
     )
 }

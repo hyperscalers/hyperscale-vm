@@ -44,6 +44,10 @@ fn a_bring_up_founds_every_supply_its_package_states() {
 
     assert_eq!(chain.balance(FOUNDER, fixed), 1_000_000);
     assert_eq!(chain.balance(FOUNDER, retired), 500);
+    assert_eq!(
+        chain.balance(FOUNDER, instance.issued_circulating(&TestHasher)),
+        1_000
+    );
 }
 
 /// Capped supply is an absent entry, and the address is where a holder
@@ -61,6 +65,7 @@ fn a_founded_supply_grants_no_mint_and_restricts_no_movement() {
     for resource in [
         instance.issued_fixed(&TestHasher),
         instance.issued_retired(&TestHasher),
+        instance.issued_circulating(&TestHasher),
         instance.issued_seat(&TestHasher, terms()),
     ] {
         assert_eq!(
@@ -87,4 +92,50 @@ fn a_deflationary_supply_only_ever_falls() {
         .expect_completed();
 
     assert_eq!(chain.balance(FOUNDER, retired), 300);
+}
+
+/// Destroying is the holder's where minting is the issuer's: a resource
+/// granting `burn` to anyone leaves existence through the holder's own
+/// account, and the issuer is not a party to it.
+///
+/// What admits it is the resource's own entry, resolved from the record
+/// the transaction presents — so the account, which declares nothing
+/// about any resource, is bound by whatever the issuer wrote.
+#[test]
+fn a_holder_destroys_what_the_resource_lets_them() {
+    let (mut chain, instance) = world();
+    let circulating = instance.issued_circulating(&TestHasher);
+
+    chain
+        .transact(FOUNDER, |b| {
+            let holder = account::authorize(b, FOUNDER)?;
+            let funds = account::withdraw(b, holder, circulating, 400u128)?;
+            account::burn(b, FOUNDER, funds)
+        })
+        .expect_completed();
+
+    assert_eq!(chain.balance(FOUNDER, circulating), 600);
+}
+
+/// And a resource granting no `Burn` entry is one nobody may destroy,
+/// however they hold it.
+///
+/// The refusal is admission's rather than the account's: the account
+/// declares the destruction and the resource declines it, which is the
+/// same shape as a movement seam refusal read from the authority side.
+#[test]
+fn a_resource_granting_no_burn_is_indestructible() {
+    let (mut chain, instance) = world();
+    let fixed = instance.issued_fixed(&TestHasher);
+
+    let refused = chain.try_transact(FOUNDER, |b| {
+        let holder = account::authorize(b, FOUNDER)?;
+        let funds = account::withdraw(b, holder, fixed, 1u128)?;
+        account::burn(b, FOUNDER, funds)
+    });
+    assert!(
+        refused.is_err(),
+        "nothing presented admits destroying a resource that grants no burn",
+    );
+    assert_eq!(chain.balance(FOUNDER, fixed), 1_000_000);
 }

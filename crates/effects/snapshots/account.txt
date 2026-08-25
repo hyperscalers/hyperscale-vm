@@ -17,6 +17,14 @@ authorize() — infallible
       1  requires 1 of (the rule stored at self.auth, 2 of (self.auth is absent, claim self))
       2  mints self
 
+burn(bucket) — infallible
+  destroys arg0, if its own rule admits it
+  exports  edge arg0
+
+burn-nf(nf-bucket) — infallible
+  destroys arg0, if its own rule admits it
+  exports  edge arg0
+
 cancel() — infallible
   declares
       0  read self.recovery

@@ -367,6 +367,18 @@ pub struct MethodSignature {
     /// which of them each call means.
     #[hbor(max = MAX_ISSUANCES_PER_SIGNATURE)]
     pub issues: Vec<Issuance>,
+    /// The value edges this method destroys, by parameter position.
+    ///
+    /// The other way supply leaves existence, and the one an issuer does
+    /// not perform: what is destroyed is the *edge's* resource rather
+    /// than one this instance derives, so the grant is per bucket and
+    /// the entry that admits it is the resource's own `Burn`, resolved
+    /// at admission from the record the caller presented. Absence of
+    /// either withholds the capability, which is what makes "anyone may
+    /// destroy what they hold" a rule the issuer writes rather than a
+    /// power the kernel hands out.
+    #[hbor(max = MAX_ISSUANCES_PER_SIGNATURE)]
+    pub destroys: Vec<u32>,
     /// The method's parameter kinds, in order; admission types every node
     /// against them.
     pub params: Vec<ParamType>,

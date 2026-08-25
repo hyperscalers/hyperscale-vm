@@ -121,6 +121,7 @@ impl Names<'_> {
         let MethodSignature {
             totality,
             issues,
+            destroys,
             params,
             outputs,
             answers,
@@ -168,6 +169,12 @@ impl Names<'_> {
                 resource_kind(*kind),
                 grants_of(grants)
             );
+        }
+        // What a caller hands over to be destroyed, which is the other
+        // way supply leaves — named by parameter because the resource is
+        // the edge's rather than one this instance derives.
+        for param in destroys {
+            let _ = writeln!(out, "  destroys arg{param}, if its own rule admits it");
         }
         if !effects.is_empty() {
             out.push_str("  declares\n");

@@ -174,6 +174,7 @@ mod tests {
         MethodSignature {
             totality: Totality::Fallible,
             issues: Vec::new(),
+            destroys: Vec::new(),
             abi: vec![AbiParam::Guard(0)],
             params: vec![
                 ParamType::U64,

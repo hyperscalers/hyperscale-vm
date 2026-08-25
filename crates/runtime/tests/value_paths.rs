@@ -34,8 +34,11 @@ enum Verdict {
     InFlight,
     /// Supply, which is its own behaviour rather than a movement of an
     /// existing holding — judged against the resource's own authority
-    /// entry, injected onto the issuing frame and answered where every
-    /// actor question is.
+    /// entry, injected onto the frame and answered where every actor
+    /// question is. Which entry, and against whose record, is the
+    /// declaration's: an issuance derives the resource and reads the
+    /// entry off itself, a destruction takes the edge's and reads it off
+    /// the record the caller presented.
     OwnBehaviour,
 }
 
@@ -68,7 +71,9 @@ const VERDICTS: &[(&str, Verdict)] = &[
     ("bucket-put", InFlight),
     // Supply, under the resource's own entries — and the entry each
     // reaches is the direction it takes, so a burn-only declaration is
-    // never asked who may mint.
+    // never asked who may mint. `burn` names no grant because a bucket
+    // carries the resource it holds, which is what lets one call serve
+    // the issuer retiring its own and a holder retiring somebody else's.
     ("mint", OwnBehaviour),
     ("mint-instances", OwnBehaviour),
     ("burn", OwnBehaviour),

@@ -140,6 +140,7 @@ impl Builder {
             signature: MethodSignature {
                 totality: recorded.totality,
                 issues: recorded.issues,
+                destroys: recorded.destroys,
                 params: params.to_vec(),
                 abi: recorded.abi,
                 outputs: recorded.outputs,
