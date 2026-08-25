@@ -15,15 +15,13 @@
 //!     impl Account {
 //!         pub fn deposit(&mut self, funds: Bucket) {
 //!             self.vault(funds.resource()).put(funds);
-//!             self.claims(funds.resource()).declared();
 //!         }
 //!     }
 //! }
 //! ```
 //!
-//! The two deltas above are declared because `put` is a commutative
-//! movement and `declared` is one stated without making it, and because
-//! the key of each is `ResourceOf(Arg(0))` — all of it read off the body.
+//! The delta above is declared because `put` is a commutative movement,
+//! and its key is `ResourceOf(Arg(0))` — all of it read off the body.
 //! Nothing was written twice.
 //!
 //! # The two halves
@@ -1854,14 +1852,6 @@ fn authoring_accessors(
 
             /// The holder's fungible balance in `resource`.
             fn vault<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Slot<
-                ::hyperscale_vm_sdk::state::Vault,
-            > {
-                let _ = resource;
-                ::core::unimplemented!("a contract body runs on the guest")
-            }
-
-            /// The guaranteed-delivery cell beside that balance.
-            fn claims<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Slot<
                 ::hyperscale_vm_sdk::state::Vault,
             > {
                 let _ = resource;
