@@ -2246,9 +2246,12 @@ fn granted_rule(
 /// The two constants are the threshold over nothing, so they are rules
 /// like any other and no evaluator meets a value it has to recognise as
 /// meaning something else. There is no separate credential spelling
-/// either: which side a leaf asks about — a claim a caller presents, or a
-/// badge the moving party holds — is the behaviour's own answer, so one
-/// derivation serves both questions.
+/// either: which side a leaf asks about is the behaviour's answer and
+/// the subject's, never a word of its own. An authority entry asks what
+/// a caller presented, whatever it names. A movement entry asks what its
+/// subject makes answerable — a badge can be held, so naming one asks a
+/// standing fact about the party whose cell moves; an identity cannot,
+/// so naming one asks whether this transaction carried a claim on it.
 fn granted_entry(
     expr: &syn::Expr,
     resources: &[Nameable<'_>],
@@ -2266,9 +2269,11 @@ fn granted_entry(
     {
         return Err(syn::Error::new(
             call.span(),
-            "a granted rule names what it names, and which side the leaf asks about is the \
-             behaviour's: `withdraw` and `deposit` ask whether the moving party holds it, \
-             every other behaviour whether a caller presented it",
+            "a granted rule names what it names, and which side the leaf asks about follows \
+             from the behaviour and from what is named: every behaviour but `withdraw` and \
+             `deposit` asks what a caller presented, and those two ask whether the moving \
+             party holds a badge, or — where an identity is named, which nothing holds — \
+             whether a claim on it was presented",
         ));
     }
     granted_rule(expr, resources, config_fields, 0)

@@ -32,7 +32,7 @@ use hyperscale_vm_effects::vocabulary::{
 use hyperscale_vm_effects::{
     ChainRecords, Clause, Constraint, EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef,
     Expr, GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph,
-    ManifestHash, MethodSignature, PackageHash, PackageMetadata, ParamType, Presented,
+    ManifestHash, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, Presented,
     PresentedGrants, ResourceGrants, ResourceMeta, SealedLeaf, Value, evaluate_expr,
     founds_its_resource, keying_resource,
 };
@@ -944,11 +944,15 @@ fn earned_claims(
 ) -> Vec<Presented> {
     let own = Presented::of_address(inputs.self_addr);
     let mut wanted = Vec::new();
+    // The frame's own claim is subtracted where admission subtracts it,
+    // which is the authority injections alone: a movement entry is
+    // resolved against the *access owner* rather than against the frame,
+    // so nothing about the frame's identity discharges one.
     let mut ask = |rules: &ResourceGrants, behaviour: GrantedBehaviour| {
         let Some(rule) = rules.get(behaviour).and_then(|sealed| sealed.decode().ok()) else {
             return;
         };
-        if own.is_some_and(|own| rule.satisfied_by(&[own])) {
+        if behaviour.asks_about_the_actor() && own.is_some_and(|own| rule.satisfied_by(&[own])) {
             return;
         }
         for leaf in rule.leaves() {
@@ -1097,6 +1101,7 @@ fn governing(
         .filter_map(|clause| {
             let Clause::Effect {
                 target,
+                mode,
                 denomination,
                 reach,
                 ..
@@ -1104,18 +1109,36 @@ fn governing(
             else {
                 return None;
             };
-            match reach {
-                Some(behaviour) => Some((
-                    keying_resource(target).and_then(&resolve)?,
-                    Some(*behaviour),
-                )),
-                // A movement earns its entries from what the cell holds,
-                // and those read the holder's own holdings rather than
-                // anything a caller presents — so the record is needed
-                // and no claim is.
-                None => Some((denomination.as_deref().and_then(&resolve)?, None)),
-            }
-        });
+            let resource = match reach {
+                Some(behaviour) => {
+                    let keyed = keying_resource(target).and_then(&resolve)?;
+                    return Some(vec![(keyed, Some(*behaviour))]);
+                }
+                None => denomination.as_deref().and_then(&resolve)?,
+            };
+            // Which movement entries the access earns, on the terms
+            // admission injects them: the two that carry their direction
+            // are judged on the movement they make, and the rest reach
+            // both ways through one access and answer for both. A read
+            // earns none and still needs the record, because a
+            // restricted resource's is what tells a withheld one from a
+            // bypass.
+            let behaviours: &[GrantedBehaviour] = match mode {
+                ModeExpr::Reserve(_) => &[GrantedBehaviour::Withdraw],
+                ModeExpr::Credit => &[GrantedBehaviour::Deposit],
+                ModeExpr::Delta | ModeExpr::Write => {
+                    &[GrantedBehaviour::Withdraw, GrantedBehaviour::Deposit]
+                }
+                ModeExpr::Read => return Some(vec![(resource, None)]),
+            };
+            Some(
+                behaviours
+                    .iter()
+                    .map(|behaviour| (resource, Some(*behaviour)))
+                    .collect(),
+            )
+        })
+        .flatten();
     destroyed.chain(declared).collect()
 }
 

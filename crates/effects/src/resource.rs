@@ -518,10 +518,6 @@ pub enum GrantsResolveError {
     /// A resolved rule past the caps a stored rule is held to.
     #[error("a resolved granted rule is past the caps a stored rule is held to")]
     PastTheCaps,
-    /// A credential naming something no holding is keyed by: an
-    /// identity, or a configuration field holding one.
-    #[error("a granted credential names something that is not a badge")]
-    NotABadge,
     /// A badge whose own rules name a badge: the chain one address folds
     /// is one link long.
     #[error("a granted rule names a badge whose own rules name a badge")]
@@ -537,11 +533,13 @@ pub enum GrantsResolveError {
 
 /// Resolve a declared rule into the sealed one an address folds.
 ///
-/// Which sealed leaf a declared one becomes is the behaviour's, not the
-/// leaf's: an actor question asks what a caller presented and seals a
-/// claim, a holder question asks what the moving party holds and seals a
-/// badge. So a package writes one derivation and never a second spelling
-/// for the second question.
+/// Which sealed leaf a declared one becomes is the behaviour's and the
+/// subject's, never the leaf's own spelling. An **actor question** asks
+/// what a caller presented and seals a claim, whatever it names. A
+/// **holder question** asks what the subject makes answerable: a badge
+/// can be held, so it seals a holding; an identity cannot, so it seals
+/// the claim that names it. A package therefore writes one derivation
+/// and never a second spelling for the second question.
 fn resolve_rule(
     hasher: &dyn Hasher,
     instance: Address,
@@ -597,7 +595,15 @@ fn resolve_claim(
     })
 }
 
-/// Resolve a declared leaf into the holding a movement entry asks about.
+/// Resolve a declared leaf into the question a movement entry asks about
+/// its subject.
+///
+/// **A resource can be held; an identity can only be presented.** So the
+/// subject decides which of the two questions this leaf is: a badge asks
+/// a standing fact about the party whose cell moves, and an identity
+/// asks whether this transaction was approved. Neither is a second
+/// spelling — the address class answers it, the same reading
+/// [`Presented::of_address`] gives every declared address.
 ///
 /// Where a subject's holding of a badge lives is the badge's kind's
 /// answer: a balance is one point cell keyed by what it holds, and
@@ -612,10 +618,19 @@ fn resolve_holding(
     link: usize,
 ) -> Result<StoredRule, GrantsResolveError> {
     let (badge, holding) = match claim {
-        // An identity keys no holding, so a movement entry naming one
-        // asks about nothing — the actor question it was written for is
-        // the other half of the table.
-        GrantClaim::SelfAddr => return Err(GrantsResolveError::NotABadge),
+        // Nothing holds an identity, so naming one asks the only other
+        // question there is: was a claim on it presented. An issuer
+        // writing this wants per-transfer approval rather than a
+        // standing register, and an approver they can replace names
+        // their own component here — a rule naming an identity is frozen
+        // for the life of the resource, and one naming a component's is
+        // frozen at the component rather than at whoever runs it.
+        GrantClaim::SelfAddr => {
+            return Ok(StoredRule::claim(
+                Presented::of_address(instance)
+                    .expect("an instance issuing a resource is a callable address"),
+            ));
+        }
         GrantClaim::SelfBadge { mark, kind, rules } => (
             self_badge(hasher, instance, config, *kind, mark, rules, link)?,
             match kind {
@@ -637,7 +652,12 @@ fn resolve_holding(
         ),
         GrantClaim::Config(slot) => {
             let named = configured(config, *slot)?;
-            let badge = named.badge().ok_or(GrantsResolveError::NotABadge)?;
+            let Some(badge) = named.badge() else {
+                // A configured identity, on [`GrantClaim::SelfAddr`]'s
+                // terms: nothing holds it, so what the entry asks is
+                // whether this transaction carried a claim on it.
+                return Ok(StoredRule::claim(named));
+            };
             let Some(id) = named.instance else {
                 // A configuration field carries an address and no kind,
                 // so the rule asks both shapes. At most one of them can
