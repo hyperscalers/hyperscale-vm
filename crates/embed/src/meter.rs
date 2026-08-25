@@ -119,20 +119,6 @@ pub fn site_declared<P: HostAccess + FuelSink>(
     refused(port.host().site_declared(site, element))
 }
 
-/// The capability one run entry names, which every run operation
-/// resolves before performing the operation its mode carries.
-///
-/// Priced as the operation it precedes rather than beside it: the
-/// resolution reads the session's own table and crosses nothing, so a
-/// run operation costs what the single form costs.
-pub fn site_at<P: HostAccess + FuelSink>(
-    port: &mut P,
-    site: u32,
-    element: u32,
-) -> Result<u32, MeterError> {
-    refused(port.host().site_at(site, element))
-}
-
 /// `access.get`.
 pub fn cell_get<P: HostAccess + FuelSink>(
     port: &mut P,

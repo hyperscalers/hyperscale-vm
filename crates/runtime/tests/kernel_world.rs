@@ -153,10 +153,6 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn site_at(&mut self, _site: u32, _index: u32) -> std::result::Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-
     fn cell_get(&mut self, site: u32, _element: u32) -> std::result::Result<Vec<u8>, AbortReason> {
         Ok(self.values[site as usize].clone())
     }

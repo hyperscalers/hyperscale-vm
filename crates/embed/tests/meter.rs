@@ -54,9 +54,6 @@ impl KernelHost for StubHost {
     fn site_declared(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
         self.op("site-declared", true)
     }
-    fn site_at(&mut self, _site: u32, index: u32) -> Result<u32, AbortReason> {
-        self.op("site-at", index)
-    }
     fn cell_get(&mut self, _site: u32, _element: u32) -> Result<Vec<u8>, AbortReason> {
         self.op("cell-get", vec![0; 5])
     }

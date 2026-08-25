@@ -61,9 +61,6 @@ pub mod fixtures {
         fn site_declared(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn site_at(&mut self, _site: u32, _index: u32) -> Result<u32, AbortReason> {
-            Err(AbortReason::HandleUnknown)
-        }
         fn cell_get(&mut self, _site: u32, _element: u32) -> Result<Vec<u8>, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }

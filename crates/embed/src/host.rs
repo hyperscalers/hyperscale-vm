@@ -35,19 +35,6 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn site_declared(&mut self, site: u32, element: u32) -> Result<bool, AbortReason>;
 
-    /// The capability the site declared for the element at `element`, as
-    /// the site rep every other operation here takes.
-    ///
-    /// An expansion whose guard did not fire answers a rep no capability
-    /// occupies, so the operation it is handed to refuses by its own
-    /// name — a body reaching one disagrees with its own declaration,
-    /// exactly as one reaching a guarded-out handle does.
-    ///
-    /// # Errors
-    ///
-    /// A deterministic refusal.
-    fn site_at(&mut self, site: u32, element: u32) -> Result<u32, AbortReason>;
-
     /// The cell's current bytes; empty if absent.
     ///
     /// One read for both byte modes: what the exclusive mode adds is the

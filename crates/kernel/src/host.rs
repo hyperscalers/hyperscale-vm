@@ -37,9 +37,6 @@ impl KernelHost for KernelSession {
     fn site_declared(&mut self, site: u32, element: u32) -> Result<bool, AbortReason> {
         refused(Self::site_declared(self, site, element))
     }
-    fn site_at(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
-        refused(Self::site_at(self, site, element))
-    }
 
     fn cell_get(&mut self, site: u32, element: u32) -> Result<Vec<u8>, AbortReason> {
         refused(Self::cell_get(self, site, element))

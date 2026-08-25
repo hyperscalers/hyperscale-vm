@@ -589,19 +589,6 @@ impl KernelSession {
         Ok(self.entry(rep, index)?.is_some())
     }
 
-    /// The capability the site declared for the element at `index`, as
-    /// the rep every other operation takes.
-    ///
-    /// An element whose guard did not fire answers [`ABSENT_REP`], which
-    /// the operation it is handed to traps on by its own name.
-    ///
-    /// # Errors
-    ///
-    /// Any [`SessionTrap`].
-    pub fn site_at(&self, rep: u32, index: u32) -> Result<u32, SessionTrap> {
-        Ok(self.entry(rep, index)?.unwrap_or(ABSENT_REP))
-    }
-
     /// One entry of a site, refusing an index past its elements.
     fn entry(&self, rep: u32, index: u32) -> Result<Option<u32>, SessionTrap> {
         if rep == ABSENT_REP {
@@ -1036,7 +1023,7 @@ impl KernelSession {
         // Once per capability rather than once per site: two handle
         // parameters may name one clause, and the grant leaves the
         // kernel once whichever of them asks.
-        let rep = self.site_at(site, element)?;
+        let rep = self.rep_at(site, element)?;
         if !self.taken.insert(rep) {
             return Err(SessionTrap::ReservationTaken);
         }
