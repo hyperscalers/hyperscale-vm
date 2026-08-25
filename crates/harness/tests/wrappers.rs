@@ -134,7 +134,7 @@ fn stdlib() -> Vec<(&'static str, PackageMetadata)> {
 /// with its signature fails here rather than at a signer's node.
 fn admits(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -> ManifestGraph {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     write(&mut b).expect("every wrapper types against its own signature");
     let graph = b.build().expect("every output is consumed");
     admit(&graph, ALICE, &chain, &TestHasher).expect("a wrapped graph admits");
@@ -172,7 +172,7 @@ fn the_account_wrappers_match_their_signatures() {
 #[test]
 fn a_degenerate_rule_is_refused_where_it_is_written() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let refused = account::securify_uniform(
         &mut b,
@@ -202,7 +202,7 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
 #[test]
 fn the_empty_threshold_reaches_the_account() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     account::securify_uniform(&mut b, alice, &always(), 86_400_000)
         .expect("anyone is a rule the vocabulary can carry");
@@ -230,7 +230,7 @@ fn a_chained_sign_in_admits() {
 #[test]
 fn misplaced_evidence_is_refused_at_the_call_site() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, BASE, 100).unwrap();
     assert!(matches!(

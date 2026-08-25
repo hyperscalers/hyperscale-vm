@@ -45,7 +45,7 @@ fn world() -> Records {
 /// between them.
 fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, BOB);
 
     let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
     let composer_proof = account::authorize(&mut root, composer).expect("sign-in types");

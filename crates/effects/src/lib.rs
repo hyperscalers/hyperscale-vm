@@ -88,8 +88,8 @@ pub use metadata::{
 pub use presented::Presented;
 pub use publish::{
     AbiError, CheckedSignature, DeclarationError, MetadataBoundsError, SignatureBoundsError,
-    SignatureError, check_abi, check_declarations, check_metadata, check_signature, seal_clauses,
-    seals,
+    SignatureError, check_abi, check_declarations, check_metadata, check_signature,
+    founds_its_resource, seal_clauses, seals,
 };
 pub use records::{ChainRecords, Composed, Records};
 pub use resource::{

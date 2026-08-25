@@ -645,7 +645,7 @@ pub fn graph_in(
     world: &Records,
     write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
 ) -> ManifestGraph {
-    let mut b = TypedBuilder::new(&world, &TestHasher);
+    let mut b = TypedBuilder::new(&world, &TestHasher, ALICE);
     write(&mut b).expect("every call types against its signature");
     b.build().expect("every output is consumed")
 }

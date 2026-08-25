@@ -126,7 +126,7 @@ proptest! {
     #[test]
     fn typed_graphs_admit_and_type_every_edge(transfers in prop::collection::vec(transfer(), 1..12)) {
         let chain = world();
-        let mut b = TypedBuilder::new(&chain, &TestHasher);
+        let mut b = TypedBuilder::new(&chain, &TestHasher, ACCOUNTS[0]);
         for t in &transfers {
             // No `resource_is` anywhere below: `withdraw` declares its
             // output's type and `take` carries it, so the assertions are

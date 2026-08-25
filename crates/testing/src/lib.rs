@@ -459,7 +459,7 @@ impl Chain {
         signer: PrincipalAddr,
         build: impl FnOnce(&mut TypedBuilder<'_>) -> Result<T, TypedError>,
     ) -> Result<Outcome<T>, Refused> {
-        let mut builder = TypedBuilder::new(&self.records, &TestHasher);
+        let mut builder = TypedBuilder::new(&self.records, &TestHasher, signer);
         let written = build(&mut builder)?;
         let graph = builder.build()?;
 

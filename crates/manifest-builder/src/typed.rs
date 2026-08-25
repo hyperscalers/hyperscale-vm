@@ -26,13 +26,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use hyperscale_vm_effects::vocabulary::{
+    AUTHORIZE_METHOD, PRESENT_BADGE_METHOD, PRESENT_INSTANCE_METHOD,
+};
 use hyperscale_vm_effects::{
     ChainRecords, Clause, Constraint, EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef,
-    Expr, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash,
-    MethodSignature, PackageHash, PackageMetadata, ParamType, PresentedGrants, ResourceMeta, Value,
-    evaluate_expr, keying_resource,
+    Expr, GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph,
+    ManifestHash, MethodSignature, PackageHash, PackageMetadata, ParamType, Presented,
+    PresentedGrants, ResourceGrants, ResourceMeta, SealedLeaf, Value, evaluate_expr,
+    founds_its_resource, keying_resource,
 };
-use hyperscale_vm_types::{Address, CallTarget, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{Address, AddressClass, CallTarget, PrincipalAddr, ResourceAddr};
 
 use crate::args::Args;
 use crate::builder::{Bucket, BuildError, GraphBuilder};
@@ -326,17 +330,36 @@ pub struct TypedBuilder<'a> {
     graph: GraphBuilder,
     chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
+    /// The principal this intent will be signed as.
+    ///
+    /// A declared fact rather than a fact about whoever runs the
+    /// builder: an agent preparing a subintent for somebody else's
+    /// wallet names that somebody, and the intent's own gates hold the
+    /// declaration to it. A wrong name is a refusal at the node that
+    /// reads it, never a forgery.
+    signer: PrincipalAddr,
+    /// The nodes already minting a claim, so a second call wanting one
+    /// presents the same proof rather than composing a second node.
+    minted: BTreeMap<(Address, Option<u64>), Proof>,
 }
 
 impl<'a> TypedBuilder<'a> {
     /// A builder with no nodes, typing its calls and resolving its
     /// targets against what `chain` answers for.
-    pub fn new(chain: &'a dyn ChainRecords, hasher: &'a dyn Hasher) -> Self {
+    pub fn new(chain: &'a dyn ChainRecords, hasher: &'a dyn Hasher, signer: PrincipalAddr) -> Self {
         Self {
             graph: GraphBuilder::new(),
             chain,
             hasher,
+            signer,
+            minted: BTreeMap::new(),
         }
+    }
+
+    /// The principal this intent will be signed as.
+    #[must_use]
+    pub const fn signer(&self) -> PrincipalAddr {
+        self.signer
     }
 
     /// The seal of `target`'s package: the name it publishes under, and
@@ -562,6 +585,78 @@ impl<'a> TypedBuilder<'a> {
         Ok((meta, package))
     }
 
+    /// Mint what this call's injected authority entries will ask for,
+    /// as far as the composer can.
+    ///
+    /// The entries come from the resources a call names rather than from
+    /// its declaration, so nothing about the method being called says a
+    /// proof is wanted — which is why every composition wrote one by
+    /// hand until now. Predicted from exactly what admission injects
+    /// from, and decided there: a prediction that comes up short refuses
+    /// at admission, as it did before there was one.
+    ///
+    /// What it can mint is what the protocol's own account offers: the
+    /// signer's own identity, and a badge the signer holds. A claim on
+    /// anything else — another party's identity, a component's — is one
+    /// no composer can mint, and it is left for whoever can.
+    fn mint_earned(
+        &mut self,
+        signature: &MethodSignature,
+        target: CallTarget,
+        record: &InstanceMeta,
+        args: &[GraphArg],
+        values: &[Value],
+        known: &[bool],
+    ) -> Vec<Proof> {
+        let budget = EvalBudget::default();
+        let inputs = EvalInputs {
+            self_addr: target.address(),
+            args: values,
+            record,
+            node_index: 0,
+            identity: UNBOUND,
+            grants: PresentedGrants::none(),
+            budget: &budget,
+        };
+        let wanted = earned_claims(signature, args, &inputs, known, self.chain, self.hasher);
+        wanted
+            .into_iter()
+            .filter_map(|claim| self.present(claim))
+            .collect()
+    }
+
+    /// The node minting `claim`, composing one where this intent has
+    /// none yet.
+    ///
+    /// Both forms are the account's own and both are satisfied by the
+    /// intent's signature, because both gate on the rule governing the
+    /// signer's own address — so neither takes a proof of its own and
+    /// the composition stays one node deep.
+    fn present(&mut self, claim: Presented) -> Option<Proof> {
+        if let Some(proof) = self.minted.get(&(claim.subject, claim.instance)) {
+            return Some(*proof);
+        }
+        let signer = self.signer;
+        let minted = match (claim.subject.class(), claim.instance) {
+            (AddressClass::Principal, None) if claim.subject == signer.address() => {
+                self.mint(signer.into(), AUTHORIZE_METHOD, (), &[])
+            }
+            (AddressClass::Resource | AddressClass::Restricted, None) => {
+                self.mint(signer.into(), PRESENT_BADGE_METHOD, (claim.subject,), &[])
+            }
+            (AddressClass::Resource | AddressClass::Restricted, Some(id)) => self.mint(
+                signer.into(),
+                PRESENT_INSTANCE_METHOD,
+                (claim.subject, id),
+                &[],
+            ),
+            _ => return None,
+        }
+        .ok()?;
+        self.minted.insert((claim.subject, claim.instance), minted);
+        Some(minted)
+    }
+
     fn append(
         &mut self,
         target: CallTarget,
@@ -582,6 +677,16 @@ impl<'a> TypedBuilder<'a> {
             .map(|value| value.unwrap_or_else(unknown))
             .collect();
 
+        // The claims this call's injected entries will ask for, minted
+        // ahead of it — before the node index is read, since each is a
+        // node of its own. Only where the author presented nothing: a
+        // proof they composed is one they meant, and a second beside it
+        // would be the builder overruling them.
+        let earned = if proofs.is_empty() {
+            self.mint_earned(signature, target, meta, &args, &values, &known)
+        } else {
+            Vec::new()
+        };
         let resources = output_resources(
             signature,
             target,
@@ -598,13 +703,17 @@ impl<'a> TypedBuilder<'a> {
         // more than one where the gate is a threshold, since satisfying
         // two of three means presenting two.
         let evidence = match (signature.requires_evidence(), proofs) {
-            (false, []) => BTreeSet::new(),
+            (false, []) if earned.is_empty() => BTreeSet::new(),
             // A method that issues, destroys or reaches earns its
             // requirement from the resource rather than from its own
             // declaration, so the signature says it admits anyone and
             // the resource says otherwise. Ruling the proof out here
             // would refuse the call before the party who decides has
             // been asked.
+            (false, []) => earned
+                .iter()
+                .map(|proof| EvidenceRef::Node(proof.node))
+                .collect(),
             (false, presented) if signature.may_earn_authority() => presented
                 .iter()
                 .map(|proof| EvidenceRef::Node(proof.node))
@@ -811,6 +920,76 @@ pub(crate) fn output_resources(
         .collect()
 }
 
+/// The claims a call's injected authority entries name, and which the
+/// frame's own identity does not already satisfy.
+///
+/// Three injections read a claim, and the fourth reads none: a movement
+/// entry asks what the *holder* holds, judged against committed state
+/// before any body runs, so nothing is presented for it.
+///
+/// **A frame speaks for itself**, so an entry the executing instance's
+/// own claim already satisfies is one admission never appends — the
+/// derivation gate, reproduced. And **founding is not minting**, so an
+/// issuance whose own frame writes the resource's record earns nothing
+/// either. Both subtractions are made here for the same reason they are
+/// made there: without them a composer would present proofs for entries
+/// that never fire, and evidence nothing reads is refused.
+fn earned_claims(
+    signature: &MethodSignature,
+    args: &[GraphArg],
+    inputs: &EvalInputs<'_>,
+    known: &[bool],
+    chain: &dyn ChainRecords,
+    hasher: &dyn Hasher,
+) -> Vec<Presented> {
+    let own = Presented::of_address(inputs.self_addr);
+    let mut wanted = Vec::new();
+    let mut ask = |rules: &ResourceGrants, behaviour: GrantedBehaviour| {
+        let Some(rule) = rules.get(behaviour).and_then(|sealed| sealed.decode().ok()) else {
+            return;
+        };
+        if own.is_some_and(|own| rule.satisfied_by(&[own])) {
+            return;
+        }
+        for leaf in rule.leaves() {
+            if let SealedLeaf::Claim(claim) = leaf
+                && !wanted.contains(claim)
+            {
+                wanted.push(*claim);
+            }
+        }
+    };
+
+    // An issuance derives its own resource, so its entries are read off
+    // the declaration rather than off any presented record.
+    for issuance in &signature.issues {
+        if founds_its_resource(issuance, signature) {
+            continue;
+        }
+        let Ok(rules) = issuance
+            .grants
+            .resolve(hasher, inputs.self_addr, &inputs.record.config)
+        else {
+            continue;
+        };
+        for behaviour in issuance.direction.behaviours() {
+            ask(&rules, *behaviour);
+        }
+    }
+    // A destruction and a reach both govern a resource somebody else
+    // issued, so both read the record the envelope carries.
+    for (resource, behaviour) in governing(signature, args, inputs, known, hasher) {
+        let Some(behaviour) = behaviour else {
+            continue;
+        };
+        let Some(record) = chain.resource(resource, hasher) else {
+            continue;
+        };
+        ask(&record.rules, behaviour);
+    }
+    wanted
+}
+
 /// Every granted-rule record a graph's calls will be resolved against,
 /// in address order.
 ///
@@ -863,7 +1042,7 @@ pub fn graph_records(
             grants: PresentedGrants::none(),
             budget: &budget,
         };
-        for resource in governing(signature, &node.args, &inputs, &known, hasher) {
+        for (resource, _) in governing(signature, &node.args, &inputs, &known, hasher) {
             if let std::collections::btree_map::Entry::Vacant(slot) = found.entry(resource)
                 && let Some(record) = chain.resource(resource, hasher)
             {
@@ -893,7 +1072,7 @@ fn governing(
     inputs: &EvalInputs<'_>,
     known: &[bool],
     hasher: &dyn Hasher,
-) -> Vec<ResourceAddr> {
+) -> Vec<(ResourceAddr, Option<GrantedBehaviour>)> {
     let resolve = |expr: &Expr| {
         if !resolvable(expr, known, 0) {
             return None;
@@ -905,10 +1084,11 @@ fn governing(
     };
     let destroyed = signature.destroys.iter().filter_map(|param| {
         let arg = usize::try_from(*param).ok().and_then(|at| args.get(at))?;
-        match arg {
+        let resource = match arg {
             GraphArg::Edge { constraints, .. } => edge_resource(constraints),
             GraphArg::Literal(_) | GraphArg::Param(_) => None,
-        }
+        }?;
+        Some((resource, Some(GrantedBehaviour::Burn)))
     });
     let declared = signature
         .effects
@@ -925,8 +1105,15 @@ fn governing(
                 return None;
             };
             match reach {
-                Some(_) => keying_resource(target).and_then(&resolve),
-                None => denomination.as_deref().and_then(&resolve),
+                Some(behaviour) => Some((
+                    keying_resource(target).and_then(&resolve)?,
+                    Some(*behaviour),
+                )),
+                // A movement earns its entries from what the cell holds,
+                // and those read the holder's own holdings rather than
+                // anything a caller presents — so the record is needed
+                // and no claim is.
+                None => Some((denomination.as_deref().and_then(&resolve)?, None)),
             }
         });
     destroyed.chain(declared).collect()

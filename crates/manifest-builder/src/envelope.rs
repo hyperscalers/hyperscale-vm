@@ -151,9 +151,13 @@ impl<'a> IntentBuilder<'a> {
     /// [`YieldSink`]: those come from [`EnvelopeBuilder::present`], on the
     /// composing side, where the intent this declaration will be is known.
     #[must_use]
-    pub fn declaration(chain: &'a dyn ChainRecords, hasher: &'a dyn Hasher) -> Self {
+    pub fn declaration(
+        chain: &'a dyn ChainRecords,
+        hasher: &'a dyn Hasher,
+        signer: PrincipalAddr,
+    ) -> Self {
         Self {
-            graph: TypedBuilder::new(chain, hasher),
+            graph: TypedBuilder::new(chain, hasher, signer),
             envelope: NEXT_ENVELOPE.fetch_add(1, Ordering::Relaxed),
             intent: 0,
             params: Vec::new(),
@@ -265,7 +269,11 @@ impl<'a> EnvelopeBuilder<'a> {
     /// An envelope and its root intent — the composer's own, which every
     /// composition has exactly one of.
     #[must_use]
-    pub fn new(chain: &'a dyn ChainRecords, hasher: &'a dyn Hasher) -> (Self, IntentBuilder<'a>) {
+    pub fn new(
+        chain: &'a dyn ChainRecords,
+        hasher: &'a dyn Hasher,
+        signer: PrincipalAddr,
+    ) -> (Self, IntentBuilder<'a>) {
         let id = NEXT_ENVELOPE.fetch_add(1, Ordering::Relaxed);
         let envelope = Self {
             chain,
@@ -278,7 +286,7 @@ impl<'a> EnvelopeBuilder<'a> {
             grants: Vec::new(),
         };
         let root = IntentBuilder {
-            graph: TypedBuilder::new(chain, hasher),
+            graph: TypedBuilder::new(chain, hasher, signer),
             envelope: id,
             intent: 0,
             params: Vec::new(),
@@ -316,7 +324,7 @@ impl<'a> EnvelopeBuilder<'a> {
         self.signers.push(signer);
         self.intents.push(None);
         IntentBuilder {
-            graph: TypedBuilder::new(self.chain, self.hasher),
+            graph: TypedBuilder::new(self.chain, self.hasher, signer),
             envelope: self.id,
             intent,
             params: Vec::new(),

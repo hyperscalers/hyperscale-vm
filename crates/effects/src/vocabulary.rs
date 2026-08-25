@@ -63,10 +63,25 @@ pub const HALT: SlotId = SlotId(7);
 
 /// The method a rest policy deposits through.
 ///
-/// Every principal is answered by an account, and `deposit` is the
-/// account method the protocol's own flows assume — the one method name
-/// that is vocabulary rather than a package's own.
+/// Every principal is answered by an account, so the four names below
+/// are the ones a flow may assume without reading any package's
+/// metadata. This is where value a composition did not route comes to
+/// rest.
 pub const DEPOSIT_METHOD: &str = "deposit";
+
+/// The method that mints a principal's own identity as a claim.
+///
+/// What a composer reaches for when an injected entry names the party
+/// signing the intent: the entry is the resource's, so nothing about the
+/// method being called says a proof is wanted, and the claim has to come
+/// from somewhere.
+pub const AUTHORIZE_METHOD: &str = "authorize";
+
+/// The method that mints a claim on a badge its caller holds.
+pub const PRESENT_BADGE_METHOD: &str = "present-badge";
+
+/// The same over one instance of a non-fungible badge.
+pub const PRESENT_INSTANCE_METHOD: &str = "present-instance";
 
 #[cfg(test)]
 mod tests {

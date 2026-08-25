@@ -153,7 +153,7 @@ fn pool() -> staking::Staking {
 /// declares — neither of which is written out below.
 fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -> ManifestGraph {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     write(&mut b).expect("every call types against its signature");
     b.build().expect("every output is consumed")
 }

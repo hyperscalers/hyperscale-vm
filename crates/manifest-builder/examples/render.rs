@@ -131,7 +131,7 @@ fn vocabulary() -> Names {
 fn main() {
     let chain = world();
     let build = |write: &dyn Fn(&mut TypedBuilder<'_>) -> Result<(), TypedError>| -> ManifestGraph {
-        let mut b = TypedBuilder::new(&chain, &TestHasher);
+        let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
         write(&mut b).expect("every call types against its signature");
         b.build().expect("every output is consumed")
     };

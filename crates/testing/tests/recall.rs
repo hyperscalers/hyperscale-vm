@@ -15,12 +15,10 @@
 //! instances are the entries of an interval.
 
 use hyperscale_vm_effects::vocabulary::NF_VAULT;
-use hyperscale_vm_effects::{TestHasher, Value, package_slot};
+use hyperscale_vm_effects::{TestHasher, package_slot};
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_testing::{
-    Address, Chain, Component, PrincipalAddr, account, package, principal,
-};
+use hyperscale_vm_testing::{Address, Chain, PrincipalAddr, account, package, principal};
 
 /// Whom both fixtures' entries name.
 const WARDEN: PrincipalAddr = principal(0xB1);
@@ -69,11 +67,6 @@ mod bailiff {
     }
 }
 
-/// A manifest id list, as the generated client builds one.
-fn ids(named: &[u64]) -> Value {
-    Value::List(named.iter().copied().map(Value::U64).collect())
-}
-
 const fn deed_terms() -> bailiff::Terms {
     bailiff::Terms {
         warden: WARDEN.address(),
@@ -107,15 +100,8 @@ fn a_recall_takes_the_instances_it_names_out_of_a_holders_interval() {
 
     chain
         .transact(WARDEN, |b| {
-            let warden = account::authorize(b, WARDEN)?;
-            b.call_as(
-                warden,
-                issuer.address(),
-                "seize",
-                (HOLDER.address(), slot, ids(&[1, 3])),
-            )?
-            .one()
-            .and_then(|taken| account::deposit_nf(b, WARDEN, taken))
+            let taken = issuer.seize(b, HOLDER.address(), slot, &[1, 3])?;
+            account::deposit_nf(b, WARDEN, taken)
         })
         .expect_completed();
 
@@ -126,28 +112,26 @@ fn a_recall_takes_the_instances_it_names_out_of_a_holders_interval() {
 }
 
 /// And nobody the entry does not name takes anything.
+///
+/// Refused before anything routes rather than at the node: the composer
+/// reads the entry off the record it found, cannot mint the claim it
+/// names — the deed's warden is somebody else — and composes no proof,
+/// so the call reaches admission asking for authority it never showed.
 #[test]
 fn a_recall_by_somebody_the_entry_does_not_name_is_refused() {
     let (mut chain, issuer, deed) = deeds();
     let slot = u64::from(NF_VAULT.0);
 
-    let refused = chain.try_transact(STRANGER, |b| {
-        let stranger = account::authorize(b, STRANGER)?;
-        b.call_as(
-            stranger,
-            issuer.address(),
-            "seize",
-            (HOLDER.address(), slot, ids(&[1])),
-        )?
-        .one()
-        .and_then(|taken| account::deposit_nf(b, STRANGER, taken))
-    });
-    // The reach's own entry, unmet at the node declaring it: the
-    // composer types the call and the resource refuses the caller.
-    let receipt = refused.expect("the manifest types and admits");
-    let refusal = format!("{:?}", receipt.refused().expect("a refusal"));
+    let refused = chain
+        .try_transact(STRANGER, |b| {
+            let taken = issuer.seize(b, HOLDER.address(), slot, &[1])?;
+            account::deposit_nf(b, STRANGER, taken)
+        })
+        .err()
+        .expect("a reach nobody admitted");
+    let refusal = format!("{refused:?}");
     assert!(
-        refusal.contains("Satisfies { node: 1 }"),
+        refusal.contains("MissingEvidence"),
         "the resource's own entry is what admits a reach: {refusal}",
     );
     assert!(chain.holds(HOLDER, deed, 1), "and the deed stands");
@@ -167,15 +151,8 @@ fn a_slot_that_keeps_no_value_is_refused_where_the_argument_is_read() {
 
     for slot in [0u64, 2, 3, 4, 6, 7, 0xFFFE] {
         let refused = chain.try_transact(WARDEN, |b| {
-            let warden = account::authorize(b, WARDEN)?;
-            b.call_as(
-                warden,
-                issuer.address(),
-                "seize",
-                (HOLDER.address(), slot, ids(&[1])),
-            )?
-            .one()
-            .and_then(|taken| account::deposit_nf(b, WARDEN, taken))
+            let taken = issuer.seize(b, HOLDER.address(), slot, &[1])?;
+            account::deposit_nf(b, WARDEN, taken)
         });
         let refusal = format!("{:?}", refused.err().expect("a slot nothing reaches"));
         assert!(
@@ -238,15 +215,8 @@ fn a_recall_finds_value_at_the_slot_the_holder_keeps_it_in() {
     let quarantine = u64::from(package_slot(1).0);
     chain
         .transact(WARDEN, |b| {
-            let warden = account::authorize(b, WARDEN)?;
-            b.call_as(
-                warden,
-                issuer.address(),
-                "recall-shares",
-                (HOLDER.address(), quarantine, 60u128),
-            )?
-            .one()
-            .and_then(|taken| account::deposit(b, WARDEN, taken))
+            let taken = issuer.recall_shares(b, HOLDER.address(), quarantine, 60u128)?;
+            account::deposit(b, WARDEN, taken)
         })
         .expect_completed();
     assert_eq!(chain.balance(WARDEN, share), 60);

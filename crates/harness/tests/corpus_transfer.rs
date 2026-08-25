@@ -133,7 +133,7 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() {
     let graph = {
         // Not a wrapper call: `dana` runs the mirror package, so its
         // deposit is the one this test published rather than the account's.
-        let mut b = TypedBuilder::new(&world, &TestHasher);
+        let mut b = TypedBuilder::new(&world, &TestHasher, ALICE);
         let alice = account::authorize(&mut b, ALICE).unwrap();
         let funds = account::withdraw(&mut b, alice, RES_X, 100).unwrap();
         b.call(dana, "deposit", (funds,)).unwrap().none().unwrap();

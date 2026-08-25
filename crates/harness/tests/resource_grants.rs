@@ -107,7 +107,7 @@ fn governed(entry: RuleBytes) -> ResourceAddr {
 /// rule, which is the whole point.
 fn governed_tree(entry: RuleBytes) -> Result<EnvelopeTree> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let caller = account::authorize(b, HOLDER)?;
         let funds = account::withdraw(b, caller, governed(entry.clone()), 40)?;
@@ -185,7 +185,7 @@ fn a_credential_governs_a_withdrawal_no_package_declared() -> Result<()> {
 fn an_unpresented_record_refuses_at_admission() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
     let chain = world();
-    let (env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let caller = account::authorize(b, HOLDER)?;
         let funds = account::withdraw(b, caller, governed(entry.clone()), 40)?;
@@ -211,7 +211,7 @@ fn an_unpresented_record_refuses_at_admission() -> Result<()> {
 fn a_changed_rule_is_a_different_resource() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let caller = account::authorize(b, HOLDER)?;
         let funds = account::withdraw(b, caller, governed(entry.clone()), 40)?;
@@ -291,7 +291,7 @@ fn a_resource_no_vault_may_hold_refuses_at_admission() -> Result<()> {
 fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let caller = account::authorize(b, HOLDER)?;
         let funds = account::withdraw(b, caller, governed(entry.clone()), 40)?;
@@ -465,7 +465,7 @@ fn admitting(entry: RuleBytes) -> ResourceAddr {
 /// same ordinary transfer a package that declared nothing composes.
 fn admitted_tree(entry: RuleBytes, recipient: PrincipalAddr) -> Result<EnvelopeTree> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let caller = account::authorize(b, HOLDER)?;
         let funds = account::withdraw(b, caller, admitting(entry.clone()), 40)?;

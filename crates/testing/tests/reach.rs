@@ -144,15 +144,8 @@ fn a_recall_reaches_past_every_rule_the_resource_carries() {
         .expect_completed();
     chain
         .transact(REGISTRAR, |b| {
-            let registrar = account::authorize(b, REGISTRAR)?;
-            b.call_as(
-                registrar,
-                issuer.address(),
-                "revoke",
-                (stranger.address(), slot, 1u128),
-            )?
-            .one()
-            .and_then(|taken| account::deposit(b, REGISTRAR, taken))
+            let taken = issuer.revoke(b, stranger.address(), slot, 1u128)?;
+            account::deposit(b, REGISTRAR, taken)
         })
         .expect_completed();
     assert_eq!(
@@ -163,25 +156,14 @@ fn a_recall_reaches_past_every_rule_the_resource_carries() {
 
     // And a holder the issuer has stopped moving anything at all.
     chain
-        .transact(REGISTRAR, |b| {
-            let registrar = account::authorize(b, REGISTRAR)?;
-            b.call_as(registrar, issuer.address(), "freeze", (HOLDER.address(),))?
-                .none()
-        })
+        .transact(REGISTRAR, |b| issuer.freeze(b, HOLDER.address()))
         .expect_completed();
 
     for (holder, taken) in [(HOLDER, 100u128), (stranger, 40u128)] {
         chain
             .transact(REGISTRAR, |b| {
-                let registrar = account::authorize(b, REGISTRAR)?;
-                b.call_as(
-                    registrar,
-                    issuer.address(),
-                    "recall-shares",
-                    (holder.address(), slot, taken),
-                )?
-                .one()
-                .and_then(|shares| account::deposit(b, REGISTRAR, shares))
+                let shares = issuer.recall_shares(b, holder.address(), slot, taken)?;
+                account::deposit(b, REGISTRAR, shares)
             })
             .expect_completed();
         assert_eq!(chain.balance(holder, share), 0);

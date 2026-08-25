@@ -98,7 +98,7 @@ fn asserted(graph: &ManifestGraph, node: usize) -> Vec<Option<ResourceAddr>> {
 #[test]
 fn a_typed_edge_asserts_its_own_resource() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     // Nothing here says the withdrawal produces `RES`; `withdraw`'s
     // declared output does, and the deposit carries the assertion.
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
@@ -116,7 +116,7 @@ fn a_typed_edge_asserts_its_own_resource() {
 #[test]
 fn a_split_of_a_typed_edge_is_two_typed_edges() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
@@ -155,7 +155,7 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
 #[test]
 fn a_pool_types_its_units_by_itself() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
@@ -175,7 +175,7 @@ fn a_pool_types_its_units_by_itself() {
 #[test]
 fn an_edge_nothing_typed_stays_untyped() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     // The untyped path mints an edge with no declared type behind it.
     // `take` types its outputs by that edge, so neither output can be
     // typed either — and the layer leaves them alone rather than guessing.
@@ -203,7 +203,7 @@ fn an_edge_nothing_typed_stays_untyped() {
 #[test]
 fn an_asserted_type_carries_through_the_untyped_path() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     // An author who types the edge by hand tells the layer as much as a
     // signature would, and the type propagates from the assertion.
     let sign_in = b.untyped().len();
@@ -224,7 +224,7 @@ fn an_asserted_type_carries_through_the_untyped_path() {
 #[should_panic(expected = "types this edge as a different resource")]
 fn a_typed_edge_refuses_a_contradicting_assertion() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
@@ -237,7 +237,7 @@ fn a_typed_edge_refuses_a_contradicting_assertion() {
 #[test]
 fn a_call_is_typed_against_the_signature_it_names() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
 
     // Four of admission's verdicts, reached one graph early.
     assert!(matches!(
@@ -281,7 +281,7 @@ fn a_call_is_typed_against_the_signature_it_names() {
 #[test]
 fn a_refused_call_appends_nothing() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();
     let funds = b
         .call_as(alice, ALICE, "withdraw", (RES, 100u128))
@@ -303,7 +303,7 @@ fn a_refused_call_appends_nothing() {
 #[test]
 fn a_target_or_method_that_does_not_resolve_is_refused() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     assert!(matches!(
         b.call(ComponentAddr::new([0xAA; 31]), "take", (30u128,)),
         Err(TypedError::UnknownInstance(_))
@@ -317,7 +317,7 @@ fn a_target_or_method_that_does_not_resolve_is_refused() {
 #[test]
 fn outputs_unpack_only_into_the_arity_the_method_declares() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     // Naming a slot the producer does not have takes stating an arity,
     // and the signature is what an arity is checked against.
     let alice = b.call_minting(ALICE, "authorize", ()).unwrap();

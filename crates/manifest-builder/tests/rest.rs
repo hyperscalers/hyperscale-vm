@@ -57,7 +57,7 @@ fn world() -> Records {
 #[test]
 fn without_a_policy_a_rest_edge_is_still_a_refusal() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
     let [taken, _rest] = payouts::Payouts::at(splitter())
@@ -76,7 +76,7 @@ fn without_a_policy_a_rest_edge_is_still_a_refusal() {
 #[test]
 fn a_policy_deposits_what_nothing_claimed() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     b.rest_to(ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
@@ -104,7 +104,7 @@ fn a_policy_deposits_what_nothing_claimed() {
 #[test]
 fn explicit_consumption_wins() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     b.rest_to(ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();
@@ -125,7 +125,7 @@ fn explicit_consumption_wins() {
 #[test]
 fn every_rest_edge_is_routed_not_just_the_first() {
     let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher);
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     b.rest_to(ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, RES, 100).unwrap();

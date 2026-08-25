@@ -1341,7 +1341,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // declaration itself, so the author is told where they wrote the
     // pair rather than a caller told where they met it.
     for issuance in &signature.issues {
-        if founds_its_resource(issuance, &flat) {
+        if founding(issuance, &flat) {
             continue;
         }
         for behaviour in issuance.direction.behaviours() {
@@ -1373,7 +1373,14 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
 /// Read off the declaration rather than declared, on the terms the
 /// instantiation fence is read off one: the frame that writes the leaf
 /// is the creation, and a frame cannot claim to be it without doing it.
-fn founds_its_resource(issuance: &Issuance, flat: &[&Clause]) -> bool {
+#[must_use]
+pub fn founds_its_resource(issuance: &Issuance, signature: &MethodSignature) -> bool {
+    let flat: Vec<&Clause> = signature.effects.iter().flat_map(Clause::effects).collect();
+    founding(issuance, &flat)
+}
+
+/// The same over a preorder already walked.
+fn founding(issuance: &Issuance, flat: &[&Clause]) -> bool {
     flat.iter().any(|clause| {
         let Clause::Effect {
             reach: None,

@@ -49,7 +49,7 @@ fn only(sinks: Vec<YieldSink>) -> YieldSink {
 /// other; the envelope is the two edges between them.
 fn swap(pay_x: u128, pay_y: u128) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
 
     let taken_y = root.declare(RES_Y, [Constraint::MinAmount(pay_y)]);
     let alice_proof = account::authorize(&mut root, ALICE)?;
@@ -87,7 +87,7 @@ fn a_composed_swap_admits() {
 /// hands them at least `amount` of X, they will bank it.
 fn payment_request(amount: u128) -> IntentDecl {
     let chain = world();
-    let mut decl = IntentBuilder::declaration(&chain, &TestHasher);
+    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE);
     let incoming = decl.declare(RES_X, [Constraint::MinAmount(amount)]);
     account::deposit(&mut decl, BOB, incoming).unwrap();
     decl.into_decl().expect("the request consumes its own hole")
@@ -100,7 +100,7 @@ fn a_presented_declaration_is_carried_verbatim() {
     let signed = request.hash(&TestHasher);
 
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
     let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     let paid = root.export(funds);
@@ -118,7 +118,7 @@ fn a_presented_declaration_is_carried_verbatim() {
 #[test]
 fn a_presented_hole_the_composition_never_bound_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     // The composer took the request and then routed nothing to it.
     let _wants = env.present(BOB, payment_request(100)).unwrap();
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
@@ -143,7 +143,7 @@ fn a_presented_declaration_that_discharges_nothing_is_refused() {
     // envelope around it.
     let mut malformed = payment_request(100);
     malformed.params.push(payment_request(50).params.remove(0));
-    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     assert!(matches!(
         env.present(BOB, malformed),
         Err(EnvelopeError::UnusedYieldParam {
@@ -156,7 +156,7 @@ fn a_presented_declaration_that_discharges_nothing_is_refused() {
 #[test]
 fn a_hole_the_graph_never_consumes_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     // Declared and then dropped: the yielded bucket would arrive with
     // nothing to receive it.
     let _taken = root.declare(RES_Y, []);
@@ -175,7 +175,7 @@ fn a_hole_the_graph_never_consumes_is_refused() {
 #[test]
 fn a_hole_two_arguments_consume_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     let taken = root.declare(RES_Y, []);
     account::deposit(&mut root, ALICE, taken).unwrap();
     // One yielded edge cannot be two deposits; the second reference is a
@@ -193,7 +193,7 @@ fn a_hole_two_arguments_consume_is_refused() {
 #[test]
 fn a_parameter_the_intent_never_declared_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     account::deposit(&mut root, ALICE, Param(3)).unwrap();
     assert!(matches!(
         env.seal(root),
@@ -207,7 +207,7 @@ fn a_parameter_the_intent_never_declared_is_refused() {
 #[test]
 fn a_hole_the_composition_never_bound_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     let taken = root.declare(RES_Y, []);
     account::deposit(&mut root, ALICE, taken).unwrap();
     env.seal(root).unwrap();
@@ -225,7 +225,7 @@ fn a_hole_the_composition_never_bound_is_refused() {
 #[test]
 fn an_intent_still_under_construction_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
     let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut root, BOB, funds).unwrap();
@@ -241,12 +241,12 @@ fn an_intent_still_under_construction_is_refused() {
 #[should_panic(expected = "bound within the envelope that minted it")]
 fn a_handle_from_another_envelope_is_refused() {
     let chain = world();
-    let (mut mine, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (mut mine, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, BOB);
     let taken = root.declare(RES_X, []);
     account::deposit(&mut root, ALICE, taken).unwrap();
     let wants = only(mine.seal(root).unwrap());
 
-    let (_theirs, mut other) = EnvelopeBuilder::new(&chain, &TestHasher);
+    let (_theirs, mut other) = EnvelopeBuilder::new(&chain, &TestHasher, BOB);
     let bob_proof = account::authorize(&mut other, BOB).unwrap();
     let funds = account::withdraw(&mut other, bob_proof, RES_X, 100).unwrap();
     let elsewhere = other.export(funds);
@@ -262,7 +262,7 @@ proptest! {
         legs in prop::collection::vec((100..1000u128, 1..100u128), 1..6),
     ) {
         let chain = world();
-        let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
+        let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
 
         let mut paid = Vec::with_capacity(legs.len());
         for (pay, _) in &legs {
