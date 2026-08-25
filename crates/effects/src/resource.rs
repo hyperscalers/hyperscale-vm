@@ -239,23 +239,30 @@ impl GrantedBehaviour {
 
     /// Why this behaviour does not admit `rule`, or nothing if it does.
     ///
-    /// Two questions and one answer each, both read off
-    /// [`asks_about_the_actor`](Self::asks_about_the_actor). **An actor
-    /// question's rule reads claims**, because a caller requests a
-    /// capability and the node's evidence answers; **a holder question's
-    /// rule reads holdings**, because the party it is about is the one
-    /// whose cell moves and no evidence can speak for them. And **the
-    /// constant that restates a behaviour's own default is refused**,
-    /// since absence already says it: everyone-may for a movement, which
-    /// absence permits, and no-one-may for an authority, which absence
-    /// withholds.
+    /// **An actor question's rule reads claims**, because a caller
+    /// requests a capability and the node's evidence answers — and a
+    /// holding leaf there would have no owner to resolve against, since
+    /// an authority entry governs a frame rather than a cell.
+    ///
+    /// **A holder question's rule may read either.** A holding asks a
+    /// standing fact about the party whose cell moves; a claim asks
+    /// whether this transaction was approved. Those are two different
+    /// questions and a movement entry may want either, or both — the
+    /// register that says who may hold, and the per-transfer sign-off
+    /// that says whether this one goes.
+    ///
+    /// And **the constant that restates a behaviour's own default is
+    /// refused**, since absence already says it: everyone-may for a
+    /// movement, which absence permits, and no-one-may for an authority,
+    /// which absence withholds.
     #[must_use]
     pub fn refuses(self, rule: &StoredRule) -> Option<GrantsResolveError> {
         let actor = self.asks_about_the_actor();
-        let wrong_leaf = rule
-            .leaves()
-            .any(|leaf| matches!(leaf, SealedLeaf::Claim(_)) != actor);
-        if wrong_leaf {
+        if actor
+            && rule
+                .leaves()
+                .any(|leaf| !matches!(leaf, SealedLeaf::Claim(_)))
+        {
             return Some(GrantsResolveError::WrongQuestion(self));
         }
         let restates = *rule == if actor { never() } else { always() };
@@ -969,32 +976,44 @@ mod tests {
         );
     }
 
-    /// Which side a behaviour's rule reads follows from whose property it
-    /// is about, and the constant restating its own default is refused.
+    /// An actor question reads claims and nothing else; a holder
+    /// question reads either, and may read both.
     ///
-    /// An actor question is asked of a caller, so it reads what the call
-    /// presented and may be opened to everyone. A holder question's
-    /// requirement can land on a frame that may not turn a caller away —
-    /// over-approximating direction puts it on the credit side, where the
-    /// method is total — so it reads a fact about the mover instead, and
-    /// closing it to no one is the statement it has that absence does not.
+    /// The asymmetry is not a preference. An authority entry governs a
+    /// *frame*, so there is no cell for a holding leaf to resolve
+    /// against and one there would name nothing. A movement entry
+    /// governs a cell, and the two leaves ask two different questions
+    /// about it: a holding is a standing fact about the party whose cell
+    /// moves, a claim is whether this transaction was approved. A
+    /// resource may want either, or both.
+    ///
+    /// The constant restating a behaviour's own default is refused
+    /// either way, since absence already says it.
     #[test]
     fn a_behaviour_reads_the_side_its_question_is_about() {
         let badge = ResourceAddr::new([0x77; 31]);
         let claims = StoredRule::claim(Presented::of_subject(badge));
         let holds = StoredRule::held(badge, Holding::Balance);
+        let both = StoredRule::CountOf {
+            count: 2,
+            rules: vec![claims.clone(), holds.clone()],
+        };
 
         for behaviour in GrantedBehaviour::ALL {
             let actor = behaviour.asks_about_the_actor();
-            assert_eq!(
+            assert!(
                 behaviour.refuses(&claims).is_none(),
-                actor,
                 "{behaviour:?} over a claim",
             );
             assert_eq!(
                 behaviour.refuses(&holds).is_none(),
                 !actor,
                 "{behaviour:?} over a holding",
+            );
+            assert_eq!(
+                behaviour.refuses(&both).is_none(),
+                !actor,
+                "{behaviour:?} over both",
             );
             // The constant absence already says is refused; the other one
             // is the statement absence cannot make.

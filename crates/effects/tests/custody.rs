@@ -21,9 +21,10 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
-    EdgeRef, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, Holding, InstanceMeta,
-    IntentDecl, JudgedLeaf, ManifestGraph, Presented, Records, ResourceGrants, ResourceKind,
-    ResourceMeta, Rule, RuleBytes, SlotRef, StoredRule, TestHasher, Value, admit_tree, child_key,
+    AdmissionError, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode,
+    Hash32, Holding, InstanceMeta, IntentDecl, JudgedLeaf, ManifestGraph, Presented, Records,
+    ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef, StoredRule, TestHasher,
+    Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -505,5 +506,117 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
     assert!(
         !wants_credential(debited, &unasked),
         "and a reservation, which only debits, is not: {unasked:?}",
+    );
+}
+
+/// A transfer between two accounts: sign in, reserve, credit.
+///
+/// The shape the case below needs and the custodian cannot give it. A
+/// reservation debits and says so, so the withdrawing node earns the
+/// `Withdraw` entry alone; the crediting node is `deposit`, which is
+/// the one method in the corpus carrying the total mark.
+fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -> EnvelopeTree {
+    EnvelopeTree {
+        root: IntentDecl {
+            graph: ManifestGraph {
+                nodes: vec![
+                    GraphNode {
+                        target: from.into(),
+                        method: "authorize".into(),
+                        args: vec![],
+                        evidence: [EvidenceRef::IntentSignature].into(),
+                    },
+                    GraphNode {
+                        target: from.into(),
+                        method: "withdraw".into(),
+                        args: vec![
+                            GraphArg::Literal(Value::Address(resource.address())),
+                            GraphArg::Literal(Value::U128(40)),
+                        ],
+                        evidence: [EvidenceRef::Node(0)].into(),
+                    },
+                    GraphNode {
+                        target: to.into(),
+                        method: "deposit".into(),
+                        args: vec![GraphArg::Edge {
+                            edge: EdgeRef {
+                                producer: 1,
+                                output: 0,
+                            },
+                            constraints: Vec::new(),
+                        }],
+                        evidence: BTreeSet::default(),
+                    },
+                ],
+            },
+            params: Vec::new(),
+        },
+        root_bindings: Vec::new(),
+        subintents: Vec::new(),
+        instances: Vec::new(),
+        resources: Vec::new(),
+    }
+}
+
+/// A movement entry a total frame cannot be held to is refused where
+/// the entry is read, not carried into the leg that would fail.
+///
+/// The mark says a caller may commit without waiting to hear back, so
+/// every verdict the frame carries has to land before any leg does.
+/// Admission answers an entry reading the call's own evidence and
+/// materialization answers one reading committed state; an entry asking
+/// *both* what the mover holds and what the call presented is
+/// answerable in neither, so what would reach it is the declaring
+/// node's own walk — after a caller may already have committed.
+///
+/// The one-sided forms are the contrast: each lands on the same total
+/// deposit and neither is refused.
+#[test]
+fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
+    let entry = |rule: StoredRule| ResourceMeta {
+        namespace: ISSUER,
+        kind: ResourceKind::Fungible,
+        material: vec![b"approved".to_vec()],
+        rules: {
+            let mut rules = ResourceGrants::new();
+            rules.set(GrantedBehaviour::Deposit, sealed(&rule));
+            rules
+        },
+    };
+    let approver = Presented::of_subject(Address::new([0x4A; 31], AddressClass::Principal));
+    let holds = StoredRule::held(BADGE, Holding::Balance);
+    let claims = StoredRule::claim(approver);
+    let mixed = StoredRule::CountOf {
+        count: 2,
+        rules: vec![claims.clone(), holds.clone()],
+    };
+
+    let admitting = |rule: StoredRule| {
+        let record = entry(rule);
+        let chain = world();
+        let mut env = transferred(ALICE, BOB, record.address(&TestHasher));
+        env.resources = vec![record];
+        admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
+    };
+
+    // A holding is materialization's, and a claim is admission's: both
+    // land before any leg, so the deposit's mark stands beside either.
+    // The claim goes unpresented here, which is a refusal about the
+    // evidence rather than about the mark.
+    assert!(admitting(holds).is_ok());
+    assert!(matches!(
+        admitting(claims),
+        Err(AdmissionError::MissingEvidence { node: 2 })
+    ));
+
+    // Both at once is the one no earlier stage can answer.
+    let resource = entry(mixed.clone()).address(&TestHasher);
+    assert_eq!(
+        admitting(mixed),
+        Err(AdmissionError::MovementUnanswerable {
+            node: 2,
+            resource,
+            behaviour: GrantedBehaviour::Deposit,
+        }),
     );
 }

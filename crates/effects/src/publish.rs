@@ -1199,6 +1199,50 @@ pub fn seal_clauses() -> Vec<Clause> {
     ]
 }
 
+/// What a total mark cannot stand beside, read off the declaration.
+fn check_totality(signature: &MethodSignature, flat: &[&Clause]) -> Result<(), DeclarationError> {
+    if !signature.totality.is_total() {
+        return Ok(());
+    }
+    // The mark promises a caller may commit without waiting to hear
+    // back, so every verdict the frame carries has to land before any
+    // leg does. Admission answers a rule reading the node's own evidence
+    // and materialization answers one reading committed state, and both
+    // land before anything commits; a rule reaching a *stored* rule
+    // needs the session, which only the declaring node's own walk holds
+    // — after a caller may already have committed.
+    //
+    // A reservation stays refused for a different reason, and it is the
+    // one the mark is actually about: a reservation is a verdict on the
+    // caller's own request. An injected fence is a verdict on the
+    // target's standing state, which the caller was never promised
+    // anything about.
+    if flat.iter().any(|clause| {
+        matches!(clause, Clause::Requires { rule, .. }
+                if rule.leaves().any(|leaf| matches!(leaf, RuleLeaf::Stored { .. })))
+            || matches!(
+                clause,
+                Clause::Effect {
+                    reach: None,
+                    mode: ModeExpr::Reserve(_),
+                    ..
+                }
+            )
+    }) {
+        return Err(DeclarationError::ConditionalTotality);
+    }
+    // Supply is the settlement model's question rather than placement's.
+    // An issuance entry reads the node's own evidence, so admission
+    // answers it before any leg runs and the mark would survive it — but
+    // what a leg nothing waits on may do to a shard's supply
+    // accumulator is attested with that leg, and the answer is owed
+    // there rather than here.
+    if !(signature.issues.is_empty() && signature.destroys.is_empty()) {
+        return Err(DeclarationError::SupplyTotality);
+    }
+    Ok(())
+}
+
 /// Judge a signature's declared effects against the prefix and the cells
 /// they are the signature's to declare.
 ///
@@ -1234,35 +1278,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     {
         return Err(DeclarationError::GuardedTotality);
     }
-    // The mark promises a caller has nothing to hear back, and a
-    // precondition is a verdict some caller hears: a total method
-    // declares no condition and no reservation.
-    if signature.totality.is_total()
-        && flat.iter().any(|clause| {
-            matches!(clause, Clause::Requires { .. })
-                || matches!(
-                    clause,
-                    Clause::Effect {
-                        reach: None,
-                        mode: ModeExpr::Reserve(_),
-                        ..
-                    }
-                )
-        })
-    {
-        return Err(DeclarationError::ConditionalTotality);
-    }
-    // Supply authority is a verdict some caller hears, on the same terms
-    // a declared condition is: the entry that admits an issuance or a
-    // destruction reads what the call presented, so it is injected onto
-    // the frame as a gate rather than as a feasibility fact. A movement
-    // entry is not — every leaf it holds reads the store — which is why
-    // the mark survives beside one and not beside these.
-    if signature.totality.is_total()
-        && !(signature.issues.is_empty() && signature.destroys.is_empty())
-    {
-        return Err(DeclarationError::SupplyTotality);
-    }
+    check_totality(signature, &flat)?;
     // A denomination is read at the position it indexes, so a list that
     // does not cover the parameters is one whose entries name positions
     // nobody agrees on. An empty list is the method that denominates
@@ -3216,15 +3232,44 @@ mod tests {
     /// than off the code.
     ///
     /// A leg reads the mark and commits without waiting, so what it has
-    /// to exclude is every way the method could still come back with a
-    /// refusal. The artifact scan covers the one that leaves the type
-    /// system — a trap — and this is the one it cannot see: a gate that
-    /// turns the caller away before the body runs.
+    /// to exclude is every verdict that could still land *inside* its
+    /// own execution. The artifact scan covers the one that leaves the
+    /// type system — a trap — and this is the one it cannot see: a
+    /// condition no earlier stage can answer.
+    ///
+    /// Which conditions those are is the placement's answer rather than
+    /// this check's. A claim reads the node's own signed evidence, so
+    /// admission decides it; a presence reads committed state, so
+    /// materialization does; both land before anything commits. A
+    /// *stored* rule needs the session, and only the declaring node's
+    /// own walk holds one.
     #[test]
-    fn a_total_mark_needs_a_body_the_declaration_answers_for() {
+    fn a_total_mark_survives_every_verdict_reached_before_its_leg() {
         let total = |signature: MethodSignature| MethodSignature {
             totality: Totality::Total,
             ..signature
+        };
+        let leaf = || {
+            TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
+                material: vec![],
+            })
+        };
+        let requiring = |rule| {
+            total(MethodSignature {
+                effects: vec![
+                    Clause::Effect {
+                        reach: None,
+                        guard: None,
+                        target: leaf(),
+                        mode: ModeExpr::Read,
+                        denomination: None,
+                    },
+                    Clause::Requires { guard: None, rule },
+                ],
+                ..MethodSignature::default()
+            })
         };
 
         // The shape that admits: public, and answering for itself.
@@ -3233,28 +3278,43 @@ mod tests {
             Ok(())
         );
 
-        // Every condition is a caller this method can turn away, and a
-        // reservation is a race it can lose.
+        // A claim admission decides, and a presence materialization
+        // does: both land before this method's leg runs, so the mark
+        // stands beside either.
         assert_eq!(
-            check_declarations(&total(MethodSignature {
-                effects: vec![Clause::Requires {
-                    guard: None,
-                    rule: RuleExpr::claim(Expr::SelfAddr),
-                }],
-                ..MethodSignature::default()
-            })),
+            check_declarations(&requiring(RuleExpr::claim(Expr::SelfAddr))),
+            Ok(())
+        );
+        assert_eq!(
+            check_declarations(&requiring(RuleExpr::Require(RuleLeaf::Presence {
+                target: Box::new(leaf()),
+                expect: Presence::Present,
+            }))),
+            Ok(())
+        );
+
+        // A stored rule needs the session, so the verdict is this
+        // method's own walk's — reached after a caller may already have
+        // committed on the strength of the mark.
+        assert_eq!(
+            check_declarations(&requiring(RuleExpr::Require(RuleLeaf::Stored {
+                cell: Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
+                    material: vec![],
+                },
+            }))),
             Err(DeclarationError::ConditionalTotality),
         );
+
+        // And a reservation, for the reason the mark is actually about:
+        // it is a verdict on the caller's own request.
         assert_eq!(
             check_declarations(&total(MethodSignature {
                 effects: vec![Clause::Effect {
                     reach: None,
                     guard: None,
-                    target: TargetExpr::Point(Expr::ChildKey {
-                        owner: Box::new(Expr::SelfAddr),
-                        slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
-                        material: vec![],
-                    }),
+                    target: leaf(),
                     mode: ModeExpr::Reserve(Expr::Literal(Value::U128(5))),
                     denomination: Some(Box::new(Expr::Config(0))),
                 }],

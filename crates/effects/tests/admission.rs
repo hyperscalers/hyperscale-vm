@@ -387,13 +387,22 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
             ..MethodSignature::default()
         },
     );
+    // The gate names what the sign-in beside it mints: a badge where
+    // the custodian presents one, and the custodian's own address where
+    // it presents itself. Admission judges a claim rule against the
+    // resolved evidence, so a fixture whose two halves named different
+    // subjects would be testing the mismatch rather than the mint.
+    let gated = match presenting {
+        Presenting::Identity => Expr::SelfAddr,
+        Presenting::Fungible(_) | Presenting::Instance(..) => Expr::Config(0),
+    };
     package.methods.insert(
         "operate".into(),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Requires {
                 guard: None,
-                rule: RuleExpr::claim(Expr::Config(0)),
+                rule: RuleExpr::claim(gated),
             }],
             ..MethodSignature::default()
         },

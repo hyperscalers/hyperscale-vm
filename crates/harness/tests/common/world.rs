@@ -6,10 +6,10 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
-    EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash,
-    PrefixShardResolver, Presented, Records, Routing, RuleBytes, ShardId, ShardResolver, SlotId,
-    StarShape, StoredRule, TestHasher, Value, admit, child_key, classify as classify_star,
-    collection_id, package_slot, route,
+    AdmissionError, EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PACKAGE_SLOT_BASE,
+    PackageHash, PrefixShardResolver, Presented, Records, Routing, RuleBytes, ShardId,
+    ShardResolver, SlotId, StarShape, StoredRule, TestHasher, Value, admit, child_key,
+    classify as classify_star, collection_id, package_slot, route,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, shares};
 use hyperscale_vm_harness::driver::{Lanes, test_hash};
@@ -26,7 +26,7 @@ use hyperscale_vm_types::{
     TxHash,
 };
 use wasmtime::Result;
-use wasmtime::error::{Context, ensure};
+use wasmtime::error::{Error as WasmtimeError, ensure};
 
 pub const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 
@@ -399,6 +399,15 @@ pub enum TxResult {
     Declined(u32),
     /// The kernel refused, before or around the call.
     Refused(Outcome),
+    /// Admission never let it in, naming the node it refused at.
+    ///
+    /// Its own variant rather than a refusal outcome, because the two
+    /// are not the same event: a refused transaction is included and
+    /// records a receipt, and an inadmissible one is never included at
+    /// all. A gate whose rule reads the node's own presented evidence is
+    /// answered here — before anything routes, and before any leg could
+    /// have committed on the strength of it.
+    Inadmissible(u32),
 }
 
 /// Whose signature a corpus graph rides.
@@ -455,7 +464,17 @@ pub fn execute_manifest(
         signer,
         clock_ms,
     } = under;
-    let admitted = admit(graph, signer, world, &TestHasher).context("admission")?;
+    let admitted = match admit(graph, signer, world, &TestHasher) {
+        Ok(admitted) => admitted,
+        // A verdict on what a node presented is admission's, and a lane
+        // reports it rather than failing: nothing about it is a defect
+        // in the driver, and it is exactly the refusal a wallet hears
+        // before it signs.
+        Err(AdmissionError::EvidenceUnsatisfied { node }) => {
+            return Ok((TxResult::Inadmissible(node), store));
+        }
+        Err(source) => return Err(WasmtimeError::new(source).context("admission")),
+    };
     let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming

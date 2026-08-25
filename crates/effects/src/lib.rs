@@ -79,7 +79,7 @@ pub use hyperscale_vm_types::{
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};
-pub use manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
+pub use manifest::{Bounds, Judged, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     DeclaredPackages, LeafForm, MAX_SHAPE_DEPTH, MetadataCache, PACKAGE_SLOT, PackageHash,
     PackageMetadata, PublishRefusal, SlotKind, SlotShape, package_hash, package_key,

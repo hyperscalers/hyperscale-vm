@@ -267,16 +267,21 @@ fn the_staking_wrappers_match_their_signatures() {
         pool.unstake(b, returned)?;
 
         // The operator surface, which supplies no funds and produces
-        // none. Registration creates seat 7; the seat operated on is a
+        // none. Its gate names the pool's own owner badge rather than a
+        // signer, so the proof it takes is the one presenting that badge
+        // — a sign-in carries Alice's identity and opens nothing here.
+        // Registration creates seat 7; the seat operated on is a
         // different one, since a seat created and deactivated in a single
         // transaction would require its leaf absent and present at once.
-        pool.register_validator(b, alice, 7, vec![0xAA; 48], vec![0xBB; 96])?;
-        pool.deactivate_validator(b, alice, 8)?;
-        pool.unjail(b, alice, 8)?;
-        pool.cast_param_vote(b, alice, 9_000, 30, 12)?;
-        pool.clear_param_vote(b, alice)
+        let operator =
+            account::present_instance(b, ALICE, pool.issued_owner_badge(&TestHasher), 0)?;
+        pool.register_validator(b, operator, 7, vec![0xAA; 48], vec![0xBB; 96])?;
+        pool.deactivate_validator(b, operator, 8)?;
+        pool.unjail(b, operator, 8)?;
+        pool.cast_param_vote(b, operator, 9_000, 30, 12)?;
+        pool.clear_param_vote(b, operator)
     });
-    assert_eq!(graph.nodes.len(), 11);
+    assert_eq!(graph.nodes.len(), 12);
 }
 
 /// The resource a pool issues, which its `stake` output derives from the
@@ -382,7 +387,11 @@ fn the_custody_wrappers_match_their_signatures() {
         account::deposit_nf(b, ALICE, minted)?;
         let badge = account::present_badge(b, ALICE, BASE)?;
         nf::operate(b, gated, badge)?;
-        let moved = account::withdraw_nf(b, badge, resource, &[7])?;
+        // Alice's own gate takes Alice's own proof: the badge proof
+        // carries the badge, and a claim on it opens what names the
+        // badge and nothing else.
+        let alice = account::authorize(b, ALICE)?;
+        let moved = account::withdraw_nf(b, alice, resource, &[7])?;
         account::deposit_nf(b, BOB, moved)
     });
 }

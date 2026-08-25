@@ -131,17 +131,71 @@ impl JudgedLeaf {
     }
 }
 
-impl Rule<JudgedLeaf> {
-    /// Whether every leaf reads the store alone, which is what decides
-    /// where this rule is judged.
+/// Where a rule is judged: the earliest stage that can answer every leaf
+/// it holds.
+///
+/// Three stages know three things, and the leaves say which is enough.
+/// Nothing declares a placement, and no reviewer has to check that a
+/// declaration stated one honestly.
+///
+/// The order matters for one property beyond cost. **Admission and
+/// materialization both land before any leg commits**, so a verdict
+/// reached there aborts the whole transaction and no caller has
+/// committed on the strength of it. A verdict reached in the walk lands
+/// inside the declaring node's own leg, which a caller may already have
+/// committed without waiting for — which is what a
+/// [`Total`](crate::signature::Totality::Total) frame may not carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Judged {
+    /// From the node's own presented evidence, which is signed content
+    /// and needs no state at all.
+    AtAdmission,
+    /// From committed state, by the shard holding the leaf, before any
+    /// leg runs.
+    AtMaterialization,
+    /// In the walk of the declaring node's own leg — the only stage
+    /// holding the evidence and the session together, and so the only
+    /// one a stored rule can be read in.
+    InTheLeg,
+}
+
+impl Judged {
+    /// Whether the verdict lands before any leg commits.
     ///
-    /// A rule answerable from committed state is judged at
-    /// materialization, before any body runs, so it states a feasibility
-    /// fact and turns no caller away. One reading evidence is judged at
-    /// the node's own call. Nothing declares which it is.
+    /// What separates a feasibility fact from a verdict a caller could
+    /// already have committed past.
     #[must_use]
-    pub fn reads_state_only(&self) -> bool {
-        self.leaves().all(JudgedLeaf::reads_state_only)
+    pub const fn before_any_leg(self) -> bool {
+        !matches!(self, Self::InTheLeg)
+    }
+}
+
+impl Rule<JudgedLeaf> {
+    /// Where this rule is judged, read off its leaves.
+    ///
+    /// A rule reaching a stored rule needs the session; one mixing
+    /// evidence with state needs both, and no single earlier stage holds
+    /// them. Everything else is answerable at one stage alone.
+    ///
+    /// A rule with no leaves is the algebra's own constant — satisfied
+    /// by anyone or by no one — and admission decides those as cheaply
+    /// as anything else does.
+    #[must_use]
+    pub fn judged(&self) -> Judged {
+        let mut state = false;
+        let mut evidence = false;
+        for leaf in self.leaves() {
+            match leaf {
+                JudgedLeaf::Stored { .. } => return Judged::InTheLeg,
+                JudgedLeaf::Presence { .. } => state = true,
+                JudgedLeaf::Claim(_) => evidence = true,
+            }
+        }
+        match (state, evidence) {
+            (true, true) => Judged::InTheLeg,
+            (true, false) => Judged::AtMaterialization,
+            (false, _) => Judged::AtAdmission,
+        }
     }
 }
 
@@ -160,3 +214,87 @@ pub struct Manifest {
 /// covering constraints, never the lowered manifest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ManifestHash(pub Hash32);
+
+#[cfg(test)]
+mod tests {
+    use hyperscale_vm_types::{
+        Address, AddressClass, EffectTarget, LocalKey, Presence, SubstateKey,
+    };
+
+    use super::{Judged, JudgedLeaf, Rule};
+    use crate::presented::Presented;
+
+    fn cell() -> SubstateKey {
+        SubstateKey {
+            owner: Address::new([3; 31], AddressClass::Component),
+            local: LocalKey([7; 16]),
+        }
+    }
+
+    fn claim() -> Rule<JudgedLeaf> {
+        Rule::Require(JudgedLeaf::Claim(Presented::of_subject(Address::new(
+            [9; 31],
+            AddressClass::Principal,
+        ))))
+    }
+
+    fn presence() -> Rule<JudgedLeaf> {
+        Rule::Require(JudgedLeaf::Presence {
+            target: EffectTarget::Point(cell()),
+            expect: Presence::Present,
+        })
+    }
+
+    fn stored() -> Rule<JudgedLeaf> {
+        Rule::Require(JudgedLeaf::Stored { cell: cell() })
+    }
+
+    /// Where a rule is judged is the earliest stage that can answer
+    /// every leaf it holds, and nothing declares it.
+    ///
+    /// The three stages know three things. Admission holds the node's
+    /// own presented evidence, which is signed content and needs no
+    /// state. Materialization holds committed state. Only the walk holds
+    /// both, which is why a stored rule and a mixture land there — and
+    /// why they are the two a frame whose caller commits without waiting
+    /// may not carry.
+    #[test]
+    fn a_rule_is_judged_at_the_earliest_stage_that_can_answer_it() {
+        let two = |left: Rule<JudgedLeaf>, right| Rule::CountOf {
+            count: 1,
+            rules: vec![left, right],
+        };
+
+        assert_eq!(claim().judged(), Judged::AtAdmission);
+        assert_eq!(presence().judged(), Judged::AtMaterialization);
+        assert_eq!(stored().judged(), Judged::InTheLeg);
+
+        // Nesting changes nothing: the leaves decide, not the tree.
+        assert_eq!(two(claim(), claim()).judged(), Judged::AtAdmission);
+        assert_eq!(
+            two(presence(), presence()).judged(),
+            Judged::AtMaterialization
+        );
+
+        // A mixture asks about the call and about the state at once, and
+        // no earlier stage holds both.
+        assert_eq!(two(claim(), presence()).judged(), Judged::InTheLeg);
+        assert_eq!(two(claim(), stored()).judged(), Judged::InTheLeg);
+        assert_eq!(two(presence(), stored()).judged(), Judged::InTheLeg);
+
+        // The algebra's constants hold no leaves at all, and admission
+        // decides those as cheaply as anything else.
+        for count in [0, 1] {
+            let constant: Rule<JudgedLeaf> = Rule::CountOf {
+                count,
+                rules: Vec::new(),
+            };
+            assert_eq!(constant.judged(), Judged::AtAdmission);
+        }
+
+        // And only the first two land before any leg commits.
+        assert!(Judged::AtAdmission.before_any_leg());
+        assert!(Judged::AtMaterialization.before_any_leg());
+        assert!(!Judged::InTheLeg.before_any_leg());
+    }
+}

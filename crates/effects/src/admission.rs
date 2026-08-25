@@ -31,7 +31,7 @@ use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, ResolveError};
 use crate::invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall};
-use crate::manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
+use crate::manifest::{Bounds, Judged, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{PackageHash, PackageMetadata};
 use crate::presented::Presented;
 use crate::publish::{CheckedSignature, seals};
@@ -253,6 +253,37 @@ pub enum AdmissionError {
     /// A guarded method named with no evidence presented.
     #[error("node {node} calls a guarded method and presents no evidence")]
     MissingEvidence {
+        /// The offending node.
+        node: u32,
+    },
+    /// A movement entry a total frame cannot be held to.
+    ///
+    /// The mark says a caller may commit without waiting to hear back,
+    /// so every verdict the frame carries has to land before any leg
+    /// does. An entry asking both what the mover holds and what the call
+    /// presented is answerable in neither earlier stage alone, so it is
+    /// the declaring node's own walk that would reach it — after a
+    /// caller may already have committed.
+    #[error(
+        "node {node} is total and moves {resource:?}, whose {behaviour:?} entry asks both what \
+         the mover holds and what the call presented"
+    )]
+    MovementUnanswerable {
+        /// The offending node.
+        node: u32,
+        /// The resource whose entry it is.
+        resource: ResourceAddr,
+        /// The behaviour the entry governs.
+        behaviour: GrantedBehaviour,
+    },
+    /// Evidence that does not satisfy what the node must present.
+    ///
+    /// Reached here rather than in the walk for every rule this stage
+    /// can decide — a claim leaf reads the node's own signed evidence
+    /// and nothing else — so a wallet hears it before signing and a
+    /// total leg never carries the verdict into its own execution.
+    #[error("node {node} presents evidence that does not satisfy what it must")]
+    EvidenceUnsatisfied {
         /// The offending node.
         node: u32,
     },
@@ -1107,7 +1138,13 @@ impl Lower<'_> {
         // reaching access earns none of the latter and a reader should
         // meet the authority that admitted it first.
         inject_reach_rules(self.grants, &mut frame, node_index)?;
-        inject_movement_rules(self.hasher, self.grants, &mut frame, node_index)?;
+        inject_movement_rules(
+            self.hasher,
+            self.grants,
+            &mut frame,
+            signature.totality.is_total(),
+            node_index,
+        )?;
         // Issuance is an actor question like any other, so its entry
         // joins the frame's conditions and computed placement routes it
         // to the call. Before evidence, because what a caller must
@@ -1150,13 +1187,7 @@ impl Lower<'_> {
         // the presence a write requires; one whose leaves reach the
         // call's evidence rides the node's call.
         let mut requires = Vec::new();
-        for rule in &frame.conditions {
-            if rule.reads_state_only() {
-                self.declaration.conditions.push(rule.clone());
-            } else {
-                requires.push(rule.clone());
-            }
-        }
+        self.split_conditions(&frame, &mut requires);
         if let Some(condition) = fence {
             self.declaration.conditions.push(condition);
         }
@@ -1431,6 +1462,22 @@ impl Lower<'_> {
         Ok((bound, inputs))
     }
 
+    /// Split a frame's conditions by where each is judged.
+    ///
+    /// One answerable from committed state alone joins the union
+    /// declaration and is judged at materialization, beside the presence
+    /// a write requires; every other rides the node's call, where the
+    /// evidence is. Nothing declares which.
+    fn split_conditions(&mut self, frame: &Declaration, requires: &mut Vec<Rule<JudgedLeaf>>) {
+        for rule in &frame.conditions {
+            if rule.judged() == Judged::AtMaterialization {
+                self.declaration.conditions.push(rule.clone());
+            } else {
+                requires.push(rule.clone());
+            }
+        }
+    }
+
     /// Resolve the node's presented evidence against its own intent.
     ///
     /// A proof is scoped to the intent that produced it — a signature
@@ -1452,7 +1499,7 @@ impl Lower<'_> {
         let required: Vec<&Rule<JudgedLeaf>> = frame
             .conditions
             .iter()
-            .filter(|rule| !rule.reads_state_only())
+            .filter(|rule| rule.judged() != Judged::AtMaterialization)
             .collect();
         // Evidence presence is a property of what this call requires: a
         // guarded or authorizing call presents something, a public one
@@ -1512,6 +1559,28 @@ impl Lower<'_> {
                         })?;
                     evidence.extend_from_slice(claims);
                 }
+            }
+        }
+        // What this node presented is signed content and a claim leaf
+        // reads nothing else, so a rule made of them alone is decided
+        // here — before anything routes, and before any leg could have
+        // committed on the strength of it. The walk judges it again over
+        // the same set, where it cannot fail: that redundancy is what
+        // lets a total frame carry one at all.
+        for rule in required
+            .iter()
+            .filter(|rule| rule.judged() == Judged::AtAdmission)
+        {
+            let judged = rule.map_leaves(&mut |leaf| match leaf {
+                JudgedLeaf::Claim(claim) => Ok(SealedLeaf::Claim(*claim)),
+                // A rule this stage judges reads claims alone, which is
+                // what put it here.
+                JudgedLeaf::Presence { .. } | JudgedLeaf::Stored { .. } => {
+                    Err(AdmissionError::EvidenceUnsatisfied { node: node_index })
+                }
+            })?;
+            if !judged.satisfied_by(&evidence) {
+                return Err(AdmissionError::EvidenceUnsatisfied { node: node_index });
             }
         }
         Ok(evidence)
@@ -1909,6 +1978,7 @@ fn inject_movement_rules(
     hasher: &dyn Hasher,
     grants: &PresentedGrants,
     frame: &mut Declaration,
+    total: bool,
     node_index: u32,
 ) -> Result<(), AdmissionError> {
     // Which requirements this frame earns, before any is built: an access
@@ -2014,23 +2084,34 @@ fn inject_movement_rules(
         // is known: every holding it names resolves to a leaf under the
         // access's own owner, and the read is appended so the leaf is
         // provisioned wherever the call runs.
-        let resolved = rule.map_leaves(&mut |leaf| match leaf {
-            SealedLeaf::Held { badge, holding } => {
-                let target = holding_target(hasher, owner, *badge, *holding);
-                declare_read(frame, target);
-                Ok(JudgedLeaf::Presence {
-                    target,
-                    expect: Presence::Present,
-                })
+        let resolved = rule.map_leaves(&mut |leaf| -> Result<_, AdmissionError> {
+            match leaf {
+                SealedLeaf::Held { badge, holding } => {
+                    let target = holding_target(hasher, owner, *badge, *holding);
+                    declare_read(frame, target);
+                    Ok(JudgedLeaf::Presence {
+                        target,
+                        expect: Presence::Present,
+                    })
+                }
+                // A movement entry may also ask whether this transaction was
+                // approved, which is a question about the call rather than
+                // about the mover — so the claim rides the node's evidence
+                // like any other.
+                SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
             }
-            // A movement entry's rule reads holdings alone, refused
-            // at the seal otherwise, so nothing else can arrive.
-            SealedLeaf::Claim(_) => Err(AdmissionError::MovementRuleMalformed {
+        })?;
+        // A rule mixing the two asks about the mover and about the call
+        // at once, and no stage before the leg holds both — so it is a
+        // verdict the declaring node's own walk reaches, which a frame
+        // whose caller commits without waiting may not carry.
+        if total && !resolved.judged().before_any_leg() {
+            return Err(AdmissionError::MovementUnanswerable {
                 node: node_index,
                 resource,
                 behaviour,
-            }),
-        })?;
+            });
+        }
         // Two entries can seal one rule — a resource putting both
         // directions on one register does — and a rule asked twice is
         // one question wherever the duplicate came from.

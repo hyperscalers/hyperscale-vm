@@ -223,9 +223,7 @@ fn a_proof_opens_only_the_account_that_minted_it() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 1 },
-        })],
+        vec![TxResult::Inadmissible(1)],
         "a proof is its own account's identity and no other's"
     );
 }
@@ -1145,9 +1143,7 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
     );
     assert_eq!(
         results[1],
-        TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 1 },
-        }),
+        TxResult::Inadmissible(1),
         "a sibling instance of the same resource is a different authority"
     );
 
@@ -1264,18 +1260,8 @@ fn a_declared_threshold_admits_exactly_its_quorum() {
             (&operate(&[admins[0], outsider]), TxHash(Hash32([0x95; 32]))),
         ],
     );
-    assert_eq!(
-        results[0],
-        TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 1 },
-        })
-    );
-    assert_eq!(
-        results[1],
-        TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 2 },
-        })
-    );
+    assert_eq!(results[0], TxResult::Inadmissible(1));
+    assert_eq!(results[1], TxResult::Inadmissible(2));
 }
 
 #[test]
