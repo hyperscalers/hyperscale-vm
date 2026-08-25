@@ -28,9 +28,10 @@ fn the_lowering_refuses_what_it_cannot_see_into() {
     refuse.compile_fail("tests/refusals/untyped_credit.rs");
 }
 
-/// Not a lowering refusal but a type: a target that names no leaf does
-/// not offer a requirement about one, so the hand-written declaration
-/// path meets the same rule the macro path meets by construction.
+/// Not a lowering refusal but a type: an interval names no leaf a write
+/// lands on, so it offers no requirement about one, and the hand-written
+/// declaration path meets the same rule the macro path meets by
+/// construction.
 #[test]
 fn the_tracer_offers_a_presence_only_where_a_leaf_is_named() {
     let refuse = TestCases::new();
@@ -116,7 +117,7 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/two_initial_supplies.rs");
     refuse.compile_fail("tests/refusals/renamed_onto_the_seal.rs");
     refuse.compile_fail("tests/refusals/grant_chains_two_badges.rs");
-    refuse.compile_fail("tests/refusals/credential_names_instances.rs");
+    refuse.compile_fail("tests/refusals/instance_of_a_balance.rs");
     refuse.compile_fail("tests/refusals/supply_of_a_schema.rs");
     refuse.compile_fail("tests/refusals/bare_instance_read.rs");
     refuse.compile_fail("tests/refusals/fungible_instance_read.rs");

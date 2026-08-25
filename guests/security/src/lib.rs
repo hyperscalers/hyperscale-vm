@@ -37,12 +37,14 @@ pub mod security {
 
     /// The register entry: one fungible unit per registered holder.
     ///
-    /// Fungible because a credential is a presence question, and only a
-    /// fungible holding is a single leaf — a non-fungible one is entries
-    /// at instance ids, and "holds any of them" is an interval no
-    /// movement may be priced against. Where terms have to travel with a
-    /// holder, they belong on a data instance beside this, which nothing
-    /// on the transfer path decodes.
+    /// Fungible because a credential is a presence question and a
+    /// balance is one leaf. A non-fungible register is spellable in the
+    /// same words — the holdings interval answers whether it holds
+    /// anything — and costs the whole id space in exclusion where this
+    /// costs one cell, so the kind is the issuer's price for telling
+    /// entries apart. Where terms have to travel with a holder, they
+    /// belong on a data instance beside this, which nothing on the
+    /// transfer path decodes.
     ///
     /// Soulbound: `withdraw = nobody` refuses every debit of it at
     /// admission, so it leaves a holder only when the registrar takes it

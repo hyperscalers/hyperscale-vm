@@ -131,11 +131,6 @@ pub enum SessionTrap {
     /// unreachable, kept honest.
     #[error("no reservation held")]
     ReservationMissing,
-    /// A presence asked of an interval, which names no leaf for one to
-    /// be about. Refused at publish; refused again here, because
-    /// metadata can be authored rather than derived.
-    #[error("an interval names no leaf for a presence to be about")]
-    PresenceOnInterval,
     /// A second take of one reservation. The grant is a quantity, and it
     /// leaves the kernel once.
     #[error("reservation already taken")]
@@ -222,7 +217,6 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::UndeclaredBranch => Self::UndeclaredBranch,
             SessionTrap::IndexOutOfBounds { .. } => Self::EntryIndexOutOfBounds,
             SessionTrap::OrderOutsideInterval => Self::OrderOutsideInterval,
-            SessionTrap::PresenceOnInterval => Self::EffectUnsupported,
             SessionTrap::WriteCapExceeded { .. } => Self::IntervalWriteCapExceeded,
             SessionTrap::ReservationMissing => Self::ReservationMissing,
             SessionTrap::ReservationTaken => Self::ReservationAlreadyTaken,
@@ -516,7 +510,7 @@ impl KernelSession {
         Ok(self.store.read(key)?.unwrap_or_default())
     }
 
-    /// Whether the leaf a declared read names is there.
+    /// Whether the target a declared read names holds anything.
     ///
     /// Presence rather than contents, because that is the whole of what
     /// a credential asks — and for a value cell the two agree, since a
@@ -526,13 +520,9 @@ impl KernelSession {
     ///
     /// # Errors
     ///
-    /// Any [`SessionTrap`]. An interval names no leaf for a presence to
-    /// be about, and is refused here as it is at publish.
+    /// Any [`SessionTrap`] the store raises.
     pub fn declared_present(&mut self, target: EffectTarget) -> Result<bool, SessionTrap> {
-        materialize::leaf_present(&mut self.store, target).map_err(|error| match error {
-            materialize::LeafReadError::Store(error) => SessionTrap::Store(error),
-            materialize::LeafReadError::Interval => SessionTrap::PresenceOnInterval,
-        })
+        Ok(materialize::occupied(&mut self.store, target)?)
     }
 
     /// A fresh read through a read capability.

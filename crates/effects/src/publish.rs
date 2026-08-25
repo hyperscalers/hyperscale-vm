@@ -374,20 +374,6 @@ pub enum DeclarationError {
     /// published.
     #[error("two write clauses on one target require opposite presences")]
     PresenceConflict,
-    /// A presence requirement on a target that names no single leaf.
-    ///
-    /// `Absent` and `Present` are what a write requires of *the leaf it
-    /// lands on*, and an interval has none: it stays valid whatever
-    /// entries enter or leave it, which is the property that makes it
-    /// declarable ahead of execution at all. A point and a collection
-    /// entry each name one leaf and carry the requirement; a range
-    /// carries only the indifferent one.
-    #[error("effect clause {clause} requires a presence of an interval, which names no leaf")]
-    PresenceOnInterval {
-        /// The clause's position in a preorder walk of the signature's
-        /// effects.
-        clause: u32,
-    },
     /// A condition naming a target no access declares under a mode that
     /// can carry the judgment.
     ///
@@ -1291,12 +1277,6 @@ fn check_conditions(signature: &MethodSignature, flat: &[&Clause]) -> Result<(),
                     if *expect == Presence::Either {
                         return Err(DeclarationError::VacuousCondition { clause });
                     }
-                    // A presence is about the leaf it names, and an
-                    // interval has none — the same refusal a
-                    // presence-requiring write meets.
-                    if matches!(**target, TargetExpr::Range { .. }) {
-                        return Err(DeclarationError::PresenceOnInterval { clause });
-                    }
                     if !declares(target, under, &coherent) {
                         return Err(DeclarationError::ConditionUndeclared { clause });
                     }
@@ -1907,7 +1887,15 @@ fn check_grants_bounds(grants: &GrantsExpr) -> Result<(), SignatureBoundsError> 
         {
             return Err(SignatureBoundsError::UnadmittedGrant);
         }
-        if !rule.within_caps(0) {
+        // A movement entry naming a badge through configuration seals as
+        // both shapes a holding takes, because a configuration field
+        // carries no kind — so the rule the address folds sits one level
+        // below the rule the author wrote, and is held to the caps there.
+        let widens = !behaviour.asks_about_the_actor()
+            && rule
+                .leaves()
+                .any(|leaf| matches!(leaf, GrantClaim::Config(_)));
+        if !rule.within_caps(usize::from(widens)) {
             return Err(SignatureBoundsError::RuleCaps);
         }
         rule.leaves().try_for_each(check_grant_leaf)
@@ -2565,8 +2553,8 @@ mod tests {
         );
     }
 
-    /// A condition that requires nothing, names an interval, or names
-    /// authority its own caller supplies is refused on its own terms.
+    /// A condition that requires nothing, or names authority its own
+    /// caller supplies, is refused on its own terms.
     #[test]
     fn a_degenerate_or_caller_named_condition_is_refused() {
         let cell = || {
@@ -2599,31 +2587,13 @@ mod tests {
             })
         };
 
-        // A condition requiring nothing, and one about an interval,
-        // which names no leaf.
+        // A condition requiring nothing.
         assert_eq!(
             declared(vec![
                 access(None, ModeExpr::Read),
                 requires(None, holds(Presence::Either)),
             ]),
             Err(DeclarationError::VacuousCondition { clause: 1 })
-        );
-        assert_eq!(
-            declared(vec![requires(
-                None,
-                RuleExpr::Require(RuleLeaf::Presence {
-                    target: Box::new(TargetExpr::Range {
-                        owner: Expr::SelfAddr,
-                        collection: SlotId(PACKAGE_SLOT_BASE),
-                        material: vec![],
-                        lo: Expr::Literal(Value::U128(0)),
-                        hi: Expr::Literal(Value::U128(10)),
-                        cap: Expr::Literal(Value::U64(4)),
-                    }),
-                    expect: Presence::Present,
-                })
-            )]),
-            Err(DeclarationError::PresenceOnInterval { clause: 0 })
         );
 
         // Authority the caller names admits everyone — at a claim leaf
@@ -2962,13 +2932,12 @@ mod tests {
         );
     }
 
-    /// A presence requirement is about the leaf a write lands on, so the
-    /// targets that name one carry it and the interval does not. Refused
-    /// at publish, where an author hears about it — and again at
-    /// materialization, which honours the requirement rather than
-    /// reading past it.
+    /// A presence is about whether the state a target names holds
+    /// anything, and each of the three shapes answers that: a cell is
+    /// there or is not, an entry is there or is not, and an interval
+    /// holds an entry or holds none.
     #[test]
-    fn a_presence_requirement_needs_a_target_that_names_a_leaf() {
+    fn a_presence_is_asked_of_every_shape_a_target_names() {
         let declared = |target: TargetExpr, requires| {
             check_declarations(&MethodSignature {
                 effects: vec![
@@ -3010,15 +2979,9 @@ mod tests {
         };
 
         for requires in [Presence::Absent, Presence::Present] {
-            // A cell and one collection entry each name exactly one leaf.
             assert_eq!(declared(point.clone(), requires), Ok(()), "{requires:?}");
             assert_eq!(declared(entry.clone(), requires), Ok(()), "{requires:?}");
-            // An interval names none.
-            assert_eq!(
-                declared(range.clone(), requires),
-                Err(DeclarationError::PresenceOnInterval { clause: 1 }),
-                "{requires:?}"
-            );
+            assert_eq!(declared(range.clone(), requires), Ok(()), "{requires:?}");
         }
     }
 

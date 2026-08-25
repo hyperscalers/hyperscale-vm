@@ -9,8 +9,9 @@
 //! the grant that mints it all read one registration.
 
 use hyperscale_vm_effects::{
-    Clause, Expr, GrantClaim, GrantedBehaviour, Presented, ResourceGrants, ResourceKind, Rule,
-    RuleBytes, RuleLeaf, StoredRule, TestHasher, Value, granting_issued_resource, issued_resource,
+    Clause, Expr, GrantClaim, GrantedBehaviour, Holding, Presented, ResourceGrants, ResourceKind,
+    Rule, RuleBytes, RuleLeaf, StoredRule, TestHasher, Value, granting_issued_resource,
+    issued_resource,
 };
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::{Address, Chain, PrincipalAddr, account, package, principal};
@@ -48,12 +49,14 @@ mod mill {
 /// `issued(Badge)` names any instance of a non-fungible badge, and it
 /// means that wherever it is written.
 ///
-/// The same words reach two sites — a method's own gate and a rule its
-/// address seals — and for a while they meant three different things
-/// there: any instance in one, a compile error in the other, and a third
-/// error inside a credential spelling that no longer exists. One
-/// derivation is what keeps them from drifting again, so the case
-/// compares the two rather than restating either.
+/// The same words reach three sites — a method's own gate, an actor rule
+/// its address seals, and a movement rule its address seals — and for a
+/// while they meant three different things there: any instance at the
+/// gate, a compile error at one grant, and a rule nobody could satisfy
+/// at the other, since a movement entry asked the balance cell a
+/// non-fungible badge never occupies. One derivation is what keeps them
+/// from drifting again, so the case compares them rather than restating
+/// any.
 #[blueprint]
 mod hall {
     use hyperscale_vm_sdk::state::{Bucket, Quantity};
@@ -61,9 +64,11 @@ mod hall {
     #[resource(non_fungible, initial(0))]
     struct Warden;
 
-    /// Recallable by whoever holds any warden badge — the same reading
-    /// the gate below is written with.
-    #[resource(grants(recall = issued(Warden)))]
+    /// Recallable by whoever holds any warden badge, and movable by one
+    /// — the same reading the gate below is written with, on both sides
+    /// of the table: `recall` asks what the caller presented, `withdraw`
+    /// asks what the mover holds.
+    #[resource(grants(recall = issued(Warden), withdraw = issued(Warden)))]
     struct Seat;
 
     #[state]
@@ -79,7 +84,7 @@ mod hall {
 }
 
 #[test]
-fn a_badge_named_without_an_instance_means_any_of_it_at_either_site() {
+fn a_badge_named_without_an_instance_means_any_of_it_at_every_site() {
     let metadata = hall::blueprint().metadata();
     let issue = &metadata.methods["issue"];
 
@@ -97,32 +102,73 @@ fn a_badge_named_without_an_instance_means_any_of_it_at_either_site() {
         })
         .expect("the gate names a badge this package issues");
 
-    // And what the sealed rule names, in the derivation's.
-    let sealed = issue
+    // And what each sealed rule names, in the derivation's.
+    let grants = &issue
         .issues
         .as_ref()
         .expect("the method issues the seat")
-        .grants
-        .iter()
-        .find_map(|(behaviour, rule)| match rule {
-            Rule::Require(GrantClaim::SelfBadge { mark, kind, .. })
-                if behaviour == GrantedBehaviour::Recall =>
-            {
-                Some((*kind, mark.clone()))
-            }
-            _ => None,
-        })
-        .expect("the seat's recall rule names a badge this package issues");
-
+        .grants;
+    let named = |wanted| {
+        grants
+            .iter()
+            .find_map(|(behaviour, rule)| match rule {
+                Rule::Require(GrantClaim::SelfBadge { mark, kind, .. }) if behaviour == wanted => {
+                    Some((*kind, mark.clone()))
+                }
+                _ => None,
+            })
+            .expect("the seat's rule names a badge this package issues")
+    };
+    let sealed = named(GrantedBehaviour::Recall);
+    assert_eq!(
+        sealed,
+        named(GrantedBehaviour::Withdraw),
+        "one spelling, one badge, at both grant sites",
+    );
     assert_eq!(
         gate,
-        (sealed.0, vec![Expr::Literal(Value::Bytes(sealed.1))],),
-        "one spelling, one badge, at both sites",
+        (
+            sealed.0,
+            vec![Expr::Literal(Value::Bytes(sealed.1.clone()))],
+        ),
+        "and the gate names the same one",
     );
     assert_eq!(
         gate.0,
         ResourceKind::NonFungible,
         "and it is the non-fungible one"
+    );
+
+    // What those two sites *ask*, resolved against an issuer. An actor
+    // question asks what the caller presented; a holder question asks
+    // the instances the holdings are entries of — never the balance cell
+    // a non-fungible badge is never keyed into, which is the rule nobody
+    // could have satisfied.
+    let issuer = Address::from(principal(0x7A));
+    let resolved = grants
+        .resolve(&TestHasher, issuer, &[])
+        .expect("the seat's rules resolve against its issuer");
+    let badge = granting_issued_resource(
+        &TestHasher,
+        issuer,
+        ResourceKind::NonFungible,
+        &ResourceGrants::new(),
+        &sealed.1,
+    );
+    let asks = |behaviour| {
+        resolved
+            .get(behaviour)
+            .expect("the entry resolved")
+            .decode()
+            .expect("a sealed rule decodes")
+    };
+    assert_eq!(
+        asks(GrantedBehaviour::Recall),
+        StoredRule::claim(Presented::of_subject(badge)),
+    );
+    assert_eq!(
+        asks(GrantedBehaviour::Withdraw),
+        StoredRule::held(badge, Holding::AnyInstance),
     );
 }
 

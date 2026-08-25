@@ -15,7 +15,7 @@ use crate::auth::RuleBytes;
 use crate::dsl::{Expr, TargetExpr};
 use crate::hash::{Hash32, Hasher};
 use crate::presented::Presented;
-use crate::rule::{GrantClaim, GrantRuleExpr, SealedLeaf, StoredRule, always, never};
+use crate::rule::{GrantClaim, GrantRuleExpr, Holding, SealedLeaf, StoredRule, always, never};
 use crate::types::{
     Value, child_key, collection_id, granting_resource_address, native_address, resource_address,
 };
@@ -461,9 +461,10 @@ pub enum GrantsResolveError {
     /// A resolved rule past the caps a stored rule is held to.
     #[error("a resolved granted rule is past the caps a stored rule is held to")]
     PastTheCaps,
-    /// A credential naming something that is not a fungible badge.
-    #[error("a granted credential names something that is not a fungible badge")]
-    NotAFungibleBadge,
+    /// A credential naming something no holding is keyed by: an
+    /// identity, or a configuration field holding one.
+    #[error("a granted credential names something that is not a badge")]
+    NotABadge,
     /// A badge whose own rules name a badge: the chain one address folds
     /// is one link long.
     #[error("a granted rule names a badge whose own rules name a badge")]
@@ -494,19 +495,11 @@ fn resolve_rule(
 ) -> Result<StoredRule, GrantsResolveError> {
     Ok(match rule {
         GrantRuleExpr::Require(claim) => {
-            let presented = resolve_claim(hasher, instance, config, claim, link)?;
-            StoredRule::Require(if behaviour.asks_about_the_actor() {
-                SealedLeaf::Claim(presented)
+            if behaviour.asks_about_the_actor() {
+                StoredRule::claim(resolve_claim(hasher, instance, config, claim, link)?)
             } else {
-                // A holding is one point cell keyed by what it holds, and
-                // only a fungible holding is one cell: a non-fungible one
-                // is entries at ids, whose collection-wide presence is an
-                // interval nothing on the transfer path may walk.
-                let Some(badge) = presented.badge().filter(|_| presented.instance.is_none()) else {
-                    return Err(GrantsResolveError::NotAFungibleBadge);
-                };
-                SealedLeaf::Held(badge)
-            })
+                resolve_holding(hasher, instance, config, claim, link)?
+            }
         }
         GrantRuleExpr::CountOf { count, rules } => StoredRule::CountOf {
             count: *count,
@@ -525,37 +518,121 @@ fn resolve_claim(
     claim: &GrantClaim,
     link: usize,
 ) -> Result<Presented, GrantsResolveError> {
-    // A badge named inside a granted rule derives through its own rules,
-    // because an address is the hash of them — the granting-nothing form
-    // would name an address nothing is minted at the moment the badge
-    // grants anything, which a soulbound credential always does. The
-    // chain is one link long, so what a badge's rules name is a claim
-    // needing no address of its own.
-    let badge = |kind, mark: &[u8], rules: &GrantsExpr| {
-        if link > 0 {
-            return Err(GrantsResolveError::BadgeChainTooDeep);
-        }
-        let rules = rules.resolve_link(hasher, instance, config, link + 1)?;
-        Ok(granting_issued_resource(
-            hasher, instance, kind, &rules, mark,
-        ))
-    };
     Ok(match claim {
         GrantClaim::SelfAddr => Presented::of_address(instance)
             .expect("an instance issuing a resource is a callable address"),
-        GrantClaim::SelfBadge { mark, kind, rules } => {
-            Presented::of_subject(badge(*kind, mark, rules)?)
-        }
-        GrantClaim::SelfInstance { mark, id, rules } => {
-            Presented::of_instance(badge(ResourceKind::NonFungible, mark, rules)?, *id)
-        }
-        GrantClaim::Config(slot) => {
-            let value = config
-                .get(*slot as usize)
-                .ok_or(GrantsResolveError::NoSuchField(*slot))?;
-            Presented::of(value).ok_or(GrantsResolveError::NotAClaim(*slot))?
-        }
+        GrantClaim::SelfBadge { mark, kind, rules } => Presented::of_subject(self_badge(
+            hasher, instance, config, *kind, mark, rules, link,
+        )?),
+        GrantClaim::SelfInstance { mark, id, rules } => Presented::of_instance(
+            self_badge(
+                hasher,
+                instance,
+                config,
+                ResourceKind::NonFungible,
+                mark,
+                rules,
+                link,
+            )?,
+            *id,
+        ),
+        GrantClaim::Config(slot) => configured(config, *slot)?,
     })
+}
+
+/// Resolve a declared leaf into the holding a movement entry asks about.
+///
+/// Where a subject's holding of a badge lives is the badge's kind's
+/// answer: a balance is one point cell keyed by what it holds, and
+/// instances are entries of the subject's collection for it. A leaf
+/// naming a badge the package issues carries the kind its address folds,
+/// so it asks the one shape.
+fn resolve_holding(
+    hasher: &dyn Hasher,
+    instance: Address,
+    config: &[Value],
+    claim: &GrantClaim,
+    link: usize,
+) -> Result<StoredRule, GrantsResolveError> {
+    let (badge, holding) = match claim {
+        // An identity keys no holding, so a movement entry naming one
+        // asks about nothing — the actor question it was written for is
+        // the other half of the table.
+        GrantClaim::SelfAddr => return Err(GrantsResolveError::NotABadge),
+        GrantClaim::SelfBadge { mark, kind, rules } => (
+            self_badge(hasher, instance, config, *kind, mark, rules, link)?,
+            match kind {
+                ResourceKind::Fungible => Holding::Balance,
+                ResourceKind::NonFungible => Holding::AnyInstance,
+            },
+        ),
+        GrantClaim::SelfInstance { mark, id, rules } => (
+            self_badge(
+                hasher,
+                instance,
+                config,
+                ResourceKind::NonFungible,
+                mark,
+                rules,
+                link,
+            )?,
+            Holding::Instance(*id),
+        ),
+        GrantClaim::Config(slot) => {
+            let named = configured(config, *slot)?;
+            let badge = named.badge().ok_or(GrantsResolveError::NotABadge)?;
+            let Some(id) = named.instance else {
+                // A configuration field carries an address and no kind,
+                // so the rule asks both shapes. At most one of them can
+                // ever be occupied, and the second read is what a leaf
+                // pays for not having said which.
+                return Ok(StoredRule::CountOf {
+                    count: 1,
+                    rules: vec![
+                        StoredRule::held(badge, Holding::Balance),
+                        StoredRule::held(badge, Holding::AnyInstance),
+                    ],
+                });
+            };
+            (badge, Holding::Instance(id))
+        }
+    };
+    Ok(StoredRule::held(badge, holding))
+}
+
+/// The claim a configuration field names.
+fn configured(config: &[Value], slot: u32) -> Result<Presented, GrantsResolveError> {
+    let value = config
+        .get(slot as usize)
+        .ok_or(GrantsResolveError::NoSuchField(slot))?;
+    Presented::of(value).ok_or(GrantsResolveError::NotAClaim(slot))
+}
+
+/// A badge the issuing instance also issues, at the address its own
+/// granted rules derive.
+///
+/// A badge named inside a granted rule derives through its own rules,
+/// because an address is the hash of them — the granting-nothing form
+/// would name an address nothing is minted at the moment the badge
+/// grants anything, which a soulbound credential always does. The chain
+/// is one link long, so what a badge's rules name is a claim needing no
+/// address of its own.
+fn self_badge(
+    hasher: &dyn Hasher,
+    instance: Address,
+    config: &[Value],
+    kind: ResourceKind,
+    mark: &[u8],
+    rules: &GrantsExpr,
+    link: usize,
+) -> Result<ResourceAddr, GrantsResolveError> {
+    if link > 0 {
+        return Err(GrantsResolveError::BadgeChainTooDeep);
+    }
+    let rules = rules.resolve_link(hasher, instance, config, link + 1)?;
+    Ok(granting_issued_resource(
+        hasher, instance, kind, &rules, mark,
+    ))
 }
 
 /// A presented resource record: the address preimage, carried in the
@@ -749,7 +826,7 @@ mod tests {
     };
     use crate::hash::TestHasher;
     use crate::presented::Presented;
-    use crate::rule::StoredRule;
+    use crate::rule::{Holding, StoredRule};
     use crate::types::native_address;
     use crate::vocabulary::GENESIS_PUBLISHER;
 
@@ -853,7 +930,7 @@ mod tests {
     fn a_behaviour_reads_the_side_its_question_is_about() {
         let badge = ResourceAddr::new([0x77; 31]);
         let claims = StoredRule::claim(Presented::of_subject(badge));
-        let holds = StoredRule::held(badge);
+        let holds = StoredRule::held(badge, Holding::Balance);
 
         for behaviour in GrantedBehaviour::ALL {
             let actor = behaviour.asks_about_the_actor();

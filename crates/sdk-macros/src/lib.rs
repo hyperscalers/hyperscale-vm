@@ -2128,7 +2128,6 @@ fn granted_rules(
             }
         };
         let name = behaviour.to_string();
-        let asks_about_the_actor = !matches!(name.as_str(), "Withdraw" | "Deposit");
         if named.contains(&name) {
             return Err(syn::Error::new(
                 entry.path.span(),
@@ -2141,23 +2140,6 @@ fn granted_rules(
         }
         named.push(name);
         let (rule, names_config) = granted_entry(&entry.value, resources, config_fields)?;
-        // A holder question is answered by one leaf under the moving
-        // party's own prefix, and only a fungible holding is one leaf: a
-        // non-fungible one is entries at ids, whose collection-wide
-        // presence is an interval nothing on the transfer path may walk.
-        if !asks_about_the_actor && names_an_instance(&entry.value) {
-            return Err(syn::Error::new(
-                entry.value.span(),
-                format!(
-                    "`{}` asks whether the moving party holds what its rule names, and only \
-                     a fungible holding is a single leaf — asking whether a holder has any \
-                     instance of a non-fungible badge is an interval nothing on the \
-                     transfer path may walk. Issue a fungible eligibility badge beside the \
-                     instance carrying the data",
-                    entry.path.get_ident().expect("matched an ident")
-                ),
-            ));
-        }
         reads_config |= names_config;
         granted.push(quote!(
             __seals.set(::hyperscale_vm_sdk::GrantedBehaviour::#behaviour, #rule);
@@ -2244,22 +2226,6 @@ struct Nameable<'a> {
     /// The mark's own rules and whether they read configuration, where
     /// the mark is nameable at all.
     rules: Option<(TokenStream2, bool)>,
-}
-
-/// Whether a granted entry names one instance of a non-fungible badge
-/// anywhere in it.
-fn names_an_instance(expr: &syn::Expr) -> bool {
-    match expr {
-        syn::Expr::Paren(inner) => names_an_instance(&inner.expr),
-        syn::Expr::Binary(binary) => {
-            names_an_instance(&binary.left) || names_an_instance(&binary.right)
-        }
-        syn::Expr::Call(call) if calls(&call.func, "issued") => {
-            call.args.len() > 1 || call.args.iter().any(names_an_instance)
-        }
-        syn::Expr::Call(call) => call.args.iter().any(names_an_instance),
-        _ => false,
-    }
 }
 
 /// Whether a granted set names a badge anywhere in it, which is what

@@ -1584,7 +1584,7 @@ fn eval_condition(
                         // declared, never against a caller's evidence
                         // here — and an actor question's rule reads no
                         // holding, refused at the seal.
-                        SealedLeaf::Held(_) => Err(EvalError::GrantRuleMalformed),
+                        SealedLeaf::Held { .. } => Err(EvalError::GrantRuleMalformed),
                     })?)
                 }
             })?;

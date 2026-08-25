@@ -339,9 +339,8 @@ impl KernelSession {
 ///
 /// # Errors
 ///
-/// [`MaterializeError::ConditionUnmet`] for a leaf whose presence is not
-/// what the condition requires, and [`MaterializeError::Unsupported`]
-/// for a target that names no leaf for a presence to be about.
+/// [`MaterializeError::ConditionUnmet`] for a target whose state does not
+/// hold what the condition requires.
 fn judge_conditions(
     store: &mut OverlayStore,
     conditions: &[Rule<JudgedLeaf>],
@@ -357,7 +356,7 @@ fn judge_conditions(
             let JudgedLeaf::Presence { target, expect } = leaf else {
                 continue;
             };
-            let held = present(store, *target)?;
+            let held = occupied(store, *target)?;
             if !met_by(*expect, held) {
                 return Err(MaterializeError::ConditionUnmet {
                     target: *target,
@@ -369,17 +368,8 @@ fn judge_conditions(
     Ok(())
 }
 
-/// [`leaf_present`] with the effect a refusal names attached.
-fn present(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, MaterializeError> {
-    leaf_present(store, target).map_err(|error| {
-        error.unsupported(Box::new(Effect {
-            target,
-            mode: Mode::Read,
-        }))
-    })
-}
-
-/// Whether `expect` is met by a leaf that is or is not there.
+/// Whether `expect` is met by state that does or does not hold
+/// something.
 const fn met_by(expect: Presence, held: bool) -> bool {
     match expect {
         Presence::Either => true,
@@ -395,7 +385,7 @@ const fn met_by(expect: Presence, held: bool) -> bool {
 fn met(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<bool, MaterializeError> {
     match rule {
         Rule::Require(JudgedLeaf::Presence { target, expect }) => {
-            Ok(met_by(*expect, present(store, *target)?))
+            Ok(met_by(*expect, occupied(store, *target)?))
         }
         // A leaf reading evidence cannot be answered here, and admission
         // never routes a rule holding one this way.
@@ -412,41 +402,40 @@ fn met(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<bool, Materi
     }
 }
 
-/// Why a presence read did not answer.
-pub enum LeafReadError {
-    Store(StoreError),
-    /// An interval names no leaf for a presence to be about — it stays
-    /// valid whatever enters or leaves it, which is the property that
-    /// makes it declarable at all. Refused at publish, and again here,
-    /// because metadata can be authored rather than derived.
-    Interval,
-}
-
-impl LeafReadError {
-    pub fn unsupported(self, effect: Box<Effect>) -> MaterializeError {
-        match self {
-            Self::Store(error) => MaterializeError::Store(error),
-            Self::Interval => MaterializeError::Unsupported(effect),
-        }
-    }
-}
-
-pub fn leaf_present(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, LeafReadError> {
-    match target {
-        // The two shapes that name one leaf. An entry's presence is the
-        // same question a possession condition asks, over the same
-        // width-one interval.
-        EffectTarget::Point(key) => Ok(store.read(key).map_err(LeafReadError::Store)?.is_some()),
+/// Whether the state a target names holds anything: the leaf a point
+/// names, the entry an entry names, or any entry of an interval.
+///
+/// One seek whichever shape it is — an interval is asked for a single
+/// entry, so the answer costs what a point read costs and the width it
+/// spans is charged to the declaration rather than to the read. What an
+/// interval pays for asking at all is exclusion: a declared read of it
+/// conflicts with every write to the collection, which is what keeps the
+/// answer from racing the entry that would change it.
+///
+/// # Errors
+///
+/// Whatever the store raises.
+pub fn occupied(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, StoreError> {
+    let (owner, collection, lo, hi) = match target {
+        EffectTarget::Point(key) => return Ok(store.read(key)?.is_some()),
+        // An entry is the width-one interval at its order, which is the
+        // normalization every other reader of a collection applies.
         EffectTarget::Entry {
             owner,
             collection,
             order,
-        } => Ok(!store
-            .entries_in_range(owner, collection, order, order, 1)
-            .map_err(LeafReadError::Store)?
-            .is_empty()),
-        EffectTarget::Range { .. } => Err(LeafReadError::Interval),
-    }
+        } => (owner, collection, order, order),
+        EffectTarget::Range {
+            owner,
+            collection,
+            lo,
+            hi,
+            ..
+        } => (owner, collection, lo, hi),
+    };
+    Ok(!store
+        .entries_in_range(owner, collection, lo, hi, 1)?
+        .is_empty())
 }
 
 /// What a target names as the thing whose contents are one fact: the
@@ -620,11 +609,12 @@ mod tests {
     /// holding the leaf judges it before the body runs — the same seam,
     /// and the same class of verdict, as an infeasible reservation.
     ///
-    /// Both shapes that name one leaf answer, because the requirement is
-    /// about the leaf rather than about how the target spells it: a cell
-    /// and a collection entry are each exactly one.
+    /// All three shapes answer, because the requirement is about whether
+    /// the state a target names holds anything rather than about how the
+    /// target spells it: a cell is there or is not, an entry is there or
+    /// is not, and an interval holds an entry or holds none.
     #[test]
-    fn a_write_requiring_a_presence_the_leaf_does_not_have_refuses() {
+    fn a_write_requiring_a_presence_the_state_does_not_have_refuses() {
         let cell = EffectTarget::Point(key(0xC1));
         let owner = Address::new([0xC1; 31], AddressClass::Component);
         let collection = CollectionId([9; 16]);
@@ -632,6 +622,13 @@ mod tests {
             owner,
             collection,
             order: 7,
+        };
+        let interval = EffectTarget::Range {
+            owner,
+            collection,
+            lo: 0,
+            hi: u128::MAX,
+            cap: 4,
         };
         let empty = |_: EffectTarget| MemoryStore::new();
         let occupied = |target: EffectTarget| {
@@ -647,12 +644,16 @@ mod tests {
                 } => {
                     store.entry_write(owner, collection, order, vec![7]);
                 }
-                EffectTarget::Range { .. } => unreachable!("not a leaf"),
+                EffectTarget::Range {
+                    owner, collection, ..
+                } => {
+                    store.entry_write(owner, collection, 7, vec![7]);
+                }
             }
             store
         };
 
-        for target in [cell, entry] {
+        for target in [cell, entry, interval] {
             // A create lands only where nothing is.
             assert_eq!(
                 presence_verdict(empty(target), target, Presence::Absent),
@@ -695,31 +696,50 @@ mod tests {
         }
     }
 
-    /// An interval names no leaf, so a requirement about one is refused
-    /// rather than read past — the publish gate says the same, and this
-    /// is what holds for metadata that was authored rather than derived.
+    /// An interval's presence is about the interval, not about the whole
+    /// collection: an entry outside the bounds leaves it empty, and the
+    /// cap bounds the walk rather than the answer.
     #[test]
-    fn a_presence_requirement_on_an_interval_refuses() {
-        let range = EffectTarget::Range {
-            owner: Address::new([0xC3; 31], AddressClass::Component),
-            collection: CollectionId([9; 16]),
-            lo: 0,
-            hi: u128::MAX,
-            cap: 4,
+    fn an_intervals_presence_is_what_lies_inside_it() {
+        let owner = Address::new([0xC3; 31], AddressClass::Component);
+        let collection = CollectionId([9; 16]);
+        let interval = EffectTarget::Range {
+            owner,
+            collection,
+            lo: 10,
+            hi: 20,
+            cap: 1,
         };
-        for requires in [Presence::Absent, Presence::Present] {
-            assert_eq!(
-                presence_verdict(MemoryStore::new(), range, requires),
-                Err(MaterializeError::Unsupported(Box::new(Effect {
-                    target: range,
-                    mode: Mode::Read,
-                }))),
-                "{requires:?}"
-            );
-        }
-        // The indifferent one is every range write there has ever been.
+        let holding = |order| {
+            let mut store = MemoryStore::new();
+            store.entry_write(owner, collection, order, vec![7]);
+            store
+        };
+
         assert_eq!(
-            presence_verdict(MemoryStore::new(), range, Presence::Either),
+            presence_verdict(holding(15), interval, Presence::Present),
+            Ok(())
+        );
+        assert_eq!(
+            presence_verdict(holding(21), interval, Presence::Present),
+            Err(MaterializeError::ConditionUnmet {
+                target: interval,
+                required: Presence::Present,
+            }),
+            "an entry past the interval is not in it"
+        );
+        assert_eq!(
+            presence_verdict(holding(21), interval, Presence::Absent),
+            Ok(())
+        );
+
+        // Every entry the cap admits and more: one answer, one seek.
+        let mut crowded = MemoryStore::new();
+        for order in 10..=20 {
+            crowded.entry_write(owner, collection, order, vec![7]);
+        }
+        assert_eq!(
+            presence_verdict(crowded, interval, Presence::Present),
             Ok(())
         );
     }

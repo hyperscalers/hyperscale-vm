@@ -11,15 +11,18 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, GrantedBehaviour, Hasher, PackageHash, PrefixShardResolver, Presented, Records,
-    ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, admit_tree,
-    never, route_tree,
+    EnvelopeTree, GrantedBehaviour, Hasher, Holding, PackageHash, PrefixShardResolver, Presented,
+    Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher,
+    admit_tree, holdings_collection, never, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
 use hyperscale_vm_manifest_builder::{EnvelopeBuilder, TypedError};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, account};
-use hyperscale_vm_types::{Address, AddressClass, Outcome, PrincipalAddr, ResourceAddr, TxHash};
+use hyperscale_vm_types::{
+    Address, AddressClass, EffectTarget, Outcome, Presence, PrincipalAddr, ResourceAddr, TxHash,
+    UnmetCondition,
+};
 use wasmtime::Result;
 use wasmtime::error::{Context, ensure};
 
@@ -268,7 +271,7 @@ fn governed_store(entry: RuleBytes, carries: bool) -> MemoryStore {
 /// inexpressible rather than merely discouraged.
 #[test]
 fn a_credential_governs_a_withdrawal_no_package_declared() -> Result<()> {
-    let entry = sealed(&StoredRule::held(BADGE));
+    let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
 
     let carried = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
     let (outcome, end) = run(
@@ -329,7 +332,7 @@ fn a_forbidden_movement_refuses_at_admission() -> Result<()> {
 /// for this resource is nothing.
 #[test]
 fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
-    let entry = sealed(&StoredRule::held(BADGE));
+    let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
@@ -361,5 +364,125 @@ fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
         40
     );
     assert_eq!(amount_of(&end, vault(HOLDER, governed(entry))), 60);
+    Ok(())
+}
+
+/// The instance a non-fungible credential names, under its holder.
+const CREDENTIAL_ID: u64 = 0x51;
+
+/// A store holding the governed resource and, where `carries` says so,
+/// one instance of the non-fungible badge its entry names.
+fn instanced_store(entry: RuleBytes, carries: bool) -> MemoryStore {
+    let mut store = MemoryStore::new();
+    seed_vault(&mut store, HOLDER, governed(entry), 100);
+    if carries {
+        store.entry_write(
+            HOLDER.address(),
+            holdings_collection(&TestHasher, HOLDER, BADGE),
+            u128::from(CREDENTIAL_ID),
+            Vec::new(),
+        );
+    }
+    store
+}
+
+/// A credential is a badge, whichever kind of badge it is.
+///
+/// A non-fungible holding is entries at instance ids rather than one
+/// balance cell, so "holds any of it" is asked of the interval those
+/// entries sit in — one seek, answered before any body runs, against a
+/// read the injection declared. What the holder writes is the same
+/// transfer either way, and what the issuer wrote is `issued(Badge)`
+/// either way: the two kinds differ in what the question costs, never in
+/// whether it can be asked.
+#[test]
+fn a_non_fungible_credential_governs_a_withdrawal_the_same_way() -> Result<()> {
+    let entry = sealed(&StoredRule::held(BADGE, Holding::AnyInstance));
+
+    let carried = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let (outcome, end) = run(
+        &instanced_store(entry.clone(), true),
+        std::slice::from_ref(&carried),
+    );
+    assert!(
+        matches!(
+            outcome.receipts[&carried.tx].outcome,
+            Outcome::Completed { .. }
+        ),
+        "a holder of an instance moves what they hold: {:?}",
+        outcome.receipts[&carried.tx].outcome,
+    );
+    assert_eq!(amount_of(&end, vault(HOLDER, governed(entry.clone()))), 100);
+
+    // The same transaction, the same package, the collection empty.
+    let bare = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let (outcome, end) = run(
+        &instanced_store(entry.clone(), false),
+        std::slice::from_ref(&bare),
+    );
+    assert_eq!(
+        outcome.receipts[&bare.tx].outcome,
+        Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Range {
+                    owner: HOLDER.address(),
+                    collection: holdings_collection(&TestHasher, HOLDER, BADGE),
+                    lo: 0,
+                    hi: u128::from(u64::MAX),
+                    cap: 1,
+                },
+                required: Presence::Present,
+            }
+        },
+        "a holder of none is refused by the interval the injection asked about",
+    );
+    assert_eq!(amount_of(&end, vault(HOLDER, governed(entry))), 100);
+    Ok(())
+}
+
+/// A credential naming one instance admits its holder alone.
+///
+/// The narrower question and the cheaper one: an entry is a leaf, so a
+/// rule naming the instance asks a point of the collection rather than
+/// the whole id space — and a holder of a different instance of the same
+/// badge is refused, which is what makes revocation by burning that one
+/// instance mean anything.
+#[test]
+fn a_credential_naming_an_instance_admits_its_holder_alone() -> Result<()> {
+    let entry = sealed(&StoredRule::held(BADGE, Holding::Instance(CREDENTIAL_ID)));
+
+    let named = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let (outcome, _) = run(
+        &instanced_store(entry.clone(), true),
+        std::slice::from_ref(&named),
+    );
+    assert!(
+        matches!(
+            outcome.receipts[&named.tx].outcome,
+            Outcome::Completed { .. }
+        ),
+        "the instance the rule names is the instance held: {:?}",
+        outcome.receipts[&named.tx].outcome,
+    );
+
+    // The same badge, another instance of it.
+    let mut store = MemoryStore::new();
+    seed_vault(&mut store, HOLDER, governed(entry.clone()), 100);
+    store.entry_write(
+        HOLDER.address(),
+        holdings_collection(&TestHasher, HOLDER, BADGE),
+        u128::from(CREDENTIAL_ID + 1),
+        Vec::new(),
+    );
+    let other = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let (outcome, end) = run(&store, std::slice::from_ref(&other));
+    assert!(
+        !matches!(
+            outcome.receipts[&other.tx].outcome,
+            Outcome::Completed { .. }
+        ),
+        "another instance of the same badge is another credential",
+    );
+    assert_eq!(amount_of(&end, vault(HOLDER, governed(entry))), 100);
     Ok(())
 }

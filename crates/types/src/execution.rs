@@ -498,7 +498,7 @@ pub enum Outcome {
 /// Which declared condition went unmet, shaped by where each kind is
 /// judged.
 ///
-/// A presence condition is judged where the leaf lives, against the
+/// A presence condition is judged where the state lives, against the
 /// folded declaration, so it names its target; an authority condition is
 /// judged at the calling node with that call's evidence, so it names the
 /// node. The rule itself is not carried: the declaration is
@@ -506,10 +506,10 @@ pub enum Outcome {
 /// metadata says what was asked.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum UnmetCondition {
-    /// The leaf the condition names does not have the presence it
-    /// requires.
+    /// The state the condition names does not hold what it requires: the
+    /// leaf a point or an entry names, or any entry of an interval.
     Holds {
-        /// The target whose leaf did not meet it.
+        /// The target whose state did not meet it.
         target: EffectTarget,
         /// What the condition required of it. Never [`Presence::Either`],
         /// which requires nothing and so cannot go unmet.

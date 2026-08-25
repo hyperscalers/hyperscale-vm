@@ -123,12 +123,34 @@ pub enum Rule<L> {
 pub enum SealedLeaf {
     /// A claim the presented set must contain.
     Claim(Presented),
-    /// The subject holds this badge: the vault leaf keyed by it is there.
+    /// The subject holds this badge, in the shape the holding names.
+    Held {
+        /// The badge held.
+        badge: ResourceAddr,
+        /// Which of the subject's holdings of it the presence is about.
+        holding: Holding,
+    },
+}
+
+/// Where a subject's holding of one badge lives, and how much of it the
+/// question is about.
+///
+/// A badge's address folds its kind, so a rule naming a badge it derives
+/// knows which shape to ask about; a rule naming one through
+/// configuration does not, and asks both — which costs it the second
+/// read rather than an answer that is silently always false.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+pub enum Holding {
+    /// A balance: the one point cell keyed by what it holds.
     ///
-    /// A fungible holding is one point cell keyed by what it holds, and a
-    /// balance reaching zero deletes its leaf — so presence and a nonzero
-    /// holding are the same fact, asked once.
-    Held(ResourceAddr),
+    /// A balance reaching zero deletes its leaf, so presence and a
+    /// nonzero holding are the same fact, asked once.
+    Balance,
+    /// Any instance of it: the subject's collection for the badge holds
+    /// an entry, whichever one.
+    AnyInstance,
+    /// One named instance: the entry at its id.
+    Instance(u64),
 }
 
 /// A rule as it is stored and judged, its leaves resolved.
@@ -143,8 +165,8 @@ impl Rule<SealedLeaf> {
 
     /// The one-leaf rule the subject's own holding satisfies.
     #[must_use]
-    pub const fn held(badge: ResourceAddr) -> Self {
-        Self::Require(SealedLeaf::Held(badge))
+    pub const fn held(badge: ResourceAddr, holding: Holding) -> Self {
+        Self::Require(SealedLeaf::Held { badge, holding })
     }
 }
 
@@ -532,7 +554,7 @@ impl StoredRule {
             // question's rule holds claims alone, refused otherwise where
             // the rule is sealed, and a holder question's holdings are
             // resolved to presence leaves before anything is judged.
-            Self::Require(SealedLeaf::Held(_)) => false,
+            Self::Require(SealedLeaf::Held { .. }) => false,
             Self::Require(SealedLeaf::Claim(claim)) => presented.contains(claim),
             Self::CountOf { count, rules } => {
                 let met = rules

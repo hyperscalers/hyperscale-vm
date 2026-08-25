@@ -21,9 +21,9 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    EdgeRef, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta, IntentDecl,
-    JudgedLeaf, ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule,
-    RuleBytes, StoredRule, TestHasher, Value, admit_tree, child_key,
+    EdgeRef, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, Holding, InstanceMeta,
+    IntentDecl, JudgedLeaf, ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta,
+    Rule, RuleBytes, StoredRule, TestHasher, Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -42,7 +42,10 @@ fn sealed(rule: &StoredRule) -> RuleBytes {
 
 fn governed_meta() -> ResourceMeta {
     let mut rules = ResourceGrants::new();
-    rules.set(GrantedBehaviour::Withdraw, sealed(&StoredRule::held(BADGE)));
+    rules.set(
+        GrantedBehaviour::Withdraw,
+        sealed(&StoredRule::held(BADGE, Holding::Balance)),
+    );
     ResourceMeta {
         namespace: ISSUER,
         kind: ResourceKind::Fungible,

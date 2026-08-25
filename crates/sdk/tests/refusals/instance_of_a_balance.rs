@@ -2,7 +2,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
-    #[resource(non_fungible, initial(0))]
+    #[resource(initial(0))]
     struct License;
 
     #[resource(grants(withdraw = issued(License, 0)))]

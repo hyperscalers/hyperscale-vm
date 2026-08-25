@@ -1069,9 +1069,10 @@ impl<Shape> Access<'_, Shape> {
 }
 
 /// What a write can require of the leaf it lands on — so, only where the
-/// target names one. An interval offers neither, which is what makes a
-/// requirement nothing could judge a compile error rather than a publish
-/// refusal.
+/// target names one. An interval offers neither: a presence over one is
+/// a fact about the interval as a whole, which says nothing about the
+/// entries a write chooses at execution, so the pairing is a type error
+/// rather than a requirement that judges the wrong thing.
 ///
 /// The requirement is a condition clause beside the write, not a mode
 /// parameter. It is emitted first, so the write stays the clause its

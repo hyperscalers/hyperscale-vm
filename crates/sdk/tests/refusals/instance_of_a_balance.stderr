@@ -1,0 +1,5 @@
+error: `License` is fungible, and a balance has no instance to name
+ --> tests/refusals/instance_of_a_balance.rs:8:50
+  |
+8 |     #[resource(grants(withdraw = issued(License, 0)))]
+  |                                                  ^

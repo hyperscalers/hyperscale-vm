@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectConflict, EffectTarget, MAX_MANIFEST_NODES, Mode, Presence,
-    PrincipalAddr, ResourceAddr, SubstateKey,
+    PrincipalAddr, ResourceAddr,
 };
 
 use crate::dsl::{
@@ -36,9 +36,11 @@ use crate::metadata::{PackageHash, PackageMetadata};
 use crate::presented::Presented;
 use crate::publish::{CheckedSignature, seals};
 use crate::records::ChainRecords;
-use crate::resource::{GrantedBehaviour, ResourceKind, granting_issued_resource};
+use crate::resource::{
+    GrantedBehaviour, ResourceKind, granting_issued_resource, holdings_collection,
+};
 use crate::route::FrameDeclaration;
-use crate::rule::{Rule, SealedLeaf, never};
+use crate::rule::{Holding, Rule, SealedLeaf, never};
 use crate::signature::{AbiParam, MethodSignature, ParamType};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::{CONFIG, VAULT};
@@ -1517,15 +1519,16 @@ fn own_prefix_only(
 /// account's is, and neither package wrote a word about it.
 ///
 /// Appended to the frame's own conditions, so everything downstream reads
-/// them the way it reads an authored gate: a `Satisfies` rides the node's
-/// call and is judged where the evidence is.
+/// them the way it reads an authored one, and placed where its leaves
+/// send it — which for a movement rule is always materialization, since
+/// every leaf it holds reads the store.
 ///
 /// One requirement per (owner, resource, behaviour) however many accesses
-/// name it, since a rule asked twice is one question. `Holds` resolves
-/// against the access's own owner, and the read it names is appended so
-/// the leaf is provisioned wherever the call runs — the owner is the
-/// frame's own instance, which `own_prefix_only` has already held every
-/// access to, so nothing here adds a participant.
+/// name it, since a rule asked twice is one question. Each holding
+/// resolves against the access's own owner, and the read it names is
+/// appended so the state is provisioned wherever the call runs — the
+/// owner is the frame's own instance, which `own_prefix_only` has already
+/// held every access to, so nothing here adds a participant.
 fn inject_movement_rules(
     hasher: &dyn Hasher,
     grants: &PresentedGrants,
@@ -1595,11 +1598,11 @@ fn inject_movement_rules(
         // access's own owner, and the read is appended so the leaf is
         // provisioned wherever the call runs.
         let resolved = rule.map_leaves(&mut |leaf| match leaf {
-            SealedLeaf::Held(badge) => {
-                let cell = credential_cell(hasher, owner, *badge);
-                declare_read(frame, cell);
+            SealedLeaf::Held { badge, holding } => {
+                let target = holding_target(hasher, owner, *badge, *holding);
+                declare_read(frame, target);
                 Ok(JudgedLeaf::Presence {
-                    target: EffectTarget::Point(cell),
+                    target,
                     expect: Presence::Present,
                 })
             }
@@ -1616,25 +1619,53 @@ fn inject_movement_rules(
     Ok(())
 }
 
-/// The leaf whose presence answers whether `owner` holds `badge`.
+/// What `owner`'s holding of `badge` occupies, in the shape the sealed
+/// leaf asks about.
 ///
-/// A fungible holding is one point cell keyed by what it holds, and a
-/// balance reaching zero deletes its leaf — so presence and a non-empty
-/// holding are the same fact, asked once.
-fn credential_cell(hasher: &dyn Hasher, owner: Address, badge: ResourceAddr) -> SubstateKey {
-    child_key(
-        hasher,
-        owner,
-        VAULT,
-        &[Value::Address(badge.address()).canonical_bytes()],
-    )
+/// A balance is the one point cell keyed by what it holds, and a balance
+/// reaching zero deletes its leaf — so presence and a nonzero holding
+/// are the same fact, asked once. Instances are entries of the holder's
+/// collection for the badge, so holding one is that entry and holding
+/// any is the interval holding something: one seek either way, and the
+/// interval is what a holder pays for the question spanning the id
+/// space.
+fn holding_target(
+    hasher: &dyn Hasher,
+    owner: Address,
+    badge: ResourceAddr,
+    holding: Holding,
+) -> EffectTarget {
+    match holding {
+        Holding::Balance => EffectTarget::Point(child_key(
+            hasher,
+            owner,
+            VAULT,
+            &[Value::Address(badge.address()).canonical_bytes()],
+        )),
+        // An instance's id is its order key and an id is a `u64`, so the
+        // interval that can hold one is the interval declared.
+        Holding::AnyInstance => EffectTarget::Range {
+            owner,
+            collection: holdings_collection(hasher, owner, badge),
+            lo: 0,
+            hi: u128::from(u64::MAX),
+            // One entry answers whether any is there, whatever else the
+            // interval holds.
+            cap: 1,
+        },
+        Holding::Instance(id) => EffectTarget::Entry {
+            owner,
+            collection: holdings_collection(hasher, owner, badge),
+            order: u128::from(id),
+        },
+    }
 }
 
-/// Append a read of `cell` to the frame, so a condition over it is
+/// Append a read of `target` to the frame, so a condition over it is
 /// provisioned wherever this call runs.
-fn declare_read(frame: &mut Declaration, cell: SubstateKey) {
+fn declare_read(frame: &mut Declaration, target: EffectTarget) {
     let effect = Effect {
-        target: EffectTarget::Point(cell),
+        target,
         mode: Mode::Read,
     };
     // A repeated insert is the same effect: the declaration already
