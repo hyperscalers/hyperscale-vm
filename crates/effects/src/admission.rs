@@ -18,8 +18,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use hyperscale_vm_types::{
-    Address, CallTarget, Effect, EffectConflict, EffectTarget, MAX_MANIFEST_NODES, Mode, Presence,
-    PrincipalAddr, ResourceAddr,
+    Address, AddressClass, CallTarget, Effect, EffectConflict, EffectTarget, MAX_MANIFEST_NODES,
+    Mode, Presence, PrincipalAddr, ResourceAddr,
 };
 
 use crate::dsl::{
@@ -77,6 +77,26 @@ pub enum AdmissionError {
         resource: ResourceAddr,
         /// Which movement the entry forbids.
         behaviour: GrantedBehaviour,
+    },
+    /// A movement of a resource whose address says its rules bind one,
+    /// with no record presented to resolve them against.
+    ///
+    /// The class byte is the one fact a reader gets without a lookup, and
+    /// this is what it is for: absence of a record and needing none are
+    /// otherwise the same thing at the seam, so withholding the record
+    /// would be a bypass anybody could take by leaving one envelope
+    /// field empty. What the record costs a composer is a lookup; what it
+    /// buys is that the rules a holder checked when accepting the asset
+    /// are the rules every movement of it is judged against.
+    #[error(
+        "node {node}: {resource:?} binds a movement by its own address, and no record was \
+         presented to resolve its rules"
+    )]
+    RecordWithheld {
+        /// The offending node.
+        node: u32,
+        /// The resource whose record is missing.
+        resource: ResourceAddr,
     },
     /// A movement rule whose bytes are not a movement rule.
     #[error("node {node}: {resource:?} has a {behaviour:?} rule that does not decode")]
@@ -1566,11 +1586,17 @@ fn inject_movement_rules(
     }
 
     for (owner, resource, behaviour) in wanted {
-        // A resource whose record was not presented grants nothing here.
-        // That is safe only because a resource whose entries restrict a
-        // movement says so on its address, so absence and needing none
-        // are told apart before anything reaches this.
+        // A resource whose record was not presented grants nothing here,
+        // and what tells that apart from a bypass is the address itself:
+        // one whose entries can stop a movement carries the class that
+        // says so, and moving it with nothing to resolve is refused.
         let Some(rules) = grants.rules(resource) else {
+            if resource.address().class() == AddressClass::Restricted {
+                return Err(AdmissionError::RecordWithheld {
+                    node: node_index,
+                    resource,
+                });
+            }
             continue;
         };
         let Some(sealed) = rules.get(behaviour) else {

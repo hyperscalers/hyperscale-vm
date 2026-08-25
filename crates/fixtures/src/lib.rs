@@ -32,6 +32,7 @@
 pub mod amm;
 pub mod book;
 pub mod custodian;
+pub mod flashloan;
 pub mod grammar;
 pub mod lending;
 pub mod lottery;
@@ -142,6 +143,9 @@ packages! {
     // Declared and never seeded: what it is for is what admission makes
     // of its declaration, which needs no network to establish.
     custodian;
+    // The flash lender: value that cannot come to rest, so the loan
+    // cannot outlive the transaction that took it.
+    flashloan => (FLASHLOAN_COMPONENT, flashloan_artifact, flashloan_package_hash, "flashloan.component.wasm");
     // The shape corpus: every form the grammar admits, as a package that
     // has to execute them. Declared and never seeded — what it is for is
     // the derivation, not a network.
