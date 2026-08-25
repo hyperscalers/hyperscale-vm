@@ -12,7 +12,7 @@ use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presen
 
 use crate::dsl::{
     Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr,
-    TargetExpr, materialized_kind,
+    TargetExpr, supports,
 };
 use crate::instance::MAX_CONFIG_FIELDS;
 use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
@@ -951,10 +951,9 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     });
     protocol_shape(clause, target, mode, denomination, requires)?;
     // And whether the world hands out anything for this pairing at all.
-    // Asked of the clause through the same function an engine reads a
-    // handle's type off, so publish refuses exactly what materialization
-    // could not have built.
-    if materialized_kind(access).is_none() {
+    // Asked of the clause through the same function routing asks, so
+    // publish refuses exactly what materialization could not have built.
+    if !supports(access) {
         return Err(DeclarationError::UnsupportedAccess { clause });
     }
     // What a cell holds is part of the key it is reached by, so the two

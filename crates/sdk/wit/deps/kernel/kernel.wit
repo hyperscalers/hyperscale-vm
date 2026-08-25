@@ -84,91 +84,46 @@ interface state {
     /// in is what the method's declared outputs say.
     resource issuer;
 
-    /// A declared fresh read of one substate.
-    resource read-cell;
-    /// A declared exclusive read-modify-write of one substate.
-    resource write-cell;
-    /// The same, over a cell that holds value.
+    /// One declared access, borrowed for the call that acts through it.
     ///
-    /// Its own type rather than a `write-cell` half of whose operations
-    /// refuse: bytes are read and replaced, value is credited and
-    /// debited, and the two share none. Which one a clause materializes
-    /// is what its declaration said the cell holds, so an export that
-    /// borrowed the wrong one is answered by the publish gate rather
-    /// than by a trap at the call.
-    resource amount-cell;
-    /// A declared commutative movement on one amount cell.
-    resource delta-cell;
-    /// A declared reservation, already judged feasible and held.
-    resource reserve-cell;
-    /// The same read, over a cell that holds value.
+    /// One resource for every mode, because a handle type answers which
+    /// table its rep indexes and nothing else: all of them index the
+    /// capability table the declaration materialized. What a body may do
+    /// through one is the capability's own answer, held by the kernel at
+    /// every operation — so a mode that grants no `set` refuses one, on
+    /// the same terms it refuses a key that was never declared.
     ///
-    /// Which of the two a clause materializes is what its declaration
-    /// said the cell holds, exactly as it is for `write-cell` and
-    /// `amount-cell` — so a read of a vault answers a quantity and a
-    /// read of a byte cell answers bytes, and neither export can borrow
-    /// the other's.
-    resource amount-read;
-    /// A declared read interval of an ordered collection.
-    resource range-read;
-    /// A declared read-modify-write interval of an ordered collection.
-    resource range-write;
-    /// The same, over entries that are instances of one resource.
-    resource instance-range;
+    /// The world has no constructor for it, which is what makes the
+    /// declared set the reachable set.
+    resource capability;
 
     /// A declared `for-each` site's whole expansion, borrowed once and
     /// walked by the index of the element that declared each entry.
     ///
-    /// One resource per handle type rather than one shared run: a run
-    /// carries exactly the operations its mode carries, so an undeclared
-    /// mode is as unreachable through a run as through a single cell.
+    /// Its own resource beside `cell` because it indexes its own table:
+    /// a run is not one capability but a site's list of them, so a rep
+    /// means something different here and the type is what says so.
+    ///
     /// The width is the instance's rather than the signature's — a list
     /// a loop maps over is configuration's business — which is why one
     /// parameter covers the whole site instead of a run of them.
     ///
-    /// Every run answers `len` at the *element* count, so two sites in
-    /// one body agree on what an index means, and `declared` at whether
-    /// this site's guard fired for that element. Operating through an
-    /// index that did not is a body whose control flow disagrees with
-    /// its own declaration, and traps on the same terms reaching a
-    /// guarded-out handle does.
-    resource read-cell-run;
-    /// A run of write cells; see `read-cell-run`.
-    resource write-cell-run;
-    /// A run of amount cells; see `read-cell-run`.
-    resource amount-cell-run;
-    /// A run of amount reads; see `read-cell-run`.
-    resource amount-read-run;
-    /// A run of delta cells; see `read-cell-run`.
-    resource delta-cell-run;
-    /// A run of reserve cells; see `read-cell-run`.
-    resource reserve-cell-run;
-    /// A run of read intervals; see `read-cell-run`.
-    resource range-read-run;
-    /// A run of write intervals; see `read-cell-run`.
-    resource range-write-run;
-    /// A run of instance intervals; see `read-cell-run`.
-    resource instance-range-run;
+    /// `len` answers the *element* count, so two sites in one body agree
+    /// on what an index means, and `declared` answers whether this
+    /// site's guard fired for that element. Operating through an index
+    /// that did not is a body whose control flow disagrees with its own
+    /// declaration, and traps on the same terms reaching a guarded-out
+    /// handle does.
+    resource run;
 
     /// The substate's current bytes; empty if absent.
-    read-cell-get: func(c: borrow<read-cell>) -> list<u8>;
-
-    /// What the cell holds, without the exclusivity moving it needs.
     ///
-    /// A curve is a function of its reserves, so asking is the one thing
-    /// a body does with a balance that changes nothing — and a method
-    /// that only asks should contend with nobody. An `amount` rather
-    /// than the bytes it is stored as, on the same terms as
-    /// `amount-cell-balance`: a cell that holds value has no byte
-    /// surface for a body to read one through, whichever handle reaches
-    /// it.
-    amount-read-balance: func(c: borrow<amount-read>) -> amount;
-
-    /// The substate's current bytes; empty if absent.
-    write-cell-get: func(c: borrow<write-cell>) -> list<u8>;
+    /// One read for both byte modes: what the exclusive mode adds is the
+    /// writes, not a second answer to the same question.
+    capability-get: func(c: borrow<capability>) -> list<u8>;
 
     /// Replace the substate's bytes.
-    write-cell-set: func(c: borrow<write-cell>, value: list<u8>);
+    capability-set: func(c: borrow<capability>, value: list<u8>);
 
     /// Seal this cell on the epoch now running.
     ///
@@ -177,7 +132,7 @@ interface state {
     /// rolled after the block that wrote it, and a body that named its
     /// own epoch could name one already rolled and open onto a value it
     /// could compute before sealing. So the epoch is not a parameter.
-    write-cell-seal: func(c: borrow<write-cell>);
+    capability-seal: func(c: borrow<capability>);
 
     /// The draw the seal in this cell matures into.
     ///
@@ -195,7 +150,7 @@ interface state {
     ///
     /// Traps on a cell holding anything but a seal, which only a guest
     /// that wrote its own bytes over one can reach.
-    write-cell-open-seal: func(c: borrow<write-cell>) -> drawn;
+    capability-open-seal: func(c: borrow<capability>) -> drawn;
 
     /// Remove the substate, so nothing is there.
     ///
@@ -206,31 +161,83 @@ interface state {
     /// an encoding rather than about the operation. A body holding the
     /// leaf exclusively may end it; the mode is the same write, and only
     /// the effect on presence is new.
-    write-cell-clear: func(c: borrow<write-cell>);
+    capability-clear: func(c: borrow<capability>);
 
     /// What the amount cell holds.
     ///
     /// A borrow, so asking moves nothing, and an `amount` rather than the
     /// bytes it is stored as — the width is the protocol's, and a cell
     /// that holds value has no byte surface for a body to read one
-    /// through. The one question about a balance that cannot change it.
-    amount-cell-balance: func(c: borrow<amount-cell>) -> amount;
+    /// through. The one question about a balance that cannot change it,
+    /// which is why every value mode answers it: a method that only asks
+    /// contends with nobody.
+    capability-balance: func(c: borrow<capability>) -> amount;
 
     /// Debit the amount cell and hand the value out.
     ///
-    /// The kernel reads, subtracts and writes back, which is what makes
-    /// an absolute cell's value linear: a body that has to read a balance
-    /// writes no absolute of its own, so nothing it computes can disagree
-    /// with what left. Traps on a stored cell that is not an amount and
-    /// on a debit past what it holds.
-    amount-cell-take: func(c: borrow<amount-cell>, amount: amount) -> own<bucket>;
+    /// The pairing fixes that the amount debited and the amount now in
+    /// flight are one number the body never got to write twice. When an
+    /// over-take is refused is the capability's answer: the exclusive
+    /// hold reads, subtracts and writes back, so it traps here, where the
+    /// commutative movement queues and leaves the question to the fold.
+    /// Traps on a stored cell that is not an amount either way.
+    capability-take: func(c: borrow<capability>, amount: amount) -> own<bucket>;
 
     /// Credit the amount cell with what the bucket carries.
     ///
     /// The bucket is consumed, so what lands in the cell is exactly what
-    /// crossed and the body names no number. Traps on a stored cell that
-    /// is not an amount and on a total past the cell's width.
-    amount-cell-put: func(c: borrow<amount-cell>, funds: own<bucket>);
+    /// crossed and the body names no number. Refused on the terms
+    /// `capability-take` states.
+    capability-put: func(c: borrow<capability>, funds: own<bucket>);
+
+    /// Take the reservation, as the value it grants.
+    ///
+    /// No declared amount: the kernel judged and held the reservation
+    /// before this body ran, and the grant is the bucket. Once per
+    /// reservation — taking is a question with one answer, where the read
+    /// beside it answers every time it is asked.
+    capability-reserve-take: func(c: borrow<capability>) -> own<bucket>;
+
+    /// Entries currently in the interval, bounded by the declared cap.
+    capability-count: func(c: borrow<capability>) -> u32;
+
+    /// Whether the page holds every entry the interval does: a page
+    /// short of its cap exhausted the interval, and a full one is
+    /// answered by probing past its last entry.
+    capability-covered: func(c: borrow<capability>) -> bool;
+
+    /// The order key of the entry at `index`, ascending — which for an
+    /// instance is its own id.
+    capability-order: func(c: borrow<capability>, index: u32) -> amount;
+
+    /// The value of the entry at `index`, ascending.
+    capability-entry: func(c: borrow<capability>, index: u32) -> list<u8>;
+
+    /// Replace the value of the entry at `index`.
+    capability-entry-set: func(c: borrow<capability>, index: u32, value: list<u8>);
+
+    /// Insert (or replace) the entry at `order`, which must lie inside the
+    /// declared interval.
+    capability-insert: func(c: borrow<capability>, order: amount, value: list<u8>);
+
+    /// Remove the entry at `index`.
+    capability-remove: func(c: borrow<capability>, index: u32);
+
+    /// Take the named entries, as the instances they were.
+    ///
+    /// The removal and the edge are one operation, which is what a
+    /// movement is for an amount cell and what this is for a collection:
+    /// a body cannot hand on instances it left where they were. A method
+    /// moving the ids it was given passes them straight through, because
+    /// what it was given is what this takes. Naming none yields an empty
+    /// bucket, which is how a method that moves nothing gets one. Traps
+    /// on an id outside the declared interval and on one the collection
+    /// does not hold.
+    capability-instance-take: func(c: borrow<capability>, ids: list<u64>) -> own<bucket>;
+
+    /// File every instance the bucket carries as an entry at the order it
+    /// was taken under, consuming it.
+    capability-instance-put: func(c: borrow<capability>, funds: own<bucket>, value: list<u8>);
 
     /// Split `amount` off a bucket, as a bucket.
     ///
@@ -267,20 +274,6 @@ interface state {
     /// receipt — and reading it is the one thing that cannot create any.
     bucket-amount: func(b: borrow<bucket>) -> amount;
 
-    /// Credit the amount cell with what the bucket carries.
-    ///
-    /// The bucket is consumed, so the credit and the value that crossed
-    /// are one number the body never got to write twice.
-    delta-cell-put: func(c: borrow<delta-cell>, funds: own<bucket>);
-
-    /// Debit the amount cell and hand the value out.
-    ///
-    /// The debit is queued like any other, so whether the cell covered it
-    /// is the movement fold's question and an over-take aborts at settle
-    /// rather than here. What the pairing fixes is that the amount
-    /// debited and the amount now in flight are one number.
-    delta-cell-take: func(c: borrow<delta-cell>, amount: amount) -> own<bucket>;
-
     /// Create `amount` of the resource this invocation issues.
     ///
     /// The one place a bucket appears with no cell debited behind it, and
@@ -303,222 +296,65 @@ interface state {
     /// what keeps a body from simply forgetting it.
     burn: func(i: borrow<issuer>, funds: own<bucket>);
 
-    /// Take the reservation, as the value it grants.
-    ///
-    /// No declared amount: the kernel judged and held the reservation
-    /// before this body ran, and the grant is the bucket. Once per
-    /// reservation — taking is a question with one answer, where the read
-    /// beside it answers every time it is asked.
-    reserve-cell-take: func(c: borrow<reserve-cell>) -> own<bucket>;
-
-    /// Entries currently in the interval, bounded by the declared cap.
-    range-read-count: func(r: borrow<range-read>) -> u32;
-
-    /// Whether the page holds every entry the interval does: a page
-    /// short of its cap exhausted the interval, and a full one is
-    /// answered by probing past its last entry.
-    range-read-covered: func(r: borrow<range-read>) -> bool;
-
-    /// The order key of the entry at `index`, ascending.
-    range-read-order: func(r: borrow<range-read>, index: u32) -> amount;
-
-    /// The value of the entry at `index`, ascending.
-    range-read-entry: func(r: borrow<range-read>, index: u32) -> list<u8>;
-
-    /// Entries currently in the interval, bounded by the declared cap.
-    range-write-count: func(r: borrow<range-write>) -> u32;
-
-    /// Whether the page holds every entry the interval does: a page
-    /// short of its cap exhausted the interval, and a full one is
-    /// answered by probing past its last entry.
-    range-write-covered: func(r: borrow<range-write>) -> bool;
-
-    /// The order key of the entry at `index`, ascending.
-    range-write-order: func(r: borrow<range-write>, index: u32) -> amount;
-
-    /// The value of the entry at `index`, ascending.
-    range-write-entry: func(r: borrow<range-write>, index: u32) -> list<u8>;
-
-    /// Replace the value of the entry at `index`.
-    range-write-set: func(r: borrow<range-write>, index: u32, value: list<u8>);
-
-    /// Insert (or replace) the entry at `order`, which must lie inside the
-    /// declared interval.
-    range-write-insert: func(r: borrow<range-write>, order: amount, value: list<u8>);
-
-    /// Remove the entry at `index`.
-    range-write-remove: func(r: borrow<range-write>, index: u32);
-
-    /// Entries currently in the interval, bounded by the declared cap.
-    instance-range-count: func(r: borrow<instance-range>) -> u32;
-
-    /// Whether the page holds every entry the interval does: a page
-    /// short of its cap exhausted the interval, and a full one is
-    /// answered by probing past its last entry.
-    instance-range-covered: func(r: borrow<instance-range>) -> bool;
-
-    /// The order key of the entry at `index`, ascending — which for an
-    /// instance is its own id.
-    instance-range-order: func(r: borrow<instance-range>, index: u32) -> amount;
-
-    /// The value of the entry at `index`, ascending.
-    instance-range-entry: func(r: borrow<instance-range>, index: u32) -> list<u8>;
-
-    /// Take the named entries, as the instances they were.
-    ///
-    /// The removal and the edge are one operation, which is what a
-    /// movement is for an amount cell and what this is for a collection:
-    /// a body cannot hand on instances it left where they were. A method
-    /// moving the ids it was given passes them straight through, because
-    /// what it was given is what this takes. Naming none yields an empty
-    /// bucket, which is how a method that moves nothing gets one. Traps
-    /// on an id outside the declared interval and on one the collection
-    /// does not hold.
-    instance-range-take: func(r: borrow<instance-range>, ids: list<u64>) -> own<bucket>;
-
-    /// File every instance the bucket carries as an entry at the order it
-    /// was taken under, consuming it.
-    instance-range-put: func(r: borrow<instance-range>, funds: own<bucket>, value: list<u8>);
-
     /// How many elements the site's loop mapped over.
-    read-cell-run-len: func(r: borrow<read-cell-run>) -> u32;
+    run-len: func(r: borrow<run>) -> u32;
 
     /// Whether this site declared anything for the element at `index`.
-    read-cell-run-declared: func(r: borrow<read-cell-run>, index: u32) -> bool;
+    run-declared: func(r: borrow<run>, index: u32) -> bool;
 
     /// The substate's current bytes; empty if absent.
-    read-cell-run-get: func(r: borrow<read-cell-run>, index: u32) -> list<u8>;
-
-    /// How many elements the site's loop mapped over.
-    write-cell-run-len: func(r: borrow<write-cell-run>) -> u32;
-
-    /// Whether this site declared anything for the element at `index`.
-    write-cell-run-declared: func(r: borrow<write-cell-run>, index: u32) -> bool;
-
-    /// The substate's current bytes; empty if absent.
-    write-cell-run-get: func(r: borrow<write-cell-run>, index: u32) -> list<u8>;
+    run-get: func(r: borrow<run>, index: u32) -> list<u8>;
 
     /// Replace the substate's bytes.
-    write-cell-run-set: func(r: borrow<write-cell-run>, index: u32, value: list<u8>);
+    run-set: func(r: borrow<run>, index: u32, value: list<u8>);
 
     /// Remove the substate, so nothing is there.
-    write-cell-run-clear: func(r: borrow<write-cell-run>, index: u32);
+    run-clear: func(r: borrow<run>, index: u32);
 
-    /// How many elements the site's loop mapped over.
-    amount-cell-run-len: func(r: borrow<amount-cell-run>) -> u32;
+    /// Seal this element's cell on the epoch now running.
+    run-seal: func(r: borrow<run>, index: u32);
 
-    /// Whether this site declared anything for the element at `index`.
-    amount-cell-run-declared: func(r: borrow<amount-cell-run>, index: u32) -> bool;
+    /// The draw the seal in this element's cell matures into.
+    run-open-seal: func(r: borrow<run>, index: u32) -> drawn;
 
     /// What the amount cell holds.
-    amount-cell-run-balance: func(r: borrow<amount-cell-run>, index: u32) -> amount;
+    run-balance: func(r: borrow<run>, index: u32) -> amount;
 
     /// Debit the cell into a bucket.
-    amount-cell-run-take: func(r: borrow<amount-cell-run>, index: u32, amount: amount) -> own<bucket>;
+    run-take: func(r: borrow<run>, index: u32, amount: amount) -> own<bucket>;
 
     /// Credit the cell, consuming the bucket.
-    amount-cell-run-put: func(r: borrow<amount-cell-run>, index: u32, funds: own<bucket>);
+    run-put: func(r: borrow<run>, index: u32, funds: own<bucket>);
 
-    /// How many elements the site's loop mapped over.
-    amount-read-run-len: func(r: borrow<amount-read-run>) -> u32;
-
-    /// Whether this site declared anything for the element at `index`.
-    amount-read-run-declared: func(r: borrow<amount-read-run>, index: u32) -> bool;
-
-    /// What the cell holds, without the exclusivity moving it needs.
-    amount-read-run-balance: func(r: borrow<amount-read-run>, index: u32) -> amount;
-
-    /// How many elements the site's loop mapped over.
-    delta-cell-run-len: func(r: borrow<delta-cell-run>) -> u32;
-
-    /// Whether this site declared anything for the element at `index`.
-    delta-cell-run-declared: func(r: borrow<delta-cell-run>, index: u32) -> bool;
-
-    /// Credit the cell commutatively, consuming the bucket.
-    delta-cell-run-put: func(r: borrow<delta-cell-run>, index: u32, funds: own<bucket>);
-
-    /// Debit the cell commutatively into a bucket.
-    delta-cell-run-take: func(r: borrow<delta-cell-run>, index: u32, amount: amount) -> own<bucket>;
-
-    /// How many elements the site's loop mapped over.
-    reserve-cell-run-len: func(r: borrow<reserve-cell-run>) -> u32;
-
-    /// Whether this site declared anything for the element at `index`.
-    reserve-cell-run-declared: func(r: borrow<reserve-cell-run>, index: u32) -> bool;
-
-    /// Take the reservation this clause declared and held.
-    reserve-cell-run-take: func(r: borrow<reserve-cell-run>, index: u32) -> own<bucket>;
-
-    /// How many elements the site's loop mapped over.
-    range-read-run-len: func(r: borrow<range-read-run>) -> u32;
-
-    /// Whether this site declared anything for the element at `index`.
-    range-read-run-declared: func(r: borrow<range-read-run>, index: u32) -> bool;
+    /// Take the reservation this element's clause declared and held.
+    run-reserve-take: func(r: borrow<run>, index: u32) -> own<bucket>;
 
     /// Entries currently in the interval, bounded by the declared cap.
-    range-read-run-count: func(r: borrow<range-read-run>, index: u32) -> u32;
+    run-count: func(r: borrow<run>, index: u32) -> u32;
 
     /// Whether the page holds every entry the interval does.
-    range-read-run-covered: func(r: borrow<range-read-run>, index: u32) -> bool;
+    run-covered: func(r: borrow<run>, index: u32) -> bool;
 
-    /// The order key of the entry at `entry`, ascending.
-    range-read-run-order: func(r: borrow<range-read-run>, index: u32, entry: u32) -> amount;
+    /// The order key of the entry at `at`, ascending.
+    run-order: func(r: borrow<run>, index: u32, at: u32) -> amount;
 
-    /// The value of the entry at `entry`, ascending.
-    range-read-run-entry: func(r: borrow<range-read-run>, index: u32, entry: u32) -> list<u8>;
+    /// The value of the entry at `at`, ascending.
+    run-entry: func(r: borrow<run>, index: u32, at: u32) -> list<u8>;
 
-    /// How many elements the site's loop mapped over.
-    range-write-run-len: func(r: borrow<range-write-run>) -> u32;
+    /// Replace the value of the entry at `at`.
+    run-entry-set: func(r: borrow<run>, index: u32, at: u32, value: list<u8>);
 
-    /// Whether this site declared anything for the element at `index`.
-    range-write-run-declared: func(r: borrow<range-write-run>, index: u32) -> bool;
+    /// Insert (or replace) the entry at `order`.
+    run-insert: func(r: borrow<run>, index: u32, order: amount, value: list<u8>);
 
-    /// Entries currently in the interval, bounded by the declared cap.
-    range-write-run-count: func(r: borrow<range-write-run>, index: u32) -> u32;
+    /// Remove the entry at `at`.
+    run-remove: func(r: borrow<run>, index: u32, at: u32);
 
-    /// Whether the page holds every entry the interval does.
-    range-write-run-covered: func(r: borrow<range-write-run>, index: u32) -> bool;
+    /// Take the named entries, as the instances they were.
+    run-instance-take: func(r: borrow<run>, index: u32, ids: list<u64>) -> own<bucket>;
 
-    /// The order key of the entry at `entry`, ascending.
-    range-write-run-order: func(r: borrow<range-write-run>, index: u32, entry: u32) -> amount;
-
-    /// The value of the entry at `entry`, ascending.
-    range-write-run-entry: func(r: borrow<range-write-run>, index: u32, entry: u32) -> list<u8>;
-
-    /// Replace the value of the entry at `entry`.
-    range-write-run-set: func(r: borrow<range-write-run>, index: u32, entry: u32, value: list<u8>);
-
-    /// Insert (or replace) the entry at `order`, which must lie inside
-    /// the declared interval.
-    range-write-run-insert: func(r: borrow<range-write-run>, index: u32, order: amount, value: list<u8>);
-
-    /// Remove the entry at `entry`.
-    range-write-run-remove: func(r: borrow<range-write-run>, index: u32, entry: u32);
-
-    /// How many elements the site's loop mapped over.
-    instance-range-run-len: func(r: borrow<instance-range-run>) -> u32;
-
-    /// Whether this site declared anything for the element at `index`.
-    instance-range-run-declared: func(r: borrow<instance-range-run>, index: u32) -> bool;
-
-    /// Entries currently in the interval, bounded by the declared cap.
-    instance-range-run-count: func(r: borrow<instance-range-run>, index: u32) -> u32;
-
-    /// Whether the page holds every entry the interval does.
-    instance-range-run-covered: func(r: borrow<instance-range-run>, index: u32) -> bool;
-
-    /// The order key of the entry at `entry`, ascending.
-    instance-range-run-order: func(r: borrow<instance-range-run>, index: u32, entry: u32) -> amount;
-
-    /// The value of the entry at `entry`, ascending.
-    instance-range-run-entry: func(r: borrow<instance-range-run>, index: u32, entry: u32) -> list<u8>;
-
-    /// Take the named instances out of the interval as a bucket.
-    instance-range-run-take: func(r: borrow<instance-range-run>, index: u32, ids: list<u64>) -> own<bucket>;
-
-    /// File every instance the bucket carries as an entry at the order it
-    /// was taken under, consuming it.
-    instance-range-run-put: func(r: borrow<instance-range-run>, index: u32, funds: own<bucket>, value: list<u8>);
+    /// File every instance the bucket carries as an entry, consuming it.
+    run-instance-put: func(r: borrow<run>, index: u32, funds: own<bucket>, value: list<u8>);
 }
 
 /// Wide arithmetic: the operations a contract cannot write itself without

@@ -20,8 +20,7 @@
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
     AbiParam, Clause, MethodSignature, PackageMetadata, Totality,
-    attach_metadata as attach_canonical, check_signature, materialized_kind, metadata_section,
-    seals,
+    attach_metadata as attach_canonical, check_signature, metadata_section, seals, supports,
 };
 use hyperscale_vm_runtime::{
     ExportParam, ExportShape, check_method, classify_exports, validated_component,
@@ -310,25 +309,23 @@ fn check_abi_against_export(
     for (position, (binding, param)) in signature.abi.iter().zip(params).enumerate() {
         match binding {
             AbiParam::Handle(clause) => {
-                let ExportParam::Handle(resource) = param else {
+                if *param != ExportParam::Handle {
                     return Err(GateError(format!(
                         "method {method:?}: ABI parameter {position} is a capability \
                          handle, but the export takes {param:?}"
                     )));
-                };
-                let expected = usize::try_from(*clause)
+                }
+                // Whether the clause materializes anything at all. What
+                // it materializes is the capability's own answer, held
+                // by the kernel at every operation.
+                let backed = usize::try_from(*clause)
                     .ok()
                     .and_then(|index| signature.effects.get(index))
-                    .and_then(materialized_kind);
-                if let Some(expected) = expected
-                    && *resource != expected
-                {
+                    .is_some_and(supports);
+                if !backed {
                     return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} borrows \
-                         `{}`, but clause {clause}'s mode materialises a \
-                         `{}`",
-                        resource.world_type(),
-                        expected.world_type()
+                        "method {method:?}: ABI parameter {position} borrows a handle \
+                         for clause {clause}, which materializes none"
                     )));
                 }
             }
@@ -349,13 +346,13 @@ fn check_abi_against_export(
                 }
             }
             AbiParam::Run { clause, site } => {
-                let ExportParam::Run(resource) = param else {
+                if *param != ExportParam::Run {
                     return Err(GateError(format!(
                         "method {method:?}: ABI parameter {position} is a run over a \
                          `for-each` site, but the export takes {param:?}"
                     )));
-                };
-                let expected = usize::try_from(*clause)
+                }
+                let backed = usize::try_from(*clause)
                     .ok()
                     .and_then(|index| signature.effects.get(index))
                     .and_then(|clause| match clause {
@@ -364,16 +361,11 @@ fn check_abi_against_export(
                             .and_then(|index| body.get(index)),
                         _ => None,
                     })
-                    .and_then(materialized_kind);
-                if let Some(expected) = expected
-                    && *resource != expected
-                {
+                    .is_some_and(supports);
+                if !backed {
                     return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} runs \
-                         `{}`, but site {site} of clause {clause}'s mode materialises a \
-                         `{}`",
-                        resource.run_type(),
-                        expected.run_type()
+                        "method {method:?}: ABI parameter {position} runs site {site} of \
+                         clause {clause}, which materializes none"
                     )));
                 }
             }
@@ -841,40 +833,38 @@ mod tests {
         let refused = admit_package(&artifact).expect_err("a handle needs a borrow");
         assert!(refused.0.contains("capability handle"), "{}", refused.0);
 
-        // A derived value where the export takes a borrow of the wrong
-        // resource for the clause's mode.
+        // A handle binding on a clause that materializes nothing. Every
+        // capability crosses as one resource, so what is left to hold is
+        // whether the clause it names backs a handle at all — a
+        // `for-each` expands over configuration and yields no single
+        // capability for a parameter to borrow.
         let borrow_export = parse_str(
             r#"(component
                  (import "hyperscale:kernel/state" (instance $state
-                   (export "delta-cell" (type $dc (sub resource)))))
-                 (alias export $state "delta-cell" (type $delta))
+                   (export "capability" (type $ac (sub resource)))))
+                 (alias export $state "capability" (type $access))
                  (core module $m
                    (func (export "f") (param i32) (result i64) i64.const 0)
                    (func (export "seal")))
                  (core instance $i (instantiate $m))
                  (func (export "instantiate") (canon lift (core func $i "seal")))
-                 (func (export "m") (param "vault" (borrow $delta)) (result u64)
+                 (func (export "m") (param "vault" (borrow $access)) (result u64)
                    (canon lift (core func $i "f"))))"#,
         )
         .expect("the component assembles");
-        let mut wrong_resource = declaring(&["m"]);
+        let mut unbacked = declaring(&["m"]);
         {
-            let signature = wrong_resource.methods.get_mut("m").expect("declared");
-            signature.effects = vec![Clause::Effect {
+            let signature = unbacked.methods.get_mut("m").expect("declared");
+            signature.effects = vec![Clause::ForEach {
                 guard: None,
-                target: TargetExpr::Point(Expr::ChildKey {
-                    owner: Box::new(Expr::SelfAddr),
-                    slot: package_slot(0),
-                    material: vec![held()],
-                }),
-                mode: ModeExpr::Reserve(Expr::Arg(0)),
-                denomination: Some(Box::new(held())),
+                list: Expr::Arg(0),
+                body: vec![],
             }];
             signature.abi = vec![AbiParam::Handle(0)];
         }
-        let artifact = attach_metadata(&borrow_export, &wrong_resource).expect("attaches");
-        let refused = admit_package(&artifact).expect_err("the borrowed resource must match");
-        assert!(refused.0.contains("reserve-cell"), "{}", refused.0);
+        let artifact = attach_metadata(&borrow_export, &unbacked).expect("attaches");
+        let refused = admit_package(&artifact).expect_err("a loop backs no single handle");
+        assert!(refused.0.contains("single access"), "{}", refused.0);
 
         // The same shape with the matching mode admits, so the refusals
         // above are the disagreement and not the shape.

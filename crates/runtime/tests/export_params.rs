@@ -2,7 +2,6 @@
 //! against.
 
 use hyperscale_vm_runtime::{ExportParam, component_exports};
-use hyperscale_vm_types::CellKind;
 use wat::parse_str;
 
 #[test]
@@ -10,9 +9,9 @@ fn every_world_shape_classifies_and_nested_exports_stay_invisible() {
     let bytes = parse_str(
         r#"(component
              (import "hyperscale:kernel/state" (instance $state
-               (export "reserve-cell" (type $rc (sub resource)))
+               (export "capability" (type $rc (sub resource)))
                (export "delta-cell" (type $dc (sub resource)))))
-             (alias export $state "reserve-cell" (type $reserve))
+             (alias export $state "capability" (type $reserve))
              (alias export $state "delta-cell" (type $delta))
 
              (core module $m
@@ -45,7 +44,7 @@ fn every_world_shape_classifies_and_nested_exports_stay_invisible() {
     let exports = component_exports(&bytes).expect("the fixture validates");
     assert_eq!(
         exports["withdraw"].params,
-        vec![ExportParam::Handle(CellKind::Reserve), ExportParam::Bytes],
+        vec![ExportParam::Handle, ExportParam::Bytes],
     );
     assert_eq!(exports["tick"].params, vec![ExportParam::U64]);
     assert_eq!(exports.len(), 3, "only function exports classify");

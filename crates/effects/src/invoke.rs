@@ -13,7 +13,7 @@
 //! actually returned. So a lowered argument is either a settled value, a
 //! table position, or an edge to read once its producer has run.
 
-use hyperscale_vm_types::{Address, CellKind, ResourceAddr};
+use hyperscale_vm_types::{Address, ResourceAddr};
 
 use crate::manifest::{Bounds, JudgedLeaf};
 use crate::metadata::PackageHash;
@@ -76,11 +76,11 @@ pub enum CallArg {
     /// A handle position no capability occupies: the clause that would
     /// have backed it was guarded out.
     ///
-    /// The kind travels because nothing downstream can recover it. An
-    /// engine reads a handle's world type off the capability at its rep,
-    /// and there is no capability here — routing has the type, from the
-    /// clause's own target and mode, and is the last thing that does.
-    AbsentHandle(CellKind),
+    /// Carries nothing: which resource the engine lends it as is the
+    /// same one every cell crosses as, and the rep it names is the one
+    /// no capability occupies. Touching it is a body whose control flow
+    /// disagrees with the verdict it was handed, and traps by name.
+    AbsentHandle,
     /// A clause's own guard verdict, as the export's `bool`.
     Bool(bool),
     /// The whole expansion of one `for-each` site: the capability each
@@ -91,12 +91,8 @@ pub enum CallArg {
     /// sites in one body may be guarded differently, and a run that
     /// dropped what did not fire would answer at a length the site beside
     /// it does not share — so the index is the element's throughout, and
-    /// a hole reads as a hole. The kind travels for the reason
-    /// [`CallArg::AbsentHandle`] carries one: a run of absences has no
-    /// capability to read a world type off.
+    /// a hole reads as a hole.
     Run {
-        /// The kind each entry is lent as, and the run's own world type.
-        kind: CellKind,
         /// One entry per element, at its position in the transaction's
         /// materialized table.
         entries: Vec<Option<u32>>,

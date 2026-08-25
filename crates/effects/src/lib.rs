@@ -1,6 +1,6 @@
 //! Effect signatures, the access DSL, and the routing fold.
 //!
-//! Access is a pure function of the signed transaction plus immutable
+//! Capability is a pure function of the signed transaction plus immutable
 //! package metadata. Every callable method carries an effect signature — a
 //! total function from its typed inputs to a declared `(key, mode)` set,
 //! written in a restricted DSL: field projections, keyed lookups over input
@@ -53,7 +53,7 @@ pub use dsl::{
     Clause, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH,
     MAX_EFFECTS_PER_SIGNATURE, MAX_ENVELOPE_EVALUATION_WORK, MAX_EVALUATION_WORK, MAX_EXPR_DEPTH,
     MAX_FOREACH_ELEMENTS, ModeExpr, PresentedGrants, TargetExpr, evaluate_declaration,
-    evaluate_effects, evaluate_expr, fresh_id, fresh_local, materialized_kind, self_child,
+    evaluate_effects, evaluate_expr, fresh_id, fresh_local, self_child, supports,
 };
 pub use envelope::{
     AdmittedTree, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_SLOT, Subintent,

@@ -17,7 +17,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_ref::{CVal, HandleKind, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{
-    DeltaCell, ReserveCell, WriteCell, add_kernel_to_linker, blessed_engine,
+    Capability as CapabilityResource, add_kernel_to_linker, blessed_engine,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Outcome,
@@ -200,7 +200,7 @@ impl GuestRunner for BlessedRunner {
                 .expect("bounded");
                 let b = rep_of(store.data(), &Capability::Delta(recipient));
                 instance
-                    .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>), (u64,)>(
+                    .get_typed_func::<(Resource<CapabilityResource>, Resource<CapabilityResource>), (u64,)>(
                         &mut store, "transfer",
                     )
                     .and_then(|f| {
@@ -214,7 +214,7 @@ impl GuestRunner for BlessedRunner {
             Shape::Rmw { cell } => {
                 let rep = rep_of(store.data(), &Capability::Write(cell));
                 instance
-                    .get_typed_func::<(Resource<WriteCell>,), (u64,)>(&mut store, "rmw")
+                    .get_typed_func::<(Resource<CapabilityResource>,), (u64,)>(&mut store, "rmw")
                     .and_then(|f| {
                         f.call(&mut store, (Resource::new_borrow(rep),))
                             .map(|(v,)| v)
@@ -283,11 +283,11 @@ impl GuestRunner for RefRunner {
                         .expect("capability present"),
                 )
                 .expect("bounded"),
-                        HandleKind::ReserveCell,
+                        HandleKind::Capability,
                     ),
                     CVal::Borrow(
                         rep_of(&session, &Capability::Delta(recipient)),
-                        HandleKind::DeltaCell,
+                        HandleKind::Capability,
                     ),
                 ],
             ),
@@ -295,7 +295,7 @@ impl GuestRunner for RefRunner {
                 "rmw",
                 vec![CVal::Borrow(
                     rep_of(&session, &Capability::Write(cell)),
-                    HandleKind::WriteCell,
+                    HandleKind::Capability,
                 )],
             ),
         };

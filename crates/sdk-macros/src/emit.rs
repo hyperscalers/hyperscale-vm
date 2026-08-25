@@ -21,13 +21,13 @@ use crate::term::{Op, Term, binding_ident, emit_kind, fresh_ident};
 /// by the time a site reaches emission its operations name one mode.
 /// A mode's parameter is evaluated before the access opens.
 ///
-/// `Access` borrows the tracer mutably for as long as it is alive, and
+/// `Capability` borrows the tracer mutably for as long as it is alive, and
 /// building a reserve amount reads the tracer to
 /// resolve arguments. Emitting the parameter into the call site would put
 /// both borrows on one expression; hoisting it is what keeps the generated
 /// code compiling for every declaration rather than only the ones with no
 /// mode parameter.
-fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
+pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     let has = |op: Op| site.ops.iter().find(|(o, _)| *o == op);
     let param = |op: Op| has(op).and_then(|(_, p)| p.clone());
     let nothing = quote!();

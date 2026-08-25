@@ -1,45 +1,66 @@
-//! Which run kinds the corpus lends, held to a list.
+//! Which modes the corpus lends through a run, held to a list.
 //!
-//! Nine resources were built and a missed one is a runtime refusal
-//! rather than a build failure: the world names every kind whether or
-//! not a package ever asks for one, so nothing about compiling the
-//! corpus says a kind was ever lent. This reads the kinds off the
-//! declarations the corpus traces, which is where a site's mode is
-//! decided, and holds them to what the fixtures actually exercise.
+//! A run is one resource whichever mode its entries carry, so nothing
+//! about compiling the corpus says a mode was ever lent through one —
+//! the capability behind an entry is the kernel's answer, and a mode the
+//! fixtures never reach is coverage nobody would miss. This reads the
+//! modes off the declarations the corpus traces, which is where a site's
+//! mode is decided, and holds them to what the fixtures exercise.
 //!
-//! The list is a floor and a ceiling both. A kind that drops off it is
-//! coverage lost; a kind that appears on it is a fixture nobody wrote
-//! down here. It is every kind there is, so the floor is the whole
-//! world.
+//! The list is a floor and a ceiling both. A mode that drops off it is
+//! coverage lost; a mode that appears on it is a fixture nobody wrote
+//! down here.
+//!
+//! It is every pairing a run site can carry but one: the corpus reaches
+//! the crediting half of a movement and not the unrestricted half, which
+//! is a fixture to write rather than a rule.
 
 use std::collections::BTreeSet;
 
-use hyperscale_vm_effects::{AbiParam, Clause, MethodSignature, materialized_kind};
+use hyperscale_vm_effects::{AbiParam, Clause, MethodSignature, ModeExpr, TargetExpr};
 use hyperscale_vm_fixtures::grammar;
-use hyperscale_vm_types::CellKind;
 
-/// The kind a run binding is lent at: the mode the site it names
-/// materialises, which is the declaration's answer rather than the
-/// export's.
-fn run_kind(signature: &MethodSignature, clause: u32, site: u32) -> Option<CellKind> {
+/// How a run site's declaration reads: its mode, and whether the target
+/// is a single leaf or an interval, and whether it holds value.
+fn run_mode(signature: &MethodSignature, clause: u32, site: u32) -> Option<&'static str> {
     let Clause::ForEach { body, .. } = signature.effects.get(clause as usize)? else {
         return None;
     };
-    materialized_kind(body.get(site as usize)?)
+    let Clause::Effect {
+        target,
+        mode,
+        denomination,
+        ..
+    } = body.get(site as usize)?
+    else {
+        return None;
+    };
+    let holds_value = denomination.is_some();
+    Some(match (target, mode) {
+        (TargetExpr::Point(_), ModeExpr::Read) if holds_value => "read of value",
+        (TargetExpr::Point(_), ModeExpr::Read) => "read of bytes",
+        (TargetExpr::Point(_), ModeExpr::Write) if holds_value => "exclusive hold on value",
+        (TargetExpr::Point(_), ModeExpr::Write) => "exclusive hold on bytes",
+        (TargetExpr::Point(_), ModeExpr::Delta) => "commutative movement",
+        (TargetExpr::Point(_), ModeExpr::Credit) => "commutative credit",
+        (TargetExpr::Point(_), ModeExpr::Reserve(_)) => "held reservation",
+        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Read) => "read interval",
+        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write) if holds_value => {
+            "interval of instances"
+        }
+        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write) => "write interval",
+        _ => return None,
+    })
 }
 
-/// Every run the corpus package lends, by the world type it is
-/// borrowed as — the name, because a kind is not ordered and the name
-/// is what a reader of a failure wants anyway.
+/// Every mode the corpus package lends through a run.
 fn reached() -> BTreeSet<&'static str> {
     grammar::metadata()
         .methods
         .values()
         .flat_map(|signature| {
             signature.abi.iter().filter_map(move |param| match param {
-                AbiParam::Run { clause, site } => {
-                    run_kind(signature, *clause, *site).map(CellKind::run_type)
-                }
+                AbiParam::Run { clause, site } => run_mode(signature, *clause, *site),
                 _ => None,
             })
         })
@@ -47,18 +68,18 @@ fn reached() -> BTreeSet<&'static str> {
 }
 
 #[test]
-fn the_corpus_lends_every_run_kind_there_is() {
+fn the_corpus_lends_every_mode_a_run_can_carry() {
     let reached = reached();
     let expected = BTreeSet::from([
-        CellKind::Read.run_type(),
-        CellKind::Write.run_type(),
-        CellKind::Amount.run_type(),
-        CellKind::AmountRead.run_type(),
-        CellKind::Delta.run_type(),
-        CellKind::Reserve.run_type(),
-        CellKind::RangeRead.run_type(),
-        CellKind::RangeWrite.run_type(),
-        CellKind::InstanceRange.run_type(),
+        "read of bytes",
+        "read of value",
+        "exclusive hold on bytes",
+        "exclusive hold on value",
+        "commutative credit",
+        "held reservation",
+        "read interval",
+        "write interval",
+        "interval of instances",
     ]);
-    assert_eq!(reached, expected, "the run kinds the corpus lends moved");
+    assert_eq!(reached, expected, "the modes the corpus lends moved");
 }

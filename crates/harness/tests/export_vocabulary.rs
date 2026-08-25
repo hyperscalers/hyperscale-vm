@@ -19,7 +19,7 @@ use hyperscale_vm_harness::dual::DualGuest;
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{CVal, RefComponent};
 use hyperscale_vm_runtime::{ExportParam, component_exports, validate_component};
-use hyperscale_vm_types::{CellKind, EffectSet, TxHash};
+use hyperscale_vm_types::{EffectSet, TxHash};
 use wasmtime::Result;
 use wat::parse_str;
 
@@ -27,17 +27,12 @@ const FUEL: u64 = 1_000_000_000;
 
 /// The state resources a clause can materialize a borrow of, by the name
 /// the kernel world exports each under.
-const HANDLE_KINDS: &[&str] = &[
-    "read-cell",
-    "write-cell",
-    "amount-cell",
-    "amount-read",
-    "delta-cell",
-    "reserve-cell",
-    "range-read",
-    "range-write",
-    "instance-range",
-];
+///
+/// Two, and one per rep space: an access's rep indexes the capability
+/// table the declaration materialized, and a run's indexes its own list
+/// of them. What a body may do through either is the capability's
+/// answer, which no world type carries.
+const HANDLE_KINDS: &[&str] = &["capability", "run"];
 
 /// A component whose exports take every parameter shape the gate can
 /// demand: a borrow of each state resource plus the issuance grant, an
@@ -110,8 +105,10 @@ fn every_shape_the_gate_can_demand_deploys_and_decodes() {
     let exports = component_exports(&bytes).expect("the exports classify");
     let handles: Vec<ExportParam> = HANDLE_KINDS
         .iter()
-        .map(|kind| {
-            ExportParam::Handle(CellKind::from_world_type(kind).expect("a state cell kind"))
+        .map(|kind| match *kind {
+            "capability" => ExportParam::Handle,
+            "run" => ExportParam::Run,
+            other => panic!("no export shape for {other}"),
         })
         .collect();
     assert_eq!(exports["handles"].params, handles);

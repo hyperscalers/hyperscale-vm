@@ -9,7 +9,6 @@
 //! for did something else.
 
 use crate::lower::{Lowered, Need, flag_ident, handle_ident, value_ident};
-use crate::mode::HandleMode;
 use crate::term::Term;
 use crate::wit::{Param, Shape};
 use crate::{is_address, is_named};
@@ -17,10 +16,10 @@ use crate::{is_address, is_named};
 /// What one export parameter carries.
 pub enum Carries {
     /// A materialized capability, at the resource its clause declares.
-    Handle(HandleMode),
+    Handle,
     /// The run covering one `for-each` site's expansions, at the same
     /// resource a single access through it would materialise.
-    Run(HandleMode),
+    Run,
     /// A value edge, under the author's own name for it.
     Edge {
         /// The name the method's signature gave the parameter.
@@ -296,11 +295,12 @@ fn same_shape(a: &Shape, b: &Shape) -> bool {
         | (Shape::Ids(_), Shape::Ids(_))
         | (Shape::Flag, Shape::Flag)
         | (Shape::Bucket, Shape::Bucket)
-        | (Shape::Issuer, Shape::Issuer) => true,
+        | (Shape::Issuer, Shape::Issuer)
+        | (Shape::Handle, Shape::Handle)
+        | (Shape::Run, Shape::Run) => true,
         (Shape::Cell(left), Shape::Cell(right)) => {
             quote::quote!(#left).to_string() == quote::quote!(#right).to_string()
         }
-        (Shape::Handle(left), Shape::Handle(right)) => left == right,
         _ => false,
     }
 }
@@ -328,11 +328,6 @@ pub fn bindings(
     let mut bindings = Vec::new();
 
     for (position, site) in lowered.handles.iter().copied().enumerate() {
-        let resource = lowered
-            .sites
-            .get(site)
-            .and_then(crate::lower::Site::resource)
-            .unwrap_or(HandleMode::ReadCell);
         // A site a `for-each` body declared is one parameter covering
         // the whole expansion, so the export's arity stays a function of
         // the signature whether or not the site sits under a loop.
@@ -340,18 +335,10 @@ pub fn bindings(
         bindings.push(Binding {
             param: Param {
                 name: format!("handle-{position}"),
-                shape: if run {
-                    Shape::Run(resource)
-                } else {
-                    Shape::Handle(resource)
-                },
+                shape: if run { Shape::Run } else { Shape::Handle },
             },
             ident: handle_ident(site),
-            carries: if run {
-                Carries::Run(resource)
-            } else {
-                Carries::Handle(resource)
-            },
+            carries: if run { Carries::Run } else { Carries::Handle },
         });
     }
 

@@ -21,11 +21,9 @@ use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
 };
 use hyperscale_vm_runtime::{
-    AmountCell, AmountCellRun, AmountRead, AmountReadRun, Bucket, DeltaCell, DeltaCellRun,
-    HostRefusal, InstanceRange, InstanceRangeRun, InstantiationCharges, Issuer, RangeRead,
-    RangeReadRun, RangeWrite, RangeWriteRun, ReadCell, ReadCellRun, ReserveCell, ReserveCellRun,
-    WriteCell, WriteCellRun, add_kernel_to_linker, blessed_engine, classify, instantiate_charged,
-    instantiation_charges, validate_component,
+    Bucket, Capability as CapabilityResource, HostRefusal, InstantiationCharges, Issuer, Run,
+    add_kernel_to_linker, blessed_engine, classify, instantiate_charged, instantiation_charges,
+    validate_component,
 };
 use hyperscale_vm_types::{ADDRESS_WORDS, AbortReason, EffectSet, ResourceAddr, TxHash};
 use wasmtime::component::{Component, Instance, Linker, Resource, ResourceAny, Val};
@@ -298,65 +296,15 @@ fn lower(store: &mut Store<KernelSession>, arg: &CVal) -> Result<Val> {
 fn borrow(store: &mut Store<KernelSession>, rep: u32, kind: HandleKind) -> Result<ResourceAny> {
     let store = &mut *store;
     match kind {
-        HandleKind::ReadCellRun => {
-            ResourceAny::try_from_resource(Resource::<ReadCellRun>::new_own(rep), store)
+        HandleKind::Capability => {
+            ResourceAny::try_from_resource(Resource::<CapabilityResource>::new_own(rep), store)
         }
-        HandleKind::WriteCellRun => {
-            ResourceAny::try_from_resource(Resource::<WriteCellRun>::new_own(rep), store)
-        }
-        HandleKind::AmountCellRun => {
-            ResourceAny::try_from_resource(Resource::<AmountCellRun>::new_own(rep), store)
-        }
-        HandleKind::AmountReadRun => {
-            ResourceAny::try_from_resource(Resource::<AmountReadRun>::new_own(rep), store)
-        }
-        HandleKind::DeltaCellRun => {
-            ResourceAny::try_from_resource(Resource::<DeltaCellRun>::new_own(rep), store)
-        }
-        HandleKind::ReserveCellRun => {
-            ResourceAny::try_from_resource(Resource::<ReserveCellRun>::new_own(rep), store)
-        }
-        HandleKind::RangeReadRun => {
-            ResourceAny::try_from_resource(Resource::<RangeReadRun>::new_own(rep), store)
-        }
-        HandleKind::RangeWriteRun => {
-            ResourceAny::try_from_resource(Resource::<RangeWriteRun>::new_own(rep), store)
-        }
-        HandleKind::InstanceRangeRun => {
-            ResourceAny::try_from_resource(Resource::<InstanceRangeRun>::new_own(rep), store)
-        }
+        HandleKind::Run => ResourceAny::try_from_resource(Resource::<Run>::new_own(rep), store),
         HandleKind::Bucket => {
             ResourceAny::try_from_resource(Resource::<Bucket>::new_own(rep), store)
         }
         HandleKind::Issuer => {
             ResourceAny::try_from_resource(Resource::<Issuer>::new_own(rep), store)
-        }
-        HandleKind::ReadCell => {
-            ResourceAny::try_from_resource(Resource::<ReadCell>::new_own(rep), store)
-        }
-        HandleKind::WriteCell => {
-            ResourceAny::try_from_resource(Resource::<WriteCell>::new_own(rep), store)
-        }
-        HandleKind::AmountCell => {
-            ResourceAny::try_from_resource(Resource::<AmountCell>::new_own(rep), store)
-        }
-        HandleKind::AmountRead => {
-            ResourceAny::try_from_resource(Resource::<AmountRead>::new_own(rep), store)
-        }
-        HandleKind::DeltaCell => {
-            ResourceAny::try_from_resource(Resource::<DeltaCell>::new_own(rep), store)
-        }
-        HandleKind::ReserveCell => {
-            ResourceAny::try_from_resource(Resource::<ReserveCell>::new_own(rep), store)
-        }
-        HandleKind::RangeRead => {
-            ResourceAny::try_from_resource(Resource::<RangeRead>::new_own(rep), store)
-        }
-        HandleKind::RangeWrite => {
-            ResourceAny::try_from_resource(Resource::<RangeWrite>::new_own(rep), store)
-        }
-        HandleKind::InstanceRange => {
-            ResourceAny::try_from_resource(Resource::<InstanceRange>::new_own(rep), store)
         }
     }
 }

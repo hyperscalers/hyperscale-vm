@@ -114,7 +114,7 @@ fn a_write_cell_reads_back_what_it_was_set_to() {
     let session = session(MemoryStore::new(), vec![point(cell, Mode::Write)]);
 
     let (session, ()) = with_kernel(session, || {
-        let mut slot = Slot::<Quantity>::at(Handle::Write(0));
+        let mut slot = Slot::<Quantity>::at(Handle::Capability(0));
         assert_eq!(
             slot.get(),
             Quantity::from_subunits(0),
@@ -143,7 +143,7 @@ fn value_taken_from_a_cell_is_the_value_in_hand() {
     let session = value_session(store, vec![point(vault, Mode::Write)]);
 
     let (_, held) = with_kernel(session, || {
-        let mut slot = Slot::<Vault>::at(Handle::Amount(0));
+        let mut slot = Slot::<Vault>::at(Handle::Capability(0));
         let funds = slot.take(Quantity::from_subunits(30));
         let held = funds.quantity();
         slot.put(funds);
@@ -162,7 +162,7 @@ fn a_bucket_divides_into_what_comes_off_and_what_is_left() {
     let session = value_session(store, vec![point(vault, Mode::Write)]);
 
     let (_, (split, rest)) = with_kernel(session, || {
-        let mut slot = Slot::<Vault>::at(Handle::Amount(0));
+        let mut slot = Slot::<Vault>::at(Handle::Capability(0));
         let mut funds = slot.take(Quantity::from_subunits(50));
         let part = funds.take(Quantity::from_subunits(20));
         (part.quantity(), funds.quantity())
@@ -191,7 +191,7 @@ fn a_division_conserves_what_it_divided() {
     let session = value_session(store, vec![point(vault, Mode::Write)]);
 
     let (_, (parts, rest)) = with_kernel(session, || {
-        let mut slot = Slot::<Vault>::at(Handle::Amount(0));
+        let mut slot = Slot::<Vault>::at(Handle::Capability(0));
         let funds = slot.take(Quantity::from_subunits(100));
         let third = Ratio::of(1, 3).expect("a third is a ratio");
         let ([a, b, c], rest) = funds.split_n(&[third, third, third]);
@@ -222,7 +222,7 @@ fn a_boolean_is_a_cell_the_vocabulary_admits() {
     let session = session(MemoryStore::new(), vec![point(flag, Mode::Write)]);
 
     let (session, (unwritten, after)) = with_kernel(session, || {
-        let mut cell = Slot::<bool>::at(Handle::Write(0));
+        let mut cell = Slot::<bool>::at(Handle::Capability(0));
         let unwritten = cell.get();
         cell.set(true);
         (unwritten, cell.get())
@@ -246,7 +246,7 @@ fn a_boolean_cell_holding_neither_byte_is_a_defect() {
     let session = session(store, vec![point(flag, Mode::Read)]);
 
     let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        with_kernel(session, || Slot::<bool>::at(Handle::Read(0)).get())
+        with_kernel(session, || Slot::<bool>::at(Handle::Capability(0)).get())
     }));
     assert!(read.is_err(), "a third byte is not a boolean");
 }
@@ -257,7 +257,7 @@ fn an_interval_reads_and_writes_the_entries_it_covers() {
     let session = session(seeded(), vec![range(Mode::Write)]);
 
     let (session, (count, orders, second)) = with_kernel(session, || {
-        let mut interval = Interval::<u64>::at(Handle::RangeWrite(0));
+        let mut interval = Interval::<u64>::at(Handle::Capability(0));
         let count = interval.count();
         let orders: Vec<OrderKey> = (0..count).map(|index| interval.order(index)).collect();
         let second = interval.entry(1);
@@ -282,7 +282,7 @@ fn an_interval_removes_the_entry_it_names() {
     let session = session(seeded(), vec![range(Mode::Write)]);
 
     let (session, (left, orders)) = with_kernel(session, || {
-        let mut interval = Interval::<u64>::at(Handle::RangeWrite(0));
+        let mut interval = Interval::<u64>::at(Handle::Capability(0));
         interval.remove(1);
         let left = interval.count();
         let orders: Vec<OrderKey> = (0..left).map(|index| interval.order(index)).collect();
@@ -313,7 +313,7 @@ fn an_entry_writes_at_the_order_it_names() {
     let session = session(MemoryStore::new(), vec![range(Mode::Write)]);
 
     let (session, read) = with_kernel(session, || {
-        let mut entry = Entry::<u64>::at(Handle::RangeWrite(0), OrderKey::from_bits(7));
+        let mut entry = Entry::<u64>::at(Handle::Capability(0), OrderKey::from_bits(7));
         entry.set(1234);
         entry.get()
     });
@@ -347,7 +347,7 @@ fn a_refused_operation_carries_its_class_out() {
     let refusal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_kernel(session, || {
             // Nothing is in the cell, so there is nothing to take.
-            let mut slot = Slot::<Vault>::at(Handle::Amount(0));
+            let mut slot = Slot::<Vault>::at(Handle::Capability(0));
             let _: Bucket = slot.take(Quantity::from_subunits(1));
         });
     }))
@@ -372,14 +372,16 @@ fn a_thread_a_refusal_unwound_through_runs_the_next_invocation() {
     let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let session = value_session(MemoryStore::new(), vec![point(vault, Mode::Write)]);
         with_kernel(session, || {
-            let mut slot = Slot::<Vault>::at(Handle::Amount(0));
+            let mut slot = Slot::<Vault>::at(Handle::Capability(0));
             let _: Bucket = slot.take(Quantity::from_subunits(1));
         });
     }));
     assert!(refused.is_err(), "an unfunded take refuses");
 
     let session = session(MemoryStore::new(), vec![point(vault, Mode::Write)]);
-    let (_, read) = with_kernel(session, || Slot::<Quantity>::at(Handle::Write(0)).get());
+    let (_, read) = with_kernel(session, || {
+        Slot::<Quantity>::at(Handle::Capability(0)).get()
+    });
 
     assert_eq!(
         read,

@@ -102,7 +102,7 @@ fn charge_scan<P: HostAccess + FuelSink>(port: &mut P) -> Result<(), MeterError>
     charge(port, lifted)
 }
 
-/// `len`, on any of the nine run resources.
+/// `run.len`.
 ///
 /// Nothing crosses the boundary but the count itself, which every host
 /// call already carries the cost of.
@@ -110,7 +110,7 @@ pub fn run_len<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<u32, 
     refused(port.host().run_len(rep))
 }
 
-/// `declared`, on any of the nine run resources.
+/// `run.declared`.
 pub fn run_declared<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
@@ -133,28 +133,15 @@ pub fn run_at<P: HostAccess + FuelSink>(
     refused(port.host().run_at(rep, index))
 }
 
-/// `read-cell.get`.
-pub fn read_cell_get<P: HostAccess + FuelSink>(
-    port: &mut P,
-    rep: u32,
-) -> Result<Vec<u8>, MeterError> {
+/// `access.get`.
+pub fn cell_get<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<Vec<u8>, MeterError> {
     let value = refused(port.host().cell_get(rep))?;
     charge(port, value.len())?;
     Ok(value)
 }
 
-/// `write-cell.get`.
-pub fn write_cell_get<P: HostAccess + FuelSink>(
-    port: &mut P,
-    rep: u32,
-) -> Result<Vec<u8>, MeterError> {
-    let value = refused(port.host().cell_get(rep))?;
-    charge(port, value.len())?;
-    Ok(value)
-}
-
-/// `write-cell.set`.
-pub fn write_cell_set<P: HostAccess + FuelSink>(
+/// `access.set`.
+pub fn cell_set<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
     value: Vec<u8>,
@@ -163,13 +150,10 @@ pub fn write_cell_set<P: HostAccess + FuelSink>(
     refused(port.host().write_cell_set(rep, value))
 }
 
-/// `write-cell.clear`. Nothing crosses the boundary, so nothing is
+/// `access.clear`. Nothing crosses the boundary, so nothing is
 /// charged for crossing it — the leaf's removal is the store's work,
 /// which the write capability was already provisioned for.
-pub fn write_cell_clear<P: HostAccess + FuelSink>(
-    port: &mut P,
-    rep: u32,
-) -> Result<(), MeterError> {
+pub fn cell_clear<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<(), MeterError> {
     refused(port.host().write_cell_clear(rep))
 }
 
@@ -185,25 +169,12 @@ pub fn mint<P: HostAccess + FuelSink>(
     refused(port.host().mint(issuer, amount))
 }
 
-/// `amount-cell.balance` and `amount-read.balance`: one figure, two
+/// `access.balance`: one figure, whichever value mode
 /// handle types.
-pub fn amount_balance<P: HostAccess + FuelSink>(
-    port: &mut P,
-    rep: u32,
-) -> Result<u128, MeterError> {
+pub fn cell_balance<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<u128, MeterError> {
     let held = refused(port.host().amount_cell_balance(rep))?;
     charge(port, AMOUNT_BOUNDARY_BYTES)?;
     Ok(held)
-}
-
-/// `amount-cell.take`.
-pub fn amount_cell_take<P: HostAccess + FuelSink>(
-    port: &mut P,
-    rep: u32,
-    amount: u128,
-) -> Result<u32, MeterError> {
-    charge(port, AMOUNT_BOUNDARY_BYTES)?;
-    refused(port.host().cell_take(rep, amount))
 }
 
 /// `burn`.
@@ -225,7 +196,7 @@ pub fn mint_instances<P: HostAccess + FuelSink>(
     refused(port.host().mint_instances(issuer, ids))
 }
 
-/// `instance-range.take`.
+/// `access.instance-take`.
 pub fn instance_range_take<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
@@ -237,7 +208,7 @@ pub fn instance_range_take<P: HostAccess + FuelSink>(
     refused(taken)
 }
 
-/// `instance-range.put`. Asks the store what each order already holds
+/// `access.instance-put`. Asks the store what each order already holds
 /// before filing it, so it pays for the seeks like a take does.
 pub fn instance_range_put<P: HostAccess + FuelSink>(
     port: &mut P,
@@ -291,8 +262,8 @@ pub fn bucket_amount<P: HostAccess + FuelSink>(
     Ok(amount)
 }
 
-/// `amount-cell.put`.
-pub fn amount_cell_put<P: HostAccess + FuelSink>(
+/// `access.put`.
+pub fn cell_put<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
     funds: u32,
@@ -300,17 +271,8 @@ pub fn amount_cell_put<P: HostAccess + FuelSink>(
     refused(port.host().cell_put(rep, funds))
 }
 
-/// `delta-cell.put`.
-pub fn delta_cell_put<P: HostAccess + FuelSink>(
-    port: &mut P,
-    rep: u32,
-    funds: u32,
-) -> Result<(), MeterError> {
-    refused(port.host().cell_put(rep, funds))
-}
-
-/// `delta-cell.take`.
-pub fn delta_cell_take<P: HostAccess + FuelSink>(
+/// `access.take`.
+pub fn cell_take<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
     amount: u128,
@@ -319,29 +281,26 @@ pub fn delta_cell_take<P: HostAccess + FuelSink>(
     refused(port.host().cell_take(rep, amount))
 }
 
-/// `reserve-cell.take`.
-pub fn reserve_cell_take<P: HostAccess + FuelSink>(
-    port: &mut P,
-    rep: u32,
-) -> Result<u32, MeterError> {
+/// `access.reserve-take`.
+pub fn reserve_take<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<u32, MeterError> {
     refused(port.host().reserve_take(rep))
 }
 
-/// `count`, on any of the three interval resources.
+/// `access.count`.
 pub fn range_count<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<u32, MeterError> {
     let count = port.host().range_count(rep);
     charge_scan(port)?;
     refused(count)
 }
 
-/// `covered`, on any of the three interval resources.
+/// `access.covered`.
 pub fn range_covered<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<bool, MeterError> {
     let covered = port.host().range_covered(rep);
     charge_scan(port)?;
     refused(covered)
 }
 
-/// `order`, on any of the three interval resources.
+/// `access.order`.
 pub fn range_order<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
@@ -354,7 +313,7 @@ pub fn range_order<P: HostAccess + FuelSink>(
     Ok(order)
 }
 
-/// `entry`, on any of the three interval resources.
+/// `access.entry`.
 pub fn range_entry<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
@@ -367,7 +326,7 @@ pub fn range_entry<P: HostAccess + FuelSink>(
     Ok(value)
 }
 
-/// `range-write.set`.
+/// `access.entry-set`.
 pub fn range_set<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
@@ -380,7 +339,7 @@ pub fn range_set<P: HostAccess + FuelSink>(
     refused(set)
 }
 
-/// `range-write.insert`.
+/// `access.insert`.
 pub fn range_insert<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
@@ -393,7 +352,7 @@ pub fn range_insert<P: HostAccess + FuelSink>(
     refused(inserted)
 }
 
-/// `range-write.remove`.
+/// `access.remove`.
 pub fn range_remove<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
@@ -459,7 +418,7 @@ pub fn fixed_pow(
     math::fixed_pow(base, exp, rounding).map_err(|error| MeterError::Refused(error.into()))
 }
 
-/// `state.write-cell-seal`.
+/// `state.access-seal`.
 ///
 /// Priced as the epoch it stores, on the same terms as the set it is:
 /// the leaf is eight bytes whatever epoch it names.
@@ -472,7 +431,7 @@ pub fn seal<P: HostAccess + FuelSink>(port: &mut P, rep: u32) -> Result<(), Mete
     charge(port, size_of::<u64>())
 }
 
-/// `state.write-cell-open-seal`.
+/// `state.access-open-seal`.
 ///
 /// Priced as the word it answers: the resolve is a lookup and a digest
 /// over a fixed preimage, so what crosses the boundary is the whole of

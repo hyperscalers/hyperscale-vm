@@ -110,35 +110,30 @@ use wasmparser::{
 const DISCHARGED: &[(&str, &str)] = &[
     // A get reads the cell its handle names; materialization is the
     // whole of what it needs.
-    ("state", "read-cell-get"),
-    ("state", "write-cell-get"),
+    ("state", "capability-get"),
     // A set stores the bytes it is handed with no judgment at the call;
     // what a receipt may carry is judged at its own boundary.
-    ("state", "write-cell-set"),
+    ("state", "capability-set"),
     // A clear ends a leaf the handle already holds exclusively; there
     // is nothing to judge that materialization did not.
-    ("state", "write-cell-clear"),
+    ("state", "capability-clear"),
     // A denominated cell holds an amount: value enters one only through
     // movements, so the read cannot meet bytes — a cell that did would
     // be a defect in state, not a refusal the call can reach.
-    ("state", "amount-cell-balance"),
-    ("state", "amount-read-balance"),
+    ("state", "capability-balance"),
     // What an edge carries is the edge's own fact.
     ("state", "bucket-amount"),
     // A credit of conserved value: the cell's denomination was judged at
     // admission against what the edge carries, and supply linearity
     // bounds any balance plus any bucket at the accumulator's width — a
-    // sum past it would need value no mint ever created.
-    ("state", "amount-cell-put"),
-    ("state", "delta-cell-put"),
+    // sum past it would need value no mint ever created. Refused at the
+    // call for an exclusive hold and at the fold for a movement, and
+    // neither refusal is one this leg can reach.
+    ("state", "capability-put"),
     // A count takes no index, so there is no bound to fall outside; the
     // coverage question is answered from the same page and its probe.
-    ("state", "range-read-count"),
-    ("state", "range-write-count"),
-    ("state", "instance-range-count"),
-    ("state", "range-read-covered"),
-    ("state", "range-write-covered"),
-    ("state", "instance-range-covered"),
+    ("state", "capability-count"),
+    ("state", "capability-covered"),
     // Total on every input; the arithmetic that refuses a divisor or a
     // width stays out, because those are runtime values no declaration
     // speaks about.
@@ -165,15 +160,8 @@ const DISCHARGED: &[(&str, &str)] = &[
 /// returns no verdict a body could trip over. Whether the transaction
 /// lost value is settled once, at the close, over the whole table.
 const DISCHARGED_DROPS: &[(&str, &str)] = &[
-    ("state", "read-cell"),
-    ("state", "write-cell"),
-    ("state", "amount-cell"),
-    ("state", "amount-read"),
-    ("state", "delta-cell"),
-    ("state", "reserve-cell"),
-    ("state", "range-read"),
-    ("state", "range-write"),
-    ("state", "instance-range"),
+    ("state", "capability"),
+    ("state", "run"),
     ("state", "issuer"),
     ("state", "bucket"),
 ];

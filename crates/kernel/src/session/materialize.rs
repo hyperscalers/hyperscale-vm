@@ -10,8 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{Declaration, JudgedLeaf, Rule};
 use hyperscale_vm_types::{
-    Address, CellKind, CollectionId, Effect, EffectTarget, Mode, Presence, ResourceAddr,
-    SubstateKey, TxHash,
+    Address, CollectionId, Effect, EffectTarget, Mode, Presence, ResourceAddr, SubstateKey, TxHash,
 };
 
 use super::buckets::Buckets;
@@ -101,28 +100,6 @@ pub enum Capability {
     /// The same interval over entries that are instances of one
     /// resource, on the terms [`Capability::Amount`] states.
     InstanceRange(Interval),
-}
-
-impl Capability {
-    /// The handle type a materialized capability is passed as.
-    #[must_use]
-    pub const fn kind(&self) -> CellKind {
-        match self {
-            Self::Read(_) => CellKind::Read,
-            Self::Write(_) => CellKind::Write,
-            Self::Amount(_) => CellKind::Amount,
-            Self::AmountRead(_) => CellKind::AmountRead,
-            // One handle type for both: what a credit gives up is a
-            // direction the kernel holds it to, not a surface the guest
-            // is handed. A world type of its own would buy the same
-            // guarantee at the price of every package rebuilding.
-            Self::Delta(_) | Self::Credit(_) => CellKind::Delta,
-            Self::Reserve { .. } => CellKind::Reserve,
-            Self::RangeRead(..) => CellKind::RangeRead,
-            Self::RangeWrite(..) => CellKind::RangeWrite,
-            Self::InstanceRange(..) => CellKind::InstanceRange,
-        }
-    }
 }
 
 /// Why materialization refused a declared effect set — each an abort
@@ -898,7 +875,7 @@ mod tests {
     #[test]
     fn the_pairings_publish_refuses_are_the_ones_no_capability_is_built_for() {
         use hyperscale_vm_effects::{
-            Clause, Expr, ModeExpr, TargetExpr, Value, materialized_kind, package_slot,
+            Clause, Expr, ModeExpr, TargetExpr, Value, package_slot, supports,
         };
 
         let owner = Address::new([3; 31], AddressClass::Component);
@@ -969,7 +946,7 @@ mod tests {
                     true,
                 );
                 assert_eq!(
-                    materialized_kind(&clause).is_none(),
+                    !supports(&clause),
                     matches!(built, Err(MaterializeError::Unsupported(_))),
                     "{declared:?} {spelled:?} materialised {built:?}"
                 );

@@ -5,7 +5,7 @@
 use hyperscale_vm_embed::KernelHost;
 use hyperscale_vm_embed::meter::FUEL_PER_BOUNDARY_BYTE;
 use hyperscale_vm_runtime::{
-    ReadCell, WriteCell, add_kernel_to_linker, blessed_engine, validate_component,
+    Capability as CapabilityResource, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use hyperscale_vm_types::math::U256;
 use hyperscale_vm_types::{AbortReason, Drawn};
@@ -24,19 +24,18 @@ use wat::parse_str;
 const GUEST_WAT: &str = r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "read-cell" (type $rc (sub resource)))
-    (export "write-cell" (type $wc (sub resource)))
-    (export "read-cell-get" (func (param "c" (borrow $rc)) (result (list u8))))
-    (export "write-cell-set" (func (param "c" (borrow $wc)) (param "value" (list u8))))))
+    (export "capability" (type $c (sub resource)))
+    (export "capability-get" (func (param "c" (borrow $c)) (result (list u8))))
+    (export "capability-set" (func (param "c" (borrow $c)) (param "value" (list u8))))))
   (import "hyperscale:kernel/env" (instance $env
     (export "clock" (func (result u64)))))
   (import "hyperscale:kernel/crypto" (instance $crypto
     (export "hash" (func (param "data" (list u8)) (result (list u8))))))
 
-  (alias export $state "read-cell" (type $rcell))
-  (alias export $state "write-cell" (type $wcell))
-  (alias export $state "read-cell-get" (func $read))
-  (alias export $state "write-cell-set" (func $write))
+  (alias export $state "capability" (type $rcell))
+  (alias export $state "capability" (type $wcell))
+  (alias export $state "capability-get" (func $read))
+  (alias export $state "capability-set" (func $write))
   (alias export $env "clock" (func $clock))
   (alias export $crypto "hash" (func $hash))
 
@@ -316,7 +315,9 @@ fn run_guest(engine: &Engine, substate_len: usize, fuel: u64) -> Result<(u64, u6
     store.set_fuel(fuel)?;
     let instance = linker.instantiate(&mut store, &component)?;
     let run = instance
-        .get_typed_func::<(Resource<ReadCell>, Resource<WriteCell>), (u64,)>(&mut store, "run")?;
+        .get_typed_func::<(Resource<CapabilityResource>, Resource<CapabilityResource>), (u64,)>(
+            &mut store, "run",
+        )?;
     let (out,) = run.call(
         &mut store,
         (Resource::new_borrow(0), Resource::new_borrow(1)),

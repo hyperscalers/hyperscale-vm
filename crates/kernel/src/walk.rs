@@ -139,19 +139,20 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
         for arg in &call.args {
             match arg {
                 CallArg::Handle(rep) => {
-                    let Some(capability) = usize::try_from(*rep)
+                    // The rep names a position the whole transaction's
+                    // declaration fixed, so one past the table is a
+                    // composition defect rather than a guest's.
+                    if usize::try_from(*rep)
                         .ok()
                         .and_then(|index| session.capabilities().get(index))
-                    else {
+                        .is_none()
+                    {
                         return Err(composition_defect(
                             session,
                             AbortReason::CapabilityOutOfRange,
                         ));
-                    };
-                    args.push(GuestArg::Handle {
-                        rep: *rep,
-                        kind: capability.kind(),
-                    });
+                    }
+                    args.push(GuestArg::Handle { rep: *rep });
                 }
                 CallArg::Bucket { source, output } => {
                     let Some(produced) = edge_at(outputs, *source, *output) else {
@@ -162,16 +163,13 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
                     };
                     args.push(GuestArg::Bucket(*produced));
                 }
-                CallArg::AbsentHandle(kind) => args.push(GuestArg::Handle {
-                    rep: ABSENT_REP,
-                    kind: *kind,
-                }),
+                CallArg::AbsentHandle => args.push(GuestArg::Handle { rep: ABSENT_REP }),
                 // A run's entries were resolved where the declaration was
                 // evaluated, so the session is handed what the site
                 // covers rather than a rule for finding it.
-                CallArg::Run { kind, entries } => {
+                CallArg::Run { entries } => {
                     let rep = session.bind_run(entries.clone());
-                    args.push(GuestArg::Run { rep, kind: *kind });
+                    args.push(GuestArg::Run { rep });
                 }
                 CallArg::Bool(taken) => args.push(GuestArg::Bool(*taken)),
                 CallArg::Issuer => args.push(GuestArg::Issuer),

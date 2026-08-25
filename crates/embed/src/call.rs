@@ -1,30 +1,26 @@
 //! One assembled invocation: what goes in, and how it ended.
 
-use hyperscale_vm_types::{AbortReason, Address, CellKind};
+use hyperscale_vm_types::{AbortReason, Address};
 
 /// One assembled argument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GuestArg<'a> {
-    /// A borrowed capability handle: its rep in the session's table and
-    /// the resource type to construct it as.
+    /// A borrowed capability handle: its rep in the session's table.
     Handle {
         /// The table position the session assigned.
         rep: u32,
-        /// The handle type.
-        kind: CellKind,
     },
     /// A borrowed run over one `for-each` site's expansion: its rep in
-    /// the session's run table and the kind each entry is lent at, which
-    /// is also the run resource the engine constructs it as.
+    /// the session's run table.
     ///
     /// A rep space of its own beside the capability table's — a run is
     /// one site's whole expansion rather than one capability, and which
-    /// capability an index reaches is the run's answer.
+    /// capability an index reaches is the run's answer. Which is why it
+    /// is lent as its own resource: the type is what tells the two rep
+    /// spaces apart.
     Run {
         /// The position the session assigned in its run table.
         rep: u32,
-        /// The handle type each entry is lent at.
-        kind: CellKind,
     },
     /// A clause's own guard verdict.
     Bool(bool),

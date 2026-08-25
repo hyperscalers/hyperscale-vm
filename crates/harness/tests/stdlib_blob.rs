@@ -146,7 +146,7 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
     let funds = dual
         .invoke_both(
             "withdraw",
-            &[CVal::Borrow(sender_rep, HandleKind::ReserveCell)],
+            &[CVal::Borrow(sender_rep, HandleKind::Capability)],
         )?
         .bucket()?;
     let (blessed, reference) = dual.finish()?;
@@ -159,7 +159,7 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
     dual.invoke_both(
         "deposit",
         &[
-            CVal::Borrow(recipient_rep, HandleKind::DeltaCell),
+            CVal::Borrow(recipient_rep, HandleKind::Capability),
             CVal::Own(funds),
         ],
     )?;
@@ -524,9 +524,9 @@ fn dual_round() -> Result<(Receipt, u64)> {
     dual.invoke_both(
         "settle",
         &[
-            CVal::Borrow(seal_rep, HandleKind::WriteCell),
-            CVal::Borrow(tickets_rep, HandleKind::RangeRead),
-            CVal::Borrow(outcome_rep, HandleKind::WriteCell),
+            CVal::Borrow(seal_rep, HandleKind::Capability),
+            CVal::Borrow(tickets_rep, HandleKind::Capability),
+            CVal::Borrow(outcome_rep, HandleKind::Capability),
         ],
     )?;
     let (blessed, reference) = dual.finish()?;

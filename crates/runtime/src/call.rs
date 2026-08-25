@@ -12,16 +12,12 @@
 //! its handle type is the same one the linker registers.
 
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
-use hyperscale_vm_types::{ADDRESS_WORDS, Address, CellKind, ISSUER_REP};
+use hyperscale_vm_types::{ADDRESS_WORDS, Address, ISSUER_REP};
 use wasmtime::component::{Instance, Resource, ResourceAny, Val};
 use wasmtime::{AsContextMut, Error, Result, Store};
 
 use crate::abort::{CallError, classify, exhausted};
-use crate::world::{
-    AmountCell, AmountCellRun, AmountRead, AmountReadRun, Bucket, DeltaCell, DeltaCellRun,
-    InstanceRange, InstanceRangeRun, Issuer, RangeRead, RangeReadRun, RangeWrite, RangeWriteRun,
-    ReadCell, ReadCellRun, ReserveCell, ReserveCellRun, WriteCell, WriteCellRun,
-};
+use crate::world::{Bucket, Capability, Issuer, Run};
 
 /// An address as the world's `record address`: four little-endian words.
 ///
@@ -44,82 +40,28 @@ fn address_val(address: Address) -> Val {
     )
 }
 
-/// The handle for one rep, as the resource type its mode names.
+/// The handle for one rep.
 ///
 /// Registered as an owned host handle rather than a borrowed one, which
 /// is a property of the value path and not of what the guest receives:
 /// a borrow is only representable inside an active call scope, and there
 /// is none while a call's arguments are still being assembled. The guest
-/// parameter is `borrow<cell>` either way — the canonical ABI lends this
+/// parameter is `borrow<capability>` either way — the canonical ABI lends this
 /// handle for the duration of the call and takes it back at scope exit —
 /// and a `Resource` carries no destructor, so ownership here names a
 /// table slot and nothing that could be destroyed.
-fn handle(kind: CellKind, rep: u32, store: impl AsContextMut) -> Result<ResourceAny> {
-    match kind {
-        CellKind::Read => ResourceAny::try_from_resource(Resource::<ReadCell>::new_own(rep), store),
-        CellKind::Write => {
-            ResourceAny::try_from_resource(Resource::<WriteCell>::new_own(rep), store)
-        }
-        CellKind::Amount => {
-            ResourceAny::try_from_resource(Resource::<AmountCell>::new_own(rep), store)
-        }
-        CellKind::AmountRead => {
-            ResourceAny::try_from_resource(Resource::<AmountRead>::new_own(rep), store)
-        }
-        CellKind::Delta => {
-            ResourceAny::try_from_resource(Resource::<DeltaCell>::new_own(rep), store)
-        }
-        CellKind::Reserve => {
-            ResourceAny::try_from_resource(Resource::<ReserveCell>::new_own(rep), store)
-        }
-        CellKind::RangeRead => {
-            ResourceAny::try_from_resource(Resource::<RangeRead>::new_own(rep), store)
-        }
-        CellKind::InstanceRange => {
-            ResourceAny::try_from_resource(Resource::<InstanceRange>::new_own(rep), store)
-        }
-        CellKind::RangeWrite => {
-            ResourceAny::try_from_resource(Resource::<RangeWrite>::new_own(rep), store)
-        }
-    }
+fn handle(rep: u32, store: impl AsContextMut) -> Result<ResourceAny> {
+    ResourceAny::try_from_resource(Resource::<Capability>::new_own(rep), store)
 }
 
 /// The run resource one `for-each` site's expansion is lent as.
 ///
-/// The kind's own run type, on the same terms [`handle`] constructs the
-/// single form: the rep is a position in the session's run table rather
-/// than in its capability table, and which capability an index reaches is
-/// the run's answer.
-fn run(kind: CellKind, rep: u32, store: impl AsContextMut) -> Result<ResourceAny> {
-    match kind {
-        CellKind::Read => {
-            ResourceAny::try_from_resource(Resource::<ReadCellRun>::new_own(rep), store)
-        }
-        CellKind::Write => {
-            ResourceAny::try_from_resource(Resource::<WriteCellRun>::new_own(rep), store)
-        }
-        CellKind::Amount => {
-            ResourceAny::try_from_resource(Resource::<AmountCellRun>::new_own(rep), store)
-        }
-        CellKind::AmountRead => {
-            ResourceAny::try_from_resource(Resource::<AmountReadRun>::new_own(rep), store)
-        }
-        CellKind::Delta => {
-            ResourceAny::try_from_resource(Resource::<DeltaCellRun>::new_own(rep), store)
-        }
-        CellKind::Reserve => {
-            ResourceAny::try_from_resource(Resource::<ReserveCellRun>::new_own(rep), store)
-        }
-        CellKind::RangeRead => {
-            ResourceAny::try_from_resource(Resource::<RangeReadRun>::new_own(rep), store)
-        }
-        CellKind::InstanceRange => {
-            ResourceAny::try_from_resource(Resource::<InstanceRangeRun>::new_own(rep), store)
-        }
-        CellKind::RangeWrite => {
-            ResourceAny::try_from_resource(Resource::<RangeWriteRun>::new_own(rep), store)
-        }
-    }
+/// Its own type beside [`handle`] because the rep is a position in the
+/// session's run table rather than in its capability table, and which
+/// capability an index reaches is the run's answer — so a rep here and a
+/// rep there mean different things, and the type is what says so.
+fn run(rep: u32, store: impl AsContextMut) -> Result<ResourceAny> {
+    ResourceAny::try_from_resource(Resource::<Run>::new_own(rep), store)
 }
 
 /// How an invocation ended, as the artifact's own result type says it can.
@@ -167,10 +109,8 @@ pub fn call_export<T: 'static>(
     let mut lowered = Vec::with_capacity(args.len());
     for arg in args {
         lowered.push(match arg {
-            GuestArg::Handle { rep, kind } => {
-                Val::Resource(handle(*kind, *rep, store.as_context_mut())?)
-            }
-            GuestArg::Run { rep, kind } => Val::Resource(run(*kind, *rep, store.as_context_mut())?),
+            GuestArg::Handle { rep } => Val::Resource(handle(*rep, store.as_context_mut())?),
+            GuestArg::Run { rep } => Val::Resource(run(*rep, store.as_context_mut())?),
             GuestArg::Bool(taken) => Val::Bool(*taken),
             GuestArg::U64(scalar) => Val::U64(*scalar),
             GuestArg::Address(address) => address_val(*address),

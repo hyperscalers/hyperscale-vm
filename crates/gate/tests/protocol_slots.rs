@@ -18,14 +18,14 @@ use wat::parse_str;
 
 const RES: Address = Address::new([0xE1; 31], AddressClass::Resource);
 
-/// A component exporting `m(c: borrow<write-cell>, amount: u64)`.
+/// A component exporting `m(c: borrow<capability>, amount: u64)`.
 fn component() -> Vec<u8> {
     parse_str(
         r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "write-cell" (type $wc (sub resource)))))
-  (alias export $state "write-cell" (type $wcell))
+    (export "capability" (type $wc (sub resource)))))
+  (alias export $state "capability" (type $wcell))
   (core module $m
     (func (export "m") (param i32 i64))
     (func (export "seal")))

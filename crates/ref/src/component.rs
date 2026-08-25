@@ -23,7 +23,7 @@ use hyperscale_vm_embed::meter::{
 };
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked, KernelHost};
 use hyperscale_vm_types::math::{Rounding, U256};
-use hyperscale_vm_types::{AbortReason, CellKind, Drawn, ISSUER_REP, SEED_BYTES};
+use hyperscale_vm_types::{AbortReason, Drawn, ISSUER_REP, SEED_BYTES};
 use wasmparser::{
     CanonicalFunction, CanonicalOption, ComponentAlias, ComponentDefinedType,
     ComponentExternalKind, ComponentType, ComponentTypeRef, ComponentValType, ExternalKind,
@@ -51,99 +51,23 @@ pub enum HandleKind {
     Bucket,
     /// `issuer`: the authority to create value, granted per invocation.
     Issuer,
-    /// `read-cell`.
-    ReadCell,
-    /// `write-cell`.
-    WriteCell,
-    /// `amount-cell`.
-    AmountCell,
-    /// `amount-read`.
-    AmountRead,
-    /// `delta-cell`.
-    DeltaCell,
-    /// `reserve-cell`.
-    ReserveCell,
-    /// `range-read`.
-    RangeRead,
-    /// `range-write`.
-    RangeWrite,
-    /// `instance-range`.
-    InstanceRange,
-    /// `read-cell-run`.
-    ReadCellRun,
-    /// `write-cell-run`.
-    WriteCellRun,
-    /// `amount-cell-run`.
-    AmountCellRun,
-    /// `amount-read-run`.
-    AmountReadRun,
-    /// `delta-cell-run`.
-    DeltaCellRun,
-    /// `reserve-cell-run`.
-    ReserveCellRun,
-    /// `range-read-run`.
-    RangeReadRun,
-    /// `range-write-run`.
-    RangeWriteRun,
-    /// `instance-range-run`.
-    InstanceRangeRun,
+    /// `access`: one declared access, whichever mode the capability at
+    /// its rep carries.
+    Capability,
+    /// `run`: one `for-each` site's whole expansion.
+    ///
+    /// Its own type beside `access` because it indexes its own table: a
+    /// rep here names a site's list of capabilities, not one of them.
+    Run,
 }
 
 impl HandleKind {
-    /// The resource type a materialized handle is passed as.
-    const fn of(kind: CellKind) -> Self {
-        match kind {
-            CellKind::Read => Self::ReadCell,
-            CellKind::Write => Self::WriteCell,
-            CellKind::Amount => Self::AmountCell,
-            CellKind::AmountRead => Self::AmountRead,
-            CellKind::Delta => Self::DeltaCell,
-            CellKind::Reserve => Self::ReserveCell,
-            CellKind::RangeRead => Self::RangeRead,
-            CellKind::RangeWrite => Self::RangeWrite,
-            CellKind::InstanceRange => Self::InstanceRange,
-        }
-    }
-
-    /// The resource type a `for-each` site's whole expansion is passed
-    /// as: one per kind, so a run carries exactly the operations its
-    /// mode carries.
-    const fn run_of(kind: CellKind) -> Self {
-        match kind {
-            CellKind::Read => Self::ReadCellRun,
-            CellKind::Write => Self::WriteCellRun,
-            CellKind::Amount => Self::AmountCellRun,
-            CellKind::AmountRead => Self::AmountReadRun,
-            CellKind::Delta => Self::DeltaCellRun,
-            CellKind::Reserve => Self::ReserveCellRun,
-            CellKind::RangeRead => Self::RangeReadRun,
-            CellKind::RangeWrite => Self::RangeWriteRun,
-            CellKind::InstanceRange => Self::InstanceRangeRun,
-        }
-    }
-
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "bucket" => Some(Self::Bucket),
             "issuer" => Some(Self::Issuer),
-            "read-cell" => Some(Self::ReadCell),
-            "write-cell" => Some(Self::WriteCell),
-            "amount-cell" => Some(Self::AmountCell),
-            "amount-read" => Some(Self::AmountRead),
-            "delta-cell" => Some(Self::DeltaCell),
-            "reserve-cell" => Some(Self::ReserveCell),
-            "range-read" => Some(Self::RangeRead),
-            "range-write" => Some(Self::RangeWrite),
-            "instance-range" => Some(Self::InstanceRange),
-            "read-cell-run" => Some(Self::ReadCellRun),
-            "write-cell-run" => Some(Self::WriteCellRun),
-            "amount-cell-run" => Some(Self::AmountCellRun),
-            "amount-read-run" => Some(Self::AmountReadRun),
-            "delta-cell-run" => Some(Self::DeltaCellRun),
-            "reserve-cell-run" => Some(Self::ReserveCellRun),
-            "range-read-run" => Some(Self::RangeReadRun),
-            "range-write-run" => Some(Self::RangeWriteRun),
-            "instance-range-run" => Some(Self::InstanceRangeRun),
+            "capability" => Some(Self::Capability),
+            "run" => Some(Self::Run),
             _ => None,
         }
     }
@@ -187,8 +111,8 @@ impl From<&GuestArg<'_>> for CVal {
     /// position, because an invocation is granted at most one.
     fn from(arg: &GuestArg<'_>) -> Self {
         match arg {
-            GuestArg::Handle { rep, kind } => Self::Borrow(*rep, HandleKind::of(*kind)),
-            GuestArg::Run { rep, kind } => Self::Borrow(*rep, HandleKind::run_of(*kind)),
+            GuestArg::Handle { rep } => Self::Borrow(*rep, HandleKind::Capability),
+            GuestArg::Run { rep } => Self::Borrow(*rep, HandleKind::Run),
             GuestArg::Bool(taken) => Self::Bool(*taken),
             GuestArg::U64(scalar) => Self::U64(*scalar),
             GuestArg::Address(address) => Self::Address(address.to_bytes()),
@@ -203,45 +127,32 @@ impl From<&GuestArg<'_>> for CVal {
 /// A kernel-world import.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HostFn {
-    ReadCellGet,
-    WriteCellGet,
-    WriteCellSet,
-    WriteCellClear,
-    AmountBalance,
-    AmountReadBalance,
-    InstanceCount,
-    InstanceCovered,
-    InstanceOrder,
-    InstanceEntry,
-    AmountTake,
-    AmountPut,
-    IssuerMint,
-    IssuerPut,
+    CellGet,
+    CellSet,
+    CellClear,
+    CellBalance,
+    CellTake,
+    CellPut,
+    ReserveTake,
+    Count,
+    Covered,
+    Order,
+    Entry,
+    EntrySet,
+    Insert,
+    Remove,
     InstanceTake,
     InstancePut,
+    IssuerMint,
+    IssuerMintInstances,
+    IssuerBurn,
     BucketTake,
     BucketSplit,
     BucketPut,
     BucketAmount,
-    IssuerTake,
-    DeltaTake,
-    DeltaPut,
-    ReserveTake,
-    RangeReadCount,
-    RangeReadCovered,
-    RangeReadOrder,
-    RangeReadEntry,
-    RangeWriteCount,
-    RangeWriteCovered,
-    RangeWriteOrder,
-    RangeWriteEntry,
-    RangeWriteSet,
-    RangeWriteInsert,
-    RangeWriteRemove,
-    /// `seal`, on a write cell: the kernel stamps the epoch now running.
+    /// `seal`: the kernel stamps the epoch now running.
     Seal,
-    /// `open-seal`, on a write cell: the draw the cell's seal matures
-    /// into.
+    /// `open-seal`: the draw the cell's seal matures into.
     OpenSeal,
     Clock,
     Hash,
@@ -251,11 +162,10 @@ enum HostFn {
     FractionCompose,
     FractionCmp,
     FixedPow,
-    /// `len`, on any of the nine run resources: how many elements the
-    /// site's loop mapped over, at the kind the run is lent as.
-    RunLen(HandleKind),
-    /// `declared`, on any of the nine run resources.
-    RunDeclared(HandleKind),
+    /// `run.len`: how many elements the site's loop mapped over.
+    RunLen,
+    /// `run.declared`.
+    RunDeclared,
 }
 
 /// How many core parameters one kernel operation's single form takes.
@@ -265,48 +175,36 @@ const fn host_params(op: HostFn) -> usize {
         // costs no return-area pointer where the read beside it
         // needs one for the amount — which is why each take
         // counts one lower than the read it stands next to.
-        HostFn::RangeReadCount
-        | HostFn::RangeWriteCount
-        | HostFn::InstanceCount
-        | HostFn::RangeReadCovered
-        | HostFn::RangeWriteCovered
-        | HostFn::InstanceCovered
+        HostFn::Count
+        | HostFn::Covered
         | HostFn::ReserveTake
-        | HostFn::WriteCellClear
+        | HostFn::CellClear
         | HostFn::Seal
         // A run's own two questions name the run and, for the second,
         // the element beside it: neither is an operation with a single
         // form to count from.
-        | HostFn::RunLen(_) => 1,
-        HostFn::ReadCellGet
-        | HostFn::WriteCellGet
-        | HostFn::AmountBalance
-        | HostFn::AmountReadBalance
-        | HostFn::RangeWriteRemove
-        | HostFn::AmountPut
-        | HostFn::DeltaPut
+        | HostFn::RunLen => 1,
+        HostFn::CellGet
+        | HostFn::CellBalance
+        | HostFn::Remove
+        | HostFn::CellPut
         | HostFn::BucketAmount
         | HostFn::BucketPut
-        | HostFn::IssuerPut
+        | HostFn::IssuerBurn
         | HostFn::OpenSeal
-        | HostFn::RunDeclared(_) => 2,
-        HostFn::WriteCellSet
-        | HostFn::AmountTake
-        | HostFn::IssuerTake
+        | HostFn::RunDeclared => 2,
+        HostFn::CellSet
+        | HostFn::CellTake
+        | HostFn::IssuerMint
         | HostFn::BucketTake
-        | HostFn::DeltaTake
-        | HostFn::RangeReadOrder
-        | HostFn::RangeReadEntry
-        | HostFn::RangeWriteOrder
-        | HostFn::RangeWriteEntry
-        | HostFn::InstanceOrder
-        | HostFn::InstanceEntry
+        | HostFn::Order
+        | HostFn::Entry
         | HostFn::Hash
         | HostFn::Emit
         | HostFn::InstanceTake
-        | HostFn::IssuerMint => 3,
-        HostFn::InstancePut | HostFn::RangeWriteSet => 4,
-        HostFn::RangeWriteInsert => 5,
+        | HostFn::IssuerMintInstances => 3,
+        HostFn::InstancePut | HostFn::EntrySet => 4,
+        HostFn::Insert => 5,
         // A `wide` flattens to four `i64`s, and a result wider
         // than one flat value travels through a return pointer
         // the caller appends: `fraction-cmp` returns an enum and
@@ -323,13 +221,13 @@ const fn host_params(op: HostFn) -> usize {
 /// A component-level function.
 #[derive(Debug, Clone, Copy)]
 enum CompFunc {
-    /// A kernel import: the operation, and the run whose entry it acts
-    /// through where the import is a run's form of it.
+    /// A kernel import: the operation, and whether it acts through a
+    /// run's entry rather than through a cell named directly.
     ///
     /// The two are separate because a run form differs from the single
     /// one in where it gets its capability and in nothing else — the
     /// operation, its arguments and its result are the same.
-    Host(HostFn, Option<HandleKind>),
+    Host(HostFn, bool),
     Lifted {
         core_func: u32,
         ty: u32,
@@ -824,11 +722,7 @@ impl RefComponent {
     }
 
     #[allow(clippy::too_many_lines)] // one line per kernel import
-    fn host_fn(
-        &self,
-        instance: u32,
-        name: &str,
-    ) -> Result<(HostFn, Option<HandleKind>), DecodeError> {
+    fn host_fn(&self, instance: u32, name: &str) -> Result<(HostFn, bool), DecodeError> {
         let interface = self
             .import_names
             .get(instance as usize)
@@ -837,181 +731,59 @@ impl RefComponent {
             .rsplit_once('/')
             .map_or(interface.as_str(), |(_, s)| s);
         match (suffix, name) {
-            ("state", "read-cell-get") => Ok((HostFn::ReadCellGet, None)),
-            ("state", "write-cell-get") => Ok((HostFn::WriteCellGet, None)),
-            ("state", "write-cell-set") => Ok((HostFn::WriteCellSet, None)),
-            ("state", "write-cell-clear") => Ok((HostFn::WriteCellClear, None)),
-            ("state", "amount-cell-balance") => Ok((HostFn::AmountBalance, None)),
-            ("state", "amount-read-balance") => Ok((HostFn::AmountReadBalance, None)),
-            ("state", "amount-cell-take") => Ok((HostFn::AmountTake, None)),
-            ("state", "amount-cell-put") => Ok((HostFn::AmountPut, None)),
-            ("state", "mint-instances") => Ok((HostFn::IssuerMint, None)),
-            ("state", "burn") => Ok((HostFn::IssuerPut, None)),
-            ("state", "instance-range-take") => Ok((HostFn::InstanceTake, None)),
-            ("state", "instance-range-put") => Ok((HostFn::InstancePut, None)),
-            ("state", "instance-range-count") => Ok((HostFn::InstanceCount, None)),
-            ("state", "instance-range-covered") => Ok((HostFn::InstanceCovered, None)),
-            ("state", "instance-range-order") => Ok((HostFn::InstanceOrder, None)),
-            ("state", "instance-range-entry") => Ok((HostFn::InstanceEntry, None)),
-            ("state", "bucket-take") => Ok((HostFn::BucketTake, None)),
-            ("state", "bucket-split") => Ok((HostFn::BucketSplit, None)),
-            ("state", "bucket-put") => Ok((HostFn::BucketPut, None)),
-            ("state", "bucket-amount") => Ok((HostFn::BucketAmount, None)),
-            ("state", "mint") => Ok((HostFn::IssuerTake, None)),
-            ("state", "delta-cell-take") => Ok((HostFn::DeltaTake, None)),
-            ("state", "delta-cell-put") => Ok((HostFn::DeltaPut, None)),
-            ("state", "reserve-cell-take") => Ok((HostFn::ReserveTake, None)),
-            ("state", "range-read-count") => Ok((HostFn::RangeReadCount, None)),
-            ("state", "range-read-covered") => Ok((HostFn::RangeReadCovered, None)),
-            ("state", "range-read-order") => Ok((HostFn::RangeReadOrder, None)),
-            ("state", "range-read-entry") => Ok((HostFn::RangeReadEntry, None)),
-            ("state", "range-write-count") => Ok((HostFn::RangeWriteCount, None)),
-            ("state", "range-write-covered") => Ok((HostFn::RangeWriteCovered, None)),
-            ("state", "range-write-order") => Ok((HostFn::RangeWriteOrder, None)),
-            ("state", "range-write-entry") => Ok((HostFn::RangeWriteEntry, None)),
-            ("state", "range-write-set") => Ok((HostFn::RangeWriteSet, None)),
-            ("state", "range-write-insert") => Ok((HostFn::RangeWriteInsert, None)),
-            ("state", "range-write-remove") => Ok((HostFn::RangeWriteRemove, None)),
-            ("math", "mul-div") => Ok((HostFn::MulDiv, None)),
-            ("math", "geometric-mean") => Ok((HostFn::GeometricMean, None)),
-            ("math", "fraction-compose") => Ok((HostFn::FractionCompose, None)),
-            ("math", "fraction-cmp") => Ok((HostFn::FractionCmp, None)),
-            ("math", "fixed-pow") => Ok((HostFn::FixedPow, None)),
-            ("state", "write-cell-seal") => Ok((HostFn::Seal, None)),
-            ("state", "write-cell-open-seal") => Ok((HostFn::OpenSeal, None)),
-            ("env", "clock") => Ok((HostFn::Clock, None)),
-            ("crypto", "hash") => Ok((HostFn::Hash, None)),
-            ("events", "emit") => Ok((HostFn::Emit, None)),
-            ("state", "read-cell-run-len") => Ok((HostFn::RunLen(HandleKind::ReadCellRun), None)),
-            ("state", "read-cell-run-declared") => {
-                Ok((HostFn::RunDeclared(HandleKind::ReadCellRun), None))
-            }
-            ("state", "read-cell-run-get") => {
-                Ok((HostFn::ReadCellGet, Some(HandleKind::ReadCellRun)))
-            }
-            ("state", "write-cell-run-len") => Ok((HostFn::RunLen(HandleKind::WriteCellRun), None)),
-            ("state", "write-cell-run-declared") => {
-                Ok((HostFn::RunDeclared(HandleKind::WriteCellRun), None))
-            }
-            ("state", "write-cell-run-get") => {
-                Ok((HostFn::WriteCellGet, Some(HandleKind::WriteCellRun)))
-            }
-            ("state", "write-cell-run-set") => {
-                Ok((HostFn::WriteCellSet, Some(HandleKind::WriteCellRun)))
-            }
-            ("state", "write-cell-run-clear") => {
-                Ok((HostFn::WriteCellClear, Some(HandleKind::WriteCellRun)))
-            }
-            ("state", "amount-cell-run-len") => {
-                Ok((HostFn::RunLen(HandleKind::AmountCellRun), None))
-            }
-            ("state", "amount-cell-run-declared") => {
-                Ok((HostFn::RunDeclared(HandleKind::AmountCellRun), None))
-            }
-            ("state", "amount-cell-run-balance") => {
-                Ok((HostFn::AmountBalance, Some(HandleKind::AmountCellRun)))
-            }
-            ("state", "amount-cell-run-take") => {
-                Ok((HostFn::AmountTake, Some(HandleKind::AmountCellRun)))
-            }
-            ("state", "amount-cell-run-put") => {
-                Ok((HostFn::AmountPut, Some(HandleKind::AmountCellRun)))
-            }
-            ("state", "amount-read-run-len") => {
-                Ok((HostFn::RunLen(HandleKind::AmountReadRun), None))
-            }
-            ("state", "amount-read-run-declared") => {
-                Ok((HostFn::RunDeclared(HandleKind::AmountReadRun), None))
-            }
-            ("state", "amount-read-run-balance") => {
-                Ok((HostFn::AmountReadBalance, Some(HandleKind::AmountReadRun)))
-            }
-            ("state", "delta-cell-run-len") => Ok((HostFn::RunLen(HandleKind::DeltaCellRun), None)),
-            ("state", "delta-cell-run-declared") => {
-                Ok((HostFn::RunDeclared(HandleKind::DeltaCellRun), None))
-            }
-            ("state", "delta-cell-run-put") => {
-                Ok((HostFn::DeltaPut, Some(HandleKind::DeltaCellRun)))
-            }
-            ("state", "delta-cell-run-take") => {
-                Ok((HostFn::DeltaTake, Some(HandleKind::DeltaCellRun)))
-            }
-            ("state", "reserve-cell-run-len") => {
-                Ok((HostFn::RunLen(HandleKind::ReserveCellRun), None))
-            }
-            ("state", "reserve-cell-run-declared") => {
-                Ok((HostFn::RunDeclared(HandleKind::ReserveCellRun), None))
-            }
-            ("state", "reserve-cell-run-take") => {
-                Ok((HostFn::ReserveTake, Some(HandleKind::ReserveCellRun)))
-            }
-            ("state", "range-read-run-len") => Ok((HostFn::RunLen(HandleKind::RangeReadRun), None)),
-            ("state", "range-read-run-declared") => {
-                Ok((HostFn::RunDeclared(HandleKind::RangeReadRun), None))
-            }
-            ("state", "range-read-run-count") => {
-                Ok((HostFn::RangeReadCount, Some(HandleKind::RangeReadRun)))
-            }
-            ("state", "range-read-run-covered") => {
-                Ok((HostFn::RangeReadCovered, Some(HandleKind::RangeReadRun)))
-            }
-            ("state", "range-read-run-order") => {
-                Ok((HostFn::RangeReadOrder, Some(HandleKind::RangeReadRun)))
-            }
-            ("state", "range-read-run-entry") => {
-                Ok((HostFn::RangeReadEntry, Some(HandleKind::RangeReadRun)))
-            }
-            ("state", "range-write-run-len") => {
-                Ok((HostFn::RunLen(HandleKind::RangeWriteRun), None))
-            }
-            ("state", "range-write-run-declared") => {
-                Ok((HostFn::RunDeclared(HandleKind::RangeWriteRun), None))
-            }
-            ("state", "range-write-run-count") => {
-                Ok((HostFn::RangeWriteCount, Some(HandleKind::RangeWriteRun)))
-            }
-            ("state", "range-write-run-covered") => {
-                Ok((HostFn::RangeWriteCovered, Some(HandleKind::RangeWriteRun)))
-            }
-            ("state", "range-write-run-order") => {
-                Ok((HostFn::RangeWriteOrder, Some(HandleKind::RangeWriteRun)))
-            }
-            ("state", "range-write-run-entry") => {
-                Ok((HostFn::RangeWriteEntry, Some(HandleKind::RangeWriteRun)))
-            }
-            ("state", "range-write-run-set") => {
-                Ok((HostFn::RangeWriteSet, Some(HandleKind::RangeWriteRun)))
-            }
-            ("state", "range-write-run-insert") => {
-                Ok((HostFn::RangeWriteInsert, Some(HandleKind::RangeWriteRun)))
-            }
-            ("state", "range-write-run-remove") => {
-                Ok((HostFn::RangeWriteRemove, Some(HandleKind::RangeWriteRun)))
-            }
-            ("state", "instance-range-run-len") => {
-                Ok((HostFn::RunLen(HandleKind::InstanceRangeRun), None))
-            }
-            ("state", "instance-range-run-declared") => {
-                Ok((HostFn::RunDeclared(HandleKind::InstanceRangeRun), None))
-            }
-            ("state", "instance-range-run-count") => {
-                Ok((HostFn::InstanceCount, Some(HandleKind::InstanceRangeRun)))
-            }
-            ("state", "instance-range-run-covered") => {
-                Ok((HostFn::InstanceCovered, Some(HandleKind::InstanceRangeRun)))
-            }
-            ("state", "instance-range-run-order") => {
-                Ok((HostFn::InstanceOrder, Some(HandleKind::InstanceRangeRun)))
-            }
-            ("state", "instance-range-run-entry") => {
-                Ok((HostFn::InstanceEntry, Some(HandleKind::InstanceRangeRun)))
-            }
-            ("state", "instance-range-run-take") => {
-                Ok((HostFn::InstanceTake, Some(HandleKind::InstanceRangeRun)))
-            }
-            ("state", "instance-range-run-put") => {
-                Ok((HostFn::InstancePut, Some(HandleKind::InstanceRangeRun)))
-            }
+            ("state", "capability-get") => Ok((HostFn::CellGet, false)),
+            ("state", "capability-set") => Ok((HostFn::CellSet, false)),
+            ("state", "capability-clear") => Ok((HostFn::CellClear, false)),
+            ("state", "capability-seal") => Ok((HostFn::Seal, false)),
+            ("state", "capability-open-seal") => Ok((HostFn::OpenSeal, false)),
+            ("state", "capability-balance") => Ok((HostFn::CellBalance, false)),
+            ("state", "capability-take") => Ok((HostFn::CellTake, false)),
+            ("state", "capability-put") => Ok((HostFn::CellPut, false)),
+            ("state", "capability-reserve-take") => Ok((HostFn::ReserveTake, false)),
+            ("state", "capability-count") => Ok((HostFn::Count, false)),
+            ("state", "capability-covered") => Ok((HostFn::Covered, false)),
+            ("state", "capability-order") => Ok((HostFn::Order, false)),
+            ("state", "capability-entry") => Ok((HostFn::Entry, false)),
+            ("state", "capability-entry-set") => Ok((HostFn::EntrySet, false)),
+            ("state", "capability-insert") => Ok((HostFn::Insert, false)),
+            ("state", "capability-remove") => Ok((HostFn::Remove, false)),
+            ("state", "capability-instance-take") => Ok((HostFn::InstanceTake, false)),
+            ("state", "capability-instance-put") => Ok((HostFn::InstancePut, false)),
+            ("state", "bucket-take") => Ok((HostFn::BucketTake, false)),
+            ("state", "bucket-split") => Ok((HostFn::BucketSplit, false)),
+            ("state", "bucket-put") => Ok((HostFn::BucketPut, false)),
+            ("state", "bucket-amount") => Ok((HostFn::BucketAmount, false)),
+            ("state", "mint") => Ok((HostFn::IssuerMint, false)),
+            ("state", "mint-instances") => Ok((HostFn::IssuerMintInstances, false)),
+            ("state", "burn") => Ok((HostFn::IssuerBurn, false)),
+            ("state", "run-len") => Ok((HostFn::RunLen, false)),
+            ("state", "run-declared") => Ok((HostFn::RunDeclared, false)),
+            ("state", "run-get") => Ok((HostFn::CellGet, true)),
+            ("state", "run-set") => Ok((HostFn::CellSet, true)),
+            ("state", "run-clear") => Ok((HostFn::CellClear, true)),
+            ("state", "run-seal") => Ok((HostFn::Seal, true)),
+            ("state", "run-open-seal") => Ok((HostFn::OpenSeal, true)),
+            ("state", "run-balance") => Ok((HostFn::CellBalance, true)),
+            ("state", "run-take") => Ok((HostFn::CellTake, true)),
+            ("state", "run-put") => Ok((HostFn::CellPut, true)),
+            ("state", "run-reserve-take") => Ok((HostFn::ReserveTake, true)),
+            ("state", "run-count") => Ok((HostFn::Count, true)),
+            ("state", "run-covered") => Ok((HostFn::Covered, true)),
+            ("state", "run-order") => Ok((HostFn::Order, true)),
+            ("state", "run-entry") => Ok((HostFn::Entry, true)),
+            ("state", "run-entry-set") => Ok((HostFn::EntrySet, true)),
+            ("state", "run-insert") => Ok((HostFn::Insert, true)),
+            ("state", "run-remove") => Ok((HostFn::Remove, true)),
+            ("state", "run-instance-take") => Ok((HostFn::InstanceTake, true)),
+            ("state", "run-instance-put") => Ok((HostFn::InstancePut, true)),
+            ("math", "mul-div") => Ok((HostFn::MulDiv, false)),
+            ("math", "geometric-mean") => Ok((HostFn::GeometricMean, false)),
+            ("math", "fraction-compose") => Ok((HostFn::FractionCompose, false)),
+            ("math", "fraction-cmp") => Ok((HostFn::FractionCmp, false)),
+            ("math", "fixed-pow") => Ok((HostFn::FixedPow, false)),
+            ("env", "clock") => Ok((HostFn::Clock, false)),
+            ("crypto", "hash") => Ok((HostFn::Hash, false)),
+            ("events", "emit") => Ok((HostFn::Emit, false)),
             _ => Err(DecodeError::Unsupported(format!(
                 "kernel import {interface}#{name}"
             ))),
@@ -1945,20 +1717,13 @@ impl<H: KernelHost> KernelCanon<'_, H> {
     ///
     /// A run form differs from the single one here and nowhere else, so
     /// the arms below read one rep whichever they were reached through.
-    /// The expected kind is the single form's; a run was already held to
-    /// its own resource type, and what the entry behind an index grants
-    /// is the session's answer.
-    fn acting(
-        &mut self,
-        run: Option<HandleKind>,
-        args: &[Value],
-        expected: HandleKind,
-        store: &mut Store,
-    ) -> Result<u32, ExecError> {
-        let Some(kind) = run else {
-            return self.resolve_handle(args[0], expected);
-        };
-        let rep = self.resolve_handle(args[0], kind)?;
+    /// What the capability behind that rep grants is the session's
+    /// answer, held at the operation rather than at the handle.
+    fn acting(&mut self, run: bool, args: &[Value], store: &mut Store) -> Result<u32, ExecError> {
+        if !run {
+            return self.resolve_handle(args[0], HandleKind::Capability);
+        }
+        let rep = self.resolve_handle(args[0], HandleKind::Run)?;
         let index = args[1].as_i32().cast_unsigned();
         meter::run_at(
             &mut MeterPort {
@@ -2125,7 +1890,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
             // arguments and costs exactly that one more than the single
             // form, which is the whole of the difference.
             CoreFuncDef::Lower { func, .. } => match self.comp.comp_funcs[*func as usize] {
-                CompFunc::Host(op, run) => host_params(op) + usize::from(run.is_some()),
+                CompFunc::Host(op, run) => host_params(op) + usize::from(run),
                 CompFunc::Lifted { .. } => 0,
             },
             CoreFuncDef::Alias { .. } => unreachable!("aliases resolve to wasm addresses"),
@@ -2183,13 +1948,13 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                 // What the capability itself took: a run names its own
                 // handle and the element's index, a single form names its
                 // handle alone, and everything after is the operation's.
-                let after = 1 + usize::from(run.is_some());
+                let after = 1 + usize::from(run);
                 match host_fn {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
                     // A run's own two questions, which name the run
                     // rather than one of its entries.
-                    HostFn::RunLen(kind) => {
-                        let rep = self.resolve_handle(args[0], kind)?;
+                    HostFn::RunLen => {
+                        let rep = self.resolve_handle(args[0], HandleKind::Run)?;
                         let len = meter::run_len(
                             &mut MeterPort {
                                 host: &mut self.host,
@@ -2200,8 +1965,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(len.cast_signed())])
                     }
-                    HostFn::RunDeclared(kind) => {
-                        let rep = self.resolve_handle(args[0], kind)?;
+                    HostFn::RunDeclared => {
+                        let rep = self.resolve_handle(args[0], HandleKind::Run)?;
                         let index = args[1].as_i32().cast_unsigned();
                         let declared = meter::run_declared(
                             &mut MeterPort {
@@ -2214,34 +1979,20 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(i32::from(declared))])
                     }
-                    HostFn::ReadCellGet | HostFn::WriteCellGet => {
-                        let expected = if host_fn == HostFn::ReadCellGet {
-                            HandleKind::ReadCell
-                        } else {
-                            HandleKind::WriteCell
-                        };
-                        let rep = self.acting(run, &args, expected, store)?;
+                    HostFn::CellGet => {
+                        let rep = self.acting(run, &args, store)?;
                         let mut port = MeterPort {
                             host: &mut self.host,
                             store,
                         };
-                        let bytes = match host_fn {
-                            HostFn::ReadCellGet => meter::read_cell_get(&mut port, rep),
-                            _ => meter::write_cell_get(&mut port, rep),
-                        }
-                        .map_err(meter_fault)?;
+                        let bytes = meter::cell_get(&mut port, rep).map_err(meter_fault)?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[after])?;
                         Ok(Vec::new())
                     }
-                    HostFn::AmountBalance | HostFn::AmountReadBalance => {
-                        let expected = if host_fn == HostFn::AmountBalance {
-                            HandleKind::AmountCell
-                        } else {
-                            HandleKind::AmountRead
-                        };
-                        let rep = self.acting(run, &args, expected, store)?;
-                        let held = meter::amount_balance(
+                    HostFn::CellBalance => {
+                        let rep = self.acting(run, &args, store)?;
+                        let held = meter::cell_balance(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2253,12 +2004,12 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Self::write_amount(store, mem, args[after], held)?;
                         Ok(Vec::new())
                     }
-                    HostFn::WriteCellSet => {
-                        let rep = self.acting(run, &args, HandleKind::WriteCell, store)?;
+                    HostFn::CellSet => {
+                        let rep = self.acting(run, &args, store)?;
                         let mem = self.mem_opt(id)?;
                         let bytes =
                             Self::read_guest_bytes(store, mem, args[after], args[after + 1])?;
-                        meter::write_cell_set(
+                        meter::cell_set(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2269,9 +2020,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::WriteCellClear => {
-                        let rep = self.acting(run, &args, HandleKind::WriteCell, store)?;
-                        meter::write_cell_clear(
+                    HostFn::CellClear => {
+                        let rep = self.acting(run, &args, store)?;
+                        meter::cell_clear(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2286,27 +2037,18 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     // drop — the same seating a lowered argument gets, so
                     // the numbering is one table's whatever opened the
                     // slot.
-                    HostFn::AmountTake | HostFn::DeltaTake => {
-                        let expected = if host_fn == HostFn::AmountTake {
-                            HandleKind::AmountCell
-                        } else {
-                            HandleKind::DeltaCell
-                        };
-                        let rep = self.acting(run, &args, expected, store)?;
+                    HostFn::CellTake => {
+                        let rep = self.acting(run, &args, store)?;
                         let amount = flat_amount(args[after], args[after + 1]);
                         let mut port = MeterPort {
                             host: &mut self.host,
                             store,
                         };
-                        let bucket = if host_fn == HostFn::AmountTake {
-                            meter::amount_cell_take(&mut port, rep, amount)
-                        } else {
-                            meter::delta_cell_take(&mut port, rep, amount)
-                        }
-                        .map_err(meter_fault)?;
+                        let bucket =
+                            meter::cell_take(&mut port, rep, amount).map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
-                    HostFn::IssuerPut => {
+                    HostFn::IssuerBurn => {
                         let rep = self.resolve_handle(args[0], HandleKind::Issuer)?;
                         let funds = self.consume_bucket(args[1])?;
                         meter::burn(
@@ -2320,7 +2062,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::IssuerMint => {
+                    HostFn::IssuerMintInstances => {
                         let rep = self.resolve_handle(args[0], HandleKind::Issuer)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[1], args[2])?;
@@ -2336,7 +2078,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(vec![Value::I32(self.seat_bucket(minted).cast_signed())])
                     }
                     HostFn::InstanceTake => {
-                        let rep = self.acting(run, &args, HandleKind::InstanceRange, store)?;
+                        let rep = self.acting(run, &args, store)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[after], args[after + 1])?;
                         let taken = meter::instance_range_take(
@@ -2351,7 +2093,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(vec![Value::I32(self.seat_bucket(taken).cast_signed())])
                     }
                     HostFn::InstancePut => {
-                        let rep = self.acting(run, &args, HandleKind::InstanceRange, store)?;
+                        let rep = self.acting(run, &args, store)?;
                         let funds = self.consume_bucket(args[after])?;
                         let mem = self.mem_opt(id)?;
                         let value =
@@ -2513,27 +2255,17 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Self::write_amount(store, mem, args[1], amount)?;
                         Ok(Vec::new())
                     }
-                    HostFn::AmountPut | HostFn::DeltaPut => {
-                        let expected = if host_fn == HostFn::AmountPut {
-                            HandleKind::AmountCell
-                        } else {
-                            HandleKind::DeltaCell
-                        };
-                        let rep = self.acting(run, &args, expected, store)?;
+                    HostFn::CellPut => {
+                        let rep = self.acting(run, &args, store)?;
                         let funds = self.consume_bucket(args[after])?;
                         let mut port = MeterPort {
                             host: &mut self.host,
                             store,
                         };
-                        if host_fn == HostFn::AmountPut {
-                            meter::amount_cell_put(&mut port, rep, funds)
-                        } else {
-                            meter::delta_cell_put(&mut port, rep, funds)
-                        }
-                        .map_err(meter_fault)?;
+                        meter::cell_put(&mut port, rep, funds).map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::IssuerTake => {
+                    HostFn::IssuerMint => {
                         let rep = self.resolve_handle(args[0], HandleKind::Issuer)?;
                         let amount = flat_amount(args[1], args[2]);
                         let bucket = meter::mint(
@@ -2548,8 +2280,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
                     HostFn::ReserveTake => {
-                        let rep = self.acting(run, &args, HandleKind::ReserveCell, store)?;
-                        let bucket = meter::reserve_cell_take(
+                        let rep = self.acting(run, &args, store)?;
+                        let bucket = meter::reserve_take(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2559,13 +2291,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
-                    HostFn::RangeReadCount | HostFn::RangeWriteCount | HostFn::InstanceCount => {
-                        let expected = match host_fn {
-                            HostFn::RangeReadCount => HandleKind::RangeRead,
-                            HostFn::InstanceCount => HandleKind::InstanceRange,
-                            _ => HandleKind::RangeWrite,
-                        };
-                        let rep = self.acting(run, &args, expected, store)?;
+                    HostFn::Count => {
+                        let rep = self.acting(run, &args, store)?;
                         let count = meter::range_count(
                             &mut MeterPort {
                                 host: &mut self.host,
@@ -2576,15 +2303,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(count.cast_signed())])
                     }
-                    HostFn::RangeReadCovered
-                    | HostFn::RangeWriteCovered
-                    | HostFn::InstanceCovered => {
-                        let expected = match host_fn {
-                            HostFn::RangeReadCovered => HandleKind::RangeRead,
-                            HostFn::InstanceCovered => HandleKind::InstanceRange,
-                            _ => HandleKind::RangeWrite,
-                        };
-                        let rep = self.acting(run, &args, expected, store)?;
+                    HostFn::Covered => {
+                        let rep = self.acting(run, &args, store)?;
                         let covered = meter::range_covered(
                             &mut MeterPort {
                                 host: &mut self.host,
@@ -2595,13 +2315,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(i32::from(covered))])
                     }
-                    HostFn::RangeReadOrder | HostFn::RangeWriteOrder | HostFn::InstanceOrder => {
-                        let expected = match host_fn {
-                            HostFn::RangeReadOrder => HandleKind::RangeRead,
-                            HostFn::InstanceOrder => HandleKind::InstanceRange,
-                            _ => HandleKind::RangeWrite,
-                        };
-                        let rep = self.acting(run, &args, expected, store)?;
+                    HostFn::Order => {
+                        let rep = self.acting(run, &args, store)?;
                         let index = args[after].as_i32().cast_unsigned();
                         let order = meter::range_order(
                             &mut MeterPort {
@@ -2616,13 +2331,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Self::write_amount(store, mem, args[after + 1], order)?;
                         Ok(Vec::new())
                     }
-                    HostFn::RangeReadEntry | HostFn::RangeWriteEntry | HostFn::InstanceEntry => {
-                        let expected = match host_fn {
-                            HostFn::RangeReadEntry => HandleKind::RangeRead,
-                            HostFn::InstanceEntry => HandleKind::InstanceRange,
-                            _ => HandleKind::RangeWrite,
-                        };
-                        let rep = self.acting(run, &args, expected, store)?;
+                    HostFn::Entry => {
+                        let rep = self.acting(run, &args, store)?;
                         let index = args[after].as_i32().cast_unsigned();
                         let bytes = meter::range_entry(
                             &mut MeterPort {
@@ -2637,8 +2347,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         self.lower_list(modules, store, mem, realloc, &bytes, args[after + 1])?;
                         Ok(Vec::new())
                     }
-                    HostFn::RangeWriteSet => {
-                        let rep = self.acting(run, &args, HandleKind::RangeWrite, store)?;
+                    HostFn::EntrySet => {
+                        let rep = self.acting(run, &args, store)?;
                         let index = args[after].as_i32().cast_unsigned();
                         let mem = self.mem_opt(id)?;
                         let value =
@@ -2655,8 +2365,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::RangeWriteInsert => {
-                        let rep = self.acting(run, &args, HandleKind::RangeWrite, store)?;
+                    HostFn::Insert => {
+                        let rep = self.acting(run, &args, store)?;
                         let mem = self.mem_opt(id)?;
                         let order = flat_amount(args[after], args[after + 1]);
                         let value =
@@ -2673,8 +2383,8 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::RangeWriteRemove => {
-                        let rep = self.acting(run, &args, HandleKind::RangeWrite, store)?;
+                    HostFn::Remove => {
+                        let rep = self.acting(run, &args, store)?;
                         let index = args[after].as_i32().cast_unsigned();
                         meter::range_remove(
                             &mut MeterPort {
@@ -2688,7 +2398,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::Seal => {
-                        let rep = self.acting(run, &args, HandleKind::WriteCell, store)?;
+                        let rep = self.acting(run, &args, store)?;
                         meter::seal(
                             &mut MeterPort {
                                 host: &mut self.host,
@@ -2700,7 +2410,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Ok(Vec::new())
                     }
                     HostFn::OpenSeal => {
-                        let rep = self.resolve_handle(args[0], HandleKind::WriteCell)?;
+                        let rep = self.acting(run, &args, store)?;
                         let drawn = meter::open_seal(
                             &mut MeterPort {
                                 host: &mut self.host,

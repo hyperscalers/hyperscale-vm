@@ -21,7 +21,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{CVal, HandleKind, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{
-    AmountCell, Bucket, InstanceRange, add_kernel_to_linker, blessed_engine, classify,
+    Bucket, Capability as CapabilityResource, add_kernel_to_linker, blessed_engine, classify,
     validate_component,
 };
 use hyperscale_vm_types::{
@@ -150,12 +150,12 @@ fn lifting(ptr: i32, len: i32) -> String {
 (component
   (import "hyperscale:kernel/state" (instance $state
     (export "bucket" (type $bk (sub resource)))
-    (export "instance-range" (type $rw (sub resource)))
-    (export "instance-range-take"
+    (export "capability" (type $rw (sub resource)))
+    (export "capability-instance-take"
       (func (param "r" (borrow $rw)) (param "ids" (list u64)) (result (own $bk))))))
   (alias export $state "bucket" (type $bucket))
-  (alias export $state "instance-range" (type $wrange))
-  (alias export $state "instance-range-take" (func $take))
+  (alias export $state "capability" (type $wrange))
+  (alias export $state "capability-instance-take" (func $take))
 
   (core module $alloc
     (memory (export "mem") 1 1)
@@ -198,10 +198,10 @@ fn lift_verdicts(ptr: i32, len: i32) -> Result<(Verdict, Verdict)> {
     both(
         &lifting(ptr, len),
         "take",
-        &[CVal::Borrow(0, HandleKind::InstanceRange)],
+        &[CVal::Borrow(0, HandleKind::Capability)],
         |instance, store| {
             instance
-                .get_typed_func::<(Resource<InstanceRange>,), (Resource<Bucket>,)>(
+                .get_typed_func::<(Resource<CapabilityResource>,), (Resource<Bucket>,)>(
                     &mut *store,
                     "take",
                 )?
@@ -248,12 +248,12 @@ fn returning(retptr: i32) -> String {
         r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "amount-cell" (type $ac (sub resource)))
+    (export "capability" (type $ac (sub resource)))
     (type $amt_decl (record (field "low" u64) (field "high" u64)))
     (export "amount" (type $amt (eq $amt_decl)))
-    (export "amount-cell-balance" (func (param "c" (borrow $ac)) (result $amt)))))
-  (alias export $state "amount-cell" (type $acell))
-  (alias export $state "amount-cell-balance" (func $balance))
+    (export "capability-balance" (func (param "c" (borrow $ac)) (result $amt)))))
+  (alias export $state "capability" (type $acell))
+  (alias export $state "capability-balance" (func $balance))
 
   (core module $alloc
     (memory (export "mem") 1 1)
@@ -297,10 +297,13 @@ fn a_return_area_is_judged_the_same_by_both() -> Result<()> {
         both(
             &returning(retptr),
             "weigh",
-            &[CVal::Borrow(1, HandleKind::AmountCell)],
+            &[CVal::Borrow(1, HandleKind::Capability)],
             |instance, store| {
                 instance
-                    .get_typed_func::<(Resource<AmountCell>,), (u64,)>(&mut *store, "weigh")?
+                    .get_typed_func::<(Resource<CapabilityResource>,), (u64,)>(
+                        &mut *store,
+                        "weigh",
+                    )?
                     .call(store, (Resource::new_borrow(1),))
             },
         )
@@ -328,10 +331,10 @@ fn allocating(at: i32) -> String {
         r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "instance-range" (type $rw (sub resource)))
-    (export "instance-range-count" (func (param "r" (borrow $rw)) (result u32)))))
-  (alias export $state "instance-range" (type $wrange))
-  (alias export $state "instance-range-count" (func $count))
+    (export "capability" (type $rw (sub resource)))
+    (export "capability-count" (func (param "r" (borrow $rw)) (result u32)))))
+  (alias export $state "capability" (type $wrange))
+  (alias export $state "capability-count" (func $count))
 
   (core module $alloc
     (memory (export "mem") 1 1)
@@ -373,12 +376,12 @@ fn a_realloc_result_is_judged_the_same_by_both() -> Result<()> {
             &allocating(at),
             "count",
             &[
-                CVal::Borrow(0, HandleKind::InstanceRange),
+                CVal::Borrow(0, HandleKind::Capability),
                 CVal::Ids(vec![10, 20]),
             ],
             |instance, store| {
                 instance
-                    .get_typed_func::<(Resource<InstanceRange>, &[u64]), (u32,)>(
+                    .get_typed_func::<(Resource<CapabilityResource>, &[u64]), (u32,)>(
                         &mut *store,
                         "count",
                     )?

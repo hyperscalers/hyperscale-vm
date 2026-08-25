@@ -3,8 +3,8 @@
     (export "hash" (func (param "data" (list u8)) (result (list u8))))))
   (alias export $crypto "hash" (func $hash))
   (import "hyperscale:kernel/state" (instance $state
-    (export "read-cell" (type $rc (sub resource)))))
-  (alias export $state "read-cell" (type $rcell))
+    (export "capability" (type $rc (sub resource)))))
+  (alias export $state "capability" (type $rcell))
 
   (core func $drop (canon resource.drop $rcell))
 

@@ -214,43 +214,16 @@ impl From<Ordering> for WitOrdering {
 pub struct Bucket;
 /// Host-side marker for the `issuer` resource.
 pub struct Issuer;
-/// Host-side marker for the `read-cell` resource.
-pub struct ReadCell;
-/// Host-side marker for the `write-cell` resource.
-pub struct WriteCell;
-/// Host-side marker for the `amount-cell` resource.
-pub struct AmountCell;
-/// Host-side marker for the `amount-read` resource.
-pub struct AmountRead;
-/// Host-side marker for the `delta-cell` resource.
-pub struct DeltaCell;
-/// Host-side marker for the `reserve-cell` resource.
-pub struct ReserveCell;
-/// Host-side marker for the `range-read` resource.
-pub struct RangeRead;
-/// Host-side marker for the `range-write` resource.
-pub struct RangeWrite;
-/// Host-side marker for the `instance-range` resource.
-pub struct InstanceRange;
-
-/// Host-side marker for the `read-cell-run` resource.
-pub struct ReadCellRun;
-/// Host-side marker for the `write-cell-run` resource.
-pub struct WriteCellRun;
-/// Host-side marker for the `amount-cell-run` resource.
-pub struct AmountCellRun;
-/// Host-side marker for the `amount-read-run` resource.
-pub struct AmountReadRun;
-/// Host-side marker for the `delta-cell-run` resource.
-pub struct DeltaCellRun;
-/// Host-side marker for the `reserve-cell-run` resource.
-pub struct ReserveCellRun;
-/// Host-side marker for the `range-read-run` resource.
-pub struct RangeReadRun;
-/// Host-side marker for the `range-write-run` resource.
-pub struct RangeWriteRun;
-/// Host-side marker for the `instance-range-run` resource.
-pub struct InstanceRangeRun;
+/// Host-side marker for the `access` resource.
+///
+/// One marker for every mode: a handle type says which table its rep
+/// indexes, and every capability indexes the one the declaration
+/// materialized.
+pub struct Capability;
+/// Host-side marker for the `run` resource.
+///
+/// Its own marker beside [`Capability`] because it indexes its own table.
+pub struct Run;
 
 /// A host refusal as an engine trap, with its class recoverable.
 ///
@@ -296,118 +269,132 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.resource("issuer", ResourceType::host::<Issuer>(), |_, _| Ok(()))?;
-    state.resource("read-cell", ResourceType::host::<ReadCell>(), |_, _| Ok(()))?;
-    state.resource("write-cell", ResourceType::host::<WriteCell>(), |_, _| {
+    state.resource("capability", ResourceType::host::<Capability>(), |_, _| {
         Ok(())
     })?;
-    state.resource("amount-cell", ResourceType::host::<AmountCell>(), |_, _| {
-        Ok(())
-    })?;
-    state.resource("amount-read", ResourceType::host::<AmountRead>(), |_, _| {
-        Ok(())
-    })?;
-    state.resource("delta-cell", ResourceType::host::<DeltaCell>(), |_, _| {
-        Ok(())
-    })?;
-    state.resource(
-        "reserve-cell",
-        ResourceType::host::<ReserveCell>(),
-        |_, _| Ok(()),
-    )?;
-    state.resource("range-read", ResourceType::host::<RangeRead>(), |_, _| {
-        Ok(())
-    })?;
-    state.resource("range-write", ResourceType::host::<RangeWrite>(), |_, _| {
-        Ok(())
-    })?;
-    state.resource(
-        "instance-range",
-        ResourceType::host::<InstanceRange>(),
-        |_, _| Ok(()),
-    )?;
-    state.resource(
-        "read-cell-run",
-        ResourceType::host::<ReadCellRun>(),
-        |_, _| Ok(()),
-    )?;
-    state.resource(
-        "write-cell-run",
-        ResourceType::host::<WriteCellRun>(),
-        |_, _| Ok(()),
-    )?;
-    state.resource(
-        "amount-cell-run",
-        ResourceType::host::<AmountCellRun>(),
-        |_, _| Ok(()),
-    )?;
-    state.resource(
-        "amount-read-run",
-        ResourceType::host::<AmountReadRun>(),
-        |_, _| Ok(()),
-    )?;
-    state.resource(
-        "delta-cell-run",
-        ResourceType::host::<DeltaCellRun>(),
-        |_, _| Ok(()),
-    )?;
-    state.resource(
-        "reserve-cell-run",
-        ResourceType::host::<ReserveCellRun>(),
-        |_, _| Ok(()),
-    )?;
-    state.resource(
-        "range-read-run",
-        ResourceType::host::<RangeReadRun>(),
-        |_, _| Ok(()),
-    )?;
-    state.resource(
-        "range-write-run",
-        ResourceType::host::<RangeWriteRun>(),
-        |_, _| Ok(()),
-    )?;
-    state.resource(
-        "instance-range-run",
-        ResourceType::host::<InstanceRangeRun>(),
-        |_, _| Ok(()),
-    )?;
+    state.resource("run", ResourceType::host::<Run>(), |_, _| Ok(()))?;
 
     state.func_wrap(
-        "read-cell-get",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReadCell>,)| {
-            let value = meter::read_cell_get(&mut Port(&mut store), r.rep()).map_err(fault)?;
+        "capability-get",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<Capability>,)| {
+            let value = meter::cell_get(&mut Port(&mut store), r.rep()).map_err(fault)?;
             Ok((value,))
         },
     )?;
     state.func_wrap(
-        "write-cell-get",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<WriteCell>,)| {
-            let value = meter::write_cell_get(&mut Port(&mut store), r.rep()).map_err(fault)?;
-            Ok((value,))
+        "capability-set",
+        |mut store: StoreContextMut<'_, T>, (r, value): (Resource<Capability>, Vec<u8>)| {
+            meter::cell_set(&mut Port(&mut store), r.rep(), value).map_err(fault)
         },
     )?;
     state.func_wrap(
-        "write-cell-set",
-        |mut store: StoreContextMut<'_, T>, (r, value): (Resource<WriteCell>, Vec<u8>)| {
-            meter::write_cell_set(&mut Port(&mut store), r.rep(), value).map_err(fault)
-        },
-    )?;
-    state.func_wrap(
-        "write-cell-seal",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<WriteCell>,)| {
+        "capability-seal",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<Capability>,)| {
             meter::seal(&mut Port(&mut store), r.rep()).map_err(fault)
         },
     )?;
     state.func_wrap(
-        "write-cell-open-seal",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<WriteCell>,)| {
+        "capability-open-seal",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<Capability>,)| {
             let drawn = meter::open_seal(&mut Port(&mut store), r.rep()).map_err(fault)?;
             Ok((WitDrawn::from(drawn),))
         },
     )?;
     state.func_wrap(
-        "write-cell-clear",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<WriteCell>,)| {
-            meter::write_cell_clear(&mut Port(&mut store), r.rep()).map_err(fault)
+        "capability-clear",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<Capability>,)| {
+            meter::cell_clear(&mut Port(&mut store), r.rep()).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
+        "capability-balance",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<Capability>,)| {
+            let held = meter::cell_balance(&mut Port(&mut store), r.rep()).map_err(fault)?;
+            Ok((Amount::from(held),))
+        },
+    )?;
+    state.func_wrap(
+        "capability-take",
+        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<Capability>, Amount)| {
+            let rep =
+                meter::cell_take(&mut Port(&mut store), r.rep(), amount.into()).map_err(fault)?;
+            Ok((Resource::<Bucket>::new_own(rep),))
+        },
+    )?;
+    state.func_wrap(
+        "capability-put",
+        |mut store: StoreContextMut<'_, T>,
+         (r, funds): (Resource<Capability>, Resource<Bucket>)| {
+            meter::cell_put(&mut Port(&mut store), r.rep(), funds.rep()).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
+        "capability-reserve-take",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<Capability>,)| {
+            let rep = meter::reserve_take(&mut Port(&mut store), r.rep()).map_err(fault)?;
+            Ok((Resource::<Bucket>::new_own(rep),))
+        },
+    )?;
+    state.func_wrap(
+        "capability-count",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<Capability>,)| {
+            Ok((meter::range_count(&mut Port(&mut store), r.rep()).map_err(fault)?,))
+        },
+    )?;
+    state.func_wrap(
+        "capability-covered",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<Capability>,)| {
+            Ok((meter::range_covered(&mut Port(&mut store), r.rep()).map_err(fault)?,))
+        },
+    )?;
+    state.func_wrap(
+        "capability-order",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Capability>, u32)| {
+            let order = meter::range_order(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            Ok((Amount::from(order),))
+        },
+    )?;
+    state.func_wrap(
+        "capability-entry",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Capability>, u32)| {
+            let value = meter::range_entry(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            Ok((value,))
+        },
+    )?;
+    state.func_wrap(
+        "capability-entry-set",
+        |mut store: StoreContextMut<'_, T>,
+         (r, index, value): (Resource<Capability>, u32, Vec<u8>)| {
+            meter::range_set(&mut Port(&mut store), r.rep(), index, value).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
+        "capability-insert",
+        |mut store: StoreContextMut<'_, T>,
+         (r, order, value): (Resource<Capability>, Amount, Vec<u8>)| {
+            meter::range_insert(&mut Port(&mut store), r.rep(), order.into(), value).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
+        "capability-remove",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Capability>, u32)| {
+            meter::range_remove(&mut Port(&mut store), r.rep(), index).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
+        "capability-instance-take",
+        |mut store: StoreContextMut<'_, T>, (r, ids): (Resource<Capability>, Vec<u64>)| {
+            let rep =
+                meter::instance_range_take(&mut Port(&mut store), r.rep(), &ids).map_err(fault)?;
+            Ok((Resource::<Bucket>::new_own(rep),))
+        },
+    )?;
+    state.func_wrap(
+        "capability-instance-put",
+        |mut store: StoreContextMut<'_, T>,
+         (r, funds, value): (Resource<Capability>, Resource<Bucket>, Vec<u8>)| {
+            meter::instance_range_put(&mut Port(&mut store), r.rep(), funds.rep(), value)
+                .map_err(fault)
         },
     )?;
     state.func_wrap(
@@ -417,31 +404,6 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
-    state.func_wrap(
-        "amount-cell-balance",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountCell>,)| {
-            let held = meter::amount_balance(&mut Port(&mut store), r.rep()).map_err(fault)?;
-            Ok((Amount::from(held),))
-        },
-    )?;
-    state.func_wrap(
-        "amount-read-balance",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountRead>,)| {
-            let held = meter::amount_balance(&mut Port(&mut store), r.rep()).map_err(fault)?;
-            Ok((Amount::from(held),))
-        },
-    )?;
-    state.func_wrap(
-        "amount-cell-take",
-        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<AmountCell>, Amount)| {
-            let rep = meter::amount_cell_take(&mut Port(&mut store), r.rep(), amount.into())
-                .map_err(fault)?;
-            Ok((Resource::<Bucket>::new_own(rep),))
-        },
-    )?;
-    // A put consumes the handle the guest passed: the canonical ABI
-    // lifts an owned argument out of the caller's table, so the rep
-    // arrives here and the guest no longer has it.
     state.func_wrap(
         "burn",
         |mut store: StoreContextMut<'_, T>, (i, funds): (Resource<Issuer>, Resource<Bucket>)| {
@@ -453,22 +415,6 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         |mut store: StoreContextMut<'_, T>, (i, ids): (Resource<Issuer>, Vec<u64>)| {
             let rep = meter::mint_instances(&mut Port(&mut store), i.rep(), &ids).map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-take",
-        |mut store: StoreContextMut<'_, T>, (r, ids): (Resource<InstanceRange>, Vec<u64>)| {
-            let taken =
-                meter::instance_range_take(&mut Port(&mut store), r.rep(), &ids).map_err(fault)?;
-            Ok((Resource::<Bucket>::new_own(taken),))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-put",
-        |mut store: StoreContextMut<'_, T>,
-         (r, funds, value): (Resource<InstanceRange>, Resource<Bucket>, Vec<u8>)| {
-            meter::instance_range_put(&mut Port(&mut store), r.rep(), funds.rep(), value)
-                .map_err(fault)
         },
     )?;
     state.func_wrap(
@@ -501,490 +447,155 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         },
     )?;
     state.func_wrap(
-        "amount-cell-put",
+        "run-len",
+        |mut store: StoreContextMut<'_, T>, (r,): (Resource<Run>,)| {
+            Ok((meter::run_len(&mut Port(&mut store), r.rep()).map_err(fault)?,))
+        },
+    )?;
+    state.func_wrap(
+        "run-declared",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Run>, u32)| {
+            let declared =
+                meter::run_declared(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            Ok((declared,))
+        },
+    )?;
+    state.func_wrap(
+        "run-get",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Run>, u32)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            let value = meter::cell_get(&mut Port(&mut store), rep).map_err(fault)?;
+            Ok((value,))
+        },
+    )?;
+    state.func_wrap(
+        "run-set",
+        |mut store: StoreContextMut<'_, T>, (r, index, value): (Resource<Run>, u32, Vec<u8>)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            meter::cell_set(&mut Port(&mut store), rep, value).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
+        "run-clear",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Run>, u32)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            meter::cell_clear(&mut Port(&mut store), rep).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
+        "run-seal",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Run>, u32)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            meter::seal(&mut Port(&mut store), rep).map_err(fault)
+        },
+    )?;
+    state.func_wrap(
+        "run-open-seal",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Run>, u32)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            let drawn = meter::open_seal(&mut Port(&mut store), rep).map_err(fault)?;
+            Ok((WitDrawn::from(drawn),))
+        },
+    )?;
+    state.func_wrap(
+        "run-balance",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Run>, u32)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            let held = meter::cell_balance(&mut Port(&mut store), rep).map_err(fault)?;
+            Ok((Amount::from(held),))
+        },
+    )?;
+    state.func_wrap(
+        "run-take",
+        |mut store: StoreContextMut<'_, T>, (r, index, amount): (Resource<Run>, u32, Amount)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            let bucket =
+                meter::cell_take(&mut Port(&mut store), rep, amount.into()).map_err(fault)?;
+            Ok((Resource::<Bucket>::new_own(bucket),))
+        },
+    )?;
+    state.func_wrap(
+        "run-put",
         |mut store: StoreContextMut<'_, T>,
-         (r, funds): (Resource<AmountCell>, Resource<Bucket>)| {
-            meter::amount_cell_put(&mut Port(&mut store), r.rep(), funds.rep()).map_err(fault)
+         (r, index, funds): (Resource<Run>, u32, Resource<Bucket>)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            meter::cell_put(&mut Port(&mut store), rep, funds.rep()).map_err(fault)
         },
     )?;
     state.func_wrap(
-        "delta-cell-put",
-        |mut store: StoreContextMut<'_, T>, (r, funds): (Resource<DeltaCell>, Resource<Bucket>)| {
-            meter::delta_cell_put(&mut Port(&mut store), r.rep(), funds.rep()).map_err(fault)
+        "run-reserve-take",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Run>, u32)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            let bucket = meter::reserve_take(&mut Port(&mut store), rep).map_err(fault)?;
+            Ok((Resource::<Bucket>::new_own(bucket),))
         },
     )?;
     state.func_wrap(
-        "delta-cell-take",
-        |mut store: StoreContextMut<'_, T>, (r, amount): (Resource<DeltaCell>, Amount)| {
-            let rep = meter::delta_cell_take(&mut Port(&mut store), r.rep(), amount.into())
-                .map_err(fault)?;
-            Ok((Resource::<Bucket>::new_own(rep),))
+        "run-count",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Run>, u32)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            Ok((meter::range_count(&mut Port(&mut store), rep).map_err(fault)?,))
         },
     )?;
     state.func_wrap(
-        "reserve-cell-take",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReserveCell>,)| {
-            let rep = meter::reserve_cell_take(&mut Port(&mut store), r.rep()).map_err(fault)?;
-            Ok((Resource::<Bucket>::new_own(rep),))
-        },
-    )?;
-
-    state.func_wrap(
-        "range-read-count",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeRead>,)| {
-            Ok((meter::range_count(&mut Port(&mut store), r.rep()).map_err(fault)?,))
+        "run-covered",
+        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<Run>, u32)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            Ok((meter::range_covered(&mut Port(&mut store), rep).map_err(fault)?,))
         },
     )?;
     state.func_wrap(
-        "range-read-order",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeRead>, u32)| {
-            let order = meter::range_order(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+        "run-order",
+        |mut store: StoreContextMut<'_, T>, (r, index, at): (Resource<Run>, u32, u32)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            let order = meter::range_order(&mut Port(&mut store), rep, at).map_err(fault)?;
             Ok((Amount::from(order),))
         },
     )?;
     state.func_wrap(
-        "range-read-entry",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeRead>, u32)| {
-            let value = meter::range_entry(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+        "run-entry",
+        |mut store: StoreContextMut<'_, T>, (r, index, at): (Resource<Run>, u32, u32)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            let value = meter::range_entry(&mut Port(&mut store), rep, at).map_err(fault)?;
             Ok((value,))
         },
     )?;
     state.func_wrap(
-        "range-read-covered",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeRead>,)| {
-            Ok((meter::range_covered(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-count",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeWrite>,)| {
-            Ok((meter::range_count(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-covered",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeWrite>,)| {
-            Ok((meter::range_covered(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-order",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWrite>, u32)| {
-            let order = meter::range_order(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((Amount::from(order),))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-entry",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWrite>, u32)| {
-            let value = meter::range_entry(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-count",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<InstanceRange>,)| {
-            Ok((meter::range_count(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-covered",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<InstanceRange>,)| {
-            Ok((meter::range_covered(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-order",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<InstanceRange>, u32)| {
-            let order = meter::range_order(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((Amount::from(order),))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-entry",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<InstanceRange>, u32)| {
-            let value = meter::range_entry(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-set",
+        "run-entry-set",
         |mut store: StoreContextMut<'_, T>,
-         (r, index, value): (Resource<RangeWrite>, u32, Vec<u8>)| {
-            meter::range_set(&mut Port(&mut store), r.rep(), index, value).map_err(fault)
+         (r, index, at, value): (Resource<Run>, u32, u32, Vec<u8>)| {
+            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
+            meter::range_set(&mut Port(&mut store), rep, at, value).map_err(fault)
         },
     )?;
     state.func_wrap(
-        "range-write-insert",
+        "run-insert",
         |mut store: StoreContextMut<'_, T>,
-         (r, order, value): (Resource<RangeWrite>, Amount, Vec<u8>)| {
-            meter::range_insert(&mut Port(&mut store), r.rep(), order.into(), value).map_err(fault)
-        },
-    )?;
-    state.func_wrap(
-        "range-write-remove",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWrite>, u32)| {
-            meter::range_remove(&mut Port(&mut store), r.rep(), index).map_err(fault)
-        },
-    )?;
-
-    state.func_wrap(
-        "read-cell-run-len",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReadCellRun>,)| {
-            Ok((meter::run_len(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "read-cell-run-declared",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<ReadCellRun>, u32)| {
-            let declared =
-                meter::run_declared(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((declared,))
-        },
-    )?;
-    state.func_wrap(
-        "read-cell-run-get",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<ReadCellRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::read_cell_get(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "write-cell-run-len",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<WriteCellRun>,)| {
-            Ok((meter::run_len(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "write-cell-run-declared",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<WriteCellRun>, u32)| {
-            let declared =
-                meter::run_declared(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((declared,))
-        },
-    )?;
-    state.func_wrap(
-        "write-cell-run-get",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<WriteCellRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::write_cell_get(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "write-cell-run-set",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, value): (Resource<WriteCellRun>, u32, Vec<u8>)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            meter::write_cell_set(&mut Port(&mut store), rep, value).map_err(fault)
-        },
-    )?;
-    state.func_wrap(
-        "write-cell-run-clear",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<WriteCellRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            meter::write_cell_clear(&mut Port(&mut store), rep).map_err(fault)
-        },
-    )?;
-    state.func_wrap(
-        "amount-cell-run-len",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountCellRun>,)| {
-            Ok((meter::run_len(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "amount-cell-run-declared",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<AmountCellRun>, u32)| {
-            let declared =
-                meter::run_declared(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((declared,))
-        },
-    )?;
-    state.func_wrap(
-        "amount-cell-run-balance",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<AmountCellRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::amount_balance(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((Amount::from(value),))
-        },
-    )?;
-    state.func_wrap(
-        "amount-cell-run-take",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, amount): (Resource<AmountCellRun>, u32, Amount)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let taken = meter::amount_cell_take(&mut Port(&mut store), rep, amount.into())
-                .map_err(fault)?;
-            Ok((Resource::<Bucket>::new_own(taken),))
-        },
-    )?;
-    state.func_wrap(
-        "amount-cell-run-put",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, funds): (Resource<AmountCellRun>, u32, Resource<Bucket>)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            meter::amount_cell_put(&mut Port(&mut store), rep, funds.rep()).map_err(fault)
-        },
-    )?;
-    state.func_wrap(
-        "amount-read-run-len",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<AmountReadRun>,)| {
-            Ok((meter::run_len(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "amount-read-run-declared",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<AmountReadRun>, u32)| {
-            let declared =
-                meter::run_declared(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((declared,))
-        },
-    )?;
-    state.func_wrap(
-        "amount-read-run-balance",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<AmountReadRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::amount_balance(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((Amount::from(value),))
-        },
-    )?;
-    state.func_wrap(
-        "delta-cell-run-len",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<DeltaCellRun>,)| {
-            Ok((meter::run_len(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "delta-cell-run-declared",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<DeltaCellRun>, u32)| {
-            let declared =
-                meter::run_declared(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((declared,))
-        },
-    )?;
-    state.func_wrap(
-        "delta-cell-run-put",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, funds): (Resource<DeltaCellRun>, u32, Resource<Bucket>)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            meter::delta_cell_put(&mut Port(&mut store), rep, funds.rep()).map_err(fault)
-        },
-    )?;
-    state.func_wrap(
-        "delta-cell-run-take",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, amount): (Resource<DeltaCellRun>, u32, Amount)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let taken =
-                meter::delta_cell_take(&mut Port(&mut store), rep, amount.into()).map_err(fault)?;
-            Ok((Resource::<Bucket>::new_own(taken),))
-        },
-    )?;
-    state.func_wrap(
-        "reserve-cell-run-len",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<ReserveCellRun>,)| {
-            Ok((meter::run_len(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "reserve-cell-run-declared",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<ReserveCellRun>, u32)| {
-            let declared =
-                meter::run_declared(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((declared,))
-        },
-    )?;
-    state.func_wrap(
-        "reserve-cell-run-take",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<ReserveCellRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let taken = meter::reserve_cell_take(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((Resource::<Bucket>::new_own(taken),))
-        },
-    )?;
-    state.func_wrap(
-        "range-read-run-len",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeReadRun>,)| {
-            Ok((meter::run_len(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "range-read-run-declared",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeReadRun>, u32)| {
-            let declared =
-                meter::run_declared(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((declared,))
-        },
-    )?;
-    state.func_wrap(
-        "range-read-run-count",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeReadRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_count(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "range-read-run-covered",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeReadRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_covered(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "range-read-run-order",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, entry): (Resource<RangeReadRun>, u32, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_order(&mut Port(&mut store), rep, entry).map_err(fault)?;
-            Ok((Amount::from(value),))
-        },
-    )?;
-    state.func_wrap(
-        "range-read-run-entry",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, entry): (Resource<RangeReadRun>, u32, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_entry(&mut Port(&mut store), rep, entry).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-run-len",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<RangeWriteRun>,)| {
-            Ok((meter::run_len(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-run-declared",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWriteRun>, u32)| {
-            let declared =
-                meter::run_declared(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((declared,))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-run-count",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWriteRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_count(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-run-covered",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<RangeWriteRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_covered(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-run-order",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, entry): (Resource<RangeWriteRun>, u32, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_order(&mut Port(&mut store), rep, entry).map_err(fault)?;
-            Ok((Amount::from(value),))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-run-entry",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, entry): (Resource<RangeWriteRun>, u32, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_entry(&mut Port(&mut store), rep, entry).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "range-write-run-set",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, entry, value): (Resource<RangeWriteRun>, u32, u32, Vec<u8>)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            meter::range_set(&mut Port(&mut store), rep, entry, value).map_err(fault)
-        },
-    )?;
-    state.func_wrap(
-        "range-write-run-insert",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, order, value): (Resource<RangeWriteRun>, u32, Amount, Vec<u8>)| {
+         (r, index, order, value): (Resource<Run>, u32, Amount, Vec<u8>)| {
             let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
             meter::range_insert(&mut Port(&mut store), rep, order.into(), value).map_err(fault)
         },
     )?;
     state.func_wrap(
-        "range-write-run-remove",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, entry): (Resource<RangeWriteRun>, u32, u32)| {
+        "run-remove",
+        |mut store: StoreContextMut<'_, T>, (r, index, at): (Resource<Run>, u32, u32)| {
             let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            meter::range_remove(&mut Port(&mut store), rep, entry).map_err(fault)
+            meter::range_remove(&mut Port(&mut store), rep, at).map_err(fault)
         },
     )?;
     state.func_wrap(
-        "instance-range-run-len",
-        |mut store: StoreContextMut<'_, T>, (r,): (Resource<InstanceRangeRun>,)| {
-            Ok((meter::run_len(&mut Port(&mut store), r.rep()).map_err(fault)?,))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-run-declared",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<InstanceRangeRun>, u32)| {
-            let declared =
-                meter::run_declared(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            Ok((declared,))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-run-count",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<InstanceRangeRun>, u32)| {
+        "run-instance-take",
+        |mut store: StoreContextMut<'_, T>, (r, index, ids): (Resource<Run>, u32, Vec<u64>)| {
             let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_count(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-run-covered",
-        |mut store: StoreContextMut<'_, T>, (r, index): (Resource<InstanceRangeRun>, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_covered(&mut Port(&mut store), rep).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-run-order",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, entry): (Resource<InstanceRangeRun>, u32, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_order(&mut Port(&mut store), rep, entry).map_err(fault)?;
-            Ok((Amount::from(value),))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-run-entry",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, entry): (Resource<InstanceRangeRun>, u32, u32)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let value = meter::range_entry(&mut Port(&mut store), rep, entry).map_err(fault)?;
-            Ok((value,))
-        },
-    )?;
-    state.func_wrap(
-        "instance-range-run-take",
-        |mut store: StoreContextMut<'_, T>,
-         (r, index, ids): (Resource<InstanceRangeRun>, u32, Vec<u64>)| {
-            let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
-            let taken =
+            let bucket =
                 meter::instance_range_take(&mut Port(&mut store), rep, &ids).map_err(fault)?;
-            Ok((Resource::<Bucket>::new_own(taken),))
+            Ok((Resource::<Bucket>::new_own(bucket),))
         },
     )?;
     state.func_wrap(
-        "instance-range-run-put",
+        "run-instance-put",
         |mut store: StoreContextMut<'_, T>,
-         (r, index, funds, value): (Resource<InstanceRangeRun>, u32, Resource<Bucket>, Vec<u8>)| {
+         (r, index, funds, value): (Resource<Run>, u32, Resource<Bucket>, Vec<u8>)| {
             let rep = meter::run_at(&mut Port(&mut store), r.rep(), index).map_err(fault)?;
             meter::instance_range_put(&mut Port(&mut store), rep, funds.rep(), value).map_err(fault)
         },

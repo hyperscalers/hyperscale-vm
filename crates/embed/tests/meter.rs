@@ -61,10 +61,10 @@ impl KernelHost for StubHost {
         self.op("cell-get", vec![0; 5])
     }
     fn write_cell_set(&mut self, _rep: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
-        self.op("write-cell-set", ())
+        self.op("cell-set", ())
     }
     fn write_cell_clear(&mut self, _rep: u32) -> Result<(), AbortReason> {
-        self.op("write-cell-clear", ())
+        self.op("cell-clear", ())
     }
     fn amount_cell_balance(&mut self, _rep: u32) -> Result<u128, AbortReason> {
         self.op("balance", 7)
@@ -216,46 +216,39 @@ fn every_function_charges_its_pinned_sequence() {
     // operation and its refusal, exactly once each.
     let cases: Vec<Case> = vec![
         (
-            "read-cell-get",
+            "cell-get",
             |p| {
-                let _ = meter::read_cell_get(p, 0);
+                let _ = meter::cell_get(p, 0);
             },
             vec![Host("cell-get"), Charge(5)],
         ),
         (
-            "write-cell-get",
-            |p| {
-                let _ = meter::write_cell_get(p, 0);
-            },
-            vec![Host("cell-get"), Charge(5)],
-        ),
-        (
-            "write-cell-seal",
+            "cell-seal",
             |p| {
                 let _ = meter::seal(p, 0);
             },
             vec![Host("seal"), Charge(8)],
         ),
         (
-            "write-cell-open-seal",
+            "cell-open-seal",
             |p| {
                 let _ = meter::open_seal(p, 0);
             },
             vec![Host("open-seal"), Charge(32)],
         ),
         (
-            "write-cell-set",
+            "cell-set",
             |p| {
-                let _ = meter::write_cell_set(p, 0, vec![0; 5]);
+                let _ = meter::cell_set(p, 0, vec![0; 5]);
             },
-            vec![Charge(5), Host("write-cell-set")],
+            vec![Charge(5), Host("cell-set")],
         ),
         (
-            "write-cell-clear",
+            "cell-clear",
             |p| {
-                let _ = meter::write_cell_clear(p, 0);
+                let _ = meter::cell_clear(p, 0);
             },
-            vec![Host("write-cell-clear")],
+            vec![Host("cell-clear")],
         ),
         (
             "mint",
@@ -267,14 +260,14 @@ fn every_function_charges_its_pinned_sequence() {
         (
             "amount-balance",
             |p| {
-                let _ = meter::amount_balance(p, 0);
+                let _ = meter::cell_balance(p, 0);
             },
             vec![Host("balance"), Charge(AMOUNT)],
         ),
         (
-            "amount-cell-take",
+            "cell-take",
             |p| {
-                let _ = meter::amount_cell_take(p, 0, 1);
+                let _ = meter::cell_take(p, 0, 1);
             },
             vec![Charge(AMOUNT), Host("cell-take")],
         ),
@@ -293,7 +286,7 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Charge(24), Host("mint-instances")],
         ),
         (
-            "instance-range-take",
+            "cell-instance-take",
             |p| {
                 let _ = meter::instance_range_take(p, 0, &[1, 2, 3]);
             },
@@ -305,7 +298,7 @@ fn every_function_charges_its_pinned_sequence() {
             ],
         ),
         (
-            "instance-range-put",
+            "cell-instance-put",
             |p| {
                 let _ = meter::instance_range_put(p, 0, 1, vec![0; 5]);
             },
@@ -345,30 +338,16 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Host("bucket-amount"), Charge(AMOUNT)],
         ),
         (
-            "amount-cell-put",
+            "cell-put",
             |p| {
-                let _ = meter::amount_cell_put(p, 0, 1);
+                let _ = meter::cell_put(p, 0, 1);
             },
             vec![Host("cell-put")],
         ),
         (
-            "delta-cell-put",
+            "cell-reserve-take",
             |p| {
-                let _ = meter::delta_cell_put(p, 0, 1);
-            },
-            vec![Host("cell-put")],
-        ),
-        (
-            "delta-cell-take",
-            |p| {
-                let _ = meter::delta_cell_take(p, 0, 1);
-            },
-            vec![Charge(AMOUNT), Host("cell-take")],
-        ),
-        (
-            "reserve-cell-take",
-            |p| {
-                let _ = meter::reserve_cell_take(p, 0);
+                let _ = meter::reserve_take(p, 0);
             },
             vec![Host("reserve-take")],
         ),
@@ -524,14 +503,14 @@ fn a_refusal_charges_no_result_bytes() {
     // scan ask, which is owed whether the call refused or not.
     let mut probe = Probe::refusing();
     assert_eq!(
-        meter::read_cell_get(&mut probe, 0),
+        meter::cell_get(&mut probe, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
     assert_eq!(probe.steps(), vec![Host("cell-get")]);
 
     let mut probe = Probe::refusing();
     assert_eq!(
-        meter::amount_balance(&mut probe, 0),
+        meter::cell_balance(&mut probe, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
     assert_eq!(probe.steps(), vec![Host("balance")]);
@@ -555,7 +534,7 @@ fn exhaustion_stops_the_sequence_where_it_lands() {
     let mut probe = Probe::new(0);
     probe.remaining = Some(4);
     assert_eq!(
-        meter::write_cell_set(&mut probe, 0, vec![0; 5]),
+        meter::cell_set(&mut probe, 0, vec![0; 5]),
         Err(MeterError::Exhausted)
     );
     assert_eq!(probe.steps(), vec![Charge(5)]);

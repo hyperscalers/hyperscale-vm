@@ -65,7 +65,7 @@ pub use hyperscale_vm_effects::ResourceRecord;
 /// opaque, decoded only where the rule is judged.
 pub use hyperscale_vm_effects::RuleBytes;
 use hyperscale_vm_effects::{LeafForm, RECORD_WIRE_DEPTH};
-use hyperscale_vm_types::{Address, CellKind, Drawn as WireDrawn, ResourceAddr};
+use hyperscale_vm_types::{Address, Drawn as WireDrawn, ResourceAddr};
 
 #[cfg(not(component))]
 use crate::host;
@@ -1150,16 +1150,15 @@ impl Keyed<Vault> {
 /// reads as undeclared rather than shortening the walk.
 #[derive(Clone, Copy, Debug)]
 pub struct Run {
-    kind: CellKind,
     rep: u32,
 }
 
 #[allow(clippy::inline_always)] // one import behind a dispatch its call site fixes
 impl Run {
-    /// The run at `rep`, whose entries are lent at `kind`.
+    /// The run at `rep`.
     #[must_use]
-    pub const fn at(kind: CellKind, rep: u32) -> Self {
-        Self { kind, rep }
+    pub const fn at(rep: u32) -> Self {
+        Self { rep }
     }
 
     /// How many elements the site's loop mapped over.
@@ -1167,7 +1166,7 @@ impl Run {
     #[inline(always)]
     pub fn len(&self) -> u32 {
         #[cfg(component)]
-        return crate::guest::run_len(self.kind, self.rep);
+        return crate::guest::run_len(self.rep);
         #[cfg(not(component))]
         return host::run_len(self.rep);
     }
@@ -1188,7 +1187,7 @@ impl Run {
     #[inline(always)]
     pub fn declared(&self, index: u32) -> bool {
         #[cfg(component)]
-        return crate::guest::run_declared(self.kind, self.rep, index);
+        return crate::guest::run_declared(self.rep, index);
         #[cfg(not(component))]
         return host::run_declared(self.rep, index);
     }
@@ -1196,7 +1195,7 @@ impl Run {
     /// The handle the entry at `index` acts through.
     #[must_use]
     pub const fn handle(&self, index: u32) -> Handle {
-        Handle::Run(self.kind, self.rep, index)
+        Handle::Run(self.rep, index)
     }
 }
 

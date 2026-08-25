@@ -46,27 +46,25 @@ use Verdict::{BothDirections, ByMode, InFlight, OwnBehaviour};
 /// derived, because "it looked like the one above it" is exactly how a
 /// second writer gets forgotten.
 const VERDICTS: &[(&str, Verdict)] = &[
-    // A write on a value cell moves in both directions through one
-    // declared access.
-    ("amount-cell-take", BothDirections),
-    ("amount-cell-put", BothDirections),
-    ("amount-cell-run-take", BothDirections),
-    ("amount-cell-run-put", BothDirections),
-    // A delta is commutative: increment or decrement, one access.
-    ("delta-cell-put", BothDirections),
-    ("delta-cell-take", BothDirections),
-    ("delta-cell-run-put", BothDirections),
-    ("delta-cell-run-take", BothDirections),
+    // One call for every value mode, so one verdict covers what the
+    // exclusive hold and the commutative movement both do: each reaches
+    // both directions through one declared access, and which of them the
+    // capability carries changes when the debit is judged rather than
+    // what it moves.
+    ("capability-take", BothDirections),
+    ("capability-put", BothDirections),
+    ("run-take", BothDirections),
+    ("run-put", BothDirections),
     // A reservation is a conditional decrement, and the only mode whose
     // direction the declaration carries.
-    ("reserve-cell-take", ByMode),
-    ("reserve-cell-run-take", ByMode),
+    ("capability-reserve-take", ByMode),
+    ("run-reserve-take", ByMode),
     // Instances move both ways through an interval, whose slot admits
     // read and write and says nothing about which.
-    ("instance-range-take", BothDirections),
-    ("instance-range-put", BothDirections),
-    ("instance-range-run-take", BothDirections),
-    ("instance-range-run-put", BothDirections),
+    ("capability-instance-take", BothDirections),
+    ("capability-instance-put", BothDirections),
+    ("run-instance-take", BothDirections),
+    ("run-instance-put", BothDirections),
     // In flight between a producer and a consumer.
     ("bucket-take", InFlight),
     ("bucket-split", InFlight),
@@ -143,7 +141,7 @@ fn only_a_reservation_carries_its_direction() {
         .collect();
     assert_eq!(
         directional,
-        vec!["reserve-cell-take", "reserve-cell-run-take"]
+        vec!["capability-reserve-take", "run-reserve-take"]
     );
 
     // And every other cell-bearing call is bidirectional through one
@@ -152,5 +150,5 @@ fn only_a_reservation_carries_its_direction() {
         .iter()
         .filter(|(_, verdict)| *verdict == BothDirections)
         .count();
-    assert_eq!(both, 12);
+    assert_eq!(both, 8);
 }

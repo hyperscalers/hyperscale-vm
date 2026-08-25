@@ -227,7 +227,7 @@ fn bucket_sequence(fx: &Fixture) -> Result<Trace> {
 
     let held_handle = dual.invoke_both("hold", &[CVal::Own(held)])?.scalar()?;
     let borrow_handle = dual
-        .invoke_both("peek", &[CVal::Borrow(readable, HandleKind::ReadCell)])?
+        .invoke_both("peek", &[CVal::Borrow(readable, HandleKind::Capability)])?
         .scalar()?;
     let released_rep = dual.invoke_both("release", &[])?.bucket()?;
     let discard_handle = dual.invoke_both("discard", &[CVal::Own(spent)])?.scalar()?;
@@ -343,16 +343,12 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
         host
     };
     let probe = build();
+    // Every capability crosses as one resource, whichever mode it
+    // carries; what the mode still decides is which table position the
+    // fixture is naming.
     let (rep, kind) = match take.cell(fx) {
         None => (ISSUER_REP, HandleKind::Issuer),
-        Some((key, mode)) => (
-            rep_of(&probe, key, mode),
-            match mode {
-                Mode::Delta => HandleKind::DeltaCell,
-                Mode::Write => HandleKind::AmountCell,
-                _ => HandleKind::ReserveCell,
-            },
-        ),
+        Some((key, mode)) => (rep_of(&probe, key, mode), HandleKind::Capability),
     };
     let mut args = vec![CVal::Borrow(rep, kind)];
     args.extend(take.amount().map(CVal::U64));
@@ -491,9 +487,9 @@ fn credited(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<Credi
     let mut probe = session_of(fx);
     let funds = minted(&mut probe, held);
     let (key, mode, kind) = if delta {
-        (fx.ledger, Mode::Delta, HandleKind::DeltaCell)
+        (fx.ledger, Mode::Delta, HandleKind::Capability)
     } else {
-        (fx.vault, Mode::Write, HandleKind::AmountCell)
+        (fx.vault, Mode::Write, HandleKind::Capability)
     };
     let args = vec![
         CVal::Borrow(rep_of(&probe, key, mode), kind),
@@ -557,7 +553,7 @@ fn a_consumed_handle_cannot_be_dropped_again() -> Result<()> {
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let refused = dual.invoke_both(
         "put-write-then-drop",
-        &[CVal::Borrow(rep, HandleKind::AmountCell), CVal::Own(funds)],
+        &[CVal::Borrow(rep, HandleKind::Capability), CVal::Own(funds)],
     )?;
     assert_eq!(refused, DualOutcome::Trapped(AbortReason::AbiViolation));
     Ok(())
@@ -592,8 +588,8 @@ fn paired(fx: &Fixture, a: u64, b: u64) -> Result<Pair> {
     let produced = dual.invoke_both(
         "take-two",
         &[
-            CVal::Borrow(ledger, HandleKind::DeltaCell),
-            CVal::Borrow(vault, HandleKind::AmountCell),
+            CVal::Borrow(ledger, HandleKind::Capability),
+            CVal::Borrow(vault, HandleKind::Capability),
             CVal::U64(a),
             CVal::U64(b),
         ],
@@ -640,7 +636,7 @@ fn weighed(fx: &Fixture, held: u128) -> Result<u64> {
         "weigh",
         &[
             CVal::Own(funds),
-            CVal::Borrow(ledger, HandleKind::DeltaCell),
+            CVal::Borrow(ledger, HandleKind::Capability),
         ],
     )?
     .scalar()
@@ -663,7 +659,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
             &[
                 CVal::Own(funds),
                 CVal::U64(off),
-                CVal::Borrow(ledger, HandleKind::DeltaCell),
+                CVal::Borrow(ledger, HandleKind::Capability),
             ],
         )?
         .bucket()?;
@@ -699,7 +695,7 @@ fn lifted_value(fx: &Fixture, ids: &[u64]) -> Result<u128> {
         .invoke_both(
             "lift",
             &[
-                CVal::Borrow(held, HandleKind::InstanceRange),
+                CVal::Borrow(held, HandleKind::Capability),
                 CVal::Ids(ids.to_vec()),
             ],
         )?
@@ -729,7 +725,7 @@ fn taking_instances_out_of_a_collection_is_what_produces_them() -> Result<()> {
         .invoke_both(
             "relift",
             &[
-                CVal::Borrow(held, HandleKind::InstanceRange),
+                CVal::Borrow(held, HandleKind::Capability),
                 CVal::Ids(vec![10, 20]),
             ],
         )?
@@ -754,7 +750,7 @@ fn an_instance_a_body_does_not_hold_is_refused() -> Result<()> {
     let refused = dual.invoke_both(
         "lift",
         &[
-            CVal::Borrow(held, HandleKind::InstanceRange),
+            CVal::Borrow(held, HandleKind::Capability),
             CVal::Ids(vec![10, 99]),
         ],
     )?;
@@ -1007,12 +1003,12 @@ fn discarded(fx: &Fixture, held: u128) -> Result<(DualOutcome, Option<u128>)> {
 const PEEK_WAT: &str = r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "amount-read" (type $ar (sub resource)))
+    (export "capability" (type $ar (sub resource)))
     (type $amt_decl (record (field "low" u64) (field "high" u64)))
     (export "amount" (type $amt (eq $amt_decl)))
-    (export "amount-read-balance" (func (param "c" (borrow $ar)) (result $amt)))))
-  (alias export $state "amount-read" (type $aread))
-  (alias export $state "amount-read-balance" (func $balance))
+    (export "capability-balance" (func (param "c" (borrow $ar)) (result $amt)))))
+  (alias export $state "capability" (type $aread))
+  (alias export $state "capability-balance" (func $balance))
 
   (core module $alloc
     (memory (export "mem") 1 1)
@@ -1069,7 +1065,7 @@ fn a_balance_read_agrees_between_the_engines() -> Result<()> {
     let guest = DualGuest::compile(&parse_str(PEEK_WAT)?)?;
     let mut dual = guest.instantiate(FUEL, peeking)?;
     let held = dual
-        .invoke_both("peek", &[CVal::Borrow(0, HandleKind::AmountRead)])?
+        .invoke_both("peek", &[CVal::Borrow(0, HandleKind::Capability)])?
         .scalar()
         .map_err(|other| format_err!("peek: {other}"))?;
     assert_eq!(u128::from(held), BALANCE);

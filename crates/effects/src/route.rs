@@ -175,8 +175,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_types::{
-        Address, AddressClass, CallTarget, CellKind, Effect, EffectConflict, EffectSet,
-        EffectTarget, MAX_MANIFEST_NODES, Mode, PrincipalAddr,
+        Address, AddressClass, CallTarget, Effect, EffectConflict, EffectSet, EffectTarget,
+        MAX_MANIFEST_NODES, Mode, PrincipalAddr,
     };
 
     use super::{PrefixShardResolver, Routing, ShardResolver, route};
@@ -636,7 +636,6 @@ mod tests {
         assert_eq!(
             routing.calls[0].args,
             vec![CallArg::Run {
-                kind: CellKind::Write,
                 entries: Vec::new(),
             }]
         );
@@ -646,7 +645,6 @@ mod tests {
         assert_eq!(
             routing.calls[0].args,
             vec![CallArg::Run {
-                kind: CellKind::Write,
                 entries: vec![Some(0), Some(1)],
             }]
         );
@@ -759,7 +757,7 @@ mod tests {
         let routing = routed(&graph, &chain);
         assert_eq!(
             routing.calls[0].args,
-            vec![CallArg::AbsentHandle(CellKind::Write), CallArg::Bool(false)]
+            vec![CallArg::AbsentHandle, CallArg::Bool(false)]
         );
 
         let (chain, graph) = guarded_world(Value::U64(1), Value::U64(1), abi);

@@ -24,7 +24,7 @@ use hyperscale_vm_types::{
 
 use crate::dsl::{
     Clause, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, PresentedGrants,
-    evaluate_declaration, evaluate_expr, materialized_kind,
+    evaluate_declaration, evaluate_expr, supports,
 };
 use crate::envelope::{YieldBinding, YieldParam};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
@@ -1741,7 +1741,7 @@ fn bind_run(
     let entries = declaration
         .run(clause, site)
         .ok_or_else(|| format!("clause {clause} has no site {site} to run"))?;
-    let kind = usize::try_from(clause)
+    let backed = usize::try_from(clause)
         .ok()
         .and_then(|index| signature.effects.get(index))
         .and_then(|clause| match clause {
@@ -1750,8 +1750,12 @@ fn bind_run(
             }
             _ => None,
         })
-        .and_then(materialized_kind)
-        .ok_or_else(|| format!("site {site} of clause {clause} materializes nothing"))?;
+        .is_some_and(supports);
+    if !backed {
+        return Err(format!(
+            "site {site} of clause {clause} materializes nothing"
+        ));
+    }
     let entries = entries
         .iter()
         .map(|entry| {
@@ -1763,18 +1767,18 @@ fn bind_run(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(CallArg::Run { kind, entries })
+    Ok(CallArg::Run { entries })
 }
 
 /// The argument a handle binding lowers to: the capability at the
 /// clause's position, or the absence the guest is told about.
 ///
 /// A span of one is the ordinary case. Zero is a clause that was guarded
-/// out, and the kind travels with the argument because nothing
-/// downstream can recover it — an engine reads a handle's type off the
-/// capability at its rep, and there is none. More than one is a
-/// `for-each`, whose width is the instance's rather than the signature's,
-/// so no fixed export parameter can name it.
+/// out, which the guest is handed all the same — an export's parameter
+/// list is a function of its signature and cannot lose a parameter to a
+/// branch. More than one is a `for-each`, whose width is the instance's
+/// rather than the signature's, so no fixed export parameter can name
+/// it.
 ///
 /// A span is one or zero and never more: the ABI check has already
 /// refused a handle naming anything but a single access, and an access
@@ -1792,8 +1796,8 @@ fn bind_handle(
         0 => signature
             .effects
             .get(index)
-            .and_then(materialized_kind)
-            .map(CallArg::AbsentHandle),
+            .is_some_and(supports)
+            .then_some(CallArg::AbsentHandle),
         _ => None,
     }
 }

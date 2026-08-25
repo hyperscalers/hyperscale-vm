@@ -35,7 +35,6 @@ use core::cell::RefCell;
 
 use hyperscale_vm_embed::KernelHost;
 pub use hyperscale_vm_embed::{GuestArg, Invoked};
-pub use hyperscale_vm_types::CellKind;
 use hyperscale_vm_types::{AbortReason, Address, Drawn, ISSUER_REP, math};
 
 use crate::handle::Handle;
@@ -176,11 +175,11 @@ fn scanned<T>(answer: Result<T, AbortReason>) -> T {
 /// lane can do and the guest cannot: a session is in hand here, so a run
 /// entry answers with the capability behind it and everything past this
 /// point is the mode's own business.
-fn acting(handle: Handle) -> Handle {
-    let Handle::Run(_, rep, index) = handle else {
-        return handle;
-    };
-    handle.at(settled(kernel(|k| k.run_at(rep, index))))
+fn acting(handle: Handle) -> u32 {
+    match handle {
+        Handle::Capability(rep) => rep,
+        Handle::Run(rep, index) => settled(kernel(|k| k.run_at(rep, index))),
+    }
 }
 
 /// The substate this handle reads.
@@ -192,11 +191,8 @@ fn acting(handle: Handle) -> Handle {
 /// body that does has declared one thing and reached for another.
 #[must_use]
 pub fn cell_get(handle: Handle) -> Vec<u8> {
-    let handle = acting(handle);
-    settled(kernel(|k| match handle {
-        Handle::Read(rep) | Handle::Write(rep) => k.cell_get(rep),
-        other => unreachable!("{other:?} reads no point substate"),
-    }))
+    let rep = acting(handle);
+    settled(kernel(|k| k.cell_get(rep)))
 }
 
 /// What this handle's amount cell holds.
@@ -210,11 +206,8 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
 /// On any mode but [`Handle::Amount`].
 #[must_use]
 pub fn cell_balance(handle: Handle) -> u128 {
-    let handle = acting(handle);
-    settled(kernel(|k| match handle {
-        Handle::Amount(rep) | Handle::AmountRead(rep) => k.amount_cell_balance(rep),
-        other => unreachable!("{other:?} holds no balance"),
-    }))
+    let rep = acting(handle);
+    settled(kernel(|k| k.amount_cell_balance(rep)))
 }
 
 /// Replace the substate this handle holds exclusively.
@@ -223,11 +216,8 @@ pub fn cell_balance(handle: Handle) -> u128 {
 ///
 /// On any mode but [`Handle::Write`].
 pub fn cell_set(handle: Handle, value: &[u8]) {
-    let handle = acting(handle);
-    settled(kernel(|k| match handle {
-        Handle::Write(rep) => k.write_cell_set(rep, value.to_vec()),
-        other => unreachable!("{other:?} does not write absolutes"),
-    }));
+    let rep = acting(handle);
+    settled(kernel(|k| k.write_cell_set(rep, value.to_vec())));
 }
 
 /// Seal this handle's cell on the epoch now running.
@@ -237,11 +227,8 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
 /// On a handle that holds no exclusive write, which the declaration a
 /// seal is written through rules out.
 pub fn cell_seal(handle: Handle) {
-    let handle = acting(handle);
-    settled(kernel(|k| match handle {
-        Handle::Write(rep) => k.seal(rep),
-        other => unreachable!("{other:?} takes no seal"),
-    }));
+    let rep = acting(handle);
+    settled(kernel(|k| k.seal(rep)));
 }
 
 /// The draw the seal in this handle's cell matured into.
@@ -252,11 +239,8 @@ pub fn cell_seal(handle: Handle) {
 /// seal is read through rules out.
 #[must_use]
 pub fn cell_open_seal(handle: Handle) -> Drawn {
-    let handle = acting(handle);
-    settled(kernel(|k| match handle {
-        Handle::Write(rep) => k.open_seal(rep),
-        other => unreachable!("{other:?} holds no seal"),
-    }))
+    let rep = acting(handle);
+    settled(kernel(|k| k.open_seal(rep)))
 }
 
 /// End the substate this handle holds exclusively.
@@ -265,11 +249,8 @@ pub fn cell_open_seal(handle: Handle) -> Drawn {
 ///
 /// On any mode but [`Handle::Write`].
 pub fn cell_clear(handle: Handle) {
-    let handle = acting(handle);
-    settled(kernel(|k| match handle {
-        Handle::Write(rep) => k.write_cell_clear(rep),
-        other => unreachable!("{other:?} does not write absolutes"),
-    }));
+    let rep = acting(handle);
+    settled(kernel(|k| k.write_cell_clear(rep)));
 }
 
 /// Move value into this handle's amount cell, consuming the bucket.
@@ -278,11 +259,8 @@ pub fn cell_clear(handle: Handle) {
 ///
 /// On a handle whose mode moves no value.
 pub fn cell_put(handle: Handle, funds: u32) {
-    let handle = acting(handle);
-    settled(kernel(|k| match handle {
-        Handle::Delta(rep) | Handle::Amount(rep) => k.cell_put(rep, funds),
-        other => unreachable!("{other:?} carries no movement"),
-    }));
+    let rep = acting(handle);
+    settled(kernel(|k| k.cell_put(rep, funds)));
 }
 
 /// Move value out of this handle's amount cell.
@@ -292,11 +270,8 @@ pub fn cell_put(handle: Handle, funds: u32) {
 /// On a handle whose mode moves no value.
 #[must_use]
 pub fn cell_take(handle: Handle, value: u128) -> u32 {
-    let handle = acting(handle);
-    settled(kernel(|k| match handle {
-        Handle::Delta(rep) | Handle::Amount(rep) => k.cell_take(rep, value),
-        other => unreachable!("{other:?} carries no movement"),
-    }))
+    let rep = acting(handle);
+    settled(kernel(|k| k.cell_take(rep, value)))
 }
 
 /// Take the reservation this method declared.
@@ -306,11 +281,8 @@ pub fn cell_take(handle: Handle, value: u128) -> u32 {
 /// On any mode but [`Handle::Reserve`].
 #[must_use]
 pub fn reserve_take(handle: Handle) -> u32 {
-    let handle = acting(handle);
-    settled(kernel(|k| match handle {
-        Handle::Reserve(rep) => k.reserve_take(rep),
-        other => unreachable!("{other:?} holds no reservation"),
-    }))
+    let rep = acting(handle);
+    settled(kernel(|k| k.reserve_take(rep)))
 }
 
 /// Issue `value` of the resource this invocation was granted.
@@ -433,13 +405,8 @@ pub fn bucket_amount(rep: u32) -> u128 {
 /// On a handle that is not an interval.
 #[must_use]
 pub fn entry_count(handle: Handle) -> u32 {
-    let handle = acting(handle);
-    scanned(kernel(|k| match handle {
-        Handle::RangeRead(rep) | Handle::RangeWrite(rep) | Handle::InstanceRange(rep) => {
-            k.range_count(rep)
-        }
-        other => unreachable!("{other:?} is not an interval"),
-    }))
+    let rep = acting(handle);
+    scanned(kernel(|k| k.range_count(rep)))
 }
 
 /// Whether this interval's page holds every entry the interval does.
@@ -449,13 +416,8 @@ pub fn entry_count(handle: Handle) -> u32 {
 /// On a handle that is not an interval.
 #[must_use]
 pub fn entry_covered(handle: Handle) -> bool {
-    let handle = acting(handle);
-    scanned(kernel(|k| match handle {
-        Handle::RangeRead(rep) | Handle::RangeWrite(rep) | Handle::InstanceRange(rep) => {
-            k.range_covered(rep)
-        }
-        other => unreachable!("{other:?} is not an interval"),
-    }))
+    let rep = acting(handle);
+    scanned(kernel(|k| k.range_covered(rep)))
 }
 
 /// The order key of this interval's entry at `index`.
@@ -465,15 +427,10 @@ pub fn entry_covered(handle: Handle) -> bool {
 /// On a handle that is not an interval.
 #[must_use]
 pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
-    let handle = acting(handle);
+    let rep = acting(handle);
     // The kernel orders by the packed integer and knows nothing of what
     // was packed into it, so the type is put back on at this seam.
-    OrderKey::from_bits(scanned(kernel(|k| match handle {
-        Handle::RangeRead(rep) | Handle::RangeWrite(rep) | Handle::InstanceRange(rep) => {
-            k.range_order(rep, index)
-        }
-        other => unreachable!("{other:?} yields no order keys"),
-    })))
+    OrderKey::from_bits(scanned(kernel(|k| k.range_order(rep, index))))
 }
 
 /// The value of this interval's entry at `index`.
@@ -483,13 +440,8 @@ pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
 /// On a handle that is not an interval.
 #[must_use]
 pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
-    let handle = acting(handle);
-    scanned(kernel(|k| match handle {
-        Handle::RangeRead(rep) | Handle::RangeWrite(rep) | Handle::InstanceRange(rep) => {
-            k.range_entry(rep, index)
-        }
-        other => unreachable!("{other:?} yields no entries"),
-    }))
+    let rep = acting(handle);
+    scanned(kernel(|k| k.range_entry(rep, index)))
 }
 
 /// The value of the entry at `order`, or empty where there is none.
@@ -506,11 +458,8 @@ pub fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {
 ///
 /// On any mode but [`Handle::RangeWrite`].
 pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
-    let handle = acting(handle);
-    scanned(kernel(|k| match handle {
-        Handle::RangeWrite(rep) => k.range_set(rep, index, value.to_vec()),
-        other => unreachable!("{other:?} does not write entries"),
-    }));
+    let rep = acting(handle);
+    scanned(kernel(|k| k.range_set(rep, index, value.to_vec())));
 }
 
 /// Insert into this interval at `order`.
@@ -519,10 +468,9 @@ pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
 ///
 /// On any mode but [`Handle::RangeWrite`].
 pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
-    let handle = acting(handle);
-    scanned(kernel(|k| match handle {
-        Handle::RangeWrite(rep) => k.range_insert(rep, order.bits(), value.to_vec()),
-        other => unreachable!("{other:?} does not write entries"),
+    let rep = acting(handle);
+    scanned(kernel(|k| {
+        k.range_insert(rep, order.bits(), value.to_vec())
     }));
 }
 
@@ -532,11 +480,8 @@ pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
 ///
 /// On any mode but [`Handle::RangeWrite`].
 pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
-    let handle = acting(handle);
-    scanned(kernel(|k| match handle {
-        Handle::InstanceRange(rep) => k.range_put(rep, funds, value.to_vec()),
-        other => unreachable!("{other:?} carries no movement"),
-    }));
+    let rep = acting(handle);
+    scanned(kernel(|k| k.range_put(rep, funds, value.to_vec())));
 }
 
 /// Take the instances `ids` names out of this interval.
@@ -546,11 +491,8 @@ pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
 /// On any mode but [`Handle::RangeWrite`].
 #[must_use]
 pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
-    let handle = acting(handle);
-    scanned(kernel(|k| match handle {
-        Handle::InstanceRange(rep) => k.range_take(rep, ids),
-        other => unreachable!("{other:?} carries no movement"),
-    }))
+    let rep = acting(handle);
+    scanned(kernel(|k| k.range_take(rep, ids)))
 }
 
 /// Remove this interval's entry at `index`.
@@ -559,11 +501,8 @@ pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
 ///
 /// On any mode but [`Handle::RangeWrite`].
 pub fn entry_remove(handle: Handle, index: u32) {
-    let handle = acting(handle);
-    scanned(kernel(|k| match handle {
-        Handle::RangeWrite(rep) => k.range_remove(rep, index),
-        other => unreachable!("{other:?} does not write entries"),
-    }));
+    let rep = acting(handle);
+    scanned(kernel(|k| k.range_remove(rep, index)));
 }
 
 /// The transaction clock, in milliseconds.
@@ -618,47 +557,32 @@ fn arg<'a>(args: &'a [GuestArg<'a>], at: usize) -> &'a GuestArg<'a> {
         .unwrap_or_else(|| refuse(AbortReason::AbiViolation))
 }
 
-/// The capability at `at`, as the mode the export declares.
+/// The capability at `at`.
 ///
-/// A rep whose materialized kind is not the one the clause named is the
-/// canonical ABI's mode-escape trap, reached here by the same route: the
-/// kernel says what it materialized, the export says what it declared,
-/// and a disagreement is a violation rather than a cast.
+/// An argument of the wrong shape is the canonical ABI's own violation,
+/// reached here by the same route: the export's parameter list is a
+/// function of its signature, so a run where a cell was declared is a
+/// composition that never should have been assembled. What the
+/// capability behind the rep grants is the kernel's answer, held at the
+/// operation rather than here.
 #[must_use]
-pub fn handle(args: &[GuestArg<'_>], at: usize, declared: CellKind) -> Handle {
-    let GuestArg::Handle { rep, kind } = *arg(args, at) else {
+pub fn handle(args: &[GuestArg<'_>], at: usize) -> Handle {
+    let GuestArg::Handle { rep } = *arg(args, at) else {
         refuse(AbortReason::AbiViolation)
     };
-    if kind != declared {
-        refuse(AbortReason::AbiViolation);
-    }
-    match declared {
-        CellKind::Read => Handle::Read(rep),
-        CellKind::Write => Handle::Write(rep),
-        CellKind::Amount => Handle::Amount(rep),
-        CellKind::AmountRead => Handle::AmountRead(rep),
-        CellKind::Delta => Handle::Delta(rep),
-        CellKind::Reserve => Handle::Reserve(rep),
-        CellKind::RangeRead => Handle::RangeRead(rep),
-        CellKind::RangeWrite => Handle::RangeWrite(rep),
-        CellKind::InstanceRange => Handle::InstanceRange(rep),
-    }
+    Handle::Capability(rep)
 }
 
 /// The run at `at`: the position it occupies in the session's run
 /// table, which every entry of it is reached through.
 ///
-/// The kind rides the argument for the reason a single handle's does —
-/// a run of absences has no capability to read one off — and is checked
-/// against what the body declared.
+/// Its own rep space beside the capability table's, which is why the
+/// argument shape is what tells them apart.
 #[must_use]
-pub fn run(args: &[GuestArg<'_>], at: usize, declared: CellKind) -> u32 {
-    let GuestArg::Run { rep, kind } = *arg(args, at) else {
+pub fn run(args: &[GuestArg<'_>], at: usize) -> u32 {
+    let GuestArg::Run { rep } = *arg(args, at) else {
         refuse(AbortReason::AbiViolation)
     };
-    if kind != declared {
-        refuse(AbortReason::AbiViolation);
-    }
     rep
 }
 

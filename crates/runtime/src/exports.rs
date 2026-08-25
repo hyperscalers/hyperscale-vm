@@ -11,7 +11,6 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_types::CellKind;
 use wasmparser::component_types::{
     ComponentAnyTypeId, ComponentDefinedType, ComponentEntityType, ComponentValType, ResourceId,
 };
@@ -24,14 +23,10 @@ use crate::validator::{ProfileError, profile_features};
 /// can put there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExportParam {
-    /// `borrow<R>` of a state cell, at the kind whose world type the
-    /// `hyperscale:kernel/state` interface exports it as — one
-    /// correspondence, [`CellKind::world_type`]'s own.
-    Handle(CellKind),
-    /// `borrow<R-run>` of one `for-each` site's whole expansion, at the
-    /// kind whose run type the `hyperscale:kernel/state` interface
-    /// exports it as — [`CellKind::run_type`]'s own correspondence.
-    Run(CellKind),
+    /// `borrow<capability>`: one declared access.
+    Handle,
+    /// `borrow<run>`: one `for-each` site's whole expansion.
+    Run,
     /// `borrow<issuer>`: this invocation's authority to create value.
     Issuer,
     /// `own<bucket>`: a value edge the call transfers into the guest.
@@ -58,7 +53,7 @@ impl ExportParam {
     #[must_use]
     pub const fn is_resource(&self) -> bool {
         match self {
-            Self::Handle(_) | Self::Run(_) | Self::Issuer | Self::Bucket => true,
+            Self::Handle | Self::Run | Self::Issuer | Self::Bucket => true,
             Self::Bytes | Self::U64 | Self::Flag | Self::Address | Self::Other => false,
         }
     }
@@ -277,10 +272,9 @@ fn param_shape(
                 .get(&resource.resource())
                 .map_or(ExportParam::Other, |name| match name.as_str() {
                     "issuer" => ExportParam::Issuer,
-                    named => CellKind::from_world_type(named)
-                        .map(ExportParam::Handle)
-                        .or_else(|| CellKind::from_run_type(named).map(ExportParam::Run))
-                        .unwrap_or(ExportParam::Other),
+                    "capability" => ExportParam::Handle,
+                    "run" => ExportParam::Run,
+                    _ => ExportParam::Other,
                 }),
             // An owned handle is a value edge: the world owns one such
             // resource, and a body that holds one holds value.

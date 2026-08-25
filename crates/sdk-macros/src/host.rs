@@ -47,29 +47,14 @@ pub fn arm(
             Carries::Flag => quote!(
                 let #ident = ::hyperscale_vm_sdk::host::flag(__args, #position);
             ),
-            Carries::Handle(resource) => {
-                let kind = resource.cell_kind();
-                quote!(
-                    let #ident = ::hyperscale_vm_sdk::host::handle(
-                        __args,
-                        #position,
-                        ::hyperscale_vm_sdk::host::CellKind::#kind,
-                    );
-                )
-            }
-            Carries::Run(resource) => {
-                let kind = resource.cell_kind();
-                quote!(
-                    let #ident = ::hyperscale_vm_sdk::state::Run::at(
-                        ::hyperscale_vm_sdk::host::CellKind::#kind,
-                        ::hyperscale_vm_sdk::host::run(
-                            __args,
-                            #position,
-                            ::hyperscale_vm_sdk::host::CellKind::#kind,
-                        ),
-                    );
-                )
-            }
+            Carries::Handle => quote!(
+                let #ident = ::hyperscale_vm_sdk::host::handle(__args, #position);
+            ),
+            Carries::Run => quote!(
+                let #ident = ::hyperscale_vm_sdk::state::Run::at(
+                    ::hyperscale_vm_sdk::host::run(__args, #position),
+                );
+            ),
             Carries::Edge { name, nf } => {
                 let reader = if nf { quote!(nf_edge) } else { quote!(edge) };
                 quote!(
@@ -108,7 +93,7 @@ pub fn arm(
                         ::hyperscale_vm_sdk::host::ids(__args, #position).to_vec(),
                     );
                 ),
-                Shape::Handle(_) | Shape::Run(_) | Shape::Bucket | Shape::Issuer => {
+                Shape::Handle | Shape::Run | Shape::Bucket | Shape::Issuer => {
                     unreachable!("a value binding is never a handle")
                 }
             },

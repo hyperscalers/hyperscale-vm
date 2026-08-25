@@ -46,7 +46,6 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
 
-use crate::mode::HandleMode;
 use crate::term::{Op, Slot, Term};
 use crate::{Declared, Resource, holds_rule, is_named};
 
@@ -186,63 +185,12 @@ impl Site {
     /// Whether this site declares a clause at all.
     ///
     /// A body that opens a handle and never uses it names no mode, so
-    /// there is nothing for the declaration to say — the same predicate
-    /// the emission uses to skip the clause, asked here so a guard's
-    /// flag is bound exactly where a clause exists to answer for it.
+    /// there is nothing for the declaration to say. Asked of the
+    /// emission itself rather than of a second fold over the same
+    /// operations: what a site declares is one lattice, and a copy of it
+    /// here would be a copy to keep in step.
     pub fn declares(&self) -> bool {
-        self.resource().is_some()
-    }
-
-    /// The kernel resource this site's handle borrows, which is its
-    /// mode, its target shape and what the cell holds together.
-    ///
-    /// The denomination is read for the same reason routing reads it: a
-    /// cell that says what it holds gets the handle value moves through,
-    /// and a cell that says nothing gets the one bytes are written to.
-    /// The two share no operation, so a body reaching for the wrong one
-    /// holds a type that does not have it.
-    ///
-    /// `None` for a site the body opened and never used: it declares
-    /// nothing, so there is no handle for the export to take.
-    pub fn resource(&self) -> Option<HandleMode> {
-        let has = |op: Op| self.ops.iter().any(|(o, _)| *o == op);
-        let holds_value = self.denomination.is_some();
-        let interval = matches!(
-            self.target,
-            Target::Entry { .. }
-                | Target::Range { .. }
-                | Target::KeyedEntry { .. }
-                | Target::Sweep { .. }
-        );
-        // A credit is a movement like any other for the purpose of
-        // choosing a handle; where it differs is the mode declared
-        // beside it, which is the emitter's.
-        let (moves, writes, reads) = (
-            has(Op::Move) || has(Op::Credit),
-            has(Op::Set) || has(Op::Create) || has(Op::Existing),
-            has(Op::Get) || has(Op::Vacant),
-        );
-        Some(match (interval, writes || moves, reads) {
-            (true, true, _) if holds_value => HandleMode::InstanceRange,
-            (true, true, _) => HandleMode::RangeWrite,
-            (true, false, true) => HandleMode::RangeRead,
-            // A body that only moves value declares a commutative
-            // movement; one that also reads the balance, or assigns it,
-            // needs the exclusivity a read-modify-write has. The mode is
-            // what the body needs rather than which word it typed.
-            (false, true, _) if moves && !writes && !reads => HandleMode::DeltaCell,
-            (false, true, _) if holds_value => HandleMode::AmountCell,
-            (false, true, _) => HandleMode::WriteCell,
-            (false, false, true) if holds_value => HandleMode::AmountRead,
-            (false, false, true) => HandleMode::ReadCell,
-            (_, false, false) => {
-                if has(Op::Reserve) {
-                    HandleMode::ReserveCell
-                } else {
-                    return None;
-                }
-            }
-        })
+        crate::emit::mode(self).is_some()
     }
 }
 

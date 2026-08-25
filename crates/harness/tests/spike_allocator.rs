@@ -27,7 +27,7 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_stdlib::{account_artifact, staking_artifact};
 use hyperscale_vm_types::{
-    Address, AddressClass, CellKind, Effect, EffectSet, EffectTarget, Mode, ResourceAddr, TxHash,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, ResourceAddr, TxHash,
     encode_amount,
 };
 use wasmtime::component::{Component, InstancePre, Linker};
@@ -149,10 +149,7 @@ fn one_transfer(
         &mut store,
         &instance,
         "withdraw",
-        &[GuestArg::Handle {
-            rep: sender_rep,
-            kind: CellKind::Reserve,
-        }],
+        &[GuestArg::Handle { rep: sender_rep }],
         FUEL,
     );
     let Invoked::Produced { edges: reps, .. } = withdraw.result else {
@@ -171,10 +168,7 @@ fn one_transfer(
         &instance,
         "deposit",
         &[
-            GuestArg::Handle {
-                rep: recipient_rep,
-                kind: CellKind::Delta,
-            },
+            GuestArg::Handle { rep: recipient_rep },
             GuestArg::Bucket(funds),
         ],
         FUEL,

@@ -98,7 +98,6 @@ mod guest;
 mod host;
 mod lanes;
 mod lower;
-mod mode;
 mod role;
 mod syntax;
 mod term;

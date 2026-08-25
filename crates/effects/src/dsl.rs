@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 
 use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{
-    Address, CellKind, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey,
-    Mode, ResourceAddr, SubstateKey, WrongClass,
+    Address, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey, Mode,
+    ResourceAddr, SubstateKey, WrongClass,
 };
 
 use crate::hash::{Hash32, Hasher};
@@ -557,67 +557,37 @@ impl TargetExpr {
     }
 }
 
-/// The handle type a clause's mode, target and denomination
-/// materialize, when the clause pins one statically.
+/// Whether the world hands out a handle for this clause at all.
 ///
-/// A `for-each` clause yields `None`: naming one as a handle parameter
-/// is a deterministic refusal at materialization, so there is no single
-/// type to answer with. So does a mode and target pairing no capability
-/// is built for.
-///
-/// The denomination is read for the same reason the kernel reads it: a
-/// cell that says what it holds is one value moves through, and a cell
-/// that says nothing is one bytes are written to. The two share no
-/// operation, so they are two types and an export borrows the one its
-/// clause named.
+/// A `for-each` clause yields `false`: naming one as a handle parameter
+/// is a deterministic refusal at materialization, so there is nothing
+/// single for an export to borrow. So does a mode and target pairing no
+/// capability is built for.
 ///
 /// Two callers, and neither can recover this from what it holds. The
-/// publish gate holds an export's declared resource to the clause it
-/// borrows, before any evaluation. Routing names the type of a handle it
-/// is deliberately *not* materializing, where an engine would otherwise
-/// read the type off a capability that is not there.
+/// publish gate refuses a clause materialization could not have backed,
+/// before any evaluation. Routing asks the same question of the same
+/// clause, so a handle position it fills is one an engine could have
+/// built.
 #[must_use]
-pub const fn materialized_kind(clause: &Clause) -> Option<CellKind> {
-    let Clause::Effect {
-        target,
-        mode,
-        denomination,
-        ..
-    } = clause
-    else {
-        return None;
+pub const fn supports(clause: &Clause) -> bool {
+    let Clause::Effect { target, mode, .. } = clause else {
+        return false;
     };
-    let holds_value = denomination.is_some();
-    match (target, mode) {
-        (TargetExpr::Point(_), ModeExpr::Read) => Some(if holds_value {
-            CellKind::AmountRead
-        } else {
-            CellKind::Read
-        }),
-        (TargetExpr::Point(_), ModeExpr::Write) => Some(if holds_value {
-            CellKind::Amount
-        } else {
-            CellKind::Write
-        }),
-        // One handle for both: what a credit gives up is a direction, and
-        // the kernel is what holds it to that — a take through a credit
-        // capability is refused the way a byte read of a value cell is.
-        // A guest type of its own would buy the same guarantee at the
-        // price of a world change every package rebuilds against.
-        (TargetExpr::Point(_), ModeExpr::Delta | ModeExpr::Credit) => Some(CellKind::Delta),
-        (TargetExpr::Point(_), ModeExpr::Reserve(_)) => Some(CellKind::Reserve),
-        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Read) => {
-            Some(CellKind::RangeRead)
-        }
-        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write) => {
-            Some(if holds_value {
-                CellKind::InstanceRange
-            } else {
-                CellKind::RangeWrite
-            })
-        }
-        _ => None,
-    }
+    matches!(
+        (target, mode),
+        (
+            TargetExpr::Point(_),
+            ModeExpr::Read
+                | ModeExpr::Write
+                | ModeExpr::Delta
+                | ModeExpr::Credit
+                | ModeExpr::Reserve(_)
+        ) | (
+            TargetExpr::Entry { .. } | TargetExpr::Range { .. },
+            ModeExpr::Read | ModeExpr::Write
+        )
+    )
 }
 
 /// One clause of an effect signature.

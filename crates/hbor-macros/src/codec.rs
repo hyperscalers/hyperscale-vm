@@ -123,14 +123,14 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
 }
 
 /// How a field is reached in the encode body.
-pub trait Access {
+pub trait Capability {
     fn get(&self, index: usize, name: Option<&Ident>) -> TokenStream;
 }
 
 /// Fields of the value itself: `&self.name` or `&self.0`.
 pub struct SelfAccess;
 
-impl Access for SelfAccess {
+impl Capability for SelfAccess {
     fn get(&self, index: usize, name: Option<&Ident>) -> TokenStream {
         name.map_or_else(
             || {
@@ -145,7 +145,7 @@ impl Access for SelfAccess {
 /// Fields bound by a match arm: the binding, by name or position.
 struct BindingAccess;
 
-impl Access for BindingAccess {
+impl Capability for BindingAccess {
     fn get(&self, index: usize, name: Option<&Ident>) -> TokenStream {
         let binding = binding(index, name);
         quote!(#binding)
@@ -167,7 +167,7 @@ pub enum Include {
 
 pub fn encode_fields(
     fields: &Fields,
-    access: &dyn Access,
+    access: &dyn Capability,
     include: Include,
 ) -> Result<TokenStream> {
     let mut out = TokenStream::new();

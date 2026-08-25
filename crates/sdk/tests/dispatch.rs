@@ -12,7 +12,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_sdk::host::{CellKind, GuestArg, Invoked};
+use hyperscale_vm_sdk::host::{GuestArg, Invoked};
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, ISSUER_REP,
     Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
@@ -175,14 +175,8 @@ fn a_body_branches_on_the_verdict_it_was_handed() {
         "bump",
         two_cells(),
         &[
-            GuestArg::Handle {
-                rep: 0,
-                kind: CellKind::Write,
-            },
-            GuestArg::Handle {
-                rep: ABSENT_REP,
-                kind: CellKind::Write,
-            },
+            GuestArg::Handle { rep: 0 },
+            GuestArg::Handle { rep: ABSENT_REP },
             GuestArg::Bool(true),
         ],
     );
@@ -197,14 +191,8 @@ fn a_body_branches_on_the_verdict_it_was_handed() {
         "bump",
         two_cells(),
         &[
-            GuestArg::Handle {
-                rep: ABSENT_REP,
-                kind: CellKind::Write,
-            },
-            GuestArg::Handle {
-                rep: 1,
-                kind: CellKind::Write,
-            },
+            GuestArg::Handle { rep: ABSENT_REP },
+            GuestArg::Handle { rep: 1 },
             GuestArg::Bool(false),
         ],
     );
@@ -224,14 +212,8 @@ fn a_verdict_the_declaration_did_not_reach_aborts_by_name() {
         "bump",
         two_cells(),
         &[
-            GuestArg::Handle {
-                rep: ABSENT_REP,
-                kind: CellKind::Write,
-            },
-            GuestArg::Handle {
-                rep: 1,
-                kind: CellKind::Write,
-            },
+            GuestArg::Handle { rep: ABSENT_REP },
+            GuestArg::Handle { rep: 1 },
             GuestArg::Bool(true),
         ],
     );
@@ -239,9 +221,9 @@ fn a_verdict_the_declaration_did_not_reach_aborts_by_name() {
 }
 
 /// The one capability the declaration materialized, as the walk passes
-/// it: rep zero, at the kind the clause's mode names.
-const fn cell(kind: CellKind) -> GuestArg<'static> {
-    GuestArg::Handle { rep: 0, kind }
+/// it: rep zero. What it grants is the session's own answer.
+const fn cell() -> GuestArg<'static> {
+    GuestArg::Handle { rep: 0 }
 }
 
 /// A `u128` as it crosses: the cell representation the vocabulary
@@ -257,11 +239,7 @@ fn an_edge_the_body_credits_lands_in_the_declared_cell() {
     let mut session = session(Mode::Delta, 0);
     let funds = minted(&mut session, 70);
 
-    let (session, invoked) = till::invoke(
-        "deposit",
-        session,
-        &[cell(CellKind::Delta), GuestArg::Bucket(funds)],
-    );
+    let (session, invoked) = till::invoke("deposit", session, &[cell(), GuestArg::Bucket(funds)]);
 
     assert!(matches!(invoked, Invoked::Produced { ref edges, .. } if edges.is_empty()));
     let (receipt, _) = session
@@ -279,11 +257,8 @@ fn an_edge_the_body_credits_lands_in_the_declared_cell() {
 fn an_edge_the_body_produces_comes_back_as_the_kernels_own() {
     let session = session(Mode::Write, 100);
 
-    let (mut session, invoked) = till::invoke(
-        "withdraw",
-        session,
-        &[cell(CellKind::Amount), GuestArg::Bytes(&wide(30))],
-    );
+    let (mut session, invoked) =
+        till::invoke("withdraw", session, &[cell(), GuestArg::Bytes(&wide(30))]);
 
     let Invoked::Produced { edges, .. } = invoked else {
         panic!("a covered withdrawal produces its edge");
@@ -302,11 +277,7 @@ fn an_edge_the_body_produces_comes_back_as_the_kernels_own() {
 fn the_error_arm_declines_rather_than_trapping() {
     let session = session(Mode::Write, 10);
 
-    let (_, invoked) = till::invoke(
-        "withdraw",
-        session,
-        &[cell(CellKind::Amount), GuestArg::Bytes(&wide(30))],
-    );
+    let (_, invoked) = till::invoke("withdraw", session, &[cell(), GuestArg::Bytes(&wide(30))]);
 
     assert_eq!(invoked, Invoked::Declined(0), "the package's own code");
 }
@@ -318,7 +289,7 @@ fn a_body_that_panics_aborts_as_the_trap_it_would_be() {
     // A read of a vault is a read of a balance, so the handle is the one
     // value comes through rather than the one bytes do — and what fails
     // is the body's own assertion about the figure it read.
-    let (_, invoked) = till::invoke("insist", session, &[cell(CellKind::AmountRead)]);
+    let (_, invoked) = till::invoke("insist", session, &[cell()]);
 
     assert_eq!(invoked, Invoked::Aborted(AbortReason::Unreachable));
 }
@@ -341,7 +312,7 @@ fn a_read_of_a_vault_answers_a_quantity_and_not_bytes() {
     ));
 
     // The body reads the balance through it and gets the figure.
-    let (_, invoked) = till::invoke("weigh", held, &[cell(CellKind::AmountRead)]);
+    let (_, invoked) = till::invoke("weigh", held, &[cell()]);
     assert_eq!(
         invoked,
         Invoked::Produced {
@@ -349,25 +320,22 @@ fn a_read_of_a_vault_answers_a_quantity_and_not_bytes() {
             answer: None,
         }
     );
-
-    // And the byte handle is not what a vault read materialises, so an
-    // export borrowing one is handed a mode it never declared.
-    let (_, invoked) = till::invoke("weigh", session(Mode::Read, 10), &[cell(CellKind::Read)]);
-    assert_eq!(invoked, Invoked::Aborted(AbortReason::AbiViolation));
 }
 
 /// A handle materialized at one mode cannot be read as another: the
 /// canonical ABI's mode escape, reached here by the same route.
 #[test]
-fn a_capability_at_the_wrong_mode_is_a_violation() {
+fn an_argument_of_the_wrong_shape_is_a_violation() {
     let session = session(Mode::Write, 10);
 
-    // `withdraw` reads and writes, so its clause materialized exclusive;
-    // a rep arriving as a fresh read is a mode the export never declared.
+    // `withdraw` declares one access, so a run in its place is a
+    // composition that could not have been assembled. What the
+    // capability behind a rep grants is the kernel's own answer; what
+    // the binding walk is held to here is the shape it built.
     let (_, invoked) = till::invoke(
         "withdraw",
         session,
-        &[cell(CellKind::Read), GuestArg::Bytes(&wide(30))],
+        &[GuestArg::Run { rep: 0 }, GuestArg::Bytes(&wide(30))],
     );
 
     assert_eq!(invoked, Invoked::Aborted(AbortReason::AbiViolation));

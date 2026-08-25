@@ -13,8 +13,8 @@ use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
 };
 use hyperscale_vm_runtime::{
-    DeltaCell, HostRefusal, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
-    add_kernel_to_linker, blessed_engine, validate_component,
+    Capability as CapabilityResource, HostRefusal, add_kernel_to_linker, blessed_engine,
+    validate_component,
 };
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet,
@@ -185,37 +185,39 @@ fn rep_at(caps: &[Capability], pred: impl Fn(&Capability) -> bool) -> u32 {
 
 /// The handles each export receives, in parameter order.
 fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, HandleKind)> {
-    let point = |wanted: SubstateKey, kind: HandleKind| {
-        let rep = rep_at(caps, |c| match (kind, c) {
-            (HandleKind::ReadCell, Capability::Read(key))
-            | (HandleKind::WriteCell, Capability::Write(key))
-            | (HandleKind::DeltaCell, Capability::Delta(key))
-            | (HandleKind::ReserveCell, Capability::Reserve { key, .. }) => *key == wanted,
+    // Every capability crosses as one resource, so what a fixture picks
+    // is a position in the table rather than a type: the key it named,
+    // or the one interval it declared.
+    let point = |wanted: SubstateKey| {
+        let rep = rep_at(caps, |c| match c {
+            Capability::Read(key)
+            | Capability::Write(key)
+            | Capability::Delta(key)
+            | Capability::Reserve { key, .. } => *key == wanted,
             _ => false,
         });
-        (rep, kind)
+        (rep, HandleKind::Capability)
     };
-    let range = |kind: HandleKind| {
-        let rep = rep_at(caps, |c| {
-            matches!(
-                (kind, c),
-                (HandleKind::RangeRead, Capability::RangeRead(..))
-                    | (HandleKind::RangeWrite, Capability::RangeWrite(..))
-            )
-        });
-        (rep, kind)
+    // An interval has no key to pick it out by, so which of the two the
+    // fixture declared is the selector — the capability's own mode,
+    // which is where the distinction lives now that one resource carries
+    // every handle across.
+    let read_range = || {
+        let rep = rep_at(caps, |c| matches!(c, Capability::RangeRead(..)));
+        (rep, HandleKind::Capability)
+    };
+    let write_range = || {
+        let rep = rep_at(caps, |c| matches!(c, Capability::RangeWrite(..)));
+        (rep, HandleKind::Capability)
     };
     match export {
-        "transfer" => vec![
-            point(fx.sender, HandleKind::ReserveCell),
-            point(fx.recipient, HandleKind::DeltaCell),
-        ],
-        "peek" => vec![point(fx.config, HandleKind::ReadCell)],
-        "rmw" => vec![point(fx.rmw, HandleKind::WriteCell)],
-        "scan-sum" => vec![range(HandleKind::RangeRead)],
-        "fill" | "place" | "no-such-entry" => vec![range(HandleKind::RangeWrite)],
-        "escape" => vec![point(fx.recipient, HandleKind::DeltaCell)],
-        "leak" | "handle-value" | "read-value" => vec![point(fx.readable, HandleKind::ReadCell)],
+        "transfer" => vec![point(fx.sender), point(fx.recipient)],
+        "peek" => vec![point(fx.config)],
+        "rmw" => vec![point(fx.rmw)],
+        "scan-sum" => vec![read_range()],
+        "fill" | "place" | "no-such-entry" => vec![write_range()],
+        "escape" => vec![point(fx.recipient)],
+        "leak" | "handle-value" | "read-value" => vec![point(fx.readable)],
         "forge" | "forge-zero" | "hash-tag" => vec![],
         other => unreachable!("unknown export {other}"),
     }
@@ -285,10 +287,9 @@ fn run_blessed(
 
     let result: Result<u64, Error> = match (export, args.as_slice()) {
         ("transfer", [(a, _), (b, _)]) => {
-            let f = instance
-                .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>), (u64,)>(
-                    &mut store, export,
-                )?;
+            let f = instance.get_typed_func::<(Resource<CapabilityResource>, Resource<CapabilityResource>), (u64,)>(
+                &mut store, export,
+            )?;
             f.call(
                 &mut store,
                 (Resource::new_borrow(*a), Resource::new_borrow(*b)),
@@ -300,30 +301,14 @@ fn run_blessed(
             f.call(&mut store, ()).map(|(v,)| v)
         }
         (_, [(rep, kind)]) => match kind {
-            HandleKind::ReadCell => call1::<ReadCell>(&mut store, &instance, export, *rep),
-            HandleKind::WriteCell => call1::<WriteCell>(&mut store, &instance, export, *rep),
-            HandleKind::DeltaCell => call1::<DeltaCell>(&mut store, &instance, export, *rep),
-            HandleKind::ReserveCell => call1::<ReserveCell>(&mut store, &instance, export, *rep),
-            HandleKind::RangeRead => call1::<RangeRead>(&mut store, &instance, export, *rep),
-            HandleKind::RangeWrite => call1::<RangeWrite>(&mut store, &instance, export, *rep),
+            HandleKind::Capability => {
+                call1::<CapabilityResource>(&mut store, &instance, export, *rep)
+            }
             // Nothing this fixture exports takes value, issues any, or
             // runs a `for-each` site; the bucket lane drives the first
             // two, and the corpus drives the third.
-            HandleKind::Bucket
-            | HandleKind::Issuer
-            | HandleKind::AmountCell
-            | HandleKind::AmountRead
-            | HandleKind::InstanceRange
-            | HandleKind::ReadCellRun
-            | HandleKind::WriteCellRun
-            | HandleKind::AmountCellRun
-            | HandleKind::AmountReadRun
-            | HandleKind::DeltaCellRun
-            | HandleKind::ReserveCellRun
-            | HandleKind::RangeReadRun
-            | HandleKind::RangeWriteRun
-            | HandleKind::InstanceRangeRun => {
-                return Err(format_err!("{export} takes no value handle"));
+            HandleKind::Bucket | HandleKind::Issuer | HandleKind::Run => {
+                return Err(format_err!("{kind:?} is not lowered by this fixture"));
             }
         },
         _ => return Err(format_err!("unexpected arg shape for {export}")),
@@ -498,7 +483,7 @@ fn reads_and_writes_agree_across_the_new_surface() -> Result<()> {
 }
 
 #[test]
-fn undeclared_key_and_mode_trap_identically_with_untouched_state() -> Result<()> {
+fn an_undeclared_key_and_an_undeclared_mode_both_refuse_with_untouched_state() -> Result<()> {
     let fx = fixture();
     // Materialization records the reservation judgment, so a fresh
     // session's log is the pre-execution baseline: a trapped guest must
@@ -510,11 +495,15 @@ fn undeclared_key_and_mode_trap_identically_with_untouched_state() -> Result<()>
     assert_eq!(forge, LaneOutcome::UnknownHandle);
     assert_eq!(forge_host.store().access_log(), baseline);
 
-    // A delta handle passed where a read-cell borrow is expected: the
-    // undeclared *mode* has no handle type to receive, and the canonical
-    // ABI rejects it before any host code runs.
+    // A delta handle passed where a read is expected. Every capability
+    // crosses as one resource, so the canonical ABI has nothing to
+    // reject and the kernel answers instead — the same refusal, at the
+    // operation rather than at the lift, and identical on both lanes.
+    // What did not move is the guarantee above it: the handle still
+    // names a cell the declaration materialized, because the world lends
+    // no way to build one.
     let (escape, escape_host, _) = both(&fx, "escape")?;
-    assert_eq!(escape, LaneOutcome::WrongHandleType);
+    assert_eq!(escape, LaneOutcome::Refusal(AbortReason::HandleWrongMode));
     assert_eq!(escape_host.store().access_log(), baseline);
     Ok(())
 }
@@ -549,7 +538,7 @@ fn the_reserved_rep_is_an_undeclared_branch_on_both_lanes() -> Result<()> {
     let (outcome, _, _) = both_with(
         &fx,
         "read-value",
-        Some(&[(ABSENT_REP, HandleKind::ReadCell)]),
+        Some(&[(ABSENT_REP, HandleKind::Capability)]),
     )?;
     assert_eq!(outcome, LaneOutcome::Refusal(AbortReason::UndeclaredBranch));
     Ok(())
@@ -577,7 +566,7 @@ fn freed_handle_slots_reuse_most_recent_first_across_invokes() -> Result<()> {
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
     instance
-        .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>), (u64,)>(
+        .get_typed_func::<(Resource<CapabilityResource>, Resource<CapabilityResource>), (u64,)>(
             &mut store, "transfer",
         )?
         .call(
@@ -588,7 +577,7 @@ fn freed_handle_slots_reuse_most_recent_first_across_invokes() -> Result<()> {
             ),
         )?;
     let (blessed_value,) = instance
-        .get_typed_func::<(Resource<ReadCell>,), (u64,)>(&mut store, "handle-value")?
+        .get_typed_func::<(Resource<CapabilityResource>,), (u64,)>(&mut store, "handle-value")?
         .call(&mut store, (Resource::new_borrow(value_args[0].0),))?;
 
     let comp = RefComponent::decode(&bytes)?;

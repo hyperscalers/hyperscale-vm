@@ -15,8 +15,6 @@ use std::fmt::Write as _;
 
 use hyperscale_vm_effects::ADDRESS_WORDS;
 
-use crate::mode::HandleMode;
-
 /// What a world names the bucket resource, and why not `bucket`.
 ///
 /// An author's module already imports the vocabulary's own `Bucket`, and
@@ -36,10 +34,10 @@ const KERNEL: &str = include_str!("../../sdk/wit/deps/kernel/kernel.wit");
 #[derive(Clone, Debug)]
 pub enum Shape {
     /// A borrow of the kernel resource the clause's mode materialises.
-    Handle(HandleMode),
+    Handle,
     /// A borrow of the run covering one `for-each` site's expansions, at
     /// the same mode a single access through it would materialise.
-    Run(HandleMode),
+    Run,
     /// A `u64` the guest reads as it stands.
     Scalar,
     /// A `bool`: the verdict of the guard on a branch's clauses, which
@@ -95,8 +93,8 @@ impl Shape {
     /// The type as the component's own signature spells it.
     fn wit(&self) -> String {
         match self {
-            Self::Handle(resource) => format!("borrow<{}>", resource.world_name()),
-            Self::Run(resource) => format!("borrow<{}-run>", resource.world_name()),
+            Self::Handle => "borrow<capability>".to_owned(),
+            Self::Run => "borrow<run>".to_owned(),
             Self::Scalar => "u64".to_owned(),
             Self::Flag => "bool".to_owned(),
             Self::Address => "kernel-address".to_owned(),
@@ -131,8 +129,8 @@ fn imported(exports: &[Export]) -> Vec<&'static str> {
     for export in exports {
         for param in &export.params {
             let resource = match param.shape {
-                Shape::Handle(resource) => resource.world_name(),
-                Shape::Run(resource) => resource.run_name(),
+                Shape::Handle => "capability",
+                Shape::Run => "run",
                 Shape::Bucket => "bucket",
                 Shape::Issuer => "issuer",
                 _ => continue,
