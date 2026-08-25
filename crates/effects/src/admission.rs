@@ -639,6 +639,7 @@ pub struct Admitted {
     manifest: Manifest,
     identity: ManifestHash,
     frames: Vec<FrameDeclaration>,
+    injected: Vec<Vec<Injected>>,
     calls: Vec<NodeCall>,
     declaration: Declaration,
 }
@@ -667,6 +668,19 @@ impl Admitted {
     #[must_use]
     pub fn calls(&self) -> &[NodeCall] {
         &self.calls
+    }
+
+    /// What the protocol put on each frame, in node order beside
+    /// [`frames`](Self::frames).
+    ///
+    /// Kept rather than dropped because the rule alone cannot say who
+    /// asked: it names a key, and a key is a hash that inverts to
+    /// nothing. Local to whoever admitted, never signed and never
+    /// routed — the shards judge the rules, and only a reader needs the
+    /// entry behind one.
+    #[must_use]
+    pub fn injected(&self) -> &[Vec<Injected>] {
+        &self.injected
     }
 
     /// The transaction's whole declaration, both views: the folded set,
@@ -880,6 +894,7 @@ pub(crate) fn admit_intents(
         minted: Vec::with_capacity(total),
         lowered: Vec::with_capacity(total),
         frames: Vec::with_capacity(total),
+        injected: Vec::with_capacity(total),
         calls: Vec::with_capacity(total),
         declaration: Declaration::default(),
         table_len: 0,
@@ -891,6 +906,7 @@ pub(crate) fn admit_intents(
         consumed,
         lowered,
         frames,
+        injected,
         calls,
         declaration,
         ..
@@ -912,6 +928,7 @@ pub(crate) fn admit_intents(
         manifest: Manifest { nodes: lowered },
         identity,
         frames,
+        injected,
         calls,
         declaration,
     })
@@ -1104,6 +1121,8 @@ struct Lower<'a> {
     minted: Vec<Vec<Presented>>,
     lowered: Vec<Node>,
     frames: Vec<FrameDeclaration>,
+    /// What the protocol put on each frame, beside it.
+    injected: Vec<Vec<Injected>>,
     calls: Vec<NodeCall>,
     /// The transaction's whole declaration, folded frame by frame.
     declaration: Declaration,
@@ -1153,7 +1172,7 @@ impl Lower<'_> {
             })?;
         own_prefix_only(&frame, node.target.address(), node_index)?;
         let fence = self.fence(node.target, &mut frame)?;
-        let (issues, _injected) = self.inject(
+        let (issues, injected) = self.inject(
             signature,
             node.target.address(),
             &meta.config,
@@ -1219,6 +1238,7 @@ impl Lower<'_> {
             node: node_index,
             ordered: frame.ordered,
         });
+        self.injected.push(injected);
         self.consumed.push(vec![0; node_outputs.len()]);
         self.outputs.push(node_outputs);
         self.lowered.push(Node {
@@ -1898,12 +1918,34 @@ fn own_prefix_only(
 /// asked, and a key is a hash that inverts to nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Injected {
-    /// What must hold.
+    /// What must hold, resolved: every holding a key under the party the
+    /// question is about.
     pub rule: Rule<JudgedLeaf>,
+    /// What was asked, before resolving hashed the subject away.
+    pub asks: Asks,
     /// The resource whose entry demands it.
     pub resource: ResourceAddr,
     /// Which of that resource's entries.
     pub behaviour: GrantedBehaviour,
+}
+
+/// What an injected requirement asks, in the terms it was asked in.
+///
+/// Beside the resolved rule rather than derived from it, because
+/// resolving is one-way: a holding becomes the presence of a key, and a
+/// key is a hash of the party and the badge that inverts to neither. So
+/// a reader handed the rule alone can see that some leaf must be there
+/// and never which, which is the whole reason a refusal is unreadable
+/// without this.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Asks {
+    /// The entry's own sealed rule.
+    Entry(StoredRule),
+    /// That the party whose cell moves is not halted — which every
+    /// movement of a resource granting `Freeze` reads, and which no
+    /// entry states because it is a fact about the holder rather than a
+    /// rule about anyone.
+    Unhalted,
 }
 
 /// An actor question's rule read as judged leaves.
@@ -1988,9 +2030,9 @@ fn inject_issuance_rules(
             else {
                 continue;
             };
-            let rule = judged_claims(&rule).ok_or_else(malformed)?;
             injected.push(Injected {
-                rule,
+                rule: judged_claims(&rule).ok_or_else(malformed)?,
+                asks: Asks::Entry(rule),
                 resource,
                 behaviour: *behaviour,
             });
@@ -2063,6 +2105,7 @@ fn inject_destruction_rules(
         };
         injected.push(Injected {
             rule: judged_claims(&rule).ok_or_else(malformed)?,
+            asks: Asks::Entry(rule),
             resource: *resource,
             behaviour: GrantedBehaviour::Burn,
         });
@@ -2128,6 +2171,7 @@ fn inject_reach_rules(
         };
         injected.push(Injected {
             rule: judged_claims(&rule).ok_or_else(malformed)?,
+            asks: Asks::Entry(rule),
             resource,
             behaviour,
         });
@@ -2219,14 +2263,20 @@ fn inject_movement_rules(
                 &[Value::Address(resource.address()).canonical_bytes()],
             ));
             declare_read(frame, halted);
-            injected.push(Injected {
+            // Once per party and resource however many directions the
+            // access moves in: one flag answers every movement of it.
+            let fence = Injected {
                 rule: Rule::Require(JudgedLeaf::Presence {
                     target: halted,
                     expect: Presence::Absent,
                 }),
+                asks: Asks::Unhalted,
                 resource,
                 behaviour: GrantedBehaviour::Freeze,
-            });
+            };
+            if !injected.contains(&fence) {
+                injected.push(fence);
+            }
         }
         let Some(sealed) = rules.get(behaviour) else {
             continue;
@@ -2289,6 +2339,7 @@ fn inject_movement_rules(
         }
         injected.push(Injected {
             rule: resolved,
+            asks: Asks::Entry(rule),
             resource,
             behaviour,
         });

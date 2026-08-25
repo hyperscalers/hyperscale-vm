@@ -33,12 +33,15 @@
 use std::fmt::Write as _;
 
 use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
-use hyperscale_vm_types::{Address, AddressClass, Presence, SubstateKey};
+use hyperscale_vm_types::{
+    Address, AddressClass, EffectTarget, Presence, SubstateKey, UnmetCondition,
+};
 
+use crate::admission::{Admitted, Asks, Injected};
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
 use crate::envelope::NULLIFIER_SLOT;
 use crate::hash::Hasher;
-use crate::manifest::Judged;
+use crate::manifest::{Judged, JudgedLeaf};
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
 use crate::presented::Presented;
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind, ResourceMeta};
@@ -132,7 +135,7 @@ pub fn explain_resource(record: &ResourceMeta, hasher: &dyn Hasher) -> String {
             Ok(Some(rule)) if rule == never() => "nobody, ever".to_owned(),
             Ok(Some(rule)) => format!(
                 "{} — heard {}",
-                sealed_rule(&rule, record.namespace),
+                sealed_rule(&rule, Some(record.namespace)),
                 heard(rule.judged())
             ),
         };
@@ -162,9 +165,9 @@ const fn heard(judged: Judged) -> &'static str {
 /// eye. It still reads as an approval: a movement entry naming the issuer
 /// asks whether *this transaction* carried a claim on them, and the party
 /// whose cell moves is somebody else entirely.
-fn sealed_rule(rule: &StoredRule, issuer: Address) -> String {
+fn sealed_rule(rule: &StoredRule, issuer: Option<Address>) -> String {
     match rule {
-        Rule::Require(SealedLeaf::Claim(claim)) if claim.subject == issuer => format!(
+        Rule::Require(SealedLeaf::Claim(claim)) if issuer == Some(claim.subject) => format!(
             "approval on the issuer{}",
             claim
                 .instance
@@ -194,6 +197,222 @@ fn sealed_rule(rule: &StoredRule, issuer: Address) -> String {
             format!("{count} of ({})", branches.join(", "))
         }
     }
+}
+
+/// What the protocol asked of a transaction, which no declaration
+/// mentions.
+///
+/// Every requirement here comes from a resource rather than from a
+/// signature — a package will not declare a rule it does not want, which
+/// is what makes omission inexpressible — so none of it is visible in
+/// [`explain`] and a reader of the packages a transaction calls would
+/// conclude it is bound by nothing. Marked as the protocol's for that
+/// reason, and each one names the entry it came from, because the rule
+/// alone says what must hold and cannot say who asked.
+///
+/// A node the protocol asked nothing of is listed anyway. The absence is
+/// the answer a reader came for, and leaving the line out would make it
+/// indistinguishable from a node this forgot.
+#[must_use]
+pub fn explain_requirements(admitted: &Admitted) -> String {
+    let mut out = String::new();
+    out.push_str("required by the protocol, from the resources this transaction moves\n");
+    for (index, node) in admitted.manifest().nodes.iter().enumerate() {
+        let _ = writeln!(
+            out,
+            "  {index:>3}  {} {}",
+            address_text(node.target),
+            node.method
+        );
+        let injected = admitted
+            .injected()
+            .get(index)
+            .map_or(&[][..], Vec::as_slice);
+        if injected.is_empty() {
+            out.push_str("         nothing — no resource this node moves governs it\n");
+            continue;
+        }
+        for Injected {
+            rule,
+            asks,
+            resource,
+            behaviour,
+        } in injected
+        {
+            let _ = writeln!(
+                out,
+                "         {} of {} — {}, heard {}",
+                behaviour_name(*behaviour),
+                address_text(resource.address()),
+                match asks {
+                    Asks::Entry(entry) => sealed_rule(entry, None),
+                    Asks::Unhalted => "the moving party is not halted".to_owned(),
+                },
+                heard(rule.judged())
+            );
+        }
+    }
+    out
+}
+
+/// Why a transaction refused, in the terms whoever it refused would read
+/// it.
+///
+/// A verdict points and carries no rule — the declaration is
+/// content-addressed with its package, so restating it in the receipt
+/// would be paying to say twice what a reader can derive. What it points
+/// at, for the condition that fires most, is a **key**: a hash of the
+/// party and the badge that inverts to neither, so the verdict alone
+/// says some leaf was missing and can never say whose or of what.
+///
+/// This is the derivation that reads it back. Every requirement the
+/// protocol put on the transaction was built from something, that
+/// something is beside it, and matching the key against them recovers
+/// the entry — so a refusal names the resource, the behaviour, and the
+/// question, none of which the receipt carries.
+///
+/// A condition matching nothing injected is the **package's own**, and
+/// saying so is half the answer on its own: it separates a rule the
+/// author wrote and a reader can find in [`explain`] from one no
+/// declaration mentions.
+#[must_use]
+pub fn explain_refusal(admitted: &Admitted, unmet: &UnmetCondition) -> String {
+    match unmet {
+        UnmetCondition::Holds { target, required } => {
+            let found = admitted
+                .injected()
+                .iter()
+                .enumerate()
+                .find_map(|(at, node)| {
+                    node.iter()
+                        .find(|injected| {
+                            injected.rule.leaves().any(|leaf| {
+                                matches!(leaf, JudgedLeaf::Presence { target: named, .. }
+                                if named == target)
+                            })
+                        })
+                        .map(|injected| (at, injected))
+                });
+            let Some((at, injected)) = found else {
+                return format!(
+                    "the package's own condition on {}: it must be {}, and it is not — a rule \
+                     its author wrote, so its declaration says what it is for",
+                    target_text(target),
+                    presence_text(*required)
+                );
+            };
+            let node = admitted.manifest().nodes.get(at);
+            format!(
+                "{}: {} of {} asks that {} — and it does not hold. Nothing declared this: it \
+                 is the resource's own entry, put on the call because the call moves it.",
+                node.map_or_else(
+                    || format!("node {at}"),
+                    |node| format!("node {at}, {} {}", address_text(node.target), node.method)
+                ),
+                behaviour_name(injected.behaviour),
+                address_text(injected.resource.address()),
+                match &injected.asks {
+                    Asks::Entry(entry) => sealed_rule(entry, None),
+                    Asks::Unhalted => "the moving party is not halted".to_owned(),
+                }
+            )
+        }
+        UnmetCondition::Satisfies { node } => {
+            let at = usize::try_from(*node).unwrap_or(usize::MAX);
+            let asked: Vec<String> = admitted
+                .injected()
+                .get(at)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .filter(|injected| {
+                    injected
+                        .rule
+                        .leaves()
+                        .any(|leaf| matches!(leaf, JudgedLeaf::Claim(_)))
+                })
+                .map(|injected| {
+                    format!(
+                        "{} of {}",
+                        behaviour_name(injected.behaviour),
+                        address_text(injected.resource.address())
+                    )
+                })
+                .collect();
+            let presented = admitted.manifest().nodes.get(at).map_or_else(
+                || "nothing this can see".to_owned(),
+                |node| {
+                    if node.evidence.is_empty() {
+                        "nothing".to_owned()
+                    } else {
+                        let claims: Vec<String> = node
+                            .evidence
+                            .iter()
+                            .map(|claim| address_text(claim.subject))
+                            .collect();
+                        claims.join(", ")
+                    }
+                },
+            );
+            if asked.is_empty() {
+                return format!(
+                    "node {node} presented {presented}, and the package's own gate is not \
+                     satisfied by it"
+                );
+            }
+            format!(
+                "node {node} presented {presented}, and it does not satisfy what the protocol \
+                 asked for: {}",
+                asked.join(", ")
+            )
+        }
+    }
+}
+
+/// What a condition required of a leaf.
+const fn presence_text(required: Presence) -> &'static str {
+    match required {
+        Presence::Present => "there",
+        Presence::Absent => "not there",
+        Presence::Either => "either way",
+    }
+}
+
+/// One effect target, as far as a hash can be read.
+///
+/// Every arm destructured whole, on the same terms as everything else
+/// here: a target that grows a field stops compiling rather than
+/// quietly stops being rendered.
+fn target_text(target: &EffectTarget) -> String {
+    match target {
+        EffectTarget::Point(key) => key_text(key),
+        EffectTarget::Entry {
+            owner,
+            collection,
+            order,
+        } => format!(
+            "{}'s collection {} at {order}",
+            address_text(*owner),
+            hex(&collection.0)
+        ),
+        EffectTarget::Range {
+            owner,
+            collection,
+            lo,
+            hi,
+            cap,
+        } => format!(
+            "{}'s collection {} over {lo}..={hi}, at most {cap} entries",
+            address_text(*owner),
+            hex(&collection.0)
+        ),
+    }
+}
+
+/// One substate key: the owner it sits under, which is an address, and
+/// the local part, which is not.
+fn key_text(key: &SubstateKey) -> String {
+    format!("{}/{}", address_text(key.owner), hex(&key.local.0))
 }
 
 /// The tables a rendering resolves names through.
