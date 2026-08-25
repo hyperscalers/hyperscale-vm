@@ -14,7 +14,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, PrincipalAddr, ResourceAddr,
+    Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Moves, PrincipalAddr,
+    ResourceAddr,
 };
 use proptest::prelude::{any, proptest};
 
@@ -193,7 +194,7 @@ fn routing_carries_the_nullifier_creation_write() {
     assert_ne!(signer, root);
     assert!(routing.per_shard[&signer].contains(&Effect {
         target: EffectTarget::Point(record.nullifier),
-        mode: Mode::Write,
+        mode: Mode::Write { moves: Moves::Both },
     }));
     // The root's shard carries no nullifier write.
     assert!(!routing.per_shard[&root].iter().any(|effect| {

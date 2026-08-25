@@ -11,7 +11,7 @@ use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, EffectTarget, Mode, Outcome, Presence, SubstateKey, TxHash, UnmetCondition,
+    Address, EffectTarget, Mode, Moves, Outcome, Presence, SubstateKey, TxHash, UnmetCondition,
     encode_amount,
 };
 
@@ -104,8 +104,8 @@ fn swap_profile_and_provision_shape_are_exact() {
         *pool_set,
         set(&[
             point(config_leaf(pool()), Mode::Read),
-            point(vault(pool(), RES_X), Mode::Write),
-            point(vault(pool(), RES_Y), Mode::Write),
+            point(vault(pool(), RES_X), Mode::Write { moves: Moves::Both }),
+            point(vault(pool(), RES_Y), Mode::Write { moves: Moves::Both }),
         ])
     );
     // The pool-shard provision carries the two balance cells and the

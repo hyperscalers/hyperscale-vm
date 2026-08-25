@@ -33,7 +33,8 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget,
-    FOOTPRINT_WEIGHT, Mode, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount, work_units,
+    FOOTPRINT_WEIGHT, Mode, Moves, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    work_units,
 };
 
 /// What every cell these fixtures move value through holds.
@@ -321,7 +322,7 @@ fn a_range_is_charged_its_declared_width_through_the_locality_filter() {
             hi: u128::MAX,
             cap: 8,
         },
-        mode: Mode::Write,
+        mode: Mode::Write { moves: Moves::Both },
     };
     wide.insert(range).unwrap();
 
@@ -331,7 +332,7 @@ fn a_range_is_charged_its_declared_width_through_the_locality_filter() {
         recipient_side.footprint(&wide)
             > effect_units(Effect {
                 target: EffectTarget::Point(cell(RECIPIENT_BYTE)),
-                mode: Mode::Write,
+                mode: Mode::Write { moves: Moves::Both },
             }),
         "a full-space range must cost more than a point"
     );
@@ -370,7 +371,7 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
     declared
         .insert(Effect {
             target: EffectTarget::Point(nullifier),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         })
         .unwrap();
     let mut store = MemoryStore::default();

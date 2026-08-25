@@ -21,6 +21,7 @@ use hyperscale_vm_effects::{
     RuleExpr, SlotRef,
 };
 use hyperscale_vm_sdk::blueprint;
+use hyperscale_vm_types::Moves;
 
 /// Control-flow spellings of one access set, each beside its straight-line
 /// equivalent. A conditional access is declared on every arm, so whichever
@@ -162,7 +163,7 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
             reach: None,
             guard: None,
             target: hashed_entry(),
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write { moves: Moves::Both },
             denomination: None,
         }],
     );
@@ -310,7 +311,7 @@ fn a_stored_rate_folds_to_an_exclusive_write_never_a_movement() {
     // A rate is not value: nothing moves into or out of the cell, so the
     // site folds to the exclusive read-modify-write and the commutative
     // movement semantics that read an amount cell are unreachable for it.
-    assert_eq!(modes, vec![ModeExpr::Write]);
+    assert_eq!(modes, vec![ModeExpr::Write { moves: Moves::Both }]);
 }
 
 #[test]

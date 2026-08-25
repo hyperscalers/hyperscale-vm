@@ -15,7 +15,7 @@ use hyperscale_vm_effects::{
     AdmissionError, Composed, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
     ManifestGraph, Records, ResolveError, TestHasher, Value, admit, collection_id, fresh_id, route,
 };
-use hyperscale_vm_types::{Address, Effect, EffectTarget, Mode};
+use hyperscale_vm_types::{Address, Effect, EffectTarget, Mode, Moves};
 
 /// One consumed output edge, unconstrained.
 const fn edge(producer: u32, output: u32) -> GraphArg {
@@ -27,7 +27,7 @@ const fn edge(producer: u32, output: u32) -> GraphArg {
 
 /// An ordinary write: on a leaf that may or may not be there.
 const fn write() -> Mode {
-    Mode::Write
+    Mode::Write { moves: Moves::Both }
 }
 
 /// The instantiation fence's read of `owner`'s configuration leaf, which

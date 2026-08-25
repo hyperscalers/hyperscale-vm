@@ -45,7 +45,7 @@ pub use execution::{
     MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MAX_MANIFEST_NODES, Outcome,
     UnmetCondition,
 };
-pub use mode::{ConflictClass, Mode, ModeKind, Presence, compatible};
+pub use mode::{ConflictClass, Mode, ModeKind, Moves, Presence, compatible};
 pub use scheme::{
     AccountSigner, MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId, SchemeSpec, SchemeVerifier,
 };

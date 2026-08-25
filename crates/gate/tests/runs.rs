@@ -12,6 +12,7 @@ use hyperscale_vm_effects::{
     TargetExpr, package_slot, seal_clauses,
 };
 use hyperscale_vm_gate::{admit_package, attach_metadata};
+use hyperscale_vm_types::Moves;
 use wat::parse_str;
 
 /// A component whose one export takes `param`, spelled as the state
@@ -75,7 +76,7 @@ fn spreading(abi: Vec<AbiParam>) -> PackageMetadata {
                         slot: SlotRef::Fixed(package_slot(0)),
                         material: vec![Expr::Binding(0)],
                     }),
-                    mode: ModeExpr::Write,
+                    mode: ModeExpr::Write { moves: Moves::Both },
                     denomination: None,
                 }],
             }],

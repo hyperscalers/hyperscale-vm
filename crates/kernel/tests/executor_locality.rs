@@ -17,7 +17,7 @@ use hyperscale_vm_kernel::{
     WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement, Outcome,
+    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement, Moves, Outcome,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
@@ -200,7 +200,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
     declared
         .insert(Effect {
             target: EffectTarget::Point(signed_nullifier()),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         })
         .unwrap();
     BatchTx {

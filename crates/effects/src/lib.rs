@@ -108,8 +108,7 @@ pub use rule::{
     never, well_formed,
 };
 pub use signature::{
-    AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MethodSignature, Moved, ParamType,
-    Totality,
+    AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MethodSignature, ParamType, Totality,
 };
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};
 pub use types::{

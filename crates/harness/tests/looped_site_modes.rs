@@ -40,16 +40,20 @@ fn looped_mode(signature: &MethodSignature, clause: u32, site: u32) -> Option<&'
     Some(match (target, mode) {
         (TargetExpr::Point(_), ModeExpr::Read) if holds_value => "read of value",
         (TargetExpr::Point(_), ModeExpr::Read) => "read of bytes",
-        (TargetExpr::Point(_), ModeExpr::Write) if holds_value => "exclusive hold on value",
-        (TargetExpr::Point(_), ModeExpr::Write) => "exclusive hold on bytes",
+        (TargetExpr::Point(_), ModeExpr::Write { .. }) if holds_value => "exclusive hold on value",
+        (TargetExpr::Point(_), ModeExpr::Write { .. }) => "exclusive hold on bytes",
         (TargetExpr::Point(_), ModeExpr::Delta) => "commutative movement",
         (TargetExpr::Point(_), ModeExpr::Credit) => "commutative credit",
         (TargetExpr::Point(_), ModeExpr::Reserve(_)) => "held reservation",
         (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Read) => "read interval",
-        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write) if holds_value => {
+        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write { .. })
+            if holds_value =>
+        {
             "interval of instances"
         }
-        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write) => "write interval",
+        (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write { .. }) => {
+            "write interval"
+        }
         _ => return None,
     })
 }

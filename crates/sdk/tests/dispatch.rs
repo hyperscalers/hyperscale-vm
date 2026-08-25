@@ -15,7 +15,7 @@ use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, Ov
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_sdk::host::{GuestArg, Invoked};
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode,
+    ABSENT_REP, AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
@@ -152,7 +152,7 @@ fn two_cells() -> KernelSession {
         declared
             .insert(Effect {
                 target: EffectTarget::Point(child_key(&TestHasher, OWNER, SlotId(slot), &[])),
-                mode: Mode::Write,
+                mode: Mode::Write { moves: Moves::Both },
             })
             .expect("the effect set takes it");
     }
@@ -260,7 +260,7 @@ fn an_edge_the_body_credits_lands_in_the_declared_cell() {
 
 #[test]
 fn an_edge_the_body_produces_comes_back_as_the_kernels_own() {
-    let session = session(Mode::Write, 100);
+    let session = session(Mode::Write { moves: Moves::Both }, 100);
 
     let (mut session, invoked) =
         till::invoke("withdraw", session, &[cell(), GuestArg::Bytes(&wide(30))]);
@@ -280,7 +280,7 @@ fn an_edge_the_body_produces_comes_back_as_the_kernels_own() {
 
 #[test]
 fn the_error_arm_declines_rather_than_trapping() {
-    let session = session(Mode::Write, 10);
+    let session = session(Mode::Write { moves: Moves::Both }, 10);
 
     let (_, invoked) = till::invoke("withdraw", session, &[cell(), GuestArg::Bytes(&wide(30))]);
 
@@ -331,7 +331,7 @@ fn a_read_of_a_vault_answers_a_quantity_and_not_bytes() {
 /// canonical ABI's mode escape, reached here by the same route.
 #[test]
 fn an_argument_of_the_wrong_shape_is_a_violation() {
-    let session = session(Mode::Write, 10);
+    let session = session(Mode::Write { moves: Moves::Both }, 10);
 
     // `withdraw` declares one access, so a value where its handle
     // belongs is a composition that could not have been assembled. What

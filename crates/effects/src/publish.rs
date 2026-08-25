@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Resolution, ShapeFault};
-use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Presence};
+use hyperscale_vm_types::{AddressClass, MAX_ERROR_CODES, MAX_EVENT_TYPES, Moves, Presence};
 
 use crate::dsl::{
     Clause, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_EXPR_DEPTH, ModeExpr, SlotRef,
@@ -917,7 +917,8 @@ fn vocabulary_shape(
     // whenever the write does — which is what `requires` says.
     let writes_where = |presence: Option<Presence>| {
         matches!(mode, ModeExpr::Read)
-            || (matches!(mode, ModeExpr::Write) && (presence.is_none() || requires == presence))
+            || (matches!(mode, ModeExpr::Write { .. })
+                && (presence.is_none() || requires == presence))
     };
     let creates = writes_where(Some(Presence::Absent));
     // A cell whose lifetime one owner runs is written at both ends of
@@ -934,7 +935,7 @@ fn vocabulary_shape(
                 && matches!(
                     mode,
                     ModeExpr::Read
-                        | ModeExpr::Write
+                        | ModeExpr::Write { .. }
                         | ModeExpr::Delta
                         | ModeExpr::Credit
                         | ModeExpr::Reserve(_)
@@ -945,7 +946,9 @@ fn vocabulary_shape(
         // Instances are a quantity too, and the interval they sit in is
         // the holdings of exactly one resource.
         NF_VAULT => (
-            !point && keyed_by_what_it_holds && matches!(mode, ModeExpr::Read | ModeExpr::Write),
+            !point
+                && keyed_by_what_it_holds
+                && matches!(mode, ModeExpr::Read | ModeExpr::Write { .. }),
             "holds a resource's instances: an interval or one of its entries, keyed by \
              that resource and denominated in it",
         ),
@@ -955,7 +958,7 @@ fn vocabulary_shape(
              written where absent and never rewritten",
         ),
         AUTH => (
-            point && bare && matches!(mode, ModeExpr::Read | ModeExpr::Write),
+            point && bare && matches!(mode, ModeExpr::Read | ModeExpr::Write { .. }),
             "is the stored authority cell: one leaf, no material, read or rewritten whole",
         ),
         // The halt flag's whole content is whether it is there, so it is
@@ -964,7 +967,7 @@ fn vocabulary_shape(
         // by the resource it halts and denominated in nothing: it holds a
         // fact, not value.
         HALT => (
-            point && keyed(1) && matches!(mode, ModeExpr::Read | ModeExpr::Write),
+            point && keyed(1) && matches!(mode, ModeExpr::Read | ModeExpr::Write { .. }),
             "is a holder's halt flag for one resource: one leaf, keyed by that resource, \
              holding no value",
         ),
@@ -1163,7 +1166,7 @@ pub fn seals(signature: &MethodSignature) -> bool {
                 Clause::Effect {
             reach: None,
                     target: TargetExpr::Point(Expr::ChildKey { owner, slot, material }),
-                    mode: ModeExpr::Write,
+                    mode: ModeExpr::Write { .. },
                     ..
                 } if **owner == Expr::SelfAddr
                     && slot.fixed() == Some(CONFIG)
@@ -1194,7 +1197,7 @@ pub fn seal_clauses() -> Vec<Clause> {
         Clause::Effect {
             guard: None,
             target: leaf(),
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write { moves: Moves::Both },
             denomination: None,
             reach: None,
         },
@@ -1408,7 +1411,7 @@ fn founding(issuance: &Issuance, flat: &[&Clause]) -> bool {
                     slot,
                     material,
                 }),
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write { .. },
             ..
         } = clause
         else {
@@ -1547,7 +1550,7 @@ fn check_conditions(flat: &[&Clause]) -> Result<(), DeclarationError> {
                     )
             })
         };
-    let coherent = |mode: &ModeExpr| matches!(mode, ModeExpr::Read | ModeExpr::Write);
+    let coherent = |mode: &ModeExpr| matches!(mode, ModeExpr::Read | ModeExpr::Write { .. });
     for (index, clause) in flat.iter().enumerate() {
         let Clause::Requires { guard, rule } = clause else {
             continue;
@@ -2110,7 +2113,7 @@ fn check_target_bounds(target: &TargetExpr) -> Result<(), SignatureBoundsError> 
 
 fn check_mode_bounds(mode: &ModeExpr) -> Result<(), SignatureBoundsError> {
     match mode {
-        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Credit | ModeExpr::Write => Ok(()),
+        ModeExpr::Read | ModeExpr::Delta | ModeExpr::Credit | ModeExpr::Write { .. } => Ok(()),
         ModeExpr::Reserve(amount) => check_expr_bounds(amount, 0),
     }
 }
@@ -2422,14 +2425,14 @@ mod tests {
         let cell = |denomination| {
             one_clause(
                 own_point(slot, vec![a_resource()]),
-                ModeExpr::Write,
+                ModeExpr::Write { moves: Moves::Both },
                 denomination,
             )
         };
         let entries = |denomination| {
             one_clause(
                 own_interval(slot, vec![a_resource()]),
-                ModeExpr::Write,
+                ModeExpr::Write { moves: Moves::Both },
                 denomination,
             )
         };
@@ -2499,7 +2502,7 @@ mod tests {
                 reach: None,
                 guard: None,
                 target: TargetExpr::Point(expr),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }],
             ..MethodSignature::default()
@@ -3339,7 +3342,7 @@ mod tests {
                         reach: None,
                         guard: None,
                         target: target.clone(),
-                        mode: ModeExpr::Write,
+                        mode: ModeExpr::Write { moves: Moves::Both },
                         denomination: None,
                     },
                     Clause::Requires {
@@ -3409,7 +3412,7 @@ mod tests {
                 reach: None,
                 guard: None,
                 target: target(),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }];
             effects.extend(conditions);
@@ -3482,7 +3485,7 @@ mod tests {
                 reach: None,
                 guard: None,
                 target: own_point(package_slot(0), vec![]),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }];
             effects.extend(conditions);
@@ -3571,7 +3574,11 @@ mod tests {
             // The two it does have.
             assert_eq!(declared(target.clone(), ModeExpr::Read, None), Ok(()));
             assert_eq!(
-                declared(target, ModeExpr::Write, Some(a_resource()),),
+                declared(
+                    target,
+                    ModeExpr::Write { moves: Moves::Both },
+                    Some(a_resource()),
+                ),
                 Ok(())
             );
         }
@@ -3644,7 +3651,7 @@ mod tests {
             reach: None,
             guard: None,
             target: cell(material),
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write { moves: Moves::Both },
             denomination: None,
         };
         let declared = |conditions: Vec<Clause>| {
@@ -3826,7 +3833,7 @@ mod tests {
     #[test]
     fn a_value_cell_is_keyed_by_what_it_holds() {
         let moves = [
-            ModeExpr::Write,
+            ModeExpr::Write { moves: Moves::Both },
             ModeExpr::Delta,
             ModeExpr::Reserve(Expr::Arg(0)),
         ];
@@ -3875,7 +3882,7 @@ mod tests {
         // Holdings are the same statement in collection form: one
         // resource's instances, in the interval narrowed by it.
         let holdings = || own_interval(NF_VAULT, vec![a_resource()]);
-        let write = || ModeExpr::Write;
+        let write = || ModeExpr::Write { moves: Moves::Both };
         assert_eq!(
             check_declarations(&one_clause(holdings(), write(), Some(a_resource()))),
             Ok(())
@@ -3899,7 +3906,7 @@ mod tests {
     /// the value cells beside it.
     #[test]
     fn a_protocol_cell_holding_no_value_is_declared_in_its_own_shape() {
-        let write = || ModeExpr::Write;
+        let write = || ModeExpr::Write { moves: Moves::Both };
         let plain = |target, mode| one_clause(target, mode, None);
         // A write that creates: the access, and the one-way door beside
         // it as the condition it now is.
@@ -3910,7 +3917,7 @@ mod tests {
                     reach: None,
                     guard: None,
                     target: target.clone(),
-                    mode: ModeExpr::Write,
+                    mode: ModeExpr::Write { moves: Moves::Both },
                     denomination: denomination.map(Box::new),
                 },
                 Clause::Requires {
@@ -4005,7 +4012,7 @@ mod tests {
         for mode in [
             ModeExpr::Delta,
             ModeExpr::Reserve(Expr::Arg(0)),
-            ModeExpr::Write,
+            ModeExpr::Write { moves: Moves::Both },
         ] {
             assert_eq!(
                 check_declarations(&one_clause(
@@ -4039,7 +4046,7 @@ mod tests {
         assert_eq!(
             check_declarations(&one_clause(
                 interval(vec![a_resource()]),
-                ModeExpr::Write,
+                ModeExpr::Write { moves: Moves::Both },
                 Some(a_resource())
             )),
             Ok(())
@@ -4047,7 +4054,7 @@ mod tests {
         assert_eq!(
             check_declarations(&one_clause(
                 interval(vec![other()]),
-                ModeExpr::Write,
+                ModeExpr::Write { moves: Moves::Both },
                 Some(a_resource())
             )),
             Err(DeclarationError::DenominationNotKeyed { clause: 0 })
@@ -4058,7 +4065,7 @@ mod tests {
         assert_eq!(
             check_declarations(&one_clause(
                 TargetExpr::Point(Expr::FreshKey { slot: 0 }),
-                ModeExpr::Write,
+                ModeExpr::Write { moves: Moves::Both },
                 Some(a_resource())
             )),
             Err(DeclarationError::DenominationNotKeyed { clause: 0 })
@@ -4084,7 +4091,11 @@ mod tests {
         // A write is the mode a byte cell takes too, so it says nothing
         // by saying nothing — which is what makes it a byte cell.
         assert_eq!(
-            check_declarations(&one_clause(own(vec![]), ModeExpr::Write, None)),
+            check_declarations(&one_clause(
+                own(vec![]),
+                ModeExpr::Write { moves: Moves::Both },
+                None
+            )),
             Ok(())
         );
         assert_eq!(
@@ -4221,7 +4232,7 @@ mod tests {
                 ..MethodSignature::default()
             })
         };
-        let write = || ModeExpr::Write;
+        let write = || ModeExpr::Write { moves: Moves::Both };
         let effect = |target, mode, denomination: Option<Expr>| Clause::Effect {
             reach: None,
             guard: None,
@@ -4416,7 +4427,7 @@ mod tests {
             material: vec![a_resource()],
             order: Expr::Literal(Value::U128(order)),
         };
-        let write = || ModeExpr::Write;
+        let write = || ModeExpr::Write { moves: Moves::Both };
 
         // Its own prefix, however the key under it is derived.
         assert_eq!(
@@ -4520,7 +4531,7 @@ mod tests {
             check_declarations(&one_reach(
                 GrantedBehaviour::Freeze,
                 point_under(holder(), SlotRef::Fixed(HALT), vec![a_resource()]),
-                ModeExpr::Write,
+                ModeExpr::Write { moves: Moves::Both },
                 None,
             )),
             Ok(())
@@ -4550,7 +4561,7 @@ mod tests {
                     hi: Expr::Literal(Value::U128(u128::MAX)),
                     cap: Expr::Literal(Value::U64(4)),
                 },
-                ModeExpr::Write,
+                ModeExpr::Write { moves: Moves::Both },
                 Some(a_resource()),
             )),
             Ok(())
@@ -4562,7 +4573,7 @@ mod tests {
             check_declarations(&one_reach(
                 GrantedBehaviour::Freeze,
                 point_under(holder(), told(), vec![a_resource()]),
-                ModeExpr::Write,
+                ModeExpr::Write { moves: Moves::Both },
                 None,
             )),
             Err(DeclarationError::ReachesAnotherCell {
@@ -4576,7 +4587,7 @@ mod tests {
             check_declarations(&one_reach(
                 GrantedBehaviour::Recall,
                 point_under(holder(), SlotRef::Fixed(HALT), vec![a_resource()]),
-                ModeExpr::Write,
+                ModeExpr::Write { moves: Moves::Both },
                 None,
             )),
             Err(DeclarationError::ReachesAnotherCell {
@@ -4624,7 +4635,7 @@ mod tests {
             check_declarations(&one_reach(
                 GrantedBehaviour::Freeze,
                 point_under(Expr::SelfAddr, SlotRef::Fixed(HALT), vec![a_resource()]),
-                ModeExpr::Write,
+                ModeExpr::Write { moves: Moves::Both },
                 None,
             )),
             Err(DeclarationError::ReachesItself { clause: 0 })
@@ -4643,7 +4654,7 @@ mod tests {
                 check_declarations(&one_reach(
                     GrantedBehaviour::Freeze,
                     point_under(holder(), SlotRef::Fixed(HALT), material),
-                    ModeExpr::Write,
+                    ModeExpr::Write { moves: Moves::Both },
                     None,
                 )),
                 Err(DeclarationError::UnkeyedReach { clause: 0 })

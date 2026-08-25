@@ -14,7 +14,7 @@ use hyperscale_vm_effects::{
     Totality, Value, granting_issued_resource, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
-use hyperscale_vm_types::{Address, ComponentAddr, Presence, ResourceAddr};
+use hyperscale_vm_types::{Address, ComponentAddr, Moves, Presence, ResourceAddr};
 
 /// The mark the issuer's one resource is declared under, and what
 /// separates it from anything else the instance might issue.
@@ -78,7 +78,7 @@ fn creating_instance(minted_resource: &Expr, minted_id: &Expr) -> Vec<Clause> {
             reach: None,
             guard: None,
             target: target(),
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write { moves: Moves::Both },
             denomination: None,
         },
         Clause::Requires {
@@ -156,7 +156,7 @@ pub fn metadata() -> PackageMetadata {
                     Expr::ResourceOf(Box::new(Expr::Arg(0))),
                     Expr::Len(Box::new(Expr::IdsOf(Box::new(Expr::Arg(0))))),
                 ),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 // The interval is one resource's holdings, and the
                 // resource is the key it is narrowed by: what an entry
                 // moving out of here carries is the same expression the
@@ -184,7 +184,7 @@ pub fn metadata() -> PackageMetadata {
                 reach: None,
                 guard: None,
                 target: holdings_range(Expr::Arg(0), Expr::Len(Box::new(Expr::Arg(1)))),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: Some(Box::new(Expr::Arg(0))),
             }],
             ..MethodSignature::default()

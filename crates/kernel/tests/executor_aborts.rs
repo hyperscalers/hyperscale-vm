@@ -15,7 +15,7 @@ use hyperscale_vm_kernel::{
     execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
@@ -315,7 +315,7 @@ fn nullifier() -> SubstateKey {
 fn nullifier_tx(id: u8) -> BatchTx {
     BatchTx {
         tx: tx(id),
-        declaration: Declaration::from_set(point(nullifier(), Mode::Write)),
+        declaration: Declaration::from_set(point(nullifier(), Mode::Write { moves: Moves::Both })),
         calls: Vec::new(),
         nullifiers: vec![nullifier()],
         env: env(),
@@ -491,10 +491,10 @@ fn declaration_views_that_disagree_refuse_the_batch() {
     let mismatched = BatchTx {
         tx: tx(0x01),
         declaration: Declaration {
-            set: point(cell(0xA), Mode::Write),
+            set: point(cell(0xA), Mode::Write { moves: Moves::Both }),
             // A different cell entirely: folding this does not reproduce
             // the set beside it.
-            ordered: point(cell(0xB), Mode::Write)
+            ordered: point(cell(0xB), Mode::Write { moves: Moves::Both })
                 .iter()
                 .map(|effect| DeclaredAccess {
                     reach: None,
@@ -604,7 +604,11 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
     let outcome = execute_batch(
         Arc::new(store),
         &[
-            BatchTx::new(tx(0x01), moving(point(poisoned, Mode::Write)), env()),
+            BatchTx::new(
+                tx(0x01),
+                moving(point(poisoned, Mode::Write { moves: Moves::Both })),
+                env(),
+            ),
             BatchTx::new(tx(0x02), moving(point(poisoned, Mode::Delta)), env()),
         ],
         &writer,
@@ -686,7 +690,11 @@ fn an_exclusive_debit_past_a_hold_loses_to_the_reserver() {
     let outcome = execute_batch(
         Arc::new(store),
         &[
-            BatchTx::new(tx(0x01), holding(point(vault, Mode::Write)), env()),
+            BatchTx::new(
+                tx(0x01),
+                holding(point(vault, Mode::Write { moves: Moves::Both })),
+                env(),
+            ),
             BatchTx::new(
                 tx(0x02),
                 holding(with_delta(
@@ -766,7 +774,11 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
     let outcome = execute_batch(
         Arc::new(store),
         &[
-            BatchTx::new(tx(0x01), moving(point(vault, Mode::Write)), env()),
+            BatchTx::new(
+                tx(0x01),
+                moving(point(vault, Mode::Write { moves: Moves::Both })),
+                env(),
+            ),
             BatchTx::new(
                 tx(0x02),
                 moving(with_delta(

@@ -14,7 +14,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement,
-    Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Moves, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// The one answer a fixture guest hands back, so a receipt depends on
@@ -173,8 +173,16 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
         ),
         // Two writers of one cell: write-write conflict, one group,
         // canonical order.
-        BatchTx::new(tx(0x03), moving(point(cell(0xE), Mode::Write)), env()),
-        BatchTx::new(tx(0x04), moving(point(cell(0xE), Mode::Write)), env()),
+        BatchTx::new(
+            tx(0x03),
+            moving(point(cell(0xE), Mode::Write { moves: Moves::Both })),
+            env(),
+        ),
+        BatchTx::new(
+            tx(0x04),
+            moving(point(cell(0xE), Mode::Write { moves: Moves::Both })),
+            env(),
+        ),
         // Infeasible: the sender vault cannot cover it after tx 0x01.
         BatchTx::new(
             tx(0x05),
@@ -182,7 +190,11 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>) {
             env(),
         ),
         // The doomed writer on its own cell.
-        BatchTx::new(tx(0x66), moving(point(cell(0xF), Mode::Write)), env()),
+        BatchTx::new(
+            tx(0x66),
+            moving(point(cell(0xF), Mode::Write { moves: Moves::Both })),
+            env(),
+        ),
     ];
     (store, batch)
 }
@@ -369,12 +381,12 @@ fn each_transaction_sees_its_own_clock() {
 
     let early = BatchTx::new(
         tx(0x01),
-        moving(point(cell(0xE), Mode::Write)),
+        moving(point(cell(0xE), Mode::Write { moves: Moves::Both })),
         EnvInputs::unsealed(1_000),
     );
     let late = BatchTx::new(
         tx(0x02),
-        moving(point(cell(0xF), Mode::Write)),
+        moving(point(cell(0xF), Mode::Write { moves: Moves::Both })),
         EnvInputs::unsealed(2_000),
     );
 
@@ -421,8 +433,16 @@ fn each_transaction_sees_its_own_epoch() {
         epoch,
         ..EnvInputs::unsealed(env().clock_ms)
     };
-    let first = BatchTx::new(tx(0x01), moving(point(cell(0xE), Mode::Write)), at(7));
-    let second = BatchTx::new(tx(0x02), moving(point(cell(0xF), Mode::Write)), at(9));
+    let first = BatchTx::new(
+        tx(0x01),
+        moving(point(cell(0xE), Mode::Write { moves: Moves::Both })),
+        at(7),
+    );
+    let second = BatchTx::new(
+        tx(0x02),
+        moving(point(cell(0xF), Mode::Write { moves: Moves::Both })),
+        at(9),
+    );
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
         answers: answered(session.epoch()),

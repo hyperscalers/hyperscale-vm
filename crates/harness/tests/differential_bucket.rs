@@ -19,7 +19,7 @@ use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore};
 use hyperscale_vm_ref::{CVal, HandleKind};
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode,
+    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Moves,
     Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
@@ -125,11 +125,11 @@ fn fixture() -> Fixture {
         },
         Effect {
             target: EffectTarget::Point(vault),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Point(opaque),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Point(ledger),
@@ -147,7 +147,7 @@ fn fixture() -> Fixture {
                 hi: 100,
                 cap: 8,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         },
     ] {
         declared.insert(effect).unwrap();
@@ -188,7 +188,7 @@ fn session_of(fx: &Fixture) -> KernelSession {
 fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
     rep_where(host, |c| match (mode, c) {
         (Mode::Read, Capability::Read(key))
-        | (Mode::Write, Capability::Amount(key))
+        | (Mode::Write { .. }, Capability::Amount(key))
         | (Mode::Delta, Capability::Delta(key))
         | (Mode::Reserve { .. }, Capability::Reserve { key, .. }) => *key == wanted,
         _ => false,
@@ -301,8 +301,8 @@ impl Take {
         match self {
             Self::Issue(_) | Self::IssueUngranted(_) => None,
             Self::Delta(_) => Some((fx.ledger, Mode::Delta)),
-            Self::Vault(_) => Some((fx.vault, Mode::Write)),
-            Self::Opaque(_) => Some((fx.opaque, Mode::Write)),
+            Self::Vault(_) => Some((fx.vault, Mode::Write { moves: Moves::Both })),
+            Self::Opaque(_) => Some((fx.opaque, Mode::Write { moves: Moves::Both })),
             Self::Reserve | Self::ReserveTwice => {
                 Some((fx.reserved, Mode::Reserve { amount: RESERVED }))
             }
@@ -504,7 +504,11 @@ fn credited(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<Credi
     let (key, mode, kind) = if delta {
         (fx.ledger, Mode::Delta, HandleKind::Site)
     } else {
-        (fx.vault, Mode::Write, HandleKind::Site)
+        (
+            fx.vault,
+            Mode::Write { moves: Moves::Both },
+            HandleKind::Site,
+        )
     };
     let args = vec![
         CVal::Borrow(rep_of(&probe, key, mode), kind),
@@ -564,7 +568,7 @@ fn a_consumed_handle_cannot_be_dropped_again() -> Result<()> {
     };
     let mut probe = session_of(&fx);
     let funds = minted(&mut probe, 30);
-    let rep = rep_of(&probe, fx.vault, Mode::Write);
+    let rep = rep_of(&probe, fx.vault, Mode::Write { moves: Moves::Both });
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let refused = dual.invoke_both(
         "put-write-then-drop",
@@ -598,7 +602,7 @@ struct Pair {
 fn paired(fx: &Fixture, a: u64, b: u64) -> Result<Pair> {
     let probe = session_of(fx);
     let ledger = rep_of(&probe, fx.ledger, Mode::Delta);
-    let vault = rep_of(&probe, fx.vault, Mode::Write);
+    let vault = rep_of(&probe, fx.vault, Mode::Write { moves: Moves::Both });
     let mut dual = GUEST.instantiate(FUEL, || session_of(fx))?;
     let produced = dual.invoke_both(
         "take-two",
@@ -705,7 +709,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
 /// The value a successful lift produced, taken back out beforehand.
 fn lifted_value(fx: &Fixture, ids: &[u64]) -> Result<u128> {
     let probe = session_of(fx);
-    let held = rep_where(&probe, |c| matches!(c, Capability::InstanceRange(..)));
+    let held = rep_where(&probe, |c| matches!(c, Capability::Instances { .. }));
     let mut dual = GUEST.instantiate(FUEL, || session_of(fx))?;
     let rep = dual
         .invoke_both(
@@ -735,7 +739,7 @@ fn taking_instances_out_of_a_collection_is_what_produces_them() -> Result<()> {
 
     // And filing them straight back leaves the collection as it was.
     let probe = session_of(&fx);
-    let held = rep_where(&probe, |c| matches!(c, Capability::InstanceRange(..)));
+    let held = rep_where(&probe, |c| matches!(c, Capability::Instances { .. }));
     let mut dual = GUEST.instantiate(FUEL, || session_of(&fx))?;
     let round_trip = dual
         .invoke_both(
@@ -761,7 +765,7 @@ fn an_instance_a_body_does_not_hold_is_refused() -> Result<()> {
     // collection does not hold. An interval take could only have answered
     // with silence.
     let probe = session_of(&fx);
-    let held = rep_where(&probe, |c| matches!(c, Capability::InstanceRange(..)));
+    let held = rep_where(&probe, |c| matches!(c, Capability::Instances { .. }));
     let mut dual = GUEST.instantiate(FUEL, || session_of(&fx))?;
     let refused = dual.invoke_both(
         "lift",

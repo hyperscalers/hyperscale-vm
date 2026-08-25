@@ -18,7 +18,7 @@ use hyperscale_vm_sdk::state::{
     self, Bucket, Entry, Interval, OrderKey, Quantity, Ratio, Slot, Vault,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Mode,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, EntryKey, Mode, Moves,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
@@ -111,7 +111,10 @@ fn seeded() -> MemoryStore {
 #[test]
 fn a_write_cell_reads_back_what_it_was_set_to() {
     let cell = key(1);
-    let session = session(MemoryStore::new(), vec![point(cell, Mode::Write)]);
+    let session = session(
+        MemoryStore::new(),
+        vec![point(cell, Mode::Write { moves: Moves::Both })],
+    );
 
     let (session, ()) = with_kernel(session, || {
         let mut slot = Slot::<Quantity>::at(Handle::at(0, 0));
@@ -140,7 +143,10 @@ fn value_taken_from_a_cell_is_the_value_in_hand() {
     let vault = key(2);
     let mut store = MemoryStore::new();
     store.write(vault, encode_amount(100).to_vec());
-    let session = value_session(store, vec![point(vault, Mode::Write)]);
+    let session = value_session(
+        store,
+        vec![point(vault, Mode::Write { moves: Moves::Both })],
+    );
 
     let (_, held) = with_kernel(session, || {
         let mut slot = Slot::<Vault>::at(Handle::at(0, 0));
@@ -159,7 +165,10 @@ fn a_bucket_divides_into_what_comes_off_and_what_is_left() {
     let vault = key(3);
     let mut store = MemoryStore::new();
     store.write(vault, encode_amount(100).to_vec());
-    let session = value_session(store, vec![point(vault, Mode::Write)]);
+    let session = value_session(
+        store,
+        vec![point(vault, Mode::Write { moves: Moves::Both })],
+    );
 
     let (_, (split, rest)) = with_kernel(session, || {
         let mut slot = Slot::<Vault>::at(Handle::at(0, 0));
@@ -188,7 +197,10 @@ fn a_division_conserves_what_it_divided() {
     let vault = key(3);
     let mut store = MemoryStore::new();
     store.write(vault, encode_amount(100).to_vec());
-    let session = value_session(store, vec![point(vault, Mode::Write)]);
+    let session = value_session(
+        store,
+        vec![point(vault, Mode::Write { moves: Moves::Both })],
+    );
 
     let (_, (parts, rest)) = with_kernel(session, || {
         let mut slot = Slot::<Vault>::at(Handle::at(0, 0));
@@ -219,7 +231,10 @@ fn a_division_conserves_what_it_divided() {
 #[test]
 fn a_boolean_is_a_cell_the_vocabulary_admits() {
     let flag = key(6);
-    let session = session(MemoryStore::new(), vec![point(flag, Mode::Write)]);
+    let session = session(
+        MemoryStore::new(),
+        vec![point(flag, Mode::Write { moves: Moves::Both })],
+    );
 
     let (session, (unwritten, after)) = with_kernel(session, || {
         let mut cell = Slot::<bool>::at(Handle::at(0, 0));
@@ -261,7 +276,7 @@ fn a_boolean_cell_holding_neither_byte_reads_as_set() {
 /// An interval walks its entries in order, and writes land in the store.
 #[test]
 fn an_interval_reads_and_writes_the_entries_it_covers() {
-    let session = session(seeded(), vec![range(Mode::Write)]);
+    let session = session(seeded(), vec![range(Mode::Write { moves: Moves::Both })]);
 
     let (session, (count, orders, second)) = with_kernel(session, || {
         let mut interval = Interval::<u64>::at(Handle::at(0, 0));
@@ -286,7 +301,7 @@ fn an_interval_reads_and_writes_the_entries_it_covers() {
 /// removal itself.
 #[test]
 fn an_interval_removes_the_entry_it_names() {
-    let session = session(seeded(), vec![range(Mode::Write)]);
+    let session = session(seeded(), vec![range(Mode::Write { moves: Moves::Both })]);
 
     let (session, (left, orders)) = with_kernel(session, || {
         let mut interval = Interval::<u64>::at(Handle::at(0, 0));
@@ -317,7 +332,10 @@ fn an_interval_removes_the_entry_it_names() {
 /// materialized, and writing one that is not there creates it.
 #[test]
 fn an_entry_writes_at_the_order_it_names() {
-    let session = session(MemoryStore::new(), vec![range(Mode::Write)]);
+    let session = session(
+        MemoryStore::new(),
+        vec![range(Mode::Write { moves: Moves::Both })],
+    );
 
     let (session, read) = with_kernel(session, || {
         let mut entry = Entry::<u64>::at(Handle::at(0, 0), OrderKey::from_bits(7));
@@ -349,7 +367,10 @@ fn the_environment_is_the_transactions_own() {
 #[test]
 fn a_refused_operation_carries_its_class_out() {
     let vault = key(4);
-    let session = value_session(MemoryStore::new(), vec![point(vault, Mode::Write)]);
+    let session = value_session(
+        MemoryStore::new(),
+        vec![point(vault, Mode::Write { moves: Moves::Both })],
+    );
 
     let refusal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_kernel(session, || {
@@ -377,7 +398,10 @@ fn a_refused_operation_carries_its_class_out() {
 fn a_thread_a_refusal_unwound_through_runs_the_next_invocation() {
     let vault = key(5);
     let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let session = value_session(MemoryStore::new(), vec![point(vault, Mode::Write)]);
+        let session = value_session(
+            MemoryStore::new(),
+            vec![point(vault, Mode::Write { moves: Moves::Both })],
+        );
         with_kernel(session, || {
             let mut slot = Slot::<Vault>::at(Handle::at(0, 0));
             let _: Bucket = slot.take(Quantity::from_subunits(1));
@@ -385,7 +409,10 @@ fn a_thread_a_refusal_unwound_through_runs_the_next_invocation() {
     }));
     assert!(refused.is_err(), "an unfunded take refuses");
 
-    let session = session(MemoryStore::new(), vec![point(vault, Mode::Write)]);
+    let session = session(
+        MemoryStore::new(),
+        vec![point(vault, Mode::Write { moves: Moves::Both })],
+    );
     let (_, read) = with_kernel(session, || Slot::<Quantity>::at(Handle::at(0, 0)).get());
 
     assert_eq!(

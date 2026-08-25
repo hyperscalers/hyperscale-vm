@@ -32,7 +32,7 @@ use std::thread;
 use hyperscale_vm_effects::{Declaration, NodeCall};
 use hyperscale_vm_types::{
     AbortReason, Address, Answer, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget,
-    Mode, ModeKind, Outcome, SubstateKey, TxHash, UnmetCondition,
+    Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
 use crate::ledger::AmountLedger;
@@ -812,7 +812,7 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
         for key in &entry.nullifiers {
             if !entry.declaration.set.contains(&Effect {
                 target: EffectTarget::Point(*key),
-                mode: Mode::Write,
+                mode: Mode::Write { moves: Moves::Both },
             }) {
                 return Err(BatchError::UndeclaredNullifier {
                     tx: entry.tx,
@@ -1089,7 +1089,7 @@ mod tests {
 
     use hyperscale_vm_effects::{Declaration, Hash32, SlotId, TestHasher, child_key};
     use hyperscale_vm_types::{
-        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, TxHash,
+        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Moves, TxHash,
     };
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
@@ -1108,7 +1108,7 @@ mod tests {
             0 => Mode::Read,
             1 => Mode::Delta,
             2 => Mode::Reserve { amount: 1 },
-            _ => Mode::Write,
+            _ => Mode::Write { moves: Moves::Both },
         }
     }
 

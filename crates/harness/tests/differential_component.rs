@@ -17,7 +17,7 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet,
-    EffectTarget, EntryKey, Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    EffectTarget, EntryKey, Mode, Moves, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// The one answer a fixture guest hands back, so a receipt depends on
@@ -116,7 +116,7 @@ fn fixture() -> Fixture {
         },
         Effect {
             target: EffectTarget::Point(rmw),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Point(readable),
@@ -140,7 +140,7 @@ fn fixture() -> Fixture {
                 hi: 100,
                 cap: 8,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         },
     ] {
         declared.insert(effect).unwrap();

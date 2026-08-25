@@ -113,8 +113,14 @@ impl KernelSession {
     /// The interval an instance-moving handle names — the same
     /// statement as [`Self::write_interval`], for the entries that are
     /// value rather than bytes.
-    fn instance_interval(&self, site: u32, element: u32) -> Result<Interval, SessionTrap> {
-        self.acting_interval(site, element, Op::MoveInstances)
+    /// The interval instances are filed into.
+    fn filing_interval(&self, site: u32, element: u32) -> Result<Interval, SessionTrap> {
+        self.acting_interval(site, element, Op::FileInstances)
+    }
+
+    /// The interval instances are taken out of.
+    fn taking_interval(&self, site: u32, element: u32) -> Result<Interval, SessionTrap> {
+        self.acting_interval(site, element, Op::TakeInstances)
     }
 
     /// Read a run of entries, charging what it lifted to
@@ -391,7 +397,7 @@ impl KernelSession {
     /// declared interval, one the collection does not hold, or more
     /// entries than the interval's cap admits.
     pub fn range_take(&mut self, site: u32, element: u32, ids: &[u64]) -> Result<u32, SessionTrap> {
-        let interval = self.instance_interval(site, element)?;
+        let interval = self.taking_interval(site, element)?;
         let resource = self.value_of(site, element)?;
         // The decoder refuses a repeated id, so the set below loses
         // nothing to dedup and a count is an instance count.
@@ -441,7 +447,7 @@ impl KernelSession {
         funds: u32,
         value: &[u8],
     ) -> Result<(), SessionTrap> {
-        let interval = self.instance_interval(site, element)?;
+        let interval = self.filing_interval(site, element)?;
         self.judge_credit(site, element, funds)?;
         let Held::Instances(ids) = self.bucket(funds)? else {
             return Err(SessionTrap::WrongEdgeKind);
@@ -495,7 +501,7 @@ mod tests {
 
     use hyperscale_vm_effects::Declaration;
     use hyperscale_vm_types::{
-        AMOUNT_CELL_BYTES, Address, AddressClass, CollectionId, Effect, EffectTarget, Mode,
+        AMOUNT_CELL_BYTES, Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Moves,
     };
 
     use super::super::fixtures::{
@@ -519,7 +525,7 @@ mod tests {
                 hi: 15,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_over(store, &set);
 
@@ -558,7 +564,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 2,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
@@ -591,7 +597,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 2,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
         let left = session.bind_site(vec![Some(0)]);
@@ -622,7 +628,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 1,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
@@ -658,7 +664,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_over(store, &set);
 
@@ -689,7 +695,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_over(store, &set);
 
@@ -722,7 +728,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         // The clause order pins the reps: 0 reads the held collection,
         // 1 writes the other.
@@ -772,7 +778,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_holding(store, &set);
 
@@ -806,7 +812,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_holding(store, &set);
 
@@ -886,7 +892,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_over(store, &set);
 

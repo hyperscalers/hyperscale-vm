@@ -155,7 +155,7 @@ mod tests {
     use crate::address::{
         Address, AddressClass, CollectionId, EffectTarget, LocalKey, SubstateKey,
     };
-    use crate::mode::Mode;
+    use crate::mode::{Mode, Moves};
 
     /// Distinct point targets, with no derivation: what these tests need
     /// of a key is only that two differ.
@@ -175,7 +175,7 @@ mod tests {
         let mut set = EffectSet::new();
         for (byte, mode) in [
             (1, Mode::Read),
-            (2, Mode::Write),
+            (2, Mode::Write { moves: Moves::Both }),
             (3, Mode::Delta),
             (4, Mode::Reserve { amount: 5 }),
         ] {
@@ -229,8 +229,11 @@ mod tests {
         };
 
         for pair in [
-            [Mode::Write, Mode::Delta],
-            [Mode::Write, Mode::Reserve { amount: 1 }],
+            [Mode::Write { moves: Moves::Both }, Mode::Delta],
+            [
+                Mode::Write { moves: Moves::Both },
+                Mode::Reserve { amount: 1 },
+            ],
         ] {
             assert_eq!(set_of(&pair).self_conflicting(), Some(cell), "{pair:?}");
         }
@@ -241,8 +244,8 @@ mod tests {
         for modes in [
             &[Mode::Delta, Mode::Reserve { amount: 1 }][..],
             &[Mode::Read, Mode::Delta],
-            &[Mode::Read, Mode::Write],
-            &[Mode::Write],
+            &[Mode::Read, Mode::Write { moves: Moves::Both }],
+            &[Mode::Write { moves: Moves::Both }],
         ] {
             assert_eq!(set_of(modes).self_conflicting(), None, "{modes:?}");
         }
@@ -250,7 +253,7 @@ mod tests {
         // A collection target is never one: it holds no amount, so the
         // pairing the check is about cannot arise.
         let mut ranges = EffectSet::new();
-        for mode in [Mode::Write, Mode::Delta] {
+        for mode in [Mode::Write { moves: Moves::Both }, Mode::Delta] {
             ranges
                 .insert(Effect {
                     target: EffectTarget::Range {

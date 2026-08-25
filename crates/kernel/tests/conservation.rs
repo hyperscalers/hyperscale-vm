@@ -353,7 +353,8 @@ mod instances {
     };
     use hyperscale_vm_kernel::{EnvInputs, KernelSession, OverlayStore};
     use hyperscale_vm_types::{
-        Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome, ResourceAddr, TxHash,
+        Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome, ResourceAddr,
+        TxHash,
     };
 
     use super::MemoryStore;
@@ -386,7 +387,7 @@ mod instances {
                 hi: u128::MAX,
                 cap: 8,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         let mut set = EffectSet::new();
         set.insert(interval).expect("one interval");

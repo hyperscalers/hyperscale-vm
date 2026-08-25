@@ -31,7 +31,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
 use hyperscale_vm_types::{
-    AbortReason, Address, ComponentAddr, Presence, PrincipalAddr, ResourceAddr, encode_amount,
+    AbortReason, Address, ComponentAddr, Moves, Presence, PrincipalAddr, ResourceAddr,
+    encode_amount,
 };
 
 const ATTACKER: PrincipalAddr = principal(0x22);
@@ -61,7 +62,7 @@ const fn write(target: TargetExpr, denomination: Option<Box<Expr>>) -> Clause {
         reach: None,
         guard: None,
         target,
-        mode: ModeExpr::Write,
+        mode: ModeExpr::Write { moves: Moves::Both },
         denomination,
     }
 }

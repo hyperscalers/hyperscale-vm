@@ -9,7 +9,7 @@
 use hyperscale_hbor::{
     DecodeError, EncodeError, Hbor, HborShape, from_slice_with_depth, to_vec, to_vec_with_depth,
 };
-use hyperscale_vm_types::{Address, AddressClass, CollectionId, ResourceAddr, SubstateKey};
+use hyperscale_vm_types::{Address, AddressClass, CollectionId, Moves, ResourceAddr, SubstateKey};
 
 use crate::auth::RuleBytes;
 use crate::dsl::{Expr, SlotRef, TargetExpr};
@@ -220,6 +220,29 @@ impl GrantedBehaviour {
         Self::Freeze,
         Self::Recall,
     ];
+
+    /// Which movement entries an access moving these directions earns.
+    ///
+    /// Both directions through one access are asked both, which
+    /// over-binds: a holder permitted to send is asked for the receiving
+    /// credential too. That is what a directional access buys — a method
+    /// moving one way says so and is judged on that alone.
+    ///
+    /// Here rather than beside either mode vocabulary because there are
+    /// two of them — the declared [`ModeExpr`](crate::dsl::ModeExpr) a
+    /// composer reads and the evaluated [`Mode`] admission injects
+    /// against — and a table each is two tables that can disagree about
+    /// who a movement is judged against.
+    ///
+    /// [`Mode`]: hyperscale_vm_types::Mode
+    #[must_use]
+    pub const fn earned_by(moves: Moves) -> &'static [Self] {
+        match moves {
+            Moves::In => &[Self::Deposit],
+            Moves::Out => &[Self::Withdraw],
+            Moves::Both => &[Self::Withdraw, Self::Deposit],
+        }
+    }
 
     /// Whether this behaviour asks about the actor rather than the
     /// holder.

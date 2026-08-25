@@ -11,7 +11,7 @@ use hyperscale_vm_effects::{
     package_slot,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
-use hyperscale_vm_types::ComponentAddr;
+use hyperscale_vm_types::{ComponentAddr, Moves};
 
 /// The entry cap the registry's drain declares.
 pub const DRAIN_CAP: u32 = 8;
@@ -61,7 +61,7 @@ pub fn metadata() -> PackageMetadata {
                 reach: None,
                 guard: None,
                 target,
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }],
             ..MethodSignature::default()
@@ -106,7 +106,7 @@ pub fn metadata() -> PackageMetadata {
                     hi: Expr::Literal(Value::U128(u128::MAX)),
                     cap: Expr::Literal(Value::U64(u64::from(DRAIN_CAP))),
                 },
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }],
             ..MethodSignature::default()

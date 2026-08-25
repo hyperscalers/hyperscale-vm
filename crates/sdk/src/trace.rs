@@ -36,7 +36,7 @@ use hyperscale_vm_effects::{
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, ResourceKind,
     RuleExpr, RuleLeaf, SlotId, SlotRef, TargetExpr, Totality, Value, well_formed,
 };
-use hyperscale_vm_types::Presence;
+use hyperscale_vm_types::{Moves, Presence};
 
 use crate::sym::{Addr, Flag, Key, Kind, Opaque, Seq, Sym, U64, U128, expr_depth};
 
@@ -971,7 +971,7 @@ impl Trace {
                     Clause::Effect {
                         reach: None,
                         target: TargetExpr::Point(cell),
-                        mode: ModeExpr::Write,
+                        mode: ModeExpr::Write { .. },
                         ..
                     } if matches!(
                         cell,
@@ -1124,7 +1124,19 @@ impl<Shape> Access<'_, Shape> {
     /// An exclusive read-modify-write, on a leaf that may or may not be
     /// there.
     pub fn write(self) {
-        self.declare(ModeExpr::Write);
+        self.declare(ModeExpr::Write { moves: Moves::Both });
+    }
+
+    /// The same exclusive hold, filing only: value may arrive under it
+    /// and may not leave.
+    ///
+    /// What a collection has instead of a credit. The contention is a
+    /// write's either way — an exclusive hold excludes everything — so
+    /// what this gives up is nothing a scheduler reads, and what it buys
+    /// is being judged on the movement it actually makes: a body that
+    /// only receives is not asked for the credential a sender needs.
+    pub fn file(self) {
+        self.declare(ModeExpr::Write { moves: Moves::In });
     }
 }
 
@@ -1165,7 +1177,7 @@ impl Access<'_, Leaf> {
 
     fn require(mut self, presence: Presence) {
         self.presence(presence);
-        self.declare(ModeExpr::Write);
+        self.declare(ModeExpr::Write { moves: Moves::Both });
     }
 
     fn presence(&mut self, presence: Presence) {

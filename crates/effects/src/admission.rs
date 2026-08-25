@@ -43,7 +43,7 @@ use crate::resource::{
 };
 use crate::route::FrameDeclaration;
 use crate::rule::{Holding, Rule, SealedLeaf, StoredRule, never};
-use crate::signature::{AbiParam, Issued, MethodSignature, Moved, ParamType};
+use crate::signature::{AbiParam, Issued, MethodSignature, ParamType};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::{CONFIG, HALT, VAULT};
 
@@ -1341,7 +1341,7 @@ impl Lower<'_> {
         };
         let leaf = EffectTarget::Point(child_key(self.hasher, address, CONFIG, &[]));
         let grants = frame.ordered.iter().any(|access| {
-            access.effect.target == leaf && matches!(access.effect.mode, Mode::Write)
+            access.effect.target == leaf && matches!(access.effect.mode, Mode::Write { .. })
         });
         if grants {
             return Ok(None);
@@ -1997,10 +1997,9 @@ fn inject_issuance_rules(
         // the terms the instantiation fence is — a node that writes the
         // leaf is the creation itself.
         let record = EffectTarget::Point(resource_record_key(hasher, target, resource));
-        let founding = frame
-            .ordered
-            .iter()
-            .any(|access| access.effect.target == record && access.effect.mode == Mode::Write);
+        let founding = frame.ordered.iter().any(|access| {
+            access.effect.target == record && matches!(access.effect.mode, Mode::Write { .. })
+        });
         if founding {
             continue;
         }
@@ -2225,7 +2224,10 @@ fn inject_movement_rules(
             continue;
         };
         let owner = access.effect.target.owner();
-        for behaviour in Moved::of(access.effect.mode).behaviours() {
+        let Some(moves) = access.effect.mode.moves() else {
+            continue;
+        };
+        for behaviour in GrantedBehaviour::earned_by(moves) {
             let entry = (owner, resource, *behaviour);
             if !wanted.contains(&entry) {
                 wanted.push(entry);

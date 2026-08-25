@@ -29,7 +29,7 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
-    Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, PrincipalAddr, ResourceAddr,
+    Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, PrincipalAddr, ResourceAddr,
     SubstateKey,
 };
 
@@ -419,7 +419,7 @@ pub fn route_tree(tree: &AdmittedTree, shards: &dyn ShardResolver) -> Routing {
         let shard = shards.shard_of(record.signer.address());
         let effect = Effect {
             target: EffectTarget::Point(record.nullifier),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         // No signature declared this, so it belongs to no frame.
         routing.push_kernel_effect(shard, effect);

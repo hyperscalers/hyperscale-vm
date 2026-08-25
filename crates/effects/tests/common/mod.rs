@@ -13,7 +13,8 @@ pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, payouts};
 pub use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, ComponentAddr, Effect, EffectSet, Presence, PrincipalAddr, ResourceAddr, SubstateKey,
+    Address, ComponentAddr, Effect, EffectSet, Moves, Presence, PrincipalAddr, ResourceAddr,
+    SubstateKey,
 };
 
 /// Accounts are principals: their class is what resolves them to the
@@ -216,7 +217,7 @@ pub fn wide_account_metadata() -> PackageMetadata {
         reach: None,
         guard: None,
         target: TargetExpr::Point(self_child(SlotId(99), vec![])),
-        mode: ModeExpr::Write,
+        mode: ModeExpr::Write { moves: Moves::Both },
         denomination: None,
     });
     methods.methods.insert(

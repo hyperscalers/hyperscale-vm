@@ -181,7 +181,7 @@ pub fn footprint(declared: &EffectSet) -> u64 {
 mod tests {
     use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode,
-        ModeKind, SubstateKey, compatible,
+        ModeKind, Moves, SubstateKey, compatible,
     };
 
     use super::{
@@ -268,8 +268,11 @@ mod tests {
 
     #[test]
     fn a_full_space_range_costs_more_than_a_narrow_one() {
-        let narrow = effect_units(effect(range(100, 200), Mode::Write));
-        let full = effect_units(effect(range(0, u128::MAX), Mode::Write));
+        let narrow = effect_units(effect(range(100, 200), Mode::Write { moves: Moves::Both }));
+        let full = effect_units(effect(
+            range(0, u128::MAX),
+            Mode::Write { moves: Moves::Both },
+        ));
         assert!(full > narrow, "{full} should exceed {narrow}");
     }
 
@@ -284,8 +287,10 @@ mod tests {
             "one key spans one leaf either way",
         );
         assert_eq!(
-            effect_units(effect(range(42, 42), Mode::Write)) - depth_units(&range(42, 42)),
-            effect_units(effect(point(1), Mode::Write)) - depth_units(&point(1)),
+            effect_units(effect(range(42, 42), Mode::Write { moves: Moves::Both }))
+                - depth_units(&range(42, 42)),
+            effect_units(effect(point(1), Mode::Write { moves: Moves::Both }))
+                - depth_units(&point(1)),
         );
     }
 
@@ -302,8 +307,8 @@ mod tests {
             cap,
         };
         let (small, large) = (
-            effect_units(effect(capped(8), Mode::Write)),
-            effect_units(effect(capped(64), Mode::Write)),
+            effect_units(effect(capped(8), Mode::Write { moves: Moves::Both })),
+            effect_units(effect(capped(64), Mode::Write { moves: Moves::Both })),
         );
         assert_eq!(large - small, DEPTH_UNITS * (64 - 8));
     }
@@ -348,11 +353,13 @@ mod tests {
     #[test]
     fn a_set_totals_its_effects() {
         let mut declared = EffectSet::new();
-        declared.insert(effect(point(1), Mode::Write)).unwrap();
+        declared
+            .insert(effect(point(1), Mode::Write { moves: Moves::Both }))
+            .unwrap();
         declared.insert(effect(range(0, 1023), Mode::Read)).unwrap();
         assert_eq!(
             footprint(&declared),
-            effect_units(effect(point(1), Mode::Write))
+            effect_units(effect(point(1), Mode::Write { moves: Moves::Both }))
                 + effect_units(effect(range(0, 1023), Mode::Read)),
         );
     }

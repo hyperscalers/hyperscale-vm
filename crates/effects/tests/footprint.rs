@@ -11,7 +11,7 @@
 
 use hyperscale_vm_effects::{effect_units, footprint};
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode, Moves,
     SubstateKey,
 };
 use proptest::collection::vec;
@@ -21,7 +21,7 @@ fn arb_mode() -> impl Strategy<Value = Mode> {
     prop_oneof![
         Just(Mode::Read),
         Just(Mode::Delta),
-        Just(Mode::Write),
+        Just(Mode::Write { moves: Moves::Both }),
         any::<u128>().prop_map(|amount| Mode::Reserve { amount }),
     ]
 }
@@ -87,7 +87,7 @@ fn set_of(effects: &[Effect]) -> EffectSet {
 /// axis working rather than this property failing.
 #[test]
 fn the_whole_order_key_space_is_the_most_expensive_interval() {
-    for kind in [Mode::Read, Mode::Delta, Mode::Write] {
+    for kind in [Mode::Read, Mode::Delta, Mode::Write { moves: Moves::Both }] {
         for cap in [0, 1, 1024, u32::MAX] {
             let whole = effect_units(Effect {
                 target: EffectTarget::Range {
@@ -209,7 +209,7 @@ fn a_move_of_more_instances_prices_above_fewer() {
             reach: None,
             guard: None,
             target: holdings_range(Expr::Arg(0), Expr::Len(Box::new(Expr::Arg(1)))),
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write { moves: Moves::Both },
             denomination: None,
         }];
         let args = [

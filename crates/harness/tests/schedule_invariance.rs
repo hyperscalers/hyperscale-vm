@@ -18,8 +18,8 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_ref::{CVal, HandleKind, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{Site, add_kernel_to_linker, blessed_engine};
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Outcome,
-    ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Moves,
+    Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Linker, Resource};
 
@@ -119,7 +119,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
         declared
             .insert(Effect {
                 target: EffectTarget::Point(rmw_cell()),
-                mode: Mode::Write,
+                mode: Mode::Write { moves: Moves::Both },
             })
             .unwrap();
         batch.push(BatchTx::new(tx(id), Declaration::from_set(declared), env()));

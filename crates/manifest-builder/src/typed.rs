@@ -32,7 +32,7 @@ use hyperscale_vm_effects::vocabulary::{
 use hyperscale_vm_effects::{
     ChainRecords, Clause, Constraint, EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef,
     Expr, GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph,
-    ManifestHash, MethodSignature, Moved, PackageHash, PackageMetadata, ParamType, Presented,
+    ManifestHash, MethodSignature, PackageHash, PackageMetadata, ParamType, Presented,
     PresentedGrants, ResourceGrants, ResourceMeta, SealedLeaf, Value, evaluate_expr,
     founds_its_resource, keying_resource,
 };
@@ -1163,10 +1163,10 @@ fn governing(
             // admission injects them from. A read earns none and still
             // needs the record, because a restricted resource's is what
             // tells a withheld one from a bypass.
-            let behaviours = Moved::declared(mode).behaviours();
-            if behaviours.is_empty() {
+            let Some(moves) = mode.moves() else {
                 return Some(vec![(resource, None)]);
-            }
+            };
+            let behaviours = GrantedBehaviour::earned_by(moves);
             Some(
                 behaviours
                     .iter()

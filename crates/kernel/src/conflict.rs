@@ -111,7 +111,7 @@ pub fn conflicts(a: &Effect, b: &Effect) -> bool {
 mod tests {
     use hyperscale_vm_effects::{SlotId, TestHasher, child_key};
     use hyperscale_vm_types::{
-        Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, ModeKind,
+        Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, ModeKind, Moves,
     };
 
     use super::{conflicts, targets_overlap};
@@ -148,7 +148,7 @@ mod tests {
             ModeKind::Delta => Mode::Delta,
             ModeKind::Credit => Mode::Credit,
             ModeKind::Reserve => Mode::Reserve { amount: 1 },
-            ModeKind::Write => Mode::Write,
+            ModeKind::Write => Mode::Write { moves: Moves::Both },
         }
     }
 
@@ -187,11 +187,11 @@ mod tests {
         // Distinct keys never conflict, whatever the modes.
         let left = Effect {
             target: point(1),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         let right = Effect {
             target: point(2),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         assert!(!conflicts(&left, &right));
     }
@@ -242,11 +242,11 @@ mod tests {
         // Overlapping exclusive writes conflict.
         let write_range = Effect {
             target: range(5, 15),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         let write_entry = Effect {
             target: entry(10),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         assert!(conflicts(&write_range, &write_entry));
     }

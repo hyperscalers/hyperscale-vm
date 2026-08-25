@@ -42,7 +42,54 @@ pub enum Mode {
     /// What the leaf must be for the write to be feasible is not the
     /// mode's to say: a presence requirement is a condition the same
     /// declaration states, judged at materialization beside this.
-    Write,
+    Write {
+        /// Which directions value may move under it.
+        ///
+        /// The commutative modes say their direction by being
+        /// themselves — a credit is a delta with one direction given up
+        /// — and the exclusive one had no way to say it at all. So it
+        /// says it here, and a collection, whose only movement mode this
+        /// is, can say it too.
+        moves: Moves,
+    },
+}
+
+/// Which directions an access moves value in.
+///
+/// A parameter rather than a mode of its own, for the reason
+/// [`Presence`] is one: **contention does not change**. An exclusive
+/// hold excludes everything whichever way value moves under it, so
+/// giving up a direction gives up nothing a scheduler reads — the same
+/// trade [`Mode::Credit`] makes against [`Mode::Delta`].
+///
+/// What it changes is which of a resource's movement entries the access
+/// earns. A declaration carrying its direction is judged on the movement
+/// it actually makes; one that does not answers for both, which
+/// over-binds — a holder permitted to send is asked for the receiving
+/// credential too.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+pub enum Moves {
+    /// Value may arrive and may not leave.
+    In,
+    /// Value may leave and may not arrive.
+    Out,
+    /// Both, which is what an access saying nothing means.
+    #[default]
+    Both,
+}
+
+impl Moves {
+    /// Whether value may arrive under it.
+    #[must_use]
+    pub const fn credits(self) -> bool {
+        matches!(self, Self::In | Self::Both)
+    }
+
+    /// Whether value may leave under it.
+    #[must_use]
+    pub const fn debits(self) -> bool {
+        matches!(self, Self::Out | Self::Both)
+    }
 }
 
 /// What a write requires of the leaf it lands on.
@@ -93,6 +140,22 @@ impl Presence {
 }
 
 impl Mode {
+    /// Which directions value moves in under this mode, or `None` where
+    /// it moves none.
+    ///
+    /// The one place the vocabulary's directions are read off, so a mode
+    /// gaining an arm answers here or does not compile.
+    #[must_use]
+    pub const fn moves(&self) -> Option<Moves> {
+        match self {
+            Self::Read => None,
+            Self::Delta => Some(Moves::Both),
+            Self::Credit => Some(Moves::In),
+            Self::Reserve { .. } => Some(Moves::Out),
+            Self::Write { moves } => Some(*moves),
+        }
+    }
+
     /// The mode's kind, for scheduling compatibility.
     #[must_use]
     pub const fn kind(&self) -> ModeKind {
@@ -101,7 +164,9 @@ impl Mode {
             Self::Delta => ModeKind::Delta,
             Self::Credit => ModeKind::Credit,
             Self::Reserve { .. } => ModeKind::Reserve,
-            Self::Write => ModeKind::Write,
+            // The direction is a movement parameter and never a
+            // scheduling one, exactly as a reservation's amount is.
+            Self::Write { .. } => ModeKind::Write,
         }
     }
 }

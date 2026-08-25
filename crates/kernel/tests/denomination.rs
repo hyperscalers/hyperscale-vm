@@ -26,7 +26,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MaterializeError, MemoryStore, OverlayStore};
 use hyperscale_vm_types::math::U256;
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
@@ -118,7 +118,7 @@ fn every_producer_stamps_what_its_source_held() {
     let ordered = vec![
         Effect {
             target: EffectTarget::Point(absolute),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Point(commutative),
@@ -215,7 +215,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
             hi: u128::MAX,
             cap: 8,
         },
-        mode: Mode::Write,
+        mode: Mode::Write { moves: Moves::Both },
     };
     let ordered = vec![interval(X), interval(Y)];
     let mut set = EffectSet::new();

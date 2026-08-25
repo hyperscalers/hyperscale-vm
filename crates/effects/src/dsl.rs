@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{
-    Address, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey, Mode,
+    Address, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey, Mode, Moves,
     ResourceAddr, SubstateKey, WrongClass,
 };
 
@@ -525,7 +525,34 @@ pub enum ModeExpr {
     /// call creates your authority cell, and fails if you already have
     /// one" — judged by the shard holding the cell, where it already
     /// judges a reservation.
-    Write,
+    Write {
+        /// Which directions value may move under it.
+        ///
+        /// A collection has no commutative mode to say this by being,
+        /// so this is the only way a method that files into one and
+        /// never takes out of it can say so — and a method that cannot
+        /// say so answers for both directions of whatever it holds.
+        moves: Moves,
+    },
+}
+
+impl ModeExpr {
+    /// Which directions value moves in under this mode, or `None` where
+    /// it moves none.
+    ///
+    /// The declared twin of [`Mode::moves`], and the two agree by being
+    /// read off one vocabulary: an evaluated mode carries exactly what
+    /// its expression declared.
+    #[must_use]
+    pub const fn moves(&self) -> Option<Moves> {
+        match self {
+            Self::Read => None,
+            Self::Delta => Some(Moves::Both),
+            Self::Credit => Some(Moves::In),
+            Self::Reserve(_) => Some(Moves::Out),
+            Self::Write { moves } => Some(*moves),
+        }
+    }
 }
 
 /// An access target expression.
@@ -636,13 +663,13 @@ pub const fn supports(clause: &Clause) -> bool {
         (
             TargetExpr::Point(_),
             ModeExpr::Read
-                | ModeExpr::Write
+                | ModeExpr::Write { .. }
                 | ModeExpr::Delta
                 | ModeExpr::Credit
                 | ModeExpr::Reserve(_)
         ) | (
             TargetExpr::Entry { .. } | TargetExpr::Range { .. },
-            ModeExpr::Read | ModeExpr::Write
+            ModeExpr::Read | ModeExpr::Write { .. }
         )
     )
 }
@@ -1814,7 +1841,7 @@ fn eval_mode(
             let amount = as_u128(&*eval_expr(expr, inputs, hasher, bindings, 0, budget)?)?;
             Ok(Mode::Reserve { amount })
         }
-        ModeExpr::Write => Ok(Mode::Write),
+        ModeExpr::Write { moves } => Ok(Mode::Write { moves: *moves }),
     }
 }
 
@@ -2395,7 +2422,7 @@ fn as_list(value: Value) -> Result<Vec<Value>, EvalError> {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_types::{
-        Address, AddressClass, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Presence,
+        Address, AddressClass, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, Presence,
         ResourceAddr, WrongClass,
     };
 
@@ -2786,14 +2813,14 @@ mod tests {
                 reach: None,
                 guard: None,
                 target: point(0xF0),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             },
             Clause::Effect {
                 reach: None,
                 guard: None,
                 target: point(0x0F),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             },
             // The same target as the first clause: a degenerate instance
@@ -2802,7 +2829,7 @@ mod tests {
                 reach: None,
                 guard: None,
                 target: point(0xF0),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             },
         ];
@@ -2964,7 +2991,7 @@ mod tests {
                     reach: None,
                     guard: None,
                     target: vault(vec![Expr::Binding(0)]),
-                    mode: ModeExpr::Write,
+                    mode: ModeExpr::Write { moves: Moves::Both },
                     denomination: None,
                 },
                 Clause::Effect {
@@ -3019,7 +3046,7 @@ mod tests {
                     slot: SlotRef::Fixed(SlotId(1)),
                     material: vec![Expr::Binding(0)],
                 }),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }],
         }];
@@ -3057,7 +3084,7 @@ mod tests {
                         slot: SlotRef::Fixed(SlotId(1)),
                         material: vec![Expr::Binding(1), Expr::Binding(0)],
                     }),
-                    mode: ModeExpr::Write,
+                    mode: ModeExpr::Write { moves: Moves::Both },
                     denomination: None,
                 }],
             }],
@@ -3193,7 +3220,7 @@ mod tests {
                     slot: SlotRef::Fixed(SlotId(16)),
                     material: vec![Expr::Binding(0)],
                 }),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }],
         }]
@@ -3269,7 +3296,7 @@ mod tests {
                     slot: SlotRef::Fixed(SlotId(16)),
                     material: vec![Expr::Binding(0)],
                 }),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }],
         }];
@@ -3329,7 +3356,7 @@ mod tests {
                         slot: SlotRef::Fixed(SlotId(16)),
                         material: vec![Expr::Binding(0), Expr::Literal(Value::Bytes(vec![0; len]))],
                     }),
-                    mode: ModeExpr::Write,
+                    mode: ModeExpr::Write { moves: Moves::Both },
                     denomination: None,
                 }],
             }]
@@ -3373,7 +3400,7 @@ mod tests {
                     slot: SlotRef::Fixed(SlotId(16)),
                     material: vec![Expr::Binding(0)],
                 }),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }],
         }];
@@ -3465,7 +3492,7 @@ mod tests {
                     hi: Expr::Arg(1),
                     cap: Expr::Arg(2),
                 },
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             },
             Clause::Effect {
@@ -3489,7 +3516,7 @@ mod tests {
                 hi: 110,
                 cap: 8,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }));
         assert!(set.contains(&Effect {
             target: EffectTarget::Point(child_key(&TestHasher, ins.self_addr, SlotId(9), &[])),
@@ -3507,7 +3534,7 @@ mod tests {
                 hi: Expr::Arg(0),
                 cap: Expr::Literal(Value::U64(16)),
             },
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write { moves: Moves::Both },
             denomination: None,
         }];
         assert_eq!(
@@ -3534,7 +3561,7 @@ mod tests {
                 material: vec![Expr::Arg(slot)],
                 order: Expr::Literal(Value::U128(9)),
             },
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write { moves: Moves::Both },
             denomination: None,
         };
         let set = evaluate_effects(&[entry_for(0), entry_for(1)], &ins, &TestHasher).unwrap();
@@ -3554,7 +3581,7 @@ mod tests {
                     collection: id_for(resource),
                     order: 9,
                 },
-                mode: Mode::Write,
+                mode: Mode::Write { moves: Moves::Both },
             }));
         }
 
@@ -3591,7 +3618,7 @@ mod tests {
                     material: vec![Expr::Arg(slot)],
                 },
             },
-            mode: ModeExpr::Write,
+            mode: ModeExpr::Write { moves: Moves::Both },
             denomination: None,
         };
         let set = evaluate_effects(&[entry_for(0), entry_for(1)], &ins, &TestHasher).unwrap();
@@ -3611,7 +3638,7 @@ mod tests {
                     collection: collection_id(&TestHasher, ins.self_addr, SlotId(2), &[]),
                     order: order_for(name),
                 },
-                mode: Mode::Write,
+                mode: Mode::Write { moves: Moves::Both },
             }));
         }
 

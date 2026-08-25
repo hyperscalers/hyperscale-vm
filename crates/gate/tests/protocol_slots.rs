@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     RuleLeaf, SlotId, SlotRef, TargetExpr, Value, seal_clauses,
 };
 use hyperscale_vm_gate::{admit_package, attach_metadata};
-use hyperscale_vm_types::{Address, AddressClass, Presence};
+use hyperscale_vm_types::{Address, AddressClass, Moves, Presence};
 use wat::parse_str;
 
 const RES: Address = Address::new([0xE1; 31], AddressClass::Resource);
@@ -69,7 +69,7 @@ fn writing(slot: SlotId, material: Vec<Expr>) -> PackageMetadata {
                         slot: SlotRef::Fixed(slot),
                         material: material.clone(),
                     }),
-                    mode: ModeExpr::Write,
+                    mode: ModeExpr::Write { moves: Moves::Both },
                     denomination: None,
                 },
                 // The one-way door the creating slots require, as the

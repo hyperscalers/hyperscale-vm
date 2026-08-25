@@ -28,7 +28,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
-    EntryKey, Mode, Movement, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    EntryKey, Mode, Movement, Moves, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// The one answer a fixture guest hands back, so a receipt depends on
@@ -177,7 +177,7 @@ fn declared_of(spec: &TxSpec) -> EffectSet {
                 exclusive.insert(k);
                 Effect {
                     target: EffectTarget::Point(cell(k)),
-                    mode: Mode::Write,
+                    mode: Mode::Write { moves: Moves::Both },
                 }
             }
             Claim::Interval { lo, hi, write } => Effect {
@@ -188,7 +188,11 @@ fn declared_of(spec: &TxSpec) -> EffectSet {
                     hi,
                     cap: 8,
                 },
-                mode: if write { Mode::Write } else { Mode::Read },
+                mode: if write {
+                    Mode::Write { moves: Moves::Both }
+                } else {
+                    Mode::Read
+                },
             },
         };
         set.insert(effect)
@@ -244,7 +248,7 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 Capability::AmountRead(_) => {
                     let _ = session.amount_cell_balance(rep, 0);
                 }
-                Capability::InstanceRange(..) => {
+                Capability::Instances { .. } => {
                     let _ = session.range_count(rep, 0);
                 }
                 Capability::Delta(_) => {

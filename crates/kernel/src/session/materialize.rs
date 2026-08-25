@@ -10,7 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{Declaration, JudgedLeaf, Rule};
 use hyperscale_vm_types::{
-    Address, CollectionId, Effect, EffectTarget, Mode, Presence, ResourceAddr, SubstateKey, TxHash,
+    Address, CollectionId, Effect, EffectTarget, Mode, Moves, Presence, ResourceAddr, SubstateKey,
+    TxHash,
 };
 
 use super::buckets::Buckets;
@@ -99,7 +100,17 @@ pub enum Capability {
     RangeWrite(Interval),
     /// The same interval over entries that are instances of one
     /// resource, on the terms [`Capability::Amount`] states.
-    InstanceRange(Interval),
+    ///
+    /// The one movement capability a collection has, so it is the one
+    /// that carries which directions value may move under it — a point
+    /// vault says that by which mode holds it, and a collection has
+    /// only this.
+    Instances {
+        /// The interval it acts over.
+        interval: Interval,
+        /// Which directions value may move under it.
+        moves: Moves,
+    },
 }
 
 /// When a movement through a capability is judged.
@@ -133,7 +144,7 @@ impl Capability {
             | Self::Delta(key)
             | Self::Credit(key)
             | Self::Reserve { key, .. } => Some(key),
-            Self::RangeRead(_) | Self::RangeWrite(_) | Self::InstanceRange(_) => None,
+            Self::RangeRead(_) | Self::RangeWrite(_) | Self::Instances { .. } => None,
         }
     }
 
@@ -143,7 +154,7 @@ impl Capability {
         match *self {
             Self::RangeRead(interval)
             | Self::RangeWrite(interval)
-            | Self::InstanceRange(interval) => Some(interval),
+            | Self::Instances { interval, .. } => Some(interval),
             Self::Read(_)
             | Self::Write(_)
             | Self::Amount(_)
@@ -167,7 +178,7 @@ impl Capability {
             | Self::Reserve { .. }
             | Self::RangeRead(_)
             | Self::RangeWrite(_)
-            | Self::InstanceRange(_) => None,
+            | Self::Instances { .. } => None,
         }
     }
 
@@ -178,7 +189,7 @@ impl Capability {
     /// what the matrix covers is written where a form is added.
     #[cfg(any(test, feature = "testing"))]
     #[must_use]
-    pub const fn forms(key: SubstateKey, amount: u128, interval: Interval) -> [Self; 10] {
+    pub const fn forms(key: SubstateKey, amount: u128, interval: Interval) -> [Self; 12] {
         [
             Self::Read(key),
             Self::Write(key),
@@ -189,7 +200,21 @@ impl Capability {
             Self::Reserve { key, amount },
             Self::RangeRead(interval),
             Self::RangeWrite(interval),
-            Self::InstanceRange(interval),
+            // Every direction, because each is a row of the matrix in
+            // its own right: what an interval permits is the whole of
+            // what giving up a direction buys.
+            Self::Instances {
+                interval,
+                moves: Moves::In,
+            },
+            Self::Instances {
+                interval,
+                moves: Moves::Out,
+            },
+            Self::Instances {
+                interval,
+                moves: Moves::Both,
+            },
         ]
     }
 
@@ -211,7 +236,15 @@ impl Capability {
             Self::Reserve { .. } => 6,
             Self::RangeRead(_) => 7,
             Self::RangeWrite(_) => 8,
-            Self::InstanceRange(_) => 9,
+            Self::Instances {
+                moves: Moves::In, ..
+            } => 9,
+            Self::Instances {
+                moves: Moves::Out, ..
+            } => 10,
+            Self::Instances {
+                moves: Moves::Both, ..
+            } => 11,
         }
     }
 }
@@ -615,7 +648,7 @@ fn capability_for(effect: Effect, denominated: bool) -> Result<Capability, Mater
         // What a cell holds chooses the handle. The two share no
         // operation, so a body reaching for the wrong one is holding a
         // type that does not have it rather than meeting a refusal.
-        (EffectTarget::Point(key), Mode::Write) => Ok(if denominated {
+        (EffectTarget::Point(key), Mode::Write { .. }) => Ok(if denominated {
             Capability::Amount(key)
         } else {
             Capability::Write(key)
@@ -648,10 +681,10 @@ fn capability_for(effect: Effect, denominated: bool) -> Result<Capability, Mater
         // Point targets are spoken for above, so what is left is a
         // collection one — and the two spell the same interval, the mode
         // choosing only which capability carries it.
-        (target, mode @ (Mode::Read | Mode::Write)) => interval_of(target)
+        (target, mode @ (Mode::Read | Mode::Write { .. })) => interval_of(target)
             .map(|interval| match (mode, denominated) {
-                (Mode::Write, true) => Capability::InstanceRange(interval),
-                (Mode::Write, false) => Capability::RangeWrite(interval),
+                (Mode::Write { moves }, true) => Capability::Instances { interval, moves },
+                (Mode::Write { .. }, false) => Capability::RangeWrite(interval),
                 _ => Capability::RangeRead(interval),
             })
             .ok_or_else(|| MaterializeError::Unsupported(Box::new(effect))),
@@ -665,8 +698,8 @@ mod tests {
 
     use hyperscale_vm_effects::{Declaration, DeclaredAccess, JudgedLeaf, Rule, SlotRef};
     use hyperscale_vm_types::{
-        Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Presence, ResourceAddr,
-        encode_amount,
+        Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Moves, Presence,
+        ResourceAddr, encode_amount,
     };
 
     use super::super::fixtures::{RESOURCE, declared, env, hash, holding, key, ord, tx};
@@ -684,7 +717,7 @@ mod tests {
     ) -> Result<(), MaterializeError> {
         let set = declared(&[Effect {
             target,
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let ordered = ord(&set);
         let conditions = match requires {
@@ -853,7 +886,7 @@ mod tests {
         let (first, second) = (key(0xA1), key(0xA2));
         let write = |k| Effect {
             target: EffectTarget::Point(k),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         let set = declared(&[write(first), write(second)]);
 
@@ -893,7 +926,7 @@ mod tests {
         let cell = key(0xB4);
         let write = Effect {
             target: EffectTarget::Point(cell),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         let set = declared(&[write, write]);
         assert_eq!(set.len(), 1, "the set folds them");
@@ -1047,7 +1080,10 @@ mod tests {
         ];
         let modes = [
             (ModeExpr::Read, Mode::Read),
-            (ModeExpr::Write, Mode::Write),
+            (
+                ModeExpr::Write { moves: Moves::Both },
+                Mode::Write { moves: Moves::Both },
+            ),
             (ModeExpr::Delta, Mode::Delta),
             (ModeExpr::Reserve(Expr::Arg(0)), Mode::Reserve { amount: 1 }),
         ];
@@ -1101,7 +1137,7 @@ mod tests {
     fn one_cell_does_not_materialise_as_a_vault_and_a_byte_cell() {
         let write = Effect {
             target: EffectTarget::Point(key(1)),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         let materialise = |holds: Vec<Option<ResourceAddr>>| {
             KernelSession::materialize(
@@ -1165,7 +1201,7 @@ mod tests {
                 hi,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         };
         let wide = interval(u128::MAX);
         let narrow = interval(10);
@@ -1204,7 +1240,7 @@ mod tests {
         let set = declared(&[
             Effect {
                 target: EffectTarget::Point(cell),
-                mode: Mode::Write,
+                mode: Mode::Write { moves: Moves::Both },
             },
             Effect {
                 target: EffectTarget::Point(cell),

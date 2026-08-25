@@ -1140,7 +1140,7 @@ mod tests {
 
     use hyperscale_vm_types::{
         ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Drawn, Effect, EffectSet,
-        EffectTarget, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode,
+        EffectTarget, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode, Moves,
         SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, encode_amount,
     };
 
@@ -1197,11 +1197,11 @@ mod tests {
     /// Every mode the kernel materializes, one of each.
     ///
     /// Built rather than materialized from a declaration: what is under
-    /// test is what a capability grants, and reaching each of the ten
+    /// test is what a capability grants, and reaching each of them
     /// through a signature that produces it would test the materializer
     /// instead. Built by [`Capability::forms`], so a mode added to the
     /// enum has to take a place in what the matrix asks.
-    fn every_capability() -> [Capability; 10] {
+    fn every_capability() -> [Capability; 12] {
         Capability::forms(
             key(1),
             5,
@@ -1249,7 +1249,8 @@ mod tests {
             Op::TakeReserved => session.reserve_take(0, 0).map(|_| ()),
             Op::ReadEntries => session.range_count(0, 0).map(|_| ()),
             Op::WriteEntries => session.range_set(0, 0, 0, vec![1]),
-            Op::MoveInstances => session.range_take(0, 0, &[1]).map(|_| ()),
+            Op::FileInstances => session.range_put(0, 0, 0, &[1]),
+            Op::TakeInstances => session.range_take(0, 0, &[1]).map(|_| ()),
         }
     }
 
@@ -1363,7 +1364,7 @@ mod tests {
     fn writing(at: SubstateKey) -> EffectSet {
         declared(&[Effect {
             target: EffectTarget::Point(at),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }])
     }
 

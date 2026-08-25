@@ -1,7 +1,7 @@
 //! Shared test worlds: small published packages, their instances, and
 //! the manifests that call them.
 
-use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, ResourceAddr};
+use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, Moves, ResourceAddr};
 
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
 use crate::hash::{Hash32, Hasher, TestHasher};
@@ -112,7 +112,10 @@ pub fn star_world(sink: Totality) -> (Records, Manifest) {
                 material: vec![],
                 grants: GrantsExpr::new(),
             }],
-            effects: vec![self_point(SlotId(2), ModeExpr::Write)],
+            effects: vec![self_point(
+                SlotId(2),
+                ModeExpr::Write { moves: Moves::Both },
+            )],
             ..MethodSignature::default()
         },
     );

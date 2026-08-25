@@ -280,7 +280,7 @@ impl KernelSession {
                 | Capability::Reserve { key, .. } => {
                     out.cells.entry(*key).or_insert(resource);
                 }
-                Capability::InstanceRange(interval) => {
+                Capability::Instances { interval, .. } => {
                     out.entries
                         .entry((interval.owner, interval.collection))
                         .or_insert(resource);
@@ -662,7 +662,7 @@ fn diff(store: &OverlayStore) -> StateDelta {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_types::{
-        AbortReason, Address, AddressClass, CollectionId, Effect, EffectTarget, Event, Mode,
+        AbortReason, Address, AddressClass, CollectionId, Effect, EffectTarget, Event, Mode, Moves,
         Outcome, encode_amount,
     };
 
@@ -739,7 +739,7 @@ mod tests {
         store.write(vault, encode_amount(100).to_vec());
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_holding(store, &set);
 
@@ -773,7 +773,7 @@ mod tests {
         store.write(vault, encode_amount(100).to_vec());
         let set = declared(&[Effect {
             target: EffectTarget::Point(vault),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_holding(store, &set);
 
@@ -797,7 +797,7 @@ mod tests {
                 hi: u128::MAX,
                 cap: 4,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
         session.range_count(0, 0).unwrap();

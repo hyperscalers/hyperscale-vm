@@ -66,6 +66,17 @@ use common::world::*;
 /// quarantine for what it refuses — which is a package's cell rather
 /// than the protocol's, since only the account itself reaches it.
 ///
+/// Three of the four moved, and this one is the dischargeable drift the
+/// paragraph above admits rather than a routing change. An exclusive
+/// write now carries which directions value moves under it, so the
+/// rendering reads `Write { moves: Both }` where it read `Write`, and
+/// `Both` is exactly what a bare write meant. The whole diff between the
+/// old rendering and the new is those four words: the same addresses,
+/// the same effect sets, the same shards asked for the same leaves, and
+/// no byte array anywhere in it moved. Transfer did not move at all,
+/// because a transfer's routing holds no exclusive write — it credits
+/// and it reserves.
+///
 /// The swap and fill pins carry the instantiation fence: admission reads
 /// the configuration leaf of every component a node targets, so the
 /// owning shard is a participant and provisions the leaf. Transfer and
@@ -99,11 +110,11 @@ fn the_catalogue_routes_to_pinned_vectors() {
 
 const PIN_TRANSFER: &str = "5ca05dceccff4764f18ee59c18c6ea096e46f91133bd7084e5d40adca9865541";
 
-const PIN_SWAP: &str = "be87bb6b8bd36425a4858fe4704d435fa9d0e5e29a185ba735a41ff00f85d65f";
+const PIN_SWAP: &str = "04996cb1cab50bcce7a37f6fda268913210814d21ef62c0dfc489736095ec195";
 
-const PIN_FILL: &str = "581542a1dd21c3487b1d749eafcf4b6dbe6e5838bdb49cee11bbdb0723ea10a3";
+const PIN_FILL: &str = "848e3ae3f840c9d0be6f6c2b1bd95110b765bca3893bf185ac7fbbe671023f1b";
 
-const PIN_PROPOSE: &str = "5c730c8e7a238ce7d1b3ccc2d6cf763a4d31ce447e1402da1d351085d8879f34";
+const PIN_PROPOSE: &str = "8cd5f368f269037b81605d8166f3007a4b754203d90c0527c21f4b311c6bd333";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

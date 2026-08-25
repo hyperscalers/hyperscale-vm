@@ -69,7 +69,7 @@ mod tests {
     use hyperscale_vm_fixtures::{amm, book};
     use hyperscale_vm_stdlib::account;
     use hyperscale_vm_types::{
-        Address, AddressClass, LocalKey, MAX_ERROR_CODES, MAX_EVENT_TYPES, ResourceAddr,
+        Address, AddressClass, LocalKey, MAX_ERROR_CODES, MAX_EVENT_TYPES, Moves, ResourceAddr,
         SubstateKey,
     };
 
@@ -90,7 +90,7 @@ mod tests {
                 reach: None,
                 guard: None,
                 target: TargetExpr::Point(expr),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }],
             ..MethodSignature::default()

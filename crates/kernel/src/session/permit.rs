@@ -12,6 +12,8 @@
 //! `Capability::form`, which is what puts it in front of the matrix
 //! rather than leaving it a pairing nobody asked.
 
+use hyperscale_vm_types::Moves;
+
 use super::materialize::Capability;
 
 /// One operation a body performs through a handle.
@@ -45,8 +47,10 @@ pub enum Op {
     ReadEntries,
     /// Write an interval's entries as bytes.
     WriteEntries,
-    /// Move instances through an interval.
-    MoveInstances,
+    /// File instances into an interval.
+    FileInstances,
+    /// Take instances out of an interval.
+    TakeInstances,
 }
 
 impl Op {
@@ -54,7 +58,7 @@ impl Op {
     /// a matrix over this and [`Capability`] is the whole of what the
     /// kernel permits, and an operation added without a row in
     /// [`permits`] does not compile.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Read,
         Self::Write,
         Self::Clear,
@@ -67,7 +71,8 @@ impl Op {
         Self::TakeReserved,
         Self::ReadEntries,
         Self::WriteEntries,
-        Self::MoveInstances,
+        Self::FileInstances,
+        Self::TakeInstances,
     ];
 
     /// How a refusal names the operation, in the vocabulary a body's
@@ -86,7 +91,8 @@ impl Op {
             Self::TakeReserved => "take the reservation",
             Self::ReadEntries => "read the interval's entries",
             Self::WriteEntries => "write the interval's entries",
-            Self::MoveInstances => "move instances through the interval",
+            Self::FileInstances => "file instances into the interval",
+            Self::TakeInstances => "take instances out of the interval",
         }
     }
 }
@@ -120,11 +126,21 @@ pub const fn permits(held: &Capability, op: Op) -> bool {
         Op::ReadEntries => {
             matches!(
                 held,
-                C::RangeRead(_) | C::RangeWrite(_) | C::InstanceRange(_)
+                C::RangeRead(_) | C::RangeWrite(_) | C::Instances { .. }
             )
         }
         Op::WriteEntries => matches!(held, C::RangeWrite(_)),
-        Op::MoveInstances => matches!(held, C::InstanceRange(_)),
+        // The two directions of an interval, on the terms the two
+        // directions of a value cell already have: an interval that gave
+        // up a direction answers the movement it kept and not the other.
+        Op::FileInstances => match held {
+            C::Instances { moves, .. } => moves.credits(),
+            _ => false,
+        },
+        Op::TakeInstances => match held {
+            C::Instances { moves, .. } => moves.debits(),
+            _ => false,
+        },
     }
 }
 
@@ -140,6 +156,14 @@ pub(super) const fn describe(held: &Capability) -> &'static str {
         Capability::Reserve { .. } => "a held reservation",
         Capability::RangeRead(_) => "a read interval",
         Capability::RangeWrite(_) => "a write interval",
-        Capability::InstanceRange(_) => "an interval of instances",
+        Capability::Instances {
+            moves: Moves::In, ..
+        } => "an interval instances are filed into",
+        Capability::Instances {
+            moves: Moves::Out, ..
+        } => "an interval instances are taken from",
+        Capability::Instances {
+            moves: Moves::Both, ..
+        } => "an interval of instances",
     }
 }

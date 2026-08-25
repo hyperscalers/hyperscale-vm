@@ -374,6 +374,7 @@ mod tests {
     use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
     use hyperscale_vm_runtime::component_exports;
     use hyperscale_vm_stdlib::{account, account_artifact, staking_artifact};
+    use hyperscale_vm_types::Moves;
     use wat::parse_str;
 
     use super::{admit_protocol_package, *};
@@ -802,7 +803,7 @@ mod tests {
                     slot: SlotRef::Fixed(package_slot(0)),
                     material: vec![],
                 }),
-                mode: ModeExpr::Write,
+                mode: ModeExpr::Write { moves: Moves::Both },
                 denomination: None,
             }];
             signature.abi = vec![AbiParam::Handle { clause: 0, site: 0 }];

@@ -33,7 +33,7 @@ use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_sdk::state::Word;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, SHIPPED as PROTOCOL, STAKING_COMPONENT};
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Moves,
     ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
@@ -478,11 +478,11 @@ fn lottery_session() -> KernelSession {
     for effect in [
         Effect {
             target: EffectTarget::Point(round_key()),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Point(draw_key()),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Range {

@@ -177,7 +177,7 @@ mod tests {
 
     use hyperscale_vm_types::{
         Address, AddressClass, CallTarget, Effect, EffectConflict, EffectSet, EffectTarget,
-        MAX_MANIFEST_NODES, Mode, PrincipalAddr,
+        MAX_MANIFEST_NODES, Mode, Moves, PrincipalAddr,
     };
 
     use super::{PrefixShardResolver, Routing, ShardResolver, route};
@@ -561,11 +561,11 @@ mod tests {
                                 slot: SlotRef::Fixed(package_slot(0)),
                                 material: vec![Expr::Binding(0)],
                             }),
-                            mode: ModeExpr::Write,
+                            mode: ModeExpr::Write { moves: Moves::Both },
                             denomination: None,
                         }],
                     },
-                    self_point(package_slot(1), ModeExpr::Write),
+                    self_point(package_slot(1), ModeExpr::Write { moves: Moves::Both }),
                 ],
                 ..MethodSignature::default()
             },
@@ -610,7 +610,7 @@ mod tests {
                             slot: SlotRef::Fixed(package_slot(0)),
                             material: vec![Expr::Binding(0)],
                         }),
-                        mode: ModeExpr::Write,
+                        mode: ModeExpr::Write { moves: Moves::Both },
                         denomination: None,
                     }],
                 }],
@@ -677,7 +677,7 @@ mod tests {
                 declaration.ordered[usize::try_from(rep).unwrap()]
                     .effect
                     .mode,
-                Mode::Write,
+                Mode::Write { moves: Moves::Both },
                 "the bound clause's own effect, whatever the spread's width"
             );
         }
@@ -704,7 +704,7 @@ mod tests {
                         slot: SlotRef::Fixed(SlotId(1)),
                         material: vec![],
                     }),
-                    mode: ModeExpr::Write,
+                    mode: ModeExpr::Write { moves: Moves::Both },
                     denomination: None,
                 }],
                 ..MethodSignature::default()
@@ -1158,7 +1158,10 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0), AbiParam::Bucket(0)],
-                effects: vec![self_point(package_slot(0), ModeExpr::Write)],
+                effects: vec![self_point(
+                    package_slot(0),
+                    ModeExpr::Write { moves: Moves::Both },
+                )],
                 ..MethodSignature::default()
             },
         );

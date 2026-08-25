@@ -259,6 +259,7 @@ fn read_uleb128(bytes: &[u8], pos: &mut usize) -> Result<usize, ArtifactError> {
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::{ShapeField, TypeShape, to_vec_with_depth};
+    use hyperscale_vm_types::Moves;
 
     use super::{
         ArtifactError, CUSTOM_SECTION_ID, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata,
@@ -406,7 +407,7 @@ mod tests {
                     reach: None,
                     guard: None,
                     target: TargetExpr::Point(expr),
-                    mode: ModeExpr::Write,
+                    mode: ModeExpr::Write { moves: Moves::Both },
                     denomination: None,
                 }],
                 ..MethodSignature::default()

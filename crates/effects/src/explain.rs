@@ -34,7 +34,7 @@ use std::fmt::Write as _;
 
 use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
 use hyperscale_vm_types::{
-    Address, AddressClass, EffectTarget, Presence, SubstateKey, UnmetCondition,
+    Address, AddressClass, EffectTarget, Moves, Presence, SubstateKey, UnmetCondition,
 };
 
 use crate::admission::{Admitted, Asks, Injected};
@@ -651,7 +651,14 @@ impl Names<'_> {
             ModeExpr::Delta => "delta".to_owned(),
             ModeExpr::Credit => "credit".to_owned(),
             ModeExpr::Reserve(amount) => format!("reserve {}", self.expr(amount, ATOM)),
-            ModeExpr::Write => "write".to_owned(),
+            // The verb a direction makes of a write: filing puts
+            // entries in and never takes them out, taking does the
+            // reverse, and a write that says neither does both.
+            ModeExpr::Write { moves } => match moves {
+                Moves::In => "file".to_owned(),
+                Moves::Out => "take".to_owned(),
+                Moves::Both => "write".to_owned(),
+            },
         }
     }
 

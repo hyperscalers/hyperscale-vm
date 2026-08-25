@@ -17,7 +17,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
-use hyperscale_vm_types::{AbortReason, ComponentAddr, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{AbortReason, ComponentAddr, Moves, PrincipalAddr, ResourceAddr};
 
 const ATTACKER: PrincipalAddr = principal(0x22);
 /// What the attacker actually has.
@@ -70,7 +70,7 @@ fn mixer() -> PackageMetadata {
                 AbiParam::Handle { clause: 0, site: 0 },
                 AbiParam::Derived(Expr::Arg(0)),
             ],
-            effects: vec![holding(DEAR, ModeExpr::Write)],
+            effects: vec![holding(DEAR, ModeExpr::Write { moves: Moves::Both })],
             ..MethodSignature::default()
         },
     );

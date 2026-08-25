@@ -24,8 +24,8 @@ use hyperscale_vm_runtime::{
     Bucket, Site, add_kernel_to_linker, blessed_engine, classify, validate_component,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, ResourceAddr,
-    SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Moves,
+    ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::component::{Component, Instance, Linker, Resource};
 use wasmtime::{Result, Store};
@@ -66,7 +66,7 @@ fn session() -> KernelSession {
     }
     store.write(cell(), encode_amount(BALANCE).to_vec());
 
-    let write = Mode::Write;
+    let write = Mode::Write { moves: Moves::Both };
     let effects = [
         Effect {
             target: EffectTarget::Range {

@@ -25,7 +25,7 @@ use hyperscale_vm_ref::{
 use hyperscale_vm_runtime::{HostRefusal, Site, add_kernel_to_linker, blessed_engine};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
-    Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Mode, Moves, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use libfuzzer_sys::fuzz_target;
 use wasmtime::component::{Component, Instance, Linker, Resource};
@@ -184,7 +184,7 @@ fn fixture(plan: &Plan) -> Option<Fx> {
         },
         Effect {
             target: EffectTarget::Point(rmw),
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Point(readable),
@@ -208,7 +208,7 @@ fn fixture(plan: &Plan) -> Option<Fx> {
                 hi: plan.hi,
                 cap: plan.cap,
             },
-            mode: Mode::Write,
+            mode: Mode::Write { moves: Moves::Both },
         },
     ];
     if plan.spare_read {
