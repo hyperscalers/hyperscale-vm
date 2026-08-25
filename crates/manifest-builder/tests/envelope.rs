@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     TestHasher, admit_tree,
 };
 use hyperscale_vm_manifest_builder::{
-    EnvelopeBuilder, EnvelopeError, IntentBuilder, SocketRef, YieldSink,
+    EnvelopeBuilder, EnvelopeError, IntentBuilder, OpenSocket, SocketRef,
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr, ResourceAddr};
@@ -41,10 +41,10 @@ fn admits(tree: &EnvelopeTree) {
     admit_tree(tree, ALICE, identity, &chain, &TestHasher).expect("a composed envelope admits");
 }
 
-/// The single sink of an intent declaring one parameter.
-fn only(sinks: Vec<YieldSink>) -> YieldSink {
-    let [sink] = sinks.try_into().expect("one socket");
-    sink
+/// The single open socket of an intent declaring one.
+fn only(sockets: Vec<OpenSocket>) -> OpenSocket {
+    let [socket] = sockets.try_into().expect("one socket");
+    socket
 }
 
 /// The two-sided trade: each signer withdraws what they pay, exports it,
@@ -244,7 +244,7 @@ fn an_intent_still_under_construction_is_refused() {
 }
 
 #[test]
-#[should_panic(expected = "bound within the envelope that minted it")]
+#[should_panic(expected = "filled within the envelope that opened it")]
 fn a_handle_from_another_envelope_is_refused() {
     let chain = world();
     let (mut mine, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, BOB);

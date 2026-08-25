@@ -122,7 +122,7 @@ fn a_composed_tree_flattens_deterministically() {
     let admitted = admit_composed(&tree).unwrap();
     let manifest = admitted.admitted.manifest();
 
-    // Root nodes lead where ready, yields interleave the rest: each
+    // Root nodes lead where ready, sockets interleave the rest: each
     // intent's sign-in and withdraw, then the two deposits consuming
     // each other's yields.
     let shape: Vec<(Address, &str)> = manifest
@@ -252,19 +252,19 @@ const fn rebind(binding: Binding, producer: u32) -> Binding {
 }
 
 #[test]
-fn mutual_yields_with_no_order_are_a_cycle() {
-    // Each intent's only node consumes the other's yield; neither can
-    // produce first.
+fn mutual_sockets_with_no_order_are_a_cycle() {
+    // Each intent's only node consumes what the other exports; neither
+    // can produce first.
     let mut tree = composed_tree(100);
     tree.root.graph.nodes = vec![deposit_param(ALICE, 0)];
     tree.subintents[0].decl.graph.nodes = vec![deposit_param(BOB, 0)];
     tree.root_bindings[0] = rebind(tree.root_bindings[0], 0);
     tree.subintents[0].bindings[0] = rebind(tree.subintents[0].bindings[0], 0);
-    assert_eq!(admit_composed(&tree), Err(AdmissionError::CyclicYields));
+    assert_eq!(admit_composed(&tree), Err(AdmissionError::CyclicSockets));
 }
 
 #[test]
-fn a_yielded_resource_must_match_the_declared_type() {
+fn what_fills_a_socket_must_match_the_declared_resource() {
     let mut tree = composed_tree(100);
     tree.subintents[0].decl.sockets[0] = Socket::Value {
         resource: RES_Y,
@@ -294,7 +294,7 @@ fn withdraw_nf(target: impl Into<CallTarget>, resource: impl Into<Address>, id: 
 }
 
 #[test]
-fn a_yielded_edge_is_judged_by_its_kind() {
+fn an_edge_filling_a_socket_is_judged_by_its_kind() {
     let nf_tree = |consumer: GraphNode| EnvelopeTree {
         root: IntentDecl {
             graph: ManifestGraph {
@@ -460,15 +460,15 @@ fn duplicate_subintents_reject() {
 }
 
 #[test]
-fn an_intent_cannot_declare_unbounded_yield_params() {
-    // The parameter count bounds the binding vector, and both index by
+fn an_intent_cannot_declare_unbounded_sockets() {
+    // The socket count bounds the binding vector, and both index by
     // `u32` — so the cap is what makes those positions expressible by
     // construction rather than by hope.
     let mut tree = composed_tree(100);
-    let param = tree.subintents[0].decl.sockets[0].clone();
+    let socket = tree.subintents[0].decl.sockets[0].clone();
     let binding = tree.subintents[0].bindings[0];
     for _ in 0..MAX_SOCKETS {
-        tree.subintents[0].decl.sockets.push(param.clone());
+        tree.subintents[0].decl.sockets.push(socket.clone());
         tree.subintents[0].bindings.push(binding);
     }
     assert_eq!(
@@ -478,10 +478,10 @@ fn an_intent_cannot_declare_unbounded_yield_params() {
 }
 
 #[test]
-fn a_yield_param_cannot_bind_a_value_parameter() {
-    // `withdraw(resource, amount)` takes no bucket, so binding a yield
-    // into it is a parameter defect — not the edge defect the shared
-    // arity check would otherwise report.
+fn a_socket_cannot_fill_a_value_parameter() {
+    // `withdraw(resource, amount)` takes no bucket, so filling one of
+    // its parameters from a socket is a parameter defect — not the edge
+    // defect the shared arity check would otherwise report.
     let mut tree = composed_tree(100);
     tree.subintents[0].decl.graph.nodes[2] = GraphNode::bearing(
         BOB,

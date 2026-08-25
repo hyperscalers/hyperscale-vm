@@ -235,10 +235,10 @@ pub enum AdmissionError {
         /// The socket it named.
         socket: u32,
     },
-    /// Yield edges admitting no execution order: intents wait on each
-    /// other's outputs in a cycle.
-    #[error("the envelope's yield edges admit no execution order")]
-    CyclicYields,
+    /// Sockets admitting no execution order: intents wait on each other
+    /// in a cycle, through their arguments or through their evidence.
+    #[error("the envelope's sockets admit no execution order")]
+    CyclicSockets,
     /// A record presented for a node that is not its component's seal.
     ///
     /// A component the chain has is a component whose record the chain
@@ -745,7 +745,7 @@ pub fn admit_presenting(
 /// enforces it against what the producer actually returned.
 /// Bind one produced edge to an edge parameter: the output lookup, the
 /// consumption bookkeeping, the kind check, and the constraint bounds —
-/// shared by a direct edge and a subintent yield, so neither path can
+/// shared by a direct edge and one filling a socket, so neither path can
 /// drop a check the other makes. `verify` is the caller's own look at
 /// the resolved resource, asked before anything is consumed.
 fn bind_edge(
@@ -845,9 +845,9 @@ pub(crate) struct IntentView<'a> {
     pub signer: Option<PrincipalAddr>,
 }
 
-/// Check every intent's bindings and parameter consumption, interleave
-/// the intents into one flattened node order along the yield edges, and
-/// run the node-by-node admission check over that order.
+/// Check every intent's bindings and socket consumption, interleave the
+/// intents into one flattened node order over the sockets they declare,
+/// and run the node-by-node admission check over that order.
 pub(crate) fn admit_intents(
     intents: &[IntentView<'_>],
     identity: ManifestHash,
@@ -984,9 +984,9 @@ fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
 }
 
 /// Deterministic interleave: repeatedly emit the lowest-indexed intent
-/// whose next node has every yield dependency satisfied. Intents keep
-/// their author order, so acyclicity is judged at yield granularity; a
-/// stall is a cycle.
+/// whose next node has every socket it reaches already filled. Intents
+/// keep their author order, so acyclicity is judged at socket
+/// granularity; a stall is a cycle.
 ///
 /// Returns the flattened position per (intent, local node) and the
 /// emission order.
@@ -1009,14 +1009,15 @@ fn interleave(
                 continue;
             };
             // Every socket this node reaches, whichever way it reaches
-            // one: an argument consuming a yielded edge, and evidence
-            // presenting a yielded proof. Both are dependencies on
-            // another intent's node, and a proof left out of this scan
-            // would let a node present a claim minted after it ran.
-            for param in node.sockets() {
-                // An out-of-range parameter carries no dependency; the
+            // one: an argument consuming the edge that fills it, and
+            // evidence presenting the proof that does. Both are
+            // dependencies on another intent's node, and a proof left
+            // out of this scan would let a node present a claim minted
+            // after it ran.
+            for socket in node.sockets() {
+                // An out-of-range socket carries no dependency; the
                 // node check below rejects it.
-                let Some(binding) = usize::try_from(param)
+                let Some(binding) = usize::try_from(socket)
                     .ok()
                     .and_then(|position| intent.bindings.get(position))
                 else {
@@ -1039,7 +1040,7 @@ fn interleave(
             break;
         }
         if !progressed {
-            return Err(AdmissionError::CyclicYields);
+            return Err(AdmissionError::CyclicSockets);
         }
     }
 
@@ -1367,9 +1368,9 @@ impl Lower<'_> {
         })))
     }
 
-    /// Bind the node's arguments against its sockets: a
-    /// literal for a value parameter, an edge or a yield binding for a
-    /// bucket one.
+    /// Bind the node's arguments against the signature's parameters: a
+    /// literal for a value parameter, and for a bucket one either an
+    /// edge of this graph or the socket some other intent fills.
     fn bind_args(
         &mut self,
         intent_index: usize,
@@ -1430,7 +1431,7 @@ impl Lower<'_> {
                     inputs.push(input);
                 }
                 GraphArg::Socket(reference) => {
-                    let (value, input) = self.bind_yielded(
+                    let (value, input) = self.bind_socket(
                         intent_index,
                         *reference,
                         *param,
@@ -1463,10 +1464,10 @@ impl Lower<'_> {
     /// Bind the edge a socket was filled with.
     ///
     /// The socket types what may arrive and the composition names what
-    /// did, so both are checked here: the parameter's declared resource
+    /// did, so both are checked here: the socket's declared resource
     /// against the edge's, and the declaring intent's own constraints
     /// against it as if it were an ordinary argument.
-    fn bind_yielded(
+    fn bind_socket(
         &mut self,
         intent_index: usize,
         reference: u32,
@@ -1627,20 +1628,25 @@ impl Lower<'_> {
                     // minting node happened to mint — so a composition
                     // cannot hand an intent authority its signer never
                     // asked for.
-                    let Some((Socket::Authority(wanted), Binding::Authority { intent, producer })) =
-                        usize::try_from(*reference).ok().and_then(|position| {
-                            Some((
-                                intent.sockets.get(position)?,
-                                *intent.bindings.get(position)?,
-                            ))
-                        })
+                    let Some((
+                        Socket::Authority(wanted),
+                        Binding::Authority {
+                            intent: filled_from,
+                            producer,
+                        },
+                    )) = usize::try_from(*reference).ok().and_then(|position| {
+                        Some((
+                            intent.sockets.get(position)?,
+                            *intent.bindings.get(position)?,
+                        ))
+                    })
                     else {
                         return Err(AdmissionError::UnknownSocket {
                             node: node_index,
                             socket: *reference,
                         });
                     };
-                    let source = usize::try_from(intent)
+                    let source = usize::try_from(filled_from)
                         .ok()
                         .and_then(|source| self.flat_of.get(source))
                         .and_then(|flat| usize::try_from(producer).ok().and_then(|at| flat.get(at)))

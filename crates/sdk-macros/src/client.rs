@@ -292,7 +292,7 @@ fn wrapper(
         (Serves::Principals, true) => (
             quote!(),
             quote!(proof.acting().ok_or(
-                ::hyperscale_vm_sdk::client::TypedError::YieldedForSelf {
+                ::hyperscale_vm_sdk::client::TypedError::SocketProofForSelf {
                     method: #published.to_owned(),
                 }
             )?),

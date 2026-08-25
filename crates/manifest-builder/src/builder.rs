@@ -418,7 +418,7 @@ impl GraphBuilder {
     /// # Panics
     ///
     /// On a bucket carrying constraints — a yield's constraints are the
-    /// consuming parameter's declaration, and accepting them here would
+    /// declaration of the socket it fills, and accepting them here would
     /// drop them silently — and on a bucket minted by a different builder.
     ///
     /// [`Binding`]: hyperscale_vm_effects::Binding
@@ -429,7 +429,7 @@ impl GraphBuilder {
     pub fn export(&mut self, bucket: Bucket) -> EdgeRef {
         assert!(
             bucket.constraints.is_empty(),
-            "a yield edge's constraints belong on the consuming intent's parameter"
+            "a yield edge's constraints belong on the socket it fills"
         );
         self.check(&bucket);
         self.consume(bucket.edge);
@@ -607,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "consuming intent's parameter")]
+    #[should_panic(expected = "the socket it fills")]
     fn a_constrained_export_is_refused() {
         let mut b = GraphBuilder::new();
         let [funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));

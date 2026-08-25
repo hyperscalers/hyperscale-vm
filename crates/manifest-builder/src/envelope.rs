@@ -9,16 +9,16 @@
 //! declaration and have it mean the same thing in whatever envelope
 //! later carries it.
 //!
-//! The wiring is done from handles rather than from indices. Declaring a
-//! socket answers with the [`SocketRef`] the intent's own graph names it
-//! by; the composition's side of the same declaration is a
-//! [`YieldSink`], which arrives when the intent enters an envelope.
-//! Exporting or offering answers with a [`YieldSource`]. Both name the
-//! intent they came from, so a binding cannot reach an intent or a node
-//! that does not exist.
+//! The wiring is done from handles rather than from indices. One
+//! declared socket has two handles, one per side: inside the intent it
+//! is the [`SocketRef`] its own graph names it by, and outside it is an
+//! [`OpenSocket`], which arrives when the intent enters an envelope.
+//! What fills one is an [`Offered`], answered by exporting an edge or
+//! offering a proof. All three name the intent they came from, so a
+//! binding cannot reach an intent or a node that does not exist.
 //!
-//! An intent enters an envelope one of two ways, and both hand back sinks
-//! the same way. [`EnvelopeBuilder::seal`] takes one the composer wrote.
+//! An intent enters an envelope one of two ways, and both hand back open
+//! sockets the same way. [`EnvelopeBuilder::seal`] takes one the composer wrote.
 //! [`EnvelopeBuilder::present`] takes one somebody else signed — built
 //! through [`IntentBuilder::declaration`] before any envelope existed, and
 //! stored exactly as handed over, because the signature already covering
@@ -113,35 +113,38 @@ pub enum EnvelopeError {
 /// cannot be wired into another's slots.
 static NEXT_ENVELOPE: AtomicU64 = AtomicU64::new(0);
 
-/// One intent's socket, as the composition names it — the
-/// socket side of a declaration, which a binding fills.
+/// One intent's declared socket, as the composition names it — the side
+/// a binding fills, against the [`SocketRef`] the intent's own graph
+/// reaches it by.
 ///
 /// Affine like the [`Socket`] it is declared beside: one socket takes one
-/// source, so binding the same parameter twice has no spelling.
+/// offering, so filling the same socket twice has no spelling.
 #[derive(Debug)]
-pub struct YieldSink {
+pub struct OpenSocket {
     envelope: u64,
     intent: u32,
     position: u32,
 }
 
-/// What one intent exported, as the composition names it — the source
-/// side of a socket.
+/// What one intent hands the composition to fill a socket with: an edge
+/// it exported, or a proof one of its nodes mints.
 ///
-/// An edge fills exactly one socket, because value is linear. A proof
-/// fills as many as ask for it, because presenting a claim twice says
-/// nothing presenting it once does not — so it answers by value rather
-/// than being consumed.
+/// Not a yield in both halves, which is why it is not named for one. An
+/// edge is yielded and fills exactly one socket, because value is
+/// linear. A proof is not yielded at all — the minting node stands where
+/// it stood — and fills as many sockets as ask for it, because
+/// presenting a claim twice says nothing presenting it once does not, so
+/// this answers by value rather than being consumed.
 #[derive(Clone, Copy, Debug)]
-pub struct YieldSource {
+pub struct Offered {
     envelope: u64,
     intent: u32,
-    yielded: Yielded,
+    offering: Offering,
 }
 
-/// Which of the two a source names.
+/// Which of the two an offering names.
 #[derive(Clone, Copy, Debug)]
-enum Yielded {
+enum Offering {
     Edge(EdgeRef),
     Proof(u32),
 }
@@ -163,9 +166,10 @@ impl<'a> IntentBuilder<'a> {
     /// An intent written to be signed on its own and handed to a composer
     /// afterwards — a declaration that exists before any envelope does.
     ///
-    /// Its sockets are filled by whoever presents it, so nothing here mints a
-    /// [`YieldSink`]: those come from [`EnvelopeBuilder::present`], on the
-    /// composing side, where the intent this declaration will be is known.
+    /// Its sockets are filled by whoever presents it, so nothing here mints
+    /// an [`OpenSocket`]: those come from [`EnvelopeBuilder::present`], on
+    /// the composing side, where the intent this declaration will be is
+    /// known.
     #[must_use]
     pub fn declaration(
         chain: &'a dyn ChainRecords,
@@ -184,10 +188,10 @@ impl<'a> IntentBuilder<'a> {
     /// `resource` and satisfying `constraints`.
     ///
     /// The [`Socket`] is this intent's own obligation — its graph must
-    /// consume it exactly once. The composition's obligation to bind the
-    /// socket is discharged against a [`YieldSink`], which arrives when the
-    /// intent enters an envelope rather than here, so that an intent
-    /// written and one presented hand back sinks the same way.
+    /// consume it exactly once. The composition's obligation to fill the
+    /// socket is discharged against an [`OpenSocket`], which arrives when
+    /// the intent enters an envelope rather than here, so that an intent
+    /// written and one presented hand back open sockets the same way.
     ///
     /// # Panics
     ///
@@ -230,7 +234,7 @@ impl<'a> IntentBuilder<'a> {
         // reading the address class gives everywhere.
         let acting = CallTarget::try_from(claim.subject).ok();
         self.sockets.push(Socket::Authority(claim));
-        Proof::yielded(position, acting)
+        Proof::from_socket(position, acting)
     }
 
     /// The declaration, for its signer to sign and hand on.
@@ -255,18 +259,18 @@ impl<'a> IntentBuilder<'a> {
     }
 
     /// Consume an output as this intent's yield edge, for the composition
-    /// to bind to some intent's socket.
+    /// to fill some intent's socket with.
     ///
     /// # Panics
     ///
     /// On a bucket carrying constraints — a yield's constraints are the
-    /// consuming parameter's declaration — or one minted elsewhere.
-    pub fn export(&mut self, bucket: Bucket) -> YieldSource {
+    /// declaring socket's — or one minted elsewhere.
+    pub fn export(&mut self, bucket: Bucket) -> Offered {
         let edge = self.graph.export(bucket);
-        YieldSource {
+        Offered {
             envelope: self.envelope,
             intent: self.intent,
-            yielded: Yielded::Edge(edge),
+            offering: Offering::Edge(edge),
         }
     }
 
@@ -279,18 +283,18 @@ impl<'a> IntentBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// On a proof that is itself a yielded one: a socket cannot fill a
-    /// socket, and the composition that filled this one is the one that
+    /// On a proof that itself came through a socket: a socket cannot fill
+    /// a socket, and the composition that filled this one is the one that
     /// would have to offer it.
     #[must_use]
-    pub fn offer(&self, proof: Proof) -> YieldSource {
+    pub fn offer(&self, proof: Proof) -> Offered {
         let EvidenceRef::Node(producer) = proof.reference() else {
-            panic!("a yielded proof is not this intent's to offer");
+            panic!("a proof from a socket is not this intent's to offer");
         };
-        YieldSource {
+        Offered {
             envelope: self.envelope,
             intent: self.intent,
-            yielded: Yielded::Proof(producer),
+            offering: Offering::Proof(producer),
         }
     }
 }
@@ -398,7 +402,7 @@ impl<'a> EnvelopeBuilder<'a> {
     }
 
     /// Bind a declaration its signer already signed, answering one
-    /// [`YieldSink`] per parameter it declares, in declaration order.
+    /// [`OpenSocket`] per socket it declares, in declaration order.
     ///
     /// This is what a subintent is for. The signer put their name to a
     /// graph over sockets before any composer existed; the composition
@@ -424,21 +428,21 @@ impl<'a> EnvelopeBuilder<'a> {
         &mut self,
         signer: PrincipalAddr,
         decl: IntentDecl,
-    ) -> Result<Vec<YieldSink>, EnvelopeError> {
+    ) -> Result<Vec<OpenSocket>, EnvelopeError> {
         let intent = u32::try_from(self.intents.len()).expect("intents fit an index");
         if decl.sockets.len() > MAX_SOCKETS {
             return Err(EnvelopeError::TooManySockets { intent });
         }
         check_sockets(&decl.graph, &decl.sockets, intent)?;
-        let sinks = self.sinks(intent, decl.sockets.len());
+        let sockets = self.open_sockets(intent, decl.sockets.len());
         self.carry(&decl.graph);
         self.signers.push(signer);
         self.intents.push(Some(decl));
-        Ok(sinks)
+        Ok(sockets)
     }
 
-    /// Seal an intent into the envelope, answering one [`YieldSink`] per
-    /// parameter it declared, in declaration order.
+    /// Seal an intent into the envelope, answering one [`OpenSocket`] per
+    /// socket it declared, in declaration order.
     ///
     /// # Errors
     ///
@@ -450,7 +454,7 @@ impl<'a> EnvelopeBuilder<'a> {
     /// # Panics
     ///
     /// On an intent from a different envelope, or one sealed twice.
-    pub fn seal(&mut self, intent: IntentBuilder<'a>) -> Result<Vec<YieldSink>, EnvelopeError> {
+    pub fn seal(&mut self, intent: IntentBuilder<'a>) -> Result<Vec<OpenSocket>, EnvelopeError> {
         assert_eq!(
             intent.envelope, self.id,
             "an intent must be sealed into the envelope that opened it"
@@ -462,10 +466,10 @@ impl<'a> EnvelopeBuilder<'a> {
             "an intent is sealed into the envelope once"
         );
         let decl = intent.finish(index)?;
-        let sinks = self.sinks(index, decl.sockets.len());
+        let sockets = self.open_sockets(index, decl.sockets.len());
         self.carry(&decl.graph);
         self.intents[slot] = Some(decl);
-        Ok(sinks)
+        Ok(sockets)
     }
 
     /// Carry the granted-rule records `graph`'s calls will be resolved
@@ -484,10 +488,11 @@ impl<'a> EnvelopeBuilder<'a> {
         }
     }
 
-    /// One sink per socket of `intent`, in declaration order.
-    fn sinks(&self, intent: u32, params: usize) -> Vec<YieldSink> {
-        (0..params)
-            .map(|position| YieldSink {
+    /// One open socket per socket `intent` declares, in declaration
+    /// order.
+    fn open_sockets(&self, intent: u32, declared: usize) -> Vec<OpenSocket> {
+        (0..declared)
+            .map(|position| OpenSocket {
                 envelope: self.id,
                 intent,
                 position: u32::try_from(position).expect("bounded by MAX_SOCKETS"),
@@ -495,9 +500,10 @@ impl<'a> EnvelopeBuilder<'a> {
             .collect()
     }
 
-    /// Bind a socket to the edge that will fill it.
+    /// Fill a socket with what another intent offers — the edge it
+    /// exported, or the proof one of its nodes mints.
     ///
-    /// The whole of composition: an edge is added between two graphs and
+    /// The whole of composition: a link is added between two graphs and
     /// neither is touched.
     ///
     /// # Panics
@@ -507,22 +513,23 @@ impl<'a> EnvelopeBuilder<'a> {
         clippy::needless_pass_by_value,
         reason = "taking both handles by value is the wiring; a borrow would let one end serve twice"
     )]
-    pub fn bind(&mut self, sink: YieldSink, source: YieldSource) {
+    pub fn bind(&mut self, socket: OpenSocket, offered: Offered) {
         assert!(
-            sink.envelope == self.id && source.envelope == self.id,
-            "a yield is bound within the envelope that minted it"
+            socket.envelope == self.id && offered.envelope == self.id,
+            "a socket is filled within the envelope that opened it"
         );
-        let binding = match source.yielded {
-            Yielded::Edge(edge) => Binding::Value {
-                intent: source.intent,
+        let binding = match offered.offering {
+            Offering::Edge(edge) => Binding::Value {
+                intent: offered.intent,
                 edge,
             },
-            Yielded::Proof(producer) => Binding::Authority {
-                intent: source.intent,
+            Offering::Proof(producer) => Binding::Authority {
+                intent: offered.intent,
                 producer,
             },
         };
-        self.bindings.insert((sink.intent, sink.position), binding);
+        self.bindings
+            .insert((socket.intent, socket.position), binding);
     }
 
     /// Emit the tree: every intent sealed, every socket bound.

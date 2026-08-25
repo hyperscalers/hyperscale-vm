@@ -149,15 +149,15 @@ pub enum TypedError {
         /// The method called.
         method: String,
     },
-    /// A yielded proof named as the actor for a gate on the target's own
-    /// identity.
+    /// A proof from a socket named as the actor for a gate on the
+    /// target's own identity.
     ///
-    /// Such a call takes its target from the proof, and a yielded one
+    /// Such a call takes its target from the proof, and one from a socket
     /// carries whatever claim the declaration named — which may be a
     /// badge, and a badge is nothing to call. Where the claim *is* an
     /// identity the call is written as it always was.
-    #[error("`{method}` acts as the proof it is given, and a yielded proof names no target")]
-    YieldedForSelf {
+    #[error("`{method}` acts as the proof it is given, and a proof from a socket names no target")]
+    SocketProofForSelf {
         /// The method called.
         method: String,
     },
@@ -185,8 +185,8 @@ pub struct Proof {
     /// The identity it carries, where that is something a call can be
     /// made against.
     ///
-    /// A node proof carries its own target, which is always callable. A
-    /// yielded one carries whatever claim the declaration named — an
+    /// A node proof carries its own target, which is always callable. One
+    /// from a socket carries whatever claim the declaration named — an
     /// identity, or a badge, and a badge is nothing to call.
     acting: Option<CallTarget>,
 }
@@ -200,8 +200,8 @@ impl Proof {
     }
 
     /// The proof a socket will be filled with, presented as this
-    /// intent's `position`-th parameter.
-    pub(crate) const fn yielded(position: u32, acting: Option<CallTarget>) -> Self {
+    /// intent's `position`-th socket.
+    pub(crate) const fn from_socket(position: u32, acting: Option<CallTarget>) -> Self {
         Self {
             reference: EvidenceRef::Socket(position),
             acting,
@@ -896,8 +896,8 @@ fn type_args(
                         param: index,
                     });
                 }
-                // A yield edge's resource is the consuming intent's
-                // declaration, which lives a tier up from here.
+                // What fills a socket takes its resource from the
+                // socket's own declaration, a tier up from here.
                 None
             }
         });

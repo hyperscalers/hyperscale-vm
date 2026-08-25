@@ -189,7 +189,7 @@ fn a_graph_renders_without_any_metadata_at_all() {
 }
 
 #[test]
-fn a_yield_parameter_renders_as_the_hole_it_is() {
+fn a_socket_renders_as_the_opening_it_is() {
     let chain = world();
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (XRD, 100u128));
