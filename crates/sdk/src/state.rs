@@ -2055,6 +2055,61 @@ pub fn unhalt(holder: Address, resource: ResourceAddr) {
     unimplemented!("{OFF_HOST}")
 }
 
+/// Take `amount` of `resource` out of the vault `holder` keeps it in at
+/// `slot`.
+///
+/// A reaching access, on [`halt`]'s terms: what admits it is the
+/// resource's own `recall` entry, injected where the declaration is
+/// evaluated, and the holder neither cooperates nor can be written to
+/// refuse.
+///
+/// The slot is the caller's to name because a holder keeps value
+/// wherever they like — the vocabulary's vault under an account, a
+/// package's own slot under a component — and a reach that listed the
+/// slots it knew would stop at the first application anybody deposited
+/// into.
+///
+/// # Panics
+///
+/// Always, off the guest, on [`halt`]'s terms.
+#[must_use]
+#[allow(clippy::needless_pass_by_value, unused_variables)]
+pub fn recall(holder: Address, slot: u64, resource: ResourceAddr, amount: Quantity) -> Bucket {
+    unimplemented!("{OFF_HOST}")
+}
+
+/// Take the instances `ids` names out of the interval `holder` keeps
+/// their `resource` holdings in at `slot`.
+///
+/// [`recall`] over the interval form, and the form a credential is
+/// revoked through: a soulbound badge leaves its holder only this way.
+///
+/// # Panics
+///
+/// Always, off the guest, on [`recall`]'s terms.
+#[must_use]
+#[allow(clippy::needless_pass_by_value, unused_variables)]
+pub fn recall_instances(holder: Address, slot: u64, resource: ResourceAddr, ids: Ids) -> NfBucket {
+    unimplemented!("{OFF_HOST}")
+}
+
+/// Take the instances `ids` names out of the interval `handle` names.
+///
+/// Called by generated code, never by an author: the authored spelling
+/// is [`recall_instances`], and an interval a body opened for itself is
+/// taken from through [`Interval::take`].
+#[doc(hidden)]
+#[must_use]
+#[inline(always)] // one import behind a cfg both targets resolve at compile time
+#[allow(clippy::inline_always, clippy::needless_pass_by_value)]
+pub fn take_instances(handle: Handle, ids: Ids) -> NfBucket {
+    let _ = &ids;
+    #[cfg(component)]
+    return NfBucket::held(crate::guest::entry_take(handle, ids.named()));
+    #[cfg(not(component))]
+    return NfBucket::at(host::entry_take(handle, ids.named()));
+}
+
 /// Raise the halt flag `handle` names: the holder stops moving that
 /// resource.
 ///

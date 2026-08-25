@@ -46,7 +46,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
 
-use crate::term::{Op, Slot, Term};
+use crate::term::{Op, Slot, SlotRef, Term};
 use crate::{Declared, Resource, holds_rule, is_named};
 
 /// What kind of state a component field holds, and under which slot.
@@ -89,7 +89,7 @@ pub enum Target {
     /// A single substate leaf under a slot.
     Point {
         /// The slot.
-        slot: u16,
+        slot: SlotRef,
         /// The child-key material.
         material: Vec<Term>,
         /// Whose prefix the leaf sits under, where it is not the
@@ -113,7 +113,10 @@ pub enum Target {
     /// An interval of a collection's order-key space.
     Range {
         /// The collection's slot.
-        slot: u16,
+        slot: SlotRef,
+        /// Whose prefix the collection sits under, on [`Target::Point`]'s
+        /// terms.
+        owner: Option<Term>,
         /// The sub-collection under that slot, empty where the slot holds
         /// one collection outright.
         material: Vec<Term>,
@@ -437,7 +440,7 @@ impl Lowered {
             matches!(
                 &site.target,
                 Target::Point { slot: at, material, owner: None }
-                    if *at == slot && material.is_empty()
+                    if at.fixed() == Some(slot) && material.is_empty()
             )
         })
     }
@@ -780,7 +783,7 @@ impl<'a> Lowerer<'a> {
     /// `site` is one, which is what makes `create` on it the record's.
     fn record_cell(&self, site: usize) -> Option<Term> {
         match self.out.sites.get(site).map(|s| &s.target) {
-            Some(Target::Point { slot, material, .. }) if *slot == RESOURCE.0 => {
+            Some(Target::Point { slot, material, .. }) if slot.fixed() == Some(RESOURCE.0) => {
                 material.first().cloned()
             }
             _ => None,
@@ -1379,7 +1382,7 @@ impl<'a> Lowerer<'a> {
         let site = self.open(
             Target::Point {
                 owner: None,
-                slot: RESOURCE.0,
+                slot: SlotRef::Fixed(RESOURCE.0),
                 material: vec![Term::SelfResource(issued.kind, issued.mark.clone())],
             },
             Some(syn::parse_quote!(
@@ -1408,7 +1411,7 @@ impl<'a> Lowerer<'a> {
         let site = self.open(
             Target::Point {
                 owner: None,
-                slot: CONFIG.0,
+                slot: SlotRef::Fixed(CONFIG.0),
                 material: vec![],
             },
             Some(syn::parse_quote!(::std::vec::Vec<u8>)),
@@ -1822,7 +1825,7 @@ impl<'a> Lowerer<'a> {
         self.open(
             Target::Point {
                 owner: None,
-                slot: INSTANCE.0,
+                slot: SlotRef::Fixed(INSTANCE.0),
                 material: vec![
                     Term::SelfResource(ResourceKind::NonFungible, issued.mark.clone()),
                     id,
@@ -2004,7 +2007,7 @@ impl<'a> Lowerer<'a> {
         let site = self.open_reaching(
             Target::Point {
                 owner: Some(holder),
-                slot: HALT.0,
+                slot: SlotRef::Fixed(HALT.0),
                 material: vec![resource],
             },
             None,
@@ -2019,6 +2022,117 @@ impl<'a> Lowerer<'a> {
             quote!(::hyperscale_vm_sdk::state::clear_halt(#handle))
         };
         Eval::plain(body)
+    }
+
+    /// Lower `recall(holder, slot, resource, amount)` and
+    /// `recall_instances(holder, slot, resource, ids)` — value taken out
+    /// of a prefix that is not this instance's.
+    ///
+    /// [`Self::lower_halt`]'s shape with a slot the caller names. A
+    /// halt has one cell to reach and the vocabulary fixes where it
+    /// sits; value sits wherever its holder keeps it, so the slot rides
+    /// the declaration as an argument and the band it may name is
+    /// judged where it has a value.
+    ///
+    /// Nothing here judges who may. The package writing this has said it
+    /// is acting as the resource's recaller, and whether it is, is the
+    /// resource's answer.
+    fn lower_recall(&mut self, instances: bool, call: &syn::ExprCall) -> Eval {
+        let spelling = if instances {
+            "recall_instances"
+        } else {
+            "recall"
+        };
+        let taken = if instances {
+            "the instances"
+        } else {
+            "the amount"
+        };
+        let named: Vec<&syn::Expr> = call.args.iter().collect();
+        let [holder, slot, resource, moved] = named[..] else {
+            self.error(
+                call.args.span(),
+                &format!(
+                    "`{spelling}` names the holder reached, the slot they keep the resource \
+                     at, the resource, and {taken} taken"
+                ),
+            );
+            return Eval::absent(call.args.span(), "a recall naming too little");
+        };
+        let holder = self.expr(holder);
+        let slot = self.expr(slot);
+        let resource = self.expr(resource);
+        let moved = self.expr(moved);
+        let (Val::Term(holder), Val::Term(slot), Val::Term(resource), Val::Term(quantity)) =
+            (holder.val, slot.val, resource.val, moved.val.clone())
+        else {
+            self.error(
+                call.args.span(),
+                &format!(
+                    "`{spelling}` names a holder, a slot, a resource and {taken} the \
+                     declaration can see — an argument, a configuration field, or a \
+                     resource this package issues"
+                ),
+            );
+            return Eval::absent(
+                call.args.span(),
+                "a recall over a value the lowering cannot see",
+            );
+        };
+        let (element, target): (syn::Type, Target) = if instances {
+            (
+                syn::parse_quote!(::hyperscale_vm_sdk::state::NfVault),
+                Target::Range {
+                    slot: SlotRef::Told(slot),
+                    owner: Some(holder),
+                    material: vec![resource.clone()],
+                    lo: Term::LitU128(0),
+                    hi: Term::LitU128(u128::MAX),
+                    cap: None,
+                },
+            )
+        } else {
+            (
+                syn::parse_quote!(::hyperscale_vm_sdk::state::Vault),
+                Target::Point {
+                    owner: Some(holder),
+                    slot: SlotRef::Told(slot),
+                    material: vec![resource.clone()],
+                },
+            )
+        };
+        let site = self.open_reaching(target, Some(element), None, Some(GrantedBehaviour::Recall));
+        let op = if instances { Op::Move } else { Op::Reserve };
+        self.record(site, op, Some(quantity.clone()), call.span());
+        let handle = self.handle(site, call.span());
+        let code = if instances {
+            // The interval carries no cap of its own, so what it buys is
+            // the count of the ids this take names — the derivation a
+            // body's own take through `all()` makes.
+            self.out.sites[site].moved = Some(Term::Len(Box::new(quantity.clone())));
+            let ids = self.value(moved.code);
+            quote!(::hyperscale_vm_sdk::state::take_instances(#handle, #ids))
+        } else {
+            // The amount reaches the guest through nothing: the kernel
+            // judged and held the reservation against this declaration
+            // before the body ran.
+            quote!(::hyperscale_vm_sdk::state::take_reservation(#handle))
+        };
+        // What the produced edge carries. A balance is the resource
+        // alone; instances are the resource and the ids this take names,
+        // which is what makes the edge routable before anything runs.
+        let produced = if instances {
+            Term::NfBucket {
+                resource: Box::new(resource),
+                ids: Box::new(quantity),
+            }
+        } else {
+            resource
+        };
+        Eval {
+            val: Val::Produced(produced),
+            code: Code::Rust(code),
+        }
     }
 
     /// Lower `destroy(funds)` — value the caller handed over, retired
@@ -3494,6 +3608,14 @@ impl<'a> Lowerer<'a> {
         if name == "halt" || name == "unhalt" {
             return self.lower_halt(name == "halt", call);
         }
+        // `recall(holder, slot, resource, amount)` and its interval
+        // form — value taken out of a prefix that is not this
+        // instance's, admitted by the resource's own `Recall` entry.
+        // The slot is the caller's because a holder keeps value
+        // wherever they like.
+        if name == "recall" || name == "recall_instances" {
+            return self.lower_recall(name == "recall_instances", call);
+        }
         // `destroy(funds)` / `destroy_nf(funds)` — the holder's side of
         // supply leaving. What it destroys is the edge's own resource,
         // so the declaration names the parameter and the rule that
@@ -4152,7 +4274,7 @@ impl<'a> Lowerer<'a> {
                     let site = self.open(
                         Target::Point {
                             owner: None,
-                            slot,
+                            slot: SlotRef::Fixed(slot),
                             material: vec![key.clone()],
                         },
                         field.element.clone(),
@@ -4258,7 +4380,8 @@ impl<'a> Lowerer<'a> {
                 {
                     let site = self.open(
                         Target::Range {
-                            slot,
+                            slot: SlotRef::Fixed(slot),
+                            owner: None,
                             material: material.to_vec(),
                             lo: lo.clone(),
                             hi: hi.clone(),
@@ -4286,7 +4409,8 @@ impl<'a> Lowerer<'a> {
                 if vals.is_empty() {
                     let site = self.open(
                         Target::Range {
-                            slot,
+                            slot: SlotRef::Fixed(slot),
+                            owner: None,
                             material: material.to_vec(),
                             lo: Term::LitU128(0),
                             hi: Term::LitU128(u128::MAX),
@@ -4321,7 +4445,7 @@ impl<'a> Lowerer<'a> {
                 let site = self.open(
                     Target::Point {
                         owner: None,
-                        slot,
+                        slot: SlotRef::Fixed(slot),
                         material: declared.clone().into_iter().collect(),
                     },
                     field.element.clone(),
@@ -4351,7 +4475,7 @@ impl<'a> Lowerer<'a> {
                     let site = self.open(
                         Target::Point {
                             owner: None,
-                            slot,
+                            slot: SlotRef::Fixed(slot),
                             material: vec![],
                         },
                         field.element.clone(),

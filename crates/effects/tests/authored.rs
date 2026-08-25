@@ -308,14 +308,16 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("registry", "bind", open(), vec![]),
         ("registry", "check", open(), vec![]),
         ("registry", "drain", open(), vec![]),
-        // The reach declares no gate of its own: what admits it is the
-        // share's own `freeze` entry, injected where the declaration is
-        // evaluated, so this table sees an open method and the resource
-        // sees the caller.
+        // A reach declares no gate of its own: what admits it is the
+        // reached resource's own entry, injected where the declaration
+        // is evaluated, so this table sees an open method and the
+        // resource sees the caller. Four of them here — the two halves
+        // of the halt flag, and the two takings the recall entry admits.
         ("security", "freeze", open(), vec![]),
         ("security", "instantiate", open(), vec![]),
         ("security", "issue", open(), vec![]),
         ("security", "issue-bearer", open(), vec![]),
+        ("security", "recall-shares", open(), vec![]),
         (
             "security",
             "register",
@@ -323,6 +325,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
             vec![],
         ),
         ("security", "release", open(), vec![]),
+        ("security", "revoke", open(), vec![]),
         ("shares", "deposit", open(), vec![]),
         ("shares", "instantiate", open(), vec![]),
         ("shares", "mint", open(), vec![]),

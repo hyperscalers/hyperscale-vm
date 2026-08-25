@@ -125,12 +125,10 @@ fn target(site: &Site) -> TokenStream {
         } => {
             let material = material.iter().map(Term::emit);
             let owner = owning(owner.as_ref());
+            let slot = slot.emit();
             quote!(
                 #owner
-                let __key = __owner.child(
-                    ::hyperscale_vm_sdk::SlotId(#slot),
-                    &[#(#material),*],
-                );
+                let __key = __owner.child(#slot, &[#(#material),*]);
                 let __access = __t.point(&__key);
             )
         }
@@ -182,12 +180,15 @@ fn target(site: &Site) -> TokenStream {
         }
         Target::Range {
             slot,
+            owner,
             material,
             lo,
             hi,
             cap,
         } => {
             let material = material.iter().map(Term::emit);
+            let owner = owning(owner.as_ref());
+            let slot = slot.emit();
             let lo = lo.emit();
             let hi = hi.emit();
             // An authored cap, or the one the site's move derived. The
@@ -200,19 +201,12 @@ fn target(site: &Site) -> TokenStream {
                 .unwrap_or(Term::LitU64(0))
                 .emit();
             quote!(
-                let __owner = __t.self_addr();
+                #owner
                 let __material = [#(#material),*];
                 let __lo = #lo.cast::<::hyperscale_vm_sdk::U128>();
                 let __hi = #hi.cast::<::hyperscale_vm_sdk::U128>();
                 let __cap = #cap.cast::<::hyperscale_vm_sdk::U64>();
-                let __access = __t.range(
-                    &__owner,
-                    ::hyperscale_vm_sdk::SlotId(#slot),
-                    &__material,
-                    &__lo,
-                    &__hi,
-                    &__cap,
-                );
+                let __access = __t.range(&__owner, #slot, &__material, &__lo, &__hi, &__cap);
             )
         }
     }

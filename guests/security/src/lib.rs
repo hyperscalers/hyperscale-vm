@@ -34,7 +34,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod security {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Quantity, halt, unhalt};
+    use hyperscale_vm_sdk::state::{Bucket, Quantity, halt, recall, unhalt};
 
     /// The register entry: one fungible unit per registered holder.
     ///
@@ -49,8 +49,10 @@ pub mod security {
     ///
     /// Soulbound: `withdraw = nobody` refuses every debit of it at
     /// admission, so it leaves a holder only when the registrar takes it
-    /// back.
-    #[resource(grants(mint = self, withdraw = nobody), display_digits = 0)]
+    /// back — which is what the `recall` entry beside it is for. The two
+    /// together are the whole of a revocable credential: nobody hands it
+    /// on, and one party can take it away.
+    #[resource(grants(mint = self, withdraw = nobody, recall = registrar), display_digits = 0)]
     struct Registered;
 
     /// The share class. Moved by a registered holder to a registered
@@ -67,7 +69,8 @@ pub mod security {
         mint = self,
         withdraw = issued(Registered),
         deposit = issued(Registered),
-        freeze = registrar
+        freeze = registrar,
+        recall = registrar
     ))]
     struct Share;
 
@@ -135,6 +138,38 @@ pub mod security {
         /// Issue the unrestricted class.
         pub fn issue_bearer(&mut self, amount: Quantity) -> Bucket {
             Bearer::mint(amount)
+        }
+
+        /// Take `amount` of the share class out of the vault `holder`
+        /// keeps it in at `slot`.
+        ///
+        /// The slot is the caller's because a holder keeps value
+        /// wherever they like: an account keeps it at the vocabulary's
+        /// vault, an application at one of its own. A recall that could
+        /// only name the first would stop at the first deposit into any
+        /// component, which is the hole the reach exists to close.
+        ///
+        /// Every rule the share class carries would refuse this if it
+        /// were asked, and none of them is: the recall's own entry is
+        /// what admits it, and a movement requirement fires against the
+        /// party being reached, who by construction fails it. That is
+        /// the whole of why a frozen holder is recallable and a holder
+        /// off the register is too.
+        pub fn recall_shares(&mut self, holder: Address, slot: u64, amount: Quantity) -> Bucket {
+            recall(holder, slot, Share::address(), amount)
+        }
+
+        /// Take `held` of the register entry back, which is the only
+        /// way it ever moves.
+        ///
+        /// `withdraw = nobody` means the holder cannot hand it on and no
+        /// package holding it can be made to release it, so revocation
+        /// is not a courtesy the holder extends — it is the registrar's
+        /// own entry, read where the declaration is evaluated.
+        ///
+        /// The amount is named because a fungible entry is a balance.
+        pub fn revoke(&mut self, holder: Address, slot: u64, held: Quantity) -> Bucket {
+            recall(holder, slot, Registered::address(), held)
         }
     }
 }
