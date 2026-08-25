@@ -1938,14 +1938,14 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             store,
                         };
                         let bytes =
-                            meter::cell_get(&mut port, site, element).map_err(meter_fault)?;
+                            meter::site_get(&mut port, site, element).map_err(meter_fault)?;
                         let (mem, realloc) = (self.mem_opt(id)?, self.realloc_opt(id)?);
                         self.lower_list(modules, store, mem, realloc, &bytes, args[after])?;
                         Ok(Vec::new())
                     }
                     HostFn::CellBalance => {
                         let (site, element) = self.acting(&args)?;
-                        let held = meter::cell_balance(
+                        let held = meter::site_balance(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -1963,7 +1963,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         let bytes =
                             Self::read_guest_bytes(store, mem, args[after], args[after + 1])?;
-                        meter::cell_set(
+                        meter::site_set(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -1977,7 +1977,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::CellClear => {
                         let (site, element) = self.acting(&args)?;
-                        meter::cell_clear(
+                        meter::site_clear(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2000,7 +2000,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             host: &mut self.host,
                             store,
                         };
-                        let bucket = meter::cell_take(&mut port, site, element, amount)
+                        let bucket = meter::site_take(&mut port, site, element, amount)
                             .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
@@ -2033,7 +2033,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let (site, element) = self.acting(&args)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[after], args[after + 1])?;
-                        let taken = meter::instance_range_take(
+                        let taken = meter::site_instance_take(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2051,7 +2051,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         let value =
                             Self::read_guest_bytes(store, mem, args[after + 1], args[after + 2])?;
-                        meter::instance_range_put(
+                        meter::site_instance_put(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2216,7 +2216,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             host: &mut self.host,
                             store,
                         };
-                        meter::cell_put(&mut port, site, element, funds).map_err(meter_fault)?;
+                        meter::site_put(&mut port, site, element, funds).map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
                     HostFn::IssuerMint => {
@@ -2233,7 +2233,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::ReserveTake => {
                         let (site, element) = self.acting(&args)?;
-                        let bucket = meter::reserve_take(
+                        let bucket = meter::site_reserve_take(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2246,7 +2246,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::Count => {
                         let (site, element) = self.acting(&args)?;
-                        let count = meter::range_count(
+                        let count = meter::site_count(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2259,7 +2259,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::Covered => {
                         let (site, element) = self.acting(&args)?;
-                        let covered = meter::range_covered(
+                        let covered = meter::site_covered(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2273,7 +2273,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::Order => {
                         let (site, element) = self.acting(&args)?;
                         let index = args[after].as_i32().cast_unsigned();
-                        let order = meter::range_order(
+                        let order = meter::site_order(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2290,7 +2290,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::Entry => {
                         let (site, element) = self.acting(&args)?;
                         let index = args[after].as_i32().cast_unsigned();
-                        let bytes = meter::range_entry(
+                        let bytes = meter::site_entry(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2310,7 +2310,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let mem = self.mem_opt(id)?;
                         let value =
                             Self::read_guest_bytes(store, mem, args[after + 1], args[after + 2])?;
-                        meter::range_set(
+                        meter::site_entry_set(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2329,7 +2329,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         let order = flat_amount(args[after], args[after + 1]);
                         let value =
                             Self::read_guest_bytes(store, mem, args[after + 2], args[after + 3])?;
-                        meter::range_insert(
+                        meter::site_insert(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2345,7 +2345,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     HostFn::Remove => {
                         let (site, element) = self.acting(&args)?;
                         let index = args[after].as_i32().cast_unsigned();
-                        meter::range_remove(
+                        meter::site_remove(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2359,7 +2359,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::Seal => {
                         let (site, element) = self.acting(&args)?;
-                        meter::seal(
+                        meter::site_seal(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,
@@ -2372,7 +2372,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     }
                     HostFn::OpenSeal => {
                         let (site, element) = self.acting(&args)?;
-                        let drawn = meter::open_seal(
+                        let drawn = meter::site_open_seal(
                             &mut MeterPort {
                                 host: &mut self.host,
                                 store,

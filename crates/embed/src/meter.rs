@@ -102,7 +102,7 @@ fn charge_scan<P: HostAccess + FuelSink>(port: &mut P) -> Result<(), MeterError>
     charge(port, lifted)
 }
 
-/// `site.len`.
+/// `state.site-len`.
 ///
 /// Nothing crosses the boundary but the count itself, which every host
 /// call already carries the cost of.
@@ -110,7 +110,7 @@ pub fn site_len<P: HostAccess + FuelSink>(port: &mut P, site: u32) -> Result<u32
     refused(port.host().site_len(site))
 }
 
-/// `site.declared`.
+/// `state.site-declared`.
 pub fn site_declared<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -119,65 +119,65 @@ pub fn site_declared<P: HostAccess + FuelSink>(
     refused(port.host().site_declared(site, element))
 }
 
-/// `access.get`.
-pub fn cell_get<P: HostAccess + FuelSink>(
+/// `state.site-get`.
+pub fn site_get<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
 ) -> Result<Vec<u8>, MeterError> {
-    let value = refused(port.host().cell_get(site, element))?;
+    let value = refused(port.host().site_get(site, element))?;
     charge(port, value.len())?;
     Ok(value)
 }
 
-/// `access.set`.
-pub fn cell_set<P: HostAccess + FuelSink>(
+/// `state.site-set`.
+pub fn site_set<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
     value: Vec<u8>,
 ) -> Result<(), MeterError> {
     charge(port, value.len())?;
-    refused(port.host().write_cell_set(site, element, value))
+    refused(port.host().site_set(site, element, value))
 }
 
-/// `access.clear`. Nothing crosses the boundary, so nothing is
+/// `state.site-clear`. Nothing crosses the boundary, so nothing is
 /// charged for crossing it — the leaf's removal is the store's work,
 /// which the write capability was already provisioned for.
-pub fn cell_clear<P: HostAccess + FuelSink>(
+pub fn site_clear<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
 ) -> Result<(), MeterError> {
-    refused(port.host().write_cell_clear(site, element))
+    refused(port.host().site_clear(site, element))
 }
 
-/// `mint`. Charges its amount argument and nothing for the handle it
-/// yields: a bucket crosses as a table index, where the amount it carries
-/// never crosses at all — here and for every take below.
+/// `state.mint`. Charges its amount argument and nothing for the bucket
+/// it yields: a bucket crosses as a table index, where the amount it
+/// carries never crosses at all — here and for every take below.
 pub fn mint<P: HostAccess + FuelSink>(port: &mut P, amount: u128) -> Result<u32, MeterError> {
     charge(port, AMOUNT_BOUNDARY_BYTES)?;
     refused(port.host().mint(amount))
 }
 
-/// `access.balance`: one figure, whichever value mode
-/// handle types.
-pub fn cell_balance<P: HostAccess + FuelSink>(
+/// `state.site-balance`: one figure, whichever of the two value modes
+/// that answer it is held.
+pub fn site_balance<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
 ) -> Result<u128, MeterError> {
-    let held = refused(port.host().amount_cell_balance(site, element))?;
+    let held = refused(port.host().site_balance(site, element))?;
     charge(port, AMOUNT_BOUNDARY_BYTES)?;
     Ok(held)
 }
 
-/// `burn`.
+/// `state.burn`.
 pub fn burn<P: HostAccess + FuelSink>(port: &mut P, funds: u32) -> Result<(), MeterError> {
     refused(port.host().burn(funds))
 }
 
-/// `mint-instances`.
+/// `state.mint-instances`.
 pub fn mint_instances<P: HostAccess + FuelSink>(
     port: &mut P,
     ids: &[u64],
@@ -186,22 +186,22 @@ pub fn mint_instances<P: HostAccess + FuelSink>(
     refused(port.host().mint_instances(ids))
 }
 
-/// `access.instance-take`.
-pub fn instance_range_take<P: HostAccess + FuelSink>(
+/// `state.site-instance-take`.
+pub fn site_instance_take<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
     ids: &[u64],
 ) -> Result<u32, MeterError> {
     charge(port, ids.len() * 8)?;
-    let taken = port.host().range_take(site, element, ids);
+    let taken = port.host().site_instance_take(site, element, ids);
     charge_scan(port)?;
     refused(taken)
 }
 
-/// `access.instance-put`. Asks the store what each order already holds
+/// `state.site-instance-put`. Asks the store what each order already holds
 /// before filing it, so it pays for the seeks like a take does.
-pub fn instance_range_put<P: HostAccess + FuelSink>(
+pub fn site_instance_put<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
@@ -209,12 +209,12 @@ pub fn instance_range_put<P: HostAccess + FuelSink>(
     value: Vec<u8>,
 ) -> Result<(), MeterError> {
     charge(port, value.len())?;
-    let filed = port.host().range_put(site, element, funds, value);
+    let filed = port.host().site_instance_put(site, element, funds, value);
     charge_scan(port)?;
     refused(filed)
 }
 
-/// `bucket.take`.
+/// `state.bucket-take`.
 pub fn bucket_take<P: HostAccess + FuelSink>(
     port: &mut P,
     bucket: u32,
@@ -224,7 +224,7 @@ pub fn bucket_take<P: HostAccess + FuelSink>(
     refused(port.host().bucket_take(bucket, amount))
 }
 
-/// `bucket.split`.
+/// `state.bucket-split`.
 pub fn bucket_split<P: HostAccess + FuelSink>(
     port: &mut P,
     bucket: u32,
@@ -235,7 +235,7 @@ pub fn bucket_split<P: HostAccess + FuelSink>(
     refused(port.host().bucket_split(bucket, num, den))
 }
 
-/// `bucket.put`.
+/// `state.bucket-put`.
 pub fn bucket_put<P: HostAccess + FuelSink>(
     port: &mut P,
     bucket: u32,
@@ -244,7 +244,7 @@ pub fn bucket_put<P: HostAccess + FuelSink>(
     refused(port.host().bucket_put(bucket, other))
 }
 
-/// `bucket.amount`.
+/// `state.bucket-amount`.
 pub fn bucket_amount<P: HostAccess + FuelSink>(
     port: &mut P,
     bucket: u32,
@@ -254,88 +254,88 @@ pub fn bucket_amount<P: HostAccess + FuelSink>(
     Ok(amount)
 }
 
-/// `access.put`.
-pub fn cell_put<P: HostAccess + FuelSink>(
+/// `state.site-put`.
+pub fn site_put<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
     funds: u32,
 ) -> Result<(), MeterError> {
-    refused(port.host().cell_put(site, element, funds))
+    refused(port.host().site_put(site, element, funds))
 }
 
-/// `access.take`.
-pub fn cell_take<P: HostAccess + FuelSink>(
+/// `state.site-take`.
+pub fn site_take<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
     amount: u128,
 ) -> Result<u32, MeterError> {
     charge(port, AMOUNT_BOUNDARY_BYTES)?;
-    refused(port.host().cell_take(site, element, amount))
+    refused(port.host().site_take(site, element, amount))
 }
 
-/// `access.reserve-take`.
-pub fn reserve_take<P: HostAccess + FuelSink>(
+/// `state.site-reserve-take`.
+pub fn site_reserve_take<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
 ) -> Result<u32, MeterError> {
-    refused(port.host().reserve_take(site, element))
+    refused(port.host().site_reserve_take(site, element))
 }
 
-/// `access.count`.
-pub fn range_count<P: HostAccess + FuelSink>(
+/// `state.site-count`.
+pub fn site_count<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
 ) -> Result<u32, MeterError> {
-    let count = port.host().range_count(site, element);
+    let count = port.host().site_count(site, element);
     charge_scan(port)?;
     refused(count)
 }
 
-/// `access.covered`.
-pub fn range_covered<P: HostAccess + FuelSink>(
+/// `state.site-covered`.
+pub fn site_covered<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
 ) -> Result<bool, MeterError> {
-    let covered = port.host().range_covered(site, element);
+    let covered = port.host().site_covered(site, element);
     charge_scan(port)?;
     refused(covered)
 }
 
-/// `access.order`.
-pub fn range_order<P: HostAccess + FuelSink>(
+/// `state.site-order`.
+pub fn site_order<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
     index: u32,
 ) -> Result<u128, MeterError> {
-    let order = port.host().range_order(site, element, index);
+    let order = port.host().site_order(site, element, index);
     charge_scan(port)?;
     let order = refused(order)?;
     charge(port, AMOUNT_BOUNDARY_BYTES)?;
     Ok(order)
 }
 
-/// `access.entry`.
-pub fn range_entry<P: HostAccess + FuelSink>(
+/// `state.site-entry`.
+pub fn site_entry<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
     index: u32,
 ) -> Result<Vec<u8>, MeterError> {
-    let value = port.host().range_entry(site, element, index);
+    let value = port.host().site_entry(site, element, index);
     charge_scan(port)?;
     let value = refused(value)?;
     charge(port, value.len())?;
     Ok(value)
 }
 
-/// `access.entry-set`.
-pub fn range_set<P: HostAccess + FuelSink>(
+/// `state.site-entry-set`.
+pub fn site_entry_set<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
@@ -343,13 +343,13 @@ pub fn range_set<P: HostAccess + FuelSink>(
     value: Vec<u8>,
 ) -> Result<(), MeterError> {
     charge(port, value.len())?;
-    let set = port.host().range_set(site, element, index, value);
+    let set = port.host().site_entry_set(site, element, index, value);
     charge_scan(port)?;
     refused(set)
 }
 
-/// `access.insert`.
-pub fn range_insert<P: HostAccess + FuelSink>(
+/// `state.site-insert`.
+pub fn site_insert<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
@@ -357,19 +357,19 @@ pub fn range_insert<P: HostAccess + FuelSink>(
     value: Vec<u8>,
 ) -> Result<(), MeterError> {
     charge(port, AMOUNT_BOUNDARY_BYTES + value.len())?;
-    let inserted = port.host().range_insert(site, element, order, value);
+    let inserted = port.host().site_insert(site, element, order, value);
     charge_scan(port)?;
     refused(inserted)
 }
 
-/// `access.remove`.
-pub fn range_remove<P: HostAccess + FuelSink>(
+/// `state.site-remove`.
+pub fn site_remove<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
     index: u32,
 ) -> Result<(), MeterError> {
-    let removed = port.host().range_remove(site, element, index);
+    let removed = port.host().site_remove(site, element, index);
     charge_scan(port)?;
     refused(removed)
 }
@@ -429,7 +429,7 @@ pub fn fixed_pow(
     math::fixed_pow(base, exp, rounding).map_err(|error| MeterError::Refused(error.into()))
 }
 
-/// `state.access-seal`.
+/// `state.site-seal`.
 ///
 /// Priced as the epoch it stores, on the same terms as the set it is:
 /// the leaf is eight bytes whatever epoch it names.
@@ -437,16 +437,16 @@ pub fn fixed_pow(
 /// # Errors
 ///
 /// A deterministic refusal (a handle that names no write).
-pub fn seal<P: HostAccess + FuelSink>(
+pub fn site_seal<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
 ) -> Result<(), MeterError> {
-    refused(port.host().seal(site, element))?;
+    refused(port.host().site_seal(site, element))?;
     charge(port, size_of::<u64>())
 }
 
-/// `state.access-open-seal`.
+/// `state.site-open-seal`.
 ///
 /// Priced as the word it answers: the resolve is a lookup and a digest
 /// over a fixed preimage, so what crosses the boundary is the whole of
@@ -456,12 +456,12 @@ pub fn seal<P: HostAccess + FuelSink>(
 ///
 /// A deterministic refusal (a handle that names no write, or a cell
 /// holding something that is not a seal).
-pub fn open_seal<P: HostAccess + FuelSink>(
+pub fn site_open_seal<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
     element: u32,
 ) -> Result<Drawn, MeterError> {
-    let drawn = refused(port.host().open_seal(site, element))?;
+    let drawn = refused(port.host().site_open_seal(site, element))?;
     charge(port, SEED_BYTES)?;
     Ok(drawn)
 }

@@ -184,7 +184,7 @@ const fn acting(handle: Handle) -> (u32, u32) {
 #[must_use]
 pub fn cell_get(handle: Handle) -> Vec<u8> {
     let (site, element) = acting(handle);
-    settled(kernel(|k| k.cell_get(site, element)))
+    settled(kernel(|k| k.site_get(site, element)))
 }
 
 /// What this handle's amount cell holds.
@@ -199,7 +199,7 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
 #[must_use]
 pub fn cell_balance(handle: Handle) -> u128 {
     let (site, element) = acting(handle);
-    settled(kernel(|k| k.amount_cell_balance(site, element)))
+    settled(kernel(|k| k.site_balance(site, element)))
 }
 
 /// Replace the substate this handle holds exclusively.
@@ -209,7 +209,7 @@ pub fn cell_balance(handle: Handle) -> u128 {
 /// On any mode but [`Handle::Write`].
 pub fn cell_set(handle: Handle, value: &[u8]) {
     let (site, element) = acting(handle);
-    settled(kernel(|k| k.write_cell_set(site, element, value.to_vec())));
+    settled(kernel(|k| k.site_set(site, element, value.to_vec())));
 }
 
 /// Seal this handle's cell on the epoch now running.
@@ -220,7 +220,7 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
 /// seal is written through rules out.
 pub fn cell_seal(handle: Handle) {
     let (site, element) = acting(handle);
-    settled(kernel(|k| k.seal(site, element)));
+    settled(kernel(|k| k.site_seal(site, element)));
 }
 
 /// The draw the seal in this handle's cell matured into.
@@ -232,7 +232,7 @@ pub fn cell_seal(handle: Handle) {
 #[must_use]
 pub fn cell_open_seal(handle: Handle) -> Drawn {
     let (site, element) = acting(handle);
-    settled(kernel(|k| k.open_seal(site, element)))
+    settled(kernel(|k| k.site_open_seal(site, element)))
 }
 
 /// End the substate this handle holds exclusively.
@@ -242,7 +242,7 @@ pub fn cell_open_seal(handle: Handle) -> Drawn {
 /// On any mode but [`Handle::Write`].
 pub fn cell_clear(handle: Handle) {
     let (site, element) = acting(handle);
-    settled(kernel(|k| k.write_cell_clear(site, element)));
+    settled(kernel(|k| k.site_clear(site, element)));
 }
 
 /// Move value into this handle's amount cell, consuming the bucket.
@@ -252,7 +252,7 @@ pub fn cell_clear(handle: Handle) {
 /// On a handle whose mode moves no value.
 pub fn cell_put(handle: Handle, funds: u32) {
     let (site, element) = acting(handle);
-    settled(kernel(|k| k.cell_put(site, element, funds)));
+    settled(kernel(|k| k.site_put(site, element, funds)));
 }
 
 /// Move value out of this handle's amount cell.
@@ -263,7 +263,7 @@ pub fn cell_put(handle: Handle, funds: u32) {
 #[must_use]
 pub fn cell_take(handle: Handle, value: u128) -> u32 {
     let (site, element) = acting(handle);
-    settled(kernel(|k| k.cell_take(site, element, value)))
+    settled(kernel(|k| k.site_take(site, element, value)))
 }
 
 /// Take the reservation this method declared.
@@ -274,7 +274,7 @@ pub fn cell_take(handle: Handle, value: u128) -> u32 {
 #[must_use]
 pub fn reserve_take(handle: Handle) -> u32 {
     let (site, element) = acting(handle);
-    settled(kernel(|k| k.reserve_take(site, element)))
+    settled(kernel(|k| k.site_reserve_take(site, element)))
 }
 
 /// Issue `value` of the resource this invocation was granted.
@@ -398,7 +398,7 @@ pub fn bucket_amount(rep: u32) -> u128 {
 #[must_use]
 pub fn entry_count(handle: Handle) -> u32 {
     let (site, element) = acting(handle);
-    scanned(kernel(|k| k.range_count(site, element)))
+    scanned(kernel(|k| k.site_count(site, element)))
 }
 
 /// Whether this interval's page holds every entry the interval does.
@@ -409,7 +409,7 @@ pub fn entry_count(handle: Handle) -> u32 {
 #[must_use]
 pub fn entry_covered(handle: Handle) -> bool {
     let (site, element) = acting(handle);
-    scanned(kernel(|k| k.range_covered(site, element)))
+    scanned(kernel(|k| k.site_covered(site, element)))
 }
 
 /// The order key of this interval's entry at `index`.
@@ -422,7 +422,7 @@ pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
     let (site, element) = acting(handle);
     // The kernel orders by the packed integer and knows nothing of what
     // was packed into it, so the type is put back on at this seam.
-    OrderKey::from_bits(scanned(kernel(|k| k.range_order(site, element, index))))
+    OrderKey::from_bits(scanned(kernel(|k| k.site_order(site, element, index))))
 }
 
 /// The value of this interval's entry at `index`.
@@ -433,7 +433,7 @@ pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
 #[must_use]
 pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
     let (site, element) = acting(handle);
-    scanned(kernel(|k| k.range_entry(site, element, index)))
+    scanned(kernel(|k| k.site_entry(site, element, index)))
 }
 
 /// The value of the entry at `order`, or empty where there is none.
@@ -452,7 +452,7 @@ pub fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {
 pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
     let (site, element) = acting(handle);
     scanned(kernel(|k| {
-        k.range_set(site, element, index, value.to_vec())
+        k.site_entry_set(site, element, index, value.to_vec())
     }));
 }
 
@@ -464,7 +464,7 @@ pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
 pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
     let (site, element) = acting(handle);
     scanned(kernel(|k| {
-        k.range_insert(site, element, order.bits(), value.to_vec())
+        k.site_insert(site, element, order.bits(), value.to_vec())
     }));
 }
 
@@ -476,7 +476,7 @@ pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
 pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
     let (site, element) = acting(handle);
     scanned(kernel(|k| {
-        k.range_put(site, element, funds, value.to_vec())
+        k.site_instance_put(site, element, funds, value.to_vec())
     }));
 }
 
@@ -488,7 +488,7 @@ pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
 #[must_use]
 pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
     let (site, element) = acting(handle);
-    scanned(kernel(|k| k.range_take(site, element, ids)))
+    scanned(kernel(|k| k.site_instance_take(site, element, ids)))
 }
 
 /// Remove this interval's entry at `index`.
@@ -498,7 +498,7 @@ pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
 /// On any mode but [`Handle::RangeWrite`].
 pub fn entry_remove(handle: Handle, index: u32) {
     let (site, element) = acting(handle);
-    scanned(kernel(|k| k.range_remove(site, element, index)));
+    scanned(kernel(|k| k.site_remove(site, element, index)));
 }
 
 /// The transaction clock, in milliseconds.

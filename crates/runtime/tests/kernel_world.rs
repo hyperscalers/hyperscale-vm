@@ -153,11 +153,11 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn cell_get(&mut self, site: u32, _element: u32) -> std::result::Result<Vec<u8>, AbortReason> {
+    fn site_get(&mut self, site: u32, _element: u32) -> std::result::Result<Vec<u8>, AbortReason> {
         Ok(self.values[site as usize].clone())
     }
 
-    fn write_cell_set(
+    fn site_set(
         &mut self,
         site: u32,
         _element: u32,
@@ -167,16 +167,12 @@ impl KernelHost for TestHost {
         Ok(())
     }
 
-    fn write_cell_clear(
-        &mut self,
-        site: u32,
-        _element: u32,
-    ) -> std::result::Result<(), AbortReason> {
+    fn site_clear(&mut self, site: u32, _element: u32) -> std::result::Result<(), AbortReason> {
         self.values[site as usize].clear();
         Ok(())
     }
 
-    fn amount_cell_balance(
+    fn site_balance(
         &mut self,
         _site: u32,
         _element: u32,
@@ -192,7 +188,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn range_take(
+    fn site_instance_take(
         &mut self,
         _site: u32,
         _element: u32,
@@ -201,7 +197,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn range_put(
+    fn site_instance_put(
         &mut self,
         _site: u32,
         _element: u32,
@@ -232,7 +228,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn cell_put(
+    fn site_put(
         &mut self,
         _site: u32,
         _element: u32,
@@ -245,7 +241,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn cell_take(
+    fn site_take(
         &mut self,
         _site: u32,
         _element: u32,
@@ -254,7 +250,11 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn reserve_take(&mut self, _site: u32, _element: u32) -> std::result::Result<u32, AbortReason> {
+    fn site_reserve_take(
+        &mut self,
+        _site: u32,
+        _element: u32,
+    ) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
@@ -262,11 +262,11 @@ impl KernelHost for TestHost {
         0
     }
 
-    fn range_count(&mut self, _site: u32, _element: u32) -> std::result::Result<u32, AbortReason> {
+    fn site_count(&mut self, _site: u32, _element: u32) -> std::result::Result<u32, AbortReason> {
         Ok(0)
     }
 
-    fn range_covered(
+    fn site_covered(
         &mut self,
         _site: u32,
         _element: u32,
@@ -274,7 +274,7 @@ impl KernelHost for TestHost {
         Ok(true)
     }
 
-    fn range_order(
+    fn site_order(
         &mut self,
         _site: u32,
         _element: u32,
@@ -283,7 +283,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn range_entry(
+    fn site_entry(
         &mut self,
         _site: u32,
         _element: u32,
@@ -292,7 +292,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn range_set(
+    fn site_entry_set(
         &mut self,
         _site: u32,
         _element: u32,
@@ -302,7 +302,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn range_insert(
+    fn site_insert(
         &mut self,
         _site: u32,
         _element: u32,
@@ -312,7 +312,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn range_remove(
+    fn site_remove(
         &mut self,
         _site: u32,
         _element: u32,
@@ -329,11 +329,11 @@ impl KernelHost for TestHost {
         CLOCK_MS
     }
 
-    fn seal(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
+    fn site_seal(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
         unreachable!("this world holds no seal")
     }
 
-    fn open_seal(&mut self, _site: u32, _element: u32) -> Result<Drawn, AbortReason> {
+    fn site_open_seal(&mut self, _site: u32, _element: u32) -> Result<Drawn, AbortReason> {
         Ok(Drawn::Ready([9; 32]))
     }
 

@@ -266,47 +266,48 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
     state.func_wrap(
         "site-get",
         |mut store: StoreContextMut<'_, T>, (r, element): (Resource<Site>, u32)| {
-            let value = meter::cell_get(&mut Port(&mut store), r.rep(), element).map_err(fault)?;
+            let value = meter::site_get(&mut Port(&mut store), r.rep(), element).map_err(fault)?;
             Ok((value,))
         },
     )?;
     state.func_wrap(
         "site-set",
         |mut store: StoreContextMut<'_, T>, (r, element, value): (Resource<Site>, u32, Vec<u8>)| {
-            meter::cell_set(&mut Port(&mut store), r.rep(), element, value).map_err(fault)
+            meter::site_set(&mut Port(&mut store), r.rep(), element, value).map_err(fault)
         },
     )?;
     state.func_wrap(
         "site-seal",
         |mut store: StoreContextMut<'_, T>, (r, element): (Resource<Site>, u32)| {
-            meter::seal(&mut Port(&mut store), r.rep(), element).map_err(fault)
+            meter::site_seal(&mut Port(&mut store), r.rep(), element).map_err(fault)
         },
     )?;
     state.func_wrap(
         "site-open-seal",
         |mut store: StoreContextMut<'_, T>, (r, element): (Resource<Site>, u32)| {
-            let drawn = meter::open_seal(&mut Port(&mut store), r.rep(), element).map_err(fault)?;
+            let drawn =
+                meter::site_open_seal(&mut Port(&mut store), r.rep(), element).map_err(fault)?;
             Ok((WitDrawn::from(drawn),))
         },
     )?;
     state.func_wrap(
         "site-clear",
         |mut store: StoreContextMut<'_, T>, (r, element): (Resource<Site>, u32)| {
-            meter::cell_clear(&mut Port(&mut store), r.rep(), element).map_err(fault)
+            meter::site_clear(&mut Port(&mut store), r.rep(), element).map_err(fault)
         },
     )?;
     state.func_wrap(
         "site-balance",
         |mut store: StoreContextMut<'_, T>, (r, element): (Resource<Site>, u32)| {
             let held =
-                meter::cell_balance(&mut Port(&mut store), r.rep(), element).map_err(fault)?;
+                meter::site_balance(&mut Port(&mut store), r.rep(), element).map_err(fault)?;
             Ok((Amount::from(held),))
         },
     )?;
     state.func_wrap(
         "site-take",
         |mut store: StoreContextMut<'_, T>, (r, element, amount): (Resource<Site>, u32, Amount)| {
-            let rep = meter::cell_take(&mut Port(&mut store), r.rep(), element, amount.into())
+            let rep = meter::site_take(&mut Port(&mut store), r.rep(), element, amount.into())
                 .map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
@@ -315,42 +316,42 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         "site-put",
         |mut store: StoreContextMut<'_, T>,
          (r, element, funds): (Resource<Site>, u32, Resource<Bucket>)| {
-            meter::cell_put(&mut Port(&mut store), r.rep(), element, funds.rep()).map_err(fault)
+            meter::site_put(&mut Port(&mut store), r.rep(), element, funds.rep()).map_err(fault)
         },
     )?;
     state.func_wrap(
         "site-reserve-take",
         |mut store: StoreContextMut<'_, T>, (r, element): (Resource<Site>, u32)| {
             let rep =
-                meter::reserve_take(&mut Port(&mut store), r.rep(), element).map_err(fault)?;
+                meter::site_reserve_take(&mut Port(&mut store), r.rep(), element).map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
     )?;
     state.func_wrap(
         "site-count",
         |mut store: StoreContextMut<'_, T>, (r, element): (Resource<Site>, u32)| {
-            Ok((meter::range_count(&mut Port(&mut store), r.rep(), element).map_err(fault)?,))
+            Ok((meter::site_count(&mut Port(&mut store), r.rep(), element).map_err(fault)?,))
         },
     )?;
     state.func_wrap(
         "site-covered",
         |mut store: StoreContextMut<'_, T>, (r, element): (Resource<Site>, u32)| {
-            Ok((meter::range_covered(&mut Port(&mut store), r.rep(), element).map_err(fault)?,))
+            Ok((meter::site_covered(&mut Port(&mut store), r.rep(), element).map_err(fault)?,))
         },
     )?;
     state.func_wrap(
         "site-order",
         |mut store: StoreContextMut<'_, T>, (r, element, index): (Resource<Site>, u32, u32)| {
-            let order = meter::range_order(&mut Port(&mut store), r.rep(), element, index)
-                .map_err(fault)?;
+            let order =
+                meter::site_order(&mut Port(&mut store), r.rep(), element, index).map_err(fault)?;
             Ok((Amount::from(order),))
         },
     )?;
     state.func_wrap(
         "site-entry",
         |mut store: StoreContextMut<'_, T>, (r, element, index): (Resource<Site>, u32, u32)| {
-            let value = meter::range_entry(&mut Port(&mut store), r.rep(), element, index)
-                .map_err(fault)?;
+            let value =
+                meter::site_entry(&mut Port(&mut store), r.rep(), element, index).map_err(fault)?;
             Ok((value,))
         },
     )?;
@@ -358,27 +359,28 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         "site-entry-set",
         |mut store: StoreContextMut<'_, T>,
          (r, element, index, value): (Resource<Site>, u32, u32, Vec<u8>)| {
-            meter::range_set(&mut Port(&mut store), r.rep(), element, index, value).map_err(fault)
+            meter::site_entry_set(&mut Port(&mut store), r.rep(), element, index, value)
+                .map_err(fault)
         },
     )?;
     state.func_wrap(
         "site-insert",
         |mut store: StoreContextMut<'_, T>,
          (r, element, order, value): (Resource<Site>, u32, Amount, Vec<u8>)| {
-            meter::range_insert(&mut Port(&mut store), r.rep(), element, order.into(), value)
+            meter::site_insert(&mut Port(&mut store), r.rep(), element, order.into(), value)
                 .map_err(fault)
         },
     )?;
     state.func_wrap(
         "site-remove",
         |mut store: StoreContextMut<'_, T>, (r, element, index): (Resource<Site>, u32, u32)| {
-            meter::range_remove(&mut Port(&mut store), r.rep(), element, index).map_err(fault)
+            meter::site_remove(&mut Port(&mut store), r.rep(), element, index).map_err(fault)
         },
     )?;
     state.func_wrap(
         "site-instance-take",
         |mut store: StoreContextMut<'_, T>, (r, element, ids): (Resource<Site>, u32, Vec<u64>)| {
-            let rep = meter::instance_range_take(&mut Port(&mut store), r.rep(), element, &ids)
+            let rep = meter::site_instance_take(&mut Port(&mut store), r.rep(), element, &ids)
                 .map_err(fault)?;
             Ok((Resource::<Bucket>::new_own(rep),))
         },
@@ -387,7 +389,7 @@ pub fn add_kernel_to_linker<T: KernelHost + 'static>(linker: &mut Linker<T>) -> 
         "site-instance-put",
         |mut store: StoreContextMut<'_, T>,
          (r, element, funds, value): (Resource<Site>, u32, Resource<Bucket>, Vec<u8>)| {
-            meter::instance_range_put(&mut Port(&mut store), r.rep(), element, funds.rep(), value)
+            meter::site_instance_put(&mut Port(&mut store), r.rep(), element, funds.rep(), value)
                 .map_err(fault)
         },
     )?;

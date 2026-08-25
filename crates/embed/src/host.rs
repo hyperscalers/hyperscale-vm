@@ -4,15 +4,21 @@
 use hyperscale_vm_types::math::U256;
 use hyperscale_vm_types::{AbortReason, Drawn};
 
-/// The kernel's operations, as reps and bytes.
+/// The kernel's operations, one per world function, as reps and bytes.
 ///
-/// Implementations hold per-transaction state: the materialized capability
-/// table, the transaction clock and epoch, and the emission
-/// buffer a completed outcome turns into receipt events. Reps are indexes
-/// the host itself assigned when materializing handles, so lookups are
-/// infallible by construction; fallible operations return a deterministic
-/// [`AbortReason`] that becomes the receipt's abort class on every
-/// replica. The host classifies; the boundary transports.
+/// Named for the world functions themselves, so the correspondence
+/// between what a guest imports, what the meter prices and what the
+/// host answers is one name rather than three.
+///
+/// Implementations hold per-transaction state: the materialized
+/// capability table, the sites lent over it, the transaction clock and
+/// epoch, and the emission buffer a completed outcome turns into receipt
+/// events. A site rep is an index the host itself assigned, but the
+/// element beside it is the guest's own number, so every site operation
+/// is fallible — and so is every operation the capability behind that
+/// element does not grant. A refusal is a deterministic [`AbortReason`]
+/// that becomes the receipt's abort class on every replica. The host
+/// classifies; the boundary transports.
 ///
 /// `Send`, because the blessed engine's store carries the implementation
 /// across a call boundary that requires it, and because a conflict group
@@ -43,19 +49,14 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn cell_get(&mut self, site: u32, element: u32) -> Result<Vec<u8>, AbortReason>;
+    fn site_get(&mut self, site: u32, element: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// Replace the cell's bytes.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn write_cell_set(
-        &mut self,
-        site: u32,
-        element: u32,
-        value: Vec<u8>,
-    ) -> Result<(), AbortReason>;
+    fn site_set(&mut self, site: u32, element: u32, value: Vec<u8>) -> Result<(), AbortReason>;
 
     /// Remove the cell, so nothing is there.
     ///
@@ -65,7 +66,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn write_cell_clear(&mut self, site: u32, element: u32) -> Result<(), AbortReason>;
+    fn site_clear(&mut self, site: u32, element: u32) -> Result<(), AbortReason>;
 
     /// What an amount cell holds.
     ///
@@ -77,7 +78,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn amount_cell_balance(&mut self, site: u32, element: u32) -> Result<u128, AbortReason>;
+    fn site_balance(&mut self, site: u32, element: u32) -> Result<u128, AbortReason>;
 
     /// Create value under this invocation's issuance grant, returning
     /// the bucket's rep.
@@ -97,7 +98,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn cell_take(&mut self, site: u32, element: u32, amount: u128) -> Result<u32, AbortReason>;
+    fn site_take(&mut self, site: u32, element: u32, amount: u128) -> Result<u32, AbortReason>;
 
     /// Destroy what this invocation issues, consuming the bucket.
     ///
@@ -120,7 +121,12 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_take(&mut self, site: u32, element: u32, ids: &[u64]) -> Result<u32, AbortReason>;
+    fn site_instance_take(
+        &mut self,
+        site: u32,
+        element: u32,
+        ids: &[u64],
+    ) -> Result<u32, AbortReason>;
 
     /// File every instance the bucket at `funds` carries as an entry,
     /// consuming it.
@@ -128,7 +134,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_put(
+    fn site_instance_put(
         &mut self,
         site: u32,
         element: u32,
@@ -167,20 +173,20 @@ pub trait KernelHost: Send {
     /// Credit the amount cell with what the bucket at `funds` carries,
     /// consuming it.
     ///
-    /// One credit for both value modes, on the terms [`Self::cell_take`]
+    /// One credit for both value modes, on the terms [`Self::site_take`]
     /// states.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn cell_put(&mut self, site: u32, element: u32, funds: u32) -> Result<(), AbortReason>;
+    fn site_put(&mut self, site: u32, element: u32, funds: u32) -> Result<(), AbortReason>;
 
     /// Take the reservation as a bucket, whose rep this returns.
     ///
     /// # Errors
     ///
     /// A deterministic refusal, including a second take of one grant.
-    fn reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason>;
+    fn site_reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason>;
 
     /// What interval scans lifted out of the store since this was last
     /// asked, in the boundary-byte terms the fuel schedule prices.
@@ -196,7 +202,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason>;
+    fn site_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason>;
 
     /// Whether the materialized page holds every entry the interval
     /// does: a page short of its cap exhausted the interval, and a full
@@ -205,28 +211,28 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn range_covered(&mut self, site: u32, element: u32) -> Result<bool, AbortReason>;
+    fn site_covered(&mut self, site: u32, element: u32) -> Result<bool, AbortReason>;
 
     /// The order key of the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_order(&mut self, site: u32, element: u32, index: u32) -> Result<u128, AbortReason>;
+    fn site_order(&mut self, site: u32, element: u32, index: u32) -> Result<u128, AbortReason>;
 
     /// The value of the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_entry(&mut self, site: u32, element: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
+    fn site_entry(&mut self, site: u32, element: u32, index: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// Replace the value of the entry at `index`.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_set(
+    fn site_entry_set(
         &mut self,
         site: u32,
         element: u32,
@@ -239,7 +245,7 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal (an order outside the interval).
-    fn range_insert(
+    fn site_insert(
         &mut self,
         site: u32,
         element: u32,
@@ -252,14 +258,14 @@ pub trait KernelHost: Send {
     /// # Errors
     ///
     /// A deterministic refusal (index out of bounds).
-    fn range_remove(&mut self, site: u32, element: u32, index: u32) -> Result<(), AbortReason>;
+    fn site_remove(&mut self, site: u32, element: u32, index: u32) -> Result<(), AbortReason>;
 
     /// Seal this cell on the epoch now running.
     ///
     /// # Errors
     ///
     /// A deterministic refusal (a handle that names no write).
-    fn seal(&mut self, site: u32, element: u32) -> Result<(), AbortReason>;
+    fn site_seal(&mut self, site: u32, element: u32) -> Result<(), AbortReason>;
 
     /// The draw the seal in this cell matures into.
     ///
@@ -270,7 +276,7 @@ pub trait KernelHost: Send {
     ///
     /// A deterministic refusal (a handle that names no write, or a cell
     /// holding something that is not a seal).
-    fn open_seal(&mut self, site: u32, element: u32) -> Result<Drawn, AbortReason>;
+    fn site_open_seal(&mut self, site: u32, element: u32) -> Result<Drawn, AbortReason>;
 
     /// The transaction clock in milliseconds.
     fn clock_ms(&self) -> u64;

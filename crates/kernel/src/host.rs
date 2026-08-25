@@ -8,9 +8,9 @@
 //!
 //! Written against the session itself rather than a wrapper, so an
 //! embedder hands its store the session and takes the same value back.
-//! That puts each trait method in front of the session method it names,
-//! so every body reaches past itself by path — and [`refused`] is what
-//! makes reaching the wrong one fail to compile.
+//! Each method here is named for the world function an engine reached it
+//! through, and each body calls the session operation that answers it —
+//! which is what makes the two vocabularies meet in exactly one file.
 
 use hyperscale_vm_embed::KernelHost;
 use hyperscale_vm_types::math::U256;
@@ -21,11 +21,11 @@ use crate::session::{KernelSession, SessionTrap};
 /// A session refusal, narrowed to the class the boundary transports.
 ///
 /// Typed to [`SessionTrap`] rather than to anything an [`AbortReason`]
-/// converts from, which is the point: a body below calls the session
-/// method its own name shadows, and one that resolved to the trait method
-/// instead would recur forever. It would also type-check, because a class
-/// converts from itself — so the conversion is spelled here, where only
-/// the session's own error satisfies it.
+/// converts from. Where a world function and the session operation behind
+/// it share a name, a body that resolved to the trait method instead
+/// would recur forever — and would type-check, because a class converts
+/// from itself. Spelling the conversion here leaves only the session's
+/// own error satisfying it.
 fn refused<T>(answer: Result<T, SessionTrap>) -> Result<T, AbortReason> {
     answer.map_err(AbortReason::from)
 }
@@ -38,23 +38,18 @@ impl KernelHost for KernelSession {
         refused(Self::site_declared(self, site, element))
     }
 
-    fn cell_get(&mut self, site: u32, element: u32) -> Result<Vec<u8>, AbortReason> {
+    fn site_get(&mut self, site: u32, element: u32) -> Result<Vec<u8>, AbortReason> {
         refused(Self::cell_get(self, site, element))
     }
-    fn write_cell_set(
-        &mut self,
-        site: u32,
-        element: u32,
-        value: Vec<u8>,
-    ) -> Result<(), AbortReason> {
+    fn site_set(&mut self, site: u32, element: u32, value: Vec<u8>) -> Result<(), AbortReason> {
         refused(Self::write_cell_set(self, site, element, value))
     }
-    fn write_cell_clear(&mut self, site: u32, element: u32) -> Result<(), AbortReason> {
+    fn site_clear(&mut self, site: u32, element: u32) -> Result<(), AbortReason> {
         refused(Self::write_cell_clear(self, site, element))
     }
 
-    fn amount_cell_balance(&mut self, site: u32, element: u32) -> Result<u128, AbortReason> {
-        self.amount_cell_balance(site, element).map_err(Into::into)
+    fn site_balance(&mut self, site: u32, element: u32) -> Result<u128, AbortReason> {
+        refused(self.amount_cell_balance(site, element))
     }
     fn burn(&mut self, funds: u32) -> Result<(), AbortReason> {
         refused(Self::burn(self, funds))
@@ -62,10 +57,15 @@ impl KernelHost for KernelSession {
     fn mint_instances(&mut self, ids: &[u64]) -> Result<u32, AbortReason> {
         refused(Self::mint_instances(self, ids))
     }
-    fn range_take(&mut self, site: u32, element: u32, ids: &[u64]) -> Result<u32, AbortReason> {
+    fn site_instance_take(
+        &mut self,
+        site: u32,
+        element: u32,
+        ids: &[u64],
+    ) -> Result<u32, AbortReason> {
         refused(Self::range_take(self, site, element, ids))
     }
-    fn range_put(
+    fn site_instance_put(
         &mut self,
         site: u32,
         element: u32,
@@ -86,34 +86,34 @@ impl KernelHost for KernelSession {
     fn bucket_amount(&mut self, rep: u32) -> Result<u128, AbortReason> {
         refused(Self::bucket_amount(self, rep))
     }
-    fn cell_put(&mut self, site: u32, element: u32, funds: u32) -> Result<(), AbortReason> {
+    fn site_put(&mut self, site: u32, element: u32, funds: u32) -> Result<(), AbortReason> {
         refused(Self::cell_put(self, site, element, funds))
     }
     fn mint(&mut self, amount: u128) -> Result<u32, AbortReason> {
         refused(Self::mint(self, amount))
     }
-    fn cell_take(&mut self, site: u32, element: u32, amount: u128) -> Result<u32, AbortReason> {
+    fn site_take(&mut self, site: u32, element: u32, amount: u128) -> Result<u32, AbortReason> {
         refused(Self::cell_take(self, site, element, amount))
     }
-    fn reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
+    fn site_reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
         refused(Self::reserve_take(self, site, element))
     }
     fn take_scan_debt(&mut self) -> usize {
         Self::take_scan_debt(self)
     }
-    fn range_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
+    fn site_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
         refused(Self::range_count(self, site, element))
     }
-    fn range_covered(&mut self, site: u32, element: u32) -> Result<bool, AbortReason> {
+    fn site_covered(&mut self, site: u32, element: u32) -> Result<bool, AbortReason> {
         refused(Self::range_covered(self, site, element))
     }
-    fn range_order(&mut self, site: u32, element: u32, index: u32) -> Result<u128, AbortReason> {
+    fn site_order(&mut self, site: u32, element: u32, index: u32) -> Result<u128, AbortReason> {
         refused(Self::range_order(self, site, element, index))
     }
-    fn range_entry(&mut self, site: u32, element: u32, index: u32) -> Result<Vec<u8>, AbortReason> {
+    fn site_entry(&mut self, site: u32, element: u32, index: u32) -> Result<Vec<u8>, AbortReason> {
         refused(Self::range_entry(self, site, element, index))
     }
-    fn range_set(
+    fn site_entry_set(
         &mut self,
         site: u32,
         element: u32,
@@ -122,7 +122,7 @@ impl KernelHost for KernelSession {
     ) -> Result<(), AbortReason> {
         refused(Self::range_set(self, site, element, index, value))
     }
-    fn range_insert(
+    fn site_insert(
         &mut self,
         site: u32,
         element: u32,
@@ -131,16 +131,16 @@ impl KernelHost for KernelSession {
     ) -> Result<(), AbortReason> {
         refused(Self::range_insert(self, site, element, order, value))
     }
-    fn range_remove(&mut self, site: u32, element: u32, index: u32) -> Result<(), AbortReason> {
+    fn site_remove(&mut self, site: u32, element: u32, index: u32) -> Result<(), AbortReason> {
         refused(Self::range_remove(self, site, element, index))
     }
     fn bucket_drop(&mut self, rep: u32) -> Result<(), AbortReason> {
         refused(Self::drop_bucket(self, rep))
     }
-    fn seal(&mut self, site: u32, element: u32) -> Result<(), AbortReason> {
+    fn site_seal(&mut self, site: u32, element: u32) -> Result<(), AbortReason> {
         refused(Self::seal(self, site, element))
     }
-    fn open_seal(&mut self, site: u32, element: u32) -> Result<Drawn, AbortReason> {
+    fn site_open_seal(&mut self, site: u32, element: u32) -> Result<Drawn, AbortReason> {
         refused(Self::open_seal(self, site, element))
     }
     fn clock_ms(&self) -> u64 {

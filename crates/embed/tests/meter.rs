@@ -54,22 +54,17 @@ impl KernelHost for StubHost {
     fn site_declared(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
         self.op("site-declared", true)
     }
-    fn cell_get(&mut self, _site: u32, _element: u32) -> Result<Vec<u8>, AbortReason> {
-        self.op("cell-get", vec![0; 5])
+    fn site_get(&mut self, _site: u32, _element: u32) -> Result<Vec<u8>, AbortReason> {
+        self.op("site-get", vec![0; 5])
     }
-    fn write_cell_set(
-        &mut self,
-        _site: u32,
-        _element: u32,
-        _value: Vec<u8>,
-    ) -> Result<(), AbortReason> {
-        self.op("cell-set", ())
+    fn site_set(&mut self, _site: u32, _element: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
+        self.op("site-set", ())
     }
-    fn write_cell_clear(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
-        self.op("cell-clear", ())
+    fn site_clear(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
+        self.op("site-clear", ())
     }
-    fn amount_cell_balance(&mut self, _site: u32, _element: u32) -> Result<u128, AbortReason> {
-        self.op("balance", 7)
+    fn site_balance(&mut self, _site: u32, _element: u32) -> Result<u128, AbortReason> {
+        self.op("site-balance", 7)
     }
     fn burn(&mut self, _funds: u32) -> Result<(), AbortReason> {
         self.op("burn", ())
@@ -80,17 +75,22 @@ impl KernelHost for StubHost {
     fn mint_instances(&mut self, _ids: &[u64]) -> Result<u32, AbortReason> {
         self.op("mint-instances", 1)
     }
-    fn range_take(&mut self, _site: u32, _element: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
-        self.op("range-take", 1)
+    fn site_instance_take(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _ids: &[u64],
+    ) -> Result<u32, AbortReason> {
+        self.op("site-instance-take", 1)
     }
-    fn range_put(
+    fn site_instance_put(
         &mut self,
         _site: u32,
         _element: u32,
         _funds: u32,
         _v: Vec<u8>,
     ) -> Result<(), AbortReason> {
-        self.op("range-put", ())
+        self.op("site-instance-put", ())
     }
     fn bucket_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
         self.op("bucket-take", 1)
@@ -104,56 +104,56 @@ impl KernelHost for StubHost {
     fn bucket_amount(&mut self, _rep: u32) -> Result<u128, AbortReason> {
         self.op("bucket-amount", 7)
     }
-    fn cell_put(&mut self, _site: u32, _element: u32, _funds: u32) -> Result<(), AbortReason> {
-        self.op("cell-put", ())
+    fn site_put(&mut self, _site: u32, _element: u32, _funds: u32) -> Result<(), AbortReason> {
+        self.op("site-put", ())
     }
-    fn cell_take(&mut self, _site: u32, _element: u32, _amount: u128) -> Result<u32, AbortReason> {
-        self.op("cell-take", 1)
+    fn site_take(&mut self, _site: u32, _element: u32, _amount: u128) -> Result<u32, AbortReason> {
+        self.op("site-take", 1)
     }
-    fn reserve_take(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
-        self.op("reserve-take", 1)
+    fn site_reserve_take(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
+        self.op("site-reserve-take", 1)
     }
     fn take_scan_debt(&mut self) -> usize {
         self.log.lock().unwrap().push(Host("take-scan-debt"));
         std::mem::take(&mut self.scan_debt)
     }
-    fn range_count(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
-        self.op("range-count", 2)
+    fn site_count(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
+        self.op("site-count", 2)
     }
-    fn range_covered(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
-        self.op("range-covered", true)
+    fn site_covered(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
+        self.op("site-covered", true)
     }
-    fn range_order(&mut self, _site: u32, _element: u32, _index: u32) -> Result<u128, AbortReason> {
-        self.op("range-order", 7)
+    fn site_order(&mut self, _site: u32, _element: u32, _index: u32) -> Result<u128, AbortReason> {
+        self.op("site-order", 7)
     }
-    fn range_entry(
+    fn site_entry(
         &mut self,
         _site: u32,
         _element: u32,
         _index: u32,
     ) -> Result<Vec<u8>, AbortReason> {
-        self.op("range-entry", vec![0; 9])
+        self.op("site-entry", vec![0; 9])
     }
-    fn range_set(
+    fn site_entry_set(
         &mut self,
         _site: u32,
         _element: u32,
         _i: u32,
         _value: Vec<u8>,
     ) -> Result<(), AbortReason> {
-        self.op("range-set", ())
+        self.op("site-entry-set", ())
     }
-    fn range_insert(
+    fn site_insert(
         &mut self,
         _site: u32,
         _element: u32,
         _o: u128,
         _v: Vec<u8>,
     ) -> Result<(), AbortReason> {
-        self.op("range-insert", ())
+        self.op("site-insert", ())
     }
-    fn range_remove(&mut self, _site: u32, _element: u32, _index: u32) -> Result<(), AbortReason> {
-        self.op("range-remove", ())
+    fn site_remove(&mut self, _site: u32, _element: u32, _index: u32) -> Result<(), AbortReason> {
+        self.op("site-remove", ())
     }
     fn bucket_drop(&mut self, _rep: u32) -> Result<(), AbortReason> {
         self.op("bucket-drop", ())
@@ -161,11 +161,11 @@ impl KernelHost for StubHost {
     fn clock_ms(&self) -> u64 {
         0
     }
-    fn seal(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
-        self.op("seal", ())
+    fn site_seal(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
+        self.op("site-seal", ())
     }
-    fn open_seal(&mut self, _site: u32, _element: u32) -> Result<Drawn, AbortReason> {
-        self.log.lock().unwrap().push(Host("open-seal"));
+    fn site_open_seal(&mut self, _site: u32, _element: u32) -> Result<Drawn, AbortReason> {
+        self.log.lock().unwrap().push(Host("site-open-seal"));
         Ok(Drawn::Ready([0; 32]))
     }
     fn hash(&self, _data: &[u8]) -> [u8; 32] {
@@ -241,39 +241,39 @@ fn every_function_charges_its_pinned_sequence() {
     // operation and its refusal, exactly once each.
     let cases: Vec<Case> = vec![
         (
-            "cell-get",
+            "site-get",
             |p| {
-                let _ = meter::cell_get(p, 0, 0);
+                let _ = meter::site_get(p, 0, 0);
             },
-            vec![Host("cell-get"), Charge(5)],
+            vec![Host("site-get"), Charge(5)],
         ),
         (
-            "cell-seal",
+            "site-seal",
             |p| {
-                let _ = meter::seal(p, 0, 0);
+                let _ = meter::site_seal(p, 0, 0);
             },
-            vec![Host("seal"), Charge(8)],
+            vec![Host("site-seal"), Charge(8)],
         ),
         (
-            "cell-open-seal",
+            "site-open-seal",
             |p| {
-                let _ = meter::open_seal(p, 0, 0);
+                let _ = meter::site_open_seal(p, 0, 0);
             },
-            vec![Host("open-seal"), Charge(32)],
+            vec![Host("site-open-seal"), Charge(32)],
         ),
         (
-            "cell-set",
+            "site-set",
             |p| {
-                let _ = meter::cell_set(p, 0, 0, vec![0; 5]);
+                let _ = meter::site_set(p, 0, 0, vec![0; 5]);
             },
-            vec![Charge(5), Host("cell-set")],
+            vec![Charge(5), Host("site-set")],
         ),
         (
-            "cell-clear",
+            "site-clear",
             |p| {
-                let _ = meter::cell_clear(p, 0, 0);
+                let _ = meter::site_clear(p, 0, 0);
             },
-            vec![Host("cell-clear")],
+            vec![Host("site-clear")],
         ),
         (
             "mint",
@@ -283,18 +283,18 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Charge(AMOUNT), Host("mint")],
         ),
         (
-            "amount-balance",
+            "site-balance",
             |p| {
-                let _ = meter::cell_balance(p, 0, 0);
+                let _ = meter::site_balance(p, 0, 0);
             },
-            vec![Host("balance"), Charge(AMOUNT)],
+            vec![Host("site-balance"), Charge(AMOUNT)],
         ),
         (
-            "cell-take",
+            "site-take",
             |p| {
-                let _ = meter::cell_take(p, 0, 0, 1);
+                let _ = meter::site_take(p, 0, 0, 1);
             },
-            vec![Charge(AMOUNT), Host("cell-take")],
+            vec![Charge(AMOUNT), Host("site-take")],
         ),
         (
             "burn",
@@ -311,25 +311,25 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Charge(24), Host("mint-instances")],
         ),
         (
-            "cell-instance-take",
+            "site-instance-take",
             |p| {
-                let _ = meter::instance_range_take(p, 0, 0, &[1, 2, 3]);
+                let _ = meter::site_instance_take(p, 0, 0, &[1, 2, 3]);
             },
             vec![
                 Charge(24),
-                Host("range-take"),
+                Host("site-instance-take"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
         ),
         (
-            "cell-instance-put",
+            "site-instance-put",
             |p| {
-                let _ = meter::instance_range_put(p, 0, 0, 1, vec![0; 5]);
+                let _ = meter::site_instance_put(p, 0, 0, 1, vec![0; 5]);
             },
             vec![
                 Charge(5),
-                Host("range-put"),
+                Host("site-instance-put"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
@@ -363,87 +363,87 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Host("bucket-amount"), Charge(AMOUNT)],
         ),
         (
-            "cell-put",
+            "site-put",
             |p| {
-                let _ = meter::cell_put(p, 0, 0, 1);
+                let _ = meter::site_put(p, 0, 0, 1);
             },
-            vec![Host("cell-put")],
+            vec![Host("site-put")],
         ),
         (
-            "cell-reserve-take",
+            "site-reserve-take",
             |p| {
-                let _ = meter::reserve_take(p, 0, 0);
+                let _ = meter::site_reserve_take(p, 0, 0);
             },
-            vec![Host("reserve-take")],
+            vec![Host("site-reserve-take")],
         ),
         (
-            "range-count",
+            "site-count",
             |p| {
-                let _ = meter::range_count(p, 0, 0);
+                let _ = meter::site_count(p, 0, 0);
             },
-            vec![Host("range-count"), Host("take-scan-debt"), Charge(3)],
+            vec![Host("site-count"), Host("take-scan-debt"), Charge(3)],
         ),
         (
-            "range-covered",
+            "site-covered",
             |p| {
-                let _ = meter::range_covered(p, 0, 0);
+                let _ = meter::site_covered(p, 0, 0);
             },
-            vec![Host("range-covered"), Host("take-scan-debt"), Charge(3)],
+            vec![Host("site-covered"), Host("take-scan-debt"), Charge(3)],
         ),
         (
-            "range-order",
+            "site-order",
             |p| {
-                let _ = meter::range_order(p, 0, 0, 0);
+                let _ = meter::site_order(p, 0, 0, 0);
             },
             vec![
-                Host("range-order"),
+                Host("site-order"),
                 Host("take-scan-debt"),
                 Charge(3),
                 Charge(AMOUNT),
             ],
         ),
         (
-            "range-entry",
+            "site-entry",
             |p| {
-                let _ = meter::range_entry(p, 0, 0, 0);
+                let _ = meter::site_entry(p, 0, 0, 0);
             },
             vec![
-                Host("range-entry"),
+                Host("site-entry"),
                 Host("take-scan-debt"),
                 Charge(3),
                 Charge(9),
             ],
         ),
         (
-            "range-set",
+            "site-entry-set",
             |p| {
-                let _ = meter::range_set(p, 0, 0, 0, vec![0; 5]);
+                let _ = meter::site_entry_set(p, 0, 0, 0, vec![0; 5]);
             },
             vec![
                 Charge(5),
-                Host("range-set"),
+                Host("site-entry-set"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
         ),
         (
-            "range-insert",
+            "site-insert",
             |p| {
-                let _ = meter::range_insert(p, 0, 0, 1, vec![0; 5]);
+                let _ = meter::site_insert(p, 0, 0, 1, vec![0; 5]);
             },
             vec![
                 Charge(AMOUNT + 5),
-                Host("range-insert"),
+                Host("site-insert"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
         ),
         (
-            "range-remove",
+            "site-remove",
             |p| {
-                let _ = meter::range_remove(p, 0, 0, 0);
+                let _ = meter::site_remove(p, 0, 0, 0);
             },
-            vec![Host("range-remove"), Host("take-scan-debt"), Charge(3)],
+            vec![Host("site-remove"), Host("take-scan-debt"), Charge(3)],
         ),
         (
             "mul-div",
@@ -528,27 +528,27 @@ fn a_refusal_charges_no_result_bytes() {
     // scan ask, which is owed whether the call refused or not.
     let mut probe = Probe::refusing();
     assert_eq!(
-        meter::cell_get(&mut probe, 0, 0),
+        meter::site_get(&mut probe, 0, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
-    assert_eq!(probe.steps(), vec![Host("cell-get")]);
+    assert_eq!(probe.steps(), vec![Host("site-get")]);
 
     let mut probe = Probe::refusing();
     assert_eq!(
-        meter::cell_balance(&mut probe, 0, 0),
+        meter::site_balance(&mut probe, 0, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
-    assert_eq!(probe.steps(), vec![Host("balance")]);
+    assert_eq!(probe.steps(), vec![Host("site-balance")]);
 
     let mut probe = Probe::refusing();
     probe.host.scan_debt = 3;
     assert_eq!(
-        meter::range_entry(&mut probe, 0, 0, 0),
+        meter::site_entry(&mut probe, 0, 0, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
     assert_eq!(
         probe.steps(),
-        vec![Host("range-entry"), Host("take-scan-debt"), Charge(3)]
+        vec![Host("site-entry"), Host("take-scan-debt"), Charge(3)]
     );
 }
 
@@ -559,7 +559,7 @@ fn exhaustion_stops_the_sequence_where_it_lands() {
     let mut probe = Probe::new(0);
     probe.remaining = Some(4);
     assert_eq!(
-        meter::cell_set(&mut probe, 0, 0, vec![0; 5]),
+        meter::site_set(&mut probe, 0, 0, vec![0; 5]),
         Err(MeterError::Exhausted)
     );
     assert_eq!(probe.steps(), vec![Charge(5)]);
