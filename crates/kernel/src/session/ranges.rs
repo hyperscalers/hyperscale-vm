@@ -92,7 +92,7 @@ impl KernelSession {
         attempted: Op,
     ) -> Result<Interval, SessionTrap> {
         let held = self.acting(site, element, attempted)?;
-        held.interval().ok_or(SessionTrap::WrongMode {
+        held.interval().ok_or(SessionTrap::Ungranted {
             site,
             element,
             held,
@@ -971,7 +971,7 @@ mod tests {
         ] {
             assert!(matches!(
                 outcome,
-                Err(SessionTrap::WrongMode {
+                Err(SessionTrap::Ungranted {
                     attempted: Op::WriteEntries,
                     ..
                 })

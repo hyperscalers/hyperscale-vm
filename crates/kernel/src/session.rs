@@ -62,18 +62,21 @@ pub enum SessionTrap {
     /// canonical ABI, kept as an honest error rather than a panic.
     #[error("unknown capability handle {0}")]
     UnknownHandle(u32),
-    /// A rep whose capability does not grant the operation.
+    /// An element whose capability does not grant the operation.
     ///
     /// Carries both halves because the diagnostic is the whole value: a
-    /// rep alone says a body disagreed with its declaration without
+    /// position alone says a body disagreed with its declaration without
     /// saying how, and this is the only signal a body reaching past its
-    /// declaration gets.
+    /// declaration gets. The capability rather than the mode it was
+    /// materialized from: what a body may do is decided over the form
+    /// the declaration produced, which folds the mode with what the
+    /// target holds.
     #[error(
         "the handle at site {site} element {element} holds {}, which does not grant {}",
         permit::describe(held),
         attempted.describe()
     )]
-    WrongMode {
+    Ungranted {
         /// The site the operation named.
         site: u32,
         /// Which element of it.
@@ -241,7 +244,7 @@ impl From<SessionTrap> for AbortReason {
     fn from(trap: SessionTrap) -> Self {
         match trap {
             SessionTrap::UnknownHandle(_) => Self::HandleUnknown,
-            SessionTrap::WrongMode { .. } => Self::HandleWrongMode,
+            SessionTrap::Ungranted { .. } => Self::HandleWrongMode,
             SessionTrap::NotASeal(_) => Self::MalformedSeal,
             SessionTrap::SealStanding(_) => Self::SealStanding,
             SessionTrap::UndeclaredBranch => Self::UndeclaredBranch,
@@ -497,7 +500,7 @@ impl KernelSession {
         if permits(&held, attempted) {
             Ok(held)
         } else {
-            Err(SessionTrap::WrongMode {
+            Err(SessionTrap::Ungranted {
                 site,
                 element,
                 held,
@@ -520,7 +523,7 @@ impl KernelSession {
         attempted: Op,
     ) -> Result<SubstateKey, SessionTrap> {
         let held = self.acting(site, element, attempted)?;
-        held.key().ok_or(SessionTrap::WrongMode {
+        held.key().ok_or(SessionTrap::Ungranted {
             site,
             element,
             held,
@@ -902,7 +905,7 @@ impl KernelSession {
     ) -> Result<Settlement, SessionTrap> {
         match held.settlement() {
             Some(settlement) => Ok(settlement),
-            None => Err(SessionTrap::WrongMode {
+            None => Err(SessionTrap::Ungranted {
                 site,
                 element,
                 held,
@@ -1222,7 +1225,7 @@ mod tests {
     /// The arguments are whatever reaches the permission check; an
     /// operation the capability grants may still fail for a reason of
     /// its own, which is why the matrix asks only whether the refusal
-    /// was a mode refusal.
+    /// was a refusal for want of the grant.
     fn attempt(session: &mut KernelSession, op: Op) -> Result<(), SessionTrap> {
         match op {
             Op::Read => session.cell_get(0, 0).map(|_| ()),
@@ -1255,12 +1258,12 @@ mod tests {
                 let mut session = holding(held);
                 let refused = matches!(
                     attempt(&mut session, op),
-                    Err(SessionTrap::WrongMode { .. })
+                    Err(SessionTrap::Ungranted { .. })
                 );
                 assert_eq!(
                     refused,
                     !permits(&held, op),
-                    "{held:?} against {op:?}: refused_as_wrong_mode={refused}"
+                    "{held:?} against {op:?}: refused_as_ungranted={refused}"
                 );
             }
         }
@@ -1270,11 +1273,11 @@ mod tests {
     /// because it is the only signal a body reaching past its own
     /// declaration gets.
     #[test]
-    fn a_mode_refusal_names_both_halves() {
+    fn an_ungranted_refusal_names_both_halves() {
         let mut session = holding(Capability::Read(key(1)));
         assert_eq!(
             session.write_cell_set(0, 0, vec![1]),
-            Err(SessionTrap::WrongMode {
+            Err(SessionTrap::Ungranted {
                 site: 0,
                 element: 0,
                 held: Capability::Read(key(1)),
@@ -1485,14 +1488,14 @@ mod tests {
         let mut session = session_under(MemoryStore::new(), &set, sealed_env(9));
         assert!(matches!(
             session.seal(0, 0),
-            Err(SessionTrap::WrongMode {
+            Err(SessionTrap::Ungranted {
                 attempted: Op::Seal,
                 ..
             })
         ));
         assert!(matches!(
             session.open_seal(0, 0),
-            Err(SessionTrap::WrongMode {
+            Err(SessionTrap::Ungranted {
                 attempted: Op::OpenSeal,
                 ..
             })

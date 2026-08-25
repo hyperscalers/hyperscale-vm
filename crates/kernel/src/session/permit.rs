@@ -1,14 +1,14 @@
 //! What a capability grants, decided in one place.
 //!
 //! Every operation the kernel exposes asks [`permits`] before it touches
-//! the store, so the accept-set of a mode is one table read rather than a
-//! match arm restated at each call. An operation added later cannot forget
-//! to ask, because the capability it would act through is reached only
-//! through the check.
+//! the store, so the accept-set of a capability is one table read rather
+//! than a match arm restated at each call. An operation added later cannot
+//! forget to ask, because the capability it would act through is reached
+//! only through the check.
 //!
 //! The table is total over both axes, which is what makes it testable.
 //! An operation added to [`Op`] is an unhandled arm in [`permits`]; a
-//! mode added to [`Capability`] is one in [`describe`] and in
+//! form added to [`Capability`] is one in [`describe`] and in
 //! `Capability::form`, which is what puts it in front of the matrix
 //! rather than leaving it a pairing nobody asked.
 
@@ -93,9 +93,9 @@ impl Op {
 
 /// Whether the capability held grants the operation attempted.
 ///
-/// Read as a row per operation rather than per mode: what an operation
-/// admits is the fact a reader needs, and stating it once is what lets a
-/// mode widen an accept-set without visiting every call site.
+/// Read as a row per operation rather than per capability: what an
+/// operation admits is the fact a reader needs, and stating it once is
+/// what lets a form widen an accept-set without visiting every call site.
 #[must_use]
 pub const fn permits(held: &Capability, op: Op) -> bool {
     use Capability as C;
