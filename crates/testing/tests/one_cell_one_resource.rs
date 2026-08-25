@@ -83,7 +83,7 @@ fn mixer_body(
             let [GuestArg::Handle { rep, .. }, GuestArg::Bucket(funds)] = args else {
                 panic!("a handle and an edge: {args:?}");
             };
-            match session.delta_put(*rep, *funds) {
+            match session.cell_put(*rep, *funds) {
                 Ok(()) => (
                     session,
                     Invoked::Produced {
@@ -98,7 +98,7 @@ fn mixer_body(
             let [GuestArg::Handle { rep, .. }, GuestArg::U64(amount)] = args else {
                 panic!("a handle and an amount: {args:?}");
             };
-            match session.write_take(*rep, u128::from(*amount)) {
+            match session.cell_take(*rep, u128::from(*amount)) {
                 Ok(bucket) => (
                     session,
                     Invoked::Produced {

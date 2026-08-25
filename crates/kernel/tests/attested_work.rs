@@ -139,7 +139,7 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
     });
     if let (Some(reserve), Some(delta)) = (reserve, delta) {
         let funds = session.reserve_take(reserve).unwrap();
-        session.delta_put(delta, funds).unwrap();
+        session.cell_put(delta, funds).unwrap();
     }
     RunResult::Completed {
         session,

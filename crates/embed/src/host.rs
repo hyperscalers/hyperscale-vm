@@ -51,17 +51,13 @@ pub trait KernelHost: Send {
 
     /// The cell's current bytes; empty if absent.
     ///
-    /// # Errors
-    ///
-    /// A deterministic refusal.
-    fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
-
-    /// The cell's current bytes under a write capability; empty if absent.
+    /// One read for both byte modes: what the exclusive mode adds is the
+    /// writes, not a second answer to the same question.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
+    fn cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason>;
 
     /// Replace the cell's bytes.
     ///
@@ -103,10 +99,14 @@ pub trait KernelHost: Send {
     /// Debit the amount cell and hand the value out as a bucket, whose
     /// rep this returns.
     ///
+    /// One debit for both value modes. Which one the capability carries
+    /// decides when an over-take is refused — at the call for the
+    /// exclusive hold, at the fold for the commutative movement.
+    ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
+    fn cell_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
 
     /// Destroy what this invocation issues, consuming the bucket.
     ///
@@ -170,26 +170,13 @@ pub trait KernelHost: Send {
     /// Credit the amount cell with what the bucket at `funds` carries,
     /// consuming it.
     ///
-    /// # Errors
-    ///
-    /// A deterministic refusal.
-    fn delta_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
-
-    /// Credit the absolute amount cell with what the bucket at `funds`
-    /// carries, consuming it.
+    /// One credit for both value modes, on the terms [`Self::cell_take`]
+    /// states.
     ///
     /// # Errors
     ///
     /// A deterministic refusal.
-    fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
-
-    /// Debit the absolute amount cell and hand the value out as a
-    /// bucket, whose rep this returns.
-    ///
-    /// # Errors
-    ///
-    /// A deterministic refusal.
-    fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason>;
+    fn cell_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason>;
 
     /// Take the reservation as a bucket, whose rep this returns.
     ///

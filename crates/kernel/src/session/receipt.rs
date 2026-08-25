@@ -743,7 +743,7 @@ mod tests {
         }]);
         let mut session = session_holding(store, &set);
 
-        let funds = session.write_take(0, 40).expect("the cell covers it");
+        let funds = session.cell_take(0, 40).expect("the cell covers it");
         let (receipt, mut threaded) = session.finish(vec![], 7).expect("finishes");
         assert_eq!(
             receipt.outcome,
@@ -777,9 +777,9 @@ mod tests {
         }]);
         let mut session = session_holding(store, &set);
 
-        let funds = session.write_take(0, 40).expect("the cell covers it");
+        let funds = session.cell_take(0, 40).expect("the cell covers it");
         let split = session.bucket_take(funds, 40).expect("the whole of it");
-        session.write_put(0, split).expect("the credit lands");
+        session.cell_put(0, split).expect("the credit lands");
 
         let (receipt, _) = session.finish(vec![], 7).expect("finishes");
         assert_eq!(receipt.outcome, Outcome::Completed { answers: vec![] });

@@ -139,7 +139,7 @@ mod through_the_session {
     fn a_mint_is_what_the_receipt_reports_and_the_ledger_takes() {
         let mut session = session();
         let minted = session.mint(ISSUER_REP, 500).expect("the grant mints");
-        session.delta_put(0, minted).expect("into its own vault");
+        session.cell_put(0, minted).expect("into its own vault");
 
         let supply = completed(session);
         assert_eq!(supply.minted(UNIT), 500);
@@ -158,7 +158,7 @@ mod through_the_session {
 
         let mut minting = session();
         let minted = minting.mint(ISSUER_REP, 500).expect("the grant mints");
-        minting.delta_put(0, minted).expect("into its own vault");
+        minting.cell_put(0, minted).expect("into its own vault");
         completed(minting).apply(&mut ledger).expect("credited");
 
         // The burn needs value to destroy, which is the mint's — held in
@@ -167,7 +167,7 @@ mod through_the_session {
         let mut held = MemoryStore::new();
         held.write(vault(1, UNIT.address()), encode_amount(500).to_vec());
         let mut burning = session_over(held);
-        let taken = burning.delta_take(0, 500).expect("the debit is queued");
+        let taken = burning.cell_take(0, 500).expect("the debit is queued");
         burning.burn(ISSUER_REP, taken).expect("the grant burns");
         let supply = completed(burning);
         assert_eq!(supply.burned(UNIT), 500);
@@ -324,9 +324,9 @@ mod through_the_session {
     fn value_moving_between_cells_moves_no_supply() {
         let mut session = session();
         let minted = session.mint(ISSUER_REP, 500).expect("the grant mints");
-        session.delta_put(0, minted).expect("into its own vault");
-        let moved = session.delta_take(0, 200).expect("out again");
-        session.delta_put(0, moved).expect("and back");
+        session.cell_put(0, minted).expect("into its own vault");
+        let moved = session.cell_take(0, 200).expect("out again");
+        session.cell_put(0, moved).expect("and back");
 
         // The mint is the only movement; the two cell operations cancel.
         let supply = completed(session);

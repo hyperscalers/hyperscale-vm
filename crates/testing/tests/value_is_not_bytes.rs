@@ -113,7 +113,7 @@ fn forge(
     if let Err(trap) = session.write_cell_set(rep, encode_amount(amount).to_vec()) {
         return (session, Invoked::Aborted(trap.into()));
     }
-    match session.write_take(rep, amount) {
+    match session.cell_take(rep, amount) {
         Ok(bucket) => (
             session,
             Invoked::Produced {
@@ -203,7 +203,7 @@ fn alias_body(
     if let Err(trap) = session.write_cell_set(bytes, encode_amount(amount).to_vec()) {
         return (session, Invoked::Aborted(trap.into()));
     }
-    match session.write_take(value, amount) {
+    match session.cell_take(value, amount) {
         Ok(bucket) => (
             session,
             Invoked::Produced {
@@ -285,7 +285,7 @@ fn two_faced_body(
             ),
             Err(trap) => (session, Invoked::Aborted(trap.into())),
         },
-        "drain" => match session.write_take(rep, amount) {
+        "drain" => match session.cell_take(rep, amount) {
             Ok(bucket) => (
                 session,
                 Invoked::Produced {
@@ -448,7 +448,7 @@ fn treasury_body(
     let [GuestArg::Handle { rep, .. }, GuestArg::U64(amount)] = args else {
         panic!("a handle and an amount: {args:?}");
     };
-    match session.write_take(*rep, u128::from(*amount)) {
+    match session.cell_take(*rep, u128::from(*amount)) {
         Ok(bucket) => (
             session,
             Invoked::Produced {
@@ -540,7 +540,7 @@ fn silent_body(
     let [GuestArg::Handle { rep, .. }, GuestArg::Bucket(funds)] = args else {
         panic!("a handle and an edge: {args:?}");
     };
-    match session.write_put(*rep, *funds) {
+    match session.cell_put(*rep, *funds) {
         Ok(()) => (
             session,
             Invoked::Produced {

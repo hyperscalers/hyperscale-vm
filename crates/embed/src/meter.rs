@@ -138,7 +138,7 @@ pub fn read_cell_get<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
 ) -> Result<Vec<u8>, MeterError> {
-    let value = refused(port.host().read_cell(rep))?;
+    let value = refused(port.host().cell_get(rep))?;
     charge(port, value.len())?;
     Ok(value)
 }
@@ -148,7 +148,7 @@ pub fn write_cell_get<P: HostAccess + FuelSink>(
     port: &mut P,
     rep: u32,
 ) -> Result<Vec<u8>, MeterError> {
-    let value = refused(port.host().write_cell_get(rep))?;
+    let value = refused(port.host().cell_get(rep))?;
     charge(port, value.len())?;
     Ok(value)
 }
@@ -203,7 +203,7 @@ pub fn amount_cell_take<P: HostAccess + FuelSink>(
     amount: u128,
 ) -> Result<u32, MeterError> {
     charge(port, AMOUNT_BOUNDARY_BYTES)?;
-    refused(port.host().write_take(rep, amount))
+    refused(port.host().cell_take(rep, amount))
 }
 
 /// `burn`.
@@ -297,7 +297,7 @@ pub fn amount_cell_put<P: HostAccess + FuelSink>(
     rep: u32,
     funds: u32,
 ) -> Result<(), MeterError> {
-    refused(port.host().write_put(rep, funds))
+    refused(port.host().cell_put(rep, funds))
 }
 
 /// `delta-cell.put`.
@@ -306,7 +306,7 @@ pub fn delta_cell_put<P: HostAccess + FuelSink>(
     rep: u32,
     funds: u32,
 ) -> Result<(), MeterError> {
-    refused(port.host().delta_put(rep, funds))
+    refused(port.host().cell_put(rep, funds))
 }
 
 /// `delta-cell.take`.
@@ -316,7 +316,7 @@ pub fn delta_cell_take<P: HostAccess + FuelSink>(
     amount: u128,
 ) -> Result<u32, MeterError> {
     charge(port, AMOUNT_BOUNDARY_BYTES)?;
-    refused(port.host().delta_take(rep, amount))
+    refused(port.host().cell_take(rep, amount))
 }
 
 /// `reserve-cell.take`.

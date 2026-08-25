@@ -154,11 +154,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn read_cell(&mut self, rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
-        Ok(self.values[rep as usize].clone())
-    }
-
-    fn write_cell_get(&mut self, rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
+    fn cell_get(&mut self, rep: u32) -> std::result::Result<Vec<u8>, AbortReason> {
         Ok(self.values[rep as usize].clone())
     }
 
@@ -218,11 +214,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn delta_put(&mut self, _rep: u32, _funds: u32) -> std::result::Result<(), AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-
-    fn write_put(&mut self, _rep: u32, _funds: u32) -> std::result::Result<(), AbortReason> {
+    fn cell_put(&mut self, _rep: u32, _funds: u32) -> std::result::Result<(), AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 
@@ -230,11 +222,7 @@ impl KernelHost for TestHost {
         Err(AbortReason::HandleUnknown)
     }
 
-    fn delta_take(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
-        Err(AbortReason::HandleUnknown)
-    }
-
-    fn write_take(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
+    fn cell_take(&mut self, _rep: u32, _amount: u128) -> std::result::Result<u32, AbortReason> {
         Err(AbortReason::HandleUnknown)
     }
 

@@ -584,23 +584,17 @@ impl KernelSession {
         Ok(materialize::occupied(&mut self.store, target)?)
     }
 
-    /// A fresh read through a read capability.
+    /// The bytes this cell holds; empty if absent.
+    ///
+    /// One read for both byte modes. What the exclusive mode adds is the
+    /// writes, so the question a fresh read asks and the question a hold
+    /// asks are the same question with the same answer.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
+    pub fn cell_get(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
         let key = self.acting_key(rep, Op::Read)?;
-        Ok(self.store.read(key)?.unwrap_or_default())
-    }
-
-    /// The read half of a write capability.
-    ///
-    /// # Errors
-    ///
-    /// Any [`SessionTrap`].
-    pub fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, SessionTrap> {
-        let key = self.acting_key(rep, Op::ReadExclusive)?;
         Ok(self.store.read(key)?.unwrap_or_default())
     }
 
@@ -719,7 +713,7 @@ impl KernelSession {
     /// Fixtures only, and gated so it stays that way: value a
     /// transaction hands a cell comes out of the bucket table, and a
     /// credit that skipped it is value from nowhere. Production reaches
-    /// the same queue through [`Self::delta_put`], which consumes an
+    /// the same queue through [`Self::cell_put`], which consumes an
     /// edge to make the credit.
     ///
     /// # Errors
@@ -728,13 +722,13 @@ impl KernelSession {
     #[cfg(any(test, feature = "testing"))]
     pub fn delta_add(&mut self, rep: u32, amount: u128) -> Result<(), SessionTrap> {
         let key = self.acting_key(rep, Op::Put)?;
-        self.delta(key, amount, DeltaOp::Add)
+        Ok(self.store.queue_delta(key, DeltaOp::Add(amount))?)
     }
 
     /// Debit a delta capability without producing the edge for it.
     ///
     /// Fixtures only, on the terms [`Self::delta_add`] states.
-    /// Production reaches the same queue through [`Self::delta_take`],
+    /// Production reaches the same queue through [`Self::cell_take`],
     /// which hands the debit out as a bucket.
     ///
     /// # Errors
@@ -743,18 +737,7 @@ impl KernelSession {
     #[cfg(any(test, feature = "testing"))]
     pub fn delta_sub(&mut self, rep: u32, amount: u128) -> Result<(), SessionTrap> {
         let key = self.acting_key(rep, Op::Take)?;
-        self.delta(key, amount, DeltaOp::Sub)
-    }
-
-    /// Queue one commutative movement on a cell the caller has already
-    /// held its capability to.
-    fn delta(
-        &mut self,
-        key: SubstateKey,
-        amount: u128,
-        op: fn(u128) -> DeltaOp,
-    ) -> Result<(), SessionTrap> {
-        Ok(self.store.queue_delta(key, op(amount))?)
+        Ok(self.store.queue_delta(key, DeltaOp::Sub(amount))?)
     }
 
     /// The reserved amount behind a reserve capability.
@@ -783,28 +766,55 @@ impl KernelSession {
             .ok_or(SessionTrap::ReservationMissing)
     }
 
-    /// Debit `amount` through a delta capability and hand the value out
-    /// as a bucket.
+    /// Debit `amount` from this cell and hand the value out as a bucket.
     ///
-    /// The debit is queued like any other, so whether the cell covered it
-    /// is the movement fold's question and an over-take is
-    /// `Outcome::Infeasible` at settle rather than a refusal here. What
-    /// the pairing buys is that the amount debited and the amount now in
-    /// flight are one number the body never got to write twice.
+    /// What the pairing buys, in either mode, is that the amount debited
+    /// and the amount now in flight are one number the body never got to
+    /// write twice. When the debit is refused differs: the exclusive hold
+    /// performs the read-modify-write and refuses an over-take here,
+    /// where the commutative movement queues and leaves the question to
+    /// the fold.
+    ///
+    /// Either way it is what the cell holds, not what it has free. A
+    /// reservation standing on the cell is another transaction's doing
+    /// and nothing this body can see, so crossing one is judged at the
+    /// fold with every other movement's floor — where it is priced as
+    /// the lost race it is, rather than as this body's arithmetic.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
+    pub fn cell_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
         // A credit gave up this direction, which is why the table admits
         // it to the credit and not to the debit.
-        let key = self.acting_key(rep, Op::Take)?;
-        self.delta(key, amount, DeltaOp::Sub)?;
+        let held = self.acting(rep, Op::Take)?;
         let resource = self.value_of(rep)?;
+        let key = match held {
+            // The exclusive hold performs the read-modify-write, so a
+            // debit past what the cell holds is refused at the call.
+            Capability::Amount(key) => {
+                self.amount_cell(key)?
+                    .checked_sub(amount)
+                    .ok_or(SessionTrap::CellUnderflow)?;
+                key
+            }
+            // The commutative movement queues, so whether the cell
+            // covered it is the fold's question and an over-take is
+            // infeasible at settle rather than a refusal here.
+            Capability::Delta(key) => key,
+            held => {
+                return Err(SessionTrap::WrongMode {
+                    rep,
+                    held,
+                    attempted: Op::Take,
+                });
+            }
+        };
+        self.store.queue_delta(key, DeltaOp::Sub(amount))?;
         Ok(self.open_bucket(Held::Amount(amount), resource))
     }
 
-    /// Credit a delta capability with what the bucket at `funds` carries.
+    /// Credit this cell with what the bucket at `funds` carries.
     ///
     /// The bucket is consumed, so the credit and the value that crossed
     /// are one number and there is no second one to disagree with.
@@ -812,33 +822,35 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn delta_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
+    pub fn cell_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
         // Nothing is consumed until everything is judged. A refusal
         // aborts the whole transaction, so no state would escape either
         // way; what the ordering keeps true is that the kernel is never
         // holding a credit it did not make, which is the property the
         // bucket table exists to state.
-        // A credit answers this and a delta answers it too: what the
-        // narrower mode gave up is the other direction, not this one.
-        let key = self.acting_key(rep, Op::Put)?;
+        let held = self.acting(rep, Op::Put)?;
         self.judge_credit(rep, funds)?;
         let amount = self.bucket_amount(funds)?;
-        self.delta(key, amount, DeltaOp::Add)?;
-        self.take_bucket(funds).map(|_| ())
-    }
-
-    /// Credit a write capability's amount cell with what the bucket at
-    /// `funds` carries.
-    ///
-    /// # Errors
-    ///
-    /// Any [`SessionTrap`].
-    pub fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), SessionTrap> {
-        let key = self.acting_key(rep, Op::PutExclusive)?;
-        self.judge_credit(rep, funds)?;
-        let held = self.amount_cell(key)?;
-        let amount = self.bucket_amount(funds)?;
-        held.checked_add(amount).ok_or(SessionTrap::CellOverflow)?;
+        let key = match held {
+            // The exclusive hold performs the read-modify-write, so a
+            // credit past the width an amount has is refused at the call.
+            Capability::Amount(key) => {
+                self.amount_cell(key)?
+                    .checked_add(amount)
+                    .ok_or(SessionTrap::CellOverflow)?;
+                key
+            }
+            // A credit answers this and a delta answers it too: what the
+            // narrower mode gave up is the other direction, not this one.
+            Capability::Delta(key) | Capability::Credit(key) => key,
+            held => {
+                return Err(SessionTrap::WrongMode {
+                    rep,
+                    held,
+                    attempted: Op::Put,
+                });
+            }
+        };
         self.store.queue_delta(key, DeltaOp::Add(amount))?;
         self.take_bucket(funds).map(|_| ())
     }
@@ -853,35 +865,6 @@ impl KernelSession {
             decode_amount(&cell).map_err(|_| SessionTrap::BadAmountCell(key))?
         };
         Ok(self.store.with_queued(key, committed)?)
-    }
-
-    /// Debit `amount` through a write capability and hand the value out
-    /// as a bucket.
-    ///
-    /// The kernel performs the read-modify-write, which is what makes an
-    /// absolute cell's value linear too: a body that needs to read a
-    /// balance — a curve needs both sides — writes no absolute back, so
-    /// there is no number of its own for the edge to disagree with.
-    /// Resolved at the call, so the refusals are immediate: a stored cell
-    /// that is not an amount, and a debit past what the cell has free.
-    ///
-    /// What the cell holds, not what it has free. A reservation standing
-    /// on the cell is another transaction's doing and nothing this body
-    /// can see, so crossing one is judged at the fold with every other
-    /// movement's floor — where it is priced as the lost race it is,
-    /// rather than as this body's arithmetic.
-    ///
-    /// # Errors
-    ///
-    /// Any [`SessionTrap`].
-    pub fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, SessionTrap> {
-        let key = self.acting_key(rep, Op::TakeExclusive)?;
-        let resource = self.value_of(rep)?;
-        self.amount_cell(key)?
-            .checked_sub(amount)
-            .ok_or(SessionTrap::CellUnderflow)?;
-        self.store.queue_delta(key, DeltaOp::Sub(amount))?;
-        Ok(self.open_bucket(Held::Amount(amount), resource))
     }
 
     /// Create `amount` of what this invocation issues, as a bucket.
@@ -1109,7 +1092,7 @@ mod tests {
             mode: Mode::Read,
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
-        assert_eq!(session.read_cell(7), Err(SessionTrap::UnknownHandle(7)));
+        assert_eq!(session.cell_get(7), Err(SessionTrap::UnknownHandle(7)));
         assert_eq!(session.range_count(7), Err(SessionTrap::UnknownHandle(7)));
     }
 
@@ -1128,7 +1111,7 @@ mod tests {
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
         assert_eq!(
-            session.read_cell(ABSENT_REP),
+            session.cell_get(ABSENT_REP),
             Err(SessionTrap::UndeclaredBranch)
         );
         assert_eq!(
@@ -1180,17 +1163,14 @@ mod tests {
     /// was a mode refusal.
     fn attempt(session: &mut KernelSession, op: Op) -> Result<(), SessionTrap> {
         match op {
-            Op::Read => session.read_cell(0).map(|_| ()),
-            Op::ReadExclusive => session.write_cell_get(0).map(|_| ()),
+            Op::Read => session.cell_get(0).map(|_| ()),
             Op::Write => session.write_cell_set(0, vec![1]),
             Op::Clear => session.write_cell_clear(0),
             Op::Seal => session.seal(0),
             Op::OpenSeal => session.open_seal(0).map(|_| ()),
             Op::Balance => session.amount_cell_balance(0).map(|_| ()),
-            Op::TakeExclusive => session.write_take(0, 1).map(|_| ()),
-            Op::PutExclusive => session.write_put(0, 0),
-            Op::Take => session.delta_take(0, 1).map(|_| ()),
-            Op::Put => session.delta_put(0, 0),
+            Op::Take => session.cell_take(0, 1).map(|_| ()),
+            Op::Put => session.cell_put(0, 0),
             Op::ReservedAmount => session.reserve_amount(0).map(|_| ()),
             Op::TakeReserved => session.reserve_take(0).map(|_| ()),
             Op::ReadEntries => session.range_count(0).map(|_| ()),
@@ -1366,7 +1346,7 @@ mod tests {
     fn a_seal_records_the_epoch_the_kernel_is_running() {
         let mut session = sealed_session(&writing(key(1)), sealed_env(9), tx(1));
         assert_eq!(
-            session.write_cell_get(0),
+            session.cell_get(0),
             Ok(9u64.to_le_bytes().to_vec()),
             "the leaf holds the running epoch"
         );
@@ -1423,7 +1403,7 @@ mod tests {
         );
         assert_eq!(lapsed.open_seal(0), Ok(Drawn::Expired));
         assert_eq!(lapsed.seal(0), Ok(()));
-        assert_eq!(lapsed.write_cell_get(0), Ok(8u64.to_le_bytes().to_vec()));
+        assert_eq!(lapsed.cell_get(0), Ok(8u64.to_le_bytes().to_vec()));
     }
 
     /// A seal is opened through the handle that holds it, so a

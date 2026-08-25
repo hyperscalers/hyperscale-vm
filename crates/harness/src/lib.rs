@@ -64,10 +64,7 @@ pub mod fixtures {
         fn run_at(&mut self, _rep: u32, _index: u32) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn read_cell(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
-            Err(AbortReason::HandleUnknown)
-        }
-        fn write_cell_get(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
+        fn cell_get(&mut self, _rep: u32) -> Result<Vec<u8>, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn write_cell_set(&mut self, _rep: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
@@ -103,19 +100,13 @@ pub mod fixtures {
         fn bucket_amount(&mut self, _rep: u32) -> Result<u128, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn delta_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
-            Err(AbortReason::HandleUnknown)
-        }
-        fn write_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
+        fn cell_put(&mut self, _rep: u32, _funds: u32) -> Result<(), AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn mint(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn delta_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
-            Err(AbortReason::HandleUnknown)
-        }
-        fn write_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
+        fn cell_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
         fn reserve_take(&mut self, _rep: u32) -> Result<u32, AbortReason> {

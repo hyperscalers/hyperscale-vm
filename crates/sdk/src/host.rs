@@ -194,8 +194,7 @@ fn acting(handle: Handle) -> Handle {
 pub fn cell_get(handle: Handle) -> Vec<u8> {
     let handle = acting(handle);
     settled(kernel(|k| match handle {
-        Handle::Read(rep) => k.read_cell(rep),
-        Handle::Write(rep) => k.write_cell_get(rep),
+        Handle::Read(rep) | Handle::Write(rep) => k.cell_get(rep),
         other => unreachable!("{other:?} reads no point substate"),
     }))
 }
@@ -281,8 +280,7 @@ pub fn cell_clear(handle: Handle) {
 pub fn cell_put(handle: Handle, funds: u32) {
     let handle = acting(handle);
     settled(kernel(|k| match handle {
-        Handle::Delta(rep) => k.delta_put(rep, funds),
-        Handle::Amount(rep) => k.write_put(rep, funds),
+        Handle::Delta(rep) | Handle::Amount(rep) => k.cell_put(rep, funds),
         other => unreachable!("{other:?} carries no movement"),
     }));
 }
@@ -296,8 +294,7 @@ pub fn cell_put(handle: Handle, funds: u32) {
 pub fn cell_take(handle: Handle, value: u128) -> u32 {
     let handle = acting(handle);
     settled(kernel(|k| match handle {
-        Handle::Delta(rep) => k.delta_take(rep, value),
-        Handle::Amount(rep) => k.write_take(rep, value),
+        Handle::Delta(rep) | Handle::Amount(rep) => k.cell_take(rep, value),
         other => unreachable!("{other:?} carries no movement"),
     }))
 }

@@ -19,10 +19,8 @@ use super::materialize::Capability;
 /// different modes are one operation asked of two capabilities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
-    /// Read a cell's bytes through a fresh read.
+    /// Read a cell's bytes.
     Read,
-    /// Read a cell's bytes through an exclusive hold.
-    ReadExclusive,
     /// Replace a cell's bytes.
     Write,
     /// End the cell, so nothing is there.
@@ -33,13 +31,9 @@ pub enum Op {
     OpenSeal,
     /// What an amount cell holds.
     Balance,
-    /// Debit an amount cell as a read-modify-write.
-    TakeExclusive,
-    /// Credit an amount cell as a read-modify-write.
-    PutExclusive,
-    /// Debit an amount cell as a commutative movement.
+    /// Debit an amount cell.
     Take,
-    /// Credit an amount cell as a commutative movement.
+    /// Credit an amount cell.
     Put,
     /// What a reservation grants.
     ReservedAmount,
@@ -58,16 +52,13 @@ impl Op {
     /// a matrix over this and [`Capability`] is the whole of what the
     /// kernel permits, and an operation added without a row shows up as
     /// an unhandled arm below.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 13] = [
         Self::Read,
-        Self::ReadExclusive,
         Self::Write,
         Self::Clear,
         Self::Seal,
         Self::OpenSeal,
         Self::Balance,
-        Self::TakeExclusive,
-        Self::PutExclusive,
         Self::Take,
         Self::Put,
         Self::ReservedAmount,
@@ -81,14 +72,14 @@ impl Op {
     /// author used rather than the kernel's own method names.
     pub(super) const fn describe(self) -> &'static str {
         match self {
-            Self::Read | Self::ReadExclusive => "read the cell's bytes",
+            Self::Read => "read the cell's bytes",
             Self::Write => "replace the cell's bytes",
             Self::Clear => "end the cell",
             Self::Seal => "seal the cell",
             Self::OpenSeal => "open the cell's seal",
             Self::Balance => "read the balance",
-            Self::TakeExclusive | Self::Take => "debit the cell",
-            Self::PutExclusive | Self::Put => "credit the cell",
+            Self::Take => "debit the cell",
+            Self::Put => "credit the cell",
             Self::ReservedAmount => "read the reserved amount",
             Self::TakeReserved => "take the reservation",
             Self::ReadEntries => "read the interval's entries",
@@ -107,21 +98,20 @@ impl Op {
 pub const fn permits(held: &Capability, op: Op) -> bool {
     use Capability as C;
     match op {
-        Op::Read => matches!(held, C::Read(_)),
-        // Reading through an exclusive hold is the hold's own read: what
-        // the exclusive mode adds is the writes, not a second answer to
-        // the same question.
-        Op::ReadExclusive | Op::Write | Op::Clear | Op::Seal | Op::OpenSeal => {
-            matches!(held, C::Write(_))
-        }
+        // Reading is what both byte modes answer: what the exclusive
+        // mode adds is the writes, not a second answer to the same
+        // question.
+        Op::Read => matches!(held, C::Read(_) | C::Write(_)),
+        Op::Write | Op::Clear | Op::Seal | Op::OpenSeal => matches!(held, C::Write(_)),
         // A read of a value cell is the one operation both value modes
         // answer: reading a balance moves none of it.
         Op::Balance => matches!(held, C::Amount(_) | C::AmountRead(_)),
-        Op::TakeExclusive | Op::PutExclusive => matches!(held, C::Amount(_)),
+        // Both value modes move value; where they differ is when the
+        // movement is judged, which the kernel reads off the capability.
         // A credit gave up the other direction, so it answers the credit
         // and not the debit.
-        Op::Take => matches!(held, C::Delta(_)),
-        Op::Put => matches!(held, C::Delta(_) | C::Credit(_)),
+        Op::Take => matches!(held, C::Amount(_) | C::Delta(_)),
+        Op::Put => matches!(held, C::Amount(_) | C::Delta(_) | C::Credit(_)),
         Op::ReservedAmount | Op::TakeReserved => matches!(held, C::Reserve { .. }),
         // Reading an interval is legal through every interval mode; the
         // narrower ones give up the writes, not the walk.

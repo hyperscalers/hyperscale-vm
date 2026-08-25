@@ -232,14 +232,14 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
             let rep = u32::try_from(rep).expect("small table");
             match capability {
                 Capability::Read(_) => {
-                    let _ = session.read_cell(rep);
+                    let _ = session.cell_get(rep);
                 }
                 Capability::Write(_) => {
                     let _ = session.write_cell_set(rep, vec![id.0.0[0]]);
                 }
                 // A value cell takes no bytes; what it takes is a debit.
                 Capability::Amount(_) => {
-                    let _ = session.write_take(rep, seed % 11);
+                    let _ = session.cell_take(rep, seed % 11);
                 }
                 // And a read of one answers a quantity, not bytes.
                 Capability::AmountRead(_) => {
@@ -257,9 +257,9 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                     // fixture has.
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
                     if let Ok(minted) = session.mint(ISSUER_REP, seed % 40) {
-                        let _ = session.delta_put(rep, minted);
+                        let _ = session.cell_put(rep, minted);
                     }
-                    if let Ok(taken) = session.delta_take(rep, seed % 17) {
+                    if let Ok(taken) = session.cell_take(rep, seed % 17) {
                         let _ = session.burn(ISSUER_REP, taken);
                     }
                 }
@@ -270,7 +270,7 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 Capability::Credit(_) => {
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
                     if let Ok(minted) = session.mint(ISSUER_REP, seed % 40) {
-                        let _ = session.delta_put(rep, minted);
+                        let _ = session.cell_put(rep, minted);
                     }
                 }
                 Capability::Reserve { .. } => {
@@ -465,9 +465,9 @@ fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
                 Capability::Delta(_) => {
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
                     if let Ok(minted) = session.mint(ISSUER_REP, seed % 40 + 17) {
-                        let _ = session.delta_put(rep, minted);
+                        let _ = session.cell_put(rep, minted);
                     }
-                    if let Ok(taken) = session.delta_take(rep, seed % 17) {
+                    if let Ok(taken) = session.cell_take(rep, seed % 17) {
                         let _ = session.burn(ISSUER_REP, taken);
                     }
                 }
@@ -512,12 +512,12 @@ fn outbound_runner(
                     // what the debit is for.
                     let debit = debits.get(&id).map_or(0, |(_, debit)| *debit);
                     session.grant_issuance(RESOURCE, ResourceKind::Fungible);
-                    if let Ok(taken) = session.delta_take(rep, debit) {
+                    if let Ok(taken) = session.cell_take(rep, debit) {
                         let _ = session.burn(ISSUER_REP, taken);
                     }
                 }
                 Capability::Read(_) => {
-                    let cell = session.read_cell(rep).unwrap_or_default();
+                    let cell = session.cell_get(rep).unwrap_or_default();
                     let amount = if cell.is_empty() {
                         0
                     } else {

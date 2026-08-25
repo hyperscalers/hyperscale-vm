@@ -41,11 +41,8 @@ impl KernelHost for KernelSession {
         refused(Self::run_at(self, rep, index))
     }
 
-    fn read_cell(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason> {
-        refused(Self::read_cell(self, rep))
-    }
-    fn write_cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason> {
-        refused(Self::write_cell_get(self, rep))
+    fn cell_get(&mut self, rep: u32) -> Result<Vec<u8>, AbortReason> {
+        refused(Self::cell_get(self, rep))
     }
     fn write_cell_set(&mut self, rep: u32, value: Vec<u8>) -> Result<(), AbortReason> {
         refused(Self::write_cell_set(self, rep, value))
@@ -81,20 +78,14 @@ impl KernelHost for KernelSession {
     fn bucket_amount(&mut self, rep: u32) -> Result<u128, AbortReason> {
         refused(Self::bucket_amount(self, rep))
     }
-    fn delta_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
-        refused(Self::delta_put(self, rep, funds))
-    }
-    fn write_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
-        refused(Self::write_put(self, rep, funds))
+    fn cell_put(&mut self, rep: u32, funds: u32) -> Result<(), AbortReason> {
+        refused(Self::cell_put(self, rep, funds))
     }
     fn mint(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
         refused(Self::mint(self, rep, amount))
     }
-    fn delta_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
-        refused(Self::delta_take(self, rep, amount))
-    }
-    fn write_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
-        refused(Self::write_take(self, rep, amount))
+    fn cell_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
+        refused(Self::cell_take(self, rep, amount))
     }
     fn reserve_take(&mut self, rep: u32) -> Result<u32, AbortReason> {
         refused(Self::reserve_take(self, rep))

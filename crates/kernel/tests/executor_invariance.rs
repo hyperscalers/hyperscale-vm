@@ -115,12 +115,12 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
     let outcome = if let (Some(reserve), Some(delta)) = (reserve, delta) {
         let amount = session.reserve_amount(reserve).unwrap();
         let funds = session.reserve_take(reserve).unwrap();
-        session.delta_put(delta, funds).unwrap();
+        session.cell_put(delta, funds).unwrap();
         Outcome::Completed {
             answers: answered(u64::try_from(amount).unwrap()),
         }
     } else if let Some(write) = write {
-        let mut value = session.write_cell_get(write).unwrap();
+        let mut value = session.cell_get(write).unwrap();
         value[0] += 1;
         session.write_cell_set(write, value.clone()).unwrap();
         if tx_id == tx(0x66) {
