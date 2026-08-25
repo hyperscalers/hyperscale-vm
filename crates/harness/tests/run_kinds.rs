@@ -60,7 +60,7 @@ fn reached() -> BTreeSet<&'static str> {
         .values()
         .flat_map(|signature| {
             signature.abi.iter().filter_map(move |param| match param {
-                AbiParam::Run { clause, site } => run_mode(signature, *clause, *site),
+                AbiParam::Handle { clause, site } => run_mode(signature, *clause, *site),
                 _ => None,
             })
         })

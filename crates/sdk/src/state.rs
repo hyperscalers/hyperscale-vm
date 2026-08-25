@@ -1140,8 +1140,8 @@ impl Keyed<Vault> {
     }
 }
 
-/// One `for-each` site's whole expansion, borrowed once and walked by
-/// the index of the element that declared each entry.
+/// One declared site, borrowed once and walked by the index of the
+/// element each access names.
 ///
 /// Built by generated code, never by an author: what a body writes is
 /// the loop it wrote, and this is what the emission rewrites the loop's
@@ -1149,12 +1149,12 @@ impl Keyed<Vault> {
 /// one body agree on what it means and a site whose guard did not fire
 /// reads as undeclared rather than shortening the walk.
 #[derive(Clone, Copy, Debug)]
-pub struct Run {
+pub struct Site {
     rep: u32,
 }
 
 #[allow(clippy::inline_always)] // one import behind a dispatch its call site fixes
-impl Run {
+impl Site {
     /// The run at `rep`.
     #[must_use]
     pub const fn at(rep: u32) -> Self {
@@ -1166,9 +1166,9 @@ impl Run {
     #[inline(always)]
     pub fn len(&self) -> u32 {
         #[cfg(component)]
-        return crate::guest::run_len(self.rep);
+        return crate::guest::site_len(self.rep);
         #[cfg(not(component))]
-        return host::run_len(self.rep);
+        return host::site_len(self.rep);
     }
 
     /// Whether the loop mapped over no elements at all.
@@ -1187,15 +1187,15 @@ impl Run {
     #[inline(always)]
     pub fn declared(&self, index: u32) -> bool {
         #[cfg(component)]
-        return crate::guest::run_declared(self.rep, index);
+        return crate::guest::site_declared(self.rep, index);
         #[cfg(not(component))]
-        return host::run_declared(self.rep, index);
+        return host::site_declared(self.rep, index);
     }
 
     /// The handle the entry at `index` acts through.
     #[must_use]
     pub const fn handle(&self, index: u32) -> Handle {
-        Handle::Run(self.rep, index)
+        Handle::at(self.rep, index)
     }
 }
 

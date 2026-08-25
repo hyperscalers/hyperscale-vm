@@ -163,15 +163,28 @@ impl ParamType {
 /// How one guest ABI parameter is built at invocation.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum AbiParam {
-    /// The capability materialized for this method's effect clause.
+    /// The site this method's handle parameter covers.
     ///
-    /// Names a clause rather than a position in the materialized table:
-    /// a `for-each` clause expands over instance configuration, so table
-    /// positions past one would depend on configuration rather than on
-    /// the signature. A clause that does not evaluate to exactly one
-    /// target cannot be a handle parameter, and naming one is a
-    /// deterministic refusal at materialization.
-    Handle(u32),
+    /// Names a clause and a site within it rather than a position in the
+    /// materialized table: a `for-each` clause expands over instance
+    /// configuration, so table positions past one would depend on
+    /// configuration rather than on the signature. A plain clause is one
+    /// site of its own, named at site zero.
+    ///
+    /// The width is the instance's rather than the signature's, which is
+    /// why one parameter covers a whole site and not a run of them — a
+    /// body's arity stays a function of what it declares, and the list a
+    /// loop maps over stays the configuration's business. An element the
+    /// site's guard did not fire for reads absent at its index rather
+    /// than shortening the walk, so two sites in one body agree on what
+    /// an index means.
+    Handle {
+        /// The top-level clause.
+        clause: u32,
+        /// The site's position in that clause's body, or zero where the
+        /// clause is one access of its own.
+        site: u32,
+    },
     /// The value edge this declared [`ParamType::Bucket`] parameter is
     /// bound to.
     ///
@@ -192,23 +205,6 @@ pub enum AbiParam {
     ///
     /// [`Declaration::clause_taken`]: crate::dsl::Declaration::clause_taken
     Guard(u32),
-    /// The run covering one site of a `for-each` clause: every
-    /// expansion of that site, walked by the index of the element that
-    /// declared it.
-    ///
-    /// The width is the instance's rather than the signature's, which is
-    /// why it is one parameter and not a run of them — a body's arity
-    /// stays a function of what it declares, and the list a loop maps
-    /// over stays the configuration's business. An expansion the site's
-    /// guard did not fire for reads absent at its index rather than
-    /// shortening the walk, so two sites in one body agree on what an
-    /// index means.
-    Run {
-        /// The top-level `for-each` clause.
-        clause: u32,
-        /// The site's position in that clause's body.
-        site: u32,
-    },
     /// A value evaluated over the method's bound inputs.
     ///
     /// The same evaluation the effect clauses run, against the same

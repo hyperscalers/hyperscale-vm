@@ -256,7 +256,9 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
     for (index, binding) in signature.abi.iter().enumerate() {
         let position = bound(index);
         match binding {
-            AbiParam::Handle(clause) => {
+            // A plain clause is one site of its own, named at site zero;
+            // anything past that names a site of a `for-each` body.
+            AbiParam::Handle { clause, site } => {
                 let declared = usize::try_from(*clause)
                     .ok()
                     .and_then(|index| signature.effects.get(index));
@@ -267,11 +269,15 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
                         declared: bound(signature.effects.len()),
                     });
                 };
-                if !matches!(declared, Clause::Effect { .. }) {
-                    return Err(AbiError::NotAnAccess {
-                        position,
-                        clause: *clause,
-                    });
+                match declared {
+                    Clause::Effect { .. } if *site == 0 => {}
+                    Clause::Effect { .. } => {
+                        return Err(AbiError::NotAnAccess {
+                            position,
+                            clause: *clause,
+                        });
+                    }
+                    _ => check_run(signature, position, *clause, *site)?,
                 }
             }
             AbiParam::Guard(clause) => {
@@ -291,9 +297,6 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
                         clause: *clause,
                     });
                 }
-            }
-            AbiParam::Run { clause, site } => {
-                check_run(signature, position, *clause, *site)?;
             }
             AbiParam::Bucket(param) => {
                 let slot = usize::try_from(*param).map_err(|_| AbiError::NoSuchParam {
@@ -2418,12 +2421,15 @@ mod tests {
         assert_eq!(
             check_abi(&signature(
                 vec![ParamType::Bucket],
-                vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
+                vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
             )),
             Ok(())
         );
         assert!(matches!(
-            check_abi(&signature(vec![], vec![AbiParam::Handle(1)])),
+            check_abi(&signature(
+                vec![],
+                vec![AbiParam::Handle { clause: 1, site: 0 }]
+            )),
             Err(AbiError::NoSuchClause { clause: 1, .. })
         ));
         assert!(matches!(
@@ -2866,7 +2872,7 @@ mod tests {
         assert_eq!(
             check_abi(&signature(
                 vec![ParamType::Bucket],
-                vec![AbiParam::Handle(0)]
+                vec![AbiParam::Handle { clause: 0, site: 0 }]
             )),
             Ok(())
         );

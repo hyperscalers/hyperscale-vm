@@ -87,7 +87,10 @@ pub fn metadata() -> PackageMetadata {
                 grants: GrantsExpr::new(),
             }),
             params: vec![],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(minted_id.clone())],
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Derived(minted_id.clone()),
+            ],
             outputs: vec![Expr::NfBucket {
                 resource: Box::new(minted_resource.clone()),
                 ids: Box::new(Expr::List(vec![minted_id.clone()])),
@@ -102,7 +105,7 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             issues: None,
             params: vec![ParamType::NfBucket],
-            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
+            abi: vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
             effects: vec![Clause::Effect {
                 guard: None,
                 target: holdings_range(
@@ -125,7 +128,10 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             issues: None,
             params: vec![ParamType::Address, ParamType::Ids],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Derived(Expr::Arg(1)),
+            ],
             outputs: vec![Expr::NfBucket {
                 resource: Box::new(Expr::Arg(0)),
                 ids: Box::new(Expr::Arg(1)),

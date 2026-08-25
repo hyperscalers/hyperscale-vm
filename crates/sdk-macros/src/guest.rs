@@ -75,23 +75,14 @@ pub fn method(
             // guest branches on it rather than on the condition, so the
             // two cannot disagree.
             Carries::Flag => signature.push(quote!(#ident: bool)),
+            // One borrow per declared site, walked by the element the
+            // access names. Through the SDK's own binding module rather
+            // than the bare name, so a body that imports a type of the
+            // same name does not shadow the world's.
             Carries::Handle => {
-                // Through the SDK's own binding module rather than the
-                // bare name, so a body that imports a type of the same
-                // name does not shadow the world's.
-                signature
-                    .push(quote!(#ident: &::hyperscale_vm_sdk::guest::kernel::state::Capability));
+                signature.push(quote!(#ident: &::hyperscale_vm_sdk::guest::kernel::state::Site));
                 prologue.push(quote!(
-                    let #ident = ::hyperscale_vm_sdk::guest::Handle::Capability(#ident.handle());
-                ));
-            }
-            // A run arrives as one borrow and is walked by index, so what
-            // the body holds is the run rather than a handle — the entry
-            // an index names is asked for where the access is written.
-            Carries::Run => {
-                signature.push(quote!(#ident: &::hyperscale_vm_sdk::guest::kernel::state::Run));
-                prologue.push(quote!(
-                    let #ident = ::hyperscale_vm_sdk::state::Run::at(#ident.handle());
+                    let #ident = ::hyperscale_vm_sdk::state::Site::at(#ident.handle());
                 ));
             }
             // A value edge is rebuilt under the name and the kind the
@@ -141,7 +132,7 @@ pub fn method(
                         let #ident: #ty = ::core::convert::Into::into(#ident);
                     ));
                 }
-                Shape::Handle | Shape::Run | Shape::Bucket => {
+                Shape::Handle | Shape::Bucket => {
                     unreachable!("a value binding is never a handle")
                 }
             },

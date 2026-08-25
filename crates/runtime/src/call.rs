@@ -17,7 +17,7 @@ use wasmtime::component::{Instance, Resource, ResourceAny, Val};
 use wasmtime::{AsContextMut, Error, Result, Store};
 
 use crate::abort::{CallError, classify, exhausted};
-use crate::world::{Bucket, Capability, Run};
+use crate::world::{Bucket, Site};
 
 /// An address as the world's `record address`: four little-endian words.
 ///
@@ -40,28 +40,18 @@ fn address_val(address: Address) -> Val {
     )
 }
 
-/// The handle for one rep.
+/// The handle for one site.
 ///
 /// Registered as an owned host handle rather than a borrowed one, which
 /// is a property of the value path and not of what the guest receives:
 /// a borrow is only representable inside an active call scope, and there
 /// is none while a call's arguments are still being assembled. The guest
-/// parameter is `borrow<capability>` either way — the canonical ABI lends this
+/// parameter is `borrow<site>` either way — the canonical ABI lends this
 /// handle for the duration of the call and takes it back at scope exit —
 /// and a `Resource` carries no destructor, so ownership here names a
 /// table slot and nothing that could be destroyed.
 fn handle(rep: u32, store: impl AsContextMut) -> Result<ResourceAny> {
-    ResourceAny::try_from_resource(Resource::<Capability>::new_own(rep), store)
-}
-
-/// The run resource one `for-each` site's expansion is lent as.
-///
-/// Its own type beside [`handle`] because the rep is a position in the
-/// session's run table rather than in its capability table, and which
-/// capability an index reaches is the run's answer — so a rep here and a
-/// rep there mean different things, and the type is what says so.
-fn run(rep: u32, store: impl AsContextMut) -> Result<ResourceAny> {
-    ResourceAny::try_from_resource(Resource::<Run>::new_own(rep), store)
+    ResourceAny::try_from_resource(Resource::<Site>::new_own(rep), store)
 }
 
 /// How an invocation ended, as the artifact's own result type says it can.
@@ -109,8 +99,7 @@ pub fn call_export<T: 'static>(
     let mut lowered = Vec::with_capacity(args.len());
     for arg in args {
         lowered.push(match arg {
-            GuestArg::Handle { rep } => Val::Resource(handle(*rep, store.as_context_mut())?),
-            GuestArg::Run { rep } => Val::Resource(run(*rep, store.as_context_mut())?),
+            GuestArg::Site { site } => Val::Resource(handle(*site, store.as_context_mut())?),
             GuestArg::Bool(taken) => Val::Bool(*taken),
             GuestArg::U64(scalar) => Val::U64(*scalar),
             GuestArg::Address(address) => address_val(*address),

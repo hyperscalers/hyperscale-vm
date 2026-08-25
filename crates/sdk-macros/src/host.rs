@@ -48,11 +48,8 @@ pub fn arm(
                 let #ident = ::hyperscale_vm_sdk::host::flag(__args, #position);
             ),
             Carries::Handle => quote!(
-                let #ident = ::hyperscale_vm_sdk::host::handle(__args, #position);
-            ),
-            Carries::Run => quote!(
-                let #ident = ::hyperscale_vm_sdk::state::Run::at(
-                    ::hyperscale_vm_sdk::host::run(__args, #position),
+                let #ident = ::hyperscale_vm_sdk::state::Site::at(
+                    ::hyperscale_vm_sdk::host::handle(__args, #position),
                 );
             ),
             Carries::Edge { name, nf } => {
@@ -90,7 +87,7 @@ pub fn arm(
                         ::hyperscale_vm_sdk::host::ids(__args, #position).to_vec(),
                     );
                 ),
-                Shape::Handle | Shape::Run | Shape::Bucket => {
+                Shape::Handle | Shape::Bucket => {
                     unreachable!("a value binding is never a handle")
                 }
             },

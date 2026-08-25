@@ -9,9 +9,9 @@ fn every_world_shape_classifies_and_nested_exports_stay_invisible() {
     let bytes = parse_str(
         r#"(component
              (import "hyperscale:kernel/state" (instance $state
-               (export "capability" (type $rc (sub resource)))
+               (export "site" (type $rc (sub resource)))
                (export "delta-cell" (type $dc (sub resource)))))
-             (alias export $state "capability" (type $reserve))
+             (alias export $state "site" (type $reserve))
              (alias export $state "delta-cell" (type $delta))
 
              (core module $m

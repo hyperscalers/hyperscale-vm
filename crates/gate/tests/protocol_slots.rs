@@ -24,8 +24,8 @@ fn component() -> Vec<u8> {
         r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "capability" (type $wc (sub resource)))))
-  (alias export $state "capability" (type $wcell))
+    (export "site" (type $wc (sub resource)))))
+  (alias export $state "site" (type $wcell))
   (core module $m
     (func (export "m") (param i32 i64))
     (func (export "seal")))
@@ -56,7 +56,10 @@ fn writing(slot: SlotId, material: Vec<Expr>) -> PackageMetadata {
         "m".into(),
         MethodSignature {
             params: vec![ParamType::U64],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Derived(Expr::Arg(0)),
+            ],
             effects: vec![
                 Clause::Effect {
                     guard: None,

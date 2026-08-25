@@ -4,9 +4,7 @@
 
 use hyperscale_vm_embed::KernelHost;
 use hyperscale_vm_embed::meter::FUEL_PER_BOUNDARY_BYTE;
-use hyperscale_vm_runtime::{
-    Capability as CapabilityResource, add_kernel_to_linker, blessed_engine, validate_component,
-};
+use hyperscale_vm_runtime::{Site, add_kernel_to_linker, blessed_engine, validate_component};
 use hyperscale_vm_types::math::U256;
 use hyperscale_vm_types::{AbortReason, Drawn};
 use wasmtime::component::{Component, Linker, Resource};
@@ -24,18 +22,18 @@ use wat::parse_str;
 const GUEST_WAT: &str = r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "capability" (type $c (sub resource)))
-    (export "capability-get" (func (param "c" (borrow $c)) (result (list u8))))
-    (export "capability-set" (func (param "c" (borrow $c)) (param "value" (list u8))))))
+    (export "site" (type $c (sub resource)))
+    (export "site-get" (func (param "c" (borrow $c)) (param "element" u32) (result (list u8))))
+    (export "site-set" (func (param "c" (borrow $c)) (param "element" u32) (param "value" (list u8))))))
   (import "hyperscale:kernel/env" (instance $env
     (export "clock" (func (result u64)))))
   (import "hyperscale:kernel/crypto" (instance $crypto
     (export "hash" (func (param "data" (list u8)) (result (list u8))))))
 
-  (alias export $state "capability" (type $rcell))
-  (alias export $state "capability" (type $wcell))
-  (alias export $state "capability-get" (func $read))
-  (alias export $state "capability-set" (func $write))
+  (alias export $state "site" (type $rcell))
+  (alias export $state "site" (type $wcell))
+  (alias export $state "site-get" (func $read))
+  (alias export $state "site-set" (func $write))
   (alias export $env "clock" (func $clock))
   (alias export $crypto "hash" (func $hash))
 
@@ -65,16 +63,17 @@ const GUEST_WAT: &str = r#"
 
   (core module $m
     (import "env" "mem" (memory 4 4))
-    (import "k" "read" (func $read (param i32 i32)))
-    (import "k" "write" (func $write (param i32 i32 i32)))
+    (import "k" "read" (func $read (param i32 i32 i32)))
+    (import "k" "write" (func $write (param i32 i32 i32 i32)))
     (import "k" "clock" (func $clock (result i64)))
     (import "k" "hash" (func $hash (param i32 i32 i32)))
     (import "k" "drop-r" (func $drop_r (param i32)))
     (import "k" "drop-w" (func $drop_w (param i32)))
     (func (export "run") (param i32 i32) (result i64)
       (local $ptr i32) (local $len i32) (local $now i64)
-      ;; read(a) -> return area at 8: {ptr, len}
+      ;; read(a, element 0) -> return area at 8: {ptr, len}
       local.get 0
+      i32.const 0
       i32.const 8
       call $read
       i32.const 8
@@ -83,8 +82,9 @@ const GUEST_WAT: &str = r#"
       i32.const 12
       i32.load
       local.set $len
-      ;; write(b, the same buffer) - no guest-side copy
+      ;; write(b, element 0, the same buffer) - no guest-side copy
       local.get 1
+      i32.const 0
       local.get $ptr
       local.get $len
       call $write
@@ -368,10 +368,8 @@ fn run_guest(engine: &Engine, substate_len: usize, fuel: u64) -> Result<(u64, u6
     );
     store.set_fuel(fuel)?;
     let instance = linker.instantiate(&mut store, &component)?;
-    let run = instance
-        .get_typed_func::<(Resource<CapabilityResource>, Resource<CapabilityResource>), (u64,)>(
-            &mut store, "run",
-        )?;
+    let run =
+        instance.get_typed_func::<(Resource<Site>, Resource<Site>), (u64,)>(&mut store, "run")?;
     let (out,) = run.call(
         &mut store,
         (Resource::new_borrow(0), Resource::new_borrow(1)),

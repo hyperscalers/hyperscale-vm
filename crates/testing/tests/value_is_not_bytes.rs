@@ -86,7 +86,10 @@ fn counterfeiter() -> PackageMetadata {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
             outputs: vec![Expr::Literal(Value::Address(xrd()))],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Derived(Expr::Arg(0)),
+            ],
             effects: vec![write(
                 own(VAULT, vec![Expr::Literal(Value::Address(xrd()))]),
                 Some(Box::new(Expr::Literal(Value::Address(xrd())))),
@@ -106,14 +109,14 @@ fn forge(
     args: &[GuestArg<'_>],
 ) -> (KernelSession, Invoked) {
     assert_eq!(export, "forge");
-    let [GuestArg::Handle { rep, .. }, GuestArg::U64(amount)] = args else {
+    let [GuestArg::Site { site }, GuestArg::U64(amount)] = args else {
         panic!("a handle and a scalar: {args:?}");
     };
-    let (rep, amount) = (*rep, u128::from(*amount));
-    if let Err(trap) = session.write_cell_set(rep, 0, encode_amount(amount).to_vec()) {
+    let (site, amount) = (*site, u128::from(*amount));
+    if let Err(trap) = session.write_cell_set(site, 0, encode_amount(amount).to_vec()) {
         return (session, Invoked::Aborted(trap.into()));
     }
-    match session.cell_take(rep, 0, amount) {
+    match session.cell_take(site, 0, amount) {
         Ok(bucket) => (
             session,
             Invoked::Produced {
@@ -171,8 +174,8 @@ fn aliased() -> PackageMetadata {
             params: vec![ParamType::U64],
             outputs: vec![held()],
             abi: vec![
-                AbiParam::Handle(0),
-                AbiParam::Handle(1),
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Handle { clause: 1, site: 0 },
                 AbiParam::Derived(Expr::Arg(0)),
             ],
             effects: vec![write(pot(), Some(Box::new(held()))), write(pot(), None)],
@@ -192,8 +195,8 @@ fn alias_body(
 ) -> (KernelSession, Invoked) {
     assert_eq!(export, "forge");
     let [
-        GuestArg::Handle { rep: value, .. },
-        GuestArg::Handle { rep: bytes, .. },
+        GuestArg::Site { site: value, .. },
+        GuestArg::Site { site: bytes, .. },
         GuestArg::U64(amount),
     ] = args
     else {
@@ -244,7 +247,10 @@ fn two_faced() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Derived(Expr::Arg(0)),
+            ],
             effects: vec![write(pot(), None)],
             ..MethodSignature::default()
         },
@@ -255,7 +261,10 @@ fn two_faced() -> PackageMetadata {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
             outputs: vec![held()],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Derived(Expr::Arg(0)),
+            ],
             effects: vec![write(pot(), Some(Box::new(held())))],
             ..MethodSignature::default()
         },
@@ -270,12 +279,12 @@ fn two_faced_body(
     mut session: KernelSession,
     args: &[GuestArg<'_>],
 ) -> (KernelSession, Invoked) {
-    let [GuestArg::Handle { rep, .. }, GuestArg::U64(amount)] = args else {
+    let [GuestArg::Site { site }, GuestArg::U64(amount)] = args else {
         panic!("a handle and a scalar: {args:?}");
     };
-    let (rep, amount) = (*rep, u128::from(*amount));
+    let (site, amount) = (*site, u128::from(*amount));
     match export {
-        "fill" => match session.write_cell_set(rep, 0, encode_amount(amount).to_vec()) {
+        "fill" => match session.write_cell_set(site, 0, encode_amount(amount).to_vec()) {
             Ok(()) => (
                 session,
                 Invoked::Produced {
@@ -285,7 +294,7 @@ fn two_faced_body(
             ),
             Err(trap) => (session, Invoked::Aborted(trap.into())),
         },
-        "drain" => match session.cell_take(rep, 0, amount) {
+        "drain" => match session.cell_take(site, 0, amount) {
             Ok(bucket) => (
                 session,
                 Invoked::Produced {
@@ -321,7 +330,10 @@ fn impostor() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::Address],
-            abi: vec![AbiParam::Handle(0), AbiParam::Handle(1)],
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Handle { clause: 1, site: 0 },
+            ],
             effects: vec![
                 write(own(AUTH, vec![]), None),
                 write(own(VAULT, vec![Expr::Arg(0)]), Some(Box::new(Expr::Arg(0)))),
@@ -376,8 +388,8 @@ fn impostor_body(
     match export {
         "arm" => {
             let [
-                GuestArg::Handle { rep: auth, .. },
-                GuestArg::Handle { rep: vault, .. },
+                GuestArg::Site { site: auth, .. },
+                GuestArg::Site { site: vault, .. },
             ] = args
             else {
                 panic!("two handles: {args:?}");
@@ -422,7 +434,10 @@ fn treasury() -> PackageMetadata {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
             outputs: vec![Expr::Config(1)],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Derived(Expr::Arg(0)),
+            ],
             effects: vec![
                 write(
                     own(VAULT, vec![Expr::Config(1)]),
@@ -445,10 +460,10 @@ fn treasury_body(
     args: &[GuestArg<'_>],
 ) -> (KernelSession, Invoked) {
     assert_eq!(export, "payout");
-    let [GuestArg::Handle { rep, .. }, GuestArg::U64(amount)] = args else {
+    let [GuestArg::Site { site }, GuestArg::U64(amount)] = args else {
         panic!("a handle and an amount: {args:?}");
     };
-    match session.cell_take(*rep, 0, u128::from(*amount)) {
+    match session.cell_take(*site, 0, u128::from(*amount)) {
         Ok(bucket) => (
             session,
             Invoked::Produced {
@@ -523,7 +538,7 @@ fn silent() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::Bucket],
-            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
+            abi: vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
             effects: vec![cell()],
             ..MethodSignature::default()
         },
@@ -537,10 +552,10 @@ fn silent_body(
     args: &[GuestArg<'_>],
 ) -> (KernelSession, Invoked) {
     assert_eq!(export, "fill");
-    let [GuestArg::Handle { rep, .. }, GuestArg::Bucket(funds)] = args else {
+    let [GuestArg::Site { site }, GuestArg::Bucket(funds)] = args else {
         panic!("a handle and an edge: {args:?}");
     };
-    match session.cell_put(*rep, 0, *funds) {
+    match session.cell_put(*site, 0, *funds) {
         Ok(()) => (
             session,
             Invoked::Produced {

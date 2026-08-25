@@ -42,8 +42,5 @@ pub use {
     charges::instantiate_charged,
     engine::{blessed_config, blessed_engine},
     fuel::blessed_operator_cost,
-    world::{
-        Amount, Bucket, Capability, HostRefusal, Run, Wide, WitDrawn, WitRounding,
-        add_kernel_to_linker,
-    },
+    world::{Amount, Bucket, HostRefusal, Site, Wide, WitDrawn, WitRounding, add_kernel_to_linker},
 };

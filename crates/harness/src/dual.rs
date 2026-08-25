@@ -21,9 +21,8 @@ use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
 };
 use hyperscale_vm_runtime::{
-    Bucket, Capability as CapabilityResource, HostRefusal, InstantiationCharges, Run,
-    add_kernel_to_linker, blessed_engine, classify, instantiate_charged, instantiation_charges,
-    validate_component,
+    Bucket, HostRefusal, InstantiationCharges, Site, add_kernel_to_linker, blessed_engine,
+    classify, instantiate_charged, instantiation_charges, validate_component,
 };
 use hyperscale_vm_types::{ADDRESS_WORDS, AbortReason, EffectSet, ResourceAddr, TxHash};
 use wasmtime::component::{Component, Instance, Linker, Resource, ResourceAny, Val};
@@ -296,10 +295,7 @@ fn lower(store: &mut Store<KernelSession>, arg: &CVal) -> Result<Val> {
 fn borrow(store: &mut Store<KernelSession>, rep: u32, kind: HandleKind) -> Result<ResourceAny> {
     let store = &mut *store;
     match kind {
-        HandleKind::Capability => {
-            ResourceAny::try_from_resource(Resource::<CapabilityResource>::new_own(rep), store)
-        }
-        HandleKind::Run => ResourceAny::try_from_resource(Resource::<Run>::new_own(rep), store),
+        HandleKind::Site => ResourceAny::try_from_resource(Resource::<Site>::new_own(rep), store),
         HandleKind::Bucket => {
             ResourceAny::try_from_resource(Resource::<Bucket>::new_own(rep), store)
         }

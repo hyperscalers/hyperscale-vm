@@ -77,44 +77,34 @@ interface state {
 
     /// One declared access, borrowed for the call that acts through it.
     ///
-    /// One resource for every mode, because a handle type answers which
-    /// table its rep indexes and nothing else: all of them index the
-    /// capability table the declaration materialized. What a body may do
-    /// through one is the capability's own answer, held by the kernel at
-    /// every operation — so a mode that grants no `set` refuses one, on
-    /// the same terms it refuses a key that was never declared.
+    /// One resource for every mode and every width, because a handle
+    /// type answers which table its rep indexes and nothing else: every
+    /// site indexes the one the declaration materialized. What a body
+    /// may do through one is the capability's own answer, held by the
+    /// kernel at every operation — so a mode that grants no `set`
+    /// refuses one, on the same terms it refuses a key that was never
+    /// declared.
+    ///
+    /// A site has a width. A plain access is one element wide; a
+    /// `for-each` access is as wide as the collection its loop mapped
+    /// over, whose width is the instance's rather than the signature's —
+    /// which is why one parameter covers a whole site instead of a run
+    /// of them. Every operation names the element it acts on, and one a
+    /// guard did not fire for is refused by its own name rather than
+    /// shortening the walk.
     ///
     /// The world has no constructor for it, which is what makes the
     /// declared set the reachable set.
-    resource capability;
-
-    /// A declared `for-each` site's whole expansion, borrowed once and
-    /// walked by the index of the element that declared each entry.
-    ///
-    /// Its own resource beside `cell` because it indexes its own table:
-    /// a run is not one capability but a site's list of them, so a rep
-    /// means something different here and the type is what says so.
-    ///
-    /// The width is the instance's rather than the signature's — a list
-    /// a loop maps over is configuration's business — which is why one
-    /// parameter covers the whole site instead of a run of them.
-    ///
-    /// `len` answers the *element* count, so two sites in one body agree
-    /// on what an index means, and `declared` answers whether this
-    /// site's guard fired for that element. Operating through an index
-    /// that did not is a body whose control flow disagrees with its own
-    /// declaration, and traps on the same terms reaching a guarded-out
-    /// handle does.
-    resource run;
+    resource site;
 
     /// The substate's current bytes; empty if absent.
     ///
     /// One read for both byte modes: what the exclusive mode adds is the
     /// writes, not a second answer to the same question.
-    capability-get: func(c: borrow<capability>) -> list<u8>;
+    site-get: func(s: borrow<site>, element: u32) -> list<u8>;
 
     /// Replace the substate's bytes.
-    capability-set: func(c: borrow<capability>, value: list<u8>);
+    site-set: func(s: borrow<site>, element: u32, value: list<u8>);
 
     /// Seal this cell on the epoch now running.
     ///
@@ -123,7 +113,7 @@ interface state {
     /// rolled after the block that wrote it, and a body that named its
     /// own epoch could name one already rolled and open onto a value it
     /// could compute before sealing. So the epoch is not a parameter.
-    capability-seal: func(c: borrow<capability>);
+    site-seal: func(s: borrow<site>, element: u32);
 
     /// The draw the seal in this cell matures into.
     ///
@@ -141,7 +131,7 @@ interface state {
     ///
     /// Traps on a cell holding anything but a seal, which only a guest
     /// that wrote its own bytes over one can reach.
-    capability-open-seal: func(c: borrow<capability>) -> drawn;
+    site-open-seal: func(s: borrow<site>, element: u32) -> drawn;
 
     /// Remove the substate, so nothing is there.
     ///
@@ -152,7 +142,7 @@ interface state {
     /// an encoding rather than about the operation. A body holding the
     /// leaf exclusively may end it; the mode is the same write, and only
     /// the effect on presence is new.
-    capability-clear: func(c: borrow<capability>);
+    site-clear: func(s: borrow<site>, element: u32);
 
     /// What the amount cell holds.
     ///
@@ -162,7 +152,7 @@ interface state {
     /// through. The one question about a balance that cannot change it,
     /// which is why every value mode answers it: a method that only asks
     /// contends with nobody.
-    capability-balance: func(c: borrow<capability>) -> amount;
+    site-balance: func(s: borrow<site>, element: u32) -> amount;
 
     /// Debit the amount cell and hand the value out.
     ///
@@ -172,14 +162,14 @@ interface state {
     /// hold reads, subtracts and writes back, so it traps here, where the
     /// commutative movement queues and leaves the question to the fold.
     /// Traps on a stored cell that is not an amount either way.
-    capability-take: func(c: borrow<capability>, amount: amount) -> own<bucket>;
+    site-take: func(s: borrow<site>, element: u32, amount: amount) -> own<bucket>;
 
     /// Credit the amount cell with what the bucket carries.
     ///
     /// The bucket is consumed, so what lands in the cell is exactly what
     /// crossed and the body names no number. Refused on the terms
-    /// `capability-take` states.
-    capability-put: func(c: borrow<capability>, funds: own<bucket>);
+    /// `site-take` states.
+    site-put: func(s: borrow<site>, element: u32, funds: own<bucket>);
 
     /// Take the reservation, as the value it grants.
     ///
@@ -187,32 +177,32 @@ interface state {
     /// before this body ran, and the grant is the bucket. Once per
     /// reservation — taking is a question with one answer, where the read
     /// beside it answers every time it is asked.
-    capability-reserve-take: func(c: borrow<capability>) -> own<bucket>;
+    site-reserve-take: func(s: borrow<site>, element: u32) -> own<bucket>;
 
     /// Entries currently in the interval, bounded by the declared cap.
-    capability-count: func(c: borrow<capability>) -> u32;
+    site-count: func(s: borrow<site>, element: u32) -> u32;
 
     /// Whether the page holds every entry the interval does: a page
     /// short of its cap exhausted the interval, and a full one is
     /// answered by probing past its last entry.
-    capability-covered: func(c: borrow<capability>) -> bool;
+    site-covered: func(s: borrow<site>, element: u32) -> bool;
 
     /// The order key of the entry at `index`, ascending — which for an
     /// instance is its own id.
-    capability-order: func(c: borrow<capability>, index: u32) -> amount;
+    site-order: func(s: borrow<site>, element: u32, index: u32) -> amount;
 
     /// The value of the entry at `index`, ascending.
-    capability-entry: func(c: borrow<capability>, index: u32) -> list<u8>;
+    site-entry: func(s: borrow<site>, element: u32, index: u32) -> list<u8>;
 
     /// Replace the value of the entry at `index`.
-    capability-entry-set: func(c: borrow<capability>, index: u32, value: list<u8>);
+    site-entry-set: func(s: borrow<site>, element: u32, index: u32, value: list<u8>);
 
     /// Insert (or replace) the entry at `order`, which must lie inside the
     /// declared interval.
-    capability-insert: func(c: borrow<capability>, order: amount, value: list<u8>);
+    site-insert: func(s: borrow<site>, element: u32, order: amount, value: list<u8>);
 
     /// Remove the entry at `index`.
-    capability-remove: func(c: borrow<capability>, index: u32);
+    site-remove: func(s: borrow<site>, element: u32, index: u32);
 
     /// Take the named entries, as the instances they were.
     ///
@@ -224,11 +214,11 @@ interface state {
     /// bucket, which is how a method that moves nothing gets one. Traps
     /// on an id outside the declared interval and on one the collection
     /// does not hold.
-    capability-instance-take: func(c: borrow<capability>, ids: list<u64>) -> own<bucket>;
+    site-instance-take: func(s: borrow<site>, element: u32, ids: list<u64>) -> own<bucket>;
 
     /// File every instance the bucket carries as an entry at the order it
     /// was taken under, consuming it.
-    capability-instance-put: func(c: borrow<capability>, funds: own<bucket>, value: list<u8>);
+    site-instance-put: func(s: borrow<site>, element: u32, funds: own<bucket>, value: list<u8>);
 
     /// Split `amount` off a bucket, as a bucket.
     ///
@@ -288,65 +278,16 @@ interface state {
     /// what keeps a body from simply forgetting it.
     burn: func(funds: own<bucket>);
 
-    /// How many elements the site's loop mapped over.
-    run-len: func(r: borrow<run>) -> u32;
+    /// How many elements this site covers.
+    ///
+    /// The element count rather than the count of expansions that fired,
+    /// so two sites in one body agree on what an index means and a
+    /// guarded one reads undeclared rather than shortening the walk. A
+    /// plain access answers one, declared or not.
+    site-len: func(s: borrow<site>) -> u32;
 
-    /// Whether this site declared anything for the element at `index`.
-    run-declared: func(r: borrow<run>, index: u32) -> bool;
-
-    /// The substate's current bytes; empty if absent.
-    run-get: func(r: borrow<run>, index: u32) -> list<u8>;
-
-    /// Replace the substate's bytes.
-    run-set: func(r: borrow<run>, index: u32, value: list<u8>);
-
-    /// Remove the substate, so nothing is there.
-    run-clear: func(r: borrow<run>, index: u32);
-
-    /// Seal this element's cell on the epoch now running.
-    run-seal: func(r: borrow<run>, index: u32);
-
-    /// The draw the seal in this element's cell matures into.
-    run-open-seal: func(r: borrow<run>, index: u32) -> drawn;
-
-    /// What the amount cell holds.
-    run-balance: func(r: borrow<run>, index: u32) -> amount;
-
-    /// Debit the cell into a bucket.
-    run-take: func(r: borrow<run>, index: u32, amount: amount) -> own<bucket>;
-
-    /// Credit the cell, consuming the bucket.
-    run-put: func(r: borrow<run>, index: u32, funds: own<bucket>);
-
-    /// Take the reservation this element's clause declared and held.
-    run-reserve-take: func(r: borrow<run>, index: u32) -> own<bucket>;
-
-    /// Entries currently in the interval, bounded by the declared cap.
-    run-count: func(r: borrow<run>, index: u32) -> u32;
-
-    /// Whether the page holds every entry the interval does.
-    run-covered: func(r: borrow<run>, index: u32) -> bool;
-
-    /// The order key of the entry at `at`, ascending.
-    run-order: func(r: borrow<run>, index: u32, at: u32) -> amount;
-
-    /// The value of the entry at `at`, ascending.
-    run-entry: func(r: borrow<run>, index: u32, at: u32) -> list<u8>;
-
-    /// Replace the value of the entry at `at`.
-    run-entry-set: func(r: borrow<run>, index: u32, at: u32, value: list<u8>);
-
-    /// Insert (or replace) the entry at `order`.
-    run-insert: func(r: borrow<run>, index: u32, order: amount, value: list<u8>);
-
-    /// Remove the entry at `at`.
-    run-remove: func(r: borrow<run>, index: u32, at: u32);
-
-    /// Take the named entries, as the instances they were.
-    run-instance-take: func(r: borrow<run>, index: u32, ids: list<u64>) -> own<bucket>;
-
-    /// File every instance the bucket carries as an entry, consuming it.
-    run-instance-put: func(r: borrow<run>, index: u32, funds: own<bucket>, value: list<u8>);
+    /// Whether this site declared anything for the element at `element`.
+    site-declared: func(s: borrow<site>, element: u32) -> bool;
 }
 
 /// Wide arithmetic: the operations a contract cannot write itself without

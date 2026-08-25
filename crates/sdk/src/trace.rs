@@ -204,7 +204,7 @@ impl Trace {
             // a `for-each` clears the mark rather than shadowing it.
             self.last_clause = effect.then_some(index);
         }
-        // `AbiParam::Run` names a site by its position in the body of the
+        // `AbiParam::Handle` names a site by its position in the body of the
         // loop directly enclosing it, so only that depth marks one.
         if self.depth() == 1 {
             self.last_site = effect.then_some(index);
@@ -559,7 +559,7 @@ impl Trace {
         assert_eq!(
             self.depth(),
             1,
-            "a run covers a site declared directly inside one `for-each`"
+            "a site inside a loop is declared directly inside one `for-each`"
         );
         let clause = u32::try_from(
             self.scopes
@@ -570,8 +570,8 @@ impl Trace {
         .unwrap_or(u32::MAX);
         let site = self
             .last_site
-            .expect("a run binding names the site just declared, and none is");
-        self.handles.push(AbiParam::Run { clause, site });
+            .expect("a handle binding names the site just declared, and none is");
+        self.handles.push(AbiParam::Handle { clause, site });
     }
 
     /// Bind the capability materialized for the clause just declared as
@@ -597,7 +597,7 @@ impl Trace {
         let clause = self
             .last_clause
             .expect("a handle binding names the clause just declared, and none is");
-        self.handles.push(AbiParam::Handle(clause));
+        self.handles.push(AbiParam::Handle { clause, site: 0 });
     }
 
     /// Bind the `index`-th declared parameter's edge, which must be one.

@@ -28,11 +28,10 @@ const FUEL: u64 = 1_000_000_000;
 /// The state resources a clause can materialize a borrow of, by the name
 /// the kernel world exports each under.
 ///
-/// Two, and one per rep space: an access's rep indexes the capability
-/// table the declaration materialized, and a run's indexes its own list
-/// of them. What a body may do through either is the capability's
-/// answer, which no world type carries.
-const HANDLE_KINDS: &[&str] = &["capability", "run"];
+/// One, because there is one rep space: a site's rep indexes the table
+/// the walk bound, whatever the site's width. What a body may do through
+/// one is the capability's answer, which no world type carries.
+const HANDLE_KINDS: &[&str] = &["site"];
 
 /// A component whose exports take every parameter shape the gate can
 /// demand: a borrow of each state resource, an
@@ -101,8 +100,7 @@ fn every_shape_the_gate_can_demand_deploys_and_decodes() {
     let handles: Vec<ExportParam> = HANDLE_KINDS
         .iter()
         .map(|kind| match *kind {
-            "capability" => ExportParam::Handle,
-            "run" => ExportParam::Run,
+            "site" => ExportParam::Handle,
             other => panic!("no export shape for {other}"),
         })
         .collect();

@@ -6,16 +6,16 @@ package test:guest;
 world registry {
     import hyperscale:kernel/state;
 
-    use hyperscale:kernel/state.{capability};
+    use hyperscale:kernel/state.{site};
 
     /// Set the binding — the width-one interval at the name's hashed
     /// order — to `value`. The order arrives derived, because the hash is
     /// admission's to compute, never the guest's.
-    export bind: func(entry: borrow<capability>, order: list<u8>, value: list<u8>);
+    export bind: func(entry: borrow<site>, order: list<u8>, value: list<u8>);
 
     /// Trap unless the binding holds exactly `expected`.
-    export check: func(entry: borrow<capability>, expected: list<u8>);
+    export check: func(entry: borrow<site>, expected: list<u8>);
 
     /// Remove every entry the declared tail shows, bounded by its cap.
-    export drain: func(tail: borrow<capability>);
+    export drain: func(tail: borrow<site>);
 }

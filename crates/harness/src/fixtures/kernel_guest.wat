@@ -1,44 +1,44 @@
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "capability" (type $ac (sub resource)))
+    (export "site" (type $ac (sub resource)))
     (type $amt_decl (record (field "low" u64) (field "high" u64)))
     (export "amount" (type $amt (eq $amt_decl)))
-    (export "capability-get" (func (param "c" (borrow $ac)) (result (list u8))))
-    (export "capability-set" (func (param "c" (borrow $ac)) (param "value" (list u8))))
+    (export "site-get" (func (param "c" (borrow $ac)) (param "element" u32) (result (list u8))))
+    (export "site-set" (func (param "c" (borrow $ac)) (param "element" u32) (param "value" (list u8))))
     (export "bucket" (type $bk (sub resource)))
-    (export "capability-put" (func (param "c" (borrow $ac)) (param "funds" (own $bk))))
-    (export "capability-reserve-take" (func (param "c" (borrow $ac)) (result (own $bk))))
+    (export "site-put" (func (param "c" (borrow $ac)) (param "element" u32) (param "funds" (own $bk))))
+    (export "site-reserve-take" (func (param "c" (borrow $ac)) (param "element" u32) (result (own $bk))))
     (export "bucket-amount" (func (param "b" (borrow $bk)) (result $amt)))
-    (export "capability-count" (func (param "r" (borrow $ac)) (result u32)))
-    (export "capability-order" (func (param "r" (borrow $ac)) (param "index" u32) (result $amt)))
-    (export "capability-entry" (func (param "r" (borrow $ac)) (param "index" u32) (result (list u8))))
-    (export "capability-entry-set" (func (param "r" (borrow $ac)) (param "index" u32) (param "value" (list u8))))
-    (export "capability-insert" (func (param "r" (borrow $ac)) (param "order" $amt) (param "value" (list u8))))
-    (export "capability-remove" (func (param "r" (borrow $ac)) (param "index" u32)))))
+    (export "site-count" (func (param "r" (borrow $ac)) (param "element" u32) (result u32)))
+    (export "site-order" (func (param "r" (borrow $ac)) (param "element" u32) (param "index" u32) (result $amt)))
+    (export "site-entry" (func (param "r" (borrow $ac)) (param "element" u32) (param "index" u32) (result (list u8))))
+    (export "site-entry-set" (func (param "r" (borrow $ac)) (param "element" u32) (param "index" u32) (param "value" (list u8))))
+    (export "site-insert" (func (param "r" (borrow $ac)) (param "element" u32) (param "order" $amt) (param "value" (list u8))))
+    (export "site-remove" (func (param "r" (borrow $ac)) (param "element" u32) (param "index" u32)))))
   (import "hyperscale:kernel/env" (instance $env
     (export "clock" (func (result u64)))))
   (import "hyperscale:kernel/crypto" (instance $crypto
     (export "hash" (func (param "data" (list u8)) (result (list u8))))))
 
-  (alias export $state "capability" (type $rcell))
-  (alias export $state "capability" (type $wcell))
-  (alias export $state "capability" (type $dcell))
-  (alias export $state "capability" (type $vcell))
-  (alias export $state "capability" (type $rrange))
-  (alias export $state "capability" (type $wrange))
-  (alias export $state "capability-get" (func $read_get))
-  (alias export $state "capability-get" (func $write_get))
-  (alias export $state "capability-set" (func $write_set))
-  (alias export $state "capability-put" (func $delta_put))
-  (alias export $state "capability-reserve-take" (func $reserve_take))
+  (alias export $state "site" (type $rcell))
+  (alias export $state "site" (type $wcell))
+  (alias export $state "site" (type $dcell))
+  (alias export $state "site" (type $vcell))
+  (alias export $state "site" (type $rrange))
+  (alias export $state "site" (type $wrange))
+  (alias export $state "site-get" (func $read_get))
+  (alias export $state "site-get" (func $write_get))
+  (alias export $state "site-set" (func $write_set))
+  (alias export $state "site-put" (func $delta_put))
+  (alias export $state "site-reserve-take" (func $reserve_take))
   (alias export $state "bucket-amount" (func $bucket_amount))
-  (alias export $state "capability-count" (func $rr_count))
-  (alias export $state "capability-order" (func $rr_order))
-  (alias export $state "capability-entry" (func $rr_entry))
-  (alias export $state "capability-count" (func $rw_count))
-  (alias export $state "capability-entry-set" (func $rw_set))
-  (alias export $state "capability-insert" (func $rw_insert))
-  (alias export $state "capability-remove" (func $rw_remove))
+  (alias export $state "site-count" (func $rr_count))
+  (alias export $state "site-order" (func $rr_order))
+  (alias export $state "site-entry" (func $rr_entry))
+  (alias export $state "site-count" (func $rw_count))
+  (alias export $state "site-entry-set" (func $rw_set))
+  (alias export $state "site-insert" (func $rw_insert))
+  (alias export $state "site-remove" (func $rw_remove))
   (alias export $env "clock" (func $clock))
   (alias export $crypto "hash" (func $hash))
 
@@ -89,19 +89,19 @@
 
   (core module $m
     (import "env" "mem" (memory 4 4))
-    (import "k" "read-get" (func $read_get (param i32 i32)))
-    (import "k" "write-get" (func $write_get (param i32 i32)))
-    (import "k" "write-set" (func $write_set (param i32 i32 i32)))
-    (import "k" "delta-put" (func $delta_put (param i32 i32)))
-    (import "k" "reserve-take" (func $reserve_take (param i32) (result i32)))
+    (import "k" "read-get" (func $read_get (param i32 i32 i32)))
+    (import "k" "write-get" (func $write_get (param i32 i32 i32)))
+    (import "k" "write-set" (func $write_set (param i32 i32 i32 i32)))
+    (import "k" "delta-put" (func $delta_put (param i32 i32 i32)))
+    (import "k" "reserve-take" (func $reserve_take (param i32 i32) (result i32)))
     (import "k" "bucket-amount" (func $bucket_amount (param i32 i32)))
-    (import "k" "rr-count" (func $rr_count (param i32) (result i32)))
-    (import "k" "rr-order" (func $rr_order (param i32 i32 i32)))
-    (import "k" "rr-entry" (func $rr_entry (param i32 i32 i32)))
-    (import "k" "rw-count" (func $rw_count (param i32) (result i32)))
-    (import "k" "rw-set" (func $rw_set (param i32 i32 i32 i32)))
-    (import "k" "rw-insert" (func $rw_insert (param i32 i64 i64 i32 i32)))
-    (import "k" "rw-remove" (func $rw_remove (param i32 i32)))
+    (import "k" "rr-count" (func $rr_count (param i32 i32) (result i32)))
+    (import "k" "rr-order" (func $rr_order (param i32 i32 i32 i32)))
+    (import "k" "rr-entry" (func $rr_entry (param i32 i32 i32 i32)))
+    (import "k" "rw-count" (func $rw_count (param i32 i32) (result i32)))
+    (import "k" "rw-set" (func $rw_set (param i32 i32 i32 i32 i32)))
+    (import "k" "rw-insert" (func $rw_insert (param i32 i32 i64 i64 i32 i32)))
+    (import "k" "rw-remove" (func $rw_remove (param i32 i32 i32)))
     (import "k" "clock" (func $clock (result i64)))
     (import "k" "hash" (func $hash (param i32 i32 i32)))
     (import "k" "drop-r" (func $drop_r (param i32)))
@@ -114,6 +114,7 @@
     (func (export "transfer") (param i32 i32) (result i64)
       (local $funds i32)
       local.get 0
+      i32.const 0
       call $reserve_take
       local.set $funds
       local.get $funds
@@ -122,6 +123,7 @@
       i32.const 8
       i64.load
       local.get 1
+      i32.const 0
       local.get $funds
       call $delta_put
       local.get 0
@@ -145,6 +147,7 @@
 
     (func (export "peek") (param i32) (result i64)
       local.get 0
+      i32.const 0
       i32.const 8
       call $read_get
       i32.const 12
@@ -158,6 +161,7 @@
     (func (export "rmw") (param i32) (result i64)
       (local $ptr i32) (local $len i32)
       local.get 0
+      i32.const 0
       i32.const 8
       call $write_get
       i32.const 8
@@ -176,6 +180,7 @@
         i32.store8
       end
       local.get 0
+      i32.const 0
       local.get $ptr
       local.get $len
       call $write_set
@@ -187,6 +192,7 @@
     (func (export "scan-sum") (param i32) (result i64)
       (local $n i32) (local $i i32) (local $sum i64)
       local.get 0
+      i32.const 0
       call $rr_count
       local.set $n
       block
@@ -196,6 +202,7 @@
           i32.ge_u
           br_if 1
           local.get 0
+          i32.const 0
           local.get $i
           i32.const 8
           call $rr_entry
@@ -207,6 +214,7 @@
           i64.add
           local.set $sum
           local.get 0
+          i32.const 0
           local.get $i
           i32.const 16
           call $rr_order
@@ -230,6 +238,7 @@
     (func (export "fill") (param i32) (result i64)
       (local $n i32)
       local.get 0
+      i32.const 0
       call $rw_count
       local.set $n
       local.get $n
@@ -242,10 +251,12 @@
         i32.store8
         local.get 0
         i32.const 0
+        i32.const 0
         i32.const 512
         i32.const 2
         call $rw_set
         local.get 0
+        i32.const 0
         local.get $n
         i32.const 1
         i32.sub
@@ -261,12 +272,14 @@
       i32.const 7
       i32.store8
       local.get 0
+      i32.const 0
       i64.const 42
       i64.const 0
       i32.const 660
       i32.const 1
       call $rw_insert
       local.get 0
+      i32.const 0
       call $rw_count
       i64.extend_i32_u
       local.get 0
@@ -274,6 +287,7 @@
 
     (func (export "escape") (param i32) (result i64)
       local.get 0
+      i32.const 0
       i32.const 8
       call $read_get
       i32.const 12
@@ -282,6 +296,7 @@
 
     (func (export "forge") (result i64)
       i32.const 9999
+      i32.const 0
       i32.const 8
       call $read_get
       i32.const 12
@@ -296,6 +311,7 @@
 
     (func (export "forge-zero") (result i64)
       i32.const 0
+      i32.const 0
       i32.const 8
       call $read_get
       i32.const 12
@@ -304,6 +320,7 @@
 
     (func (export "read-value") (param i32) (result i64)
       local.get 0
+      i32.const 0
       i32.const 8
       call $read_get
       local.get 0
@@ -314,6 +331,7 @@
 
     (func (export "leak") (param i32) (result i64)
       local.get 0
+      i32.const 0
       i32.const 8
       call $read_get
       i32.const 12
@@ -322,6 +340,7 @@
 
     (func (export "no-such-entry") (param i32) (result i64)
       local.get 0
+      i32.const 0
       i32.const 99
       call $rw_remove
       i64.const 0))

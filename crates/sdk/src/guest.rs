@@ -43,7 +43,7 @@ use core::mem::ManuallyDrop;
 
 pub use bindings::hyperscale::kernel;
 use hyperscale_vm_types::{Drawn, SEED_BYTES};
-use kernel::state::{Capability, Run};
+use kernel::state::Site;
 
 use crate::Address;
 pub use crate::handle::Handle;
@@ -216,18 +216,14 @@ macro_rules! borrows {
 }
 
 borrows! {
-    capability -> Capability,
-    run -> Run,
+    site -> Site,
 }
 
 /// The substate this handle reads.
 #[must_use]
 #[inline(always)]
 pub fn cell_get(handle: Handle) -> Vec<u8> {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_get(&capability(rep)),
-        Handle::Run(rep, at) => kernel::state::run_get(&run(rep), at),
-    }
+    kernel::state::site_get(&site(handle.site), handle.element)
 }
 
 /// What this handle's amount cell holds.
@@ -238,19 +234,16 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
 #[must_use]
 #[inline(always)]
 pub fn cell_balance(handle: Handle) -> u128 {
-    whole(match handle {
-        Handle::Capability(rep) => kernel::state::capability_balance(&capability(rep)),
-        Handle::Run(rep, at) => kernel::state::run_balance(&run(rep), at),
-    })
+    whole(kernel::state::site_balance(
+        &site(handle.site),
+        handle.element,
+    ))
 }
 
 /// Replace the substate this handle holds exclusively.
 #[inline(always)]
 pub fn cell_set(handle: Handle, value: &[u8]) {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_set(&capability(rep), value),
-        Handle::Run(rep, at) => kernel::state::run_set(&run(rep), at, value),
-    }
+    kernel::state::site_set(&site(handle.site), handle.element, value)
 }
 
 /// The world's `drawn`, as the vocabulary's own.
@@ -280,58 +273,40 @@ impl From<kernel::state::Drawn> for Drawn {
 /// Seal this handle's cell on the epoch now running.
 #[inline(always)]
 pub fn cell_seal(handle: Handle) {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_seal(&capability(rep)),
-        Handle::Run(rep, at) => kernel::state::run_seal(&run(rep), at),
-    }
+    kernel::state::site_seal(&site(handle.site), handle.element)
 }
 
 /// The draw the seal in this handle's cell matures into.
 #[must_use]
 #[inline(always)]
 pub fn cell_open_seal(handle: Handle) -> Drawn {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_open_seal(&capability(rep)).into(),
-        Handle::Run(rep, at) => kernel::state::run_open_seal(&run(rep), at).into(),
-    }
+    kernel::state::site_open_seal(&site(handle.site), handle.element).into()
 }
 
 /// End this handle's cell, so nothing is there.
 #[inline(always)]
 pub fn cell_clear(handle: Handle) {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_clear(&capability(rep)),
-        Handle::Run(rep, at) => kernel::state::run_clear(&run(rep), at),
-    }
+    kernel::state::site_clear(&site(handle.site), handle.element)
 }
 
 /// Credit this handle's amount cell with what the bucket carries.
 #[inline(always)]
 pub fn cell_put(handle: Handle, funds: kernel::state::Bucket) {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_put(&capability(rep), funds),
-        Handle::Run(rep, at) => kernel::state::run_put(&run(rep), at, funds),
-    }
+    kernel::state::site_put(&site(handle.site), handle.element, funds)
 }
 
 /// Debit this handle's amount cell, as a bucket.
 #[must_use]
 #[inline(always)]
 pub fn cell_take(handle: Handle, value: u128) -> kernel::state::Bucket {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_take(&capability(rep), amount(value)),
-        Handle::Run(rep, at) => kernel::state::run_take(&run(rep), at, amount(value)),
-    }
+    kernel::state::site_take(&site(handle.site), handle.element, amount(value))
 }
 
 /// Take the reservation this method declared.
 #[must_use]
 #[inline(always)]
 pub fn reserve_take(handle: Handle) -> kernel::state::Bucket {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_reserve_take(&capability(rep)),
-        Handle::Run(rep, at) => kernel::state::run_reserve_take(&run(rep), at),
-    }
+    kernel::state::site_reserve_take(&site(handle.site), handle.element)
 }
 
 /// Create `value` of what this invocation issues.
@@ -358,20 +333,14 @@ pub fn burn(funds: kernel::state::Bucket) {
 #[must_use]
 #[inline(always)]
 pub fn entry_count(handle: Handle) -> u32 {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_count(&capability(rep)),
-        Handle::Run(rep, at) => kernel::state::run_count(&run(rep), at),
-    }
+    kernel::state::site_count(&site(handle.site), handle.element)
 }
 
 /// Whether this interval's page holds every entry the interval does.
 #[must_use]
 #[inline(always)]
 pub fn entry_covered(handle: Handle) -> bool {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_covered(&capability(rep)),
-        Handle::Run(rep, at) => kernel::state::run_covered(&run(rep), at),
-    }
+    kernel::state::site_covered(&site(handle.site), handle.element)
 }
 
 /// The order key of this interval's entry at `index`.
@@ -381,20 +350,18 @@ pub fn entry_covered(handle: Handle) -> bool {
 #[must_use]
 #[inline(always)]
 pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
-    ordered(match handle {
-        Handle::Capability(rep) => kernel::state::capability_order(&capability(rep), index),
-        Handle::Run(rep, at) => kernel::state::run_order(&run(rep), at, index),
-    })
+    ordered(kernel::state::site_order(
+        &site(handle.site),
+        handle.element,
+        index,
+    ))
 }
 
 /// The value of this interval's entry at `index`.
 #[must_use]
 #[inline(always)]
 pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_entry(&capability(rep), index),
-        Handle::Run(rep, at) => kernel::state::run_entry(&run(rep), at, index),
-    }
+    kernel::state::site_entry(&site(handle.site), handle.element, index)
 }
 
 /// The value of this interval's entry at `order`, or nothing if the
@@ -410,55 +377,37 @@ pub fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {
 /// Replace this interval's entry at `index`.
 #[inline(always)]
 pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
-    match handle {
-        Handle::Capability(rep) => {
-            kernel::state::capability_entry_set(&capability(rep), index, value)
-        }
-        Handle::Run(rep, at) => kernel::state::run_entry_set(&run(rep), at, index, value),
-    }
+    kernel::state::site_entry_set(&site(handle.site), handle.element, index, value)
 }
 
 /// Insert (or replace) this interval's entry at `order`.
 #[inline(always)]
 pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
-    match handle {
-        Handle::Capability(rep) => {
-            kernel::state::capability_insert(&capability(rep), amount(order.bits()), value)
-        }
-        Handle::Run(rep, at) => {
-            kernel::state::run_insert(&run(rep), at, amount(order.bits()), value)
-        }
-    }
+    kernel::state::site_insert(
+        &site(handle.site),
+        handle.element,
+        amount(order.bits()),
+        value,
+    )
 }
 
 /// File every instance the bucket carries as an entry of this interval.
 #[inline(always)]
 pub fn entry_put(handle: Handle, funds: kernel::state::Bucket, value: &[u8]) {
-    match handle {
-        Handle::Capability(rep) => {
-            kernel::state::capability_instance_put(&capability(rep), funds, value)
-        }
-        Handle::Run(rep, at) => kernel::state::run_instance_put(&run(rep), at, funds, value),
-    }
+    kernel::state::site_instance_put(&site(handle.site), handle.element, funds, value)
 }
 
 /// Take the named entries of this interval, as the instances they were.
 #[must_use]
 #[inline(always)]
 pub fn entry_take(handle: Handle, ids: &[u64]) -> kernel::state::Bucket {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_instance_take(&capability(rep), ids),
-        Handle::Run(rep, at) => kernel::state::run_instance_take(&run(rep), at, ids),
-    }
+    kernel::state::site_instance_take(&site(handle.site), handle.element, ids)
 }
 
 /// Remove this interval's entry at `index`.
 #[inline(always)]
 pub fn entry_remove(handle: Handle, index: u32) {
-    match handle {
-        Handle::Capability(rep) => kernel::state::capability_remove(&capability(rep), index),
-        Handle::Run(rep, at) => kernel::state::run_remove(&run(rep), at, index),
-    }
+    kernel::state::site_remove(&site(handle.site), handle.element, index)
 }
 
 /// How many elements a run's site mapped over.
@@ -469,15 +418,15 @@ pub fn entry_remove(handle: Handle, index: u32) {
 /// shortening the walk.
 #[must_use]
 #[inline(always)]
-pub fn run_len(rep: u32) -> u32 {
-    kernel::state::run_len(&run(rep))
+pub fn site_len(rep: u32) -> u32 {
+    kernel::state::site_len(&site(rep))
 }
 
 /// Whether a run's site declared anything for the element at `index`.
 #[must_use]
 #[inline(always)]
-pub fn run_declared(rep: u32, index: u32) -> bool {
-    kernel::state::run_declared(&run(rep), index)
+pub fn site_declared(rep: u32, index: u32) -> bool {
+    kernel::state::site_declared(&site(rep), index)
 }
 
 /// The transaction clock, in milliseconds.

@@ -17,9 +17,6 @@ use crate::{is_address, is_named};
 pub enum Carries {
     /// A materialized capability, at the resource its clause declares.
     Handle,
-    /// The run covering one `for-each` site's expansions, at the same
-    /// resource a single access through it would materialise.
-    Run,
     /// A value edge, under the author's own name for it.
     Edge {
         /// The name the method's signature gave the parameter.
@@ -293,8 +290,7 @@ fn same_shape(a: &Shape, b: &Shape) -> bool {
         | (Shape::Ids(_), Shape::Ids(_))
         | (Shape::Flag, Shape::Flag)
         | (Shape::Bucket, Shape::Bucket)
-        | (Shape::Handle, Shape::Handle)
-        | (Shape::Run, Shape::Run) => true,
+        | (Shape::Handle, Shape::Handle) => true,
         (Shape::Cell(left), Shape::Cell(right)) => {
             quote::quote!(#left).to_string() == quote::quote!(#right).to_string()
         }
@@ -325,17 +321,13 @@ pub fn bindings(
     let mut bindings = Vec::new();
 
     for (position, site) in lowered.handles.iter().copied().enumerate() {
-        // A site a `for-each` body declared is one parameter covering
-        // the whole expansion, so the export's arity stays a function of
-        // the signature whether or not the site sits under a loop.
-        let run = lowered.runs.contains(&site);
         bindings.push(Binding {
             param: Param {
                 name: format!("handle-{position}"),
-                shape: if run { Shape::Run } else { Shape::Handle },
+                shape: Shape::Handle,
             },
             ident: handle_ident(site),
-            carries: if run { Carries::Run } else { Carries::Handle },
+            carries: Carries::Handle,
         });
     }
 

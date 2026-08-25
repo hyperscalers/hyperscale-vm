@@ -11,23 +11,23 @@ wit_bindgen::generate!({
 });
 
 use hyperscale::kernel::state::{
-    capability_instance_put, capability_instance_take, capability_set, burn, mint_instances,
+    site_instance_put, site_instance_take, site_set, burn, mint_instances,
 };
 
 struct Nf;
 
 impl Guest for Nf {
-    fn mint(data: &Capability, id: u64) -> Bucket {
-        capability_set(data, &id.to_le_bytes());
+    fn mint(data: &Site, id: u64) -> Bucket {
+        site_set(data, 0, &id.to_le_bytes());
         mint_instances(&[id])
     }
 
-    fn deposit(holdings: &Capability, funds: Bucket) {
-        capability_instance_put(holdings, funds, &[1]);
+    fn deposit(holdings: &Site, funds: Bucket) {
+        site_instance_put(holdings, 0, funds, &[1]);
     }
 
-    fn withdraw(holdings: &Capability, ids: Vec<u64>) -> Bucket {
-        capability_instance_take(holdings, &ids)
+    fn withdraw(holdings: &Site, ids: Vec<u64>) -> Bucket {
+        site_instance_take(holdings, 0, &ids)
     }
 
     fn burn(funds: Bucket) {

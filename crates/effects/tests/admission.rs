@@ -1038,7 +1038,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
                     },
                 },
             ],
-            abi: vec![AbiParam::Handle(0)],
+            abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
             ..MethodSignature::default()
         },
     );

@@ -91,7 +91,7 @@ fn a_derived_value_does_not_fill_a_run_parameter() {
     // up, and the mismatch is refused where every other capability
     // parameter's is.
     let artifact = attach_metadata(
-        &taking(Some("run")),
+        &taking(Some("site")),
         &spreading(vec![AbiParam::Derived(Expr::Arg(0))]),
     )
     .expect("attaches");

@@ -23,10 +23,8 @@ use crate::validator::{ProfileError, profile_features};
 /// can put there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExportParam {
-    /// `borrow<capability>`: one declared access.
+    /// `borrow<site>`: one declared access, whatever its width.
     Handle,
-    /// `borrow<run>`: one `for-each` site's whole expansion.
-    Run,
     /// `own<bucket>`: a value edge the call transfers into the guest.
     Bucket,
     /// `list<u8>`: keys, opaque values, and every other byte-shaped one.
@@ -51,7 +49,7 @@ impl ExportParam {
     #[must_use]
     pub const fn is_resource(&self) -> bool {
         match self {
-            Self::Handle | Self::Run | Self::Bucket => true,
+            Self::Handle | Self::Bucket => true,
             Self::Bytes | Self::U64 | Self::Flag | Self::Address | Self::Other => false,
         }
     }
@@ -269,8 +267,7 @@ fn param_shape(
             Some(ComponentDefinedType::Borrow(resource)) => resources
                 .get(&resource.resource())
                 .map_or(ExportParam::Other, |name| match name.as_str() {
-                    "capability" => ExportParam::Handle,
-                    "run" => ExportParam::Run,
+                    "site" => ExportParam::Handle,
                     _ => ExportParam::Other,
                 }),
             // An owned handle is a value edge: the world owns one such

@@ -166,7 +166,10 @@ impl Names<'_> {
             let _ = writeln!(out, "  yields   edge {edge} = {}", self.expr(output, ATOM));
         }
         if !abi.is_empty() {
-            let bound: Vec<String> = abi.iter().map(|param| self.abi_param(param)).collect();
+            let bound: Vec<String> = abi
+                .iter()
+                .map(|param| self.abi_param(param, effects))
+                .collect();
             let _ = writeln!(out, "  exports  {}", bound.join(", "));
         }
     }
@@ -485,12 +488,25 @@ impl Names<'_> {
     }
 
     /// How one ABI parameter is built.
-    fn abi_param(&self, param: &AbiParam) -> String {
+    ///
+    /// A site is named only where the clause has more than one — a plain
+    /// access is a site of its own, and saying so would be noise on
+    /// every line.
+    fn abi_param(&self, param: &AbiParam, effects: &[Clause]) -> String {
         match param {
-            AbiParam::Handle(clause) => format!("handle for clause {clause}"),
+            AbiParam::Handle { clause, site } => {
+                let looped = usize::try_from(*clause)
+                    .ok()
+                    .and_then(|index| effects.get(index))
+                    .is_some_and(|clause| matches!(clause, Clause::ForEach { .. }));
+                if looped {
+                    format!("handle for clause {clause} site {site}")
+                } else {
+                    format!("handle for clause {clause}")
+                }
+            }
             AbiParam::Bucket(position) => format!("edge arg{position}"),
             AbiParam::Guard(clause) => format!("whether clause {clause} was declared"),
-            AbiParam::Run { clause, site } => format!("the run over clause {clause} site {site}"),
             AbiParam::Derived(expr) => self.expr(expr, SELECT),
         }
     }

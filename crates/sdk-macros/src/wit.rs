@@ -35,9 +35,6 @@ const KERNEL: &str = include_str!("../../sdk/wit/deps/kernel/kernel.wit");
 pub enum Shape {
     /// A borrow of the kernel resource the clause's mode materialises.
     Handle,
-    /// A borrow of the run covering one `for-each` site's expansions, at
-    /// the same mode a single access through it would materialise.
-    Run,
     /// A `u64` the guest reads as it stands.
     Scalar,
     /// A `bool`: the verdict of the guard on a branch's clauses, which
@@ -91,8 +88,7 @@ impl Shape {
     /// The type as the component's own signature spells it.
     fn wit(&self) -> String {
         match self {
-            Self::Handle => "borrow<capability>".to_owned(),
-            Self::Run => "borrow<run>".to_owned(),
+            Self::Handle => "borrow<site>".to_owned(),
             Self::Scalar => "u64".to_owned(),
             Self::Flag => "bool".to_owned(),
             Self::Address => "kernel-address".to_owned(),
@@ -126,8 +122,7 @@ fn imported(exports: &[Export]) -> Vec<&'static str> {
     for export in exports {
         for param in &export.params {
             let resource = match param.shape {
-                Shape::Handle => "capability",
-                Shape::Run => "run",
+                Shape::Handle => "site",
                 Shape::Bucket => "bucket",
                 _ => continue,
             };

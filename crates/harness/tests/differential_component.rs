@@ -13,8 +13,7 @@ use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
 };
 use hyperscale_vm_runtime::{
-    Capability as CapabilityResource, HostRefusal, add_kernel_to_linker, blessed_engine,
-    validate_component,
+    HostRefusal, Site, add_kernel_to_linker, blessed_engine, validate_component,
 };
 use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet,
@@ -196,7 +195,7 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Handle
             | Capability::Reserve { key, .. } => *key == wanted,
             _ => false,
         });
-        (rep, HandleKind::Capability)
+        (rep, HandleKind::Site)
     };
     // An interval has no key to pick it out by, so which of the two the
     // fixture declared is the selector — the capability's own mode,
@@ -204,11 +203,11 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Handle
     // every handle across.
     let read_range = || {
         let rep = rep_at(caps, |c| matches!(c, Capability::RangeRead(..)));
-        (rep, HandleKind::Capability)
+        (rep, HandleKind::Site)
     };
     let write_range = || {
         let rep = rep_at(caps, |c| matches!(c, Capability::RangeWrite(..)));
-        (rep, HandleKind::Capability)
+        (rep, HandleKind::Site)
     };
     match export {
         "transfer" => vec![point(fx.sender), point(fx.recipient)],
@@ -287,9 +286,8 @@ fn run_blessed(
 
     let result: Result<u64, Error> = match (export, args.as_slice()) {
         ("transfer", [(a, _), (b, _)]) => {
-            let f = instance.get_typed_func::<(Resource<CapabilityResource>, Resource<CapabilityResource>), (u64,)>(
-                &mut store, export,
-            )?;
+            let f = instance
+                .get_typed_func::<(Resource<Site>, Resource<Site>), (u64,)>(&mut store, export)?;
             f.call(
                 &mut store,
                 (Resource::new_borrow(*a), Resource::new_borrow(*b)),
@@ -301,13 +299,10 @@ fn run_blessed(
             f.call(&mut store, ()).map(|(v,)| v)
         }
         (_, [(rep, kind)]) => match kind {
-            HandleKind::Capability => {
-                call1::<CapabilityResource>(&mut store, &instance, export, *rep)
-            }
-            // Nothing this fixture exports takes value or runs a
-            // `for-each` site; the bucket lane drives the first and the
-            // corpus drives the second.
-            HandleKind::Bucket | HandleKind::Run => {
+            HandleKind::Site => call1::<Site>(&mut store, &instance, export, *rep),
+            // Nothing this fixture exports takes value; the bucket lane
+            // drives that.
+            HandleKind::Bucket => {
                 return Err(format_err!("{kind:?} is not lowered by this fixture"));
             }
         },
@@ -535,11 +530,7 @@ fn handle_values_agree_and_index_zero_is_never_allocatable() -> Result<()> {
 #[test]
 fn the_reserved_rep_is_an_undeclared_branch_on_both_lanes() -> Result<()> {
     let fx = fixture();
-    let (outcome, _, _) = both_with(
-        &fx,
-        "read-value",
-        Some(&[(ABSENT_REP, HandleKind::Capability)]),
-    )?;
+    let (outcome, _, _) = both_with(&fx, "read-value", Some(&[(ABSENT_REP, HandleKind::Site)]))?;
     assert_eq!(outcome, LaneOutcome::Refusal(AbortReason::UndeclaredBranch));
     Ok(())
 }
@@ -566,9 +557,7 @@ fn freed_handle_slots_reuse_most_recent_first_across_invokes() -> Result<()> {
     store.set_fuel(FUEL)?;
     let instance = linker.instantiate(&mut store, &component)?;
     instance
-        .get_typed_func::<(Resource<CapabilityResource>, Resource<CapabilityResource>), (u64,)>(
-            &mut store, "transfer",
-        )?
+        .get_typed_func::<(Resource<Site>, Resource<Site>), (u64,)>(&mut store, "transfer")?
         .call(
             &mut store,
             (
@@ -577,7 +566,7 @@ fn freed_handle_slots_reuse_most_recent_first_across_invokes() -> Result<()> {
             ),
         )?;
     let (blessed_value,) = instance
-        .get_typed_func::<(Resource<CapabilityResource>,), (u64,)>(&mut store, "handle-value")?
+        .get_typed_func::<(Resource<Site>,), (u64,)>(&mut store, "handle-value")?
         .call(&mut store, (Resource::new_borrow(value_args[0].0),))?;
 
     let comp = RefComponent::decode(&bytes)?;

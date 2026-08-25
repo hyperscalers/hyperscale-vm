@@ -54,7 +54,7 @@ fn mixer() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::Bucket],
-            abi: vec![AbiParam::Handle(0), AbiParam::Bucket(0)],
+            abi: vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
             effects: vec![holding(CHEAP, ModeExpr::Delta)],
             ..MethodSignature::default()
         },
@@ -65,7 +65,10 @@ fn mixer() -> PackageMetadata {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
             outputs: vec![Expr::Literal(Value::Address(DEAR.address()))],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(0))],
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Derived(Expr::Arg(0)),
+            ],
             effects: vec![holding(DEAR, ModeExpr::Write)],
             ..MethodSignature::default()
         },
@@ -80,10 +83,10 @@ fn mixer_body(
 ) -> (KernelSession, Invoked) {
     match export {
         "fill" => {
-            let [GuestArg::Handle { rep, .. }, GuestArg::Bucket(funds)] = args else {
+            let [GuestArg::Site { site }, GuestArg::Bucket(funds)] = args else {
                 panic!("a handle and an edge: {args:?}");
             };
-            match session.cell_put(*rep, 0, *funds) {
+            match session.cell_put(*site, 0, *funds) {
                 Ok(()) => (
                     session,
                     Invoked::Produced {
@@ -95,10 +98,10 @@ fn mixer_body(
             }
         }
         "drain" => {
-            let [GuestArg::Handle { rep, .. }, GuestArg::U64(amount)] = args else {
+            let [GuestArg::Site { site }, GuestArg::U64(amount)] = args else {
                 panic!("a handle and an amount: {args:?}");
             };
-            match session.cell_take(*rep, 0, u128::from(*amount)) {
+            match session.cell_take(*site, 0, u128::from(*amount)) {
                 Ok(bucket) => (
                     session,
                     Invoked::Produced {

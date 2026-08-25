@@ -18,7 +18,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_types::{
-    ABSENT_REP, AbortReason, Address, Answer, MAX_ANSWER_BYTES, MAX_ERROR_CODES, Outcome, Presence,
+    AbortReason, Address, Answer, MAX_ANSWER_BYTES, MAX_ERROR_CODES, Outcome, Presence,
     SubstateKey, UnmetCondition,
 };
 
@@ -138,21 +138,27 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
         let mut args = Vec::with_capacity(call.args.len());
         for arg in &call.args {
             match arg {
-                CallArg::Handle(rep) => {
-                    // The rep names a position the whole transaction's
+                // One site per handle parameter, whatever its width: the
+                // entries were resolved where the declaration was
+                // evaluated, so the session is handed what the site
+                // covers rather than a rule for finding it.
+                CallArg::Site { entries } => {
+                    // A rep names a position the whole transaction's
                     // declaration fixed, so one past the table is a
                     // composition defect rather than a guest's.
-                    if usize::try_from(*rep)
-                        .ok()
-                        .and_then(|index| session.capabilities().get(index))
-                        .is_none()
-                    {
+                    if entries.iter().flatten().any(|rep| {
+                        usize::try_from(*rep)
+                            .ok()
+                            .and_then(|index| session.capabilities().get(index))
+                            .is_none()
+                    }) {
                         return Err(composition_defect(
                             session,
                             AbortReason::CapabilityOutOfRange,
                         ));
                     }
-                    args.push(GuestArg::Handle { rep: *rep });
+                    let site = session.bind_site(entries.clone());
+                    args.push(GuestArg::Site { site });
                 }
                 CallArg::Bucket { source, output } => {
                     let Some(produced) = edge_at(outputs, *source, *output) else {
@@ -162,14 +168,6 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
                         ));
                     };
                     args.push(GuestArg::Bucket(*produced));
-                }
-                CallArg::AbsentHandle => args.push(GuestArg::Handle { rep: ABSENT_REP }),
-                // A run's entries were resolved where the declaration was
-                // evaluated, so the session is handed what the site
-                // covers rather than a rule for finding it.
-                CallArg::Run { entries } => {
-                    let rep = session.bind_site(entries.clone());
-                    args.push(GuestArg::Run { rep });
                 }
                 CallArg::Bool(taken) => args.push(GuestArg::Bool(*taken)),
                 CallArg::U64(scalar) => args.push(GuestArg::U64(*scalar)),

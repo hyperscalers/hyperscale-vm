@@ -46,25 +46,20 @@ use Verdict::{BothDirections, ByMode, InFlight, OwnBehaviour};
 /// derived, because "it looked like the one above it" is exactly how a
 /// second writer gets forgotten.
 const VERDICTS: &[(&str, Verdict)] = &[
-    // One call for every value mode, so one verdict covers what the
-    // exclusive hold and the commutative movement both do: each reaches
-    // both directions through one declared access, and which of them the
-    // capability carries changes when the debit is judged rather than
-    // what it moves.
-    ("capability-take", BothDirections),
-    ("capability-put", BothDirections),
-    ("run-take", BothDirections),
-    ("run-put", BothDirections),
+    // One call for every value mode and every width, so one verdict
+    // covers what the exclusive hold and the commutative movement both
+    // do: each reaches both directions through one declared access, and
+    // which of them the capability carries changes when the debit is
+    // judged rather than what it moves.
+    ("site-take", BothDirections),
+    ("site-put", BothDirections),
     // A reservation is a conditional decrement, and the only mode whose
     // direction the declaration carries.
-    ("capability-reserve-take", ByMode),
-    ("run-reserve-take", ByMode),
+    ("site-reserve-take", ByMode),
     // Instances move both ways through an interval, whose slot admits
     // read and write and says nothing about which.
-    ("capability-instance-take", BothDirections),
-    ("capability-instance-put", BothDirections),
-    ("run-instance-take", BothDirections),
-    ("run-instance-put", BothDirections),
+    ("site-instance-take", BothDirections),
+    ("site-instance-put", BothDirections),
     // In flight between a producer and a consumer.
     ("bucket-take", InFlight),
     ("bucket-split", InFlight),
@@ -139,10 +134,7 @@ fn only_a_reservation_carries_its_direction() {
         .filter(|(_, verdict)| *verdict == ByMode)
         .map(|(name, _)| *name)
         .collect();
-    assert_eq!(
-        directional,
-        vec!["capability-reserve-take", "run-reserve-take"]
-    );
+    assert_eq!(directional, vec!["site-reserve-take"]);
 
     // And every other cell-bearing call is bidirectional through one
     // access, which is why both requirements are injected there.
@@ -150,5 +142,5 @@ fn only_a_reservation_carries_its_direction() {
         .iter()
         .filter(|(_, verdict)| *verdict == BothDirections)
         .count();
-    assert_eq!(both, 8);
+    assert_eq!(both, 4);
 }

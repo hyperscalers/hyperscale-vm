@@ -144,10 +144,7 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
     // The grant is the bucket, so the withdrawal names no amount and
     // what comes back is the value itself rather than a reading of it.
     let funds = dual
-        .invoke_both(
-            "withdraw",
-            &[CVal::Borrow(sender_rep, HandleKind::Capability)],
-        )?
+        .invoke_both("withdraw", &[CVal::Borrow(sender_rep, HandleKind::Site)])?
         .bucket()?;
     let (blessed, reference) = dual.finish()?;
     let withdraw_fuel = blessed.fuel;
@@ -159,7 +156,7 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
     dual.invoke_both(
         "deposit",
         &[
-            CVal::Borrow(recipient_rep, HandleKind::Capability),
+            CVal::Borrow(recipient_rep, HandleKind::Site),
             CVal::Own(funds),
         ],
     )?;
@@ -524,9 +521,9 @@ fn dual_round() -> Result<(Receipt, u64)> {
     dual.invoke_both(
         "settle",
         &[
-            CVal::Borrow(seal_rep, HandleKind::Capability),
-            CVal::Borrow(tickets_rep, HandleKind::Capability),
-            CVal::Borrow(outcome_rep, HandleKind::Capability),
+            CVal::Borrow(seal_rep, HandleKind::Site),
+            CVal::Borrow(tickets_rep, HandleKind::Site),
+            CVal::Borrow(outcome_rep, HandleKind::Site),
         ],
     )?;
     let (blessed, reference) = dual.finish()?;

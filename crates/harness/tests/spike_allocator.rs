@@ -149,7 +149,7 @@ fn one_transfer(
         &mut store,
         &instance,
         "withdraw",
-        &[GuestArg::Handle { rep: sender_rep }],
+        &[GuestArg::Site { site: sender_rep }],
         FUEL,
     );
     let Invoked::Produced { edges: reps, .. } = withdraw.result else {
@@ -168,7 +168,9 @@ fn one_transfer(
         &instance,
         "deposit",
         &[
-            GuestArg::Handle { rep: recipient_rep },
+            GuestArg::Site {
+                site: recipient_rep,
+            },
             GuestArg::Bucket(funds),
         ],
         FUEL,

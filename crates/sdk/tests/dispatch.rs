@@ -175,8 +175,8 @@ fn a_body_branches_on_the_verdict_it_was_handed() {
         "bump",
         two_cells(),
         &[
-            GuestArg::Handle { rep: 0 },
-            GuestArg::Handle { rep: ABSENT_REP },
+            GuestArg::Site { site: 0 },
+            GuestArg::Site { site: ABSENT_REP },
             GuestArg::Bool(true),
         ],
     );
@@ -191,8 +191,8 @@ fn a_body_branches_on_the_verdict_it_was_handed() {
         "bump",
         two_cells(),
         &[
-            GuestArg::Handle { rep: ABSENT_REP },
-            GuestArg::Handle { rep: 1 },
+            GuestArg::Site { site: ABSENT_REP },
+            GuestArg::Site { site: 1 },
             GuestArg::Bool(false),
         ],
     );
@@ -212,8 +212,8 @@ fn a_verdict_the_declaration_did_not_reach_aborts_by_name() {
         "bump",
         two_cells(),
         &[
-            GuestArg::Handle { rep: ABSENT_REP },
-            GuestArg::Handle { rep: 1 },
+            GuestArg::Site { site: ABSENT_REP },
+            GuestArg::Site { site: 1 },
             GuestArg::Bool(true),
         ],
     );
@@ -223,7 +223,7 @@ fn a_verdict_the_declaration_did_not_reach_aborts_by_name() {
 /// The one capability the declaration materialized, as the walk passes
 /// it: rep zero. What it grants is the session's own answer.
 const fn cell() -> GuestArg<'static> {
-    GuestArg::Handle { rep: 0 }
+    GuestArg::Site { site: 0 }
 }
 
 /// A `u128` as it crosses: the cell representation the vocabulary
@@ -328,14 +328,14 @@ fn a_read_of_a_vault_answers_a_quantity_and_not_bytes() {
 fn an_argument_of_the_wrong_shape_is_a_violation() {
     let session = session(Mode::Write, 10);
 
-    // `withdraw` declares one access, so a run in its place is a
-    // composition that could not have been assembled. What the
-    // capability behind a rep grants is the kernel's own answer; what
-    // the binding walk is held to here is the shape it built.
+    // `withdraw` declares one access, so a value where its handle
+    // belongs is a composition that could not have been assembled. What
+    // the capability behind a site grants is the kernel's own answer;
+    // what the binding walk is held to here is the shape it built.
     let (_, invoked) = till::invoke(
         "withdraw",
         session,
-        &[GuestArg::Run { rep: 0 }, GuestArg::Bytes(&wide(30))],
+        &[GuestArg::Bytes(&wide(30)), GuestArg::Bytes(&wide(30))],
     );
 
     assert_eq!(invoked, Invoked::Aborted(AbortReason::AbiViolation));

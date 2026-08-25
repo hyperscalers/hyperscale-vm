@@ -1724,40 +1724,68 @@ struct Lowering<'a> {
     hasher: &'a dyn Hasher,
 }
 
-/// The argument a run binding lowers to: what one `for-each` site
-/// declared, one entry per element of the list its loop mapped over.
+/// The argument one handle binding lowers to: the capability each of
+/// the site's elements names, and an absence where its guard did not
+/// fire.
 ///
-/// Every entry resolves through the map the evaluation recorded, so
-/// nothing here computes a position — what the walk did is what the run
-/// covers, and an expansion the site's guard did not fire for is an
-/// absence rather than a gap.
-fn bind_run(
+/// One function for both shapes, because a site is one shape: a plain
+/// clause is a site of one element, a `for-each` clause's body site is
+/// as wide as the list its loop mapped over, and a clause guarded out
+/// contributes an absence rather than shortening anything. The
+/// declaration recorded both — the spans for the first, the expansions
+/// for the second — so nothing here computes a position.
+fn bind_site(
     signature: &MethodSignature,
     declaration: &Declaration,
     clause: u32,
     site: u32,
     offset: u32,
 ) -> Result<CallArg, String> {
-    let entries = declaration
-        .run(clause, site)
-        .ok_or_else(|| format!("clause {clause} has no site {site} to run"))?;
-    let backed = usize::try_from(clause)
-        .ok()
-        .and_then(|index| signature.effects.get(index))
-        .and_then(|clause| match clause {
-            Clause::ForEach { body, .. } => {
-                usize::try_from(site).ok().and_then(|index| body.get(index))
+    let index = usize::try_from(clause).map_err(|_| format!("clause {clause} is out of range"))?;
+    let declared = signature
+        .effects
+        .get(index)
+        .ok_or_else(|| format!("clause {clause} is not declared"))?;
+
+    let entries: Vec<Option<u32>> = if let Clause::ForEach { body, .. } = declared {
+        let backed = usize::try_from(site)
+            .ok()
+            .and_then(|at| body.get(at))
+            .is_some_and(supports);
+        if !backed {
+            return Err(format!(
+                "site {site} of clause {clause} materializes nothing"
+            ));
+        }
+        declaration
+            .run(clause, site)
+            .ok_or_else(|| format!("clause {clause} has no site {site} to run"))?
+            .to_vec()
+    } else {
+        // A plain clause is one site of one element: the span the
+        // evaluation recorded is one entry when the clause was declared
+        // and none when its guard ruled it out.
+        if !supports(declared) {
+            return Err(format!("clause {clause} materializes nothing"));
+        }
+        let (start, len) = declaration
+            .clause_spans
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("clause {clause} has no span"))?;
+        match len {
+            1 => vec![Some(start)],
+            0 => vec![None],
+            _ => {
+                return Err(format!(
+                    "clause {clause} evaluated to {len} accesses, which no handle names"
+                ));
             }
-            _ => None,
-        })
-        .is_some_and(supports);
-    if !backed {
-        return Err(format!(
-            "site {site} of clause {clause} materializes nothing"
-        ));
-    }
+        }
+    };
+
     let entries = entries
-        .iter()
+        .into_iter()
         .map(|entry| {
             entry.map_or(Ok(None), |position| {
                 position
@@ -1767,39 +1795,7 @@ fn bind_run(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(CallArg::Run { entries })
-}
-
-/// The argument a handle binding lowers to: the capability at the
-/// clause's position, or the absence the guest is told about.
-///
-/// A span of one is the ordinary case. Zero is a clause that was guarded
-/// out, which the guest is handed all the same — an export's parameter
-/// list is a function of its signature and cannot lose a parameter to a
-/// branch. More than one is a `for-each`, whose width is the instance's
-/// rather than the signature's, so no fixed export parameter can name
-/// it.
-///
-/// A span is one or zero and never more: the ABI check has already
-/// refused a handle naming anything but a single access, and an access
-/// contributes one entry when it is declared and none when it is not.
-fn bind_handle(
-    signature: &MethodSignature,
-    declaration: &Declaration,
-    clause: u32,
-    offset: u32,
-) -> Option<CallArg> {
-    let index = usize::try_from(clause).ok()?;
-    let (start, len) = declaration.clause_spans.get(index).copied()?;
-    match len {
-        1 => start.checked_add(offset).map(CallArg::Handle),
-        0 => signature
-            .effects
-            .get(index)
-            .is_some_and(supports)
-            .then_some(CallArg::AbsentHandle),
-        _ => None,
-    }
+    Ok(CallArg::Site { entries })
 }
 
 /// Lower one node's ABI binding against the inputs bound to it.
@@ -1838,10 +1834,8 @@ fn lower_call(
             reason,
         };
         args.push(match binding {
-            AbiParam::Handle(clause) => bind_handle(signature, declaration, *clause, offset)
-                .ok_or_else(|| unbindable(format!("clause {clause} binds no handle")))?,
-            AbiParam::Run { clause, site } => {
-                bind_run(signature, declaration, *clause, *site, offset).map_err(&unbindable)?
+            AbiParam::Handle { clause, site } => {
+                bind_site(signature, declaration, *clause, *site, offset).map_err(&unbindable)?
             }
             AbiParam::Guard(clause) => {
                 let taken = usize::try_from(*clause)

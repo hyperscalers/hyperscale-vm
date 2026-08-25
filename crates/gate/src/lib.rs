@@ -308,24 +308,32 @@ fn check_abi_against_export(
     }
     for (position, (binding, param)) in signature.abi.iter().zip(params).enumerate() {
         match binding {
-            AbiParam::Handle(clause) => {
+            AbiParam::Handle { clause, site } => {
                 if *param != ExportParam::Handle {
                     return Err(GateError(format!(
                         "method {method:?}: ABI parameter {position} is a capability \
                          handle, but the export takes {param:?}"
                     )));
                 }
-                // Whether the clause materializes anything at all. What
-                // it materializes is the capability's own answer, held
-                // by the kernel at every operation.
-                let backed = usize::try_from(*clause)
+                // Whether the site the binding names materializes
+                // anything at all. What it materializes is the
+                // capability's own answer, held by the kernel at every
+                // operation.
+                let declared = usize::try_from(*clause)
                     .ok()
-                    .and_then(|index| signature.effects.get(index))
-                    .is_some_and(supports);
+                    .and_then(|index| signature.effects.get(index));
+                let backed = match declared {
+                    Some(Clause::ForEach { body, .. }) => usize::try_from(*site)
+                        .ok()
+                        .and_then(|at| body.get(at))
+                        .is_some_and(supports),
+                    Some(clause) => *site == 0 && supports(clause),
+                    None => false,
+                };
                 if !backed {
                     return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} borrows a handle \
-                         for clause {clause}, which materializes none"
+                        "method {method:?}: ABI parameter {position} borrows site {site} of \
+                         clause {clause}, which materializes none"
                     )));
                 }
             }
@@ -334,30 +342,6 @@ fn check_abi_against_export(
                     return Err(GateError(format!(
                         "method {method:?}: ABI parameter {position} is a value edge, \
                          but the export takes {param:?}"
-                    )));
-                }
-            }
-            AbiParam::Run { clause, site } => {
-                if *param != ExportParam::Run {
-                    return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} is a run over a \
-                         `for-each` site, but the export takes {param:?}"
-                    )));
-                }
-                let backed = usize::try_from(*clause)
-                    .ok()
-                    .and_then(|index| signature.effects.get(index))
-                    .and_then(|clause| match clause {
-                        Clause::ForEach { body, .. } => usize::try_from(*site)
-                            .ok()
-                            .and_then(|index| body.get(index)),
-                        _ => None,
-                    })
-                    .is_some_and(supports);
-                if !backed {
-                    return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} runs site {site} of \
-                         clause {clause}, which materializes none"
                     )));
                 }
             }
@@ -465,7 +449,7 @@ mod tests {
             .expect("declared")
             // The signature declares no effect clauses, so there is no
             // clause 0 for a handle to name.
-            .abi = vec![AbiParam::Handle(0)];
+            .abi = vec![AbiParam::Handle { clause: 0, site: 0 }];
         let artifact = attach_metadata(&component, &metadata).expect("attaches");
 
         let refused = admit_package(&artifact).expect_err("an unresolvable binding refuses");
@@ -819,22 +803,21 @@ mod tests {
                 mode: ModeExpr::Write,
                 denomination: None,
             }];
-            signature.abi = vec![AbiParam::Handle(0)];
+            signature.abi = vec![AbiParam::Handle { clause: 0, site: 0 }];
         }
         let artifact = attach_metadata(&scalar_export(), &wrong_kind).expect("attaches");
         let refused = admit_package(&artifact).expect_err("a handle needs a borrow");
         assert!(refused.0.contains("capability handle"), "{}", refused.0);
 
-        // A handle binding on a clause that materializes nothing. Every
-        // capability crosses as one resource, so what is left to hold is
-        // whether the clause it names backs a handle at all — a
-        // `for-each` expands over configuration and yields no single
-        // capability for a parameter to borrow.
+        // A handle binding on a site the declaration does not have.
+        // Every capability crosses as one resource of one width, so what
+        // is left to hold is whether the site it names is declared at
+        // all — an empty loop declares none.
         let borrow_export = parse_str(
             r#"(component
                  (import "hyperscale:kernel/state" (instance $state
-                   (export "capability" (type $ac (sub resource)))))
-                 (alias export $state "capability" (type $access))
+                   (export "site" (type $ac (sub resource)))))
+                 (alias export $state "site" (type $access))
                  (core module $m
                    (func (export "f") (param i32) (result i64) i64.const 0)
                    (func (export "seal")))
@@ -852,11 +835,11 @@ mod tests {
                 list: Expr::Arg(0),
                 body: vec![],
             }];
-            signature.abi = vec![AbiParam::Handle(0)];
+            signature.abi = vec![AbiParam::Handle { clause: 0, site: 0 }];
         }
         let artifact = attach_metadata(&borrow_export, &unbacked).expect("attaches");
-        let refused = admit_package(&artifact).expect_err("a loop backs no single handle");
-        assert!(refused.0.contains("single access"), "{}", refused.0);
+        let refused = admit_package(&artifact).expect_err("an empty loop declares no site");
+        assert!(refused.0.contains("not an access"), "{}", refused.0);
 
         // The same shape with the matching mode admits, so the refusals
         // above are the disagreement and not the shape.
@@ -873,7 +856,7 @@ mod tests {
                 mode: ModeExpr::Delta,
                 denomination: Some(Box::new(held())),
             }];
-            signature.abi = vec![AbiParam::Handle(0)];
+            signature.abi = vec![AbiParam::Handle { clause: 0, site: 0 }];
         }
         let artifact = attach_metadata(&borrow_export, &sound).expect("attaches");
         assert!(admit_package(&artifact).is_ok());

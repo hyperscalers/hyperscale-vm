@@ -222,8 +222,8 @@ impl Spec {
             let _ = writeln!(
                 out,
                 r#"(import "hyperscale:kernel/state" (instance $state
-                     (export "capability" (type $rc (sub resource)))))
-                   (alias export $state "capability" (type $rcell))
+                     (export "site" (type $rc (sub resource)))))
+                   (alias export $state "site" (type $rcell))
                    (core func $dropf (canon resource.drop $rcell))"#
             );
         }

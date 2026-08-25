@@ -1,40 +1,40 @@
 (component
   (import "hyperscale:kernel/state" (instance $state
     (export "bucket" (type $bk (sub resource)))
-    (export "capability" (type $ac (sub resource)))
+    (export "site" (type $ac (sub resource)))
     (type $amt_decl (record (field "low" u64) (field "high" u64)))
     (export "amount" (type $amt (eq $amt_decl)))
-    (export "capability-get" (func (param "c" (borrow $ac)) (result (list u8))))
+    (export "site-get" (func (param "c" (borrow $ac)) (param "element" u32) (result (list u8))))
     (export "mint" (func (param "amount" $amt) (result (own $bk))))
-    (export "capability-take" (func (param "c" (borrow $ac)) (param "amount" $amt) (result (own $bk))))
-    (export "capability-put" (func (param "c" (borrow $ac)) (param "funds" (own $bk))))
+    (export "site-take" (func (param "c" (borrow $ac)) (param "element" u32) (param "amount" $amt) (result (own $bk))))
+    (export "site-put" (func (param "c" (borrow $ac)) (param "element" u32) (param "funds" (own $bk))))
     (export "bucket-amount" (func (param "b" (borrow $bk)) (result $amt)))
     (export "bucket-take" (func (param "b" (borrow $bk)) (param "amount" $amt) (result (own $bk))))
-    (export "capability-count" (func (param "r" (borrow $ac)) (result u32)))
-    (export "capability-instance-take" (func (param "r" (borrow $ac)) (param "ids" (list u64)) (result (own $bk))))
-    (export "capability-instance-put" (func (param "r" (borrow $ac)) (param "funds" (own $bk)) (param "value" (list u8))))
+    (export "site-count" (func (param "r" (borrow $ac)) (param "element" u32) (result u32)))
+    (export "site-instance-take" (func (param "r" (borrow $ac)) (param "element" u32) (param "ids" (list u64)) (result (own $bk))))
+    (export "site-instance-put" (func (param "r" (borrow $ac)) (param "element" u32) (param "funds" (own $bk)) (param "value" (list u8))))
     (export "bucket-put" (func (param "b" (borrow $bk)) (param "other" (own $bk))))
-    (export "capability-reserve-take" (func (param "c" (borrow $ac)) (result (own $bk))))))
+    (export "site-reserve-take" (func (param "c" (borrow $ac)) (param "element" u32) (result (own $bk))))))
 
   (alias export $state "bucket" (type $bucket))
-  (alias export $state "capability" (type $rcell))
-  (alias export $state "capability" (type $wcell))
-  (alias export $state "capability" (type $dcell))
-  (alias export $state "capability" (type $vcell))
-  (alias export $state "capability-get" (func $read_get))
+  (alias export $state "site" (type $rcell))
+  (alias export $state "site" (type $wcell))
+  (alias export $state "site" (type $dcell))
+  (alias export $state "site" (type $vcell))
+  (alias export $state "site-get" (func $read_get))
   (alias export $state "mint" (func $issue))
-  (alias export $state "capability-take" (func $write_take))
-  (alias export $state "capability-put" (func $write_put))
+  (alias export $state "site-take" (func $write_take))
+  (alias export $state "site-put" (func $write_put))
   (alias export $state "bucket-amount" (func $bucket_amount))
-  (alias export $state "capability" (type $wrange))
+  (alias export $state "site" (type $wrange))
   (alias export $state "bucket-take" (func $bucket_take))
-  (alias export $state "capability-count" (func $rw_count))
-  (alias export $state "capability-instance-take" (func $range_take))
-  (alias export $state "capability-instance-put" (func $range_put))
+  (alias export $state "site-count" (func $rw_count))
+  (alias export $state "site-instance-take" (func $range_take))
+  (alias export $state "site-instance-put" (func $range_put))
   (alias export $state "bucket-put" (func $bucket_put))
-  (alias export $state "capability-put" (func $delta_put))
-  (alias export $state "capability-take" (func $delta_take))
-  (alias export $state "capability-reserve-take" (func $reserve_take))
+  (alias export $state "site-put" (func $delta_put))
+  (alias export $state "site-take" (func $delta_take))
+  (alias export $state "site-reserve-take" (func $reserve_take))
 
   (core module $alloc
     (memory (export "mem") 1 1)
@@ -76,20 +76,20 @@
 
   (core module $m
     (import "env" "mem" (memory 1 1))
-    (import "k" "read-get" (func $read_get (param i32 i32)))
+    (import "k" "read-get" (func $read_get (param i32 i32 i32)))
     (import "k" "issue" (func $issue (param i64 i64) (result i32)))
-    (import "k" "write-take" (func $write_take (param i32 i64 i64) (result i32)))
-    (import "k" "write-put" (func $write_put (param i32 i32)))
+    (import "k" "write-take" (func $write_take (param i32 i32 i64 i64) (result i32)))
+    (import "k" "write-put" (func $write_put (param i32 i32 i32)))
     (import "k" "bucket-amount" (func $bucket_amount (param i32 i32)))
     (import "k" "bucket-take" (func $bucket_take (param i32 i64 i64) (result i32)))
-    (import "k" "rw-count" (func $rw_count (param i32) (result i32)))
-    (import "k" "range-take" (func $range_take (param i32 i32 i32) (result i32)))
-    (import "k" "range-put" (func $range_put (param i32 i32 i32 i32)))
+    (import "k" "rw-count" (func $rw_count (param i32 i32) (result i32)))
+    (import "k" "range-take" (func $range_take (param i32 i32 i32 i32) (result i32)))
+    (import "k" "range-put" (func $range_put (param i32 i32 i32 i32 i32)))
     (import "k" "drop-wrange" (func $drop_wrange (param i32)))
     (import "k" "bucket-put" (func $bucket_put (param i32 i32)))
-    (import "k" "delta-put" (func $delta_put (param i32 i32)))
-    (import "k" "delta-take" (func $delta_take (param i32 i64 i64) (result i32)))
-    (import "k" "reserve-take" (func $reserve_take (param i32) (result i32)))
+    (import "k" "delta-put" (func $delta_put (param i32 i32 i32)))
+    (import "k" "delta-take" (func $delta_take (param i32 i32 i64 i64) (result i32)))
+    (import "k" "reserve-take" (func $reserve_take (param i32 i32) (result i32)))
     (import "k" "drop-bucket" (func $drop_bucket (param i32)))
     (import "k" "drop-read" (func $drop_read (param i32)))
     (import "k" "drop-write" (func $drop_write (param i32)))
@@ -108,6 +108,7 @@
 
     (func (export "peek") (param i32) (result i64)
       local.get 0
+      i32.const 0
       i32.const 8
       call $read_get
       local.get 0
@@ -133,6 +134,7 @@
     (func (export "lift") (param i32 i32 i32) (result i32)
       (local $held i32)
       local.get 0
+      i32.const 0
       local.get 1
       local.get 2
       call $range_take
@@ -148,7 +150,9 @@
       i32.const 1
       i32.store8
       local.get 0
+      i32.const 0
       local.get 0
+      i32.const 0
       local.get 1
       local.get 2
       call $range_take
@@ -156,6 +160,7 @@
       i32.const 1
       call $range_put
       local.get 0
+      i32.const 0
       call $rw_count
       i64.extend_i32_u
       local.get 0
@@ -195,6 +200,7 @@
       call $bucket_take
       local.set $off
       local.get 2
+      i32.const 0
       local.get 0
       call $delta_put
       local.get 2
@@ -211,6 +217,7 @@
       i32.const 32
       i64.load
       local.get 1
+      i32.const 0
       local.get 0
       call $delta_put
       local.get 1
@@ -221,6 +228,7 @@
     ;; consumed one traps, which is what the negative index reports.
     (func (export "put-write") (param i32 i32) (result i64)
       local.get 0
+      i32.const 0
       local.get 1
       call $write_put
       local.get 0
@@ -229,6 +237,7 @@
 
     (func (export "put-delta") (param i32 i32) (result i64)
       local.get 0
+      i32.const 0
       local.get 1
       call $delta_put
       local.get 0
@@ -238,6 +247,7 @@
     ;; The same credit, then a second drop of the handle it consumed.
     (func (export "put-write-then-drop") (param i32 i32) (result i64)
       local.get 0
+      i32.const 0
       local.get 1
       call $write_put
       local.get 1
@@ -252,11 +262,13 @@
     (func (export "take-two") (param i32 i32 i64 i64) (result i32)
       (local $one i32) (local $two i32)
       local.get 0
+      i32.const 0
       local.get 2
       i64.const 0
       call $delta_take
       local.set $one
       local.get 1
+      i32.const 0
       local.get 3
       i64.const 0
       call $write_take
@@ -275,6 +287,7 @@
 
     (func (export "take-write") (param i32 i64) (result i32)
       local.get 0
+      i32.const 0
       local.get 1
       i64.const 0
       call $write_take
@@ -283,6 +296,7 @@
 
     (func (export "take-delta") (param i32 i64) (result i32)
       local.get 0
+      i32.const 0
       local.get 1
       i64.const 0
       call $delta_take
@@ -291,6 +305,7 @@
 
     (func (export "take-reserve") (param i32) (result i32)
       local.get 0
+      i32.const 0
       call $reserve_take
       local.get 0
       call $drop_reserve)
@@ -301,9 +316,11 @@
     ;; call, so nothing is owed a disposal.
     (func (export "take-reserve-twice") (param i32) (result i32)
       local.get 0
+      i32.const 0
       call $reserve_take
       drop
       local.get 0
+      i32.const 0
       call $reserve_take
       local.get 0
       call $drop_reserve))

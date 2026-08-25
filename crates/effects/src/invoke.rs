@@ -58,14 +58,24 @@ pub fn distinct_ids(ids: &[u64]) -> Option<Vec<u64>> {
 /// Where one ABI argument comes from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallArg {
-    /// The capability at this position in the transaction's materialized
-    /// table.
+    /// One declared site: the capability each of its elements names, at
+    /// that element's index, and an absence where the site's guard did
+    /// not fire.
     ///
-    /// Resolved from the clause the binding names, through that clause's
-    /// span in its frame's flattened order plus the frame's own offset —
-    /// so the position is a function of the whole transaction's
-    /// declaration, which is what the table is built from.
-    Handle(u32),
+    /// A plain access is a site of one entry, and a `for-each` site is
+    /// as wide as the collection its loop mapped over — so an export's
+    /// parameter list is a function of its signature either way, and the
+    /// index a body walks is the element's throughout.
+    ///
+    /// The absences are the reason this is a list rather than a span.
+    /// Two sites in one body may be guarded differently, and a site that
+    /// dropped what did not fire would answer at a length the site
+    /// beside it does not share — so a hole reads as a hole.
+    Site {
+        /// One entry per element, at its position in the transaction's
+        /// materialized table.
+        entries: Vec<Option<u32>>,
+    },
     /// The cell an earlier node produced on one of its output edges.
     Bucket {
         /// The producing node's index in the flattened manifest.
@@ -73,30 +83,8 @@ pub enum CallArg {
         /// Which of the producer's outputs the edge carries.
         output: u32,
     },
-    /// A handle position no capability occupies: the clause that would
-    /// have backed it was guarded out.
-    ///
-    /// Carries nothing: which resource the engine lends it as is the
-    /// same one every cell crosses as, and the rep it names is the one
-    /// no capability occupies. Touching it is a body whose control flow
-    /// disagrees with the verdict it was handed, and traps by name.
-    AbsentHandle,
     /// A clause's own guard verdict, as the export's `bool`.
     Bool(bool),
-    /// The whole expansion of one `for-each` site: the capability each
-    /// element declared, at that element's index, and an absence where
-    /// the site's guard did not fire.
-    ///
-    /// The absences are the reason this is a list rather than a span. Two
-    /// sites in one body may be guarded differently, and a run that
-    /// dropped what did not fire would answer at a length the site beside
-    /// it does not share — so the index is the element's throughout, and
-    /// a hole reads as a hole.
-    Run {
-        /// One entry per element, at its position in the transaction's
-        /// materialized table.
-        entries: Vec<Option<u32>>,
-    },
     /// A 64-bit scalar the signature derived from the node's inputs.
     U64(u64),
     /// An address the signature derived from the node's inputs.

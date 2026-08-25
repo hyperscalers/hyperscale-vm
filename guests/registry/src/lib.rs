@@ -9,7 +9,7 @@ wit_bindgen::generate!({
 });
 
 use hyperscale::kernel::state::{
-    Amount, capability_count, capability_entry, capability_insert, capability_remove,
+    Amount, site_count, site_entry, site_insert, site_remove,
 };
 
 /// A `u128` as the kernel's world names it.
@@ -30,21 +30,21 @@ fn order_of(cell: &[u8]) -> Amount {
 struct Registry;
 
 impl Guest for Registry {
-    fn bind(entry: &Capability, order: Vec<u8>, value: Vec<u8>) {
-        capability_insert(entry, order_of(&order), &value);
+    fn bind(entry: &Site, order: Vec<u8>, value: Vec<u8>) {
+        site_insert(entry, 0, order_of(&order), &value);
     }
 
-    fn check(entry: &Capability, expected: Vec<u8>) {
-        assert!(capability_count(entry) == 1, "unbound name");
+    fn check(entry: &Site, expected: Vec<u8>) {
+        assert!(site_count(entry, 0) == 1, "unbound name");
         assert!(
-            capability_entry(entry, 0) == expected,
+            site_entry(entry, 0, 0) == expected,
             "mismatched binding"
         );
     }
 
-    fn drain(tail: &Capability) {
-        while capability_count(tail) > 0 {
-            capability_remove(tail, 0);
+    fn drain(tail: &Site) {
+        while site_count(tail, 0) > 0 {
+            site_remove(tail, 0, 0);
         }
     }
 }

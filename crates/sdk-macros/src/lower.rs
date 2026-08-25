@@ -2273,16 +2273,18 @@ impl<'a> Lowerer<'a> {
         self.out.handles.insert(site);
         let ident = handle_ident(site);
         let binder = self.out.sites[site].binder;
+        // Every site has a width, so every access names an element. A
+        // plain one is a site of one and names element zero; a site a
+        // `for-each` body declared names the element it was declared
+        // for, so it exists inside that loop and nowhere else.
         if binder == 0 {
-            return quote!(#ident);
+            return quote!(#ident.handle(0));
         }
-        // A run's entry is named by the element it was declared for, so
-        // it exists inside the loop that declared it and nowhere else.
         if self.depth() < binder {
             self.error(
                 span,
                 "this handle was declared inside a `for-each`, so it names an entry of \
-                 that loop's run — and outside the loop there is no element to name",
+                 that loop's site — and outside the loop there is no element to name",
             );
         }
         self.out.runs.insert(site);

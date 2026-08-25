@@ -110,17 +110,17 @@ use wasmparser::{
 const DISCHARGED: &[(&str, &str)] = &[
     // A get reads the cell its handle names; materialization is the
     // whole of what it needs.
-    ("state", "capability-get"),
+    ("state", "site-get"),
     // A set stores the bytes it is handed with no judgment at the call;
     // what a receipt may carry is judged at its own boundary.
-    ("state", "capability-set"),
+    ("state", "site-set"),
     // A clear ends a leaf the handle already holds exclusively; there
     // is nothing to judge that materialization did not.
-    ("state", "capability-clear"),
+    ("state", "site-clear"),
     // A denominated cell holds an amount: value enters one only through
     // movements, so the read cannot meet bytes — a cell that did would
     // be a defect in state, not a refusal the call can reach.
-    ("state", "capability-balance"),
+    ("state", "site-balance"),
     // What an edge carries is the edge's own fact.
     ("state", "bucket-amount"),
     // A credit of conserved value: the cell's denomination was judged at
@@ -129,11 +129,11 @@ const DISCHARGED: &[(&str, &str)] = &[
     // sum past it would need value no mint ever created. Refused at the
     // call for an exclusive hold and at the fold for a movement, and
     // neither refusal is one this leg can reach.
-    ("state", "capability-put"),
+    ("state", "site-put"),
     // A count takes no index, so there is no bound to fall outside; the
     // coverage question is answered from the same page and its probe.
-    ("state", "capability-count"),
-    ("state", "capability-covered"),
+    ("state", "site-count"),
+    ("state", "site-covered"),
     // Total on every input; the arithmetic that refuses a divisor or a
     // width stays out, because those are runtime values no declaration
     // speaks about.
@@ -159,12 +159,8 @@ const DISCHARGED: &[(&str, &str)] = &[
 /// account for and holds on to it when there is, and either way it
 /// returns no verdict a body could trip over. Whether the transaction
 /// lost value is settled once, at the close, over the whole table.
-const DISCHARGED_DROPS: &[(&str, &str)] = &[
-    ("state", "capability"),
-    ("state", "run"),
-    ("state", "issuer"),
-    ("state", "bucket"),
-];
+const DISCHARGED_DROPS: &[(&str, &str)] =
+    &[("state", "site"), ("state", "issuer"), ("state", "bucket")];
 
 /// Why a body cannot carry the total mark.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

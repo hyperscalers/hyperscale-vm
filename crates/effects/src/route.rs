@@ -592,7 +592,7 @@ mod tests {
             "m".into(),
             MethodSignature {
                 totality: Totality::Fallible,
-                abi: vec![AbiParam::Run { clause: 0, site: 0 }],
+                abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
                 effects: vec![Clause::ForEach {
                     guard: Some(Box::new(Expr::Config(1))),
                     list: Expr::Config(0),
@@ -635,7 +635,7 @@ mod tests {
         let routing = routed(&graph, &chain);
         assert_eq!(
             routing.calls[0].args,
-            vec![CallArg::Run {
+            vec![CallArg::Site {
                 entries: Vec::new(),
             }]
         );
@@ -644,7 +644,7 @@ mod tests {
         let routing = routed(&graph, &chain);
         assert_eq!(
             routing.calls[0].args,
-            vec![CallArg::Run {
+            vec![CallArg::Site {
                 entries: vec![Some(0), Some(1)],
             }]
         );
@@ -657,11 +657,13 @@ mod tests {
         // moves with it while its clause index does not.
         for width in 1u64..4 {
             let spread: Vec<Value> = (0..width).map(Value::U64).collect();
-            let (chain, graph) = spreading_world(spread, vec![AbiParam::Handle(1)]);
+            let (chain, graph) =
+                spreading_world(spread, vec![AbiParam::Handle { clause: 1, site: 0 }]);
             let routing = routed(&graph, &chain);
-            let CallArg::Handle(rep) = routing.calls[0].args[0] else {
+            let CallArg::Site { ref entries } = routing.calls[0].args[0] else {
                 panic!("a handle argument");
             };
+            let rep = entries[0].expect("the clause was declared");
             let declaration = routing.declaration().clone();
             assert_eq!(u64::from(rep), width);
             assert_eq!(
@@ -752,17 +754,25 @@ mod tests {
         // cannot lose a parameter to a branch, so the guest is handed a
         // handle that answers nothing — carrying the type routing is the
         // last thing to know, beside the verdict that says so.
-        let abi = vec![AbiParam::Handle(0), AbiParam::Guard(0)];
+        let abi = vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Guard(0)];
         let (chain, graph) = guarded_world(Value::U64(1), Value::U64(2), abi.clone());
         let routing = routed(&graph, &chain);
         assert_eq!(
             routing.calls[0].args,
-            vec![CallArg::AbsentHandle, CallArg::Bool(false)]
+            vec![
+                CallArg::Site {
+                    entries: vec![None]
+                },
+                CallArg::Bool(false)
+            ]
         );
 
         let (chain, graph) = guarded_world(Value::U64(1), Value::U64(1), abi);
         let routing = routed(&graph, &chain);
-        assert!(matches!(routing.calls[0].args[0], CallArg::Handle(_)));
+        assert!(matches!(
+            routing.calls[0].args[0],
+            CallArg::Site { ref entries } if entries == &[Some(0)]
+        ));
         assert_eq!(routing.calls[0].args[1], CallArg::Bool(true));
     }
 
@@ -837,20 +847,36 @@ mod tests {
     }
 
     #[test]
-    fn a_handle_on_a_spreading_clause_is_refused() {
+    fn a_handle_on_a_site_the_loop_does_not_declare_is_refused() {
         // A `for-each` expands over the target's creation-fixed
-        // configuration, so a handle on one asks for a capability whose
-        // count is the instance's rather than the signature's. Judged on
-        // the signature at the cache door, before any evaluation reaches
-        // the spread: the clause is not a single access whatever the
-        // configuration says.
+        // configuration, and one parameter covers a whole site of it —
+        // so a handle on the loop's own site is a binding like any
+        // other, whatever width the configuration gives it.
+        MetadataCache::new()
+            .publish(
+                pkg("spread"),
+                spreading_package(vec![AbiParam::Handle { clause: 0, site: 0 }]),
+            )
+            .expect("a site of the loop backs a handle");
+
+        // What is left to refuse is a site the loop's body does not
+        // declare. Judged on the signature at the cache door, before any
+        // evaluation reaches the spread: what the body declares is the
+        // signature's answer whatever the configuration says.
         let refusal = MetadataCache::new()
-            .publish(pkg("spread"), spreading_package(vec![AbiParam::Handle(0)]))
-            .expect_err("a spreading clause cannot back a handle");
+            .publish(
+                pkg("spread"),
+                spreading_package(vec![AbiParam::Handle { clause: 0, site: 1 }]),
+            )
+            .expect_err("the loop declares no second site");
         assert!(
             matches!(
                 refusal.source,
-                SignatureError::Abi(AbiError::NotAnAccess { clause: 0, .. })
+                SignatureError::Abi(AbiError::NotALoopedAccess {
+                    clause: 0,
+                    site: 1,
+                    ..
+                })
             ),
             "unexpected refusal: {refusal:?}"
         );
@@ -994,7 +1020,7 @@ mod tests {
                 params: vec![ParamType::Bucket],
                 // Nothing in the ABI carries the bucket: the method
                 // consumes the edge without reading what crossed.
-                abi: vec![AbiParam::Handle(0)],
+                abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
                 effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
                 ..MethodSignature::default()
             },

@@ -53,7 +53,7 @@ fn mirror_metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Bucket],
-            abi: vec![AbiParam::Handle(1), AbiParam::Bucket(0)],
+            abi: vec![AbiParam::Handle { clause: 1, site: 0 }, AbiParam::Bucket(0)],
             effects: vec![
                 Clause::Effect {
                     guard: None,

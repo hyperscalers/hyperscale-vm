@@ -529,7 +529,7 @@ fn a_total_method_declares_the_union_and_binds_no_verdict() {
     assert_eq!(
         bump.abi
             .iter()
-            .filter(|binding| matches!(binding, AbiParam::Handle(_)))
+            .filter(|binding| matches!(binding, AbiParam::Handle { clause: _, site: 0 }))
             .count(),
         2,
         "both handles arrive"

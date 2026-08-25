@@ -53,7 +53,7 @@ pub fn metadata() -> PackageMetadata {
             issues: None,
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
-                AbiParam::Handle(0),
+                AbiParam::Handle { clause: 0, site: 0 },
                 AbiParam::Derived(order),
                 AbiParam::Derived(Expr::Arg(1)),
             ],
@@ -73,7 +73,10 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             issues: None,
             params: vec![ParamType::U64, ParamType::U128],
-            abi: vec![AbiParam::Handle(0), AbiParam::Derived(Expr::Arg(1))],
+            abi: vec![
+                AbiParam::Handle { clause: 0, site: 0 },
+                AbiParam::Derived(Expr::Arg(1)),
+            ],
             effects: vec![Clause::Effect {
                 guard: None,
                 target,
@@ -89,7 +92,7 @@ pub fn metadata() -> PackageMetadata {
             totality: Totality::Infallible,
             issues: None,
             params: vec![ParamType::U128],
-            abi: vec![AbiParam::Handle(0)],
+            abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
             effects: vec![Clause::Effect {
                 guard: None,
                 target: TargetExpr::Range {

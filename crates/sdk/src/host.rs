@@ -171,10 +171,7 @@ fn scanned<T>(answer: Result<T, AbortReason>) -> T {
 /// The site and element an operation acts through: the handle itself at
 /// element zero, or the element a run's index names.
 const fn acting(handle: Handle) -> (u32, u32) {
-    match handle {
-        Handle::Capability(rep) => (rep, 0),
-        Handle::Run(rep, index) => (rep, index),
-    }
+    (handle.site, handle.element)
 }
 
 /// The substate this handle reads.
@@ -556,7 +553,7 @@ fn arg<'a>(args: &'a [GuestArg<'a>], at: usize) -> &'a GuestArg<'a> {
         .unwrap_or_else(|| refuse(AbortReason::AbiViolation))
 }
 
-/// The capability at `at`.
+/// The site at `at`.
 ///
 /// An argument of the wrong shape is the canonical ABI's own violation,
 /// reached here by the same route: the export's parameter list is a
@@ -565,36 +562,23 @@ fn arg<'a>(args: &'a [GuestArg<'a>], at: usize) -> &'a GuestArg<'a> {
 /// capability behind the rep grants is the kernel's answer, held at the
 /// operation rather than here.
 #[must_use]
-pub fn handle(args: &[GuestArg<'_>], at: usize) -> Handle {
-    let GuestArg::Handle { rep } = *arg(args, at) else {
+pub fn handle(args: &[GuestArg<'_>], at: usize) -> u32 {
+    let GuestArg::Site { site } = *arg(args, at) else {
         refuse(AbortReason::AbiViolation)
     };
-    Handle::Capability(rep)
+    site
 }
 
-/// The run at `at`: the position it occupies in the session's run
-/// table, which every entry of it is reached through.
-///
-/// Its own rep space beside the capability table's, which is why the
-/// argument shape is what tells them apart.
+/// How many elements the site covers.
 #[must_use]
-pub fn run(args: &[GuestArg<'_>], at: usize) -> u32 {
-    let GuestArg::Run { rep } = *arg(args, at) else {
-        refuse(AbortReason::AbiViolation)
-    };
-    rep
+pub fn site_len(site: u32) -> u32 {
+    settled(kernel(|k| k.site_len(site)))
 }
 
-/// How many elements a run's site mapped over.
+/// Whether the site declared anything for the element at `element`.
 #[must_use]
-pub fn run_len(rep: u32) -> u32 {
-    settled(kernel(|k| k.site_len(rep)))
-}
-
-/// Whether a run's site declared anything for the element at `index`.
-#[must_use]
-pub fn run_declared(rep: u32, index: u32) -> bool {
-    settled(kernel(|k| k.site_declared(rep, index)))
+pub fn site_declared(site: u32, element: u32) -> bool {
+    settled(kernel(|k| k.site_declared(site, element)))
 }
 
 /// The scalar at `at`.

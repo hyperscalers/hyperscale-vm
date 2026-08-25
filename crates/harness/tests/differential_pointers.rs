@@ -21,8 +21,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{CVal, HandleKind, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{
-    Bucket, Capability as CapabilityResource, add_kernel_to_linker, blessed_engine, classify,
-    validate_component,
+    Bucket, Site, add_kernel_to_linker, blessed_engine, classify, validate_component,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, ResourceAddr,
@@ -150,12 +149,12 @@ fn lifting(ptr: i32, len: i32) -> String {
 (component
   (import "hyperscale:kernel/state" (instance $state
     (export "bucket" (type $bk (sub resource)))
-    (export "capability" (type $rw (sub resource)))
-    (export "capability-instance-take"
-      (func (param "r" (borrow $rw)) (param "ids" (list u64)) (result (own $bk))))))
+    (export "site" (type $rw (sub resource)))
+    (export "site-instance-take"
+      (func (param "r" (borrow $rw)) (param "element" u32) (param "ids" (list u64)) (result (own $bk))))))
   (alias export $state "bucket" (type $bucket))
-  (alias export $state "capability" (type $wrange))
-  (alias export $state "capability-instance-take" (func $take))
+  (alias export $state "site" (type $wrange))
+  (alias export $state "site-instance-take" (func $take))
 
   (core module $alloc
     (memory (export "mem") 1 1)
@@ -166,7 +165,7 @@ fn lifting(ptr: i32, len: i32) -> String {
 
   (core module $m
     (import "env" "mem" (memory 1 1))
-    (import "k" "take" (func $take (param i32 i32 i32) (result i32)))
+    (import "k" "take" (func $take (param i32 i32 i32 i32) (result i32)))
     (import "k" "drop" (func $drop (param i32)))
     ;; One id an honest call would name, written eight-aligned.
     (func (export "take") (param i32) (result i32)
@@ -175,6 +174,7 @@ fn lifting(ptr: i32, len: i32) -> String {
       i64.const 10
       i64.store
       local.get 0
+      i32.const 0
       i32.const {ptr}
       i32.const {len}
       call $take
@@ -198,13 +198,10 @@ fn lift_verdicts(ptr: i32, len: i32) -> Result<(Verdict, Verdict)> {
     both(
         &lifting(ptr, len),
         "take",
-        &[CVal::Borrow(0, HandleKind::Capability)],
+        &[CVal::Borrow(0, HandleKind::Site)],
         |instance, store| {
             instance
-                .get_typed_func::<(Resource<CapabilityResource>,), (Resource<Bucket>,)>(
-                    &mut *store,
-                    "take",
-                )?
+                .get_typed_func::<(Resource<Site>,), (Resource<Bucket>,)>(&mut *store, "take")?
                 .call(store, (Resource::new_borrow(0),))
         },
     )
@@ -248,12 +245,12 @@ fn returning(retptr: i32) -> String {
         r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "capability" (type $ac (sub resource)))
+    (export "site" (type $ac (sub resource)))
     (type $amt_decl (record (field "low" u64) (field "high" u64)))
     (export "amount" (type $amt (eq $amt_decl)))
-    (export "capability-balance" (func (param "c" (borrow $ac)) (result $amt)))))
-  (alias export $state "capability" (type $acell))
-  (alias export $state "capability-balance" (func $balance))
+    (export "site-balance" (func (param "c" (borrow $ac)) (param "element" u32) (result $amt)))))
+  (alias export $state "site" (type $acell))
+  (alias export $state "site-balance" (func $balance))
 
   (core module $alloc
     (memory (export "mem") 1 1)
@@ -264,11 +261,12 @@ fn returning(retptr: i32) -> String {
 
   (core module $m
     (import "env" "mem" (memory 1 1))
-    (import "k" "balance" (func $balance (param i32 i32)))
+    (import "k" "balance" (func $balance (param i32 i32 i32)))
     (import "k" "drop" (func $drop (param i32)))
     (func (export "weigh") (param i32) (result i64)
       (local $out i64)
       local.get 0
+      i32.const 0
       i32.const {retptr}
       call $balance
       i32.const {retptr}
@@ -297,13 +295,10 @@ fn a_return_area_is_judged_the_same_by_both() -> Result<()> {
         both(
             &returning(retptr),
             "weigh",
-            &[CVal::Borrow(1, HandleKind::Capability)],
+            &[CVal::Borrow(1, HandleKind::Site)],
             |instance, store| {
                 instance
-                    .get_typed_func::<(Resource<CapabilityResource>,), (u64,)>(
-                        &mut *store,
-                        "weigh",
-                    )?
+                    .get_typed_func::<(Resource<Site>,), (u64,)>(&mut *store, "weigh")?
                     .call(store, (Resource::new_borrow(1),))
             },
         )
@@ -331,10 +326,10 @@ fn allocating(at: i32) -> String {
         r#"
 (component
   (import "hyperscale:kernel/state" (instance $state
-    (export "capability" (type $rw (sub resource)))
-    (export "capability-count" (func (param "r" (borrow $rw)) (result u32)))))
-  (alias export $state "capability" (type $wrange))
-  (alias export $state "capability-count" (func $count))
+    (export "site" (type $rw (sub resource)))
+    (export "site-count" (func (param "r" (borrow $rw)) (param "element" u32) (result u32)))))
+  (alias export $state "site" (type $wrange))
+  (alias export $state "site-count" (func $count))
 
   (core module $alloc
     (memory (export "mem") 1 1)
@@ -345,11 +340,12 @@ fn allocating(at: i32) -> String {
 
   (core module $m
     (import "env" "mem" (memory 1 1))
-    (import "k" "count" (func $count (param i32) (result i32)))
+    (import "k" "count" (func $count (param i32 i32) (result i32)))
     (import "k" "drop" (func $drop (param i32)))
     (func (export "count") (param i32 i32 i32) (result i32)
       (local $out i32)
       local.get 0
+      i32.const 0
       call $count
       local.set $out
       local.get 0
@@ -375,16 +371,10 @@ fn a_realloc_result_is_judged_the_same_by_both() -> Result<()> {
         both(
             &allocating(at),
             "count",
-            &[
-                CVal::Borrow(0, HandleKind::Capability),
-                CVal::Ids(vec![10, 20]),
-            ],
+            &[CVal::Borrow(0, HandleKind::Site), CVal::Ids(vec![10, 20])],
             |instance, store| {
                 instance
-                    .get_typed_func::<(Resource<CapabilityResource>, &[u64]), (u32,)>(
-                        &mut *store,
-                        "count",
-                    )?
+                    .get_typed_func::<(Resource<Site>, &[u64]), (u32,)>(&mut *store, "count")?
                     .call(store, (Resource::new_borrow(0), &[10u64, 20][..]))
             },
         )
