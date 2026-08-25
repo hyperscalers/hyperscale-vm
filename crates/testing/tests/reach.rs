@@ -18,6 +18,7 @@
 use hyperscale_vm_effects::TestHasher;
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_fixtures::security;
+use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::{
     Chain, Component, PrincipalAddr, ResourceAddr, account, package, principal,
 };
@@ -169,4 +170,83 @@ fn a_recall_reaches_past_every_rule_the_resource_carries() {
         assert_eq!(chain.balance(holder, share), 0);
     }
     assert_eq!(chain.balance(REGISTRAR, share), 140);
+}
+
+/// An issuer that keeps its own authority, by naming itself.
+#[blueprint]
+mod sovereign {
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::{Bucket, Quantity, halt, recall};
+
+    /// A note whose `freeze` and `recall` entries name the issuing
+    /// instance rather than a party outside its code.
+    ///
+    /// The other posture of an authority entry, and the choice is about
+    /// who holds the discretion. Naming a badge or an identity puts it
+    /// outside the package: a caller presents that party's claim and the
+    /// code cannot spend the authority without them. Naming the issuer
+    /// puts it in the code, so what decides is the method's own gate —
+    /// this one declares none and is open on purpose, because a package
+    /// that wanted a gate would write one.
+    #[resource(grants(mint = self, freeze = self, recall = self))]
+    struct Note;
+
+    #[state]
+    struct Sovereign {}
+
+    impl Sovereign {
+        pub fn issue(&mut self, amount: Quantity) -> Bucket {
+            Note::mint(amount)
+        }
+
+        pub fn freeze(&mut self, holder: Address) {
+            halt(holder, Note::address());
+        }
+
+        pub fn claw_back(&mut self, holder: Address, slot: u64, amount: Quantity) -> Bucket {
+            recall(holder, slot, Note::address(), amount)
+        }
+    }
+}
+
+/// A frame speaks for itself at a reach, as it does at every other
+/// injected authority entry.
+///
+/// The entry names the issuing instance, and **nothing can present a
+/// claim on a component but that component** — so an entry demanded of
+/// the frame that already satisfies it is one no caller could ever
+/// answer, and the freeze would be a capability the issuer declared and
+/// could never exercise. The subtraction is the same one an issuance and
+/// a destruction get, and it reproduces the derivation gate: being the
+/// executing instance is one way a rule admits you.
+#[test]
+fn an_issuer_whose_entry_names_itself_reaches_presenting_nothing() {
+    let holder = principal(0xA7);
+    let mut chain = Chain::native();
+    chain.publish(package!(sovereign));
+    let issuer = chain.instantiate::<sovereign::client::Sovereign>(REGISTRAR, ());
+    let note = issuer.issued_note(&TestHasher);
+    let slot = u64::from(VAULT.0);
+
+    chain
+        .transact(REGISTRAR, |b| {
+            let minted = issuer.issue(b, 100u128)?;
+            account::deposit(b, holder, minted)
+        })
+        .expect_completed();
+
+    // Neither call presents anything, and neither has anything it could
+    // present: the authority is the component's own.
+    chain
+        .transact(REGISTRAR, |b| issuer.freeze(b, holder.address()))
+        .expect_completed();
+    chain
+        .transact(REGISTRAR, |b| {
+            let taken = issuer.claw_back(b, holder.address(), slot, 40u128)?;
+            account::deposit(b, REGISTRAR, taken)
+        })
+        .expect_completed();
+
+    assert_eq!(chain.balance(holder, note), 60);
+    assert_eq!(chain.balance(REGISTRAR, note), 40);
 }

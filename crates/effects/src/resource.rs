@@ -237,6 +237,44 @@ impl GrantedBehaviour {
         }
     }
 
+    /// What this behaviour's entry demands of a frame speaking as
+    /// `speaking_for`, or nothing where it demands nothing of it.
+    ///
+    /// **A frame speaks for itself.** An entry the executing instance's
+    /// own claim already satisfies is one nothing is demanded for, which
+    /// reproduces the derivation gate exactly: a component minting its
+    /// own resource is not refused for presenting nothing, and a rule
+    /// naming a badge instead still means delegated authority.
+    ///
+    /// The subtraction is **an actor question's alone**. A holder
+    /// question resolves against the party whose cell moves, and the
+    /// executing frame's identity says nothing about them — so a
+    /// movement entry is demanded of the frame whoever the frame is.
+    ///
+    /// Here rather than at each injection because the answer is the one
+    /// thing a composer and admission must agree on exactly: a composer
+    /// that subtracts where admission does not presents nothing for an
+    /// entry that fires, and one that subtracts less presents evidence
+    /// nothing reads. Either way the graph it emits is one admission
+    /// refuses.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError`] on entry bytes that are not a rule within the
+    /// vocabulary's caps.
+    pub fn demanded(
+        self,
+        entry: &RuleBytes,
+        speaking_for: Option<Presented>,
+    ) -> Result<Option<StoredRule>, DecodeError> {
+        let rule = entry.decode()?;
+        if self.asks_about_the_actor() && speaking_for.is_some_and(|own| rule.satisfied_by(&[own]))
+        {
+            return Ok(None);
+        }
+        Ok(Some(rule))
+    }
+
     /// Why this behaviour does not admit `rule`, or nothing if it does.
     ///
     /// **An actor question's rule reads claims**, because a caller

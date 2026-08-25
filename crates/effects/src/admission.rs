@@ -42,8 +42,8 @@ use crate::resource::{
     resource_record_key,
 };
 use crate::route::FrameDeclaration;
-use crate::rule::{Holding, Rule, SealedLeaf, never};
-use crate::signature::{AbiParam, Issued, MethodSignature, ParamType};
+use crate::rule::{Holding, Rule, SealedLeaf, StoredRule, never};
+use crate::signature::{AbiParam, Issued, MethodSignature, Moved, ParamType};
 use crate::types::{EdgeContent, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, Value, child_key};
 use crate::vocabulary::{CONFIG, HALT, VAULT};
 
@@ -1153,40 +1153,14 @@ impl Lower<'_> {
             })?;
         own_prefix_only(&frame, node.target.address(), node_index)?;
         let fence = self.fence(node.target, &mut frame)?;
-        // The reach's own entry before the movement entries, because a
-        // reaching access earns none of the latter and a reader should
-        // meet the authority that admitted it first.
-        inject_reach_rules(self.grants, &mut frame, node_index)?;
-        inject_movement_rules(
-            self.hasher,
-            self.grants,
-            &mut frame,
-            signature.totality.is_total(),
-            node_index,
-        )?;
-        // Issuance is an actor question like any other, so its entry
-        // joins the frame's conditions and computed placement routes it
-        // to the call. Before evidence, because what a caller must
-        // present is a property of the conditions the frame carries.
-        let mut issues = inject_issuance_rules(
-            self.hasher,
+        let (issues, _injected) = self.inject(
             signature,
             node.target.address(),
             &meta.config,
+            &inputs,
             &mut frame,
             node_index,
         )?;
-        // Appended after them, so the index a body passes to a mint is
-        // the position its own declaration fixed: a destruction names no
-        // index, since the bucket carries the resource it holds.
-        issues.extend(inject_destruction_rules(
-            self.grants,
-            signature,
-            &inputs,
-            &mut frame,
-            node.target.address(),
-            node_index,
-        )?);
         // Evidence last, because what a call must present is a property
         // of the declaration this node actually evaluated rather than of
         // the clause list its signature was written with: a guard that
@@ -1443,6 +1417,60 @@ impl Lower<'_> {
             }
         }
         Ok((bound, inputs))
+    }
+
+    /// Every requirement the protocol puts on `frame`, appended to its
+    /// own conditions and answered whole beside them.
+    ///
+    /// None of it is declared. A package will not write a rule it does
+    /// not want, so each of these comes from the resource rather than
+    /// from the signature — which is what makes omission inexpressible —
+    /// and each is returned carrying the entry that demanded it, because
+    /// the rule alone says what must hold and cannot say who asked.
+    ///
+    /// A rule asked twice is one question wherever the duplicate came
+    /// from: a resource putting both directions of a movement on one
+    /// register asks it twice, and the frame carries it once.
+    fn inject(
+        &self,
+        signature: &MethodSignature,
+        target: Address,
+        config: &[Value],
+        inputs: &[NodeInput],
+        frame: &mut Declaration,
+        node_index: u32,
+    ) -> Result<(Vec<IssuanceGrant>, Vec<Injected>), AdmissionError> {
+        // The reach's own entry before the movement entries, because a
+        // reaching access earns none of the latter and a reader should
+        // meet the authority that admitted it first.
+        let mut injected = inject_reach_rules(self.grants, frame, target, node_index)?;
+        injected.extend(inject_movement_rules(
+            self.hasher,
+            self.grants,
+            frame,
+            signature.totality.is_total(),
+            node_index,
+        )?);
+        // Issuance is an actor question like any other, so its entry
+        // joins the frame's conditions and computed placement routes it
+        // to the call. Before evidence, because what a caller must
+        // present is a property of the conditions the frame carries.
+        let (mut issues, issuance) =
+            inject_issuance_rules(self.hasher, signature, target, config, frame, node_index)?;
+        injected.extend(issuance);
+        // Appended after them, so the index a body passes to a mint is
+        // the position its own declaration fixed: a destruction names no
+        // index, since the bucket carries the resource it holds.
+        let (destroyed, destruction) =
+            inject_destruction_rules(self.grants, signature, inputs, target, node_index)?;
+        issues.extend(destroyed);
+        injected.extend(destruction);
+        for requirement in &injected {
+            if !frame.conditions.contains(&requirement.rule) {
+                frame.conditions.push(requirement.rule.clone());
+            }
+        }
+        Ok((issues, injected))
     }
 
     /// Split a frame's conditions by where each is judged.
@@ -1858,15 +1886,49 @@ fn own_prefix_only(
 /// claim on the target minted into that set would satisfy every
 /// `Claim(SelfAddr)` gate standing beside it, which is the shape an
 /// account's own spending gates take.
+/// A requirement the protocol put on a frame, and the entry that put it
+/// there.
+///
+/// Nothing here is declared. A package writes no word about any of it —
+/// which is what makes omission inexpressible — so a reader meeting one
+/// of these is meeting the protocol speak, and the resource and the
+/// behaviour are what it speaks for. That provenance is why these are
+/// carried out of the injection rather than pushed into the frame and
+/// forgotten: the rule alone says what must hold and cannot say who
+/// asked, and a key is a hash that inverts to nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Injected {
+    /// What must hold.
+    pub rule: Rule<JudgedLeaf>,
+    /// The resource whose entry demands it.
+    pub resource: ResourceAddr,
+    /// Which of that resource's entries.
+    pub behaviour: GrantedBehaviour,
+}
+
+/// An actor question's rule read as judged leaves.
+///
+/// Such a rule reads claims and the seal refuses it otherwise, so a
+/// holding here is a record that could not have been sealed — `None`,
+/// for the caller to name in its own terms.
+fn judged_claims(rule: &StoredRule) -> Option<Rule<JudgedLeaf>> {
+    rule.map_leaves(&mut |leaf| match leaf {
+        SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
+        SealedLeaf::Held { .. } => Err(()),
+    })
+    .ok()
+}
+
 fn inject_issuance_rules(
     hasher: &dyn Hasher,
     signature: &MethodSignature,
     target: Address,
     config: &[Value],
-    frame: &mut Declaration,
+    frame: &Declaration,
     node_index: u32,
-) -> Result<Vec<IssuanceGrant>, AdmissionError> {
+) -> Result<(Vec<IssuanceGrant>, Vec<Injected>), AdmissionError> {
     let mut granted = Vec::with_capacity(signature.issues.len());
+    let mut injected = Vec::new();
     for issuance in &signature.issues {
         // The rules the mark grants ride the grant's own address, so what
         // a body issues is what a gate naming the same resource resolves
@@ -1908,6 +1970,11 @@ fn inject_issuance_rules(
             behaviour: GrantedBehaviour::Mint,
         })?;
         for behaviour in issuance.direction.behaviours() {
+            let malformed = || AdmissionError::IssuanceRuleMalformed {
+                node: node_index,
+                resource,
+                behaviour: *behaviour,
+            };
             let sealed = rules
                 .get(*behaviour)
                 .ok_or(AdmissionError::IssuanceUnadmitted {
@@ -1915,32 +1982,21 @@ fn inject_issuance_rules(
                     resource,
                     behaviour: *behaviour,
                 })?;
-            let rule = sealed
-                .decode()
-                .map_err(|_| AdmissionError::IssuanceRuleMalformed {
-                    node: node_index,
-                    resource,
-                    behaviour: *behaviour,
-                })?;
-            if rule.satisfied_by(&[own]) {
+            let Some(rule) = behaviour
+                .demanded(sealed, Some(own))
+                .map_err(|_| malformed())?
+            else {
                 continue;
-            }
-            // An actor question's rule reads claims, refused at the seal
-            // otherwise, so nothing else can arrive.
-            let judged = rule.map_leaves(&mut |leaf| match leaf {
-                SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
-                SealedLeaf::Held { .. } => Err(AdmissionError::IssuanceRuleMalformed {
-                    node: node_index,
-                    resource,
-                    behaviour: *behaviour,
-                }),
-            })?;
-            if !frame.conditions.contains(&judged) {
-                frame.conditions.push(judged);
-            }
+            };
+            let rule = judged_claims(&rule).ok_or_else(malformed)?;
+            injected.push(Injected {
+                rule,
+                resource,
+                behaviour: *behaviour,
+            });
         }
     }
-    Ok(granted)
+    Ok((granted, injected))
 }
 
 /// Resolve the per-bucket grants this frame's declared destructions
@@ -1962,11 +2018,11 @@ fn inject_destruction_rules(
     grants: &PresentedGrants,
     signature: &MethodSignature,
     inputs: &[NodeInput],
-    frame: &mut Declaration,
     evidence_of: Address,
     node_index: u32,
-) -> Result<Vec<IssuanceGrant>, AdmissionError> {
+) -> Result<(Vec<IssuanceGrant>, Vec<Injected>), AdmissionError> {
     let mut granted = Vec::with_capacity(signature.destroys.len());
+    let mut injected = Vec::new();
     for param in &signature.destroys {
         let Some(NodeInput::Edge {
             resource, content, ..
@@ -1981,16 +2037,15 @@ fn inject_destruction_rules(
             node: node_index,
             resource: *resource,
         };
-        let rule = grants
+        let malformed = || AdmissionError::IssuanceRuleMalformed {
+            node: node_index,
+            resource: *resource,
+            behaviour: GrantedBehaviour::Burn,
+        };
+        let sealed = grants
             .rules(*resource)
             .and_then(|rules| rules.get(GrantedBehaviour::Burn))
-            .ok_or_else(refused)?
-            .decode()
-            .map_err(|_| AdmissionError::IssuanceRuleMalformed {
-                node: node_index,
-                resource: *resource,
-                behaviour: GrantedBehaviour::Burn,
-            })?;
+            .ok_or_else(refused)?;
         granted.push(IssuanceGrant {
             resource: *resource,
             kind: content.kind(),
@@ -2000,24 +2055,19 @@ fn inject_destruction_rules(
         // party: an account destroying a token it holds is not the
         // token's issuer, so a rule naming the issuer reaches the call
         // and the caller answers for it.
-        if let Some(own) = Presented::of_address(evidence_of)
-            && rule.satisfied_by(&[own])
-        {
+        let Some(rule) = GrantedBehaviour::Burn
+            .demanded(sealed, Presented::of_address(evidence_of))
+            .map_err(|_| malformed())?
+        else {
             continue;
-        }
-        let judged = rule.map_leaves(&mut |leaf| match leaf {
-            SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
-            SealedLeaf::Held { .. } => Err(AdmissionError::IssuanceRuleMalformed {
-                node: node_index,
-                resource: *resource,
-                behaviour: GrantedBehaviour::Burn,
-            }),
-        })?;
-        if !frame.conditions.contains(&judged) {
-            frame.conditions.push(judged);
-        }
+        };
+        injected.push(Injected {
+            rule: judged_claims(&rule).ok_or_else(malformed)?,
+            resource: *resource,
+            behaviour: GrantedBehaviour::Burn,
+        });
     }
-    Ok(granted)
+    Ok((granted, injected))
 }
 
 /// Inject the entry admitting each access that reaches a foreign prefix.
@@ -2034,9 +2084,11 @@ fn inject_destruction_rules(
 /// a holder of, which is every resource until its issuer says otherwise.
 fn inject_reach_rules(
     grants: &PresentedGrants,
-    frame: &mut Declaration,
+    frame: &Declaration,
+    reaching: Address,
     node_index: u32,
-) -> Result<(), AdmissionError> {
+) -> Result<Vec<Injected>, AdmissionError> {
+    let mut injected = Vec::new();
     let mut wanted: Vec<Reach> = Vec::new();
     for access in &frame.ordered {
         let Some(reach) = access.reach else {
@@ -2051,35 +2103,36 @@ fn inject_reach_rules(
         resource,
     } in wanted
     {
-        let rule = grants
+        let malformed = || AdmissionError::IssuanceRuleMalformed {
+            node: node_index,
+            resource,
+            behaviour,
+        };
+        let sealed = grants
             .rules(resource)
             .and_then(|rules| rules.get(behaviour))
             .ok_or(AdmissionError::ReachUnadmitted {
                 node: node_index,
                 resource,
                 behaviour,
-            })?
-            .decode()
-            .map_err(|_| AdmissionError::IssuanceRuleMalformed {
-                node: node_index,
-                resource,
-                behaviour,
             })?;
-        // An actor question's rule reads claims, refused at the seal
-        // otherwise, so nothing else can arrive.
-        let judged = rule.map_leaves(&mut |leaf| match leaf {
-            SealedLeaf::Claim(claim) => Ok(JudgedLeaf::Claim(*claim)),
-            SealedLeaf::Held { .. } => Err(AdmissionError::IssuanceRuleMalformed {
-                node: node_index,
-                resource,
-                behaviour,
-            }),
-        })?;
-        if !frame.conditions.contains(&judged) {
-            frame.conditions.push(judged);
-        }
+        // The frame speaks for itself here as it does at every other
+        // injected authority entry: an issuer whose own entry names it
+        // is the authority, and asking it to prove it is asking for a
+        // claim on a component, which only that component can mint.
+        let Some(rule) = behaviour
+            .demanded(sealed, Presented::of_address(reaching))
+            .map_err(|_| malformed())?
+        else {
+            continue;
+        };
+        injected.push(Injected {
+            rule: judged_claims(&rule).ok_or_else(malformed)?,
+            resource,
+            behaviour,
+        });
     }
-    Ok(())
+    Ok(injected)
 }
 
 /// Inject the movement requirements this frame's declared accesses earn.
@@ -2106,7 +2159,8 @@ fn inject_movement_rules(
     frame: &mut Declaration,
     total: bool,
     node_index: u32,
-) -> Result<(), AdmissionError> {
+) -> Result<Vec<Injected>, AdmissionError> {
+    let mut injected = Vec::new();
     // Which requirements this frame earns, before any is built: an access
     // whose mode reaches both directions earns both, and only a
     // reservation carries its own.
@@ -2127,20 +2181,7 @@ fn inject_movement_rules(
             continue;
         };
         let owner = access.effect.target.owner();
-        let behaviours: &[GrantedBehaviour] = match access.effect.mode {
-            // The two that carry their direction are judged on the
-            // movement they make and nothing else.
-            Mode::Reserve { .. } => &[GrantedBehaviour::Withdraw],
-            Mode::Credit => &[GrantedBehaviour::Deposit],
-            // The rest reach both ways through one access, so both are
-            // asked. That over-binds — a holder permitted to send is
-            // asked for the receiving credential too — which is why a
-            // method that only moves one way says so and is judged on
-            // that alone.
-            Mode::Delta | Mode::Write => &[GrantedBehaviour::Withdraw, GrantedBehaviour::Deposit],
-            Mode::Read => continue,
-        };
-        for behaviour in behaviours {
+        for behaviour in Moved::of(access.effect.mode).behaviours() {
             let entry = (owner, resource, *behaviour);
             if !wanted.contains(&entry) {
                 wanted.push(entry);
@@ -2178,24 +2219,32 @@ fn inject_movement_rules(
                 &[Value::Address(resource.address()).canonical_bytes()],
             ));
             declare_read(frame, halted);
-            let clear = Rule::Require(JudgedLeaf::Presence {
-                target: halted,
-                expect: Presence::Absent,
+            injected.push(Injected {
+                rule: Rule::Require(JudgedLeaf::Presence {
+                    target: halted,
+                    expect: Presence::Absent,
+                }),
+                resource,
+                behaviour: GrantedBehaviour::Freeze,
             });
-            if !frame.conditions.contains(&clear) {
-                frame.conditions.push(clear);
-            }
         }
         let Some(sealed) = rules.get(behaviour) else {
             continue;
         };
-        let rule = sealed
-            .decode()
-            .map_err(|_| AdmissionError::MovementRuleMalformed {
+        // No subtraction reaches a movement entry: it resolves against
+        // the party whose cell moves, and the executing frame's identity
+        // says nothing about them. Asked through the same door anyway,
+        // so which entries a frame speaks for itself on is one answer.
+        let Some(rule) = behaviour.demanded(sealed, None).map_err(|_| {
+            AdmissionError::MovementRuleMalformed {
                 node: node_index,
                 resource,
                 behaviour,
-            })?;
+            }
+        })?
+        else {
+            continue;
+        };
         // Nobody may: decidable from the entry, without state and without
         // a body, so the graph is refused rather than admitted to fail
         // later.
@@ -2238,14 +2287,13 @@ fn inject_movement_rules(
                 behaviour,
             });
         }
-        // Two entries can seal one rule — a resource putting both
-        // directions on one register does — and a rule asked twice is
-        // one question wherever the duplicate came from.
-        if !frame.conditions.contains(&resolved) {
-            frame.conditions.push(resolved);
-        }
+        injected.push(Injected {
+            rule: resolved,
+            resource,
+            behaviour,
+        });
     }
-    Ok(())
+    Ok(injected)
 }
 
 /// What `owner`'s holding of `badge` occupies, in the shape the sealed

@@ -32,7 +32,7 @@ use hyperscale_vm_effects::vocabulary::{
 use hyperscale_vm_effects::{
     ChainRecords, Clause, Constraint, EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef,
     Expr, GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph,
-    ManifestHash, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, Presented,
+    ManifestHash, MethodSignature, Moved, PackageHash, PackageMetadata, ParamType, Presented,
     PresentedGrants, ResourceGrants, ResourceMeta, SealedLeaf, Value, evaluate_expr,
     founds_its_resource, keying_resource,
 };
@@ -964,17 +964,23 @@ pub(crate) fn output_resources(
 /// The claims a call's injected authority entries name, and which the
 /// frame's own identity does not already satisfy.
 ///
-/// Three injections read a claim, and the fourth reads none: a movement
-/// entry asks what the *holder* holds, judged against committed state
-/// before any body runs, so nothing is presented for it.
+/// All four injections can read a claim. Three are actor questions and
+/// always do; a movement entry does where its subject is an identity,
+/// because nothing holds one and asking whether this transaction carried
+/// a claim on it is the only other question there is.
 ///
-/// **A frame speaks for itself**, so an entry the executing instance's
-/// own claim already satisfies is one admission never appends — the
-/// derivation gate, reproduced. And **founding is not minting**, so an
-/// issuance whose own frame writes the resource's record earns nothing
-/// either. Both subtractions are made here for the same reason they are
-/// made there: without them a composer would present proofs for entries
-/// that never fire, and evidence nothing reads is refused.
+/// **What an entry demands is [`GrantedBehaviour::demanded`]'s answer,
+/// not this function's** — the same door admission injects through, so a
+/// composer cannot come to a different view of which entries fire. The
+/// two used to decide it separately, and the drift was silent both ways:
+/// present nothing for an entry that fires and the call is refused for
+/// missing evidence, present something for one that does not and it is
+/// refused for offering it.
+///
+/// **Founding is not minting** is the one subtraction that stays here,
+/// because it is a property of the declaration rather than of the entry:
+/// an issuance whose own frame writes the resource's record earns
+/// nothing, and no entry is consulted to know it.
 fn earned_claims(
     signature: &MethodSignature,
     args: &[GraphArg],
@@ -985,17 +991,13 @@ fn earned_claims(
 ) -> Vec<Presented> {
     let own = Presented::of_address(inputs.self_addr);
     let mut wanted = Vec::new();
-    // The frame's own claim is subtracted where admission subtracts it,
-    // which is the authority injections alone: a movement entry is
-    // resolved against the *access owner* rather than against the frame,
-    // so nothing about the frame's identity discharges one.
     let mut ask = |rules: &ResourceGrants, behaviour: GrantedBehaviour| {
-        let Some(rule) = rules.get(behaviour).and_then(|sealed| sealed.decode().ok()) else {
+        let Some(sealed) = rules.get(behaviour) else {
             return;
         };
-        if behaviour.asks_about_the_actor() && own.is_some_and(|own| rule.satisfied_by(&[own])) {
+        let Ok(Some(rule)) = behaviour.demanded(sealed, own) else {
             return;
-        }
+        };
         for leaf in rule.leaves() {
             if let SealedLeaf::Claim(claim) = leaf
                 && !wanted.contains(claim)
@@ -1157,21 +1159,14 @@ fn governing(
                 }
                 None => denomination.as_deref().and_then(&resolve)?,
             };
-            // Which movement entries the access earns, on the terms
-            // admission injects them: the two that carry their direction
-            // are judged on the movement they make, and the rest reach
-            // both ways through one access and answer for both. A read
-            // earns none and still needs the record, because a
-            // restricted resource's is what tells a withheld one from a
-            // bypass.
-            let behaviours: &[GrantedBehaviour] = match mode {
-                ModeExpr::Reserve(_) => &[GrantedBehaviour::Withdraw],
-                ModeExpr::Credit => &[GrantedBehaviour::Deposit],
-                ModeExpr::Delta | ModeExpr::Write => {
-                    &[GrantedBehaviour::Withdraw, GrantedBehaviour::Deposit]
-                }
-                ModeExpr::Read => return Some(vec![(resource, None)]),
-            };
+            // Which movement entries the access earns, off the table
+            // admission injects them from. A read earns none and still
+            // needs the record, because a restricted resource's is what
+            // tells a withheld one from a bypass.
+            let behaviours = Moved::declared(mode).behaviours();
+            if behaviours.is_empty() {
+                return Some(vec![(resource, None)]);
+            }
             Some(
                 behaviours
                     .iter()

@@ -43,7 +43,7 @@ pub mod types;
 pub mod vectors;
 pub mod vocabulary;
 
-pub use admission::{AdmissionError, Admitted, MAX_SOCKETS, admit, admit_presenting};
+pub use admission::{AdmissionError, Admitted, Injected, MAX_SOCKETS, admit, admit_presenting};
 pub use artifact::{
     ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, declaration_hash,
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
@@ -104,7 +104,8 @@ pub use rule::{
     never, well_formed,
 };
 pub use signature::{
-    AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MethodSignature, ParamType, Totality,
+    AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MethodSignature, Moved, ParamType,
+    Totality,
 };
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};
 pub use types::{

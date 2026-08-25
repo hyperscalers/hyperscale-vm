@@ -2,9 +2,11 @@
 //! about its parameters and its ABI binding.
 
 use hyperscale_hbor::Hbor;
-use hyperscale_vm_types::{CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{
+    CallTarget, ComponentAddr, Mode, PackageAddr, PrincipalAddr, ResourceAddr,
+};
 
-use crate::dsl::{Clause, Expr};
+use crate::dsl::{Clause, Expr, ModeExpr};
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
 use crate::rule::{RuleExpr, RuleLeaf, StoredRule};
 use crate::types::{MAX_IDS_PER_EDGE, Value};
@@ -263,6 +265,71 @@ impl Totality {
 /// rather than anything a method chooses — and the cost of each is a
 /// derivation at admission, which is what this bounds.
 pub const MAX_ISSUANCES_PER_SIGNATURE: usize = 16;
+
+/// Which directions an access moves value in.
+///
+/// The whole of what a mode decides about the movement entries an access
+/// earns, and the movement-side parallel of [`Issued`]. Here as a type
+/// rather than as a table at each site because there are two mode
+/// vocabularies for one set of directions — the declared [`ModeExpr`] a
+/// composer reads off a signature, and the evaluated [`Mode`] admission
+/// injects against — and a table each is two tables that can disagree
+/// about who a movement is judged against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Moved {
+    /// Nothing moves: a read earns no entry and answers to none.
+    Neither,
+    /// Out only — what a method that only spends says about itself.
+    Out,
+    /// In only — what a method that only receives says about itself.
+    In,
+    /// Both, through one access.
+    Both,
+}
+
+impl Moved {
+    /// Which movement entries an access moving this way earns.
+    ///
+    /// Both directions through one access are asked both, which
+    /// over-binds: a holder permitted to send is asked for the receiving
+    /// credential too. That is why a method moving one way says so and
+    /// is judged on that alone.
+    #[must_use]
+    pub const fn behaviours(self) -> &'static [GrantedBehaviour] {
+        match self {
+            Self::Neither => &[],
+            Self::Out => &[GrantedBehaviour::Withdraw],
+            Self::In => &[GrantedBehaviour::Deposit],
+            Self::Both => &[GrantedBehaviour::Withdraw, GrantedBehaviour::Deposit],
+        }
+    }
+
+    /// How an evaluated access moves.
+    #[must_use]
+    pub const fn of(mode: Mode) -> Self {
+        match mode {
+            Mode::Read => Self::Neither,
+            Mode::Reserve { .. } => Self::Out,
+            Mode::Credit => Self::In,
+            Mode::Delta | Mode::Write => Self::Both,
+        }
+    }
+
+    /// How a declared access says it will move, before anything is
+    /// evaluated.
+    ///
+    /// Beside [`of`](Self::of) rather than anywhere else, so a mode
+    /// vocabulary gaining an arm cannot gain it on one side only.
+    #[must_use]
+    pub const fn declared(mode: &ModeExpr) -> Self {
+        match mode {
+            ModeExpr::Read => Self::Neither,
+            ModeExpr::Reserve(_) => Self::Out,
+            ModeExpr::Credit => Self::In,
+            ModeExpr::Delta | ModeExpr::Write => Self::Both,
+        }
+    }
+}
 
 /// Which directions a declared issuance takes.
 ///
