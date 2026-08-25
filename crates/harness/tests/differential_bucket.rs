@@ -188,7 +188,7 @@ fn session_of(fx: &Fixture) -> KernelSession {
 fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
     rep_where(host, |c| match (mode, c) {
         (Mode::Read, Capability::Read(key))
-        | (Mode::Write { .. }, Capability::Amount(key))
+        | (Mode::Write { .. }, Capability::Amount { key, .. })
         | (Mode::Delta, Capability::Delta(key))
         | (Mode::Reserve { .. }, Capability::Reserve { key, .. }) => *key == wanted,
         _ => false,

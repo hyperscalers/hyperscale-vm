@@ -241,7 +241,7 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                     let _ = session.write_cell_set(rep, 0, vec![id.0.0[0]]);
                 }
                 // A value cell takes no bytes; what it takes is a debit.
-                Capability::Amount(_) => {
+                Capability::Amount { .. } => {
                     let _ = session.cell_take(rep, 0, seed % 11);
                 }
                 // And a read of one answers a quantity, not bytes.

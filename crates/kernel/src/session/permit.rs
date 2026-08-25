@@ -113,13 +113,23 @@ pub const fn permits(held: &Capability, op: Op) -> bool {
         Op::Write | Op::Clear | Op::Seal | Op::OpenSeal => matches!(held, C::Write(_)),
         // A read of a value cell is the one operation both value modes
         // answer: reading a balance moves none of it.
-        Op::Balance => matches!(held, C::Amount(_) | C::AmountRead(_)),
+        Op::Balance => matches!(held, C::Amount { .. } | C::AmountRead(_)),
         // Both value modes move value; where they differ is when the
         // movement is judged, which the kernel reads off the capability.
         // A credit gave up the other direction, so it answers the credit
-        // and not the debit.
-        Op::Take => matches!(held, C::Amount(_) | C::Delta(_)),
-        Op::Put => matches!(held, C::Amount(_) | C::Delta(_) | C::Credit(_)),
+        // and not the debit — and the exclusive hold, which says its
+        // direction in a field rather than by being itself, is read the
+        // same way. Admission judged the access on the direction it
+        // declared, so a movement the other way is one no entry was
+        // asked about.
+        Op::Take => match held {
+            C::Amount { moves, .. } => moves.debits(),
+            _ => matches!(held, C::Delta(_)),
+        },
+        Op::Put => match held {
+            C::Amount { moves, .. } => moves.credits(),
+            _ => matches!(held, C::Delta(_) | C::Credit(_)),
+        },
         Op::ReservedAmount | Op::TakeReserved => matches!(held, C::Reserve { .. }),
         // Reading an interval is legal through every interval mode; the
         // narrower ones give up the writes, not the walk.
@@ -149,7 +159,15 @@ pub(super) const fn describe(held: &Capability) -> &'static str {
     match held {
         Capability::Read(_) => "a fresh read",
         Capability::Write(_) => "an exclusive read-modify-write",
-        Capability::Amount(_) => "an exclusive hold on a cell of value",
+        Capability::Amount {
+            moves: Moves::In, ..
+        } => "an exclusive hold on a cell of value that may only be credited",
+        Capability::Amount {
+            moves: Moves::Out, ..
+        } => "an exclusive hold on a cell of value that may only be debited",
+        Capability::Amount {
+            moves: Moves::Both, ..
+        } => "an exclusive hold on a cell of value",
         Capability::AmountRead(_) => "a read of a cell of value",
         Capability::Delta(_) => "a commutative movement",
         Capability::Credit(_) => "a commutative credit",

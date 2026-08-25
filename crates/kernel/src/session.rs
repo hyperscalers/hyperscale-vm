@@ -1147,6 +1147,7 @@ mod tests {
     use super::fixtures::{
         declared, env, key, session_for, session_holding, session_over, session_under, tx,
     };
+    use super::materialize::capability_for;
     use super::{Capability, EnvInputs, Interval, KernelSession, Op, SessionTrap, TxHash, permits};
     use crate::ledger::AmountLedger;
     use crate::overlay::OverlayStore;
@@ -1201,7 +1202,7 @@ mod tests {
     /// through a signature that produces it would test the materializer
     /// instead. Built by [`Capability::forms`], so a mode added to the
     /// enum has to take a place in what the matrix asks.
-    fn every_capability() -> [Capability; 12] {
+    fn every_capability() -> [Capability; 14] {
         Capability::forms(
             key(1),
             5,
@@ -1302,6 +1303,52 @@ mod tests {
             "the handle at site 0 element 0 holds a fresh read, which does not grant replace the \
              cell's bytes"
         );
+    }
+
+    /// A direction the declaration gave up is one the capability
+    /// refuses, whichever shape of cell holds the value.
+    ///
+    /// Materialization is what the case is about rather than the table
+    /// alone: admission judges a directional access on the one movement
+    /// entry it earns, so a capability built without the direction
+    /// would leave the other movement enforced by nothing at all.
+    #[test]
+    fn a_hold_that_gave_up_a_direction_refuses_the_movement_it_gave_up() {
+        let cell = |moves| {
+            capability_for(
+                Effect {
+                    target: EffectTarget::Point(key(1)),
+                    mode: Mode::Write { moves },
+                },
+                true,
+            )
+            .expect("a denominated exclusive point materializes")
+        };
+        let interval = |moves| Capability::Instances {
+            interval: Interval {
+                owner: Address::new([9; 31], AddressClass::Component),
+                collection: CollectionId([4; 16]),
+                lo: 0,
+                hi: 100,
+                cap: 8,
+            },
+            moves,
+        };
+        for held in [cell, interval] {
+            for (moves, debits, credits) in [
+                (Moves::In, false, true),
+                (Moves::Out, true, false),
+                (Moves::Both, true, true),
+            ] {
+                let held = held(moves);
+                let (take, put) = match held {
+                    Capability::Instances { .. } => (Op::TakeInstances, Op::FileInstances),
+                    _ => (Op::Take, Op::Put),
+                };
+                assert_eq!(permits(&held, take), debits, "{held:?} debits");
+                assert_eq!(permits(&held, put), credits, "{held:?} credits");
+            }
+        }
     }
 
     #[test]

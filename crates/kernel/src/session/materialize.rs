@@ -66,7 +66,21 @@ pub enum Capability {
     /// operation: bytes are read and replaced, value is credited and
     /// debited, and a handle that offered both would be one the kernel
     /// had to refuse half of at every call.
-    Amount(SubstateKey),
+    Amount {
+        /// The cell held.
+        key: SubstateKey,
+        /// Which directions value may move under it.
+        ///
+        /// The commutative modes say their direction by being
+        /// themselves, so a cell reached through one of those needs no
+        /// field. This is the mode that had no way to say it, and what
+        /// it says here is what admission judged the access on: an
+        /// access that gave up a direction earns only the movement
+        /// entry it kept, so keeping the direction out of the
+        /// capability would leave the other movement enforced by
+        /// nothing.
+        moves: Moves,
+    },
     /// A read of one cell holding value.
     ///
     /// Its own variant beside [`Capability::Read`] for the reason
@@ -101,10 +115,11 @@ pub enum Capability {
     /// The same interval over entries that are instances of one
     /// resource, on the terms [`Capability::Amount`] states.
     ///
-    /// The one movement capability a collection has, so it is the one
-    /// that carries which directions value may move under it — a point
-    /// vault says that by which mode holds it, and a collection has
-    /// only this.
+    /// The one movement capability a collection has, and it carries its
+    /// direction for the reason the exclusive point hold does: the
+    /// declaration says which way value moves under it, and a
+    /// capability that dropped the answer would leave the direction
+    /// declared and unenforced.
     Instances {
         /// The interval it acts over.
         interval: Interval,
@@ -139,7 +154,7 @@ impl Capability {
         match *self {
             Self::Read(key)
             | Self::Write(key)
-            | Self::Amount(key)
+            | Self::Amount { key, .. }
             | Self::AmountRead(key)
             | Self::Delta(key)
             | Self::Credit(key)
@@ -157,7 +172,7 @@ impl Capability {
             | Self::Instances { interval, .. } => Some(interval),
             Self::Read(_)
             | Self::Write(_)
-            | Self::Amount(_)
+            | Self::Amount { .. }
             | Self::AmountRead(_)
             | Self::Delta(_)
             | Self::Credit(_)
@@ -170,7 +185,7 @@ impl Capability {
     #[must_use]
     pub const fn settlement(&self) -> Option<Settlement> {
         match *self {
-            Self::Amount(key) => Some(Settlement::Immediate(key)),
+            Self::Amount { key, .. } => Some(Settlement::Immediate(key)),
             Self::Delta(key) | Self::Credit(key) => Some(Settlement::Queued(key)),
             Self::Read(_)
             | Self::Write(_)
@@ -189,20 +204,31 @@ impl Capability {
     /// what the matrix covers is written where a form is added.
     #[cfg(any(test, feature = "testing"))]
     #[must_use]
-    pub const fn forms(key: SubstateKey, amount: u128, interval: Interval) -> [Self; 12] {
+    pub const fn forms(key: SubstateKey, amount: u128, interval: Interval) -> [Self; 14] {
         [
             Self::Read(key),
             Self::Write(key),
-            Self::Amount(key),
+            // Every direction, for the reason the interval forms below
+            // are enumerated one by one: what giving up a direction
+            // buys is exactly what the matrix is there to state.
+            Self::Amount {
+                key,
+                moves: Moves::In,
+            },
+            Self::Amount {
+                key,
+                moves: Moves::Out,
+            },
+            Self::Amount {
+                key,
+                moves: Moves::Both,
+            },
             Self::AmountRead(key),
             Self::Delta(key),
             Self::Credit(key),
             Self::Reserve { key, amount },
             Self::RangeRead(interval),
             Self::RangeWrite(interval),
-            // Every direction, because each is a row of the matrix in
-            // its own right: what an interval permits is the whole of
-            // what giving up a direction buys.
             Self::Instances {
                 interval,
                 moves: Moves::In,
@@ -229,22 +255,30 @@ impl Capability {
         match self {
             Self::Read(_) => 0,
             Self::Write(_) => 1,
-            Self::Amount(_) => 2,
-            Self::AmountRead(_) => 3,
-            Self::Delta(_) => 4,
-            Self::Credit(_) => 5,
-            Self::Reserve { .. } => 6,
-            Self::RangeRead(_) => 7,
-            Self::RangeWrite(_) => 8,
+            Self::Amount {
+                moves: Moves::In, ..
+            } => 2,
+            Self::Amount {
+                moves: Moves::Out, ..
+            } => 3,
+            Self::Amount {
+                moves: Moves::Both, ..
+            } => 4,
+            Self::AmountRead(_) => 5,
+            Self::Delta(_) => 6,
+            Self::Credit(_) => 7,
+            Self::Reserve { .. } => 8,
+            Self::RangeRead(_) => 9,
+            Self::RangeWrite(_) => 10,
             Self::Instances {
                 moves: Moves::In, ..
-            } => 9,
+            } => 11,
             Self::Instances {
                 moves: Moves::Out, ..
-            } => 10,
+            } => 12,
             Self::Instances {
                 moves: Moves::Both, ..
-            } => 11,
+            } => 13,
         }
     }
 }
@@ -638,7 +672,10 @@ const fn interval_of(target: EffectTarget) -> Option<Interval> {
 /// The capability form of one declared effect: the world-design mapping.
 /// Entry targets are degenerate one-entry intervals, so collection access
 /// needs exactly two resource shapes.
-fn capability_for(effect: Effect, denominated: bool) -> Result<Capability, MaterializeError> {
+pub(super) fn capability_for(
+    effect: Effect,
+    denominated: bool,
+) -> Result<Capability, MaterializeError> {
     match (effect.target, effect.mode) {
         (EffectTarget::Point(key), Mode::Read) => Ok(if denominated {
             Capability::AmountRead(key)
@@ -648,8 +685,8 @@ fn capability_for(effect: Effect, denominated: bool) -> Result<Capability, Mater
         // What a cell holds chooses the handle. The two share no
         // operation, so a body reaching for the wrong one is holding a
         // type that does not have it rather than meeting a refusal.
-        (EffectTarget::Point(key), Mode::Write { .. }) => Ok(if denominated {
-            Capability::Amount(key)
+        (EffectTarget::Point(key), Mode::Write { moves }) => Ok(if denominated {
+            Capability::Amount { key, moves }
         } else {
             Capability::Write(key)
         }),

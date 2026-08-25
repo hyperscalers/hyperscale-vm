@@ -273,7 +273,7 @@ impl KernelSession {
                 continue;
             };
             match capability {
-                Capability::Amount(key)
+                Capability::Amount { key, .. }
                 | Capability::AmountRead(key)
                 | Capability::Delta(key)
                 | Capability::Credit(key)

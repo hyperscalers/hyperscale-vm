@@ -662,7 +662,7 @@ fn an_exclusive_debit_past_a_hold_loses_to_the_reserver() {
             match capability {
                 // The whole balance, exclusively — which the hold
                 // standing on the cell leaves none of.
-                Capability::Amount(_) => {
+                Capability::Amount { .. } => {
                     let funds = session.cell_take(rep, 0, 100).unwrap();
                     session.grant_issuance(vec![IssuanceGrant {
                         resource: RESOURCE,
