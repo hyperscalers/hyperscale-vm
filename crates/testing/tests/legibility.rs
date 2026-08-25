@@ -82,15 +82,15 @@ fn issuer() -> security::Security {
 ///
 /// One authoring word covers both, because the subject decides which
 /// question is answerable — so this is the only place a holder can learn
-/// which of the two they are in. "The moving party holds a balance of X"
-/// is a standing fact about them, true or false before this transaction
-/// existed; "approval on Y" is about the transaction and says nothing
-/// about them at all.
+/// which of the two they are in. "The moving party holds any instance of
+/// X" is a standing fact about them, true or false before this
+/// transaction existed; "approval on Y" is about the transaction and says
+/// nothing about them at all.
 #[test]
 fn a_movement_entry_says_which_of_its_two_questions_it_asks() {
     let register = of(issuer().issued_share(&TestHasher, terms()));
     assert!(
-        register.contains("withdraw   the moving party holds a balance of"),
+        register.contains("withdraw   the moving party holds any instance of"),
         "{register}"
     );
 
@@ -114,7 +114,7 @@ fn a_movement_entry_says_which_of_its_two_questions_it_asks() {
 fn an_entry_says_when_its_verdict_would_land() {
     let register = of(issuer().issued_share(&TestHasher, terms()));
     assert!(
-        register.contains("balance of restricted:")
+        register.contains("any instance of restricted:")
             && register.contains("heard before any body runs"),
         "{register}"
     );

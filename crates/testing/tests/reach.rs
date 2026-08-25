@@ -16,7 +16,7 @@
 //! is by construction the party each of those rules would refuse.
 
 use hyperscale_vm_effects::TestHasher;
-use hyperscale_vm_effects::vocabulary::VAULT;
+use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::{
@@ -44,12 +44,12 @@ fn world() -> (Chain, security::Security, ResourceAddr) {
     let issuer = chain.instantiate::<security::Security>(REGISTRAR, terms());
     let share = issuer.issued_share(&TestHasher, terms());
 
-    for who in [HOLDER, OTHER] {
+    for (id, who) in [(1u64, HOLDER), (2, OTHER)] {
         chain
             .transact(REGISTRAR, |b| {
                 let registrar = account::authorize(b, REGISTRAR)?;
-                let entry = issuer.register(b, registrar)?;
-                account::deposit(b, who, entry)
+                let entry = issuer.register(b, registrar, id)?;
+                account::deposit_nf(b, who, entry)
             })
             .expect_completed();
     }
@@ -125,7 +125,11 @@ fn a_halt_stops_a_holder_who_was_moving_freely() {
 fn a_recall_reaches_past_every_rule_the_resource_carries() {
     let (mut chain, issuer, share) = world();
     let entry = issuer.issued_registered(&TestHasher, terms());
-    let slot = u64::from(VAULT.0);
+    // Two slots, because a holder keeps the two in different cells: the
+    // share class is a balance and the register entry is an interval, so
+    // an issuer reaching for either names where that one lives.
+    let vault = u64::from(VAULT.0);
+    let holdings = u64::from(NF_VAULT.0);
 
     // A holder nobody registered, holding shares they could never move
     // themselves: `withdraw` names the register and they are not on it.
@@ -133,8 +137,8 @@ fn a_recall_reaches_past_every_rule_the_resource_carries() {
     chain
         .transact(REGISTRAR, |b| {
             let registrar = account::authorize(b, REGISTRAR)?;
-            let entry = issuer.register(b, registrar)?;
-            account::deposit(b, stranger, entry)
+            let entry = issuer.register(b, registrar, 3)?;
+            account::deposit_nf(b, stranger, entry)
         })
         .expect_completed();
     chain
@@ -145,14 +149,13 @@ fn a_recall_reaches_past_every_rule_the_resource_carries() {
         .expect_completed();
     chain
         .transact(REGISTRAR, |b| {
-            let taken = issuer.revoke(b, stranger.address(), slot, 1u128)?;
-            account::deposit(b, REGISTRAR, taken)
+            let taken = issuer.revoke(b, stranger.address(), holdings, &[3])?;
+            account::deposit_nf(b, REGISTRAR, taken)
         })
         .expect_completed();
-    assert_eq!(
-        chain.balance(stranger, entry),
-        0,
-        "the entry is the register"
+    assert!(
+        !chain.holds(stranger, entry, 3),
+        "the entry is the register, and the registrar named which"
     );
 
     // And a holder the issuer has stopped moving anything at all.
@@ -163,7 +166,7 @@ fn a_recall_reaches_past_every_rule_the_resource_carries() {
     for (holder, taken) in [(HOLDER, 100u128), (stranger, 40u128)] {
         chain
             .transact(REGISTRAR, |b| {
-                let shares = issuer.recall_shares(b, holder.address(), slot, taken)?;
+                let shares = issuer.recall_shares(b, holder.address(), vault, taken)?;
                 account::deposit(b, REGISTRAR, shares)
             })
             .expect_completed();

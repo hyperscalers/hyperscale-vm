@@ -187,12 +187,12 @@ fn a_recall_finds_value_at_the_slot_the_holder_keeps_it_in() {
     // Both parties on the register, since the share class asks the
     // register about the party each movement is under — the recall
     // included, once the value is back in the warden's own hands.
-    for who in [WARDEN, HOLDER] {
+    for (id, who) in [(1u64, WARDEN), (2, HOLDER)] {
         chain
             .transact(WARDEN, |b| {
                 let warden = account::authorize(b, WARDEN)?;
-                let entry = issuer.register(b, warden)?;
-                account::deposit(b, who, entry)
+                let entry = issuer.register(b, warden, id)?;
+                account::deposit_nf(b, who, entry)
             })
             .expect_completed();
     }

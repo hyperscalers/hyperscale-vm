@@ -16,7 +16,9 @@
 
 use std::fmt::Write as _;
 
-use hyperscale_vm_effects::{Hash32, ManifestGraph, explain_refusal, explain_requirements};
+use hyperscale_vm_effects::{
+    Hash32, ManifestGraph, TestHasher, explain_refusal, explain_requirements, holdings_collection,
+};
 use hyperscale_vm_harness::driver::vault;
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_stdlib::account;
@@ -49,21 +51,30 @@ fn trade() -> ManifestGraph {
     })
 }
 
+/// One registration, as the register keeps them: an entry of the
+/// holder's own interval for the badge, at the registration's id.
+fn register(store: &mut MemoryStore, holder: impl Into<Address>, id: u64) {
+    let holder = holder.into();
+    store.entry_write(
+        holder,
+        holdings_collection(&TestHasher, holder, registered()),
+        u128::from(id),
+        vec![1],
+    );
+}
+
 /// The reserves and the buyer's credential, with the venue's optional.
 fn store(venue_admitted: bool) -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(600).to_vec());
-    store.write(vault(ALICE, registered()), encode_amount(1).to_vec());
     store.write(vault(register_pool(), RES_X), encode_amount(1_000).to_vec());
     store.write(
         vault(register_pool(), share()),
         encode_amount(1_000).to_vec(),
     );
+    register(&mut store, ALICE, 1);
     if venue_admitted {
-        store.write(
-            vault(register_pool(), registered()),
-            encode_amount(1).to_vec(),
-        );
+        register(&mut store, register_pool(), 2);
     }
     store
 }
@@ -92,13 +103,13 @@ fn a_transaction_says_what_the_protocol_asked_of_it() {
     let share = addr(share());
     assert!(
         text.contains(&format!(
-            "withdraw of {share} — the moving party holds a balance of"
+            "withdraw of {share} — the moving party holds any instance of"
         )),
         "{text}"
     );
     assert!(
         text.contains(&format!(
-            "deposit of {share} — the moving party holds a balance of"
+            "deposit of {share} — the moving party holds any instance of"
         )),
         "{text}"
     );
@@ -148,7 +159,7 @@ fn a_refusal_names_the_resource_and_the_behaviour_behind_it() {
     );
     assert!(
         text.contains(&format!(
-            "the moving party holds a balance of {}",
+            "the moving party holds any instance of {}",
             addr(registered())
         )),
         "{text}"

@@ -23,16 +23,15 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, pkg, world};
-use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode, Hash32,
     InstanceMeta, IntentDecl, Issuance, JudgedLeaf, ManifestGraph, Records, ResourceMeta, Rule,
-    TestHasher, Value, admit_tree, child_key, granting_issued_resource,
+    TestHasher, Value, admit_tree, granting_issued_resource, holdings_collection,
 };
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, PrincipalAddr,
-    ResourceAddr, SubstateKey,
+    ResourceAddr,
 };
 
 /// Who keeps the register: the identity the issuer's configuration names.
@@ -96,14 +95,22 @@ fn record(issuer: ComponentAddr, mark: &[u8]) -> ResourceMeta {
     }
 }
 
-/// The leaf that answers whether `owner` holds `badge`.
-fn credential(owner: impl Into<Address>, badge: ResourceAddr) -> SubstateKey {
-    child_key(
-        &TestHasher,
+/// What answers whether `owner` holds `badge`: their own interval for
+/// it, holding anything at all.
+///
+/// An interval rather than a leaf because the register is non-fungible,
+/// and an instance's id is its order key — so the interval that can hold
+/// one is the whole `u64` space, capped at the single entry that answers
+/// the question.
+fn credential(owner: impl Into<Address>, badge: ResourceAddr) -> EffectTarget {
+    let owner = owner.into();
+    EffectTarget::Range {
         owner,
-        VAULT,
-        &[Value::Address(badge.address()).canonical_bytes()],
-    )
+        collection: holdings_collection(&TestHasher, owner, badge),
+        lo: 0,
+        hi: u128::from(u64::MAX),
+        cap: 1,
+    }
 }
 
 /// A withdrawal of `resource` from [`ALICE`]'s own account, banked back
@@ -210,35 +217,38 @@ fn an_authored_rule_governs_a_holder_the_package_never_named() {
         .expect("the transfer admits");
     let declaration = admitted.admitted.declaration();
 
-    let cell = credential(ALICE, registered);
+    let held = credential(ALICE, registered);
     assert!(
         declaration
             .conditions
             .contains(&Rule::Require(JudgedLeaf::Presence {
-                target: EffectTarget::Point(cell),
+                target: held,
                 expect: Presence::Present,
             })),
         "the withdrawal is judged against the mover's own register entry",
     );
     assert!(
         declaration.set.contains(&Effect {
-            target: EffectTarget::Point(cell),
+            target: held,
             mode: Mode::Read,
         }),
-        "and the leaf is provisioned by the declaration that reads it",
+        "and the interval is provisioned by the declaration that reads it",
     );
 
-    // One leaf, not an interval: a register entry is a balance, so every
-    // injected presence read on this transfer path is a point.
+    // What the non-fungible kind costs, stated where it is paid. The
+    // question is the same one a balance answered — is this party on the
+    // register — and one seek answers it either way; what changed is that
+    // an interval is priced by the span it declares, and this one spans
+    // the id space. Every transfer of the share class pays it.
     assert!(
-        declaration.conditions.iter().all(|condition| matches!(
+        declaration.conditions.iter().any(|condition| matches!(
             condition,
             Rule::Require(JudgedLeaf::Presence {
-                target: EffectTarget::Point(_),
+                target: EffectTarget::Range { lo: 0, hi, cap: 1, .. },
                 ..
-            })
+            }) if *hi == u128::from(u64::MAX)
         )),
-        "a fungible credential is one leaf and never a scan: {:?}",
+        "the register is read as an interval over the whole id space: {:?}",
         declaration.conditions,
     );
 }
@@ -266,7 +276,7 @@ fn each_side_of_a_transfer_answers_for_its_own_register_entry() {
     for holder in [Address::from(ALICE), Address::from(BOB)] {
         assert!(
             conditions.contains(&Rule::Require(JudgedLeaf::Presence {
-                target: EffectTarget::Point(credential(holder, registered)),
+                target: credential(holder, registered),
                 expect: Presence::Present,
             })),
             "{holder:?} is asked for their own entry: {conditions:?}",

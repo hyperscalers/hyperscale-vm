@@ -10,11 +10,11 @@
 //! `Share` puts both directions of a movement on the register, so it
 //! leaves a holder exactly while the register says so and reaches only
 //! somebody the register admits — standing facts about the two parties,
-//! each read as one leaf under their own prefix, with no proof presented
-//! and nothing about the caller consulted. `Registered` grants
-//! `withdraw = nobody`, so the entry itself can never leave the holder it
-//! was issued to: a credential somebody can hand on is a register
-//! somebody else can join without the registrar.
+//! each read under their own prefix, with no proof presented and nothing
+//! about the caller consulted. `Registered` grants `withdraw = nobody`,
+//! so the entry itself can never leave the holder it was issued to: a
+//! credential somebody can hand on is a register somebody else can join
+//! without the registrar.
 //!
 //! That pairing is why a badge carries its own rules into the leaf that
 //! names it. `Registered`'s address is the hash of `withdraw = nobody`,
@@ -42,25 +42,34 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod security {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Quantity, halt, recall, unhalt};
+    use hyperscale_vm_sdk::state::{
+        Bucket, Ids, NfBucket, Quantity, halt, recall, recall_instances, unhalt,
+    };
 
-    /// The register entry: one fungible unit per registered holder.
+    /// The register entry: one instance per registration.
     ///
-    /// Fungible because a credential is a presence question and a
-    /// balance is one leaf. A non-fungible register is spellable in the
-    /// same words — the holdings interval answers whether it holds
-    /// anything — and costs the whole id space in exclusion where this
-    /// costs one cell, so the kind is the issuer's price for telling
-    /// entries apart. Where terms have to travel with a holder, they
-    /// belong on a data instance beside this, which nothing on the
-    /// transfer path decodes.
+    /// Non-fungible, and the price is the whole of the choice. Asking
+    /// whether a party is on the register reads one leaf either way —
+    /// a balance cell, or the holder's own interval for this badge —
+    /// but an interval is *priced* by the span it declares, so every
+    /// movement of the share class pays for a question spanning the id
+    /// space where a balance would have paid for a cell. That cost is on
+    /// the transfer path, and it is on it forever.
+    ///
+    /// What it buys is entries a registrar can tell apart. A balance
+    /// says how much and never which, so revoking is by amount and one
+    /// registration is indistinguishable from another; instances make a
+    /// registration a thing with a name, revoked or reissued one holder
+    /// at a time. A fungible register remains the right choice for an
+    /// issuer who will never need to name one, and it is spellable in
+    /// exactly these words with the kind changed.
     ///
     /// Soulbound: `withdraw = nobody` refuses every debit of it at
     /// admission, so it leaves a holder only when the registrar takes it
     /// back — which is what the `recall` entry beside it is for. The two
     /// together are the whole of a revocable credential: nobody hands it
     /// on, and one party can take it away.
-    #[resource(grants(mint = self, withdraw = nobody, recall = registrar), display_digits = 0)]
+    #[resource(non_fungible, grants(mint = self, withdraw = nobody, recall = registrar))]
     struct Registered;
 
     /// The share class. Moved by a registered holder to a registered
@@ -135,15 +144,20 @@ pub mod security {
     struct Security {}
 
     impl Security {
-        /// Admit a holder to the register.
+        /// Admit a holder to the register, as the registration `id`.
         ///
-        /// The unit leaves as an edge the caller routes to whoever is
-        /// being registered — so being on the register is holding the
-        /// entry, and there is no second list that could disagree with
-        /// the leaf the movement seam actually reads.
+        /// The entry leaves as an edge the caller routes to whoever is
+        /// being registered — so being on the register is holding one,
+        /// and there is no second list that could disagree with the leaf
+        /// the movement seam actually reads.
+        ///
+        /// The id is the registrar's to choose and is what makes a
+        /// registration nameable afterwards. Nothing on the transfer
+        /// path reads it: what a movement asks is whether the holder's
+        /// interval holds anything at all.
         #[requires(registrar)]
-        pub fn register(&mut self) -> Bucket {
-            Registered::mint(Quantity::from_subunits(1))
+        pub fn register(&mut self, id: u64) -> NfBucket {
+            Registered::mint(id)
         }
 
         /// Issue shares.
@@ -199,17 +213,20 @@ pub mod security {
             recall(holder, slot, Share::address(), amount)
         }
 
-        /// Take `held` of the register entry back, which is the only
-        /// way it ever moves.
+        /// Take the named registrations back, which is the only way
+        /// one ever moves.
         ///
-        /// `withdraw = nobody` means the holder cannot hand it on and no
-        /// package holding it can be made to release it, so revocation
-        /// is not a courtesy the holder extends — it is the registrar's
-        /// own entry, read where the declaration is evaluated.
+        /// `withdraw = nobody` means the holder cannot hand one on and
+        /// no package holding it can be made to release it, so
+        /// revocation is not a courtesy the holder extends — it is the
+        /// registrar's own entry, read where the declaration is
+        /// evaluated.
         ///
-        /// The amount is named because a fungible entry is a balance.
-        pub fn revoke(&mut self, holder: Address, slot: u64, held: Quantity) -> Bucket {
-            recall(holder, slot, Registered::address(), held)
+        /// The registrations are named rather than counted, which is
+        /// what the non-fungible kind was bought for: a registrar
+        /// revoking one of a holder's two says which.
+        pub fn revoke(&mut self, holder: Address, slot: u64, ids: Ids) -> NfBucket {
+            recall_instances(holder, slot, Registered::address(), ids)
         }
     }
 }

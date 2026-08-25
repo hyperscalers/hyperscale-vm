@@ -3,7 +3,7 @@
 
 use hyperscale_vm_effects::{
     AdmissionError, EnvelopeTree, Hash32, IntentDecl, ManifestGraph, Presented, TestHasher, Value,
-    child_key,
+    child_key, holdings_collection,
 };
 use hyperscale_vm_fixtures::{amm, shares};
 use hyperscale_vm_harness::driver::{amount_of, vault};
@@ -382,22 +382,35 @@ fn register_swap_graph(min_out: u128) -> ManifestGraph {
     })
 }
 
+/// One registration for `holder`, as the register keeps them: an entry
+/// of their own interval for the badge, at the registration's id.
+///
+/// Seeded rather than transacted for the venue, which has no method that
+/// takes a badge — a pool declares nothing about the register and cannot
+/// be made to. What the seam reads is the leaf, so the leaf is the fact.
+fn register(store: &mut MemoryStore, holder: impl Into<Address>, id: u64) {
+    let holder = holder.into();
+    store.entry_write(
+        holder,
+        holdings_collection(&TestHasher, holder, registered()),
+        u128::from(id),
+        vec![1],
+    );
+}
+
 /// The venue stocked and both parties admitted, or the venue left off
 /// the register.
 fn register_store(venue_admitted: bool) -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(600).to_vec());
-    store.write(vault(ALICE, registered()), encode_amount(1).to_vec());
     store.write(vault(register_pool(), RES_X), encode_amount(1_000).to_vec());
     store.write(
         vault(register_pool(), share()),
         encode_amount(1_000).to_vec(),
     );
+    register(&mut store, ALICE, 1);
     if venue_admitted {
-        store.write(
-            vault(register_pool(), registered()),
-            encode_amount(1).to_vec(),
-        );
+        register(&mut store, register_pool(), 2);
     }
     store
 }
@@ -455,14 +468,22 @@ fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
         &register_store(false),
         &[(&graph, TxHash(Hash32([0x41; 32])))],
     );
-    // Named leaf and all: the venue's own register entry, asked to be
-    // present. Nothing about the refusal mentions the pool's code,
-    // because the pool's code says nothing about it.
+    // Named target and all: the venue's own interval for the register
+    // badge, asked to hold anything at all. Nothing about the refusal
+    // mentions the pool's code, because the pool's code says nothing
+    // about it — and the interval spans the id space, which is what a
+    // non-fungible register costs every movement of the class.
     assert_eq!(
         results[0],
         TxResult::Refused(Outcome::ConditionUnmet {
             condition: UnmetCondition::Holds {
-                target: EffectTarget::Point(vault(register_pool(), registered())),
+                target: EffectTarget::Range {
+                    owner: Address::from(register_pool()),
+                    collection: holdings_collection(&TestHasher, register_pool(), registered()),
+                    lo: 0,
+                    hi: u128::from(u64::MAX),
+                    cap: 1,
+                },
                 required: Presence::Present,
             },
         }),

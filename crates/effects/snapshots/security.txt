@@ -10,8 +10,8 @@ instantiate() — infallible
   declares
       0  requires self.config is absent
       1  write self.config
-      2  requires self.resource[self-issued(fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar] is absent
-      3  write self.resource[self-issued(fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar]
+      2  requires self.resource[self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar] is absent
+      3  write self.resource[self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar]
       4  requires self.resource[self-issued(fungible["share"]), granting mint to the issuer and withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge and freeze to config.registrar and recall to config.registrar] is absent
       5  write self.resource[self-issued(fungible["share"]), granting mint to the issuer and withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge and freeze to config.registrar and recall to config.registrar]
       6  requires self.resource[self-issued(fungible["approved"]), granting mint to the issuer and withdraw to whoever answers for config.registrar and deposit to whoever answers for config.registrar and recall to config.registrar] is absent
@@ -41,19 +41,22 @@ recall-shares(address, u64, u128) — infallible
   yields   edge 0 = self-issued(fungible["share"]), granting mint to the issuer and withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge and freeze to config.registrar and recall to config.registrar
   exports  handle for clause 0
 
-register() — infallible
-  mints    "registered" fungible, granting mint to the issuer and withdraw to nobody and recall to config.registrar
+register(u64) — infallible
+  mints    "registered" non-fungible, granting mint to the issuer and withdraw to nobody and recall to config.registrar
   declares
       0  requires claim config.registrar
-  yields   edge 0 = self-issued(fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar
+      1  requires self.instance[self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar, arg0] is absent
+      2  write self.instance[self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar, arg0]
+  yields   edge 0 = edge(self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar × [arg0])
+  exports  handle for clause 2, arg0
 
 release(address) — infallible
   declares
       0  write arg0.halt[self-issued(fungible["share"]), granting mint to the issuer and withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge and freeze to config.registrar and recall to config.registrar], reaching under freeze
   exports  handle for clause 0
 
-revoke(address, u64, u128) — infallible
+revoke(address, u64, ids) — infallible
   declares
-      0  reserve arg2 arg0.arg1[self-issued(fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar] holding self-issued(fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar, reaching under recall
-  yields   edge 0 = self-issued(fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar
-  exports  handle for clause 0
+      0  write arg0.arg1[self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar] over 0..=u128::MAX, at most len(arg2) entries holding self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar, reaching under recall
+  yields   edge 0 = edge(self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar × arg2)
+  exports  handle for clause 0, arg2
