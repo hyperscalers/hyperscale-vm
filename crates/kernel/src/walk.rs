@@ -168,7 +168,7 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
                 // evaluated, so the session is handed what the site
                 // covers rather than a rule for finding it.
                 CallArg::Run { entries } => {
-                    let rep = session.bind_run(entries.clone());
+                    let rep = session.bind_site(entries.clone());
                     args.push(GuestArg::Run { rep });
                 }
                 CallArg::Bool(taken) => args.push(GuestArg::Bool(*taken)),

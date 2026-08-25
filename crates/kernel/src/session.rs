@@ -361,16 +361,21 @@ pub struct KernelSession {
     /// is visible in the export's own type and a body that was granted
     /// nothing has nothing to name.
     issuance: Option<(ResourceAddr, ResourceKind)>,
-    /// The runs this invocation has been lent, in the order the walk
-    /// bound them; a run handle's rep is its index here.
+    /// Every site this invocation can act through, flattened: one entry
+    /// per element of each site, in the order they were bound.
     ///
-    /// A rep space of its own beside the capability table's, because a
-    /// run is not one capability — it is one site's whole expansion, and
-    /// which capability an index reaches is the run's answer rather than
-    /// the table's. The resource type a run is lent as is what tells the
-    /// two spaces apart, on the same terms a bucket's rep is told from a
-    /// cell's.
-    runs: Vec<Vec<Option<u32>>>,
+    /// An entry names a position in [`KernelSession::table`], or nothing
+    /// where the site's guard did not fire for that element.
+    entries: Vec<Option<u32>>,
+    /// Where each site's entries start, and how many it has; a site
+    /// handle's rep is its index here.
+    ///
+    /// Materialization seeds one width-one site per capability, in table
+    /// order, so **site `n` element 0 is capability `n`** — which is what
+    /// lets a session be acted through the moment it exists, rather than
+    /// only after a walk has bound something. Sites a `for-each` needs
+    /// are appended past the seeded ones.
+    sites: Vec<(u32, u32)>,
     /// Reservations already taken, by capability rep.
     ///
     /// A grant answers once. The read this replaces answered every time
@@ -432,9 +437,20 @@ impl KernelSession {
     }
 
     fn capability(&self, rep: u32) -> Result<Capability, SessionTrap> {
-        if rep == ABSENT_REP {
-            return Err(SessionTrap::UndeclaredBranch);
-        }
+        self.at(rep, 0)
+    }
+
+    /// The capability one element of a site names.
+    ///
+    /// An element the site's guard did not fire for names none, which is
+    /// a body whose control flow disagrees with the verdict it was
+    /// handed — named rather than folded into an unknown handle because
+    /// the diagnostic is the whole value: nothing was materialized here
+    /// on purpose.
+    fn at(&self, site: u32, element: u32) -> Result<Capability, SessionTrap> {
+        let rep = self
+            .entry(site, element)?
+            .ok_or(SessionTrap::UndeclaredBranch)?;
         usize::try_from(rep)
             .ok()
             .and_then(|index| self.table.get(index))
@@ -488,37 +504,49 @@ impl KernelSession {
         }
     }
 
-    /// Lend one `for-each` site's expansion, answering the rep the run
-    /// is reached at.
+    /// Lend one declared site, answering the rep it is reached at.
     ///
-    /// Bound per invocation as the walk assembles the call's arguments,
-    /// which is where the entries were resolved.
-    pub fn bind_run(&mut self, entries: Vec<Option<u32>>) -> u32 {
-        let rep = u32::try_from(self.runs.len()).unwrap_or(ABSENT_REP);
-        self.runs.push(entries);
+    /// One entry per element, in the order the walk resolved them: a
+    /// plain access is a site of one, and a `for-each` site is as wide
+    /// as the collection its loop mapped over.
+    ///
+    /// Always appended, never matched against the seeded sites: a site
+    /// the walk binds carries what the *declaration* resolved, which for
+    /// a guarded-out clause is an absence no capability stands behind.
+    pub fn bind_site(&mut self, entries: Vec<Option<u32>>) -> u32 {
+        let rep = u32::try_from(self.sites.len()).unwrap_or(u32::MAX);
+        let start = u32::try_from(self.entries.len()).unwrap_or(u32::MAX);
+        let len = u32::try_from(entries.len()).unwrap_or(u32::MAX);
+        self.entries.extend(entries);
+        self.sites.push((start, len));
         rep
     }
 
-    /// The run at `rep`.
-    fn run(&self, rep: u32) -> Result<&[Option<u32>], SessionTrap> {
-        usize::try_from(rep)
+    /// The entries the site at `rep` covers.
+    fn site(&self, rep: u32) -> Result<&[Option<u32>], SessionTrap> {
+        let (start, len) = usize::try_from(rep)
             .ok()
-            .and_then(|index| self.runs.get(index))
-            .map(Vec::as_slice)
+            .and_then(|index| self.sites.get(index))
+            .copied()
+            .ok_or(SessionTrap::UnknownHandle(rep))?;
+        let start = start as usize;
+        self.entries
+            .get(start..start + len as usize)
             .ok_or(SessionTrap::UnknownHandle(rep))
     }
 
-    /// How many elements the site's loop mapped over.
+    /// How many elements the site covers.
     ///
     /// The element count rather than the count of expansions that fired,
     /// so two sites in one body agree on what an index means and a
-    /// guarded one reads absent rather than shortening the walk.
+    /// guarded one reads absent rather than shortening the walk. A plain
+    /// access answers one, declared or not.
     ///
     /// # Errors
     ///
-    /// [`SessionTrap::UnknownHandle`] on a rep no run occupies.
-    pub fn run_len(&self, rep: u32) -> Result<u32, SessionTrap> {
-        Ok(u32::try_from(self.run(rep)?.len()).unwrap_or(u32::MAX))
+    /// [`SessionTrap::UnknownHandle`] on a rep no site occupies.
+    pub fn site_len(&self, rep: u32) -> Result<u32, SessionTrap> {
+        Ok(u32::try_from(self.site(rep)?.len()).unwrap_or(u32::MAX))
     }
 
     /// Whether the site declared anything for the element at `index`.
@@ -526,26 +554,29 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn run_declared(&self, rep: u32, index: u32) -> Result<bool, SessionTrap> {
-        Ok(self.run_entry(rep, index)?.is_some())
+    pub fn site_declared(&self, rep: u32, index: u32) -> Result<bool, SessionTrap> {
+        Ok(self.entry(rep, index)?.is_some())
     }
 
-    /// The capability the site declared for the element at `index`.
+    /// The capability the site declared for the element at `index`, as
+    /// the rep every other operation takes.
     ///
-    /// An expansion whose guard did not fire answers [`ABSENT_REP`],
-    /// which the operation it is handed to traps on by its own name —
-    /// the same answer a guarded clause at top level already gives.
+    /// An element whose guard did not fire answers [`ABSENT_REP`], which
+    /// the operation it is handed to traps on by its own name.
     ///
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn run_at(&self, rep: u32, index: u32) -> Result<u32, SessionTrap> {
-        Ok(self.run_entry(rep, index)?.unwrap_or(ABSENT_REP))
+    pub fn site_at(&self, rep: u32, index: u32) -> Result<u32, SessionTrap> {
+        Ok(self.entry(rep, index)?.unwrap_or(ABSENT_REP))
     }
 
-    /// One entry of a run, refusing an index past its elements.
-    fn run_entry(&self, rep: u32, index: u32) -> Result<Option<u32>, SessionTrap> {
-        let entries = self.run(rep)?;
+    /// One entry of a site, refusing an index past its elements.
+    fn entry(&self, rep: u32, index: u32) -> Result<Option<u32>, SessionTrap> {
+        if rep == ABSENT_REP {
+            return Err(SessionTrap::UndeclaredBranch);
+        }
+        let entries = self.site(rep)?;
         usize::try_from(index)
             .ok()
             .and_then(|index| entries.get(index))
@@ -1150,6 +1181,20 @@ mod tests {
         ]
     }
 
+    /// A session holding exactly `held`, reachable at rep zero.
+    ///
+    /// The capability and the site that reaches it are installed
+    /// together, which is the invariant materialization keeps: a
+    /// capability nothing can be acted through is not a session state
+    /// any declaration produces.
+    fn holding(held: Capability) -> KernelSession {
+        let mut session = session_over(MemoryStore::new(), &declared(&[]));
+        session.table = vec![held];
+        session.entries = vec![Some(0)];
+        session.sites = vec![(0, 1)];
+        session
+    }
+
     /// Perform `op` through the entry point that carries it, at rep 0.
     ///
     /// The arguments are whatever reaches the permission check; an
@@ -1182,8 +1227,7 @@ mod tests {
     fn every_capability_grants_exactly_what_the_table_says() {
         for held in every_capability() {
             for op in Op::ALL {
-                let mut session = session_over(MemoryStore::new(), &declared(&[]));
-                session.table = vec![held];
+                let mut session = holding(held);
                 let refused = matches!(
                     attempt(&mut session, op),
                     Err(SessionTrap::WrongMode { .. })
@@ -1202,8 +1246,7 @@ mod tests {
     /// declaration gets.
     #[test]
     fn a_mode_refusal_names_both_halves() {
-        let mut session = session_over(MemoryStore::new(), &declared(&[]));
-        session.table = vec![Capability::Read(key(1))];
+        let mut session = holding(Capability::Read(key(1)));
         assert_eq!(
             session.write_cell_set(0, vec![1]),
             Err(SessionTrap::WrongMode {

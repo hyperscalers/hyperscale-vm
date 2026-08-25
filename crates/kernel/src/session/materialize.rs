@@ -283,6 +283,7 @@ impl KernelSession {
             }
         }
 
+        let table_len = table.len();
         Ok(Self {
             store,
             declared: declared.clone(),
@@ -298,7 +299,16 @@ impl KernelSession {
             cell_resources: ordered.iter().map(|access| access.holds).collect(),
             buckets: Buckets::default(),
             issuance: None,
-            runs: Vec::new(),
+            // One width-one site per capability, in table order, so a
+            // capability's rep is also the rep of the site that reaches
+            // it. A session is actable the moment it exists; what a walk
+            // binds past these is the sites a `for-each` needs.
+            entries: (0..u32::try_from(table_len).unwrap_or(u32::MAX))
+                .map(Some)
+                .collect(),
+            sites: (0..u32::try_from(table_len).unwrap_or(u32::MAX))
+                .map(|index| (index, 1))
+                .collect(),
             taken: BTreeSet::new(),
         })
     }
