@@ -9,10 +9,8 @@ fn every_world_shape_classifies_and_nested_exports_stay_invisible() {
     let bytes = parse_str(
         r#"(component
              (import "hyperscale:kernel/state" (instance $state
-               (export "site" (type $rc (sub resource)))
-               (export "delta-cell" (type $dc (sub resource)))))
-             (alias export $state "site" (type $reserve))
-             (alias export $state "delta-cell" (type $delta))
+               (export "site" (type $rc (sub resource)))))
+             (alias export $state "site" (type $site))
 
              (core module $m
                (func (export "withdraw") (param i32 i32 i32) (result i32)
@@ -27,7 +25,7 @@ fn every_world_shape_classifies_and_nested_exports_stay_invisible() {
              (core instance $i (instantiate $m))
 
              (func (export "withdraw")
-               (param "vault" (borrow $reserve)) (param "amount" (list u8))
+               (param "vault" (borrow $site)) (param "amount" (list u8))
                (result (list u8))
                (canon lift (core func $i "withdraw")
                  (memory $i "mem") (realloc (func $i "realloc"))))

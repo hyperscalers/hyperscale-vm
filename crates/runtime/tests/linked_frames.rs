@@ -205,10 +205,10 @@ fn a_callback_that_is_itself_a_builtin_is_refused() {
     let bytes = parse_str(
         r#"(component
              (import "hyperscale:kernel/state" (instance $state
-               (export "read-cell" (type $rc (sub resource)))))
-             (alias export $state "read-cell" (type $rcell))
+               (export "site" (type $rc (sub resource)))))
+             (alias export $state "site" (type $site))
 
-             (core func $drop (canon resource.drop $rcell))
+             (core func $drop (canon resource.drop $site))
 
              (core module $main
                (func (export "run") (result i32) i32.const 7))

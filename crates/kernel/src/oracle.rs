@@ -133,7 +133,8 @@ pub fn covered(access: &Access, declared: &EffectSet) -> bool {
 /// Whether a declared exclusive claim covers the commutative record a
 /// value cell's change is kept as.
 ///
-/// An `amount-cell` is exclusive in when it may run and commutative in
+/// An exclusive hold on value is exclusive in when it may run and
+/// commutative in
 /// how it is written down, because a receipt says what moved rather than
 /// what a cell ended at. That holds for a point cell and nowhere else: a
 /// collection entry has no movement form, so a delta against one is an

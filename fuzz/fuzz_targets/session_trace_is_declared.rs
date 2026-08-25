@@ -22,10 +22,7 @@ use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, Ov
 use hyperscale_vm_ref::{
     CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
 };
-use hyperscale_vm_runtime::{
-    DeltaCell, HostRefusal, RangeRead, RangeWrite, ReadCell, ReserveCell, WriteCell,
-    add_kernel_to_linker, blessed_engine,
-};
+use hyperscale_vm_runtime::{HostRefusal, Site, add_kernel_to_linker, blessed_engine};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
     Mode, ResourceAddr, SubstateKey, TxHash, encode_amount,
@@ -285,39 +282,43 @@ fn rep_where(caps: &[Capability], pred: impl Fn(&Capability) -> bool) -> u32 {
     u32::try_from(caps.iter().position(pred).expect("capability present")).expect("bounded")
 }
 
-/// The handles each export receives, in parameter order.
+/// The sites each export receives, in parameter order.
+///
+/// Every capability crosses as one resource, so what a fixture picks is
+/// a position in the table rather than a type: the key it named, or the
+/// one interval it declared. A session seeds one width-one site per
+/// capability in table order, so that position is the site's too.
 fn args_for(fx: &Fx, caps: &[Capability], export: &str) -> Vec<(u32, HandleKind)> {
-    let point = |wanted: SubstateKey, kind: HandleKind| {
-        let rep = rep_where(caps, |c| match (kind, c) {
-            (HandleKind::ReadCell, Capability::Read(key))
-            | (HandleKind::WriteCell, Capability::Write(key))
-            | (HandleKind::DeltaCell, Capability::Delta(key))
-            | (HandleKind::ReserveCell, Capability::Reserve { key, .. }) => *key == wanted,
+    let point = |wanted: SubstateKey| {
+        let rep = rep_where(caps, |c| match c {
+            Capability::Read(key)
+            | Capability::Write(key)
+            | Capability::Delta(key)
+            | Capability::Reserve { key, .. } => *key == wanted,
             _ => false,
         });
-        (rep, kind)
+        (rep, HandleKind::Site)
     };
-    let range = |kind: HandleKind| {
-        let rep = rep_where(caps, |c| {
-            matches!(
-                (kind, c),
-                (HandleKind::RangeRead, Capability::RangeRead(..))
-                    | (HandleKind::RangeWrite, Capability::RangeWrite(..))
-            )
-        });
-        (rep, kind)
+    // An interval has no key to pick it out by, so which of the two the
+    // fixture declared is the selector — the capability's own mode,
+    // which is where the distinction lives now that one resource carries
+    // every handle across.
+    let read_range = || {
+        let rep = rep_where(caps, |c| matches!(c, Capability::RangeRead(..)));
+        (rep, HandleKind::Site)
+    };
+    let write_range = || {
+        let rep = rep_where(caps, |c| matches!(c, Capability::RangeWrite(..)));
+        (rep, HandleKind::Site)
     };
     match export {
-        "transfer" => vec![
-            point(fx.sender, HandleKind::ReserveCell),
-            point(fx.recipient, HandleKind::DeltaCell),
-        ],
-        "peek" => vec![point(fx.config, HandleKind::ReadCell)],
-        "rmw" => vec![point(fx.rmw, HandleKind::WriteCell)],
-        "scan-sum" => vec![range(HandleKind::RangeRead)],
-        "fill" | "place" | "no-such-entry" => vec![range(HandleKind::RangeWrite)],
-        "escape" => vec![point(fx.recipient, HandleKind::DeltaCell)],
-        "leak" | "handle-value" | "read-value" => vec![point(fx.readable, HandleKind::ReadCell)],
+        "transfer" => vec![point(fx.sender), point(fx.recipient)],
+        "peek" => vec![point(fx.config)],
+        "rmw" => vec![point(fx.rmw)],
+        "scan-sum" => vec![read_range()],
+        "fill" | "place" | "no-such-entry" => vec![write_range()],
+        "escape" => vec![point(fx.recipient)],
+        "leak" | "handle-value" | "read-value" => vec![point(fx.readable)],
         "forge" | "forge-zero" | "hash-tag" => vec![],
         other => unreachable!("unknown export {other}"),
     }
@@ -396,9 +397,7 @@ fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, KernelSession,
         let args = args_for(fx, &caps, export);
         let result: Result<u64, Error> = match (*export, args.as_slice()) {
             ("transfer", [(a, _), (b, _)]) => instance
-                .get_typed_func::<(Resource<ReserveCell>, Resource<DeltaCell>), (u64,)>(
-                    &mut store, export,
-                )
+                .get_typed_func::<(Resource<Site>, Resource<Site>), (u64,)>(&mut store, export)
                 .and_then(|f| {
                     f.call(
                         &mut store,
@@ -410,31 +409,10 @@ fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, KernelSession,
                 .get_typed_func::<(), (u64,)>(&mut store, export)
                 .and_then(|f| f.call(&mut store, ()).map(|(v,)| v)),
             (_, [(rep, kind)]) => match kind {
-                HandleKind::ReadCell => call1::<ReadCell>(&mut store, &instance, export, *rep),
-                HandleKind::WriteCell => call1::<WriteCell>(&mut store, &instance, export, *rep),
-                HandleKind::DeltaCell => call1::<DeltaCell>(&mut store, &instance, export, *rep),
-                HandleKind::ReserveCell => {
-                    call1::<ReserveCell>(&mut store, &instance, export, *rep)
-                }
-                HandleKind::RangeRead => call1::<RangeRead>(&mut store, &instance, export, *rep),
-                HandleKind::RangeWrite => call1::<RangeWrite>(&mut store, &instance, export, *rep),
-                // Nothing this fixture exports takes value, issues any,
-                // or runs a `for-each` site; the bucket lane drives the
-                // first two, and the corpus drives the third.
-                HandleKind::Bucket
-                | HandleKind::Issuer
-                | HandleKind::AmountCell
-                | HandleKind::AmountRead
-                | HandleKind::InstanceRange
-                | HandleKind::ReadCellRun
-                | HandleKind::WriteCellRun
-                | HandleKind::AmountCellRun
-                | HandleKind::AmountReadRun
-                | HandleKind::DeltaCellRun
-                | HandleKind::ReserveCellRun
-                | HandleKind::RangeReadRun
-                | HandleKind::RangeWriteRun
-                | HandleKind::InstanceRangeRun => unreachable!("{export} takes no value handle"),
+                HandleKind::Site => call1::<Site>(&mut store, &instance, export, *rep),
+                // Nothing this fixture exports takes value; the bucket
+                // lane drives that.
+                HandleKind::Bucket => unreachable!("{export} takes no value handle"),
             },
             _ => unreachable!("unexpected arg shape for {export}"),
         };

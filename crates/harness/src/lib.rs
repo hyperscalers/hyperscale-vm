@@ -245,8 +245,8 @@ pub mod fixtures {
     /// `scan-sum`
     /// folds a read interval's entry and order bytes; `fill` rewrites entry
     /// zero and removes the last entry of a write interval; `place` inserts
-    /// order 42; `escape` passes a delta handle to a read-cell function
-    /// (the mode-escape trap); `forge` passes a handle index the host never
+    /// order 42; `escape` reads bytes through a handle the declaration
+    /// lent as a commutative movement (the mode-escape trap); `forge` passes a handle index the host never
     /// lowered; `read-value` reads whatever read cell it is handed, which
     /// is how a test reaches the rep a clause nobody declared would have
     /// occupied; `leak` never drops its borrow; `no-such-entry` removes
