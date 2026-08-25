@@ -79,3 +79,50 @@ impl TryFrom<&StoredRule> for RuleBytes {
         rule.to_bytes().map(Self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use hyperscale_vm_types::{Address, AddressClass};
+
+    use super::RuleBytes;
+    use crate::presented::Presented;
+    use crate::rule::StoredRule;
+
+    fn one_rule() -> StoredRule {
+        StoredRule::claim(Presented::of_subject(Address::new(
+            [7; 31],
+            AddressClass::Component,
+        )))
+    }
+
+    /// A rule crosses as an argument as its own bytes and sits in a cell
+    /// inside a record, and the two are not the same bytes.
+    ///
+    /// Stated here because this is the file that owns both halves: a
+    /// writer reaching for the wrong one stores a rule no gate can read,
+    /// and the only signal would be an account nobody can open.
+    #[test]
+    fn the_cell_form_frames_what_the_argument_form_carries() {
+        let rule = one_rule();
+        let carried = RuleBytes::try_from(&rule).expect("a rule within the caps");
+        let stored = carried.in_cell();
+
+        assert_ne!(
+            stored,
+            *carried.bytes(),
+            "a cell holds the record, and the record holds the rule"
+        );
+        assert_eq!(RuleBytes::rule_in_cell(&stored), Ok(rule));
+    }
+
+    /// And the wrong half fails closed. A cell holding what an argument
+    /// carries decodes as no rule at all, which admits nobody — never as
+    /// some other rule, which would admit somebody.
+    #[test]
+    fn a_cell_holding_the_argument_form_reads_as_no_rule() {
+        let carried = RuleBytes::try_from(&one_rule()).expect("a rule within the caps");
+
+        assert!(RuleBytes::rule_in_cell(carried.bytes()).is_err());
+        assert!(RuleBytes::rule_in_cell(&[]).is_err());
+    }
+}

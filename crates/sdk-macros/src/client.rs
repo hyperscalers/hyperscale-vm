@@ -198,14 +198,6 @@ fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
             quote!(#value::U256(#name.to_le_bytes())),
         );
     }
-    if is_named(ty, "Rule") {
-        let rule = sdk("Rule");
-        return (quote!(#name: #rule), quote!(#name));
-    }
-    if is_named(ty, "RoleTable") {
-        let roles = sdk("RoleTable");
-        return (quote!(#name: #roles), quote!(#name));
-    }
     // `u64`, `u128` and the byte vectors bind as themselves.
     (quote!(#name: #ty), quote!(#name))
 }

@@ -280,7 +280,8 @@ impl<T: Record> Cellular for Option<T> {
 ///
 /// One byte string and no nesting of its own — what a rule holds is the
 /// rule vocabulary's, decoded where the rule is judged, so the cap here
-/// is the one level a byte string occupies.
+/// is the one level a byte string occupies. This is what frames a rule
+/// cell, and the framing `RuleBytes::rule_in_cell` reads back.
 impl Record for RuleBytes {
     const WIRE_DEPTH: usize = 1;
 }
@@ -291,8 +292,18 @@ impl LeafShape for u128 {
     }
 }
 
-/// A stored rule's bytes are the cell's bytes: nothing to decode here,
-/// because what they mean is settled where the rule is judged.
+/// How a rule crosses as an argument: the bytes themselves, since a
+/// `list<u8>` is already the world's own framing and what the bytes mean
+/// is settled where the rule is judged.
+///
+/// Not what a cell of one holds, which is the one place this vocabulary
+/// carries a value two ways. A rule cell is `Option<RuleBytes>` — the
+/// `None` an unwritten cell has to read as is what makes an account
+/// without a stored rule govern itself — and that goes through
+/// [`Record`], which frames. The kernel judges a stored rule through
+/// `RuleBytes::rule_in_cell`, so the framed form is the one every writer
+/// of a rule cell produces and a bare `Cell<RuleBytes>` would hold bytes
+/// no gate could read.
 impl Cellular for RuleBytes {
     fn from_cell(cell: &[u8]) -> Self {
         Self(cell.to_vec())
@@ -2141,38 +2152,6 @@ impl Ids {
     #[must_use]
     pub fn count(&self) -> u64 {
         u64::try_from(self.0.len()).unwrap_or(u64::MAX)
-    }
-}
-
-/// An authority rule parameter, as a contract signature names it.
-///
-/// The rule arrives as canonical bytes the admission gate already decoded
-/// under the vocabulary caps, so a body carries them and judges nothing.
-#[derive(Clone, Debug, Default)]
-pub struct Rule(pub Vec<u8>);
-
-impl Rule {
-    /// The canonical bytes, which is all a body may do with one: what
-    /// they mean was settled at admission.
-    #[must_use]
-    pub fn bytes(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl LeafShape for Rule {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Bytes
-    }
-}
-
-impl Cellular for Rule {
-    fn from_cell(cell: &[u8]) -> Self {
-        Self(cell.to_vec())
-    }
-
-    fn to_cell(&self) -> Vec<u8> {
-        self.0.clone()
     }
 }
 
