@@ -113,36 +113,38 @@ impl From<&GuestArg<'_>> for CVal {
     }
 }
 
-/// A kernel-world import.
+/// A kernel-world import, one variant per function the world declares.
+///
+/// Named for the function itself, so the mapping in
+/// [`RefComponent::host_fn`] is the only place the world's spelling and
+/// this crate's meet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HostFn {
-    CellGet,
-    CellSet,
-    CellClear,
-    CellBalance,
-    CellTake,
-    CellPut,
-    ReserveTake,
-    Count,
-    Covered,
-    Order,
-    Entry,
-    EntrySet,
-    Insert,
-    Remove,
-    InstanceTake,
-    InstancePut,
-    IssuerMint,
-    IssuerMintInstances,
-    IssuerBurn,
+    SiteGet,
+    SiteSet,
+    SiteClear,
+    SiteBalance,
+    SiteTake,
+    SitePut,
+    SiteReserveTake,
+    SiteCount,
+    SiteCovered,
+    SiteOrder,
+    SiteEntry,
+    SiteEntrySet,
+    SiteInsert,
+    SiteRemove,
+    SiteInstanceTake,
+    SiteInstancePut,
+    Mint,
+    MintInstances,
+    Burn,
     BucketTake,
     BucketSplit,
     BucketPut,
     BucketAmount,
-    /// `seal`: the kernel stamps the epoch now running.
-    Seal,
-    /// `open-seal`: the draw the cell's seal matures into.
-    OpenSeal,
+    SiteSeal,
+    SiteOpenSeal,
     Clock,
     Hash,
     Emit,
@@ -151,48 +153,46 @@ enum HostFn {
     FractionCompose,
     FractionCmp,
     FixedPow,
-    /// `site.len`: how many elements the site covers.
     SiteLen,
-    /// `site.declared`.
     SiteDeclared,
 }
 
-/// How many core parameters one kernel operation's single form takes.
+/// How many core parameters one kernel operation takes.
 const fn host_params(op: HostFn) -> usize {
     match op {
         // The grant is the invocation's, so a burn names the bucket it
         // consumes and nothing else; a site's own count names the site.
-        HostFn::IssuerBurn | HostFn::SiteLen => 1,
+        HostFn::Burn | HostFn::SiteLen => 1,
         // Every site operation names the site and the element it acts on
         // before anything of its own. A take's bucket comes back as a
         // flat handle, so it costs no return-area pointer where the read
         // beside it needs one for the amount — which is why each take
         // counts one lower than the read it stands next to.
-        HostFn::Count
-        | HostFn::Covered
-        | HostFn::ReserveTake
-        | HostFn::CellClear
-        | HostFn::Seal
+        HostFn::SiteCount
+        | HostFn::SiteCovered
+        | HostFn::SiteReserveTake
+        | HostFn::SiteClear
+        | HostFn::SiteSeal
         | HostFn::SiteDeclared
-        | HostFn::IssuerMint
-        | HostFn::IssuerMintInstances
+        | HostFn::Mint
+        | HostFn::MintInstances
         | HostFn::BucketAmount
         | HostFn::BucketPut => 2,
-        HostFn::CellGet
-        | HostFn::CellBalance
-        | HostFn::Remove
-        | HostFn::CellPut
-        | HostFn::OpenSeal
+        HostFn::SiteGet
+        | HostFn::SiteBalance
+        | HostFn::SiteRemove
+        | HostFn::SitePut
+        | HostFn::SiteOpenSeal
         | HostFn::BucketTake
         | HostFn::Hash
         | HostFn::Emit => 3,
-        HostFn::CellSet
-        | HostFn::CellTake
-        | HostFn::Order
-        | HostFn::Entry
-        | HostFn::InstanceTake => 4,
-        HostFn::InstancePut | HostFn::EntrySet => 5,
-        HostFn::Insert => 6,
+        HostFn::SiteSet
+        | HostFn::SiteTake
+        | HostFn::SiteOrder
+        | HostFn::SiteEntry
+        | HostFn::SiteInstanceTake => 4,
+        HostFn::SiteInstancePut | HostFn::SiteEntrySet => 5,
+        HostFn::SiteInsert => 6,
         // A `wide` flattens to four `i64`s, and a result wider
         // than one flat value travels through a return pointer
         // the caller appends: `fraction-cmp` returns an enum and
@@ -714,33 +714,33 @@ impl RefComponent {
             .rsplit_once('/')
             .map_or(interface.as_str(), |(_, s)| s);
         match (suffix, name) {
-            ("state", "site-get") => Ok(HostFn::CellGet),
-            ("state", "site-set") => Ok(HostFn::CellSet),
-            ("state", "site-clear") => Ok(HostFn::CellClear),
-            ("state", "site-seal") => Ok(HostFn::Seal),
-            ("state", "site-open-seal") => Ok(HostFn::OpenSeal),
-            ("state", "site-balance") => Ok(HostFn::CellBalance),
-            ("state", "site-take") => Ok(HostFn::CellTake),
-            ("state", "site-put") => Ok(HostFn::CellPut),
-            ("state", "site-reserve-take") => Ok(HostFn::ReserveTake),
-            ("state", "site-count") => Ok(HostFn::Count),
-            ("state", "site-covered") => Ok(HostFn::Covered),
-            ("state", "site-order") => Ok(HostFn::Order),
-            ("state", "site-entry") => Ok(HostFn::Entry),
-            ("state", "site-entry-set") => Ok(HostFn::EntrySet),
-            ("state", "site-insert") => Ok(HostFn::Insert),
-            ("state", "site-remove") => Ok(HostFn::Remove),
-            ("state", "site-instance-take") => Ok(HostFn::InstanceTake),
-            ("state", "site-instance-put") => Ok(HostFn::InstancePut),
+            ("state", "site-get") => Ok(HostFn::SiteGet),
+            ("state", "site-set") => Ok(HostFn::SiteSet),
+            ("state", "site-clear") => Ok(HostFn::SiteClear),
+            ("state", "site-seal") => Ok(HostFn::SiteSeal),
+            ("state", "site-open-seal") => Ok(HostFn::SiteOpenSeal),
+            ("state", "site-balance") => Ok(HostFn::SiteBalance),
+            ("state", "site-take") => Ok(HostFn::SiteTake),
+            ("state", "site-put") => Ok(HostFn::SitePut),
+            ("state", "site-reserve-take") => Ok(HostFn::SiteReserveTake),
+            ("state", "site-count") => Ok(HostFn::SiteCount),
+            ("state", "site-covered") => Ok(HostFn::SiteCovered),
+            ("state", "site-order") => Ok(HostFn::SiteOrder),
+            ("state", "site-entry") => Ok(HostFn::SiteEntry),
+            ("state", "site-entry-set") => Ok(HostFn::SiteEntrySet),
+            ("state", "site-insert") => Ok(HostFn::SiteInsert),
+            ("state", "site-remove") => Ok(HostFn::SiteRemove),
+            ("state", "site-instance-take") => Ok(HostFn::SiteInstanceTake),
+            ("state", "site-instance-put") => Ok(HostFn::SiteInstancePut),
             ("state", "site-len") => Ok(HostFn::SiteLen),
             ("state", "site-declared") => Ok(HostFn::SiteDeclared),
             ("state", "bucket-take") => Ok(HostFn::BucketTake),
             ("state", "bucket-split") => Ok(HostFn::BucketSplit),
             ("state", "bucket-put") => Ok(HostFn::BucketPut),
             ("state", "bucket-amount") => Ok(HostFn::BucketAmount),
-            ("state", "mint") => Ok(HostFn::IssuerMint),
-            ("state", "mint-instances") => Ok(HostFn::IssuerMintInstances),
-            ("state", "burn") => Ok(HostFn::IssuerBurn),
+            ("state", "mint") => Ok(HostFn::Mint),
+            ("state", "mint-instances") => Ok(HostFn::MintInstances),
+            ("state", "burn") => Ok(HostFn::Burn),
             ("math", "mul-div") => Ok(HostFn::MulDiv),
             ("math", "geometric-mean") => Ok(HostFn::GeometricMean),
             ("math", "fraction-compose") => Ok(HostFn::FractionCompose),
@@ -1679,10 +1679,10 @@ impl<H: KernelHost> KernelCanon<'_, H> {
 
     /// The site and element an operation acts through.
     ///
-    /// A run form differs from the single one here and nowhere else, so
-    /// the arms below read one rep whichever they were reached through.
-    /// What the capability behind that rep grants is the session's
-    /// answer, held at the operation rather than at the handle.
+    /// One shape for every width, so the arms below read the same two
+    /// arguments whatever the declaration behind them expanded to. What
+    /// the capability at that element grants is the session's answer,
+    /// held at the operation rather than at the handle.
     fn acting(&mut self, args: &[Value]) -> Result<(u32, u32), ExecError> {
         let site = self.resolve_handle(args[0], HandleKind::Site)?;
         Ok((site, args[1].as_i32().cast_unsigned()))
@@ -1838,9 +1838,9 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
     fn param_count(&self, id: u32) -> usize {
         match &self.comp.core_funcs[id as usize] {
             CoreFuncDef::ResourceDrop { .. } => 1,
-            // A run names the element's index before the operation's own
-            // arguments and costs exactly that one more than the single
-            // form, which is the whole of the difference.
+            // Every site operation names its handle and the element it
+            // acts on before anything of its own, so the arity is the
+            // operation's alone.
             CoreFuncDef::Lower { func, .. } => match self.comp.comp_funcs[*func as usize] {
                 CompFunc::Host(op) => host_params(op),
                 CompFunc::Lifted { .. } => 0,
@@ -1897,14 +1897,14 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                 // A lend lasts as long as the call that took it, and this
                 // is where one begins.
                 self.lent.clear();
-                // What the capability itself took: a run names its own
-                // handle and the element's index, a single form names its
-                // handle alone, and everything after is the operation's.
+                // What reaching the capability took: the site's handle
+                // and the element's index. Everything after is the
+                // operation's own.
                 let after = 2;
                 match host_fn {
                     HostFn::Clock => Ok(vec![Value::I64(self.host.clock_ms().cast_signed())]),
-                    // A run's own two questions, which name the run
-                    // rather than one of its entries.
+                    // The site's own two questions, which name the site
+                    // rather than one of its elements.
                     HostFn::SiteLen => {
                         let rep = self.resolve_handle(args[0], HandleKind::Site)?;
                         let len = meter::site_len(
@@ -1931,7 +1931,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(i32::from(declared))])
                     }
-                    HostFn::CellGet => {
+                    HostFn::SiteGet => {
                         let (site, element) = self.acting(&args)?;
                         let mut port = MeterPort {
                             host: &mut self.host,
@@ -1943,7 +1943,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         self.lower_list(modules, store, mem, realloc, &bytes, args[after])?;
                         Ok(Vec::new())
                     }
-                    HostFn::CellBalance => {
+                    HostFn::SiteBalance => {
                         let (site, element) = self.acting(&args)?;
                         let held = meter::site_balance(
                             &mut MeterPort {
@@ -1958,7 +1958,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Self::write_amount(store, mem, args[after], held)?;
                         Ok(Vec::new())
                     }
-                    HostFn::CellSet => {
+                    HostFn::SiteSet => {
                         let (site, element) = self.acting(&args)?;
                         let mem = self.mem_opt(id)?;
                         let bytes =
@@ -1975,7 +1975,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::CellClear => {
+                    HostFn::SiteClear => {
                         let (site, element) = self.acting(&args)?;
                         meter::site_clear(
                             &mut MeterPort {
@@ -1993,7 +1993,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                     // drop — the same seating a lowered argument gets, so
                     // the numbering is one table's whatever opened the
                     // slot.
-                    HostFn::CellTake => {
+                    HostFn::SiteTake => {
                         let (site, element) = self.acting(&args)?;
                         let amount = flat_amount(args[after], args[after + 1]);
                         let mut port = MeterPort {
@@ -2004,7 +2004,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                             .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
-                    HostFn::IssuerBurn => {
+                    HostFn::Burn => {
                         let funds = self.consume_bucket(args[0])?;
                         meter::burn(
                             &mut MeterPort {
@@ -2016,7 +2016,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::IssuerMintInstances => {
+                    HostFn::MintInstances => {
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[0], args[1])?;
                         let minted = meter::mint_instances(
@@ -2029,7 +2029,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(minted).cast_signed())])
                     }
-                    HostFn::InstanceTake => {
+                    HostFn::SiteInstanceTake => {
                         let (site, element) = self.acting(&args)?;
                         let mem = self.mem_opt(id)?;
                         let ids = Self::read_guest_ids(store, mem, args[after], args[after + 1])?;
@@ -2045,7 +2045,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(taken).cast_signed())])
                     }
-                    HostFn::InstancePut => {
+                    HostFn::SiteInstancePut => {
                         let (site, element) = self.acting(&args)?;
                         let funds = self.consume_bucket(args[after])?;
                         let mem = self.mem_opt(id)?;
@@ -2209,7 +2209,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Self::write_amount(store, mem, args[1], amount)?;
                         Ok(Vec::new())
                     }
-                    HostFn::CellPut => {
+                    HostFn::SitePut => {
                         let (site, element) = self.acting(&args)?;
                         let funds = self.consume_bucket(args[after])?;
                         let mut port = MeterPort {
@@ -2219,7 +2219,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         meter::site_put(&mut port, site, element, funds).map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::IssuerMint => {
+                    HostFn::Mint => {
                         let amount = flat_amount(args[0], args[1]);
                         let bucket = meter::mint(
                             &mut MeterPort {
@@ -2231,7 +2231,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
-                    HostFn::ReserveTake => {
+                    HostFn::SiteReserveTake => {
                         let (site, element) = self.acting(&args)?;
                         let bucket = meter::site_reserve_take(
                             &mut MeterPort {
@@ -2244,7 +2244,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(self.seat_bucket(bucket).cast_signed())])
                     }
-                    HostFn::Count => {
+                    HostFn::SiteCount => {
                         let (site, element) = self.acting(&args)?;
                         let count = meter::site_count(
                             &mut MeterPort {
@@ -2257,7 +2257,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(count.cast_signed())])
                     }
-                    HostFn::Covered => {
+                    HostFn::SiteCovered => {
                         let (site, element) = self.acting(&args)?;
                         let covered = meter::site_covered(
                             &mut MeterPort {
@@ -2270,7 +2270,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(vec![Value::I32(i32::from(covered))])
                     }
-                    HostFn::Order => {
+                    HostFn::SiteOrder => {
                         let (site, element) = self.acting(&args)?;
                         let index = args[after].as_i32().cast_unsigned();
                         let order = meter::site_order(
@@ -2287,7 +2287,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         Self::write_amount(store, mem, args[after + 1], order)?;
                         Ok(Vec::new())
                     }
-                    HostFn::Entry => {
+                    HostFn::SiteEntry => {
                         let (site, element) = self.acting(&args)?;
                         let index = args[after].as_i32().cast_unsigned();
                         let bytes = meter::site_entry(
@@ -2304,7 +2304,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         self.lower_list(modules, store, mem, realloc, &bytes, args[after + 1])?;
                         Ok(Vec::new())
                     }
-                    HostFn::EntrySet => {
+                    HostFn::SiteEntrySet => {
                         let (site, element) = self.acting(&args)?;
                         let index = args[after].as_i32().cast_unsigned();
                         let mem = self.mem_opt(id)?;
@@ -2323,7 +2323,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::Insert => {
+                    HostFn::SiteInsert => {
                         let (site, element) = self.acting(&args)?;
                         let mem = self.mem_opt(id)?;
                         let order = flat_amount(args[after], args[after + 1]);
@@ -2342,7 +2342,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::Remove => {
+                    HostFn::SiteRemove => {
                         let (site, element) = self.acting(&args)?;
                         let index = args[after].as_i32().cast_unsigned();
                         meter::site_remove(
@@ -2357,7 +2357,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::Seal => {
+                    HostFn::SiteSeal => {
                         let (site, element) = self.acting(&args)?;
                         meter::site_seal(
                             &mut MeterPort {
@@ -2370,7 +2370,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
                         .map_err(meter_fault)?;
                         Ok(Vec::new())
                     }
-                    HostFn::OpenSeal => {
+                    HostFn::SiteOpenSeal => {
                         let (site, element) = self.acting(&args)?;
                         let drawn = meter::site_open_seal(
                             &mut MeterPort {
