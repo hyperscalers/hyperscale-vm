@@ -11,7 +11,7 @@ use hyperscale_vm_types::{Address, EffectTarget, Presence, ResourceAddr, Substat
 
 use crate::hash::Hash32;
 use crate::presented::Presented;
-use crate::rule::Rule;
+use crate::rule::{Rule, SealedLeaf};
 use crate::types::{EdgeContent, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
@@ -192,6 +192,41 @@ impl Rule<JudgedLeaf> {
             }
         }
         match (state, evidence) {
+            (true, true) => Judged::InTheLeg,
+            (true, false) => Judged::AtMaterialization,
+            (false, _) => Judged::AtAdmission,
+        }
+    }
+}
+
+impl Rule<SealedLeaf> {
+    /// Where an entry sealing this rule is judged, once something injects
+    /// it.
+    ///
+    /// Settled at the seal, before any holder has been named and before
+    /// any transaction exists — because a sealed leaf maps one-to-one
+    /// onto a judged one: a holding becomes the presence of the moving
+    /// party's own leaf, and a claim stays a claim. Neither can become a
+    /// [`Stored`](JudgedLeaf::Stored) leaf, which is why an entry can
+    /// never be judged in the leg for reaching a rule.
+    ///
+    /// What it buys is a reader of the record learning *when they would
+    /// hear*, from the record alone. An entry asking a standing fact
+    /// about them is answered before any body runs and turns nobody
+    /// away mid-transaction; one asking whether this transaction was
+    /// approved is answered before it is a transaction at all; one
+    /// asking both is the only shape that lands inside a leg.
+    #[must_use]
+    pub fn judged(&self) -> Judged {
+        let mut held = false;
+        let mut claimed = false;
+        for leaf in self.leaves() {
+            match leaf {
+                SealedLeaf::Held { .. } => held = true,
+                SealedLeaf::Claim(_) => claimed = true,
+            }
+        }
+        match (held, claimed) {
             (true, true) => Judged::InTheLeg,
             (true, false) => Judged::AtMaterialization,
             (false, _) => Judged::AtAdmission,

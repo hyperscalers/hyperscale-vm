@@ -60,7 +60,7 @@ pub use envelope::{
     AdmittedTree, Binding, EnvelopeTree, IntentDecl, MAX_SUBINTENTS, NULLIFIER_SLOT, Socket,
     Subintent, SubintentHash, SubintentRecord, admit_tree, encode_tree, nullifier_key, route_tree,
 };
-pub use explain::{explain, explain_method};
+pub use explain::{explain, explain_method, explain_resource};
 pub use footprint::{
     DEPTH_UNITS, EXCLUSIVITY_FLOOR, SCAN_SEEK_ENTRIES, TARGET_UNITS, WIDTH_UNITS, effect_units,
     footprint,

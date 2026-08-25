@@ -33,13 +33,19 @@
 use std::fmt::Write as _;
 
 use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
-use hyperscale_vm_types::{Address, Presence, SubstateKey};
+use hyperscale_vm_types::{Address, AddressClass, Presence, SubstateKey};
 
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
 use crate::envelope::NULLIFIER_SLOT;
+use crate::hash::Hasher;
+use crate::manifest::Judged;
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
-use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
-use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleExpr, RuleLeaf, always, never};
+use crate::presented::Presented;
+use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind, ResourceMeta};
+use crate::rule::{
+    GrantClaim, GrantRuleExpr, Holding, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule, always,
+    never,
+};
 use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, Totality};
 use crate::types::{EdgeContent, Value, u256_decimal};
 use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
@@ -66,6 +72,128 @@ pub fn explain_method(metadata: &PackageMetadata, method: &str) -> Option<String
     let mut out = String::new();
     Names(metadata).method(method, signature, &mut out);
     Some(out)
+}
+
+/// What a resource's own record says about moving it, for whoever is
+/// deciding whether to accept it.
+///
+/// The tier where the questions are settled. A package's declaration
+/// says `withdraw = config.registrar` and cannot say what that field
+/// will name; a record has the instance's answer folded into it, so
+/// every entry here reads as one of exactly two questions — **a holding**,
+/// a standing fact about the party whose cell moves, or **an approval**,
+/// which is about this transaction and nothing about that party.
+///
+/// Each entry also says when its verdict lands, which is what a holder
+/// needs and what the sealed leaves already decide: an approval is
+/// answered before the transaction exists and costs a refused sender
+/// nothing; a holding is answered before any body runs; an entry asking
+/// both lands inside the call, where a caller may already have committed.
+///
+/// The addresses render as themselves. A record is what a resource's own
+/// address is the hash of, so there is no package here to name anything
+/// through — which is the honest limit of reading a resource rather than
+/// a declaration.
+#[must_use]
+pub fn explain_resource(record: &ResourceMeta, hasher: &dyn Hasher) -> String {
+    let address = record.address(hasher);
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "resource {}  {}",
+        address_text(address.address()),
+        resource_kind(record.kind)
+    );
+    let _ = writeln!(out, "  issued by  {}", address_text(record.namespace));
+    let _ = writeln!(
+        out,
+        "  class      {}",
+        match address.address().class() {
+            AddressClass::Restricted =>
+                "restricted — an entry here can stop a movement of it, so a transfer \
+                 presents this record",
+            _ => "plain — nothing here can stop a movement, so a transfer pays for none of it",
+        }
+    );
+    // What the issuing frame speaks for, asked through the door
+    // admission injects through — so what this says demands nothing is
+    // exactly what nothing is demanded for.
+    let issuer = Presented::of_address(record.namespace);
+    for behaviour in GrantedBehaviour::ALL {
+        let Some(entry) = record.rules.get(behaviour) else {
+            continue;
+        };
+        let asks = match behaviour.demanded(entry, issuer) {
+            Err(_) => "unreadable".to_owned(),
+            Ok(None) => "the issuer's own code, which proves nothing to itself".to_owned(),
+            // The constants answer without asking anything, so there is
+            // no stage for a verdict to land at and nothing to hear.
+            Ok(Some(rule)) if rule == always() => "anyone".to_owned(),
+            Ok(Some(rule)) if rule == never() => "nobody, ever".to_owned(),
+            Ok(Some(rule)) => format!(
+                "{} — heard {}",
+                sealed_rule(&rule, record.namespace),
+                heard(rule.judged())
+            ),
+        };
+        let _ = writeln!(out, "  {:<9}  {asks}", behaviour_name(behaviour));
+    }
+    out
+}
+
+/// When a verdict reached at this stage lands, in what it costs the
+/// party it lands on.
+const fn heard(judged: Judged) -> &'static str {
+    match judged {
+        // Never included, so it costs a refused sender nothing at all.
+        Judged::AtAdmission => "before it is a transaction",
+        // The whole transaction aborts, and no caller committed on it.
+        Judged::AtMaterialization => "before any body runs",
+        // Inside the declaring node's own leg, which a caller may
+        // already have committed without waiting for.
+        Judged::InTheLeg => "inside the call, after a caller may have committed",
+    }
+}
+
+/// One sealed rule, each leaf saying which of the two questions it is.
+///
+/// `issuer` is the record's own namespace, so an entry naming it reads as
+/// the issuer rather than as an address a reader would have to compare by
+/// eye. It still reads as an approval: a movement entry naming the issuer
+/// asks whether *this transaction* carried a claim on them, and the party
+/// whose cell moves is somebody else entirely.
+fn sealed_rule(rule: &StoredRule, issuer: Address) -> String {
+    match rule {
+        Rule::Require(SealedLeaf::Claim(claim)) if claim.subject == issuer => format!(
+            "approval on the issuer{}",
+            claim
+                .instance
+                .map_or_else(String::new, |id| format!(", instance {id}"))
+        ),
+        Rule::Require(SealedLeaf::Claim(claim)) => format!(
+            "approval on {}{}",
+            address_text(claim.subject),
+            claim
+                .instance
+                .map_or_else(String::new, |id| format!(", instance {id}"))
+        ),
+        Rule::Require(SealedLeaf::Held { badge, holding }) => format!(
+            "the moving party holds {} of {}",
+            match holding {
+                Holding::Balance => "a balance".to_owned(),
+                Holding::AnyInstance => "any instance".to_owned(),
+                Holding::Instance(id) => format!("instance {id}"),
+            },
+            address_text(badge.address())
+        ),
+        Rule::CountOf { count, rules } => {
+            let branches: Vec<String> = rules
+                .iter()
+                .map(|branch| sealed_rule(branch, issuer))
+                .collect();
+            format!("{count} of ({})", branches.join(", "))
+        }
+    }
 }
 
 /// The tables a rendering resolves names through.
@@ -167,7 +295,7 @@ impl Names<'_> {
                 },
                 bytes(mark),
                 resource_kind(*kind),
-                grants_of(grants)
+                self.grants_of(grants)
             );
         }
         // What a caller hands over to be destroyed, which is the other
@@ -415,7 +543,7 @@ impl Names<'_> {
                     "self-issued({}{}){}",
                     resource_kind(*kind),
                     self.material(material),
-                    grants_of(grants)
+                    self.grants_of(grants)
                 ),
                 ATOM,
             ),
@@ -535,6 +663,96 @@ impl Names<'_> {
         }
     }
 
+    /// What a resource's declared entries grant, as a trailer on the
+    /// derivation that folds them.
+    fn grants_of(&self, grants: &GrantsExpr) -> String {
+        if grants.is_empty() {
+            return String::new();
+        }
+        let granted: Vec<String> = grants
+            .iter()
+            .map(|(behaviour, entry)| {
+                format!(
+                    "{} to {}",
+                    behaviour_name(behaviour),
+                    self.grant_entry(behaviour, entry)
+                )
+            })
+            .collect();
+        format!(", granting {}", granted.join(" and "))
+    }
+
+    /// What one declared entry admits, as a reader of the resource sees
+    /// it.
+    ///
+    /// **Which question an entry asks is the subject's answer, not the
+    /// behaviour's.** An actor question always reads a claim, so it says
+    /// who must approve. A holder question reads whichever its subject
+    /// can be asked: a resource can be held, so naming one asks a
+    /// standing fact about the party whose cell moves; an identity
+    /// cannot, so naming one asks whether this transaction carried a
+    /// claim on it.
+    ///
+    /// A configuration field carries an address and no class until an
+    /// instance supplies one, so this cannot say which of the two it
+    /// will be, and does not pretend to — the record's own rendering is
+    /// where the answer is settled.
+    fn grant_entry(&self, behaviour: GrantedBehaviour, rule: &GrantRuleExpr) -> String {
+        if *rule == always() {
+            return "anyone".to_owned();
+        }
+        if *rule == never() {
+            return "nobody".to_owned();
+        }
+        if behaviour.asks_about_the_actor() {
+            return self.grant_rule(rule);
+        }
+        match rule {
+            Rule::Require(GrantClaim::SelfAddr) => {
+                "whatever transaction the issuer approves".to_owned()
+            }
+            Rule::Require(GrantClaim::Config(field)) => {
+                format!("whoever answers for {}", self.config(*field))
+            }
+            Rule::Require(GrantClaim::SelfBadge { .. } | GrantClaim::SelfInstance { .. }) => {
+                format!("whoever holds {}", self.grant_rule(rule))
+            }
+            // A threshold over subjects that need not agree about which
+            // question they ask, so each branch says for itself.
+            Rule::CountOf { count, rules } => {
+                let branches: Vec<String> = rules
+                    .iter()
+                    .map(|branch| self.grant_entry(behaviour, branch))
+                    .collect();
+                format!("{count} of ({})", branches.join(", "))
+            }
+        }
+    }
+
+    /// An actor question's entry, which always names who must approve.
+    fn grant_rule(&self, rule: &GrantRuleExpr) -> String {
+        match rule {
+            Rule::Require(claim) => self.grant_claim(claim),
+            Rule::CountOf { count, rules } => {
+                let branches: Vec<String> =
+                    rules.iter().map(|rule| self.grant_rule(rule)).collect();
+                format!("{count} of ({})", branches.join(", "))
+            }
+        }
+    }
+
+    /// What one declared claim names.
+    fn grant_claim(&self, claim: &GrantClaim) -> String {
+        match claim {
+            GrantClaim::SelfAddr => "the issuer".to_owned(),
+            GrantClaim::SelfBadge { mark, .. } => format!("the issuer's {} badge", bytes(mark)),
+            GrantClaim::SelfInstance { mark, id, .. } => {
+                format!("instance {id} of the issuer's {} badge", bytes(mark))
+            }
+            GrantClaim::Config(field) => self.config(*field),
+        }
+    }
+
     /// A configuration field, by the name its author spelled.
     fn config(&self, field: u32) -> String {
         usize::try_from(field)
@@ -591,24 +809,6 @@ fn name_table(title: &str, names: &[String], base: u16, out: &mut String) {
     }
 }
 
-/// The rules a resource's own address grants, where it grants any.
-fn grants_of(grants: &GrantsExpr) -> String {
-    if grants.is_empty() {
-        return String::new();
-    }
-    let granted: Vec<String> = grants
-        .iter()
-        .map(|(behaviour, entry)| {
-            format!(
-                "{} to {}",
-                behaviour_name(behaviour),
-                grant_entry(behaviour, entry)
-            )
-        })
-        .collect();
-    format!(", granting {}", granted.join(" and "))
-}
-
 /// A literal, in the form the kind reads best in.
 fn value_text(value: &Value) -> String {
     match value {
@@ -657,50 +857,6 @@ fn leaf_form(form: &LeafForm) -> String {
     match form {
         LeafForm::Value(shape) => format!("holding {}", shape_of(shape)),
         LeafForm::Bytes => "holding its own bytes".to_owned(),
-    }
-}
-
-/// A granted rule, whose leaves name what the resource's own derivation
-/// commits to and nothing a caller supplies.
-/// What one granted entry admits, as a reader of the resource sees it.
-///
-/// Which side a leaf asks about is the behaviour's, so the reading is
-/// too: a holder question is answered by what the moving party holds, an
-/// actor question by what a caller presents.
-fn grant_entry(behaviour: GrantedBehaviour, rule: &GrantRuleExpr) -> String {
-    if *rule == always() {
-        return "anyone".to_owned();
-    }
-    if *rule == never() {
-        return "nobody".to_owned();
-    }
-    let rendered = grant_rule(rule);
-    if behaviour.asks_about_the_actor() {
-        rendered
-    } else {
-        format!("whoever holds {rendered}")
-    }
-}
-
-/// What one declared claim names.
-fn grant_claim(claim: &GrantClaim) -> String {
-    match claim {
-        GrantClaim::SelfAddr => "the issuer".to_owned(),
-        GrantClaim::SelfBadge { mark, .. } => format!("the issuer's {} badge", bytes(mark)),
-        GrantClaim::SelfInstance { mark, id, .. } => {
-            format!("instance {id} of the issuer's {} badge", bytes(mark))
-        }
-        GrantClaim::Config(field) => format!("configuration field {field}"),
-    }
-}
-
-fn grant_rule(rule: &GrantRuleExpr) -> String {
-    match rule {
-        Rule::Require(claim) => grant_claim(claim),
-        Rule::CountOf { count, rules } => {
-            let branches: Vec<String> = rules.iter().map(grant_rule).collect();
-            format!("{count} of ({})", branches.join(", "))
-        }
     }
 }
 
