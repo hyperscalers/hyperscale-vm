@@ -22,15 +22,15 @@
 //! properties over the signed form, so a defect here costs a signer a
 //! refused transaction and can never admit one the protocol would refuse.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    ChainRecords, Constraint, EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef, Expr,
-    GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash,
-    MethodSignature, PackageHash, PackageMetadata, ParamType, PresentedGrants, Value,
-    evaluate_expr,
+    ChainRecords, Clause, Constraint, EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef,
+    Expr, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph, ManifestHash,
+    MethodSignature, PackageHash, PackageMetadata, ParamType, PresentedGrants, ResourceMeta, Value,
+    evaluate_expr, keying_resource,
 };
 use hyperscale_vm_types::{Address, CallTarget, PrincipalAddr, ResourceAddr};
 
@@ -809,6 +809,127 @@ pub(crate) fn output_resources(
             }
         })
         .collect()
+}
+
+/// Every granted-rule record a graph's calls will be resolved against,
+/// in address order.
+///
+/// What an envelope carries in its `resources` section, found rather
+/// than asked for. Run over a declaration rather than over a builder,
+/// because the composer assembling an envelope is not always the party
+/// that wrote what it carries: a presented subintent arrives whole and
+/// already signed, and the records it needs are readable off it. Records
+/// ride the envelope rather than any intent, so attaching them forges
+/// nothing that a signature covers.
+///
+/// Best effort by construction, and safely so. A resource named through
+/// a `for-each` element, or through an argument nothing in the
+/// declaration determines, is one this cannot resolve — and a record
+/// missing from the envelope is a refusal at admission rather than a
+/// movement let through, because withholding a restricted resource's
+/// record withholds the movement.
+#[must_use]
+pub fn graph_records(
+    graph: &ManifestGraph,
+    chain: &dyn ChainRecords,
+    hasher: &dyn Hasher,
+) -> Vec<ResourceMeta> {
+    let mut found: BTreeMap<ResourceAddr, ResourceMeta> = BTreeMap::new();
+    for (index, node) in graph.nodes.iter().enumerate() {
+        let Some(meta) = chain.instance(node.target) else {
+            continue;
+        };
+        let Some(package) = chain.package(meta.package) else {
+            continue;
+        };
+        let Some(signature) = package.methods.get(&node.method) else {
+            continue;
+        };
+        let Ok(inputs) = type_args(&node.method, &node.args, &signature.params) else {
+            continue;
+        };
+        let known: Vec<bool> = inputs.iter().map(Option::is_some).collect();
+        let values: Vec<Value> = inputs
+            .into_iter()
+            .map(|value| value.unwrap_or_else(unknown))
+            .collect();
+        let budget = EvalBudget::default();
+        let inputs = EvalInputs {
+            self_addr: node.target.address(),
+            args: &values,
+            record: &meta,
+            node_index: u32::try_from(index).unwrap_or(u32::MAX),
+            identity: UNBOUND,
+            grants: PresentedGrants::none(),
+            budget: &budget,
+        };
+        for resource in governing(signature, &node.args, &inputs, &known, hasher) {
+            if let std::collections::btree_map::Entry::Vacant(slot) = found.entry(resource)
+                && let Some(record) = chain.resource(resource, hasher)
+            {
+                slot.insert(record);
+            }
+        }
+    }
+    found.into_values().collect()
+}
+
+/// Every resource whose granted-rule record this call's injected entries
+/// will be resolved against.
+///
+/// Three sources, one per injection that reads a *presented* record. A
+/// **destruction** governs the resource of an edge the caller named, so
+/// the edge's own type says which. A **reach** is keyed first by the
+/// resource whose entry admits it. And a **movement** is judged against
+/// the entries of what the cell holds, which the clause's denomination
+/// names.
+///
+/// The fourth injection needs nothing here: an issuance governs a
+/// resource the *declaration* derives, so re-derivation is the address
+/// and there is no record to find.
+fn governing(
+    signature: &MethodSignature,
+    args: &[GraphArg],
+    inputs: &EvalInputs<'_>,
+    known: &[bool],
+    hasher: &dyn Hasher,
+) -> Vec<ResourceAddr> {
+    let resolve = |expr: &Expr| {
+        if !resolvable(expr, known, 0) {
+            return None;
+        }
+        match evaluate_expr(expr, inputs, hasher) {
+            Ok(Value::Address(address)) => ResourceAddr::try_from(address).ok(),
+            _ => None,
+        }
+    };
+    let destroyed = signature.destroys.iter().filter_map(|param| {
+        let arg = usize::try_from(*param).ok().and_then(|at| args.get(at))?;
+        match arg {
+            GraphArg::Edge { constraints, .. } => edge_resource(constraints),
+            GraphArg::Literal(_) | GraphArg::Param(_) => None,
+        }
+    });
+    let declared = signature
+        .effects
+        .iter()
+        .flat_map(Clause::effects)
+        .filter_map(|clause| {
+            let Clause::Effect {
+                target,
+                denomination,
+                reach,
+                ..
+            } = clause
+            else {
+                return None;
+            };
+            match reach {
+                Some(_) => keying_resource(target).and_then(&resolve),
+                None => denomination.as_deref().and_then(&resolve),
+            }
+        });
+    destroyed.chain(declared).collect()
 }
 
 /// The value standing in for an input nothing determined.

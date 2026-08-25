@@ -24,11 +24,14 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hyperscale_vm_types::{Address, CallTarget};
+use hyperscale_vm_types::{Address, CallTarget, ResourceAddr};
 
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, InstanceRegistry};
 use crate::metadata::{MetadataCache, PackageHash, PackageMetadata};
+use crate::resource::ResourceMeta;
+use crate::signature::Issuance;
+use crate::types::Value;
 
 /// The records the chain answers for, as one node holds them.
 ///
@@ -52,6 +55,21 @@ pub trait ChainRecords: Send + Sync {
     /// A published package's metadata, or `None` where this node has not
     /// seen the package publish.
     fn package(&self, hash: PackageHash) -> Option<Arc<PackageMetadata>>;
+
+    /// The granted-rule record a resource's address commits, or `None`
+    /// where this world cannot say which component issues it.
+    ///
+    /// **Not a state read, and it cannot be one.** A resource's record
+    /// is committed under its *issuer*, and the address is the hash of
+    /// the issuer, the kind, the mark and the rules — so nothing about
+    /// it says who to ask. What answers is whoever watched the issuance
+    /// declared: an index over the instances a world holds, which is why
+    /// the derivation seam is a parameter here rather than something the
+    /// implementation keeps.
+    ///
+    /// Owned rather than shared, because an implementation that derives
+    /// its answer has nothing to lend.
+    fn resource(&self, resource: ResourceAddr, hasher: &dyn Hasher) -> Option<ResourceMeta>;
 }
 
 impl<T: ChainRecords + ?Sized> ChainRecords for &T {
@@ -62,6 +80,10 @@ impl<T: ChainRecords + ?Sized> ChainRecords for &T {
     fn package(&self, hash: PackageHash) -> Option<Arc<PackageMetadata>> {
         T::package(self, hash)
     }
+
+    fn resource(&self, resource: ResourceAddr, hasher: &dyn Hasher) -> Option<ResourceMeta> {
+        T::resource(self, resource, hasher)
+    }
 }
 
 impl<T: ChainRecords + ?Sized> ChainRecords for Arc<T> {
@@ -71,6 +93,10 @@ impl<T: ChainRecords + ?Sized> ChainRecords for Arc<T> {
 
     fn package(&self, hash: PackageHash) -> Option<Arc<PackageMetadata>> {
         T::package(self, hash)
+    }
+
+    fn resource(&self, resource: ResourceAddr, hasher: &dyn Hasher) -> Option<ResourceMeta> {
+        T::resource(self, resource, hasher)
     }
 }
 
@@ -117,6 +143,49 @@ impl ChainRecords for Records {
     fn package(&self, hash: PackageHash) -> Option<Arc<PackageMetadata>> {
         self.packages.record(hash)
     }
+
+    /// Derived from what this world holds: every instance's package
+    /// declares which resources it issues, and each of those addresses
+    /// re-derives against the instance issuing it.
+    ///
+    /// A scan rather than a map, because the world it scans is the whole
+    /// of what it knows and building an index would be one more thing to
+    /// keep agreeing with the two collections beside it. A node serving
+    /// a live chain keeps the index instead, on the terms the type's own
+    /// doc sets.
+    fn resource(&self, resource: ResourceAddr, hasher: &dyn Hasher) -> Option<ResourceMeta> {
+        self.instances
+            .components()
+            .filter_map(|(issuer, meta)| Some((issuer, meta, self.packages.get(meta.package)?)))
+            .flat_map(|(issuer, meta, package)| {
+                package
+                    .methods
+                    .values()
+                    .flat_map(|signature| &signature.issues)
+                    .filter_map(move |issuance| issued_record(hasher, issuer, meta, issuance))
+            })
+            .find(|record| record.address(hasher) == resource)
+    }
+}
+
+/// The record one declared issuance commits, resolved against the
+/// instance issuing it.
+///
+/// `None` where the grant tree names something the instance's own
+/// configuration does not resolve — a resource that instance could never
+/// issue, and so one no address of this world's names.
+fn issued_record(
+    hasher: &dyn Hasher,
+    issuer: Address,
+    meta: &InstanceMeta,
+    issuance: &Issuance,
+) -> Option<ResourceMeta> {
+    Some(ResourceMeta {
+        namespace: issuer,
+        kind: issuance.kind,
+        material: vec![Value::Bytes(issuance.mark.clone()).canonical_bytes()],
+        rules: issuance.grants.resolve(hasher, issuer, &meta.config).ok()?,
+    })
 }
 
 /// A transaction's own records, over what the chain answers for.
@@ -158,5 +227,26 @@ impl ChainRecords for Composed<'_> {
 
     fn package(&self, hash: PackageHash) -> Option<Arc<PackageMetadata>> {
         self.base.package(hash)
+    }
+
+    /// The base first, then this envelope's own components — the same
+    /// order an instance resolves in, so a presented record can never
+    /// displace a committed one.
+    fn resource(&self, resource: ResourceAddr, hasher: &dyn Hasher) -> Option<ResourceMeta> {
+        self.base.resource(resource, hasher).or_else(|| {
+            self.presented
+                .values()
+                .filter_map(|meta| Some((meta, self.base.package(meta.package)?)))
+                .flat_map(|(meta, package)| {
+                    let issuer = meta.address(hasher).address();
+                    package
+                        .methods
+                        .values()
+                        .flat_map(|signature| &signature.issues)
+                        .filter_map(move |issuance| issued_record(hasher, issuer, meta, issuance))
+                        .collect::<Vec<_>>()
+                })
+                .find(|record| record.address(hasher) == resource)
+        })
     }
 }

@@ -1583,8 +1583,6 @@ fn eval_denomination(
     Ok(ResourceAddr::try_from(address)?)
 }
 
-/// The expression a target's key is derived from first, which for a
-/// reach is the resource whose entry admits it.
 /// The authority a reaching access acts under, over the resource its
 /// own key was derived from.
 ///
@@ -1610,9 +1608,14 @@ fn eval_reach(
     }))
 }
 
-fn keying_resource(target: &TargetExpr) -> Option<&Expr> {
-    // A fresh key is minted under its owner rather than derived from
-    // anything, so it is keyed by nothing and can never be reached.
+/// The expression a target's key is derived from first.
+///
+/// What a reach is admitted by: a reaching target is keyed first by the
+/// resource whose entry admits it, held to that shape at publish. A
+/// fresh key is minted under its owner rather than derived from
+/// anything, so it is keyed by nothing and can never be reached.
+#[must_use]
+pub fn keying_resource(target: &TargetExpr) -> Option<&Expr> {
     let material = match target {
         TargetExpr::Point(Expr::ChildKey { material, .. })
         | TargetExpr::Entry { material, .. }

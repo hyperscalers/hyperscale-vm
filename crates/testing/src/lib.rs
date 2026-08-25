@@ -48,14 +48,14 @@ pub use hyperscale_vm_effects::ResourceKind;
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver,
-    PresentedGrants, Records, ResourceMeta, TestHasher, Value, admit_presenting, child_key,
-    declaration_hash, holdings_collection, issued_resource, route,
+    PresentedGrants, Records, TestHasher, Value, admit_presenting, child_key, declaration_hash,
+    holdings_collection, issued_resource, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
     decode_amount, execute_batch,
 };
-use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError, graph_records};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, instantiate};
 pub use hyperscale_vm_types::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_types::{
@@ -348,44 +348,6 @@ impl Chain {
         address
     }
 
-    /// The granted-rule record of every resource this world's components
-    /// issue.
-    ///
-    /// A real composer presents the records its own transaction reaches,
-    /// resolved from the packages it is calling; a chain a test drives
-    /// knows every one of them, so it presents all of them and the
-    /// question of which a composer would have found never arises here.
-    /// What each says is still checked by re-derivation at admission —
-    /// presenting a record is not being believed.
-    fn presented(&self) -> PresentedGrants {
-        let records: Vec<ResourceMeta> = self
-            .records
-            .instances
-            .components()
-            .flat_map(|(address, meta)| {
-                let package = self.records.packages.get(meta.package);
-                let issued = package
-                    .into_iter()
-                    .flat_map(|metadata| metadata.methods.values())
-                    .flat_map(|signature| &signature.issues);
-                issued
-                    .filter_map(|issuance| {
-                        Some(ResourceMeta {
-                            namespace: address,
-                            kind: issuance.kind,
-                            material: vec![Value::Bytes(issuance.mark.clone()).canonical_bytes()],
-                            rules: issuance
-                                .grants
-                                .resolve(&TestHasher, address, &meta.config)
-                                .ok()?,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        PresentedGrants::from_presented(&TestHasher, &records)
-    }
-
     /// The resource an instance issues under `mark`.
     ///
     /// The same derivation `issued(mark)` reaches inside a body: an
@@ -501,11 +463,14 @@ impl Chain {
         let written = build(&mut builder)?;
         let graph = builder.build()?;
 
+        // The records the graph's own calls will be resolved against,
+        // found the way a composer finds them rather than handed over.
+        let records = graph_records(&graph, &self.records, &TestHasher);
         let admitted = admit_presenting(
             &graph,
             signer,
             &self.records,
-            &self.presented(),
+            &PresentedGrants::from_presented(&TestHasher, &records),
             &TestHasher,
         )?;
         let routing = route(&admitted, &PrefixShardResolver { bits: 0 });

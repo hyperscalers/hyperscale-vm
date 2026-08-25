@@ -39,7 +39,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
 use crate::builder::{Bucket, Param};
-use crate::typed::{TypedBuilder, TypedError};
+use crate::typed::{TypedBuilder, TypedError, graph_records};
 
 /// Why an envelope could not be composed.
 ///
@@ -357,6 +357,7 @@ impl<'a> EnvelopeBuilder<'a> {
         }
         check_params(&decl.graph, decl.params.len(), intent)?;
         let sinks = self.sinks(intent, decl.params.len());
+        self.carry(&decl.graph);
         self.signers.push(signer);
         self.intents.push(Some(decl));
         Ok(sinks)
@@ -388,8 +389,25 @@ impl<'a> EnvelopeBuilder<'a> {
         );
         let decl = intent.finish(index)?;
         let sinks = self.sinks(index, decl.params.len());
+        self.carry(&decl.graph);
         self.intents[slot] = Some(decl);
         Ok(sinks)
+    }
+
+    /// Carry the granted-rule records `graph`'s calls will be resolved
+    /// against.
+    ///
+    /// Run over every intent the envelope carries, written here or
+    /// signed elsewhere. A subintent arrives whole, so what its calls
+    /// need is readable off it — and the records ride the envelope
+    /// rather than any intent, so the composer attaching them touches
+    /// nothing a signature covers.
+    fn carry(&mut self, graph: &ManifestGraph) {
+        for record in graph_records(graph, self.chain, self.hasher) {
+            if !self.grants.contains(&record) {
+                self.grants.push(record);
+            }
+        }
     }
 
     /// One sink per declared parameter of `intent`, in declaration order.
