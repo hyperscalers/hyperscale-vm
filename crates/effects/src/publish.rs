@@ -762,8 +762,17 @@ fn targets_own_prefix(target: &TargetExpr) -> bool {
 /// are instances and an overlapping one saying they are bytes are two
 /// answers about the same entries, and comparing targets would let them
 /// both through.
+///
+/// The declared half of the pair the vocabulary keeps everywhere else —
+/// `ModeExpr` beside `Mode`, [`TargetExpr`] beside `EffectTarget`. This
+/// one is over expressions and asks whether a *signature* is
+/// self-consistent; the kernel's `Contents` is over evaluated keys and
+/// asks whether one transaction's clauses are. Two tiers of one
+/// question, and neither can stand for the other: two expressions that
+/// differ can evaluate to one cell, and two that agree are one answer
+/// before anything runs.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-enum Contents<'a> {
+enum ContentsExpr<'a> {
     /// One leaf, as the expression naming it.
     Leaf(&'a Expr),
     /// Every entry of one collection, as the owner and identity it hangs
@@ -772,9 +781,9 @@ enum Contents<'a> {
 }
 
 /// Which cell's contents a clause is an answer about.
-fn contents(target: &TargetExpr) -> Contents<'_> {
+fn contents(target: &TargetExpr) -> ContentsExpr<'_> {
     match target {
-        TargetExpr::Point(key) => Contents::Leaf(key),
+        TargetExpr::Point(key) => ContentsExpr::Leaf(key),
         TargetExpr::Entry {
             owner,
             collection,
@@ -786,7 +795,7 @@ fn contents(target: &TargetExpr) -> Contents<'_> {
             collection,
             material,
             ..
-        } => Contents::Entries(owner, collection, material),
+        } => ContentsExpr::Entries(owner, collection, material),
     }
 }
 
@@ -1505,7 +1514,7 @@ fn check_agreement(flat: &[&Clause]) -> Result<(), DeclarationError> {
     // a question one execution answers, and complementary arms answer it
     // differently on purpose; what a cell holds is not a question an
     // execution answers at all.
-    let mut holds: BTreeMap<Contents<'_>, bool> = BTreeMap::new();
+    let mut contents_hold_value: BTreeMap<ContentsExpr<'_>, bool> = BTreeMap::new();
     for (index, clause) in flat.iter().enumerate() {
         let Clause::Effect {
             reach: None,
@@ -1518,7 +1527,7 @@ fn check_agreement(flat: &[&Clause]) -> Result<(), DeclarationError> {
         };
         let clause = u32::try_from(index).unwrap_or(u32::MAX);
         let value = denomination.is_some();
-        if *holds.entry(contents(target)).or_insert(value) != value {
+        if *contents_hold_value.entry(contents(target)).or_insert(value) != value {
             return Err(DeclarationError::MixedContents { clause });
         }
     }

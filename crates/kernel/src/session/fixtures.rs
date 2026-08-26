@@ -8,7 +8,7 @@ use hyperscale_vm_types::{
     Address, AddressClass, Effect, EffectSet, Mode, ResourceAddr, SubstateKey, TxHash,
 };
 
-use super::materialize::{Holds, holds_of};
+use super::materialize::{Contents, contents_of};
 use super::{EnvInputs, KernelSession};
 use crate::overlay::OverlayStore;
 use crate::store::MemoryStore;
@@ -75,17 +75,19 @@ pub(super) const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// [`MaterializeError::MixedContents`](super::MaterializeError::MixedContents)
 /// holds a signature to.
 pub(super) fn holding(ordered: &[Effect]) -> Vec<DeclaredAccess> {
-    let value: BTreeSet<Holds> = ordered
+    let value: BTreeSet<Contents> = ordered
         .iter()
         .filter(|effect| matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }))
-        .map(|effect| holds_of(effect.target))
+        .map(|effect| contents_of(effect.target))
         .collect();
     ordered
         .iter()
         .map(|effect| DeclaredAccess {
             reach: None,
             effect: *effect,
-            holds: value.contains(&holds_of(effect.target)).then_some(RESOURCE),
+            holds: value
+                .contains(&contents_of(effect.target))
+                .then_some(RESOURCE),
         })
         .collect()
 }

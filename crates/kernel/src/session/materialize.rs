@@ -435,10 +435,10 @@ impl KernelSession {
         // rather than by the target, so two intervals of one collection
         // are one answer about its entries.
         let mut table = Vec::with_capacity(ordered.len());
-        let mut holds: BTreeMap<Holds, Option<ResourceAddr>> = BTreeMap::new();
+        let mut contents: BTreeMap<Contents, Option<ResourceAddr>> = BTreeMap::new();
         for access in ordered {
-            if holds
-                .insert(holds_of(access.effect.target), access.holds)
+            if contents
+                .insert(contents_of(access.effect.target), access.holds)
                 .is_some_and(|held| held != access.holds)
             {
                 return Err(MaterializeError::MixedContents(access.effect.target));
@@ -621,8 +621,13 @@ pub fn occupied(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, 
 /// targets over one set of entries — so an interval saying its entries
 /// are instances and an overlapping one saying they are bytes are two
 /// answers about the same entries.
+///
+/// The evaluated half of the pair `publish`'s `ContentsExpr` opens. That
+/// one asks whether a *signature* is self-consistent, before anything is
+/// evaluated; this asks it of one transaction's evaluated clauses, where
+/// two expressions that differ may have reached one cell.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Holds {
+pub(super) enum Contents {
     /// One leaf.
     Leaf(SubstateKey),
     /// Every entry of one collection.
@@ -630,15 +635,15 @@ pub(super) enum Holds {
 }
 
 /// Which cell's contents an effect is an answer about.
-pub(super) const fn holds_of(target: EffectTarget) -> Holds {
+pub(super) const fn contents_of(target: EffectTarget) -> Contents {
     match target {
-        EffectTarget::Point(key) => Holds::Leaf(key),
+        EffectTarget::Point(key) => Contents::Leaf(key),
         EffectTarget::Entry {
             owner, collection, ..
         }
         | EffectTarget::Range {
             owner, collection, ..
-        } => Holds::Entries(owner, collection),
+        } => Contents::Entries(owner, collection),
     }
 }
 
