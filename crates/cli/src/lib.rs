@@ -28,7 +28,7 @@ use hyperscale_vm_effects::PackageMetadata;
 // The rendering `explain` prints, re-exported so the command reaches one
 // dependency for the whole pipeline it drives.
 pub use hyperscale_vm_effects::{explain, explain_method};
-pub use hyperscale_vm_gate::Provenance;
+pub use hyperscale_vm_gate::{GateError, Provenance};
 use hyperscale_vm_gate::{admit_package, admit_protocol_package, attach_metadata, decode_metadata};
 use hyperscale_vm_runtime::validate_component;
 use wit_component::ComponentEncoder;
@@ -213,8 +213,27 @@ pub fn artifact(dir: &Path, provenance: Provenance) -> Result<Vec<u8>, BuildErro
         Provenance::Published => admit_package(&artifact),
         Provenance::Protocol => admit_protocol_package(&artifact),
     }
-    .map_err(|error| BuildError::new(error.0))?;
+    .map_err(|refusal| BuildError::new(explain_gate_refusal(&refusal, &metadata)))?;
     Ok(artifact)
+}
+
+/// A gate refusal, with the declaration of the method it is about
+/// printed beneath it.
+///
+/// The sentence names a clause or a parameter by index, and an index
+/// means nothing without the declaration it indexes. The gate knows which
+/// method it refused, the caller holds the metadata, and `explain_method`
+/// renders the numbered listing — so the three together say which line
+/// the author has to change. A refusal about the package rather than one
+/// method renders as its sentence and nothing else.
+#[must_use]
+pub fn explain_gate_refusal(refusal: &GateError, metadata: &PackageMetadata) -> String {
+    let listing = refusal
+        .method
+        .as_deref()
+        .and_then(|method| explain_method(metadata, method))
+        .map_or_else(String::new, |listing| format!("\n\n{listing}"));
+    format!("{refusal}{listing}")
 }
 
 /// Where [`build`] writes a package's artifact.

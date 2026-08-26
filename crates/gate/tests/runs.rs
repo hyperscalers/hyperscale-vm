@@ -99,8 +99,8 @@ fn a_derived_value_does_not_fill_a_run_parameter() {
     .expect("attaches");
     let refused =
         admit_package(&artifact).expect_err("a derived value cannot fill a resource borrow");
-    assert!(refused.0.contains("\"m\""), "{}", refused.0);
-    assert!(refused.0.contains("derived"), "{}", refused.0);
+    assert_eq!(refused.method.as_deref(), Some("m"), "{refused}");
+    assert!(refused.message.contains("derived"), "{refused}");
 
     // And the binding it does fill, so the refusal above is about the
     // parameter's shape rather than about the binding.

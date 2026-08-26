@@ -96,7 +96,7 @@ fn verdict(metadata: &PackageMetadata) -> Result<(), String> {
     let artifact = attach_metadata(&component(), metadata).expect("attaches");
     admit_package(&artifact)
         .map(|_| ())
-        .map_err(|error| error.0)
+        .map_err(|error| error.to_string())
 }
 
 #[test]

@@ -11,7 +11,10 @@
 
 use std::path::PathBuf;
 
-use hyperscale_vm_cli::{Provenance, artifact, declaration, explain, explain_method, scaffold};
+use hyperscale_vm_cli::{
+    GateError, Provenance, artifact, declaration, explain, explain_gate_refusal, explain_method,
+    scaffold,
+};
 use hyperscale_vm_gate::extract_metadata;
 
 /// The packages authored as one module apiece: the corpus's own, and one
@@ -161,5 +164,39 @@ fn a_package_explains_itself_in_the_names_its_author_wrote() {
     assert!(
         whole.contains("round-truncated"),
         "the error table:\n{whole}"
+    );
+}
+
+/// A gate refusal names a clause by index, and the build prints the
+/// declaration that index is into.
+///
+/// The sentence on its own sends an author counting clauses. Beneath the
+/// listing it names a line. Which method the gate refused is the gate's
+/// own answer now rather than a phrase inside the message, so this is a
+/// lookup rather than a parse.
+#[test]
+fn a_gate_refusal_carries_the_declaration_its_indices_are_into() {
+    let dir = guests().join("lottery");
+    let metadata = declaration(&dir).unwrap_or_else(|error| panic!("lottery: {error}"));
+
+    let about_a_method =
+        GateError::new("ABI parameter 2 borrows site 1 of clause 0").about("enter");
+    let told = explain_gate_refusal(&about_a_method, &metadata);
+    assert!(told.contains("ABI parameter 2"), "the sentence:\n{told}");
+    assert!(told.contains("self.tickets"), "and the listing:\n{told}");
+
+    // A refusal about the package has no method to look up, and reads as
+    // its own sentence.
+    let about_the_package = GateError::new("the package declares no way to make a component");
+    assert_eq!(
+        explain_gate_refusal(&about_the_package, &metadata),
+        about_the_package.to_string(),
+    );
+
+    // Nor does a method the package does not declare invent a listing.
+    let elsewhere = GateError::new("something").about("no-such-method");
+    assert_eq!(
+        explain_gate_refusal(&elsewhere, &metadata),
+        elsewhere.to_string(),
     );
 }

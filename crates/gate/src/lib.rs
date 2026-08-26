@@ -17,6 +17,8 @@
 //! profile, and the judgement of each declared method against the export
 //! that will receive its arguments.
 
+use std::fmt;
+
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
     AbiParam, Clause, MethodSignature, PackageMetadata, Totality,
@@ -38,9 +40,51 @@ mod section;
 /// the build, off the same call. What differs between them is who is
 /// listening, so what a caller needs is the sentence, not a variant to
 /// branch on.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct GateError(pub String);
+///
+/// The method is beside the sentence rather than inside it. Most of these
+/// refusals are about one method, and a caller holding the name can do
+/// something with it — the build command prints that method's own
+/// declaration beneath the refusal, which is what makes a clause index in
+/// the sentence mean anything.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GateError {
+    /// The method the refusal is about, where it is about one.
+    pub method: Option<String>,
+    /// What is wrong, without the method's name in it.
+    pub message: String,
+}
+
+impl GateError {
+    /// A refusal about the package rather than about one method.
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            method: None,
+            message: message.into(),
+        }
+    }
+
+    /// The same refusal, said to be about `method`.
+    ///
+    /// Attached where the loop knows the name, so no message has to carry
+    /// it and none of them can spell it differently.
+    #[must_use]
+    pub fn about(mut self, method: &str) -> Self {
+        self.method = Some(method.to_owned());
+        self
+    }
+}
+
+impl fmt::Display for GateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.method {
+            Some(method) => write!(f, "method {method:?}: {}", self.message),
+            None => f.write_str(&self.message),
+        }
+    }
+}
+
+impl std::error::Error for GateError {}
 
 /// Attach `metadata` to a component artifact as its metadata section.
 ///
@@ -55,7 +99,7 @@ pub struct GateError(pub String);
 /// here so nothing assembles an artifact admission would refuse on size.
 pub fn attach_metadata(artifact: &[u8], metadata: &PackageMetadata) -> Result<Vec<u8>, GateError> {
     encode_metadata(metadata)?;
-    attach_canonical(artifact, metadata).map_err(|error| GateError(error.to_string()))
+    attach_canonical(artifact, metadata).map_err(|error| GateError::new(error.to_string()))
 }
 
 /// The effect metadata a component artifact declares, if it declares any.
@@ -67,7 +111,7 @@ pub fn attach_metadata(artifact: &[u8], metadata: &PackageMetadata) -> Result<Ve
 /// payload is oversized or not canonical metadata.
 pub fn extract_metadata(artifact: &[u8]) -> Result<Option<PackageMetadata>, GateError> {
     metadata_section(artifact)
-        .map_err(|error| GateError(error.to_string()))?
+        .map_err(|error| GateError::new(error.to_string()))?
         .map(decode_metadata)
         .transpose()
 }
@@ -138,25 +182,28 @@ pub enum Provenance {
 
 fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, GateError> {
     let types = validated_component(artifact)
-        .map_err(|error| GateError(format!("artifact is outside the profile: {error}")))?;
+        .map_err(|error| GateError::new(format!("artifact is outside the profile: {error}")))?;
     let metadata = extract_metadata(artifact)?
-        .ok_or_else(|| GateError("artifact declares no effect metadata section".into()))?;
+        .ok_or_else(|| GateError::new("artifact declares no effect metadata section"))?;
     let exports = classify_exports(artifact, &types)
-        .map_err(|error| GateError(format!("artifact does not parse: {error}")))?;
+        .map_err(|error| GateError::new(format!("artifact does not parse: {error}")))?;
+    // Every refusal below is about the method the loop is on, so the name
+    // is attached here and no message carries it — which is what stops
+    // sixteen of them spelling it sixteen ways.
     for (method, signature) in &metadata.methods {
-        let Some(export) = exports.get(method.as_str()) else {
-            return Err(GateError(format!(
-                "metadata declares method {method:?}, which the component does not export"
-            )));
+        let judged = || {
+            let export = exports
+                .get(method.as_str())
+                .ok_or_else(|| GateError::new("the component does not export it"))?;
+            // The composed signature check: the same judgment the
+            // metadata cache runs at its door, asked here first so a
+            // refusal names the artifact rather than a call.
+            check_signature(signature).map_err(|error| GateError::new(error.to_string()))?;
+            check_abi_against_export(signature, &export.params)?;
+            check_outputs_against_export(signature, export)?;
+            judge_totality(artifact, method, signature, export, provenance)
         };
-        // The composed signature check: the same judgment the metadata
-        // cache runs at its door, asked here first so a refusal names the
-        // artifact rather than a call.
-        check_signature(signature)
-            .map_err(|error| GateError(format!("method {method:?}: {error}")))?;
-        check_abi_against_export(method, signature, &export.params)?;
-        check_outputs_against_export(method, signature, export)?;
-        judge_totality(artifact, method, signature, export, provenance)?;
+        judged().map_err(|refusal| refusal.about(method))?;
     }
     judge_seal(&metadata, provenance)?;
     Ok(metadata)
@@ -180,11 +227,10 @@ fn judge_seal(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), 
     if matches!(provenance, Provenance::Protocol) || metadata.methods.values().any(seals) {
         return Ok(());
     }
-    Err(GateError(
+    Err(GateError::new(
         "the package declares no way to make a component of it actual: one method must \
          write the component's own configuration leaf, which is the cell every call to \
-         it is judged against"
-            .into(),
+         it is judged against",
     ))
 }
 
@@ -197,29 +243,26 @@ fn judge_seal(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), 
 /// artifact, so a signature disagreeing with either describes a package
 /// that is not the one being published.
 fn check_outputs_against_export(
-    method: &str,
     signature: &MethodSignature,
     export: &ExportShape,
 ) -> Result<(), GateError> {
     let declared = signature.outputs.len();
     if declared != export.edges {
-        return Err(GateError(format!(
-            "method {method:?}: the signature produces {declared} value edges, the export \
+        return Err(GateError::new(format!(
+            "the signature produces {declared} value edges, the export \
              hands back {}",
             export.edges
         )));
     }
     if signature.answers != export.answers {
-        return Err(GateError(if export.answers {
-            format!(
-                "method {method:?}: the export hands back a value beside its edges, and \
-                 the signature says it answers with nothing"
-            )
+        return Err(GateError::new(if export.answers {
+            "the export hands back a value beside its edges, and the signature says it \
+             answers with nothing"
+                .to_owned()
         } else {
-            format!(
-                "method {method:?}: the signature says the method answers with a value, \
-                 and the export hands back none"
-            )
+            "the signature says the method answers with a value, and the export hands \
+             back none"
+                .to_owned()
         }));
     }
     Ok(())
@@ -263,26 +306,26 @@ fn judge_totality(
     // is a conservative reading — the mark is a function of the artifact,
     // so there is one right answer and the gate holds authors to it.
     if export.declines != (signature.totality == Totality::Fallible) {
-        return Err(GateError(if export.declines {
+        return Err(GateError::new(if export.declines {
             format!(
-                "method {method:?} declares {:?} over an export that carries an error arm",
+                "declares {:?} over an export that carries an error arm",
                 signature.totality
             )
         } else {
-            format!("method {method:?} declares Fallible over an export that cannot decline")
+            "declares Fallible over an export that cannot decline".to_owned()
         }));
     }
     if signature.totality != Totality::Total {
         return Ok(());
     }
     match provenance {
-        Provenance::Published => Err(GateError(format!(
-            "method {method:?} claims totality, which a published package cannot: \
-             the mark is granted to protocol code seeded at genesis"
-        ))),
+        Provenance::Published => Err(GateError::new(
+            "claims totality, which a published package cannot: the mark is granted to \
+             protocol code seeded at genesis",
+        )),
         Provenance::Protocol => check_method(artifact, method).map_err(|error| {
-            GateError(format!(
-                "method {method:?} claims totality its artifact does not support: {error}"
+            GateError::new(format!(
+                "claims totality its artifact does not support: {error}"
             ))
         }),
     }
@@ -295,13 +338,12 @@ fn judge_totality(
 /// clause and parameter indices resolve; what remains is whether the
 /// compiled export can take what the binding builds.
 fn check_abi_against_export(
-    method: &str,
     signature: &MethodSignature,
     params: &[ExportParam],
 ) -> Result<(), GateError> {
     if signature.abi.len() != params.len() {
-        return Err(GateError(format!(
-            "method {method:?}: the binding builds {} arguments, the export takes {}",
+        return Err(GateError::new(format!(
+            "the binding builds {} arguments, the export takes {}",
             signature.abi.len(),
             params.len()
         )));
@@ -310,8 +352,8 @@ fn check_abi_against_export(
         match binding {
             AbiParam::Handle { clause, site } => {
                 if *param != ExportParam::Handle {
-                    return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} is a capability \
+                    return Err(GateError::new(format!(
+                        "ABI parameter {position} is a capability \
                          handle, but the export takes {param:?}"
                     )));
                 }
@@ -331,32 +373,32 @@ fn check_abi_against_export(
                     None => false,
                 };
                 if !backed {
-                    return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} borrows site {site} of \
+                    return Err(GateError::new(format!(
+                        "ABI parameter {position} borrows site {site} of \
                          clause {clause}, which materializes none"
                     )));
                 }
             }
             AbiParam::Bucket(_) => {
                 if *param != ExportParam::Bucket {
-                    return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} is a value edge, \
+                    return Err(GateError::new(format!(
+                        "ABI parameter {position} is a value edge, \
                          but the export takes {param:?}"
                     )));
                 }
             }
             AbiParam::Guard(_) => {
                 if *param != ExportParam::Flag {
-                    return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} is a clause's guard \
+                    return Err(GateError::new(format!(
+                        "ABI parameter {position} is a clause's guard \
                          verdict, but the export takes {param:?}"
                     )));
                 }
             }
             AbiParam::Derived(_) => {
                 if param.is_resource() {
-                    return Err(GateError(format!(
-                        "method {method:?}: ABI parameter {position} is a derived \
+                    return Err(GateError::new(format!(
+                        "ABI parameter {position} is a derived \
                          value, but the export takes {param:?}"
                     )));
                 }
@@ -454,7 +496,7 @@ mod tests {
         let artifact = attach_metadata(&component, &metadata).expect("attaches");
 
         let refused = admit_package(&artifact).expect_err("an unresolvable binding refuses");
-        assert!(refused.0.contains("\"m\""), "{}", refused.0);
+        assert_eq!(refused.method.as_deref(), Some("m"), "{refused}");
 
         // The same artifact with nothing bound admits, so the refusal is
         // the binding and not the shape.
@@ -607,7 +649,7 @@ mod tests {
         let artifact =
             attach_metadata(&component, &declaring(&["deposit", "withdraw"])).expect("attaches");
         let refused = admit_package(&artifact).expect_err("refuses");
-        assert!(refused.0.contains("withdraw"), "{}", refused.0);
+        assert!(refused.to_string().contains("withdraw"), "{refused}");
 
         // The name has to match exactly — a component export is looked
         // up by the name a manifest node writes.
@@ -634,7 +676,10 @@ mod tests {
         let artifact =
             attach_metadata(&component_exporting(&["deposit"]), &sealless).expect("attaches");
         let refused = admit_package(&artifact).expect_err("its components could never be called");
-        assert!(refused.0.contains("configuration leaf"), "{}", refused.0);
+        assert!(
+            refused.to_string().contains("configuration leaf"),
+            "{refused}"
+        );
 
         // The same package, with the seal its components come up
         // through.
@@ -691,7 +736,7 @@ mod tests {
             ("staking", staking_artifact()),
         ] {
             admit_protocol_package(artifact)
-                .unwrap_or_else(|error| panic!("{name}: the stdlib must admit: {}", error.0));
+                .unwrap_or_else(|error| panic!("{name}: the stdlib must admit: {error}"));
         }
     }
 
@@ -709,9 +754,8 @@ mod tests {
 
         let error = admit_package(artifact).expect_err("a publish cannot carry the mark");
         assert!(
-            error.0.contains("claims totality"),
-            "refused for the wrong reason: {}",
-            error.0,
+            error.to_string().contains("claims totality"),
+            "refused for the wrong reason: {error}",
         );
     }
 
@@ -742,9 +786,8 @@ mod tests {
         let error = admit_protocol_package(&artifact)
             .expect_err("a mark the code cannot support is not admissible");
         assert!(
-            error.0.contains("error arm"),
-            "refused for the wrong reason: {}",
-            error.0,
+            error.to_string().contains("error arm"),
+            "refused for the wrong reason: {error}",
         );
 
         // Behind the declaration stands the refusal it masks on the
@@ -789,7 +832,7 @@ mod tests {
         let empty = declaring(&["m"]);
         let artifact = attach_metadata(&scalar_export(), &empty).expect("attaches");
         let refused = admit_package(&artifact).expect_err("arity must refuse");
-        assert!(refused.0.contains("arguments"), "{}", refused.0);
+        assert!(refused.to_string().contains("arguments"), "{refused}");
 
         // A handle binding against a scalar parameter.
         let mut wrong_kind = declaring(&["m"]);
@@ -810,7 +853,10 @@ mod tests {
         }
         let artifact = attach_metadata(&scalar_export(), &wrong_kind).expect("attaches");
         let refused = admit_package(&artifact).expect_err("a handle needs a borrow");
-        assert!(refused.0.contains("capability handle"), "{}", refused.0);
+        assert!(
+            refused.to_string().contains("capability handle"),
+            "{refused}"
+        );
 
         // A handle binding on a site the declaration does not have.
         // Every capability crosses as one resource of one width, so what
@@ -842,7 +888,7 @@ mod tests {
         }
         let artifact = attach_metadata(&borrow_export, &unbacked).expect("attaches");
         let refused = admit_package(&artifact).expect_err("an empty loop declares no site");
-        assert!(refused.0.contains("not an access"), "{}", refused.0);
+        assert!(refused.to_string().contains("not an access"), "{refused}");
 
         // The same shape with the matching mode admits, so the refusals
         // above are the disagreement and not the shape.

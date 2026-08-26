@@ -29,9 +29,9 @@ pub const MAX_PACKAGE_METADATA_BYTES: usize = MAX_TX_BYTES_LEN / 4;
 /// [`GateError`] if the metadata is past a bound decode enforces, so
 /// that whatever this returns decodes back to an equal value.
 pub fn encode_metadata(metadata: &PackageMetadata) -> Result<Vec<u8>, GateError> {
-    let bytes = encode_canonical(metadata).map_err(|error| GateError(error.to_string()))?;
+    let bytes = encode_canonical(metadata).map_err(|error| GateError::new(error.to_string()))?;
     if bytes.len() > MAX_PACKAGE_METADATA_BYTES {
-        return Err(GateError(format!(
+        return Err(GateError::new(format!(
             "metadata encodes to {} bytes, past the {MAX_PACKAGE_METADATA_BYTES} cap",
             bytes.len()
         )));
@@ -47,12 +47,12 @@ pub fn encode_metadata(metadata: &PackageMetadata) -> Result<Vec<u8>, GateError>
 /// bytes, or a structure past a bound the vocabulary fixes.
 pub fn decode_metadata(bytes: &[u8]) -> Result<PackageMetadata, GateError> {
     if bytes.len() > MAX_PACKAGE_METADATA_BYTES {
-        return Err(GateError(format!(
+        return Err(GateError::new(format!(
             "metadata section is {} bytes, past the {MAX_PACKAGE_METADATA_BYTES} cap",
             bytes.len()
         )));
     }
-    decode_canonical(bytes).map_err(|error| GateError(error.to_string()))
+    decode_canonical(bytes).map_err(|error| GateError::new(error.to_string()))
 }
 
 #[cfg(test)]
