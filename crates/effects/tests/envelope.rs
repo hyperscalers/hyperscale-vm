@@ -504,7 +504,11 @@ fn a_bare_graph_admits_no_params() {
     };
     assert_eq!(
         admit(&graph, ALICE, &chain, &TestHasher),
-        Err(AdmissionError::UnknownSocket { node: 0, socket: 0 })
+        Err(AdmissionError::UnknownSocket {
+            intent: 0,
+            node: 0,
+            socket: 0
+        })
     );
 }
 

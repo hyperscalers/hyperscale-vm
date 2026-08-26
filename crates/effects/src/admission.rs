@@ -218,11 +218,16 @@ pub enum AdmissionError {
     },
     /// A socket reference past what the intent declared — in a bare
     /// graph, any socket reference at all.
-    #[error("node {node} references socket {socket}, which is not declared")]
+    ///
+    /// Both indices are the intent's own, on the terms
+    /// [`Self::SocketClaimMismatch`] states.
+    #[error("intent {intent}: node {node} references socket {socket}, which is not declared")]
     UnknownSocket {
-        /// The consuming node.
+        /// The intent the node and the socket both belong to.
+        intent: u32,
+        /// The consuming node, in that intent.
         node: u32,
-        /// The socket it named.
+        /// The socket it named, in that intent.
         socket: u32,
     },
     /// Sockets admitting no execution order: intents wait on each other
@@ -275,11 +280,19 @@ pub enum AdmissionError {
     /// What makes a socket worth signing: the signer says which
     /// authority they are asking for, and a composition that supplies
     /// some other one is refused rather than quietly presenting it.
-    #[error("node {node} presents socket {socket}, which is filled by no such claim")]
+    ///
+    /// A socket is declared per intent, so the intent is what says which
+    /// socket `socket` names — and the node is stated in the same
+    /// numbering, so both halves of the sentence are one intent's.
+    #[error(
+        "intent {intent}: node {node} presents socket {socket}, which is filled by no such claim"
+    )]
     SocketClaimMismatch {
-        /// The presenting node.
+        /// The intent the node and the socket both belong to.
+        intent: u32,
+        /// The presenting node, in that intent.
         node: u32,
-        /// The socket it presented.
+        /// The socket it presented, in that intent.
         socket: u32,
     },
     /// Evidence that does not satisfy what the node must present.
@@ -346,17 +359,50 @@ pub enum AdmissionError {
     /// A proof drawn from a node that is not an earlier node of the same
     /// intent — the proof's producer must have run, and aborted the
     /// transaction if its own gate refused, before anything consumes it.
-    #[error("node {node} draws a proof from node {producer}, which is not earlier")]
+    ///
+    /// Both indices are the intent's own, on the terms
+    /// [`Self::ForwardEdge`] states.
+    #[error(
+        "intent {intent}: node {node} draws a proof from node {producer}, which is not earlier"
+    )]
     ForwardProof {
-        /// The consuming node, flattened.
+        /// The intent both indices are numbered within.
+        intent: u32,
+        /// The consuming node, in that intent.
         node: u32,
-        /// The claimed producer, in the intent's own node order.
+        /// The producer the proof claims, in that intent.
+        producer: u32,
+    },
+    /// A socket filled by a node that has minted nothing by the time the
+    /// presenting node reads it.
+    ///
+    /// Its own refusal rather than [`Self::ForwardProof`]'s, because the
+    /// filling node belongs to another intent: one sentence naming both
+    /// would put two intents' numberings side by side, which is the
+    /// thing these payloads exist to avoid.
+    #[error(
+        "socket {socket} is filled by intent {intent} node {producer}, which has minted nothing"
+    )]
+    UnmintedSocket {
+        /// The socket, in the presenting intent.
+        socket: u32,
+        /// The intent that fills it.
+        intent: u32,
+        /// The filling node, in that intent.
         producer: u32,
     },
     /// A proof drawn from a node whose method mints no identity.
-    #[error("node {node} draws a proof from node {producer}, whose method does not mint")]
+    ///
+    /// Both indices are the intent's own, so this refusal and the one
+    /// above read in one numbering — a composer comparing them is
+    /// comparing the same two things.
+    #[error(
+        "intent {intent}: node {node} draws a proof from node {producer}, whose method does not mint"
+    )]
     UnmintingProof {
-        /// The consuming node, flattened.
+        /// The intent both indices are numbered within.
+        intent: u32,
+        /// The consuming node, in that intent.
         node: u32,
         /// The producer named, in the intent's own node order.
         producer: u32,
@@ -418,11 +464,21 @@ pub enum AdmissionError {
     },
     /// An edge whose producer is not an earlier node — the shape a cycle
     /// would need, rejected structurally.
-    #[error("node {node} consumes an edge from node {producer}, which is not earlier")]
+    ///
+    /// Both indices are the intent's own, unlike everywhere else in this
+    /// enum. The producer is the one the edge names and may be no node
+    /// at all, which is the refusal — so there is nothing to flatten it
+    /// against, and stating the consumer in the same numbering is what
+    /// makes the two comparable.
+    #[error(
+        "intent {intent}: node {node} consumes an edge from node {producer}, which is not earlier"
+    )]
     ForwardEdge {
-        /// The consuming node.
+        /// The intent both indices are numbered within.
+        intent: u32,
+        /// The consuming node, in that intent.
         node: u32,
-        /// The claimed producer.
+        /// The producer the edge claims, in that intent.
         producer: u32,
     },
     /// An edge naming an output slot the producer does not have.
@@ -1456,7 +1512,8 @@ impl Lower<'_> {
                     }
                     if edge.producer >= local {
                         return Err(AdmissionError::ForwardEdge {
-                            node: node_index,
+                            intent: Self::intent_of(intent_index),
+                            node: local,
                             producer: edge.producer,
                         });
                     }
@@ -1478,6 +1535,7 @@ impl Lower<'_> {
                 GraphArg::Socket(reference) => {
                     let (value, input) = self.bind_socket(
                         intent_index,
+                        local,
                         *reference,
                         *param,
                         (node_index, param_index),
@@ -1574,6 +1632,15 @@ impl Lower<'_> {
         }
     }
 
+    /// An intent's own position, as these payloads carry it.
+    ///
+    /// Bounded by `MAX_SUBINTENTS`, which the envelope gate enforces
+    /// before anything here runs — the same expectation the interleave
+    /// already makes of it.
+    fn intent_of(intent_index: usize) -> u32 {
+        u32::try_from(intent_index).expect("intents are bounded by MAX_SUBINTENTS")
+    }
+
     /// Bind the edge a socket was filled with.
     ///
     /// The socket types what may arrive and the composition names what
@@ -1583,6 +1650,7 @@ impl Lower<'_> {
     fn bind_socket(
         &mut self,
         intent_index: usize,
+        local: u32,
         reference: u32,
         param: ParamType,
         at: (u32, u32),
@@ -1598,7 +1666,8 @@ impl Lower<'_> {
             ))
         }) else {
             return Err(AdmissionError::UnknownSocket {
-                node: node_index,
+                intent: Self::intent_of(intent_index),
+                node: local,
                 socket: *reference,
             });
         };
@@ -1668,6 +1737,7 @@ impl Lower<'_> {
         node_index: u32,
     ) -> Result<Vec<Presented>, AdmissionError> {
         let intent = &self.intents[intent_index];
+        let local = u32::try_from(local_index).map_err(|_| AdmissionError::TooManyNodes)?;
         let required = judged_here(frame);
         check_evidence_presence(&required, node, node_index)?;
         let mut evidence = Vec::with_capacity(node.evidence.len());
@@ -1702,16 +1772,18 @@ impl Lower<'_> {
                         .filter(|&earlier| earlier < local_index)
                         .map(|earlier| self.flat_of[intent_index][earlier])
                         .and_then(|flat| usize::try_from(flat).ok())
-                        .ok_or(AdmissionError::ForwardProof {
-                            node: node_index,
+                        .ok_or_else(|| AdmissionError::ForwardProof {
+                            intent: Self::intent_of(intent_index),
+                            node: local,
                             producer: *producer,
                         })?;
                     let claims = self
                         .minted
                         .get(flat)
                         .filter(|claims| !claims.is_empty())
-                        .ok_or(AdmissionError::UnmintingProof {
-                            node: node_index,
+                        .ok_or_else(|| AdmissionError::UnmintingProof {
+                            intent: Self::intent_of(intent_index),
+                            node: local,
                             producer: *producer,
                         })?;
                     // Charged, because the copy is the cost. A claim is
@@ -1750,7 +1822,8 @@ impl Lower<'_> {
                     })
                     else {
                         return Err(AdmissionError::UnknownSocket {
-                            node: node_index,
+                            intent: Self::intent_of(intent_index),
+                            node: local,
                             socket: *reference,
                         });
                     };
@@ -1759,8 +1832,9 @@ impl Lower<'_> {
                         .and_then(|source| self.flat_of.get(source))
                         .and_then(|flat| usize::try_from(producer).ok().and_then(|at| flat.get(at)))
                         .and_then(|flat| usize::try_from(*flat).ok())
-                        .ok_or(AdmissionError::UnknownSocket {
-                            node: node_index,
+                        .ok_or_else(|| AdmissionError::UnknownSocket {
+                            intent: Self::intent_of(intent_index),
+                            node: local,
                             socket: *reference,
                         })?;
                     // The interleave orders a node after every socket it
@@ -1769,13 +1843,15 @@ impl Lower<'_> {
                     let minted = self
                         .minted
                         .get(source)
-                        .ok_or(AdmissionError::ForwardProof {
-                            node: node_index,
+                        .ok_or(AdmissionError::UnmintedSocket {
+                            socket: *reference,
+                            intent: filled_from,
                             producer,
                         })?;
                     if !minted.contains(wanted) {
                         return Err(AdmissionError::SocketClaimMismatch {
-                            node: node_index,
+                            intent: Self::intent_of(intent_index),
+                            node: local,
                             socket: *reference,
                         });
                     }

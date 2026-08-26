@@ -401,6 +401,13 @@ fn a_declared_hole_carries_a_proof_across_an_intent_boundary() {
 /// The declaration is what makes the socket worth signing: the holder
 /// asked for the desk's approval, so a claim on anybody else is not the
 /// authority they undertook to accept — however the composer wired it.
+///
+/// The one case in the corpus where the two numberings differ, so it is
+/// what says the coordinates are the composer's. A socket belongs to the
+/// intent that declared it; naming the node in the flattened manifest
+/// beside it — node 2, socket 0 — put two numberings in one sentence and
+/// read as correct, because for a bare graph they coincide. Intent 1's
+/// node 1 is what the composer wrote.
 #[test]
 fn a_hole_bound_to_the_wrong_claim_is_refused() {
     let request = note_request(Presented::of_subject(ALICE));
@@ -408,6 +415,10 @@ fn a_hole_bound_to_the_wrong_claim_is_refused() {
     let chain = world();
     assert_eq!(
         admit_tree(&tree, DESK, tree.hash(&TestHasher), &chain, &TestHasher),
-        Err(AdmissionError::SocketClaimMismatch { node: 2, socket: 0 }),
+        Err(AdmissionError::SocketClaimMismatch {
+            intent: 1,
+            node: 1,
+            socket: 0
+        }),
     );
 }

@@ -537,6 +537,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     assert_eq!(
         admit(&own, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ForwardProof {
+            intent: 0,
             node: 1,
             producer: 1
         })
@@ -548,6 +549,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     assert_eq!(
         admit(&later, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ForwardProof {
+            intent: 0,
             node: 1,
             producer: 2
         })
@@ -570,6 +572,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     assert_eq!(
         admit(&unminting, ALICE, &chain, &TestHasher),
         Err(AdmissionError::UnmintingProof {
+            intent: 0,
             node: 3,
             producer: 2
         })
@@ -630,6 +633,7 @@ fn every_malformed_mutation_rejects() {
     assert_eq!(
         admit_it(&cyclic),
         Err(AdmissionError::ForwardEdge {
+            intent: 0,
             node: 2,
             producer: 3,
         })
@@ -645,6 +649,7 @@ fn every_malformed_mutation_rejects() {
     assert_eq!(
         admit_it(&self_edge),
         Err(AdmissionError::ForwardEdge {
+            intent: 0,
             node: 2,
             producer: 2,
         })
