@@ -27,7 +27,7 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_stdlib::{account_artifact, staking_artifact};
 use hyperscale_vm_types::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, ResourceAddr, SubstateKey,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, ResourceAddr, SubstateKey,
     TxHash, encode_amount,
 };
 use wasmtime::component::{Component, InstancePre, Linker};
@@ -136,13 +136,13 @@ fn transfer_session() -> KernelSession {
     declared
         .insert(Effect {
             target: EffectTarget::Point(recipient),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
     declared
         .insert(Effect {
             target: EffectTarget::Point(quarantine_key()),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
     declared
@@ -194,9 +194,19 @@ fn one_transfer(
     let mut session = store.into_data();
     session.enter_invocation(RECIPIENT);
     let recipient_key = child_key(&TestHasher, RECIPIENT, SlotId(1), &[]);
-    let recipient_rep = rep_where(&session, |c| *c == Capability::Delta(recipient_key));
+    let recipient_rep = rep_where(&session, |c| {
+        *c == Capability::Delta {
+            key: recipient_key,
+            moves: Moves::Both,
+        }
+    });
     let flag_rep = rep_where(&session, |c| *c == Capability::Read(refused_key()));
-    let quarantine_rep = rep_where(&session, |c| *c == Capability::Delta(quarantine_key()));
+    let quarantine_rep = rep_where(&session, |c| {
+        *c == Capability::Delta {
+            key: quarantine_key(),
+            moves: Moves::Both,
+        }
+    });
     let mut store = Store::new(engine, session);
     let instance = instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
     let deposit = invoke_export(

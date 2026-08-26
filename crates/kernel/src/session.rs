@@ -893,7 +893,7 @@ mod tests {
     /// through a signature that produces it would test the materializer
     /// instead. Built by [`Capability::forms`], so a mode added to the
     /// enum has to take a place in what the matrix asks.
-    fn every_capability() -> [Capability; 14] {
+    fn every_capability() -> [Capability; 15] {
         Capability::forms(
             key(1),
             5,

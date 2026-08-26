@@ -114,19 +114,16 @@ pub const fn grants(held: &Capability, op: Op) -> bool {
         Op::Balance => matches!(held, C::Amount { .. } | C::AmountRead(_)),
         // Both value modes move value; where they differ is when the
         // movement is judged, which the kernel reads off the capability.
-        // A credit gave up the other direction, so it answers the credit
-        // and not the debit — and the exclusive hold, which says its
-        // direction in a field rather than by being itself, is read the
-        // same way. Admission judged the access on the direction it
-        // declared, so a movement the other way is one no entry was
-        // asked about.
+        // Each answers the directions it kept and no other: admission
+        // judged the access on the direction it declared, so a movement
+        // the other way is one no entry was asked about.
         Op::Take => match held {
-            C::Amount { moves, .. } => moves.debits(),
-            _ => matches!(held, C::Delta(_)),
+            C::Amount { moves, .. } | C::Delta { moves, .. } => moves.debits(),
+            _ => false,
         },
         Op::Put => match held {
-            C::Amount { moves, .. } => moves.credits(),
-            _ => matches!(held, C::Delta(_) | C::Credit(_)),
+            C::Amount { moves, .. } | C::Delta { moves, .. } => moves.credits(),
+            _ => false,
         },
         Op::ReservedAmount | Op::TakeReserved => matches!(held, C::Reserve { .. }),
         // Reading an interval is legal through every interval mode; the

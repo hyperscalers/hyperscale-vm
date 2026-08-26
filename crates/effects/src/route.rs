@@ -288,7 +288,7 @@ mod tests {
             vec![
                 Effect {
                     target: point(instance_of("payer"), SlotId(1)),
-                    mode: Mode::Delta,
+                    mode: Mode::Delta { moves: Moves::Both },
                 },
                 Effect {
                     target: EffectTarget::Point(child_key(
@@ -301,7 +301,7 @@ mod tests {
                 },
                 Effect {
                     target: point(instance_of("payee"), SlotId(2)),
-                    mode: Mode::Delta,
+                    mode: Mode::Delta { moves: Moves::Both },
                 },
                 Effect {
                     target: EffectTarget::Point(child_key(
@@ -810,7 +810,7 @@ mod tests {
                             slot: SlotRef::Fixed(SlotId(9)),
                             material: vec![Expr::Binding(0)],
                         }),
-                        mode: ModeExpr::Delta,
+                        mode: ModeExpr::Delta { moves: Moves::Both },
                         denomination: None,
                     }],
                 }],
@@ -927,7 +927,10 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::NfBucket],
                 abi: vec![AbiParam::Bucket(0)],
-                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
+                effects: vec![self_point(
+                    SlotId(1),
+                    ModeExpr::Delta { moves: Moves::Both },
+                )],
                 ..MethodSignature::default()
             },
         );
@@ -969,7 +972,10 @@ mod tests {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket, ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(1)],
-                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
+                effects: vec![self_point(
+                    SlotId(1),
+                    ModeExpr::Delta { moves: Moves::Both },
+                )],
                 ..MethodSignature::default()
             },
         );
@@ -1037,7 +1043,10 @@ mod tests {
                 // Nothing in the ABI carries the bucket: the method
                 // consumes the edge without reading what crossed.
                 abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
-                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
+                effects: vec![self_point(
+                    SlotId(1),
+                    ModeExpr::Delta { moves: Moves::Both },
+                )],
                 ..MethodSignature::default()
             },
         );
@@ -1116,7 +1125,7 @@ mod tests {
                             slot: SlotRef::Fixed(SlotId(1)),
                             material: vec![],
                         }),
-                        mode: ModeExpr::Delta,
+                        mode: ModeExpr::Delta { moves: Moves::Both },
                         denomination: None,
                     }],
                     ..MethodSignature::default()

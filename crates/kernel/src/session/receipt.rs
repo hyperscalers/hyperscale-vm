@@ -272,8 +272,7 @@ impl KernelSession {
             match capability {
                 Capability::Amount { key, .. }
                 | Capability::AmountRead(key)
-                | Capability::Delta(key)
-                | Capability::Credit(key)
+                | Capability::Delta { key, .. }
                 | Capability::Reserve { key, .. } => {
                     out.cells.entry(*key).or_insert(resource);
                 }
@@ -726,7 +725,7 @@ mod tests {
         let cell = key(0xE1);
         let set = declared(&[Effect {
             target: EffectTarget::Point(cell),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 

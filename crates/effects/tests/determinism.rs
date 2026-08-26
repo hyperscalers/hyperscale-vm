@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     SlotRef, TestHasher, Value, admit, evaluate_expr, route,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, ResourceAddr,
+    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, ResourceAddr,
 };
 use proptest::collection::vec;
 use proptest::option;
@@ -190,7 +190,7 @@ proptest! {
         let recipient_set = &first.per_shard[&shard_of(recipient)];
         assert!(recipient_set.contains(&Effect {
             target: EffectTarget::Point(vault(recipient, resource)),
-            mode: Mode::Credit,
+            mode: Mode::Delta { moves: Moves::In },
         }));
     }
 
@@ -242,7 +242,7 @@ proptest! {
         assert_eq!(first.frames.len(), 3, "one frame per manifest node");
         assert!(first.per_shard[&shard_of(recipient)].contains(&Effect {
             target: EffectTarget::Point(vault(recipient, resource)),
-            mode: Mode::Credit,
+            mode: Mode::Delta { moves: Moves::In },
         }));
     }
 }

@@ -17,22 +17,19 @@ pub enum Mode {
     Read,
     /// Unconditional commutative increment or decrement; the amount is
     /// dynamic and never part of the declaration.
-    Delta,
-    /// Unconditional commutative increment, and no decrement.
     ///
-    /// [`Delta`](Self::Delta) with one direction given up, which is what
-    /// a method that only receives can say about itself. Two things turn
-    /// on being able to say it. A credit cannot underflow, so it never
+    /// A delta narrowed to [`Moves::In`] cannot underflow, so it never
     /// fails feasibility — the only movement in the vocabulary that
-    /// cannot. And a declaration that carries its direction can be judged
-    /// on the movement it actually makes, where one that does not has to
-    /// answer for both.
-    ///
-    /// Contends exactly as a delta does: giving up a direction gives up
-    /// nothing a scheduler reads.
-    Credit,
+    /// cannot. A method that only receives says exactly that about
+    /// itself, and is judged on the movement it kept rather than
+    /// answering for both.
+    Delta {
+        /// Which directions value may move under it.
+        moves: Moves,
+    },
     /// Conditional decrement, feasible iff committed balance minus prior
-    /// reservations covers the declared amount.
+    /// reservations covers the declared amount. A decrement is its
+    /// definition, so its direction is [`Moves::Out`] by being itself.
     Reserve {
         /// The statically evaluated amount feasibility is judged against.
         amount: u128,
@@ -43,13 +40,9 @@ pub enum Mode {
     /// mode's to say: a presence requirement is a condition the same
     /// declaration states, judged at materialization beside this.
     Write {
-        /// Which directions value may move under it.
-        ///
-        /// The commutative modes say their direction by being
-        /// themselves — a credit is a delta with one direction given up
-        /// — and the exclusive one had no way to say it at all. So it
-        /// says it here, and a collection, whose only movement mode this
-        /// is, can say it too.
+        /// Which directions value may move under it, on the terms a
+        /// delta's field states them — and the one way a collection,
+        /// whose only movement mode this is, can say a direction at all.
         moves: Moves,
     },
 }
@@ -58,9 +51,9 @@ pub enum Mode {
 ///
 /// A parameter rather than a mode of its own, for the reason
 /// [`Presence`] is one: **contention does not change**. An exclusive
-/// hold excludes everything whichever way value moves under it, so
-/// giving up a direction gives up nothing a scheduler reads — the same
-/// trade [`Mode::Credit`] makes against [`Mode::Delta`].
+/// hold excludes everything whichever way value moves under it, and a
+/// delta commutes whichever way it moves, so giving up a direction gives
+/// up nothing a scheduler reads.
 ///
 /// What it changes is which of a resource's movement entries the access
 /// earns. A declaration carrying its direction is judged on the movement
@@ -149,10 +142,8 @@ impl Mode {
     pub const fn moves(&self) -> Option<Moves> {
         match self {
             Self::Read => None,
-            Self::Delta => Some(Moves::Both),
-            Self::Credit => Some(Moves::In),
+            Self::Delta { moves } | Self::Write { moves } => Some(*moves),
             Self::Reserve { .. } => Some(Moves::Out),
-            Self::Write { moves } => Some(*moves),
         }
     }
 
@@ -161,11 +152,10 @@ impl Mode {
     pub const fn kind(&self) -> ModeKind {
         match self {
             Self::Read => ModeKind::Read,
-            Self::Delta => ModeKind::Delta,
-            Self::Credit => ModeKind::Credit,
+            // A direction is a movement parameter and never a scheduling
+            // one, exactly as a reservation's amount is.
+            Self::Delta { .. } => ModeKind::Delta,
             Self::Reserve { .. } => ModeKind::Reserve,
-            // The direction is a movement parameter and never a
-            // scheduling one, exactly as a reservation's amount is.
             Self::Write { .. } => ModeKind::Write,
         }
     }
@@ -178,8 +168,6 @@ pub enum ModeKind {
     Read,
     /// See [`Mode::Delta`].
     Delta,
-    /// See [`Mode::Credit`].
-    Credit,
     /// See [`Mode::Reserve`].
     Reserve,
     /// See [`Mode::Write`].
@@ -198,8 +186,8 @@ pub const fn compatible(a: ModeKind, b: ModeKind) -> bool {
         (a, b),
         (ModeKind::Read, ModeKind::Read)
             | (
-                ModeKind::Delta | ModeKind::Credit | ModeKind::Reserve,
-                ModeKind::Delta | ModeKind::Credit | ModeKind::Reserve
+                ModeKind::Delta | ModeKind::Reserve,
+                ModeKind::Delta | ModeKind::Reserve
             )
     )
 }
@@ -214,13 +202,13 @@ pub const fn compatible(a: ModeKind, b: ModeKind) -> bool {
 pub enum ConflictClass {
     /// Fresh reads: internally compatible.
     Read = 0,
-    /// The movement modes: delta, credit and reserve.
+    /// The movement modes: delta and reserve.
     ///
-    /// Named for what they are rather than for how they compose. Delta
-    /// and credit commute; a reserve does not commute with either, and
-    /// the class holds all three because what a class answers is which
-    /// declarations *may share a cell* — which a reserve does, losing
-    /// the race where it does not fit.
+    /// Named for what they are rather than for how they compose. Deltas
+    /// commute; a reserve does not commute with them, and the class
+    /// holds both because what a class answers is which declarations
+    /// *may share a cell* — which a reserve does, losing the race where
+    /// it does not fit.
     Movement = 1,
     /// Exclusive writes: compatible with nothing that conflicts at all.
     Write = 2,
@@ -258,20 +246,14 @@ impl ModeKind {
     /// The one list a walk over the kinds reads, so the weights, the
     /// truth tables and the fixtures all move with the lattice rather
     /// than each keeping their own copy of it.
-    pub const ALL: [Self; 5] = [
-        Self::Read,
-        Self::Delta,
-        Self::Credit,
-        Self::Reserve,
-        Self::Write,
-    ];
+    pub const ALL: [Self; 4] = [Self::Read, Self::Delta, Self::Reserve, Self::Write];
 
     /// The conflict class this mode joins.
     #[must_use]
     pub const fn conflict_class(self) -> ConflictClass {
         match self {
             Self::Read => ConflictClass::Read,
-            Self::Delta | Self::Credit | Self::Reserve => ConflictClass::Movement,
+            Self::Delta | Self::Reserve => ConflictClass::Movement,
             Self::Write => ConflictClass::Write,
         }
     }
@@ -303,13 +285,12 @@ mod tests {
     /// untested row.
     #[test]
     fn compatibility_matrix() {
-        // Read, Delta, Credit, Reserve, Write — `ModeKind::ALL`'s order.
+        // Read, Delta, Reserve, Write — `ModeKind::ALL`'s order.
         let table = [
-            [true, false, false, false, false],
-            [false, true, true, true, false],
-            [false, true, true, true, false],
-            [false, true, true, true, false],
-            [false, false, false, false, false],
+            [true, false, false, false],
+            [false, true, true, false],
+            [false, true, true, false],
+            [false, false, false, false],
         ];
         assert_eq!(table.len(), ModeKind::ALL.len(), "a kind with no row");
         for (i, &a) in ModeKind::ALL.iter().enumerate() {

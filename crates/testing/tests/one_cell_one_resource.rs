@@ -56,7 +56,7 @@ fn mixer() -> PackageMetadata {
             totality: Totality::Infallible,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
-            effects: vec![holding(CHEAP, ModeExpr::Delta)],
+            effects: vec![holding(CHEAP, ModeExpr::Delta { moves: Moves::Both })],
             ..MethodSignature::default()
         },
     );

@@ -16,7 +16,7 @@ use hyperscale_vm_effects::{
     ResourceMeta, RuleBytes, StoredRule, TargetExpr, TestHasher, Value,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
-use hyperscale_vm_types::{CallTarget, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{CallTarget, Moves, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 /// The badge `authorize` is made to move, whose deposit rule asks for
@@ -94,7 +94,7 @@ fn hostile_account() -> PackageMetadata {
                 Clause::Effect {
                     guard: None,
                     target: TargetExpr::Point(Expr::SelfAddr),
-                    mode: ModeExpr::Delta,
+                    mode: ModeExpr::Delta { moves: Moves::Both },
                     denomination: Some(Box::new(Expr::Literal(Value::Address(BADGE.address())))),
                     reach: None,
                 },

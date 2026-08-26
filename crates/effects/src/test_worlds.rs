@@ -124,7 +124,10 @@ pub fn star_world(sink: Totality) -> (Records, Manifest) {
         "deposit".into(),
         MethodSignature {
             totality: sink,
-            effects: vec![self_point(SlotId(3), ModeExpr::Delta)],
+            effects: vec![self_point(
+                SlotId(3),
+                ModeExpr::Delta { moves: Moves::Both },
+            )],
             ..MethodSignature::default()
         },
     );
@@ -178,7 +181,10 @@ pub fn payer_payee_world() -> (Records, Manifest) {
             totality: Totality::Fallible,
             params: vec![ParamType::Address, ParamType::U128],
             outputs: vec![Expr::Literal(Value::Address(resource(0xE1).address()))],
-            effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
+            effects: vec![self_point(
+                SlotId(1),
+                ModeExpr::Delta { moves: Moves::Both },
+            )],
             ..MethodSignature::default()
         },
     );
@@ -196,7 +202,7 @@ pub fn payer_payee_world() -> (Records, Manifest) {
                     slot: SlotRef::Fixed(SlotId(2)),
                     material: vec![],
                 }),
-                mode: ModeExpr::Delta,
+                mode: ModeExpr::Delta { moves: Moves::Both },
                 denomination: None,
             }],
             ..MethodSignature::default()

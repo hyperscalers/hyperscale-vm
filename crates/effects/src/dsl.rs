@@ -511,11 +511,14 @@ pub enum ModeExpr {
     /// Fresh coherent read.
     Read,
     /// Commutative increment or decrement; no declared amount.
-    Delta,
-    /// Commutative increment and no decrement — what a method that only
-    /// receives says about itself.
-    Credit,
-    /// Conditional decrement of the evaluated amount.
+    Delta {
+        /// Which directions value may move under it. Narrowed to
+        /// [`Moves::In`], it is what a method that only receives says
+        /// about itself.
+        moves: Moves,
+    },
+    /// Conditional decrement of the evaluated amount. A decrement is its
+    /// definition, so its direction is [`Moves::Out`] by being itself.
     Reserve(Expr),
     /// Exclusive read-modify-write.
     ///
@@ -526,12 +529,10 @@ pub enum ModeExpr {
     /// one" — judged by the shard holding the cell, where it already
     /// judges a reservation.
     Write {
-        /// Which directions value may move under it.
-        ///
-        /// A collection has no commutative mode to say this by being,
-        /// so this is the only way a method that files into one and
-        /// never takes out of it can say so — and a method that cannot
-        /// say so answers for both directions of whatever it holds.
+        /// Which directions value may move under it, on the terms a
+        /// delta's field states them — and the one way a method that
+        /// files into a collection and never takes out of it can say
+        /// so, since a collection's only movement mode is this one.
         moves: Moves,
     },
 }
@@ -547,10 +548,8 @@ impl ModeExpr {
     pub const fn moves(&self) -> Option<Moves> {
         match self {
             Self::Read => None,
-            Self::Delta => Some(Moves::Both),
-            Self::Credit => Some(Moves::In),
+            Self::Delta { moves } | Self::Write { moves } => Some(*moves),
             Self::Reserve(_) => Some(Moves::Out),
-            Self::Write { moves } => Some(*moves),
         }
     }
 }
@@ -662,11 +661,7 @@ pub const fn supports(clause: &Clause) -> bool {
         (target, mode),
         (
             TargetExpr::Point(_),
-            ModeExpr::Read
-                | ModeExpr::Write { .. }
-                | ModeExpr::Delta
-                | ModeExpr::Credit
-                | ModeExpr::Reserve(_)
+            ModeExpr::Read | ModeExpr::Write { .. } | ModeExpr::Delta { .. } | ModeExpr::Reserve(_)
         ) | (
             TargetExpr::Entry { .. } | TargetExpr::Range { .. },
             ModeExpr::Read | ModeExpr::Write { .. }
@@ -1915,8 +1910,7 @@ fn eval_mode(
 ) -> Result<Mode, EvalError> {
     match mode {
         ModeExpr::Read => Ok(Mode::Read),
-        ModeExpr::Delta => Ok(Mode::Delta),
-        ModeExpr::Credit => Ok(Mode::Credit),
+        ModeExpr::Delta { moves } => Ok(Mode::Delta { moves: *moves }),
         ModeExpr::Reserve(expr) => {
             let amount = as_u128(&*eval_expr(expr, inputs, hasher, bindings, 0, budget)?)?;
             Ok(Mode::Reserve { amount })
@@ -3022,7 +3016,7 @@ mod tests {
                     slot: SlotRef::Fixed(SlotId(1)),
                     material: vec![Expr::Field(Box::new(Expr::Binding(0)), 1)],
                 }),
-                mode: ModeExpr::Delta,
+                mode: ModeExpr::Delta { moves: Moves::Both },
                 denomination: None,
             }],
         }];
@@ -3040,7 +3034,7 @@ mod tests {
             );
             assert!(set.contains(&Effect {
                 target: EffectTarget::Point(key),
-                mode: Mode::Delta,
+                mode: Mode::Delta { moves: Moves::Both },
             }));
         }
     }
@@ -3081,7 +3075,7 @@ mod tests {
                         Box::new(Expr::Literal(Value::U64(1))),
                     ))),
                     target: vault(vec![Expr::Binding(0), Expr::Literal(Value::U64(7))]),
-                    mode: ModeExpr::Delta,
+                    mode: ModeExpr::Delta { moves: Moves::Both },
                     denomination: None,
                 },
             ],
@@ -3968,7 +3962,7 @@ mod tests {
                 slot: SlotRef::Fixed(SlotId(1)),
                 material: vec![Expr::Arg(0)],
             }),
-            mode: ModeExpr::Delta,
+            mode: ModeExpr::Delta { moves: Moves::Both },
             denomination: Some(Box::new(Expr::Arg(0))),
         }];
         assert_eq!(

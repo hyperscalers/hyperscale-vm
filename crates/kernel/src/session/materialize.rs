@@ -77,16 +77,11 @@ pub enum Capability {
     Amount {
         /// The cell held.
         key: SubstateKey,
-        /// Which directions value may move under it.
-        ///
-        /// The commutative modes say their direction by being
-        /// themselves, so a cell reached through one of those needs no
-        /// field. This is the mode that had no way to say it, and what
-        /// it says here is what admission judged the access on: an
-        /// access that gave up a direction earns only the movement
-        /// entry it kept, so keeping the direction out of the
-        /// capability would leave the other movement enforced by
-        /// nothing.
+        /// Which directions value may move under it — what admission
+        /// judged the access on: an access that gave up a direction
+        /// earns only the movement entry it kept, so a capability that
+        /// dropped the answer would leave the other movement enforced
+        /// by nothing.
         moves: Moves,
     },
     /// A read of one cell holding value.
@@ -97,14 +92,17 @@ pub enum Capability {
     /// body to read one through.
     AmountRead(SubstateKey),
     /// Commutative movement on one amount cell.
-    Delta(SubstateKey),
-    /// The crediting half of one, and nothing else.
     ///
-    /// Its own variant rather than a flag on [`Capability::Delta`],
-    /// because what separates them is which operations they answer: a
-    /// take through this is refused the way a byte read of a value cell
+    /// Carries the directions the declaration kept, because which
+    /// operations the handle answers turns on them: a take through a
+    /// credit-only delta is refused the way a byte read of a value cell
     /// is, and by the same dispatch.
-    Credit(SubstateKey),
+    Delta {
+        /// The cell moved.
+        key: SubstateKey,
+        /// Which directions value may move under it.
+        moves: Moves,
+    },
     /// A held reservation on one amount cell, at this clause's own
     /// declared amount. The store's hold is the per-transaction fold
     /// over every reservation on the cell, so the clause's share rides
@@ -164,8 +162,7 @@ impl Capability {
             | Self::Write(key)
             | Self::Amount { key, .. }
             | Self::AmountRead(key)
-            | Self::Delta(key)
-            | Self::Credit(key)
+            | Self::Delta { key, .. }
             | Self::Reserve { key, .. } => Some(key),
             Self::RangeRead(_) | Self::RangeWrite(_) | Self::Instances { .. } => None,
         }
@@ -182,8 +179,7 @@ impl Capability {
             | Self::Write(_)
             | Self::Amount { .. }
             | Self::AmountRead(_)
-            | Self::Delta(_)
-            | Self::Credit(_)
+            | Self::Delta { .. }
             | Self::Reserve { .. } => None,
         }
     }
@@ -194,7 +190,7 @@ impl Capability {
     pub const fn settlement(&self) -> Option<Settlement> {
         match *self {
             Self::Amount { key, .. } => Some(Settlement::Immediate(key)),
-            Self::Delta(key) | Self::Credit(key) => Some(Settlement::Queued(key)),
+            Self::Delta { key, .. } => Some(Settlement::Queued(key)),
             Self::Read(_)
             | Self::Write(_)
             | Self::AmountRead(_)
@@ -225,8 +221,15 @@ impl Capability {
                 moves: Moves::Both, ..
             } => "an exclusive hold on a cell of value",
             Self::AmountRead(_) => "a read of a cell of value",
-            Self::Delta(_) => "a commutative movement",
-            Self::Credit(_) => "a commutative credit",
+            Self::Delta {
+                moves: Moves::In, ..
+            } => "a commutative credit",
+            Self::Delta {
+                moves: Moves::Out, ..
+            } => "a commutative debit",
+            Self::Delta {
+                moves: Moves::Both, ..
+            } => "a commutative movement",
             Self::Reserve { .. } => "a held reservation",
             Self::RangeRead(_) => "a read interval",
             Self::RangeWrite(_) => "a write interval",
@@ -249,7 +252,7 @@ impl Capability {
     /// what the matrix covers is written where a form is added.
     #[cfg(any(test, feature = "testing"))]
     #[must_use]
-    pub const fn forms(key: SubstateKey, amount: u128, interval: Interval) -> [Self; 14] {
+    pub const fn forms(key: SubstateKey, amount: u128, interval: Interval) -> [Self; 15] {
         [
             Self::Read(key),
             Self::Write(key),
@@ -269,8 +272,18 @@ impl Capability {
                 moves: Moves::Both,
             },
             Self::AmountRead(key),
-            Self::Delta(key),
-            Self::Credit(key),
+            Self::Delta {
+                key,
+                moves: Moves::In,
+            },
+            Self::Delta {
+                key,
+                moves: Moves::Out,
+            },
+            Self::Delta {
+                key,
+                moves: Moves::Both,
+            },
             Self::Reserve { key, amount },
             Self::RangeRead(interval),
             Self::RangeWrite(interval),
@@ -310,20 +323,27 @@ impl Capability {
                 moves: Moves::Both, ..
             } => 4,
             Self::AmountRead(_) => 5,
-            Self::Delta(_) => 6,
-            Self::Credit(_) => 7,
-            Self::Reserve { .. } => 8,
-            Self::RangeRead(_) => 9,
-            Self::RangeWrite(_) => 10,
+            Self::Delta {
+                moves: Moves::In, ..
+            } => 6,
+            Self::Delta {
+                moves: Moves::Out, ..
+            } => 7,
+            Self::Delta {
+                moves: Moves::Both, ..
+            } => 8,
+            Self::Reserve { .. } => 9,
+            Self::RangeRead(_) => 10,
+            Self::RangeWrite(_) => 11,
             Self::Instances {
                 moves: Moves::In, ..
-            } => 11,
-            Self::Instances {
-                moves: Moves::Out, ..
             } => 12,
             Self::Instances {
-                moves: Moves::Both, ..
+                moves: Moves::Out, ..
             } => 13,
+            Self::Instances {
+                moves: Moves::Both, ..
+            } => 14,
         }
     }
 }
@@ -814,16 +834,9 @@ pub(super) fn capability_for(
         // they name holds value, so the declaration has to say what —
         // judged here rather than at the movement, because a declaration
         // that cannot be materialized is one no body should run against.
-        (EffectTarget::Point(key), Mode::Delta) => {
+        (EffectTarget::Point(key), Mode::Delta { moves }) => {
             if denominated {
-                Ok(Capability::Delta(key))
-            } else {
-                Err(MaterializeError::UndenominatedMovement(key))
-            }
-        }
-        (EffectTarget::Point(key), Mode::Credit) => {
-            if denominated {
-                Ok(Capability::Credit(key))
+                Ok(Capability::Delta { key, moves })
             } else {
                 Err(MaterializeError::UndenominatedMovement(key))
             }
@@ -1344,7 +1357,10 @@ mod tests {
                 ModeExpr::Write { moves: Moves::Both },
                 Mode::Write { moves: Moves::Both },
             ),
-            (ModeExpr::Delta, Mode::Delta),
+            (
+                ModeExpr::Delta { moves: Moves::Both },
+                Mode::Delta { moves: Moves::Both },
+            ),
             (ModeExpr::Reserve(Expr::Arg(0)), Mode::Reserve { amount: 1 }),
         ];
 
@@ -1494,14 +1510,17 @@ mod tests {
         );
     }
 
-    /// Every commutative mode beside the exclusive hold, not just the
-    /// one a case happened to name: `Credit` is `Delta` narrowed to one
-    /// direction, and a check that knew two of the three would admit the
-    /// third on the same cell.
+    /// Every commutative mode beside the exclusive hold, each direction
+    /// of the delta included: a check that knew two of the three would
+    /// admit the third on the same cell.
     #[test]
     fn one_transaction_cannot_hold_both_an_exclusive_and_a_commutative_mode() {
         let cell = key(3);
-        for commutative in [Mode::Delta, Mode::Credit, Mode::Reserve { amount: 0 }] {
+        for commutative in [
+            Mode::Delta { moves: Moves::Both },
+            Mode::Delta { moves: Moves::In },
+            Mode::Reserve { amount: 0 },
+        ] {
             let set = declared(&[
                 Effect {
                     target: EffectTarget::Point(cell),
@@ -1572,7 +1591,7 @@ mod tests {
                 hi: 1,
                 cap: 1,
             },
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         }]);
         assert!(matches!(
             KernelSession::materialize(

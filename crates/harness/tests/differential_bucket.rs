@@ -133,7 +133,7 @@ fn fixture() -> Fixture {
         },
         Effect {
             target: EffectTarget::Point(ledger),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Point(reserved),
@@ -189,7 +189,7 @@ fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
     rep_where(host, |c| match (mode, c) {
         (Mode::Read, Capability::Read(key))
         | (Mode::Write { .. }, Capability::Amount { key, .. })
-        | (Mode::Delta, Capability::Delta(key))
+        | (Mode::Delta { .. }, Capability::Delta { key, .. })
         | (Mode::Reserve { .. }, Capability::Reserve { key, .. }) => *key == wanted,
         _ => false,
     })
@@ -300,7 +300,7 @@ impl Take {
     const fn cell(self, fx: &Fixture) -> Option<(SubstateKey, Mode)> {
         match self {
             Self::Issue(_) | Self::IssueUngranted(_) => None,
-            Self::Delta(_) => Some((fx.ledger, Mode::Delta)),
+            Self::Delta(_) => Some((fx.ledger, Mode::Delta { moves: Moves::Both })),
             Self::Vault(_) => Some((fx.vault, Mode::Write { moves: Moves::Both })),
             Self::Opaque(_) => Some((fx.opaque, Mode::Write { moves: Moves::Both })),
             Self::Reserve | Self::ReserveTwice => {
@@ -502,7 +502,11 @@ fn credited(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<Credi
     let mut probe = session_of(fx);
     let funds = minted(&mut probe, held);
     let (key, mode, kind) = if delta {
-        (fx.ledger, Mode::Delta, HandleKind::Site)
+        (
+            fx.ledger,
+            Mode::Delta { moves: Moves::Both },
+            HandleKind::Site,
+        )
     } else {
         (
             fx.vault,
@@ -601,7 +605,7 @@ struct Pair {
 /// What both edges came to, agreed on both engines.
 fn paired(fx: &Fixture, a: u64, b: u64) -> Result<Pair> {
     let probe = session_of(fx);
-    let ledger = rep_of(&probe, fx.ledger, Mode::Delta);
+    let ledger = rep_of(&probe, fx.ledger, Mode::Delta { moves: Moves::Both });
     let vault = rep_of(&probe, fx.vault, Mode::Write { moves: Moves::Both });
     let mut dual = GUEST.instantiate(FUEL, || session_of(fx))?;
     let produced = dual.invoke_both(
@@ -649,7 +653,7 @@ fn weighed(fx: &Fixture, held: u128) -> Result<u64> {
     };
     let mut probe = session_of(fx);
     let funds = minted(&mut probe, held);
-    let ledger = rep_of(&probe, fx.ledger, Mode::Delta);
+    let ledger = rep_of(&probe, fx.ledger, Mode::Delta { moves: Moves::Both });
     let mut dual = GUEST.instantiate(FUEL, build)?;
     dual.invoke_both(
         "weigh",
@@ -667,7 +671,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
     };
     let mut probe = session_of(fx);
     let funds = minted(&mut probe, held);
-    let ledger = rep_of(&probe, fx.ledger, Mode::Delta);
+    let ledger = rep_of(&probe, fx.ledger, Mode::Delta { moves: Moves::Both });
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let came_off = dual
         .invoke_both(

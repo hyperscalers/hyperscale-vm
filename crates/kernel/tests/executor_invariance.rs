@@ -37,7 +37,7 @@ const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// body runs.
 fn moving(set: EffectSet) -> Declaration {
     Declaration::from_set(set).denominated(|effect| {
-        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+        matches!(effect.mode, Mode::Delta { .. } | Mode::Reserve { .. }).then_some(RESOURCE)
     })
 }
 
@@ -76,7 +76,7 @@ fn reserve_and_delta(sender: SubstateKey, amount: u128, recipient: SubstateKey) 
     let mut set = point(sender, Mode::Reserve { amount });
     set.insert(Effect {
         target: EffectTarget::Point(recipient),
-        mode: Mode::Delta,
+        mode: Mode::Delta { moves: Moves::Both },
     })
     .unwrap();
     set
@@ -104,7 +104,13 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
         _ => None,
     });
     let delta = caps.iter().find_map(|c| match c {
-        Capability::Delta(key) => Some(rep_of(&session, &Capability::Delta(*key))),
+        Capability::Delta { key, .. } => Some(rep_of(
+            &session,
+            &Capability::Delta {
+                key: *key,
+                moves: Moves::Both,
+            },
+        )),
         _ => None,
     });
     let write = caps.iter().find_map(|c| match c {

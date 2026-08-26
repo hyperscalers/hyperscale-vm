@@ -18,8 +18,8 @@ use hyperscale_vm_effects::{
     admit_presenting, child_key, explain_admission, fresh_id, holdings_entry, route,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
-    WrongClass,
+    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, Presence,
+    ResourceAddr, WrongClass,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -168,12 +168,12 @@ fn a_well_formed_graph_lowers_and_routes() {
     // could not make.
     assert!(alice_set.contains(&Effect {
         target: EffectTarget::Point(vault(ALICE, RES_X)),
-        mode: Mode::Credit,
+        mode: Mode::Delta { moves: Moves::In },
     }));
     let bob_set = &routing.per_shard[&shard_of(BOB)];
     assert!(bob_set.contains(&Effect {
         target: EffectTarget::Point(vault(BOB, RES_X)),
-        mode: Mode::Credit,
+        mode: Mode::Delta { moves: Moves::In },
     }));
 }
 

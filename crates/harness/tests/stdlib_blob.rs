@@ -96,13 +96,13 @@ fn session() -> KernelSession {
     declared
         .insert(Effect {
             target: EffectTarget::Point(recipient),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
     declared
         .insert(Effect {
             target: EffectTarget::Point(quarantine),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
     declared
@@ -187,9 +187,21 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
     let blessed_host = entering(blessed.session, RECIPIENT);
     let reference_host = entering(reference.session, RECIPIENT);
     let (refused, quarantine) = recipient_cells();
-    let recipient_rep = rep_of(&blessed_host, &Capability::Delta(recipient));
+    let recipient_rep = rep_of(
+        &blessed_host,
+        &Capability::Delta {
+            key: recipient,
+            moves: Moves::Both,
+        },
+    );
     let flag_rep = rep_of(&blessed_host, &Capability::Read(refused));
-    let quarantine_rep = rep_of(&blessed_host, &Capability::Delta(quarantine));
+    let quarantine_rep = rep_of(
+        &blessed_host,
+        &Capability::Delta {
+            key: quarantine,
+            moves: Moves::Both,
+        },
+    );
     let mut dual = ACCOUNT.instantiate_pair(FUEL, blessed_host, reference_host)?;
     dual.invoke_both(
         "deposit",

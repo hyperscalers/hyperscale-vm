@@ -848,8 +848,9 @@ impl Names<'_> {
     fn mode(&self, mode: &ModeExpr, target: &TargetExpr, holds_value: bool) -> String {
         match mode {
             ModeExpr::Read => "read".to_owned(),
-            ModeExpr::Delta => "delta".to_owned(),
-            ModeExpr::Credit => "credit".to_owned(),
+            ModeExpr::Delta { moves: Moves::Both } => "delta".to_owned(),
+            ModeExpr::Delta { moves: Moves::In } => "credit".to_owned(),
+            ModeExpr::Delta { moves: Moves::Out } => "debit".to_owned(),
             ModeExpr::Reserve(amount) => format!("reserve {}", self.expr(amount, ATOM)),
             ModeExpr::Write { moves } => match (moves, holds_value) {
                 (Moves::Both, _) | (_, false) => "write".to_owned(),

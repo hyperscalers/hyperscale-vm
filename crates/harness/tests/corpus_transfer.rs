@@ -17,7 +17,8 @@ use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::check_method;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, EffectSet, EffectTarget, Event, Mode, Outcome, SubstateKey, TxHash, encode_amount,
+    Address, EffectSet, EffectTarget, Event, Mode, Moves, Outcome, SubstateKey, TxHash,
+    encode_amount,
 };
 use wasmtime::Result;
 
@@ -100,14 +101,14 @@ fn mirror_metadata() -> PackageMetadata {
                     reach: None,
                     guard: None,
                     target: TargetExpr::Point(self_child(DECOY, vec![resource_of_arg0()])),
-                    mode: ModeExpr::Delta,
+                    mode: ModeExpr::Delta { moves: Moves::Both },
                     denomination: Some(Box::new(resource_of_arg0())),
                 },
                 Clause::Effect {
                     reach: None,
                     guard: None,
                     target: TargetExpr::Point(self_child(VAULT, vec![resource_of_arg0()])),
-                    mode: ModeExpr::Delta,
+                    mode: ModeExpr::Delta { moves: Moves::Both },
                     denomination: Some(Box::new(resource_of_arg0())),
                 },
             ],
@@ -237,8 +238,8 @@ fn transfer_profile_and_provision_shape_are_exact() {
                 // The recipient's side only receives, and says so: a
                 // deposit that answered for a debit would be asked for
                 // the sender's credential as well as its own.
-                point(vault(BOB, RES_X), Mode::Credit),
-                point(quarantine(BOB, RES_X), Mode::Credit),
+                point(vault(BOB, RES_X), Mode::Delta { moves: Moves::In }),
+                point(quarantine(BOB, RES_X), Mode::Delta { moves: Moves::In }),
                 point(refused(BOB, RES_X), Mode::Read),
             ]),
         ),

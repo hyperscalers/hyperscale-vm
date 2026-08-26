@@ -90,11 +90,11 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
             effect_set(&[
                 Effect {
                     target: EffectTarget::Point(vault(BOB, usdc)),
-                    mode: Mode::Credit,
+                    mode: Mode::Delta { moves: Moves::In },
                 },
                 Effect {
                     target: EffectTarget::Point(quarantine(BOB, usdc)),
-                    mode: Mode::Credit,
+                    mode: Mode::Delta { moves: Moves::In },
                 },
                 Effect {
                     target: EffectTarget::Point(refused(BOB, usdc)),
@@ -157,11 +157,11 @@ fn swap_writes_both_reserves_and_reads_the_config() {
                 },
                 Effect {
                     target: EffectTarget::Point(vault(ALICE, RES_Y)),
-                    mode: Mode::Credit,
+                    mode: Mode::Delta { moves: Moves::In },
                 },
                 Effect {
                     target: EffectTarget::Point(quarantine(ALICE, RES_Y)),
-                    mode: Mode::Credit,
+                    mode: Mode::Delta { moves: Moves::In },
                 },
                 Effect {
                     target: EffectTarget::Point(refused(ALICE, RES_Y)),
@@ -245,7 +245,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
         },
         Effect {
             target: EffectTarget::Point(vault(book(), BASE)),
-            mode: Mode::Credit,
+            mode: Mode::Delta { moves: Moves::In },
         },
     ]);
     let expected: BTreeMap<_, _> = grouped
@@ -319,11 +319,11 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 },
                 Effect {
                     target: EffectTarget::Point(vault(BOB, BASE)),
-                    mode: Mode::Credit,
+                    mode: Mode::Delta { moves: Moves::In },
                 },
                 Effect {
                     target: EffectTarget::Point(quarantine(BOB, BASE)),
-                    mode: Mode::Credit,
+                    mode: Mode::Delta { moves: Moves::In },
                 },
                 Effect {
                     target: EffectTarget::Point(refused(BOB, BASE)),
@@ -333,11 +333,11 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 // reservation was taken from.
                 Effect {
                     target: EffectTarget::Point(vault(BOB, QUOTE)),
-                    mode: Mode::Credit,
+                    mode: Mode::Delta { moves: Moves::In },
                 },
                 Effect {
                     target: EffectTarget::Point(quarantine(BOB, QUOTE)),
-                    mode: Mode::Credit,
+                    mode: Mode::Delta { moves: Moves::In },
                 },
                 Effect {
                     target: EffectTarget::Point(refused(BOB, QUOTE)),
@@ -363,11 +363,11 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 // to answer both ways; the payment only arrives.
                 Effect {
                     target: EffectTarget::Point(vault(book(), BASE)),
-                    mode: Mode::Delta,
+                    mode: Mode::Delta { moves: Moves::Both },
                 },
                 Effect {
                     target: EffectTarget::Point(vault(book(), QUOTE)),
-                    mode: Mode::Credit,
+                    mode: Mode::Delta { moves: Moves::In },
                 },
             ]),
         ),

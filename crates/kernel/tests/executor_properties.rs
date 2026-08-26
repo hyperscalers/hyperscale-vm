@@ -51,7 +51,7 @@ const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// body runs.
 fn moving(set: EffectSet) -> Declaration {
     Declaration::from_set(set).denominated(|effect| {
-        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+        matches!(effect.mode, Mode::Delta { .. } | Mode::Reserve { .. }).then_some(RESOURCE)
     })
 }
 use proptest::collection::vec as prop_vec;
@@ -157,7 +157,7 @@ fn declared_of(spec: &TxSpec) -> EffectSet {
                 commutative.insert(k);
                 Effect {
                     target: EffectTarget::Point(cell(k)),
-                    mode: Mode::Delta,
+                    mode: Mode::Delta { moves: Moves::Both },
                 }
             }
             Claim::Reserve(k, amount) => {
@@ -224,6 +224,16 @@ fn batch_of(specs: &[TxSpec]) -> (Vec<BatchTx>, BTreeSet<TxHash>) {
     (batch, aborting)
 }
 
+/// Grant the fixture's own issuance, which is where the value a
+/// transaction hands a cell comes from.
+fn grant_minting(session: &mut KernelSession) {
+    session.grant_issuance(vec![IssuanceGrant {
+        resource: RESOURCE,
+        kind: ResourceKind::Fungible,
+        direction: Issued::Either,
+    }]);
+}
+
 /// The scripted guest: exercise every capability the session hands over,
 /// deterministically in the transaction's own identity.
 fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
@@ -251,18 +261,16 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 Capability::Instances { .. } => {
                     let _ = session.range_count(rep, 0);
                 }
-                Capability::Delta(_) => {
+                Capability::Delta {
+                    moves: Moves::Both, ..
+                } => {
                     // Credit, then a smaller debit, so the cell moves both
                     // ways without always draining. Through the bucket
                     // each way, with a mint behind the credit and a burn
                     // after the debit: value a transaction hands a cell
                     // comes from somewhere, and a mint is the somewhere a
                     // fixture has.
-                    session.grant_issuance(vec![IssuanceGrant {
-                        resource: RESOURCE,
-                        kind: ResourceKind::Fungible,
-                        direction: Issued::Either,
-                    }]);
+                    grant_minting(&mut session);
                     if let Ok(minted) = session.mint(0, seed % 40) {
                         let _ = session.cell_put(rep, 0, minted);
                     }
@@ -270,18 +278,24 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                         let _ = session.burn(taken);
                     }
                 }
-                // Only the crediting half, which is the whole of what
-                // this capability answers: the debit beside it above is
+                // One direction only, which is the whole of what the
+                // narrowed handle answers: the movement the other way is
                 // refused here, and the property is that the cell still
                 // conserves.
-                Capability::Credit(_) => {
-                    session.grant_issuance(vec![IssuanceGrant {
-                        resource: RESOURCE,
-                        kind: ResourceKind::Fungible,
-                        direction: Issued::Either,
-                    }]);
+                Capability::Delta {
+                    moves: Moves::In, ..
+                } => {
+                    grant_minting(&mut session);
                     if let Ok(minted) = session.mint(0, seed % 40) {
                         let _ = session.cell_put(rep, 0, minted);
+                    }
+                }
+                Capability::Delta {
+                    moves: Moves::Out, ..
+                } => {
+                    grant_minting(&mut session);
+                    if let Ok(taken) = session.cell_take(rep, 0, seed % 17) {
+                        let _ = session.burn(taken);
                     }
                 }
                 Capability::Reserve { .. } => {
@@ -342,7 +356,7 @@ fn own_movements(entry: &BatchTx) -> BTreeMap<SubstateKey, Movement> {
         .filter_map(|effect| match effect {
             Effect {
                 target: EffectTarget::Point(key),
-                mode: Mode::Delta,
+                mode: Mode::Delta { moves: Moves::Both },
             } => Some((
                 key,
                 Movement {
@@ -448,7 +462,7 @@ fn portable_declared(claims: &[PortableClaim]) -> EffectSet {
         let effect = match *claim {
             PortableClaim::Delta(k) => Effect {
                 target: EffectTarget::Point(cell(k)),
-                mode: Mode::Delta,
+                mode: Mode::Delta { moves: Moves::Both },
             },
             PortableClaim::Reserve(k, amount) => Effect {
                 target: EffectTarget::Point(cell(k)),
@@ -473,7 +487,7 @@ fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
         for (rep, capability) in caps.iter().enumerate() {
             let rep = u32::try_from(rep).expect("small table");
             match capability {
-                Capability::Delta(_) => {
+                Capability::Delta { .. } => {
                     session.grant_issuance(vec![IssuanceGrant {
                         resource: RESOURCE,
                         kind: ResourceKind::Fungible,
@@ -519,7 +533,7 @@ fn outbound_runner(
         for (rep, capability) in caps.iter().enumerate() {
             let rep = u32::try_from(rep).expect("small table");
             match capability {
-                Capability::Delta(_) => {
+                Capability::Delta { .. } => {
                     // Taken through the bucket and burned, so the debit
                     // is value leaving the world rather than value the
                     // fixture lost track of. The take is unjudged here —
@@ -577,7 +591,7 @@ proptest! {
             declared
                 .insert(Effect {
                     target: EffectTarget::Point(key),
-                    mode: Mode::Delta,
+                    mode: Mode::Delta { moves: Moves::Both },
                 })
                 .expect("one mode per key");
             batch.push(BatchTx::new(tx(index), moving(declared), EnvInputs::unsealed(1_000)));

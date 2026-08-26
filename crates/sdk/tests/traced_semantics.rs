@@ -194,7 +194,7 @@ fn nested_binders_survive_evaluation() {
         assert!(
             set.contains(&Effect {
                 target: EffectTarget::Point(expect(member, tag)),
-                mode: Mode::Delta,
+                mode: Mode::Delta { moves: Moves::Both },
             }),
             "member {member:?} under tag {tag:?} was not declared — binders may be swapped"
         );
@@ -222,8 +222,7 @@ fn planned(clauses: &[Clause], depth: usize) -> Vec<Planned> {
             } => shapes.push(Planned {
                 mode: match mode {
                     ModeExpr::Read => ModeKind::Read,
-                    ModeExpr::Delta => ModeKind::Delta,
-                    ModeExpr::Credit => ModeKind::Credit,
+                    ModeExpr::Delta { .. } => ModeKind::Delta,
                     ModeExpr::Reserve(_) => ModeKind::Reserve,
                     ModeExpr::Write { .. } => ModeKind::Write,
                 },

@@ -395,6 +395,9 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
         Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, TargetExpr, Totality,
     };
 
+    const CREDIT: ModeExpr = ModeExpr::Delta { moves: Moves::In };
+    const DELTA: ModeExpr = ModeExpr::Delta { moves: Moves::Both };
+
     let vault_of = |resource: Expr| {
         TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
@@ -468,7 +471,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
 
     // The governed resource grants `Withdraw` and nothing else, so a
     // credit earns no requirement from it at all.
-    let (receiver, credited) = admitted(governed_meta(), ModeExpr::Credit, "receiver");
+    let (receiver, credited) = admitted(governed_meta(), CREDIT, "receiver");
     assert!(
         !wants_credential(receiver, &credited),
         "a credit is not asked for a withdrawal credential: {credited:?}",
@@ -477,7 +480,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
     // The same cell, the same resource, one word different: a
     // bidirectional access has to answer for the debit it might make,
     // so a withdraw-only credential ends up gating the credit too.
-    let (both_ways, both) = admitted(governed_meta(), ModeExpr::Delta, "bidirectional");
+    let (both_ways, both) = admitted(governed_meta(), DELTA, "bidirectional");
     assert!(
         wants_credential(both_ways, &both),
         "a delta answers for both directions, so it carries the withdrawal's: {both:?}",
@@ -487,7 +490,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
     // credit and leaves the reservation alone, which is the same
     // sentence read from the other end: each direction answers for the
     // movement it makes.
-    let (credited, asked) = admitted(admitting_meta(), ModeExpr::Credit, "recipient");
+    let (credited, asked) = admitted(admitting_meta(), CREDIT, "recipient");
     assert!(
         wants_credential(credited, &asked),
         "a credit is asked for the deposit credential: {asked:?}",

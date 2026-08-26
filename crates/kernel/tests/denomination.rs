@@ -69,11 +69,11 @@ fn try_session(denominations: &[Option<ResourceAddr>]) -> Result<KernelSession, 
     let ordered = vec![
         Effect {
             target: EffectTarget::Point(vault(X)),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Point(vault(Y)),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         },
     ];
     let mut set = EffectSet::new();
@@ -122,7 +122,7 @@ fn every_producer_stamps_what_its_source_held() {
         },
         Effect {
             target: EffectTarget::Point(commutative),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Point(reserved),
@@ -132,7 +132,7 @@ fn every_producer_stamps_what_its_source_held() {
         // offered to, and what every one of them must refuse.
         Effect {
             target: EffectTarget::Point(vault(Y)),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         },
     ];
     let mut set = EffectSet::new();

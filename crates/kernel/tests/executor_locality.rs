@@ -41,7 +41,7 @@ const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// body runs.
 fn moving(set: EffectSet) -> Declaration {
     Declaration::from_set(set).denominated(|effect| {
-        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+        matches!(effect.mode, Mode::Delta { .. } | Mode::Reserve { .. }).then_some(RESOURCE)
     })
 }
 
@@ -75,7 +75,7 @@ fn transfer_declared(amount: u128) -> EffectSet {
     .unwrap();
     set.insert(Effect {
         target: EffectTarget::Point(cell(RECIPIENT_BYTE)),
-        mode: Mode::Delta,
+        mode: Mode::Delta { moves: Moves::Both },
     })
     .unwrap();
     set
@@ -89,7 +89,7 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
         _ => None,
     });
     let delta = caps.iter().enumerate().find_map(|(rep, c)| match c {
-        Capability::Delta(_) => Some(u32::try_from(rep).unwrap()),
+        Capability::Delta { .. } => Some(u32::try_from(rep).unwrap()),
         _ => None,
     });
     if let (Some(reserve), Some(delta)) = (reserve, delta) {
@@ -339,7 +339,7 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
         for (rep, capability) in caps.iter().enumerate() {
             let rep = u32::try_from(rep).unwrap();
             match capability {
-                Capability::Delta(_) => {
+                Capability::Delta { .. } => {
                     // Both ways through the bucket, minting behind the
                     // credit and burning after the debit, so the fixture
                     // moves value rather than conjuring it.
@@ -388,7 +388,7 @@ fn remote_movement_batch() -> Vec<BatchTx> {
     moved
         .insert(Effect {
             target: EffectTarget::Point(cell(PAYER_BYTE)),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
     vec![

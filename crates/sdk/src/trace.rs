@@ -1100,7 +1100,7 @@ impl<Shape> Access<'_, Shape> {
     /// A commutative increment or decrement; the amount is dynamic and
     /// never part of the declaration.
     pub fn delta(self) {
-        self.declare(ModeExpr::Delta);
+        self.declare(ModeExpr::Delta { moves: Moves::Both });
     }
 
     /// A commutative increment and no decrement — what a method that
@@ -1111,7 +1111,7 @@ impl<Shape> Access<'_, Shape> {
     /// asks nothing of a credit, where a bidirectional access has to
     /// answer for the debit it might have made.
     pub fn credit(self) {
-        self.declare(ModeExpr::Credit);
+        self.declare(ModeExpr::Delta { moves: Moves::In });
     }
 
     /// A conditional decrement, judged feasible against the declared

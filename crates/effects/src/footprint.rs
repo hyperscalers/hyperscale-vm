@@ -244,11 +244,10 @@ mod tests {
     #[test]
     fn every_kind_weighs_what_the_schedule_says() {
         let schedule = [
-            (ModeKind::Read, 5),
+            (ModeKind::Read, 4),
             (ModeKind::Delta, 3),
-            (ModeKind::Credit, 3),
             (ModeKind::Reserve, 3),
-            (ModeKind::Write, 6),
+            (ModeKind::Write, 5),
         ];
         for (kind, weight) in schedule {
             assert_eq!(mode_weight(kind), weight, "{kind:?}");
@@ -262,9 +261,8 @@ mod tests {
 
     #[test]
     fn the_weight_ordering_is_the_lattice_ordering() {
-        // write > read > {delta, credit, reserve}, off `compatible`.
+        // write > read > {delta, reserve}, off `compatible`.
         assert_eq!(mode_weight(ModeKind::Delta), mode_weight(ModeKind::Reserve));
-        assert_eq!(mode_weight(ModeKind::Delta), mode_weight(ModeKind::Credit));
         assert!(mode_weight(ModeKind::Delta) > EXCLUSIVITY_FLOOR);
         assert!(mode_weight(ModeKind::Read) > mode_weight(ModeKind::Delta));
         assert!(mode_weight(ModeKind::Write) > mode_weight(ModeKind::Read));

@@ -92,7 +92,7 @@ mod through_the_session {
     use hyperscale_vm_effects::{Declaration, Hasher, IssuanceGrant, Issued};
     use hyperscale_vm_kernel::{EnvInputs, KernelSession, OverlayStore, SupplyDelta, SupplyLedger};
     use hyperscale_vm_types::{
-        AbortReason, Effect, EffectSet, EffectTarget, Mode, Outcome, ResourceAddr,
+        AbortReason, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome, ResourceAddr,
     };
 
     use super::{Hash32, MemoryStore, ResourceKind, TestHasher, TxHash, encode_amount, vault};
@@ -112,7 +112,7 @@ mod through_the_session {
     fn session_over(store: MemoryStore) -> KernelSession {
         let moving = Effect {
             target: EffectTarget::Point(vault(1, UNIT.address())),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         };
         let mut set = EffectSet::new();
         set.insert(moving).expect("one cell");
@@ -284,7 +284,7 @@ mod through_the_session {
         for cell in cells {
             set.insert(Effect {
                 target: EffectTarget::Point(cell),
-                mode: Mode::Delta,
+                mode: Mode::Delta { moves: Moves::Both },
             })
             .expect("three distinct cells");
         }

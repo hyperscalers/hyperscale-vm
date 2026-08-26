@@ -20,7 +20,7 @@ use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
 fn arb_mode() -> impl Strategy<Value = Mode> {
     prop_oneof![
         Just(Mode::Read),
-        Just(Mode::Delta),
+        Just(Mode::Delta { moves: Moves::Both }),
         Just(Mode::Write { moves: Moves::Both }),
         any::<u128>().prop_map(|amount| Mode::Reserve { amount }),
     ]
@@ -87,7 +87,11 @@ fn set_of(effects: &[Effect]) -> EffectSet {
 /// axis working rather than this property failing.
 #[test]
 fn the_whole_order_key_space_is_the_most_expensive_interval() {
-    for kind in [Mode::Read, Mode::Delta, Mode::Write { moves: Moves::Both }] {
+    for kind in [
+        Mode::Read,
+        Mode::Delta { moves: Moves::Both },
+        Mode::Write { moves: Moves::Both },
+    ] {
         for cap in [0, 1, 1024, u32::MAX] {
             let whole = effect_units(Effect {
                 target: EffectTarget::Range {

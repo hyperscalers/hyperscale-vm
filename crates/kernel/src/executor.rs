@@ -1101,8 +1101,7 @@ mod tests {
     const fn mode_of(kind: ModeKind) -> Mode {
         match kind {
             ModeKind::Read => Mode::Read,
-            ModeKind::Delta => Mode::Delta,
-            ModeKind::Credit => Mode::Credit,
+            ModeKind::Delta => Mode::Delta { moves: Moves::Both },
             ModeKind::Reserve => Mode::Reserve { amount: 1 },
             ModeKind::Write => Mode::Write { moves: Moves::Both },
         }

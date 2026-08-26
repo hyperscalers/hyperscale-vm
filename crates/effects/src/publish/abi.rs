@@ -285,7 +285,7 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
 #[cfg(test)]
 mod tests {
 
-    use hyperscale_vm_types::Presence;
+    use hyperscale_vm_types::{Moves, Presence};
 
     use super::*;
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
@@ -299,7 +299,7 @@ mod tests {
             reach: None,
             guard: None,
             target: TargetExpr::Point(Expr::SelfAddr),
-            mode: ModeExpr::Delta,
+            mode: ModeExpr::Delta { moves: Moves::Both },
             denomination: None,
         }
     }

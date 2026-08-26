@@ -22,7 +22,7 @@ Access is a pure function of the signed transaction plus immutable metadata. Con
 |---|---|
 | `read` | Fresh coherent read of committed state |
 | `locked` | Read of a permanently locked substate — the target cannot change |
-| `delta` | Unconditional commutative increment/decrement; the amount is runtime-determined, never declared |
+| `delta` | Unconditional commutative increment/decrement; the amount is runtime-determined, never declared. Carries which directions value may move — a credit-only delta cannot underflow and is judged only on the movement it kept |
 | `reserve(n)` | Conditional decrement, feasible iff committed balance minus prior reservations covers `n` |
 | `write` | Exclusive read-modify-write, optionally requiring the leaf absent or present |
 

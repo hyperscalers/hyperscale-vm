@@ -108,7 +108,7 @@ fn fixture() -> Fixture {
         },
         Effect {
             target: EffectTarget::Point(recipient),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         },
         Effect {
             target: EffectTarget::Point(config),
@@ -191,7 +191,7 @@ fn args_for(fx: &Fixture, caps: &[Capability], export: &str) -> Vec<(u32, Handle
         let rep = rep_at(caps, |c| match c {
             Capability::Read(key)
             | Capability::Write(key)
-            | Capability::Delta(key)
+            | Capability::Delta { key, .. }
             | Capability::Reserve { key, .. } => *key == wanted,
             _ => false,
         });

@@ -599,8 +599,7 @@ fn vocabulary_shape(
                     mode,
                     ModeExpr::Read
                         | ModeExpr::Write { .. }
-                        | ModeExpr::Delta
-                        | ModeExpr::Credit
+                        | ModeExpr::Delta { .. }
                         | ModeExpr::Reserve(_)
                 ),
             "holds a fungible balance: one leaf, keyed by the resource it holds, \
@@ -806,7 +805,7 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     {
         return Err(DeclarationError::DenominationNotKeyed { clause });
     }
-    if denomination.is_none() && matches!(mode, ModeExpr::Delta | ModeExpr::Reserve(_)) {
+    if denomination.is_none() && matches!(mode, ModeExpr::Delta { .. } | ModeExpr::Reserve(_)) {
         return Err(DeclarationError::UndenominatedMovement { clause });
     }
     // The class is decidable at publish only where the denomination is
@@ -1386,7 +1385,7 @@ mod tests {
             reach: None,
             guard: None,
             target: cell(),
-            mode: ModeExpr::Delta,
+            mode: ModeExpr::Delta { moves: Moves::Both },
             denomination: Some(Box::new(a_resource())),
         };
         let requires = |guard: Option<Expr>, rule| Clause::Requires {
@@ -2140,7 +2139,10 @@ mod tests {
         // collection's entries move by being named, which is what a
         // rewrite of the interval is.
         for target in [entry(), interval()] {
-            for mode in [ModeExpr::Delta, ModeExpr::Reserve(Expr::Arg(0))] {
+            for mode in [
+                ModeExpr::Delta { moves: Moves::Both },
+                ModeExpr::Reserve(Expr::Arg(0)),
+            ] {
                 assert_eq!(
                     declared(target.clone(), mode.clone(), Some(a_resource())),
                     refused,
@@ -2369,7 +2371,7 @@ mod tests {
     fn a_value_cell_is_keyed_by_what_it_holds() {
         let moves = [
             ModeExpr::Write { moves: Moves::Both },
-            ModeExpr::Delta,
+            ModeExpr::Delta { moves: Moves::Both },
             ModeExpr::Reserve(Expr::Arg(0)),
         ];
         // A vault is keyed by the resource it holds and says so in
@@ -2429,7 +2431,7 @@ mod tests {
         )));
         assert!(misshapen(&one_clause(
             holdings(),
-            ModeExpr::Delta,
+            ModeExpr::Delta { moves: Moves::Both },
             Some(a_resource())
         )));
     }
@@ -2488,7 +2490,10 @@ mod tests {
             check_declarations(&creating(own_point(AUTH, vec![]), None)),
             Ok(())
         );
-        assert!(misshapen(&plain(own_point(AUTH, vec![]), ModeExpr::Delta)));
+        assert!(misshapen(&plain(
+            own_point(AUTH, vec![]),
+            ModeExpr::Delta { moves: Moves::Both }
+        )));
         assert!(misshapen(&plain(
             own_point(AUTH, vec![a_resource()]),
             write()
@@ -2545,7 +2550,7 @@ mod tests {
 
         // Keyed by what it holds, in the modes that move it.
         for mode in [
-            ModeExpr::Delta,
+            ModeExpr::Delta { moves: Moves::Both },
             ModeExpr::Reserve(Expr::Arg(0)),
             ModeExpr::Write { moves: Moves::Both },
         ] {
@@ -2616,7 +2621,10 @@ mod tests {
     #[test]
     fn a_movement_that_names_no_resource_does_not_publish() {
         let own = |material: Vec<Expr>| own_point(package_slot(0), material);
-        for mode in [ModeExpr::Delta, ModeExpr::Reserve(Expr::Arg(0))] {
+        for mode in [
+            ModeExpr::Delta { moves: Moves::Both },
+            ModeExpr::Reserve(Expr::Arg(0)),
+        ] {
             assert_eq!(
                 check_declarations(&one_clause(own(vec![a_resource()]), mode.clone(), None)),
                 Err(DeclarationError::UndenominatedMovement { clause: 0 }),
@@ -2653,7 +2661,7 @@ mod tests {
         assert_eq!(
             check_declarations(&one_clause(
                 own_point(package_slot(0), vec![component.clone()]),
-                ModeExpr::Delta,
+                ModeExpr::Delta { moves: Moves::Both },
                 Some(component)
             )),
             Err(DeclarationError::NotAResource {
@@ -2666,7 +2674,7 @@ mod tests {
         assert_eq!(
             check_declarations(&one_clause(
                 own_point(package_slot(0), vec![Expr::Arg(0)]),
-                ModeExpr::Delta,
+                ModeExpr::Delta { moves: Moves::Both },
                 Some(Expr::Arg(0))
             )),
             Ok(())
@@ -2677,7 +2685,7 @@ mod tests {
         assert_eq!(
             check_declarations(&one_clause(
                 own_point(package_slot(0), vec![Expr::SelfAddr]),
-                ModeExpr::Delta,
+                ModeExpr::Delta { moves: Moves::Both },
                 Some(Expr::SelfAddr)
             )),
             Err(DeclarationError::NotAResource {
@@ -2705,7 +2713,7 @@ mod tests {
         assert_eq!(
             check_declarations(&one_clause(
                 own_point(package_slot(0), vec![restricted()]),
-                ModeExpr::Delta,
+                ModeExpr::Delta { moves: Moves::Both },
                 Some(restricted())
             )),
             Ok(()),
@@ -2849,7 +2857,7 @@ mod tests {
         // byte read of the same leaf still disagree about what came out.
         assert_eq!(
             declared(vec![
-                effect(leaf(), ModeExpr::Delta, held()),
+                effect(leaf(), ModeExpr::Delta { moves: Moves::Both }, held()),
                 effect(leaf(), ModeExpr::Read, None),
             ]),
             MIXED
@@ -3033,7 +3041,10 @@ mod tests {
 
         // Its own prefix, however the key under it is derived.
         assert_eq!(
-            check_declarations(&declaring(child_of(Expr::SelfAddr), ModeExpr::Delta)),
+            check_declarations(&declaring(
+                child_of(Expr::SelfAddr),
+                ModeExpr::Delta { moves: Moves::Both }
+            )),
             Ok(())
         );
         assert_eq!(
@@ -3056,7 +3067,10 @@ mod tests {
             ))),
         ] {
             assert_eq!(
-                check_declarations(&declaring(child_of(owner), ModeExpr::Delta)),
+                check_declarations(&declaring(
+                    child_of(owner),
+                    ModeExpr::Delta { moves: Moves::Both }
+                )),
                 Err(DeclarationError::ForeignPrefix { clause: 0 })
             );
         }
@@ -3071,7 +3085,7 @@ mod tests {
                     reach: None,
                     guard: None,
                     target: child_of(Expr::Binding(0)),
-                    mode: ModeExpr::Delta,
+                    mode: ModeExpr::Delta { moves: Moves::Both },
                     denomination: Some(Box::new(a_resource())),
                 }],
             }],

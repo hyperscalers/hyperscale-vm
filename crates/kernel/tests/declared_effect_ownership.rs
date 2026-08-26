@@ -25,7 +25,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, PrincipalAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, ComponentAddr, Moves, PrincipalAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// The role the stdlib account keeps its balances under.
@@ -73,7 +73,7 @@ fn predator() -> PackageMetadata {
                     slot: SlotRef::Fixed(VAULT),
                     material: vec![Expr::Literal(Value::Address(XRD))],
                 }),
-                mode: ModeExpr::Delta,
+                mode: ModeExpr::Delta { moves: Moves::Both },
                 denomination: None,
             }],
             ..MethodSignature::default()
@@ -145,7 +145,7 @@ fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
     let granted = session.capabilities().to_vec();
     assert!(
         !granted.iter().any(
-            |capability| matches!(capability, Capability::Delta(key) if *key == vault_of(VICTIM))
+            |capability| matches!(capability, Capability::Delta { key, .. } if *key == vault_of(VICTIM))
         ),
         "a package declared a delta on a stranger's vault and the kernel \
          materialized it: {granted:?}"
@@ -185,7 +185,7 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
     };
 
     let Some(rep) = session.capabilities().iter().position(
-        |capability| matches!(capability, Capability::Delta(key) if *key == vault_of(VICTIM)),
+        |capability| matches!(capability, Capability::Delta { key, .. } if *key == vault_of(VICTIM)),
     ) else {
         return; // No handle on the victim's cell: nothing to spend through.
     };

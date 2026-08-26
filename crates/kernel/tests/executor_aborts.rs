@@ -30,7 +30,7 @@ const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// body runs.
 fn moving(set: EffectSet) -> Declaration {
     Declaration::from_set(set).denominated(|effect| {
-        matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }).then_some(RESOURCE)
+        matches!(effect.mode, Mode::Delta { .. } | Mode::Reserve { .. }).then_some(RESOURCE)
     })
 }
 
@@ -70,7 +70,7 @@ fn point(key: SubstateKey, mode: Mode) -> EffectSet {
 fn with_delta(mut set: EffectSet, key: SubstateKey) -> EffectSet {
     set.insert(Effect {
         target: EffectTarget::Point(key),
-        mode: Mode::Delta,
+        mode: Mode::Delta { moves: Moves::Both },
     })
     .unwrap();
     set
@@ -92,7 +92,7 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
             _ => None,
         });
         let delta = caps.iter().enumerate().find_map(|(rep, c)| match c {
-            Capability::Delta(_) => Some(u32::try_from(rep).unwrap()),
+            Capability::Delta { .. } => Some(u32::try_from(rep).unwrap()),
             _ => None,
         });
         match (reserve, delta) {
@@ -148,7 +148,11 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
             )),
             env(),
         ),
-        BatchTx::new(tx(0x02), moving(point(cell(0xA), Mode::Delta)), env()),
+        BatchTx::new(
+            tx(0x02),
+            moving(point(cell(0xA), Mode::Delta { moves: Moves::Both })),
+            env(),
+        ),
     ];
 
     for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
@@ -192,7 +196,11 @@ fn a_covered_debit_completes_beside_a_reservation() {
             )),
             env(),
         ),
-        BatchTx::new(tx(0x02), moving(point(cell(0xA), Mode::Delta)), env()),
+        BatchTx::new(
+            tx(0x02),
+            moving(point(cell(0xA), Mode::Delta { moves: Moves::Both })),
+            env(),
+        ),
     ];
 
     let outcome = execute_batch(
@@ -224,8 +232,16 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
     let mut store = MemoryStore::new();
     store.write(cell(0xA), encode_amount(20).to_vec());
     let batch = vec![
-        BatchTx::new(tx(0x01), moving(point(cell(0xA), Mode::Delta)), env()),
-        BatchTx::new(tx(0x02), moving(point(cell(0xA), Mode::Delta)), env()),
+        BatchTx::new(
+            tx(0x01),
+            moving(point(cell(0xA), Mode::Delta { moves: Moves::Both })),
+            env(),
+        ),
+        BatchTx::new(
+            tx(0x02),
+            moving(point(cell(0xA), Mode::Delta { moves: Moves::Both })),
+            env(),
+        ),
     ];
     let mut reversed = batch.clone();
     reversed.reverse();
@@ -495,7 +511,11 @@ fn a_drained_vault_leaves_no_cell() {
             )),
             env(),
         ),
-        BatchTx::new(tx(0x02), moving(point(cell(0xD), Mode::Delta)), env()),
+        BatchTx::new(
+            tx(0x02),
+            moving(point(cell(0xD), Mode::Delta { moves: Moves::Both })),
+            env(),
+        ),
     ];
     let outcome = execute_batch(
         Arc::new(store),
@@ -691,7 +711,7 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
         let delta = session
             .capabilities()
             .iter()
-            .position(|c| matches!(c, Capability::Delta(_)))
+            .position(|c| matches!(c, Capability::Delta { .. }))
             .map(|rep| u32::try_from(rep).unwrap());
         if let Some(rep) = delta {
             session.delta_add(rep, 0, 1).unwrap();
@@ -711,7 +731,11 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
                 moving(point(poisoned, Mode::Write { moves: Moves::Both })),
                 env(),
             ),
-            BatchTx::new(tx(0x02), moving(point(poisoned, Mode::Delta)), env()),
+            BatchTx::new(
+                tx(0x02),
+                moving(point(poisoned, Mode::Delta { moves: Moves::Both })),
+                env(),
+            ),
         ],
         &writer,
         test_hash,
@@ -756,7 +780,7 @@ fn an_exclusive_debit_past_a_hold_loses_to_the_reserver() {
     let scripted = |_entry: &BatchTx, mut session: KernelSession| {
         let caps: Vec<Capability> = session.capabilities().to_vec();
         let delta = caps.iter().enumerate().find_map(|(rep, c)| match c {
-            Capability::Delta(_) => Some(u32::try_from(rep).unwrap()),
+            Capability::Delta { .. } => Some(u32::try_from(rep).unwrap()),
             _ => None,
         });
         for (rep, capability) in caps.iter().enumerate() {
@@ -844,7 +868,7 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
     let scripted = |_entry: &BatchTx, mut session: KernelSession| {
         let caps: Vec<Capability> = session.capabilities().to_vec();
         let delta = caps.iter().enumerate().find_map(|(rep, c)| match c {
-            Capability::Delta(_) => Some(u32::try_from(rep).unwrap()),
+            Capability::Delta { .. } => Some(u32::try_from(rep).unwrap()),
             _ => None,
         });
         for (rep, capability) in caps.iter().enumerate() {
@@ -925,7 +949,7 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
             let rep = session
                 .capabilities()
                 .iter()
-                .position(|c| matches!(c, Capability::Delta(_)))
+                .position(|c| matches!(c, Capability::Delta { .. }))
                 .map(|rep| u32::try_from(rep).unwrap())
                 .expect("a delta capability");
             session.delta_add(rep, 0, u128::MAX).unwrap();
@@ -941,7 +965,11 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
     let outcome = execute_batch(
         Arc::new(MemoryStore::new()),
         &[
-            BatchTx::new(tx(0x01), moving(point(vault, Mode::Delta)), env()),
+            BatchTx::new(
+                tx(0x01),
+                moving(point(vault, Mode::Delta { moves: Moves::Both })),
+                env(),
+            ),
             BatchTx::new(tx(0x02), moving(point(cell(0xD), Mode::Read)), env()),
         ],
         &overflowing,
@@ -1019,8 +1047,16 @@ fn a_transaction_that_lost_value_aborts_beside_one_that_did_not() {
     let honest = cell(0xB);
     let fabricating = cell(0xD);
     let batch = vec![
-        BatchTx::new(tx(0x01), moving(point(honest, Mode::Delta)), env()),
-        BatchTx::new(tx(0x02), moving(point(fabricating, Mode::Delta)), env()),
+        BatchTx::new(
+            tx(0x01),
+            moving(point(honest, Mode::Delta { moves: Moves::Both })),
+            env(),
+        ),
+        BatchTx::new(
+            tx(0x02),
+            moving(point(fabricating, Mode::Delta { moves: Moves::Both })),
+            env(),
+        ),
     ];
     let run = |entry: &BatchTx, mut session: KernelSession| {
         if entry.tx == tx(0x01) {

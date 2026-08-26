@@ -195,7 +195,7 @@ mod tests {
         for (byte, mode) in [
             (1, Mode::Read),
             (2, Mode::Write { moves: Moves::Both }),
-            (3, Mode::Delta),
+            (3, Mode::Delta { moves: Moves::Both }),
             (4, Mode::Reserve { amount: 5 }),
         ] {
             set.insert(Effect {
@@ -221,7 +221,7 @@ mod tests {
         mixed
             .insert(Effect {
                 target: target(3),
-                mode: Mode::Delta,
+                mode: Mode::Delta { moves: Moves::Both },
             })
             .unwrap();
         assert_eq!(mixed.provision_targets(), BTreeSet::from([target(3)]));
@@ -234,8 +234,7 @@ mod tests {
     const fn mode_of(kind: ModeKind) -> Mode {
         match kind {
             ModeKind::Read => Mode::Read,
-            ModeKind::Delta => Mode::Delta,
-            ModeKind::Credit => Mode::Credit,
+            ModeKind::Delta => Mode::Delta { moves: Moves::Both },
             ModeKind::Reserve => Mode::Reserve { amount: 1 },
             ModeKind::Write => Mode::Write { moves: Moves::Both },
         }
@@ -282,7 +281,10 @@ mod tests {
         // A collection target is never one: it holds no amount, so the
         // pairing the check is about cannot arise.
         let mut ranges = EffectSet::new();
-        for mode in [Mode::Write { moves: Moves::Both }, Mode::Delta] {
+        for mode in [
+            Mode::Write { moves: Moves::Both },
+            Mode::Delta { moves: Moves::Both },
+        ] {
             ranges
                 .insert(Effect {
                     target: EffectTarget::Range {
@@ -315,12 +317,12 @@ mod tests {
         .unwrap();
         set.insert(Effect {
             target,
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
         set.insert(Effect {
             target,
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
         assert_eq!(set.iter().count(), 2);
@@ -330,7 +332,7 @@ mod tests {
         }));
         assert!(set.contains(&Effect {
             target,
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         }));
 
         let overflow = set.insert(Effect {

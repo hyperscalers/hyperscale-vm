@@ -102,7 +102,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
         declared
             .insert(Effect {
                 target: EffectTarget::Point(recipient),
-                mode: Mode::Delta,
+                mode: Mode::Delta { moves: Moves::Both },
             })
             .unwrap();
         batch.push(BatchTx::new(
@@ -196,7 +196,13 @@ impl GuestRunner for BlessedRunner {
                         .expect("capability present"),
                 )
                 .expect("bounded");
-                let b = rep_of(store.data(), &Capability::Delta(recipient));
+                let b = rep_of(
+                    store.data(),
+                    &Capability::Delta {
+                        key: recipient,
+                        moves: Moves::Both,
+                    },
+                );
                 instance
                     .get_typed_func::<(Resource<Site>, Resource<Site>), (u64,)>(
                         &mut store, "transfer",
@@ -284,7 +290,7 @@ impl GuestRunner for RefRunner {
                         HandleKind::Site,
                     ),
                     CVal::Borrow(
-                        rep_of(&session, &Capability::Delta(recipient)),
+                        rep_of(&session, &Capability::Delta { key: recipient, moves: Moves::Both }),
                         HandleKind::Site,
                     ),
                 ],

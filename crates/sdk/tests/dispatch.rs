@@ -241,7 +241,7 @@ const fn wide(value: u128) -> [u8; 16] {
 /// about the key: the kernel evaluated it, so the export never sees it.
 #[test]
 fn an_edge_the_body_credits_lands_in_the_declared_cell() {
-    let mut session = session(Mode::Delta, 0);
+    let mut session = session(Mode::Delta { moves: Moves::Both }, 0);
     let funds = minted(&mut session, 70);
 
     let (session, invoked) = till::invoke("deposit", session, &[cell(), GuestArg::Bucket(funds)]);

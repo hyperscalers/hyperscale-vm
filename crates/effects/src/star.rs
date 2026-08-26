@@ -289,6 +289,8 @@ fn chain_depths(manifest: &Manifest, shards: &dyn ShardResolver, roles: &[Role])
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_vm_types::Moves;
+
     use super::{MAX_STAGED_DEPTH, Role, Strategy, classify, classify_strategy};
     use crate::dsl::{Expr, ModeExpr};
     use crate::hash::TestHasher;
@@ -309,7 +311,10 @@ mod tests {
         let mut solo = PackageMetadata::default();
         solo.methods.insert(
             "act".into(),
-            method(vec![self_point(SlotId(1), ModeExpr::Delta)]),
+            method(vec![self_point(
+                SlotId(1),
+                ModeExpr::Delta { moves: Moves::Both },
+            )]),
         );
         chain.packages.publish_unchecked(pkg("solo"), solo);
         chain.instances.create(&TestHasher, meta_of("solo"));
@@ -361,14 +366,20 @@ mod tests {
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![Expr::SelfAddr],
-                effects: vec![self_point(SlotId(1), ModeExpr::Delta)],
+                effects: vec![self_point(
+                    SlotId(1),
+                    ModeExpr::Delta { moves: Moves::Both },
+                )],
                 ..MethodSignature::default()
             },
         );
         let mut consuming = PackageMetadata::default();
         consuming.methods.insert(
             "take".into(),
-            method(vec![self_point(SlotId(2), ModeExpr::Delta)]),
+            method(vec![self_point(
+                SlotId(2),
+                ModeExpr::Delta { moves: Moves::Both },
+            )]),
         );
         chain.packages.publish_unchecked(pkg("producer"), producing);
         chain.packages.publish_unchecked(pkg("consumer"), consuming);

@@ -20,7 +20,7 @@ use hyperscale_vm_kernel::{
     EnvInputs, KernelSession, MemoryStore, OverlayStore, Substates, decode_amount,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Outcome, ResourceAddr,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome, ResourceAddr,
     SubstateKey, TxHash, encode_amount,
 };
 
@@ -68,7 +68,7 @@ fn session(held: u128, reserves: &[u128]) -> (KernelSession, u32) {
         reach: None,
         effect: Effect {
             target: EffectTarget::Point(sink),
-            mode: Mode::Delta,
+            mode: Mode::Delta { moves: Moves::Both },
         },
         holds: Some(UNIT),
     });

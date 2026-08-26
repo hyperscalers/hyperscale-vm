@@ -903,7 +903,7 @@ mod tests {
                     slot: SlotRef::Fixed(package_slot(0)),
                     material: vec![held()],
                 }),
-                mode: ModeExpr::Delta,
+                mode: ModeExpr::Delta { moves: Moves::Both },
                 denomination: Some(Box::new(held())),
             }];
             signature.abi = vec![AbiParam::Handle { clause: 0, site: 0 }];

@@ -19,6 +19,7 @@ use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{AbiParam, Clause, MethodSignature, ModeExpr, TargetExpr};
 use hyperscale_vm_fixtures::grammar;
+use hyperscale_vm_types::Moves;
 
 /// How a looped site's declaration reads: its mode, and whether the
 /// target is a single leaf or an interval, and whether it holds value.
@@ -42,8 +43,8 @@ fn looped_mode(signature: &MethodSignature, clause: u32, site: u32) -> Option<&'
         (TargetExpr::Point(_), ModeExpr::Read) => "read of bytes",
         (TargetExpr::Point(_), ModeExpr::Write { .. }) if holds_value => "exclusive hold on value",
         (TargetExpr::Point(_), ModeExpr::Write { .. }) => "exclusive hold on bytes",
-        (TargetExpr::Point(_), ModeExpr::Delta) => "commutative movement",
-        (TargetExpr::Point(_), ModeExpr::Credit) => "commutative credit",
+        (TargetExpr::Point(_), ModeExpr::Delta { moves: Moves::Both }) => "commutative movement",
+        (TargetExpr::Point(_), ModeExpr::Delta { moves: Moves::In }) => "commutative credit",
         (TargetExpr::Point(_), ModeExpr::Reserve(_)) => "held reservation",
         (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Read) => "read interval",
         (TargetExpr::Entry { .. } | TargetExpr::Range { .. }, ModeExpr::Write { .. })

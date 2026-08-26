@@ -22,11 +22,7 @@ pub const fn permits(declared: ModeKind, access: ModeKind) -> bool {
         (declared, access),
         (ModeKind::Write, ModeKind::Read | ModeKind::Write)
             | (ModeKind::Read, ModeKind::Read)
-            // A credit is written down as the commutative movement it is,
-            // so the record a store keeps of one says `Delta`. What the
-            // narrower mode gave up is a direction, which the record does
-            // not carry and the session refused before it was made.
-            | (ModeKind::Delta | ModeKind::Credit, ModeKind::Delta)
+            | (ModeKind::Delta, ModeKind::Delta)
             | (ModeKind::Reserve, ModeKind::Reserve)
     )
 }

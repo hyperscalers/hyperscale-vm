@@ -260,7 +260,7 @@ mod tests {
                                 map: Box::new(Expr::Binding(1)),
                                 key: Box::new(Expr::Binding(0)),
                             }),
-                            mode: ModeExpr::Delta,
+                            mode: ModeExpr::Delta { moves: Moves::Both },
                             denomination: None,
                         }],
                     }],

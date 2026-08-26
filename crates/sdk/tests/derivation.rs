@@ -476,7 +476,7 @@ fn a_branch_the_declaration_can_read_guards_its_own_clauses() {
         clause,
         Clause::Effect {
             reach: _,
-            mode: ModeExpr::Credit,
+            mode: ModeExpr::Delta { moves: Moves::In },
             ..
         }
     )));
@@ -1384,7 +1384,7 @@ fn a_module_with_no_state_struct_declares_what_its_body_reaches() {
     let effects = &metadata.methods["deposit"].effects;
     let [
         Clause::Effect {
-            mode: ModeExpr::Credit,
+            mode: ModeExpr::Delta { moves: Moves::In },
             denomination: Some(resource),
             ..
         },
