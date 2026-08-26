@@ -202,7 +202,7 @@ pub mod account {
         /// before the export runs, so the body has nothing to say and
         /// the read the gate performs is the gate's to declare.
         #[proves(self)]
-        pub fn authorize(&mut self) {}
+        pub fn authorize(&self) {}
 
         /// File the instances the edge carries as holdings entries.
         ///
@@ -232,7 +232,7 @@ pub mod account {
         /// For a fungible badge, where holding any of it is the whole
         /// claim. One instance of a non-fungible one is `present-instance`.
         #[proves(badge)]
-        pub fn present_badge(&mut self, badge: Address) {}
+        pub fn present_badge(&self, badge: Address) {}
 
         /// The same gate over one instance: the kernel judges the
         /// holder's rule and the holdings entry at `id` before the
@@ -245,7 +245,7 @@ pub mod account {
         /// badge resource with one instance per admin expressible:
         /// rotate by issuing, revoke by burning.
         #[proves(badge[id])]
-        pub fn present_instance(&mut self, badge: Address, id: u64) {}
+        pub fn present_instance(&self, badge: Address, id: u64) {}
 
         /// Store the three rules that govern from here on, and the delay
         /// the first replacement of them waits.
