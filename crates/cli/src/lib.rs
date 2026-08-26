@@ -37,6 +37,7 @@ pub use hyperscale_vm_effects::{explain, explain_method};
 pub use hyperscale_vm_gate::{GateError, Provenance};
 use hyperscale_vm_gate::{admit_package, admit_protocol_package, attach_metadata, decode_metadata};
 use hyperscale_vm_runtime::validate_component;
+use serde_json::{Value as Json, from_str};
 use wit_component::ComponentEncoder;
 
 pub mod scaffold;
@@ -79,35 +80,40 @@ fn cargo(dir: &Path, args: &[&str]) -> Result<std::process::Output, BuildError> 
         .map_err(|error| BuildError::new(format!("spawn cargo in {}: {error}", dir.display())))
 }
 
-/// The single wasm the crate's library build produced.
+/// The wasm the crate's library build produced, as the build itself
+/// named it.
 ///
-/// Found rather than named: a package's artifact is whatever its own
-/// `[package] name` compiles to, and a lookup by convention would refuse
-/// a crate for being called something else. More than one is the one case
-/// worth refusing, because picking would be picking arbitrarily.
-fn built_wasm(dir: &Path) -> Result<PathBuf, BuildError> {
-    let out = dir.join("target").join(TARGET).join("release");
-    let entries = std::fs::read_dir(&out)
-        .map_err(|error| BuildError::new(format!("read {}: {error}", out.display())))?;
-    let mut found: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "wasm")
+/// Read out of cargo's own artifact messages rather than found by
+/// scanning a directory. A directory scan has to know two things it
+/// cannot: where the target directory is — a workspace member's is the
+/// workspace's, not the crate's — and which of the files in it belongs to
+/// this crate, which under a shared target directory is one of many. What
+/// the build says it wrote answers both, and answers them the same way
+/// for a member of a workspace and for a crate that is its own root.
+fn built_wasm(messages: &str) -> Result<PathBuf, BuildError> {
+    let mut found: Vec<PathBuf> = messages
+        .lines()
+        .filter_map(|line| from_str::<Json>(line).ok())
+        .filter(|message| message["reason"] == "compiler-artifact")
+        .flat_map(|message| {
+            let names = message["filenames"].as_array().cloned().unwrap_or_default();
+            names
+                .iter()
+                .filter_map(Json::as_str)
+                .map(PathBuf::from)
+                .collect::<Vec<_>>()
         })
+        .filter(|path| path.extension().is_some_and(|it| it == "wasm"))
         .collect();
     found.sort();
     match found.len() {
         1 => Ok(found.remove(0)),
-        0 => Err(BuildError::new(format!(
-            "no wasm in {} — the crate builds no cdylib",
-            out.display()
-        ))),
+        0 => Err(BuildError::new(
+            "the build produced no wasm — the crate builds no cdylib".to_owned(),
+        )),
         _ => Err(BuildError::new(format!(
-            "{} wasm files in {}; a stale one from a renamed crate is the usual cause",
-            found.len(),
-            out.display()
+            "the build produced {} wasm files, and picking would be picking arbitrarily",
+            found.len()
         ))),
     }
 }
@@ -125,7 +131,22 @@ pub fn compile(dir: &Path) -> Result<Vec<u8>, BuildError> {
     // `--lib` alone: the metadata binary beside it is a host program, and
     // asking wasm32 to build one would ask for a `main` that is
     // deliberately not there.
-    let built = cargo(dir, &["build", "--release", "--lib", "--target", TARGET])?;
+    // `json-render-diagnostics` rather than plain `json`: the artifact
+    // paths reach stdout for [`built_wasm`], and the diagnostics stay
+    // rendered on stderr, where the linker check below reads them and
+    // where an author's own build error is legible.
+    let built = cargo(
+        dir,
+        &[
+            "build",
+            "--release",
+            "--lib",
+            "--target",
+            TARGET,
+            "--message-format",
+            "json-render-diagnostics",
+        ],
+    )?;
     if !built.status.success() {
         return Err(BuildError::new(format!(
             "the package's code did not build:\n{}",
@@ -148,7 +169,8 @@ pub fn compile(dir: &Path) -> Result<Vec<u8>, BuildError> {
             mismatch.trim()
         )));
     }
-    let core = std::fs::read(built_wasm(dir)?)
+    let messages = String::from_utf8_lossy(&built.stdout);
+    let core = std::fs::read(built_wasm(&messages)?)
         .map_err(|error| BuildError::new(format!("read the core module: {error}")))?;
     // wit-component's API errors with `anyhow::Error`, which has no
     // `StdError` impl to convert through; flatten its chain instead.

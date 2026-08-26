@@ -1,6 +1,3 @@
-# `trim-paths` is unstable, and the toolchain is pinned anyway.
-cargo-features = ["trim-paths"]
-
 [package]
 name = "staking-guest"
 version = "0.0.0"
@@ -11,23 +8,5 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wit-bindgen = "=0.60.0"
-# The contract SDK. `#[blueprint]` is what authors this package: the
-# declaration on a host build, the component on a guest one.
-hyperscale-vm-sdk = { path = "../../crates/sdk", features = ["guest"] }
-
-[profile.release]
-opt-level = "s"
-lto = true
-# The artifact carries no path from the machine that built it. Panic
-# formatting is elided, but a `Location` survives whatever formats it,
-# and the one it names is the source file's — absolute, and so as much a
-# property of the checkout as the name section this build already strips.
-trim-paths = "all"
-# One unit per crate: nothing about the artifact's function order is
-# left to codegen-unit partitioning or LTO merge order.
-codegen-units = 1
-
-# Deliberately outside the host workspace: this crate compiles to
-# wasm32-unknown-unknown and is built by the harness, not by workspace builds.
-[workspace]
+wit-bindgen.workspace = true
+hyperscale-vm-sdk.workspace = true

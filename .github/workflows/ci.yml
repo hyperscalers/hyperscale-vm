@@ -75,14 +75,13 @@ jobs:
       # fail if a package crate took back `panic = "abort"`, which builds
       # a host std the test harness cannot link against.
       #
-      # Under the guests' own pinned nightly: a package manifest opts in
-      # to `trim-paths`, which stable cargo will not parse, and the
-      # toolchain a bare `cargo` picks here is the workspace's.
+      # Under the guests' own pinned nightly: the guests' manifest opts
+      # in to `trim-paths`, which stable cargo will not parse, and the
+      # toolchain a bare `cargo` picks here is the host workspace's.
       - name: Package Tests
         env:
           RUSTUP_TOOLCHAIN: nightly-2026-06-08
+        working-directory: guests
         run: |
-          for manifest in guests/*/Cargo.toml; do
-            cargo test --manifest-path "$manifest"
-            cargo test --release --manifest-path "$manifest"
-          done
+          cargo test --workspace
+          cargo test --release --workspace

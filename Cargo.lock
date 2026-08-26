@@ -683,6 +683,7 @@ dependencies = [
  "hyperscale-vm-fixtures",
  "hyperscale-vm-gate",
  "hyperscale-vm-runtime",
+ "serde_json",
  "thiserror 2.0.19",
  "wit-component",
 ]

@@ -1,0 +1,52 @@
+# `trim-paths` is unstable, and the toolchain is pinned anyway.
+cargo-features = ["trim-paths"]
+
+# The guests are one workspace of their own, deliberately outside the
+# host's: they compile to wasm32-unknown-unknown and are built by the
+# harness rather than by a workspace build. One root rather than
+# seventeen, because everything that made each of them a root — the
+# profile, the target rustflags, the lockfile — was identical in all
+# seventeen and is a property of "a guest" rather than of any one of
+# them. Seventeen copies is seventeen chances to be missing one, which is
+# how a guest shipped with no build configuration at all.
+[workspace]
+resolver = "3"
+members = [
+    "account",
+    "amm",
+    "book",
+    "capped",
+    "custodian",
+    "flashloan",
+    "grammar",
+    "lending",
+    "lottery",
+    "nf",
+    "payouts",
+    "peg",
+    "perp",
+    "registry",
+    "security",
+    "shares",
+    "staking",
+]
+
+[workspace.dependencies]
+wit-bindgen = "=0.60.0"
+# The contract SDK. `#[blueprint]` is what authors this package: the
+# declaration on a host build, the component on a guest one.
+hyperscale-vm-sdk = { path = "../crates/sdk", features = ["guest"] }
+# The author's chain: publish, seed, call, assert.
+hyperscale-vm-testing = { path = "../crates/testing" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+# The artifact carries no path from the machine that built it. Panic
+# formatting is elided, but a `Location` survives whatever formats it,
+# and the one it names is the source file's — absolute, and so as much a
+# property of the checkout as the name section this build already strips.
+trim-paths = "all"
+# One unit per crate: nothing about the artifact's function order is
+# left to codegen-unit partitioning or LTO merge order.
+codegen-units = 1

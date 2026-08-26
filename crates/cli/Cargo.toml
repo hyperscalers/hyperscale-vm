@@ -15,6 +15,8 @@ hyperscale-vm-effects.workspace = true
 # carry: a package that builds here has passed the call admission runs.
 hyperscale-vm-gate.workspace = true
 hyperscale-vm-runtime = { workspace = true, features = ["engine"] }
+# `cargo --message-format=json` is what says which file a build wrote.
+serde_json.workspace = true
 thiserror.workspace = true
 wit-component.workspace = true
 
