@@ -217,7 +217,6 @@ pub fn method(
 /// present.
 pub fn component(world: &str, document: &str, methods: &[&Method]) -> TokenStream {
     let functions = methods.iter().map(|m| &m.function);
-    let _ = world;
     quote!(
         // The kernel interfaces are bound in the SDK, once. Generating
         // them again here would produce a second set of Rust types for

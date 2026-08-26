@@ -256,7 +256,9 @@ pub enum AdmissionError {
     ///
     /// What makes a socket worth signing: the signer says which
     /// authority they are asking for, and a composition that supplies
-    /// some other one is refused rather than quietly presenting it.
+    /// some other one is refused rather than quietly presenting it. A
+    /// filling node that minted nothing at all is the same refusal —
+    /// no claim it minted matches, because it minted none.
     ///
     /// A socket is declared per intent, so the intent is what says which
     /// socket `socket` names — and the node is stated in the same
@@ -326,24 +328,6 @@ pub enum AdmissionError {
         /// The consuming node, in that intent.
         node: u32,
         /// The producer the proof claims, in that intent.
-        producer: u32,
-    },
-    /// A socket filled by a node that has minted nothing by the time the
-    /// presenting node reads it.
-    ///
-    /// Its own refusal rather than [`Self::ForwardProof`]'s, because the
-    /// filling node belongs to another intent: one sentence naming both
-    /// would put two intents' numberings side by side, which is the
-    /// thing these payloads exist to avoid.
-    #[error(
-        "socket {socket} is filled by intent {intent} node {producer}, which has minted nothing"
-    )]
-    UnmintedSocket {
-        /// The socket, in the presenting intent.
-        socket: u32,
-        /// The intent that fills it.
-        intent: u32,
-        /// The filling node, in that intent.
         producer: u32,
     },
     /// A proof drawn from a node whose method mints no identity.
@@ -763,8 +747,7 @@ impl AdmissionError {
             | Self::SocketKindMismatch { intent, .. }
             | Self::SocketResourceMismatch { intent, .. }
             | Self::UnconsumedSocket { intent, .. }
-            | Self::SocketReused { intent, .. }
-            | Self::UnmintedSocket { intent, .. } => Placed {
+            | Self::SocketReused { intent, .. } => Placed {
                 intent: Some(*intent),
                 node: None,
                 param: None,

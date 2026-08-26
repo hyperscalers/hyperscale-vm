@@ -800,9 +800,8 @@ impl Admission<'_> {
     ) -> Result<(Value, NodeInput), AdmissionError> {
         let intent = &self.intents[intent_index];
         let (node_index, param_index) = at;
-        let reference = &reference;
 
-        let Some((decl, binding)) = usize::try_from(*reference).ok().and_then(|position| {
+        let Some((decl, binding)) = usize::try_from(reference).ok().and_then(|position| {
             Some((
                 intent.sockets.get(position)?,
                 intent.bindings.get(position)?,
@@ -811,7 +810,7 @@ impl Admission<'_> {
             return Err(AdmissionError::UnknownSocket {
                 intent: Self::intent_of(intent_index),
                 node: local,
-                socket: *reference,
+                socket: reference,
             });
         };
         if !param.is_edge() {
@@ -837,7 +836,7 @@ impl Admission<'_> {
             return Err(AdmissionError::AuthoritySocketAsArgument {
                 node: node_index,
                 param: param_index,
-                socket: *reference,
+                socket: reference,
             });
         };
         let source_intent =
@@ -858,7 +857,7 @@ impl Admission<'_> {
                 } else {
                     Err(AdmissionError::SocketResourceMismatch {
                         intent: intent_at,
-                        socket: *reference,
+                        socket: reference,
                     })
                 }
             },
@@ -987,11 +986,7 @@ impl Admission<'_> {
                     let minted = self
                         .minted
                         .get(source)
-                        .ok_or(AdmissionError::UnmintedSocket {
-                            socket: *reference,
-                            intent: filled_from,
-                            producer,
-                        })?;
+                        .expect("the interleave orders the minting node earlier");
                     if !minted.contains(wanted) {
                         return Err(AdmissionError::SocketClaimMismatch {
                             intent: Self::intent_of(intent_index),

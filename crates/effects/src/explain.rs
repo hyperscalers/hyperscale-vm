@@ -751,9 +751,9 @@ impl Names<'_> {
                 );
             }
         }
-        name_table("config", &self.0.config, 0, out);
-        name_table("events", &self.0.events, 0, out);
-        name_table("errors", &self.0.errors, 0, out);
+        name_table("config", &self.0.config, out);
+        name_table("events", &self.0.events, out);
+        name_table("errors", &self.0.errors, out);
         if !self.0.types.is_empty() {
             out.push_str("types\n");
             for (name, shape) in &self.0.types {
@@ -1333,15 +1333,14 @@ impl Names<'_> {
     }
 }
 
-/// One index-to-name table, numbered from the band it is indexed in.
-fn name_table(title: &str, names: &[String], base: u16, out: &mut String) {
+/// One index-to-name table.
+fn name_table(title: &str, names: &[String], out: &mut String) {
     if names.is_empty() {
         return;
     }
     let _ = writeln!(out, "{title}");
     for (index, name) in names.iter().enumerate() {
-        let number = base as usize + index;
-        let _ = writeln!(out, "  {number:>5}  {name}");
+        let _ = writeln!(out, "  {index:>5}  {name}");
     }
 }
 
