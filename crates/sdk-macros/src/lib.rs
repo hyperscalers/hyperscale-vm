@@ -682,6 +682,23 @@ fn lower_methods(
             let syn::ImplItem::Fn(method) = item else {
                 continue;
             };
+            // Only `pub` methods lower, and `strip` removes the macro's
+            // attributes from every fn — so a gate on a private method
+            // would vanish along with the export the author thought
+            // they were guarding. Forgetting `pub` is the classic slip,
+            // and the refusal names the fix.
+            if !matches!(method.vis, syn::Visibility::Public(_))
+                && let Some(gate) = method
+                    .attrs
+                    .iter()
+                    .find(|attr| attr.path().is_ident("requires") || attr.path().is_ident("proves"))
+            {
+                return Err(syn::Error::new_spanned(
+                    gate,
+                    "a gate guards a published method, and a private one publishes \
+                     nothing — make the method `pub`, or drop the attribute",
+                ));
+            }
             if matches!(method.vis, syn::Visibility::Public(_)) {
                 // The published name, not the Rust one: `#[name(..)]`
                 // reaches the same collision, and the builder would

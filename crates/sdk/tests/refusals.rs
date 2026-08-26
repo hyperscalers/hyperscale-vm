@@ -179,6 +179,15 @@ fn the_lowering_refuses_a_fielded_error_variant() {
     refuse.compile_fail("tests/refusals/fielded_error.rs");
 }
 
+/// A gate on a private method guards nothing: only `pub` methods lower,
+/// and the attribute would be silently stripped with the export the
+/// author thought they were guarding.
+#[test]
+fn the_lowering_refuses_a_gate_on_a_private_method() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/private_gated.rs");
+}
+
 /// A method carries one gate.
 ///
 /// The gate attributes are collected before any is read, so a second one
