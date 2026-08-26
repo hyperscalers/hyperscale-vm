@@ -19,7 +19,7 @@
 //!
 //! The five machines a session interleaves each live beside it:
 //! [`materialize`] judges the declaration into the capability table,
-//! [`permit`] decides what each capability grants, [`buckets`] is the
+//! [`grants`] decides what each capability grants, [`buckets`] is the
 //! linearity ledger for value in flight, [`ranges`] holds the interval
 //! scan cache and its budgets, and [`receipt`] folds what committed.
 

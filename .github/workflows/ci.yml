@@ -39,6 +39,14 @@ jobs:
       # it wants neither a sanitizer nor a corpus.
       - name: Cargo Clippy (fuzz)
         run: cargo +nightly clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
+      # Intra-doc links are how a reader navigates the vocabulary, and a
+      # rename breaks them where clippy has nothing to say. Held to the
+      # same standard as the lints above: the links a rename leaves
+      # dangling accumulate exactly where the vocabulary moved most.
+      - name: Cargo Doc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +nightly doc --no-deps --workspace
 
   test:
     name: Test Suite

@@ -20,7 +20,7 @@
 //! somebody already calls them. A wallet passes the names it shows its
 //! user; anything unnamed renders as the address itself, in bech32m for
 //! the network the caller is reading on, which is why the network word is
-//! an input here for the reason it is in [`preflight`](crate::preflight).
+//! an input here for the reason it is in [`preflight()`](crate::preflight()).
 //!
 //! An address written as an argument carries an `@`, because that position
 //! admits a binding too and a reader signing a transfer has to tell the

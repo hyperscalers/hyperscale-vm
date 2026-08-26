@@ -272,7 +272,7 @@ pub enum Expr {
     ///
     /// The one constructor of non-fungible edge content, so the id-set
     /// discipline is judged here and nowhere else: at most
-    /// [`MAX_IDS_PER_EDGE`](crate::types::MAX_IDS_PER_EDGE) ids, each
+    /// [`MAX_IDS_PER_EDGE`] ids, each
     /// distinct — a duplicate would be one instance landing twice.
     NfBucket {
         /// The resource the edge carries.
@@ -1192,7 +1192,7 @@ pub struct Declaration {
     /// Not recoverable from [`Declaration::clause_spans`]: an empty
     /// `for-each` contributes no effects and was taken all the same.
     ///
-    /// [`AbiParam::Guard`]: crate::metadata::AbiParam::Guard
+    /// [`AbiParam::Guard`]: crate::AbiParam::Guard
     pub clause_taken: Vec<bool>,
     /// Where each expansion of a top-level `for-each` landed, keyed by
     /// that clause's index: a row per clause of the body, an entry per
@@ -1210,12 +1210,12 @@ pub struct Declaration {
     /// over it would be wrong the moment two sites are guarded
     /// differently.
     ///
-    /// This is what an [`AbiParam::Run`] binding resolves through, so
-    /// the index a body walks is the *element* — every run in one body
+    /// This is what an [`AbiParam::Handle`] binding resolves through, so
+    /// the index a body walks is the *element* — every site in one body
     /// counts the same elements, and a site that did not fire reads
     /// absent rather than shortening the walk.
     ///
-    /// [`AbiParam::Run`]: crate::metadata::AbiParam::Run
+    /// [`AbiParam::Handle`]: crate::AbiParam::Handle
     pub expansions: BTreeMap<u32, Vec<Vec<Option<u32>>>>,
 }
 

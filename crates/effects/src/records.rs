@@ -8,10 +8,10 @@
 //! vocabulary's.
 //!
 //! [`ChainRecords`] states only what admission has to ask, on the terms
-//! [`Substates`] already sets for durable state: the caller decides
-//! whether an answer comes from a genesis-static map, a cell read at an
-//! anchored height, a cache of records fetched from other shards, or any
-//! layering of those. [`Records`] is the in-memory implementation the
+//! the kernel's own store already sets for durable state: the caller
+//! decides whether an answer comes from a genesis-static map, a cell read
+//! at an anchored height, a cache of records fetched from other shards,
+//! or any layering of those. [`Records`] is the in-memory implementation the
 //! composer and the corpus hold; [`Composed`] is the per-envelope
 //! layering that puts a transaction's own records in front of one.
 //!

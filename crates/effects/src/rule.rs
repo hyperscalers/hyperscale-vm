@@ -53,7 +53,7 @@ pub const MAX_RULE_BRANCHES: usize = 16;
 /// tree that wide is neither a shape a guardian arrangement takes nor
 /// one anybody could hand to a package. A stored rule travels as
 /// [`Value::Bytes`](crate::Value::Bytes) — an argument under
-/// [`MAX_VALUE_BYTES`](crate::MAX_VALUE_BYTES), a role table's entry under
+/// [`MAX_VALUE_BYTES`](crate::types::MAX_VALUE_BYTES), a role table's entry under
 /// the same — so past
 /// what those bytes hold, a rule the caps admit is a rule no call can
 /// carry. Sized so the widest tree inside the shape bounds encodes well
@@ -97,7 +97,7 @@ pub enum Rule<L> {
     /// Satisfied when enough branches are.
     ///
     /// Over an empty branch list this is the algebra's top and bottom:
-    /// [`always`] is a count of zero, [`never`] a count of one, and both
+    /// [`always`] is a count of zero, [`never()`] a count of one, and both
     /// fall out of the same `met >= count` the judge already computes.
     CountOf {
         /// How many of `rules` must be satisfied. Over branches, at
@@ -252,7 +252,7 @@ impl RuleLeaf {
 /// is what lets [`check_metadata`] hold an authored tree to the same caps
 /// the decode gate holds a stored one to.
 ///
-/// [`check_metadata`]: crate::metadata::check_metadata
+/// [`check_metadata`]: crate::check_metadata
 pub type RuleExpr = Rule<RuleLeaf>;
 
 /// A granted rule's leaf: a claim a resource's own derivation commits to.
@@ -422,7 +422,7 @@ pub const fn never<L>() -> Rule<L> {
     }
 }
 
-/// [`never`]'s canonical bytes, as a constant.
+/// [`never()`]'s canonical bytes, as a constant.
 ///
 /// Spelled out rather than encoded, because the one writer that needs it
 /// is a guest and a guest cannot carry a rule's codec: the vocabulary is

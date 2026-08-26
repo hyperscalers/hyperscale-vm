@@ -104,9 +104,11 @@ impl Routing {
     /// filtered by shard: the table is shard-invariant so that every
     /// participant of a cross-shard transaction agrees on which rep is
     /// which, and locality scopes what is *applied* rather than what is
-    /// materialized. A fold whose reservations overflow the set is a
-    /// [`RouteError::Conflict`] at `route()`, so a routing that exists
-    /// has a declaration.
+    /// materialized. A fold whose reservations overflow the set is an
+    /// [`AdmissionError::Conflict`] before anything routes, so a routing
+    /// that exists has a declaration.
+    ///
+    /// [`AdmissionError::Conflict`]: crate::AdmissionError::Conflict
     #[must_use]
     pub const fn declaration(&self) -> &Declaration {
         &self.declaration

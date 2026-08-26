@@ -855,7 +855,7 @@ pub(crate) fn check_value_depth(graph: &ManifestGraph) -> Result<(), AdmissionEr
 /// roots fresh-ID derivation — the signed graph's hash, so distinct
 /// signed transactions never mint the same fresh key.
 ///
-/// Only admission constructs one, and [`crate::route`] takes nothing else,
+/// Only admission constructs one, and [`crate::route()`] takes nothing else,
 /// so "routing consumes admitted manifests" is a fact about the types
 /// rather than a convention callers are asked to keep.
 #[derive(Clone, Debug, PartialEq, Eq)]

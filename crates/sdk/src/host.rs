@@ -189,7 +189,8 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::Amount`].
+/// On a handle that holds no value cell — a balance is what both value
+/// modes answer, and nothing else does.
 #[must_use]
 pub fn cell_balance(handle: Handle) -> u128 {
     let Handle { site, element } = handle;
@@ -200,7 +201,7 @@ pub fn cell_balance(handle: Handle) -> u128 {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::Write`].
+/// On a handle that holds no exclusive write.
 pub fn cell_set(handle: Handle, value: &[u8]) {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_set(site, element, value.to_vec())));
@@ -233,7 +234,7 @@ pub fn cell_open_seal(handle: Handle) -> Drawn {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::Write`].
+/// On a handle that holds no exclusive write.
 pub fn cell_clear(handle: Handle) {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_clear(site, element)));
@@ -264,7 +265,8 @@ pub fn cell_take(handle: Handle, value: u128) -> u32 {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::Reserve`].
+/// On a handle that holds no reservation, and on a second take of one:
+/// the declaration buys one bucket per capability, not per site.
 #[must_use]
 pub fn reserve_take(handle: Handle) -> u32 {
     let Handle { site, element } = handle;
@@ -442,7 +444,7 @@ pub fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::RangeWrite`].
+/// On a handle that holds no exclusive write over the interval.
 pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
     let Handle { site, element } = handle;
     scanned(kernel(|k| {
@@ -454,7 +456,7 @@ pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::RangeWrite`].
+/// On a handle that holds no exclusive write over the interval.
 pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
     let Handle { site, element } = handle;
     scanned(kernel(|k| {
@@ -466,7 +468,8 @@ pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::RangeWrite`].
+/// On a handle whose interval files no instances — an interval that
+/// gave up the inbound direction answers the movement it kept.
 pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
     let Handle { site, element } = handle;
     scanned(kernel(|k| {
@@ -478,7 +481,7 @@ pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::RangeWrite`].
+/// On a handle whose interval takes no instances, on the same terms.
 #[must_use]
 pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
     let Handle { site, element } = handle;
@@ -489,7 +492,7 @@ pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
 ///
 /// # Panics
 ///
-/// On any mode but [`Handle::RangeWrite`].
+/// On a handle that holds no exclusive write over the interval.
 pub fn entry_remove(handle: Handle, index: u32) {
     let Handle { site, element } = handle;
     scanned(kernel(|k| k.site_remove(site, element, index)));

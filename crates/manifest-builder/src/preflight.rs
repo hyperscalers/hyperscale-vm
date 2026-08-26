@@ -249,9 +249,9 @@ impl Report {
 ///
 /// # Errors
 ///
-/// [`PreflightError::Admission`] or [`PreflightError::Route`] for a
-/// transaction the chain would refuse, and [`PreflightError::Network`] for
-/// a network word no address can be named under.
+/// [`PreflightError::Admission`] for a transaction the chain would
+/// refuse, and [`PreflightError::Network`] for a network word no address
+/// can be named under.
 pub fn preflight(
     graph: &ManifestGraph,
     composer: PrincipalAddr,

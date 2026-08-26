@@ -1,7 +1,7 @@
 //! The session as the engines' host.
 //!
 //! [`KernelHost`] is the engine-facing projection of the session's own
-//! API: the same operations, with [`SessionTrap`](crate::SessionTrap)
+//! API: the same operations, with [`SessionTrap`]
 //! narrowed to the class the boundary transports. The session keeps the
 //! richer error for its own callers — a wrong mode and an unknown handle
 //! are different defects to the kernel and one abort class to a guest.

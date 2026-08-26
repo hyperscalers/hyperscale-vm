@@ -11,7 +11,7 @@
 //! rather than keeping its own.
 //!
 //! The seam itself stays a parameter: everything here takes
-//! [`Hasher`](hyperscale_hbor::hash::Hasher), and this is the
+//! [`Hasher`], and this is the
 //! implementation a network runs rather than the only one it can.
 
 use blake3::Hasher as Blake3;

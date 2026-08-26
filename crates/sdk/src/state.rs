@@ -35,7 +35,7 @@
 //!
 //! The accessors that do have a guest body are always inlined, because
 //! each is one import behind a match on a mode its call site already
-//! fixed. [`crate::guest`] states the argument; what it turns on is that
+//! fixed. The `guest` module states the argument; what it turns on is that
 //! an out-of-line dead arm is an `unreachable` the totality scan reads as
 //! a fault, and this vocabulary is what every derived body is written in.
 //!

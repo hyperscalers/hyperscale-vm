@@ -27,7 +27,7 @@
 //! the work it buys.
 //!
 //! Nothing here reads state, so a footprint is computable wherever
-//! [`crate::route`]'s output is — which is what lets the fee payer's shard
+//! [`crate::route()`]'s output is — which is what lets the fee payer's shard
 //! price a declaration over keys another shard owns, without asking it.
 //!
 //! The unit weights are structure, not calibration: the constants below

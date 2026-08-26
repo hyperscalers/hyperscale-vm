@@ -475,12 +475,13 @@ pub enum Outcome {
     /// A declared condition the committed state or the presented
     /// evidence does not meet.
     ///
-    /// Priced with [`Outcome::Infeasible`] rather than as a defect, for
-    /// the reason the taxonomy gives [`Outcome::PresenceUnmet`] and
-    /// [`Outcome::Unauthorized`]: a condition is a precondition on
-    /// committed state, the world moved between signing and execution,
-    /// and the protocol cannot tell an honest loser of that race from a
-    /// careless caller.
+    /// Priced with [`Outcome::Infeasible`] rather than as a defect: a
+    /// condition is a precondition on committed state, the world moved
+    /// between signing and execution, and the protocol cannot tell an
+    /// honest loser of that race from a careless caller. Which is why the
+    /// unmet presence and the unsatisfied rule are one variant with a
+    /// [`UnmetCondition`] beside it rather than two of their own — the
+    /// price is the same and the difference is legibility.
     #[hbor(discriminant = 9)]
     ConditionUnmet {
         /// The condition that went unmet.

@@ -84,7 +84,7 @@ pub enum Socket {
         constraints: Vec<Constraint>,
     },
     /// A proof carrying exactly this claim, which this intent's own
-    /// nodes present through [`EvidenceRef::Socket`].
+    /// nodes present through [`crate::EvidenceRef::Socket`].
     ///
     /// The claim is the declaration's, so a holder signs *which
     /// authority they are asking for* and never who supplies it — and
@@ -104,7 +104,7 @@ pub enum Socket {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct IntentDecl {
     /// The intent's invocation graph; arguments may reference the
-    /// sockets via [`GraphArg::Socket`].
+    /// sockets via [`crate::GraphArg::Socket`].
     pub graph: ManifestGraph,
     /// The sockets this intent declares. A value socket is consumed by
     /// exactly one node argument; an authority socket is presented by as

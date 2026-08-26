@@ -5,7 +5,7 @@
 //! — the capability table mediates, so one declared bucket and two
 //! declared effects can become two ABI arguments of which one is a handle
 //! for the vault's delta and the other the bucket's bytes. The
-//! [`crate::metadata::MethodSignature`]'s binding states which; this
+//! [`crate::MethodSignature`]'s binding states which; this
 //! module is that statement resolved against one node's bound inputs.
 //!
 //! Everything a binding names is resolvable before execution except one

@@ -26,7 +26,7 @@
 //!
 //! Refusal is cheap on purpose. A method that fails this check is not
 //! broken and its package still deploys: it classifies as
-//! [`Infallible`](hyperscale_vm_effects::Totality::Infallible) at best, so
+//! `Totality::Infallible` at best, so
 //! what it loses is the decomposition an outbound leg would have had.
 //! That asymmetry is what lets the check ship while it is still
 //! conservative.

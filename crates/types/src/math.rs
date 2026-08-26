@@ -1,6 +1,7 @@
 //! Wide integer arithmetic: the semantics behind the `math` interface.
 //!
-//! Beside the host surface rather than behind it. [`KernelHost`] exists
+//! Beside the host surface rather than behind it. The kernel's own host
+//! trait exists
 //! because the kernel's operations reach state, and an engine has to ask
 //! something that holds it; these reach nothing. Making them trait methods
 //! would put a seam where the whole argument for host provision is that

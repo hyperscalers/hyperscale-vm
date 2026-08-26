@@ -11,7 +11,7 @@
 //! no package hash, so [`PrincipalAddr`] is already the whole of what a
 //! handle could say.
 //!
-//! [`PrincipalAddr`]: hyperscale_vm_effects::PrincipalAddr
+//! [`PrincipalAddr`]: hyperscale_vm_types::PrincipalAddr
 
 use hyperscale_hbor::to_vec;
 use hyperscale_vm_effects::{PackageMetadata, RuleBytes, StoredRule};

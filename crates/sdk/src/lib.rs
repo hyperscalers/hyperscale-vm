@@ -4,9 +4,10 @@
 //! `#[blueprint]` traces a body through to get back exactly the
 //! [`hyperscale_vm_effects::MethodSignature`] routing needs, against the
 //! real evaluator rather than a model of it. Compiled as the component a
-//! package publishes, the same types are the calls — [`guest`] binds
-//! `hyperscale:kernel` once, and each accessor is the import its mode
-//! names.
+//! package publishes, the same types are the calls — the `guest` module
+//! binds `hyperscale:kernel` once, and each accessor is the import its
+//! mode names. It compiles only on a component build, so it is not in
+//! these docs.
 //!
 //! Which of the two a build gets is the compiling crate's own answer: the
 //! `guest` feature says this crate publishes the package, and only then

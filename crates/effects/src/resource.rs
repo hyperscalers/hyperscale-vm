@@ -24,7 +24,7 @@ pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
 /// What a resource is: divisible value, or named instances.
 ///
 /// Derivation material before it is anything else: the discriminant is
-/// folded into [`resource_address`](crate::types::resource_address), so
+/// folded into [`resource_address`], so
 /// one address names one kind and a resource minted as both kinds is
 /// two resources rather than a conflation. The same vocabulary types an
 /// edge — declared, evaluated from the producing method's output

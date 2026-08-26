@@ -445,7 +445,7 @@ impl Trace {
     /// Declare accesses to an interval of a collection's order-key space.
     ///
     /// `cap` bounds the entries execution may touch and evaluates like
-    /// the bounds beside it. [`hyperscale_vm_effects::footprint`] charges
+    /// the bounds beside it. [`hyperscale_vm_effects::footprint()`] charges
     /// the interval's own magnitude as the exclusion it is and the cap as
     /// the walk it buys, so a range wider or deeper than the method needs
     /// is priced as what it claims.

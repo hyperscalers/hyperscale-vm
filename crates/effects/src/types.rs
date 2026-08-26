@@ -31,8 +31,8 @@ pub struct ShardId(pub u64);
 ///
 /// The slot says which child — a vault, a claims cell, a field group, an
 /// ordered collection — a canonical address refers to. The word is a
-/// storage one and nothing else: authority is [`RoleId`] and its role
-/// set, and the two share no vocabulary.
+/// storage one and nothing else: authority is a rule over a claim, and
+/// the two share no vocabulary.
 ///
 /// A slot is hashed with its owner, and an owner belongs to one package,
 /// so two packages naming one value never collide: a slot is scoped by
@@ -51,7 +51,6 @@ pub struct ShardId(pub u64);
 /// address as their own, which is the whole reason the third band has to
 /// clear the second. It never has to clear another package's.
 ///
-/// [`RoleId`]: crate::RoleId
 /// [`NULLIFIER_SLOT`]: crate::NULLIFIER_SLOT
 /// [`PACKAGE_SLOT`]: crate::PACKAGE_SLOT
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
@@ -283,7 +282,7 @@ pub fn resource_address(
 ///
 /// The class comes from the entries rather than from the caller: a
 /// resource whose rules restrict a movement anyone could otherwise make
-/// carries [`AddressClass::Restricted`], and one that does not stays
+/// carries [`crate::AddressClass::Restricted`], and one that does not stays
 /// plain. So the two are different addresses over one body, and a reader
 /// holding only the address knows whether it must have the rules in hand
 /// before it may let a movement through.

@@ -9,7 +9,7 @@
 //! arguments, creation-fixed instance configuration, and a hasher, and
 //! nothing else.
 //!
-//! [`route`] folds signature evaluation over a manifest's nodes and returns
+//! [`route()`] folds signature evaluation over a manifest's nodes and returns
 //! the transaction's routing: per-shard effect sets and the obligations.
 //!
 //! The crate is isolated: protocol hashing binds through the [`Hasher`]

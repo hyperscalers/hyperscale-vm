@@ -12,7 +12,7 @@
 //! The [`MemoryStore`] implements all three and records every access as
 //! an [`Access`] — the substrate the trace-subset oracle asserts against.
 //! What the commutative modes *mean* over any of these surfaces is
-//! [`AmountLedger`](crate::AmountLedger)'s, written once and implemented
+//! [`AmountLedger`]'s, written once and implemented
 //! here in terms of this store's own view.
 
 use std::collections::BTreeMap;
