@@ -16,3 +16,7 @@ hyperscale-vm-testing.workspace = true
 # The issuer under test: this package declares nothing about what it
 # holds, so what binds it has to come from a package that does.
 security-guest = { path = "../security" }
+# A movable non-fungible, which is what the instance half needs and no
+# resource of the custodian's own or the security package's is.
+grammar = { path = "../grammar" }
+hyperscale-vm-sdk.workspace = true

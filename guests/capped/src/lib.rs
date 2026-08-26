@@ -70,9 +70,11 @@ pub mod capped {
     /// Minted by whoever holds the configured badge, and by nobody else.
     ///
     /// The issuing instance's own claim does not satisfy this rule, so
-    /// the requirement reaches the call and a caller presents the badge
-    /// — which is what makes minting a credential that splits,
-    /// delegates and is revoked through recall.
+    /// the requirement reaches the call and a caller answers for
+    /// whatever `config.minter` names. What that makes a credential is
+    /// the authority rather than the seat: name a badge there and
+    /// minting splits, delegates and is taken back on the badge's own
+    /// terms, none of which this mark states or needs to.
     #[resource(grants(mint = config.minter), display_digits = 0)]
     struct Seat;
 

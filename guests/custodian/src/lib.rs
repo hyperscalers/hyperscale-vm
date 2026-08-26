@@ -66,11 +66,18 @@ pub mod custodian {
 
         /// Instances in, on the same terms: an interval admits a read
         /// and a write and says nothing about which way value went.
+        ///
+        /// Keyed on the configured resource rather than on whatever the
+        /// edge carries, exactly as the fungible half is — a collection
+        /// is keyed by what it holds, so filing under the edge's own
+        /// resource would open a collection nothing takes from, and what
+        /// went into it could never come out. An edge of any other
+        /// resource traps at the write instead.
         pub fn file(&mut self, instances: NfBucket) {
-            self.holdings(instances.resource()).all().file(instances);
+            self.holdings(self.config().instances).all().file(instances);
         }
 
-        /// And instances back out.
+        /// And instances back out, from the one collection `file` fills.
         pub fn release(&mut self, ids: Ids) -> NfBucket {
             self.holdings(self.config().instances).all().take(ids)
         }

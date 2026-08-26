@@ -378,6 +378,7 @@ dependencies = [
 name = "custodian-guest"
 version = "0.0.0"
 dependencies = [
+ "grammar",
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
  "security-guest",
