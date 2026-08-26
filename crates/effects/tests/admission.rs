@@ -1132,6 +1132,91 @@ fn an_unbindable_abi_param_is_explained_as_a_binding() {
     assert!(!told.contains("42"), "{told}");
 }
 
+/// Two destroyed parameters of one resource carry the burn requirement
+/// once.
+///
+/// The grant is per destroyed edge — each bucket needs its capability —
+/// but the entry's question is one question, and the carried list is
+/// what a reader of the requirements meets: rendering `burn of R` twice
+/// would say the protocol asked twice.
+#[test]
+fn a_double_destruction_asks_the_burn_question_once() {
+    let mut rules = ResourceGrants::new();
+    let burnable =
+        RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(ALICE))).expect("a rule encodes");
+    rules.set(GrantedBehaviour::Burn, burnable);
+    let record = ResourceMeta {
+        namespace: ALICE.address(),
+        kind: ResourceKind::Fungible,
+        material: Vec::new(),
+        rules,
+    };
+    let shreddable = record.address(&TestHasher);
+    let presented = PresentedGrants::from_presented(&TestHasher, std::slice::from_ref(&record));
+
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "shred".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            params: vec![ParamType::Bucket, ParamType::Bucket],
+            destroys: vec![0, 1],
+            ..MethodSignature::default()
+        },
+    );
+    let mut chain = setup();
+    chain.packages.publish_unchecked(pkg("shredder"), package);
+    let meta = InstanceMeta {
+        package: pkg("shredder"),
+        config: Vec::new(),
+        salt: Hash32([0x3D; 32]),
+    };
+    let shredder = meta.address(&TestHasher);
+    chain.instances.create(&TestHasher, meta);
+
+    let withdraw = |amount: u128| GraphNode {
+        target: ALICE.into(),
+        method: "withdraw".into(),
+        args: vec![
+            GraphArg::Literal(Value::Address(shreddable.address())),
+            GraphArg::Literal(Value::U128(amount)),
+        ],
+        evidence: [EvidenceRef::Node(0)].into(),
+    };
+    let edge = |producer: u32| GraphArg::Edge {
+        edge: EdgeRef {
+            producer,
+            output: 0,
+        },
+        constraints: vec![],
+    };
+    let graph = ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE.into(),
+                method: "authorize".into(),
+                args: vec![],
+                evidence: [EvidenceRef::IntentSignature].into(),
+            },
+            withdraw(5),
+            withdraw(7),
+            GraphNode {
+                target: shredder.into(),
+                method: "shred".into(),
+                args: vec![edge(1), edge(2)],
+                evidence: [EvidenceRef::Node(0)].into(),
+            },
+        ],
+    };
+    let admitted =
+        admit_presenting(&graph, ALICE, &chain, &presented, &TestHasher).expect("admits");
+    let burns = admitted.injected()[3]
+        .iter()
+        .filter(|entry| entry.behaviour == GrantedBehaviour::Burn)
+        .count();
+    assert_eq!(burns, 1, "one question, however many edges it covers");
+}
+
 /// The injection dedup is work the envelope pays for.
 ///
 /// Injecting a movement rule scans the frame's conditions for a

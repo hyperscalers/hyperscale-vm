@@ -274,7 +274,16 @@ pub(super) fn inject_destruction_rules(
             kind: content.kind(),
             direction: Issued::Burned,
         });
-        injected.extend(entry);
+        // The grant is per destroyed edge; the requirement is not. Two
+        // destroyed parameters of one resource ask the entry's one
+        // question, and a reader of the requirements should meet it
+        // once — the frame's conditions already dedup it, and the
+        // carried list dedups on the same terms.
+        if let Some(entry) = entry
+            && !injected.contains(&entry)
+        {
+            injected.push(entry);
+        }
     }
     Ok((granted, injected))
 }
