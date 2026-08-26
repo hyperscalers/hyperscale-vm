@@ -633,9 +633,15 @@ pub struct Placed {
     /// The node the refusal is about.
     pub node: Option<u32>,
     /// The argument position, where the refusal is about one argument.
+    /// Always a position in the call's own argument list — an ABI
+    /// binding's position is [`abi`](Self::abi), a different list.
     pub param: Option<u32>,
     /// The effect clause, in a preorder walk of the method's effects.
     pub clause: Option<u32>,
+    /// The ABI binding position, where the refusal is about one binding.
+    /// A different list from the arguments: handles and guards come
+    /// first, so an index into one names nothing in the other.
+    pub abi: Option<u32>,
 }
 
 impl AdmissionError {
@@ -645,6 +651,7 @@ impl AdmissionError {
     /// a variant added without a place here does not compile, so no
     /// refusal can arrive somewhere a reader cannot be sent.
     #[must_use]
+    #[allow(clippy::too_many_lines)] // one total dispatch over every refusal variant
     pub const fn at(&self) -> Placed {
         match self {
             // Flattened, and about the node as a whole.
@@ -666,6 +673,7 @@ impl AdmissionError {
                 node: Some(*node),
                 param: None,
                 clause: None,
+                abi: None,
             },
             // Flattened, and about one of its arguments.
             Self::DestroysNoEdge { node, param, .. }
@@ -677,7 +685,6 @@ impl AdmissionError {
             | Self::ResourceMismatch { node, param, .. }
             | Self::WrongDenomination { node, param, .. }
             | Self::DenominationType { node, param, .. }
-            | Self::UnbindableAbiParam { node, param, .. }
             | Self::SocketForValueParam { node, param, .. }
             | Self::AuthoritySocketAsArgument { node, param, .. }
             | Self::ValueTooDeep { node, param, .. } => Placed {
@@ -685,6 +692,18 @@ impl AdmissionError {
                 node: Some(*node),
                 param: Some(*param),
                 clause: None,
+                abi: None,
+            },
+            // Flattened, and about one ABI binding — a different list
+            // from the arguments, so the position rides its own
+            // coordinate and a renderer cannot quote an unrelated
+            // argument for it.
+            Self::UnbindableAbiParam { node, param, .. } => Placed {
+                intent: None,
+                node: Some(*node),
+                param: None,
+                clause: None,
+                abi: Some(*param),
             },
             // Flattened, and about one of its declared clauses.
             Self::ForeignDeclaration { node, clause, .. }
@@ -693,6 +712,7 @@ impl AdmissionError {
                 node: Some(*node),
                 param: None,
                 clause: Some(*clause),
+                abi: None,
             },
             // The producing node, flattened: what the edge resolved to
             // rather than what the composer wrote.
@@ -703,6 +723,7 @@ impl AdmissionError {
                 node: Some(*producer),
                 param: None,
                 clause: None,
+                abi: None,
             },
             // Stated in the intent's own numbering, because the other
             // index in the sentence has no flattened form.
@@ -715,6 +736,7 @@ impl AdmissionError {
                 node: Some(*node),
                 param: None,
                 clause: None,
+                abi: None,
             },
             // About the intent rather than any one of its nodes.
             Self::BindingArity { intent, .. }
@@ -728,6 +750,7 @@ impl AdmissionError {
                 node: None,
                 param: None,
                 clause: None,
+                abi: None,
             },
             // A budget, a shape, or a whole composition: nowhere to send
             // a reader that the sentence does not already say.
@@ -743,6 +766,7 @@ impl AdmissionError {
                 node: None,
                 param: None,
                 clause: None,
+                abi: None,
             },
         }
     }

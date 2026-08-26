@@ -1063,6 +1063,75 @@ fn a_refusal_names_the_listed_clause_that_declared_it() {
     assert!(!listed.contains("requires"), "{told}");
 }
 
+/// An unbindable ABI binding is explained as a binding, never as an
+/// argument.
+///
+/// The ABI list and the argument list are different lists — handles and
+/// guards come first — so a position in one names nothing in the other.
+/// The refusal carries its position on the binding coordinate, and the
+/// explanation describes the binding itself rather than quoting whatever
+/// literal happens to sit at the same argument index.
+#[test]
+fn an_unbindable_abi_param_is_explained_as_a_binding() {
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "poke".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            params: vec![ParamType::U64],
+            // A guard naming a clause the signature does not have: the
+            // shape publish refuses, arriving as chain-served metadata
+            // that never met that door.
+            abi: vec![AbiParam::Guard(7)],
+            effects: vec![Clause::Effect {
+                reach: None,
+                guard: None,
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: SlotRef::Fixed(AUTH),
+                    material: vec![],
+                }),
+                mode: ModeExpr::Read,
+                denomination: None,
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    let mut chain = setup();
+    chain.packages.publish_unchecked(pkg("poker"), package);
+    let meta = InstanceMeta {
+        package: pkg("poker"),
+        config: Vec::new(),
+        salt: Hash32([0x7E; 32]),
+    };
+    let poker = meta.address(&TestHasher);
+    chain.instances.create(&TestHasher, meta);
+
+    let graph = ManifestGraph {
+        nodes: vec![GraphNode {
+            target: poker.into(),
+            method: "poke".into(),
+            args: vec![GraphArg::Literal(Value::U64(42))],
+            evidence: BTreeSet::new(),
+        }],
+    };
+    let refusal = admit(&graph, ALICE, &chain, &TestHasher).expect_err("nothing binds guard 7");
+    assert!(matches!(
+        refusal,
+        AdmissionError::UnbindableAbiParam {
+            node: 0,
+            param: 0,
+            ..
+        }
+    ));
+    let told = explain_admission(&graph, &chain, &refusal);
+    assert!(told.contains("binding 0"), "{told}");
+    // The literal at argument 0 is unrelated to binding 0 and must not
+    // be quoted as if it were the refused thing.
+    assert!(!told.contains("argument 0"), "{told}");
+    assert!(!told.contains("42"), "{told}");
+}
+
 /// The injection dedup is work the envelope pays for.
 ///
 /// Injecting a movement rule scans the frame's conditions for a

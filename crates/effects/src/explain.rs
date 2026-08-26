@@ -556,12 +556,27 @@ fn explain_placed(
             arg_text(arg)
         );
     }
+    if let Some(abi) = at.abi
+        && let Some(described) = bound_abi(records, node, abi)
+    {
+        let _ = write!(out, "\n  binding {abi}: {described}");
+    }
     if let Some(clause) = at.clause
         && let Some(listing) = declared_clause(records, node, clause)
     {
         let _ = write!(out, "\n  clause {clause}: {}", listing.trim_end());
     }
     out
+}
+
+/// The ABI binding a refusal is about, described as the exports line
+/// describes it — never as an argument, which is a different list.
+fn bound_abi(records: &dyn ChainRecords, node: &GraphNode, abi: u32) -> Option<String> {
+    let instance = records.instance(node.target)?;
+    let metadata = records.package(instance.package)?;
+    let signature = metadata.methods.get(&node.method)?;
+    let param = signature.abi.get(usize::try_from(abi).ok()?)?;
+    Some(Names(&metadata).abi_param(param, &signature.effects))
 }
 
 /// The node a refusal points at.
