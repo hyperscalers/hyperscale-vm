@@ -1305,34 +1305,41 @@ mod tests {
         );
     }
 
+    /// Every commutative mode beside the exclusive hold, not just the
+    /// one a case happened to name: `Credit` is `Delta` narrowed to one
+    /// direction, and a check that knew two of the three would admit the
+    /// third on the same cell.
     #[test]
-    fn one_transaction_cannot_hold_both_absolute_and_commutative_modes() {
+    fn one_transaction_cannot_hold_both_an_exclusive_and_a_commutative_mode() {
         let cell = key(3);
-        let set = declared(&[
-            Effect {
-                target: EffectTarget::Point(cell),
-                mode: Mode::Write { moves: Moves::Both },
-            },
-            Effect {
-                target: EffectTarget::Point(cell),
-                mode: Mode::Delta,
-            },
-        ]);
-        assert_eq!(
-            KernelSession::materialize(
-                OverlayStore::new(Arc::new(MemoryStore::new())),
-                &Declaration {
-                    set: set.clone(),
-                    ordered: holding(&ord(&set)),
-                    ..Declaration::default()
+        for commutative in [Mode::Delta, Mode::Credit, Mode::Reserve { amount: 0 }] {
+            let set = declared(&[
+                Effect {
+                    target: EffectTarget::Point(cell),
+                    mode: Mode::Write { moves: Moves::Both },
                 },
-                tx(1),
-                env(),
-                hash,
-            )
-            .expect_err("absolute and movement semantics cannot compose"),
-            MaterializeError::SelfConflicting(cell)
-        );
+                Effect {
+                    target: EffectTarget::Point(cell),
+                    mode: commutative,
+                },
+            ]);
+            assert_eq!(
+                KernelSession::materialize(
+                    OverlayStore::new(Arc::new(MemoryStore::new())),
+                    &Declaration {
+                        set: set.clone(),
+                        ordered: holding(&ord(&set)),
+                        ..Declaration::default()
+                    },
+                    tx(1),
+                    env(),
+                    hash,
+                )
+                .expect_err("one cell, two settlement disciplines"),
+                MaterializeError::SelfConflicting(cell),
+                "{commutative:?}",
+            );
+        }
     }
 
     #[test]

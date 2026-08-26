@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::address::{EffectTarget, SubstateKey};
-use crate::mode::{Mode, ModeKind};
+use crate::mode::{ConflictClass, Mode, ModeKind};
 
 /// A declared access: target plus mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -134,22 +134,34 @@ impl EffectSet {
     /// The first point target this set claims both exclusively and
     /// commutatively, if any.
     ///
-    /// The two record differently — a receipt carries absolutes for the
-    /// one and movements for the other — so a set holding both on one
-    /// cell has no receipt to produce. Asked of the set rather than of a
-    /// clause list, because the set is where a target's modes are already
-    /// gathered.
+    /// The two judge one debit at different moments: the exclusive hold
+    /// performs the read-modify-write and refuses an over-take at the
+    /// call, where a commutative movement queues and leaves the question
+    /// to the fold. A body handed both handles onto one cell meets
+    /// whichever discipline it reached for, so which refusal the
+    /// transaction sees stops being a property of what it declared. A
+    /// declaration names one discipline per cell.
+    ///
+    /// A read beside either is not one: reading a cell answers the same
+    /// question through both byte handles, so there is no second
+    /// discipline for it to pick between.
+    ///
+    /// Read off the conflict class rather than a mode list beside it, so
+    /// a commutative mode named later is covered by being commutative.
+    /// Asked of the set rather than of a clause list, because the set is
+    /// where a target's modes are already gathered.
     #[must_use]
     pub fn self_conflicting(&self) -> Option<SubstateKey> {
         self.by_target.iter().find_map(|(target, modes)| {
             let EffectTarget::Point(key) = target else {
                 return None;
             };
-            let exclusive = modes.iter().any(|mode| mode.kind() == ModeKind::Write);
-            let commutative = modes
-                .iter()
-                .any(|mode| matches!(mode.kind(), ModeKind::Delta | ModeKind::Reserve));
-            (exclusive && commutative).then_some(*key)
+            let claims = |class| {
+                modes
+                    .iter()
+                    .any(|mode| mode.kind().conflict_class() == class)
+            };
+            (claims(ConflictClass::Write) && claims(ConflictClass::Commutative)).then_some(*key)
         })
     }
 }
@@ -162,7 +174,7 @@ mod tests {
     use crate::address::{
         Address, AddressClass, CollectionId, EffectTarget, LocalKey, SubstateKey,
     };
-    use crate::mode::{Mode, Moves};
+    use crate::mode::{ConflictClass, Mode, ModeKind, Moves};
 
     /// Distinct point targets, with no derivation: what these tests need
     /// of a key is only that two differ.
@@ -217,6 +229,18 @@ mod tests {
         assert!(EffectSet::new().provision_targets().is_empty());
     }
 
+    /// A mode standing for each kind. Total over [`ModeKind`], so a kind
+    /// added later has to choose its parameters here.
+    const fn mode_of(kind: ModeKind) -> Mode {
+        match kind {
+            ModeKind::Read => Mode::Read,
+            ModeKind::Delta => Mode::Delta,
+            ModeKind::Credit => Mode::Credit,
+            ModeKind::Reserve => Mode::Reserve { amount: 1 },
+            ModeKind::Write => Mode::Write { moves: Moves::Both },
+        }
+    }
+
     #[test]
     fn a_self_conflict_is_an_exclusive_beside_a_commutative() {
         let cell = SubstateKey {
@@ -235,26 +259,24 @@ mod tests {
             set
         };
 
-        for pair in [
-            [Mode::Write { moves: Moves::Both }, Mode::Delta],
-            [
-                Mode::Write { moves: Moves::Both },
-                Mode::Reserve { amount: 1 },
-            ],
-        ] {
-            assert_eq!(set_of(&pair).self_conflicting(), Some(cell), "{pair:?}");
-        }
-
-        // Everything else composes: the commutative modes with each
-        // other, and reads with anything — a read is not an absolute, so
-        // there is nothing for a movement to disagree with.
-        for modes in [
-            &[Mode::Delta, Mode::Reserve { amount: 1 }][..],
-            &[Mode::Read, Mode::Delta],
-            &[Mode::Read, Mode::Write { moves: Moves::Both }],
-            &[Mode::Write { moves: Moves::Both }],
-        ] {
-            assert_eq!(set_of(modes).self_conflicting(), None, "{modes:?}");
+        // Every ordered pairing, so the answer is stated for each rather
+        // than for whichever ones a case happened to list. Exclusive
+        // beside commutative is the one that conflicts, both ways round;
+        // the commutative modes compose with each other, and a read
+        // composes with anything — reading a cell answers the same
+        // question through either byte handle.
+        for left in ModeKind::ALL {
+            for right in ModeKind::ALL {
+                let classes = [left.conflict_class(), right.conflict_class()];
+                let split = classes.contains(&ConflictClass::Write)
+                    && classes.contains(&ConflictClass::Commutative);
+                let pair = [mode_of(left), mode_of(right)];
+                assert_eq!(
+                    set_of(&pair).self_conflicting(),
+                    split.then_some(cell),
+                    "{left:?} beside {right:?}",
+                );
+            }
         }
 
         // A collection target is never one: it holds no amount, so the
