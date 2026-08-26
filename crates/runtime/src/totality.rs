@@ -159,8 +159,7 @@ const DISCHARGED: &[(&str, &str)] = &[
 /// account for and holds on to it when there is, and either way it
 /// returns no verdict a body could trip over. Whether the transaction
 /// lost value is settled once, at the close, over the whole table.
-const DISCHARGED_DROPS: &[(&str, &str)] =
-    &[("state", "site"), ("state", "issuer"), ("state", "bucket")];
+const DISCHARGED_DROPS: &[(&str, &str)] = &[("state", "site"), ("state", "bucket")];
 
 /// Why a body cannot carry the total mark.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

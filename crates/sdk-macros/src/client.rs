@@ -48,8 +48,8 @@ pub enum Shape {
     Guarded { on_self: bool, threshold: bool },
     /// The target's stored primary, minting the target's identity.
     Authorizing,
-    /// One of the target's stored roles, minting nothing.
-    RoleGated,
+    /// A rule the target stores beside its primary, minting nothing.
+    Governed,
     /// The holder's rule and its possession of a badge, minting that
     /// badge.
     Custodial,
@@ -67,7 +67,7 @@ impl Shape {
                 threshold: *threshold,
             },
             Gate::Authorizing(_) => Self::Authorizing,
-            Gate::Governed(_) => Self::RoleGated,
+            Gate::Governed(_) => Self::Governed,
             Gate::Custodial { .. } => Self::Custodial,
         }
     }
@@ -80,7 +80,7 @@ impl Shape {
     /// Whether the gate judges against a rule the target stores, which
     /// is what the intent's own signature can reach.
     const fn reads_a_rule(self) -> bool {
-        matches!(self, Self::Authorizing | Self::RoleGated | Self::Custodial)
+        matches!(self, Self::Authorizing | Self::Governed | Self::Custodial)
     }
 
     /// Whether naming the method mints evidence for later nodes.

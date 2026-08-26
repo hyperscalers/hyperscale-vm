@@ -370,7 +370,6 @@ const OWN: &[&str] = &[
     "error",
     "record",
     "resource",
-    "roles",
     "requires",
     "proves",
     "total",
@@ -830,13 +829,6 @@ fn strip_macro_attrs(items: &mut [syn::Item], state_name: &syn::Ident, role: Rol
                 }
             }
             syn::Item::Enum(item) => {
-                // (roles removed)
-                // A `#[roles]` enum is names for the gates and the
-                // metadata table; nothing constructs a variant, and the
-                // lint would be describing the design.
-                if item.attrs.iter().any(|a| a.path().is_ident("roles")) {
-                    item.attrs.push(syn::parse_quote!(#[allow(dead_code)]));
-                }
                 strip(&mut item.attrs);
                 for variant in &mut item.variants {
                     strip(&mut variant.attrs);
