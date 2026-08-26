@@ -145,7 +145,7 @@ pub mod lending {
         /// is worth, and the numeraire a debt subunit is worth. Neither
         /// is a scaled integer a caller and this body have to agree about
         /// the scale of.
-        #[requires(oracle)]
+        #[requires(config.oracle)]
         pub fn post_price(
             &mut self,
             collateral: Fixed<Numeraire, Collateral>,

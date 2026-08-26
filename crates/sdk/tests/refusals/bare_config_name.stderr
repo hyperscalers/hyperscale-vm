@@ -1,0 +1,5 @@
+error: a configuration field is named `config.chair`
+  --> tests/refusals/bare_config_name.rs:21:20
+   |
+21 |         #[requires(chair)]
+   |                    ^^^^^

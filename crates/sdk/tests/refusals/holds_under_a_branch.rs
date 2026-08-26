@@ -20,7 +20,7 @@ mod contract {
         // Conjoined, but inside a branch of a disjunction: the
         // conjunction the plan admits is the top-level one, and this is
         // not it.
-        #[requires(owner || (holds(badge) && deputy))]
+        #[requires(config.owner || (holds(badge) && config.deputy))]
         pub fn operate(&mut self, badge: Address, fee: Quantity) {
             let _ = badge;
             self.fee.set(fee);

@@ -1,5 +1,5 @@
 error: a threshold over branches requiring none of them is the empty threshold
   --> tests/refusals/vacuous_threshold.rs:22:20
    |
-22 |         #[requires(n_of(0, chair, deputy))]
+22 |         #[requires(n_of(0, config.chair, config.deputy))]
    |                    ^^^^

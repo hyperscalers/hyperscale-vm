@@ -5,9 +5,14 @@ mod contract {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{Cell, Quantity};
 
+    // The grant position reads the same grammar the gate does, so a bare
+    // name is refused here in the same words.
+    #[resource(non_fungible, grants(mint = self, recall = warden))]
+    struct Seat;
+
     #[config]
     struct Settings {
-        owner: Address,
+        warden: Address,
     }
 
     #[state]
@@ -16,11 +21,7 @@ mod contract {
     }
 
     impl Contract {
-        // A threshold branch is inside a rule, so it is refused there
-        // too — depth does not buy possession a way in.
-        #[requires(n_of(2, config.owner, holds(badge)))]
-        pub fn operate(&mut self, badge: Address, fee: Quantity) {
-            let _ = badge;
+        pub fn set_fee(&mut self, fee: Quantity) {
             self.fee.set(fee);
         }
     }

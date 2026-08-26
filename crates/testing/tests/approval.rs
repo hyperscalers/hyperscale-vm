@@ -47,7 +47,7 @@ mod desk {
     /// component here — a rule naming an identity is frozen for the life
     /// of the resource, and a component's identity is frozen at the
     /// component rather than at whoever runs it.
-    #[resource(grants(mint = self, withdraw = officer))]
+    #[resource(grants(mint = self, withdraw = config.officer))]
     struct Note;
 
     /// Who signs off on a movement.

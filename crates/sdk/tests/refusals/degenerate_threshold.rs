@@ -21,7 +21,7 @@ mod contract {
         // not a gate anybody meant, and the vocabulary holds no rule for
         // it. Refused on the line rather than at the tracer, where the
         // shape is all that is left.
-        #[requires(n_of(3, chair, deputy))]
+        #[requires(n_of(3, config.chair, config.deputy))]
         pub fn set_fee(&mut self, fee: Quantity) {
             self.fee.set(fee);
         }

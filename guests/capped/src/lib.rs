@@ -73,7 +73,7 @@ pub mod capped {
     /// the requirement reaches the call and a caller presents the badge
     /// — which is what makes minting a credential that splits,
     /// delegates and is revoked through recall.
-    #[resource(grants(mint = minter), display_digits = 0)]
+    #[resource(grants(mint = config.minter), display_digits = 0)]
     struct Seat;
 
     /// Who may mint the seat.

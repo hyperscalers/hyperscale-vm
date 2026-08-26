@@ -67,7 +67,7 @@ pub mod security {
     /// back — which is what the `recall` entry beside it is for. The two
     /// together are the whole of a revocable credential: nobody hands it
     /// on, and one party can take it away.
-    #[resource(non_fungible, grants(mint = self, withdraw = nobody, recall = registrar))]
+    #[resource(non_fungible, grants(mint = self, withdraw = nobody, recall = config.registrar))]
     struct Registered;
 
     /// The share class. Moved by a registered holder to a registered
@@ -84,8 +84,8 @@ pub mod security {
         mint = self,
         withdraw = issued(Registered),
         deposit = issued(Registered),
-        freeze = registrar,
-        recall = registrar
+        freeze = config.registrar,
+        recall = config.registrar
     ))]
     struct Share;
 
@@ -110,9 +110,9 @@ pub mod security {
     /// every movement, where a register is read once and moves nothing.
     #[resource(grants(
         mint = self,
-        withdraw = registrar,
-        deposit = registrar,
-        recall = registrar
+        withdraw = config.registrar,
+        deposit = config.registrar,
+        recall = config.registrar
     ))]
     struct Approved;
 
@@ -123,7 +123,7 @@ pub mod security {
     /// withholds the capability rather than permitting a movement — so
     /// granting one leaves the address plain, and a holder of this pays
     /// nothing on the transfer path.
-    #[resource(grants(mint = self, recall = registrar))]
+    #[resource(grants(mint = self, recall = config.registrar))]
     struct Bearer;
 
     /// Who keeps the register.
@@ -153,7 +153,7 @@ pub mod security {
         /// registration nameable afterwards. Nothing on the transfer
         /// path reads it: what a movement asks is whether the holder's
         /// interval holds anything at all.
-        #[requires(registrar)]
+        #[requires(config.registrar)]
         pub fn register(&mut self, id: u64) -> NfBucket {
             Registered::mint(id)
         }

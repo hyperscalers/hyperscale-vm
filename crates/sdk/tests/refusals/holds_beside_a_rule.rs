@@ -19,7 +19,7 @@ mod contract {
         // Conjoined beside the rule rather than within it, and refused
         // on the same terms: `#[requires]` names claims, and possession
         // is spelled `#[proves]`.
-        #[requires(owner && holds(badge))]
+        #[requires(config.owner && holds(badge))]
         pub fn operate(&mut self, badge: Address, fee: Quantity) {
             let _ = badge;
             self.fee.set(fee);

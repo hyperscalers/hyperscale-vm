@@ -58,7 +58,7 @@ pub mod staking {
     /// confers the operator surface — so without the gate the race to
     /// seal an address is the race to own the pool it names.
     #[config]
-    #[requires(founder)]
+    #[requires(config.founder)]
     struct Settings {
         staked_resource: ResourceAddr,
         /// Who may bring the pool up: fixed where the address is
@@ -172,7 +172,7 @@ pub mod staking {
         }
 
         /// Take on a validator, recording the key the pool registered.
-        #[requires(OwnerBadge)]
+        #[requires(issued(OwnerBadge))]
         pub fn register_validator(
             &mut self,
             validator_id: u64,
@@ -202,7 +202,7 @@ pub mod staking {
         }
 
         /// Stand a validator down.
-        #[requires(OwnerBadge)]
+        #[requires(issued(OwnerBadge))]
         pub fn deactivate_validator(&mut self, validator_id: u64) {
             // Holding the leaf is the whole of the access: the
             // declaration says the pool operates this validator, and the
@@ -212,14 +212,14 @@ pub mod staking {
         }
 
         /// Ask for a validator to be unjailed.
-        #[requires(OwnerBadge)]
+        #[requires(issued(OwnerBadge))]
         pub fn unjail(&mut self, validator_id: u64) {
             self.validators.at(validator_id).exclusive();
             ValidatorUnjailed { validator_id }.emit();
         }
 
         /// Cast the pool's governance vote, replacing any it held.
-        #[requires(OwnerBadge)]
+        #[requires(issued(OwnerBadge))]
         pub fn cast_param_vote(&mut self, split_bytes: u64, impound_epochs: u64, activate_at: u64) {
             // The pool holds one vote, so a cast replaces rather than
             // adds. What it keeps is what it voted for, which is the only
@@ -234,7 +234,7 @@ pub mod staking {
         }
 
         /// Withdraw the pool's governance vote.
-        #[requires(OwnerBadge)]
+        #[requires(issued(OwnerBadge))]
         pub fn clear_param_vote(&mut self) {
             self.vote.set(None);
             ParamVoteCleared.emit();

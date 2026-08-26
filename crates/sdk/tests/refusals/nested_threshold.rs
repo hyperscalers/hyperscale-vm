@@ -21,7 +21,7 @@ mod contract {
         // macro reads that bound from the vocabulary rather than
         // restating it — so a gate the decoder would refuse never
         // reaches the decoder.
-        #[requires(n_of(1, n_of(1, n_of(1, n_of(1, chair)))))]
+        #[requires(n_of(1, n_of(1, n_of(1, n_of(1, config.chair)))))]
         pub fn set_fee(&mut self, fee: Quantity) {
             self.fee.set(fee);
         }

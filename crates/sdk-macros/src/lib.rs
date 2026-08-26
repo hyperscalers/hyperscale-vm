@@ -763,48 +763,55 @@ fn guarded_identity(
     let refuse = || {
         syn::Error::new(
             identity.span(),
-            "a guarded method names `self`, a badge it issues, or one of the \
-             component's configuration fields",
+            "a guarded method names `self`, `config.<field>`, or `issued(<Resource>)`",
         )
     };
     match identity {
         syn::Expr::Path(path) if path.path.is_ident("self") => Ok((quote!(__t.self_addr()), true)),
+        // A bare name is not a leaf. It was two things once — a badge and
+        // a configuration field in one namespace — and each now has its
+        // own spelling, so the refusal can say which one this is.
         syn::Expr::Path(path) if path.path.get_ident().is_some() => {
             let name = path.path.get_ident().expect("checked").to_string();
             if params.iter().any(|(p, _)| *p == name) {
                 return Err(syn::Error::new(
                     identity.span(),
                     "the authority this method requires is one its caller names, so \
-                     the gate would admit everyone — name `self`, a badge it issues, \
-                     or a configuration field instead",
+                     the gate would admit everyone — name `self`, `config.<field>`, \
+                     or `issued(<Resource>)` instead",
                 ));
             }
-            let issued = resources.iter().find(|r| r.name == name);
-            let configured = config_fields.iter().position(|(f, _)| *f == name);
-            // The two are different authorities — a badge this instance
-            // issues, an address fixed where it was created — so a name
-            // that is both says nothing about which the gate means.
-            if issued.is_some() && configured.is_some() {
+            if resources.iter().any(|r| r.name == name) {
                 return Err(syn::Error::new(
                     identity.span(),
-                    "this names both a resource the package issues and a configuration \
-                     field, so which authority the gate means is not written — rename one",
+                    format!("a badge the package issues is named `issued({name})`"),
                 ));
             }
-            // A resource the package declares is one this instance
-            // issues, so holding it is operating this instance and the
-            // mark is the item's rather than a literal repeated at every
-            // gate that names it.
-            if let Some(issued) = issued {
-                let kind = emit_kind(issued.kind);
-                let mark = syn::LitByteStr::new(&issued.mark, identity.span());
-                return Ok((quote!(__t.self_resource(#kind, #mark)), false));
+            if config_fields.iter().any(|(f, _)| *f == name) {
+                return Err(syn::Error::new(
+                    identity.span(),
+                    format!("a configuration field is named `config.{name}`"),
+                ));
             }
-            // Creation-fixed, so the claim is the target's own: an
-            // object whose address derives from no key admits somebody
-            // by naming them where it was created.
-            let Some(slot) = configured else {
-                return Err(refuse());
+            Err(refuse())
+        }
+        // Creation-fixed, so the claim is the target's own: an object
+        // whose address derives from no key admits somebody by naming
+        // them where it was created.
+        syn::Expr::Field(access) => {
+            let named = match (&*access.base, &access.member) {
+                (syn::Expr::Path(base), syn::Member::Named(field))
+                    if base.path.is_ident("config") =>
+                {
+                    field.to_string()
+                }
+                _ => return Err(refuse()),
+            };
+            let Some(slot) = config_fields.iter().position(|(f, _)| *f == named) else {
+                return Err(syn::Error::new(
+                    identity.span(),
+                    format!("`{named}` is not a configuration field of this package"),
+                ));
             };
             let slot = u32::try_from(slot).unwrap_or(u32::MAX);
             Ok((
@@ -2303,6 +2310,81 @@ fn granted_branches(
     ))
 }
 
+/// The `issued(<Resource>)` leaf: a badge the issuing instance also
+/// issues, optionally narrowed to one instance of it.
+///
+/// Beside the leaf, whether it reads the instance's configuration, on the
+/// terms [`granted_claim`] states.
+fn granted_badge(
+    call: &syn::ExprCall,
+    resources: &[Nameable<'_>],
+) -> syn::Result<(TokenStream2, bool)> {
+    let mut args = call.args.iter();
+    let named = match args.next() {
+        Some(syn::Expr::Path(path)) => path.path.get_ident().map(ToString::to_string),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        syn::Error::new(
+            call.span(),
+            "`issued(..)` names a `#[resource]` struct of this package",
+        )
+    })?;
+    let Some(badge) = resources.iter().find(|badge| *badge.ident == named) else {
+        return Err(syn::Error::new(
+            call.span(),
+            format!("`{named}` is not a `#[resource]` of this package"),
+        ));
+    };
+    // A badge's address is the hash of its own rules, so the leaf
+    // carries them. What it may not carry is a badge of its own:
+    // the chain one address folds is one link long, so a mark
+    // whose rules name a badge is not nameable from one.
+    let Some((rules, reads_config)) = badge.rules.as_ref() else {
+        return Err(syn::Error::new(
+            call.span(),
+            format!(
+                "`{named}` names a badge in its own granted rules, and a badge \
+                     chain is one link long — the address a leaf derives folds the \
+                     rules of the badge it names, so a second link would make one \
+                     address a function of how deeply its author nested"
+            ),
+        ));
+    };
+    let mark = syn::LitByteStr::new(kebab(&named).as_bytes(), badge.ident.span());
+    let kind = match badge.kind {
+        ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::ResourceKind::Fungible),
+        ResourceKind::NonFungible => {
+            quote!(::hyperscale_vm_sdk::ResourceKind::NonFungible)
+        }
+    };
+    match (badge.kind, args.next()) {
+        // Naming a badge without an instance is naming any of it,
+        // whichever kind it is — the reading `#[requires(..)]`
+        // already gives the same words.
+        (_, None) => Ok((
+            quote!(::hyperscale_vm_sdk::GrantClaim::SelfBadge {
+                mark: #mark.to_vec(),
+                kind: #kind,
+                rules: #rules,
+            }),
+            *reads_config,
+        )),
+        (ResourceKind::NonFungible, Some(id)) => Ok((
+            quote!(::hyperscale_vm_sdk::GrantClaim::SelfInstance {
+                mark: #mark.to_vec(),
+                id: #id,
+                rules: #rules,
+            }),
+            *reads_config,
+        )),
+        (ResourceKind::Fungible, Some(id)) => Err(syn::Error::new(
+            id.span(),
+            format!("`{named}` is fungible, and a balance has no instance to name"),
+        )),
+    }
+}
+
 /// One grant leaf, as the closed vocabulary spells it.
 ///
 /// Beside the leaf, whether it reads the instance's configuration —
@@ -2317,10 +2399,10 @@ fn granted_claim(
     let refuse = |span| {
         syn::Error::new(
             span,
-            "a grant claim is `self`, `issued(<Resource>)` for a fungible badge, \
-             `issued(<Resource>, <id>)` for one instance of a non-fungible one, or a \
-             configuration field by name — a derivation the address already knows, \
-             never anything a caller supplies",
+            "a grant claim is `self`, `config.<field>`, `issued(<Resource>)` for a \
+             fungible badge, or `issued(<Resource>, <id>)` for one instance of a \
+             non-fungible one — a derivation the address already knows, never anything \
+             a caller supplies",
         )
     };
     match expr {
@@ -2328,87 +2410,52 @@ fn granted_claim(
         syn::Expr::Path(path) if path.path.is_ident("self") => {
             Ok((quote!(::hyperscale_vm_sdk::GrantClaim::SelfAddr), false))
         }
-        // A configuration field, whose address class says which claim.
+        // A bare name is not a leaf, and each of the two things it used
+        // to be has its own spelling to point at.
         syn::Expr::Path(path) => {
             let name = path
                 .path
                 .get_ident()
                 .map(ToString::to_string)
                 .ok_or_else(|| refuse(path.span()))?;
+            if resources.iter().any(|badge| *badge.ident == name) {
+                return Err(syn::Error::new(
+                    path.span(),
+                    format!("a badge the package issues is named `issued({name})`"),
+                ));
+            }
+            if config_fields.contains(&name) {
+                return Err(syn::Error::new(
+                    path.span(),
+                    format!("a configuration field is named `config.{name}`"),
+                ));
+            }
+            Err(refuse(path.span()))
+        }
+        // A configuration field, whose address class says which claim.
+        syn::Expr::Field(access) => {
+            let named = match (&*access.base, &access.member) {
+                (syn::Expr::Path(base), syn::Member::Named(field))
+                    if base.path.is_ident("config") =>
+                {
+                    field.to_string()
+                }
+                _ => return Err(refuse(access.span())),
+            };
             let slot = config_fields
                 .iter()
-                .position(|field| *field == name)
+                .position(|field| *field == named)
                 .ok_or_else(|| {
                     syn::Error::new(
-                        path.span(),
-                        format!("`{name}` is not a configuration field of this package"),
+                        access.span(),
+                        format!("`{named}` is not a configuration field of this package"),
                     )
                 })?;
             let slot = u32::try_from(slot).unwrap_or(u32::MAX);
             Ok((quote!(::hyperscale_vm_sdk::GrantClaim::Config(#slot)), true))
         }
         // A badge the issuing instance also issues.
-        syn::Expr::Call(call) if calls(&call.func, "issued") => {
-            let mut args = call.args.iter();
-            let named = match args.next() {
-                Some(syn::Expr::Path(path)) => path.path.get_ident().map(ToString::to_string),
-                _ => None,
-            }
-            .ok_or_else(|| refuse(call.span()))?;
-            let Some(badge) = resources.iter().find(|badge| *badge.ident == named) else {
-                return Err(syn::Error::new(
-                    call.span(),
-                    format!("`{named}` is not a `#[resource]` of this package"),
-                ));
-            };
-            // A badge's address is the hash of its own rules, so the leaf
-            // carries them. What it may not carry is a badge of its own:
-            // the chain one address folds is one link long, so a mark
-            // whose rules name a badge is not nameable from one.
-            let Some((rules, reads_config)) = badge.rules.as_ref() else {
-                return Err(syn::Error::new(
-                    call.span(),
-                    format!(
-                        "`{named}` names a badge in its own granted rules, and a badge \
-                         chain is one link long — the address a leaf derives folds the \
-                         rules of the badge it names, so a second link would make one \
-                         address a function of how deeply its author nested"
-                    ),
-                ));
-            };
-            let mark = syn::LitByteStr::new(kebab(&named).as_bytes(), badge.ident.span());
-            let kind = match badge.kind {
-                ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::ResourceKind::Fungible),
-                ResourceKind::NonFungible => {
-                    quote!(::hyperscale_vm_sdk::ResourceKind::NonFungible)
-                }
-            };
-            match (badge.kind, args.next()) {
-                // Naming a badge without an instance is naming any of it,
-                // whichever kind it is — the reading `#[requires(..)]`
-                // already gives the same words.
-                (_, None) => Ok((
-                    quote!(::hyperscale_vm_sdk::GrantClaim::SelfBadge {
-                        mark: #mark.to_vec(),
-                        kind: #kind,
-                        rules: #rules,
-                    }),
-                    *reads_config,
-                )),
-                (ResourceKind::NonFungible, Some(id)) => Ok((
-                    quote!(::hyperscale_vm_sdk::GrantClaim::SelfInstance {
-                        mark: #mark.to_vec(),
-                        id: #id,
-                        rules: #rules,
-                    }),
-                    *reads_config,
-                )),
-                (ResourceKind::Fungible, Some(id)) => Err(syn::Error::new(
-                    id.span(),
-                    format!("`{named}` is fungible, and a balance has no instance to name"),
-                )),
-            }
-        }
+        syn::Expr::Call(call) if calls(&call.func, "issued") => granted_badge(call, resources),
         other => Err(refuse(other.span())),
     }
 }

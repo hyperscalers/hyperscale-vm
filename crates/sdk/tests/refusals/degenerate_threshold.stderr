@@ -1,5 +1,5 @@
 error: a threshold requiring more branches than it has would admit no one
   --> tests/refusals/degenerate_threshold.rs:24:20
    |
-24 |         #[requires(n_of(3, chair, deputy))]
+24 |         #[requires(n_of(3, config.chair, config.deputy))]
    |                    ^^^^

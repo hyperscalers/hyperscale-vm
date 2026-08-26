@@ -1,0 +1,5 @@
+error: a badge the package issues is named `issued(OwnerBadge)`
+  --> tests/refusals/bare_badge_name.rs:18:20
+   |
+18 |         #[requires(OwnerBadge)]
+   |                    ^^^^^^^^^^

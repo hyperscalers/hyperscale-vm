@@ -721,7 +721,7 @@ mod board {
 
     impl Board {
         /// Either officer alone.
-        #[requires(chair || deputy)]
+        #[requires(config.chair || config.deputy)]
         pub fn set_fee(&mut self, fee: Quantity) {
             self.fee.set(fee);
         }
@@ -732,13 +732,13 @@ mod board {
         /// what a package publishes outlives the identifier that
         /// happened to name it, so the rename is stated once.
         #[name("reset")]
-        #[requires(n_of(2, chair, deputy, third))]
+        #[requires(n_of(2, config.chair, config.deputy, config.third))]
         pub fn clear_fee(&mut self) {
             self.fee.set(Quantity::ZERO);
         }
 
         /// Both officers, and the chain flattens rather than nesting.
-        #[requires(chair && deputy && third)]
+        #[requires(config.chair && config.deputy && config.third)]
         pub fn dissolve(&mut self) {
             self.fee.set(Quantity::ZERO);
         }

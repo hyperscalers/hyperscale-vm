@@ -128,7 +128,7 @@ pub mod perp {
 
     impl Perp {
         /// Post what one base unit is worth.
-        #[requires(oracle)]
+        #[requires(config.oracle)]
         pub fn post_mark(&mut self, mark: Fixed<Quote, Base>) {
             self.mark.set(mark);
         }
@@ -139,13 +139,13 @@ pub mod perp {
         /// reason rather than for want of one: they write two different
         /// counters, which is what keeps the two directions roundable
         /// apart.
-        #[requires(oracle)]
+        #[requires(config.oracle)]
         pub fn charge_longs(&mut self, rate: Fixed<Quote, Base>) {
             self.funding_charged.set(self.funding_charged.get() + rate);
         }
 
         /// Add one period's funding, with shorts paying it.
-        #[requires(oracle)]
+        #[requires(config.oracle)]
         pub fn credit_longs(&mut self, rate: Fixed<Quote, Base>) {
             self.funding_credited
                 .set(self.funding_credited.get() + rate);

@@ -30,7 +30,7 @@ mod registry {
 
     /// Only the founder may bring the registry up or seed its table.
     #[config]
-    #[requires(founder)]
+    #[requires(config.founder)]
     struct Settings {
         founder: Address,
     }
@@ -58,7 +58,7 @@ mod registry {
         /// cell holds is what a caller hands over, and an attribute has
         /// no way to say it. The cell's `Absent` door is what makes it
         /// once-only, so it needs no help from the seal.
-        #[requires(founder)]
+        #[requires(config.founder)]
         pub fn seed_admin(&mut self, rule: RuleBytes, delay_ms: u64) {
             self.admin.create(rule);
             self.delay_ms.set(delay_ms);

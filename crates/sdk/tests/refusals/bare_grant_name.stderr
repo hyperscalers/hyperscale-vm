@@ -1,0 +1,5 @@
+error: a configuration field is named `config.warden`
+  --> tests/refusals/bare_grant_name.rs:10:59
+   |
+10 |     #[resource(non_fungible, grants(mint = self, recall = warden))]
+   |                                                           ^^^^^^

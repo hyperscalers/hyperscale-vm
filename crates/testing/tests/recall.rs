@@ -38,7 +38,7 @@ mod bailiff {
 
     /// One instance per deed, which is what makes revocation
     /// holder-by-holder rather than a balance nobody can tell apart.
-    #[resource(non_fungible, grants(mint = self, recall = warden))]
+    #[resource(non_fungible, grants(mint = self, recall = config.warden))]
     struct Deed;
 
     /// Who may take one back. An identity rather than a badge, so the

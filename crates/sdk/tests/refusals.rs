@@ -173,12 +173,18 @@ fn the_lowering_refuses_possession_inside_a_rule() {
 /// A gate leaf names one authority.
 ///
 /// A badge the package issues and an address fixed at creation are
-/// different claims, so a name that resolves to both is refused rather
-/// than resolved by the order the lowering happens to look.
+/// different claims, and they have different spellings — so a bare name
+/// is refused wherever a leaf is read, in the gate and in a grant alike,
+/// and the refusal names the spelling that would have worked.
+///
+/// One name for both used to be the ambiguity worth its own refusal.
+/// Two spellings make it unrepresentable.
 #[test]
-fn the_lowering_refuses_an_authority_named_twice() {
+fn the_lowering_refuses_a_leaf_spelled_as_a_bare_name() {
     let refuse = TestCases::new();
-    refuse.compile_fail("tests/refusals/named_both.rs");
+    refuse.compile_fail("tests/refusals/bare_config_name.rs");
+    refuse.compile_fail("tests/refusals/bare_badge_name.rs");
+    refuse.compile_fail("tests/refusals/bare_grant_name.rs");
 }
 
 /// A threshold the vocabulary holds no rule for, refused where it was

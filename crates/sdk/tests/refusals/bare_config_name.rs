@@ -5,12 +5,9 @@ mod contract {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{Cell, Quantity};
 
-    #[resource]
-    struct owner;
-
     #[config]
     struct Settings {
-        owner: Address,
+        chair: Address,
     }
 
     #[state]
@@ -19,10 +16,10 @@ mod contract {
     }
 
     impl Contract {
-        // A badge this instance issues and an address fixed at creation
-        // are different authorities; one name for both says neither.
-        #[requires(owner)]
-        pub fn operate(&mut self, fee: Quantity) {
+        // A configuration field has one spelling, and a bare name is not
+        // it: the refusal says which field this is and how to write it.
+        #[requires(chair)]
+        pub fn set_fee(&mut self, fee: Quantity) {
             self.fee.set(fee);
         }
     }

@@ -101,7 +101,7 @@ pub mod peg {
         /// reserve a stable subunit is worth over parity, or under it.
         /// Neither the scale nor the direction is a convention this body
         /// and the caller have to agree on separately.
-        #[requires(oracle)]
+        #[requires(config.oracle)]
         pub fn post_deviation(&mut self, deviation: SignedFixed<Reserve, Stable>) {
             self.deviation.set(deviation);
         }

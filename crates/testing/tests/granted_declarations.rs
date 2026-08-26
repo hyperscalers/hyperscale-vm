@@ -78,7 +78,7 @@ mod hall {
 
     impl Hall {
         /// Callable by whoever holds any warden badge.
-        #[requires(Warden)]
+        #[requires(issued(Warden))]
         pub fn issue(&mut self, amount: Quantity) -> Bucket {
             Seat::mint(amount)
         }

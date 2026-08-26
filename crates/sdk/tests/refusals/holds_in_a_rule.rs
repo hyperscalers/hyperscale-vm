@@ -20,7 +20,7 @@ mod contract {
         // Admitting a `holds` here — under a disjunction, or conjoined
         // beside the rule — would make authority a predicate engine,
         // which is the fence the grammar keeps.
-        #[requires(holds(badge) || owner)]
+        #[requires(holds(badge) || config.owner)]
         pub fn operate(&mut self, badge: Address, fee: Quantity) {
             let _ = badge;
             self.fee.set(fee);
