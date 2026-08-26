@@ -80,16 +80,88 @@ pub enum Authority {
         /// resource at large.
         instance: Option<u64>,
     },
-    /// A threshold the method itself declares: `count` of `branches`,
-    /// each a claim of its own. What satisfies which branch is the
-    /// holder's to know, so the report states the shape rather than
-    /// choosing a way through it.
+    /// A threshold: `count` of `branches`, each an authority of its own.
+    /// Which branches a holder satisfies is theirs to choose, so the
+    /// report states every branch rather than picking a way through —
+    /// and a conjunction is the threshold whose count is its width,
+    /// where each branch is asked and the report says which.
     Threshold {
         /// How many branches must be satisfied.
         count: u8,
-        /// How many there are.
-        branches: u32,
+        /// What each branch asks.
+        branches: Vec<Self>,
     },
+}
+
+impl Authority {
+    /// Whether anything a holder could sign or present satisfies this.
+    ///
+    /// [`TargetHasNoKey`](Self::TargetHasNoKey) is satisfied by nobody,
+    /// and a threshold only where enough of its branches are.
+    #[must_use]
+    pub fn satisfiable(&self) -> bool {
+        match self {
+            Self::TargetHasNoKey => false,
+            Self::Threshold { count, branches } => {
+                branches
+                    .iter()
+                    .filter(|branch| branch.satisfiable())
+                    .count()
+                    >= usize::from(*count)
+            }
+            Self::Anyone
+            | Self::Signature(_)
+            | Self::StoredRule
+            | Self::Held
+            | Self::Badge { .. } => true,
+        }
+    }
+
+    /// The signatures satisfying this authority certainly requires, into
+    /// `out`.
+    ///
+    /// A conjunction needs every branch, so each contributes; a
+    /// threshold below its width leaves the choice with the holder and
+    /// contributes none. A rule-judged branch contributes the target's
+    /// own key — the identity that satisfies the rule while nothing is
+    /// stored.
+    fn certain_signers(&self, target: Address, out: &mut BTreeSet<PrincipalAddr>) {
+        match self {
+            Self::Signature(principal) => {
+                out.insert(*principal);
+            }
+            Self::StoredRule => {
+                if let Ok(principal) = PrincipalAddr::try_from(target) {
+                    out.insert(principal);
+                }
+            }
+            Self::Threshold { count, branches } if usize::from(*count) == branches.len() => {
+                for branch in branches {
+                    branch.certain_signers(target, out);
+                }
+            }
+            Self::Anyone
+            | Self::TargetHasNoKey
+            | Self::Held
+            | Self::Badge { .. }
+            | Self::Threshold { .. } => {}
+        }
+    }
+
+    /// Every address this authority names, into `out` — what
+    /// [`Report::named`] renders, however deep in a threshold it sits.
+    fn names(&self, out: &mut Vec<Address>) {
+        match self {
+            Self::Signature(principal) => out.push(principal.address()),
+            Self::Badge { resource, .. } => out.push(resource.address()),
+            Self::Threshold { branches, .. } => {
+                for branch in branches {
+                    branch.names(out);
+                }
+            }
+            Self::Anyone | Self::StoredRule | Self::Held | Self::TargetHasNoKey => {}
+        }
+    }
 }
 
 /// What one node of the flattened manifest requires of a signature.
@@ -137,6 +209,47 @@ fn governing(rule: &Rule<JudgedLeaf>) -> Option<SubstateKey> {
         return None;
     };
     (absent == cell).then_some(*cell)
+}
+
+/// What one claim asks of a signer.
+///
+/// A principal's address derives from its key material, so its own
+/// authority is a signature; a badge is presented rather than signed
+/// for; every other class derives from a hash of what it is, and
+/// nothing signs for that. What a claim's subject is, is its class's
+/// answer, asked here because here is where it matters.
+fn claimed(claim: &Claim) -> Authority {
+    match (claim.badge(), claim.callable()) {
+        (Some(resource), _) => Authority::Badge {
+            resource,
+            instance: claim.instance,
+        },
+        (None, Some(CallTarget::Principal(principal))) => Authority::Signature(principal),
+        (None, Some(CallTarget::Component(_)) | None) => Authority::TargetHasNoKey,
+    }
+}
+
+/// The authority one resolved rule asks for, thresholds carrying what
+/// each branch asks in turn.
+///
+/// The governing idiom answers first: the rule stored at a cell, or —
+/// while nothing is stored there — the identity that address itself
+/// derives. Two branches, one question, and a holder is owed the
+/// question rather than the spelling. The recursion is bounded by the
+/// caps every rule is decoded and evaluated under.
+fn authority_of(rule: &Rule<JudgedLeaf>) -> Authority {
+    if governing(rule).is_some() {
+        return Authority::StoredRule;
+    }
+    match rule {
+        Rule::Require(JudgedLeaf::Claim(claim)) => claimed(claim),
+        Rule::Require(JudgedLeaf::Stored { .. }) => Authority::StoredRule,
+        Rule::Require(JudgedLeaf::Presence { .. }) => Authority::Held,
+        Rule::CountOf { count, rules } => Authority::Threshold {
+            count: *count,
+            branches: rules.iter().map(authority_of).collect(),
+        },
+    }
 }
 
 /// Everything a holder can know before signing.
@@ -207,27 +320,24 @@ impl Report {
         declared_work(self.footprint(), gas_limit, signatures)
     }
 
-    /// Every signature the transaction needs: what its nodes' declared
-    /// access requires, plus the signer of every bound subintent. A
-    /// rule-judged node contributes its target's own key — the identity
-    /// that satisfies the rule while nothing is stored; a securified
-    /// target's stored rules name their signers in state, which no
-    /// report reads.
+    /// Every signature the transaction certainly needs: what its nodes'
+    /// declared access requires, plus the signer of every bound
+    /// subintent. A rule-judged node contributes its target's own key —
+    /// the identity that satisfies the rule while nothing is stored; a
+    /// securified target's stored rules name their signers in state,
+    /// which no report reads; and a threshold below its width leaves the
+    /// choice with the holder, so only a conjunction's branches
+    /// contribute.
     #[must_use]
     pub fn signers(&self) -> BTreeSet<PrincipalAddr> {
-        self.authority
-            .iter()
-            .filter_map(|required| match required.authority {
-                Authority::Signature(principal) => Some(principal),
-                Authority::StoredRule => PrincipalAddr::try_from(required.target).ok(),
-                Authority::Anyone
-                | Authority::TargetHasNoKey
-                | Authority::Held
-                | Authority::Badge { .. }
-                | Authority::Threshold { .. } => None,
-            })
-            .chain(self.subintents.iter().map(|record| record.signer))
-            .collect()
+        let mut signers: BTreeSet<PrincipalAddr> =
+            self.subintents.iter().map(|record| record.signer).collect();
+        for required in &self.authority {
+            required
+                .authority
+                .certain_signers(required.target, &mut signers);
+        }
+        signers
     }
 
     /// The nodes whose access no signature can satisfy. A transaction
@@ -235,7 +345,7 @@ impl Report {
     pub fn unsatisfiable(&self) -> impl Iterator<Item = &Required> {
         self.authority
             .iter()
-            .filter(|required| matches!(required.authority, Authority::TargetHasNoKey))
+            .filter(|required| !required.authority.satisfiable())
     }
 
     /// An address the report names, in this network's text form.
@@ -298,51 +408,20 @@ fn report(
         .map(|(shard, declared)| (*shard, footprint(declared)))
         .collect();
 
-    // What one claim asks of a signer: a principal's address derives
-    // from its key material, so its own authority is a signature; every
-    // other class derives from a hash of what it is, and nothing signs
-    // for that.
-    // What a claim's subject is, is its class's answer, asked here
-    // because here is where it matters.
-    let claimed = |claim: &Claim| match (claim.badge(), claim.callable()) {
-        (Some(resource), _) => Authority::Badge {
-            resource,
-            instance: claim.instance,
-        },
-        (None, Some(CallTarget::Principal(principal))) => Authority::Signature(principal),
-        (None, Some(CallTarget::Component(_)) | None) => Authority::TargetHasNoKey,
-    };
-
     // The authority gate admission resolved for each node, read back
     // rather than re-derived: the report answers with the verdict
-    // execution will judge, over the node's real bound inputs. A
-    // principal's address derives from its key material, so its own
-    // authority is a signature; every other class derives from a hash of
-    // what it is, and nothing signs for that.
+    // execution will judge, over the node's real bound inputs.
     let mut authority = Vec::with_capacity(admitted.manifest().nodes.len());
     for (index, node) in admitted.manifest().nodes.iter().enumerate() {
         let required = match admitted.calls()[index].requires.as_slice() {
             [] => Authority::Anyone,
-            [Rule::Require(JudgedLeaf::Claim(claim))] => claimed(claim),
-            [Rule::Require(JudgedLeaf::Stored { .. })] => Authority::StoredRule,
-            [Rule::Require(JudgedLeaf::Presence { .. })] => Authority::Held,
-            // The governing idiom: the rule stored at a cell, or — while
-            // nothing is stored there — the identity that address itself
-            // derives. Two branches, one question, and a holder is owed
-            // the question rather than the spelling.
-            [rule] if governing(rule).is_some() => Authority::StoredRule,
-            // A threshold names more than one thing, and which of them a
-            // holder can produce is theirs to know: the report says what
-            // is asked rather than picking a way to satisfy it.
-            [Rule::CountOf { count, rules }] => Authority::Threshold {
-                count: *count,
-                branches: u32::try_from(rules.len()).unwrap_or(u32::MAX),
-            },
-            // Several required rules conjoin, so the report says how
-            // many are asked and that all of them are.
+            [rule] => authority_of(rule),
+            // Several required rules conjoin: the threshold whose count
+            // is its width, so the report says every one of them is
+            // asked, and what each asks.
             rules => Authority::Threshold {
                 count: u8::try_from(rules.len()).unwrap_or(u8::MAX),
-                branches: u32::try_from(rules.len()).unwrap_or(u32::MAX),
+                branches: rules.iter().map(authority_of).collect(),
             },
         };
         authority.push(Required {
@@ -354,23 +433,19 @@ fn report(
     }
 
     // Every address the report names, rendered once so a network word the
-    // encoding refuses fails here rather than at a display seam.
+    // encoding refuses fails here rather than at a display seam. The
+    // authorities' own names — a signer, the badge a holder presents —
+    // are walked however deep a threshold holds them, so `text` answers
+    // for every address the report itself hands the caller.
     let mut named = BTreeMap::new();
+    let mut authority_names = Vec::new();
+    for required in &authority {
+        required.authority.names(&mut authority_names);
+    }
     let addresses = authority
         .iter()
         .map(|required| required.target)
-        .chain(
-            authority
-                .iter()
-                .filter_map(|required| match required.authority {
-                    Authority::Signature(principal) => Some(principal.address()),
-                    // The badge a holder presents: named here so
-                    // `text` answers for the address the report itself
-                    // hands the caller.
-                    Authority::Badge { resource, .. } => Some(resource.address()),
-                    _ => None,
-                }),
-        )
+        .chain(authority_names)
         .chain(subintents.iter().map(|record| record.signer.address()));
     for address in addresses {
         if let Entry::Vacant(slot) = named.entry(address) {

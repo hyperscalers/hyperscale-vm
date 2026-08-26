@@ -6,15 +6,18 @@
 //! checked against the same call made directly.
 
 use hyperscale_vm_effects::{
-    Constraint, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, Records,
-    TestHasher, Value, admit, footprint, route,
+    Claim, Constraint, GrantedBehaviour, Hash32, Hasher, InstanceMeta, PackageHash,
+    PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
+    StoredRule, TestHasher, Value, admit, footprint, route,
 };
 use hyperscale_vm_manifest_builder::{
-    Authority, EnvelopeBuilder, PreflightError, TypedBuilder, preflight, preflight_tree,
+    Authority, EnvelopeBuilder, IntentBuilder, PreflightError, TypedBuilder, preflight,
+    preflight_tree,
 };
 use hyperscale_vm_stdlib::{account, staking};
 use hyperscale_vm_types::{
-    PrincipalAddr, ResourceAddr, SchemeId, TextError, declared_work, signature_work,
+    Address, AddressClass, PrincipalAddr, ResourceAddr, SchemeId, TextError, declared_work,
+    signature_work,
 };
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -232,4 +235,75 @@ fn a_composition_names_every_signer_it_needs() {
     assert_eq!(report.subintents[0].signer, BOB);
     // The nullifier the composition would spend, named before signing.
     assert_eq!(report.identity(), tree.hash(&TestHasher));
+}
+
+/// The party whose approval the note's own entry names.
+const DESK: PrincipalAddr = PrincipalAddr::new([0x40; 31]);
+/// Whose namespace the note sits in; its code never runs here.
+const MINTER: Address = Address::new([0x6A; 31], AddressClass::Component);
+
+/// A note that moves only in a transaction the desk signed.
+fn note_meta() -> ResourceMeta {
+    let mut rules = ResourceGrants::new();
+    rules.set(
+        GrantedBehaviour::Withdraw,
+        RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(DESK)))
+            .expect("a rule within the caps encodes"),
+    );
+    ResourceMeta {
+        namespace: MINTER,
+        kind: ResourceKind::Fungible,
+        material: vec![b"note".to_vec()],
+        rules,
+    }
+}
+
+/// A withdrawal of a governed note answers to its account's gate and to
+/// the note's own entry at once, and the report says what each branch
+/// asks — the branch contents are the case a preflight exists for.
+#[test]
+fn a_conjunction_reports_what_each_branch_asks() {
+    let chain = world();
+    let note = note_meta().address(&TestHasher);
+    let mut request = IntentBuilder::declaration(&chain, &TestHasher, BOB);
+    let approval = request.declare_proof(Claim::of_subject(DESK));
+    let bob = account::authorize(&mut request, BOB).unwrap();
+    let funds = request
+        .call_presenting(&[bob, approval], BOB, "withdraw", (note, 40u128))
+        .unwrap()
+        .one()
+        .unwrap();
+    account::deposit(&mut request, BOB, funds).unwrap();
+    let request = request.into_decl().unwrap();
+
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK);
+    let desk = account::authorize(&mut root, DESK).unwrap();
+    let offered = root.offer(desk);
+    let wants = env.present(BOB, request).unwrap().one().unwrap();
+    env.seal(root).unwrap().none().unwrap();
+    env.bind(wants, offered).unwrap();
+    env.resource(note_meta());
+    let tree = env.build().unwrap();
+
+    let report = preflight_tree(&tree, DESK, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+
+    let withdrawing = report
+        .authority
+        .iter()
+        .find(|required| required.method == "withdraw")
+        .expect("the request withdraws");
+    assert_eq!(
+        withdrawing.authority,
+        Authority::Threshold {
+            count: 2,
+            branches: vec![Authority::Signature(BOB), Authority::Signature(DESK)],
+        }
+    );
+    // A signer named inside a threshold is still an address the report
+    // names, and a conjunction branch is a signature the transaction
+    // certainly needs.
+    assert!(report.text(DESK).is_some());
+    assert!(report.signers().contains(&DESK));
+    assert!(report.signers().contains(&BOB));
+    assert_eq!(report.unsatisfiable().count(), 0);
 }
