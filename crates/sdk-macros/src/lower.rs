@@ -3916,8 +3916,20 @@ impl<'a> Lowerer<'a> {
             // ---- operating through an open handle -----------------------
             Val::Handle(site) => {
                 let Some(op) = Op::from_method(&method) else {
-                    let code = self.pass_through(&receiver, &method, evals, call);
-                    return Eval::plain(code);
+                    // A handle reaches the kernel, so every method on one
+                    // is an operation the declaration has to name. Passing
+                    // an unmodelled one through would emit a body that
+                    // acts through a capability the declaration never
+                    // bought — the one shape the walk exists to make
+                    // impossible.
+                    let vocabulary = Op::VOCABULARY.join(", ");
+                    self.error(
+                        call.span(),
+                        &format!(
+                            "`{method}` names no operation a declaration can carry, so what it reaches the kernel for is not what this method declares. One of: {vocabulary}"
+                        ),
+                    );
+                    return Eval::absent(call.span(), "an operation the vocabulary does not hold");
                 };
                 let param = match args.first() {
                     Some(Val::Term(term)) => Some(term.clone()),
@@ -4574,7 +4586,7 @@ impl<'a> Lowerer<'a> {
                 // instantiated, silently — so the table is reached by
                 // `existing()`, whose presence condition makes that the
                 // routed refusal it should be.
-                if matches!(method, "get" | "peek") && holds_rule(field) {
+                if method == "get" && holds_rule(field) {
                     self.error(
                         call.span(),
                         "a stored role table is read with `existing()` — a `get` reads an \

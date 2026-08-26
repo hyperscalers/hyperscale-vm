@@ -29,10 +29,17 @@ use hyperscale_vm_types::Moves;
 #[blueprint]
 mod shapes {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::Quantity;
+    use hyperscale_vm_sdk::state::{Keyed, Quantity};
+
+    #[record]
+    struct Note {
+        weight: u64,
+    }
 
     #[state]
-    struct Shapes {}
+    struct Shapes {
+        notes: Keyed<Option<Note>>,
+    }
 
     impl Shapes {
         /// A loop over a *computed* list declares what one pass declares:
@@ -91,6 +98,16 @@ mod shapes {
         pub fn plain(&mut self, _flag: u64, a: Address) {
             self.vault(a).declared();
         }
+
+        /// A rewrite is a set through the door that requires presence.
+        pub fn refiled(&mut self, id: u64, weight: u64) {
+            self.notes.at(id).rewrite(Note { weight });
+        }
+
+        /// The door alone, so the pair says what a rewrite adds to it.
+        pub fn touched(&mut self, id: u64) {
+            let _ = self.notes.at(id).existing();
+        }
     }
 }
 
@@ -106,6 +123,17 @@ fn every_spelling_of_a_conditional_declares_the_same_accesses() {
         effects("looped"),
         effects("once"),
         "loop over a runtime list"
+    );
+    // A rewrite reaches the kernel, so it declares reaching — the walk
+    // has no spelling it may pass through untouched.
+    assert_eq!(
+        effects("refiled"),
+        effects("touched"),
+        "a rewrite is a write through the door `existing` states"
+    );
+    assert!(
+        !metadata.methods["refiled"].effects.is_empty(),
+        "a rewrite declares the leaf it writes"
     );
 }
 

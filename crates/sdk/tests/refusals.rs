@@ -17,6 +17,7 @@ use trybuild::TestCases;
 fn the_lowering_refuses_what_it_cannot_see_into() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/self_call.rs");
+    refuse.compile_fail("tests/refusals/unmodelled_handle_op.rs");
     refuse.compile_fail("tests/refusals/self_escape.rs");
     refuse.compile_fail("tests/refusals/closure.rs");
     refuse.compile_fail("tests/refusals/unwalkable_macro.rs");

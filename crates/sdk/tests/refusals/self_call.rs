@@ -11,7 +11,7 @@ mod contract {
 
     impl Contract {
         pub fn credit(&mut self, a: Address) {
-            self.vault(a).add(0);
+            self.vault(a).declared_credit();
         }
 
         pub fn double(&mut self, a: Address) {

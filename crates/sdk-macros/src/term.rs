@@ -510,11 +510,46 @@ pub enum Op {
 }
 
 impl Op {
+    /// Every method name an operation answers to, for a refusal to list.
+    ///
+    /// Beside [`Op::from_method`] rather than derived from it, because a
+    /// name maps to an operation and not the other way round — several
+    /// spell one operation, and which ones is the vocabulary's own fact.
+    pub const VOCABULARY: &'static [&'static str] = &[
+        "get",
+        "count",
+        "covered",
+        "entry",
+        "order",
+        "balance",
+        "pick",
+        "picked",
+        "put",
+        "declared_credit",
+        "file",
+        "take",
+        "declared",
+        "reserve",
+        "set",
+        "insert",
+        "remove",
+        "create",
+        "seal",
+        "existing",
+        "exclusive",
+        "open",
+        "reseal",
+        "retire",
+        "rewrite",
+        "vacant",
+    ];
+
     /// The operation a method name implies, if it is one of the vocabulary.
     pub fn from_method(name: &str) -> Option<Self> {
         match name {
-            "get" | "peek" | "count" | "covered" | "entry" | "order" | "balance" | "pick"
-            | "picked" => Some(Self::Get),
+            "get" | "count" | "covered" | "entry" | "order" | "balance" | "pick" | "picked" => {
+                Some(Self::Get)
+            }
             // The three that only pay in. A take is the other
             // direction, and a bare `declared` states a movement without
             // making one and says nothing about which way, so both stay
@@ -524,9 +559,35 @@ impl Op {
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),
             "create" | "seal" => Some(Self::Create),
-            "existing" | "exclusive" | "open" | "reseal" | "retire" => Some(Self::Existing),
+            // A rewrite is a set through a door that requires presence,
+            // which is what `existing` states and what `create` states
+            // the other way round.
+            "existing" | "exclusive" | "open" | "reseal" | "retire" | "rewrite" => {
+                Some(Self::Existing)
+            }
             "vacant" => Some(Self::Vacant),
             _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Op;
+
+    /// The listed vocabulary is the one the walk answers to.
+    ///
+    /// A refusal that names a method the walk would have accepted, or
+    /// omits one it accepts, sends an author to change working code — so
+    /// the list and the match are held to each other rather than kept in
+    /// step by hand.
+    #[test]
+    fn every_listed_name_is_one_the_walk_answers_to() {
+        for name in Op::VOCABULARY {
+            assert!(
+                Op::from_method(name).is_some(),
+                "`{name}` is offered and not answered"
+            );
         }
     }
 }
