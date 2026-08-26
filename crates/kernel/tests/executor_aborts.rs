@@ -374,6 +374,108 @@ fn racing_nullifier_writers_commit_exactly_once() {
     );
 }
 
+/// A transaction that also touches `shared`, so it joins the nullifier
+/// writers' group without competing for the subintent itself.
+fn sharing_tx(id: u8) -> BatchTx {
+    let mut set = EffectSet::default();
+    set.insert(Effect {
+        target: EffectTarget::Point(cell(0x5A)),
+        mode: Mode::Write { moves: Moves::Both },
+    })
+    .unwrap();
+    BatchTx {
+        tx: tx(id),
+        declaration: Declaration::from_set(set),
+        calls: Vec::new(),
+        nullifiers: Vec::new(),
+        env: env(),
+        gas_limit: u64::MAX,
+    }
+}
+
+/// A nullifier writer that also takes the shared cell, so all three
+/// members of the group conflict pairwise and run in canonical order.
+fn nullifier_and_shared_tx(id: u8) -> BatchTx {
+    let mut set = EffectSet::default();
+    set.insert(Effect {
+        target: EffectTarget::Point(nullifier()),
+        mode: Mode::Write { moves: Moves::Both },
+    })
+    .unwrap();
+    set.insert(Effect {
+        target: EffectTarget::Point(cell(0x5A)),
+        mode: Mode::Write { moves: Moves::Both },
+    })
+    .unwrap();
+    BatchTx {
+        tx: tx(id),
+        declaration: Declaration::from_set(set),
+        calls: Vec::new(),
+        nullifiers: vec![nullifier()],
+        env: env(),
+        gas_limit: u64::MAX,
+    }
+}
+
+#[test]
+fn an_abort_between_two_committers_does_not_unspend_the_subintent() {
+    // A spend belongs to the transaction that made it, so a later
+    // member's rollback cannot reach it. The middle transaction takes no
+    // part in the subintent — it shares a cell, which is what puts all
+    // three in one group — and its abort rolls back the group store to
+    // where the winner left it, not to where the group began.
+    let scripted = |entry: &BatchTx, session: KernelSession| {
+        if entry.tx == tx(0x02) {
+            RunResult::Aborted {
+                session,
+                outcome: Outcome::UserError {
+                    reason: AbortReason::Unreachable,
+                },
+                fuel: FUEL,
+            }
+        } else {
+            RunResult::Completed {
+                session,
+                answers: vec![],
+                fuel: FUEL,
+            }
+        }
+    };
+    let batch = vec![
+        nullifier_and_shared_tx(0x01),
+        sharing_tx(0x02),
+        nullifier_and_shared_tx(0x03),
+    ];
+    let outcome = execute_batch(
+        Arc::new(MemoryStore::new()),
+        &batch,
+        &scripted,
+        test_hash,
+        ExecutionMode::Serial,
+        &Locality::All,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        outcome.receipts[&tx(0x01)].outcome,
+        Outcome::Completed { .. }
+    ));
+    assert!(matches!(
+        outcome.receipts[&tx(0x02)].outcome,
+        Outcome::UserError { .. }
+    ));
+    assert_eq!(
+        outcome.receipts[&tx(0x03)].outcome,
+        Outcome::NullifierSpent { key: nullifier() },
+        "the winner's spend survives an unrelated member's rollback"
+    );
+    let mut store = outcome.store;
+    assert_eq!(
+        store.read(nullifier()).unwrap(),
+        Some(tx(0x01).0.0.to_vec())
+    );
+}
+
 #[test]
 fn a_drained_vault_leaves_no_cell() {
     // Storage is a refundable per-byte bond, so the leaf has to go when

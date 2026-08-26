@@ -18,7 +18,7 @@ use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, total_movement};
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
-use crate::store::{Access, Fault, StoreError};
+use crate::store::{Access, Fault, StoreError, WorkingStore};
 use crate::supply::SupplyDelta;
 
 /// The committed state change, keyed canonically: `None` is a removal.
@@ -581,6 +581,23 @@ impl KernelSession {
             Settlement::Settled(settles) => settles,
             Settlement::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
         };
+        // Committing spends every subintent: the nullifier cell records
+        // the consuming transaction. The write goes into the same layer
+        // the rest of the transaction wrote into, so an abort below
+        // discards it exactly as it discards everything else, and a
+        // commit merges it once — a spend cannot outlive the transaction
+        // that made it, and cannot be rolled back by another one.
+        //
+        // Only the owning shard holds the cell, which is where the spent
+        // check reads it. The receipt carries the write wherever the
+        // transaction ran, as the outbound effect record every other
+        // operation reaches other shards through.
+        let spent = self.tx.0.0.to_vec();
+        for key in self.nullifiers.clone() {
+            if self.locality.is_local(key.owner) {
+                self.store.write(key, spent.clone())?;
+            }
+        }
         let escaped = undeclared_accesses(self.store.access_log(), &self.declared);
         if !escaped.is_empty() {
             return Err(FinishError::Undeclared(escaped));
@@ -592,6 +609,9 @@ impl KernelSession {
             .retain(|key, _| !movements.contains_key(key) && !settles.contains_key(key));
         delta.movements = movements.into();
         delta.settles = settles.into();
+        for key in &self.nullifiers {
+            delta.cells.insert(*key, Some(spent.clone()));
+        }
         if self.unconserved(&delta, &denominations).is_some() {
             return Ok(abort_with(
                 self.store,

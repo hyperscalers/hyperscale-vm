@@ -342,6 +342,12 @@ pub struct KernelSession {
     env: EnvInputs,
     hash_fn: fn(&[u8]) -> [u8; 32],
     locality: Locality,
+    /// The subintent cells committing spends, from the batch entry.
+    ///
+    /// Held here rather than written by the caller because spending is
+    /// part of committing: the write belongs in the layer the rest of
+    /// the transaction wrote into, so it merges or discards with it.
+    nullifiers: Vec<SubstateKey>,
     /// The interval machinery: materialized scans, scan debt, write caps.
     ranges: Ranges,
     /// The instance whose method is executing, set by the runner as it
@@ -412,6 +418,13 @@ impl KernelSession {
     #[must_use]
     pub fn with_locality(mut self, locality: Locality) -> Self {
         self.locality = locality;
+        self
+    }
+
+    /// The subintent cells a commit spends.
+    #[must_use]
+    pub fn with_nullifiers(mut self, nullifiers: Vec<SubstateKey>) -> Self {
+        self.nullifiers = nullifiers;
         self
     }
 

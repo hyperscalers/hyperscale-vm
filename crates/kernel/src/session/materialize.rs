@@ -477,6 +477,7 @@ impl KernelSession {
             env,
             hash_fn,
             locality: Locality::All,
+            nullifiers: Vec::new(),
             ranges: Ranges::default(),
             invocation: None,
             events: Vec::new(),
