@@ -18,7 +18,7 @@ use hyperscale_vm_effects::{
     Presented, Records, ResourceKind, RuleBytes, StoredRule, TestHasher, Value, admit, always,
     issued_resource,
 };
-use hyperscale_vm_fixtures::{amm, book, lottery, nf, payouts, registry};
+use hyperscale_vm_fixtures::{HAND_AUTHORED, amm, book, lottery, nf, payouts, registry};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
 use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
@@ -419,8 +419,18 @@ fn every_hand_written_method_has_a_wrapper() {
         ),
         ("registry", &["bind", "check", "drain"]),
     ];
-    let hand_written: Vec<(&str, PackageMetadata)> =
-        vec![("nf", nf::metadata()), ("registry", registry::metadata())];
+    // Which packages are hand-written is the fixtures crate's own fact,
+    // read rather than restated: a package added there and not here
+    // would be one whose wrappers nothing holds to its signatures, and
+    // the list saying so would be the text that fell behind.
+    let hand_written: Vec<(&str, PackageMetadata)> = HAND_AUTHORED
+        .iter()
+        .map(|name| match *name {
+            "nf" => ("nf", nf::metadata()),
+            "registry" => ("registry", registry::metadata()),
+            other => panic!("{other} is hand-authored and has no wrapper sweep"),
+        })
+        .collect();
     // Zipping would truncate silently, so the lists are held to one
     // length first: a package appended to one and not the other is the
     // same drift as a method, and would otherwise go unchecked.

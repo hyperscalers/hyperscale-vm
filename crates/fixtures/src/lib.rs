@@ -216,6 +216,19 @@ packages! {
     shares => (SHARES_COMPONENT, shares_artifact, shares_package_hash, "shares.component.wasm");
 }
 
+/// The packages whose declaration is written out beside them rather
+/// than traced from a `#[blueprint]` module.
+///
+/// A derived package's call wrappers are emitted per method by the
+/// macro, so there is nothing about them a second text could disagree
+/// with. A hand-written package's wrappers are hand-written too, and
+/// what holds them to the signatures they mirror is a sweep that has to
+/// know which packages those are — a fact this crate knows and nothing
+/// downstream can infer from a `PackageMetadata`.
+///
+/// Held to the modules themselves by `the_hand_authored_list_is_every_module_that_derives_nothing`.
+pub const HAND_AUTHORED: &[&str] = &["nf", "registry"];
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -229,6 +242,31 @@ mod tests {
         for (artifact, metadata) in seeded() {
             assert_eq!(extract_metadata(artifact).unwrap(), Some(metadata));
         }
+    }
+
+    /// [`HAND_AUTHORED`] is exactly the modules that derive nothing.
+    ///
+    /// A derived module's whole body is a `guest!` call and whatever the
+    /// package adds beside it; a hand-authored one writes its
+    /// declaration out. Read off the modules rather than trusted,
+    /// because a package added to `packages!` and not to the list would
+    /// be a package whose wrappers nothing holds to its signatures —
+    /// and the list is downstream of the modules by one directory, which
+    /// is exactly far enough to be forgotten.
+    #[test]
+    fn the_hand_authored_list_is_every_module_that_derives_nothing() {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut written: Vec<String> = DECLARED
+            .iter()
+            .map(|(name, _)| (*name).to_owned())
+            .filter(|name| {
+                let body = std::fs::read_to_string(source.join(format!("{name}.rs")))
+                    .unwrap_or_else(|error| panic!("{name} has a module: {error}"));
+                !body.contains("guest!(")
+            })
+            .collect();
+        written.sort();
+        assert_eq!(written, HAND_AUTHORED);
     }
 
     /// The attached section is what an address covers, so a bare
