@@ -268,39 +268,18 @@ pub enum DeclarationError {
         /// effects.
         clause: u32,
     },
-    /// A denomination written down as an address of a class that names
-    /// no resource.
+    /// An address written down with a class that names no resource, at
+    /// whichever position the signature wrote it.
     ///
-    /// Routing refuses every such denomination when it evaluates one;
-    /// this is the same verdict at publish, for the cases decidable
-    /// there — a literal, or the instance's own address, which is a
+    /// Routing refuses every such address when it evaluates one; this
+    /// is the same verdict at publish, for the cases decidable there —
+    /// a literal, or the instance's own address, which is a
     /// component's — so an author hears it about their package rather
     /// than a caller about their manifest.
-    #[error("effect clause {clause} denominates in a {found} address, which names no resource")]
+    #[error("{site} a {found} address, which names no resource")]
     NotAResource {
-        /// The clause's position in a preorder walk of the signature's
-        /// effects.
-        clause: u32,
-        /// The class the expression is decided to carry.
-        found: AddressClass,
-    },
-    /// A parameter's denomination written down as an address of a class
-    /// that names no resource — [`DeclarationError::NotAResource`]'s
-    /// verdict, at the position a signature denominates an edge.
-    #[error("parameter {param}'s denomination is a {found} address, which names no resource")]
-    ParamNotAResource {
-        /// The parameter position the denomination indexes.
-        param: u32,
-        /// The class the expression is decided to carry.
-        found: AddressClass,
-    },
-    /// An output projection written down as an address of a class that
-    /// names no resource — the same verdict, at the position a signature
-    /// says what its edges carry.
-    #[error("output {output} projects a {found} address, which names no resource")]
-    OutputNotAResource {
-        /// The output's position in the signature's projection list.
-        output: u32,
+        /// Where the signature writes the address.
+        site: ResourceSite,
         /// The class the expression is decided to carry.
         found: AddressClass,
     },
@@ -395,7 +374,7 @@ fn judge_reach(
     let Some(resource) = material.first() else {
         return Err(DeclarationError::UnkeyedReach { clause });
     };
-    if !decided_class(resource).is_none_or(names_a_resource) {
+    if decided_non_resource(resource).is_some() {
         return Err(DeclarationError::UnkeyedReach { clause });
     }
     // A reach into a stranger's prefix is admitted by the reached
@@ -692,6 +671,35 @@ const fn decided_class(expr: &Expr) -> Option<AddressClass> {
     }
 }
 
+/// The class an expression is decided to carry, where that class names
+/// no resource — the one question every not-a-resource site asks.
+fn decided_non_resource(expr: &Expr) -> Option<AddressClass> {
+    decided_class(expr).filter(|class| !names_a_resource(*class))
+}
+
+/// Where a signature writes an address that must name a resource,
+/// rendered with the verb the position speaks in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceSite {
+    /// A clause's denomination, at the clause's position in a preorder
+    /// walk of the signature's effects.
+    Clause(u32),
+    /// A parameter's denomination, at the parameter position it indexes.
+    Param(u32),
+    /// An output projection, at its position in the projection list.
+    Output(u32),
+}
+
+impl std::fmt::Display for ResourceSite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Clause(clause) => write!(f, "effect clause {clause} denominates in"),
+            Self::Param(param) => write!(f, "parameter {param}'s denomination is"),
+            Self::Output(output) => write!(f, "output {output} projects"),
+        }
+    }
+}
+
 /// Whether a class names a resource.
 ///
 /// A resource has two classes, and both are resources everywhere one is
@@ -720,11 +728,9 @@ fn judge_outputs(outputs: &[Expr]) -> Result<(), DeclarationError> {
             Expr::NfBucket { resource, .. } => resource,
             expr => expr,
         };
-        if let Some(found) = decided_class(resource)
-            && !names_a_resource(found)
-        {
-            return Err(DeclarationError::OutputNotAResource {
-                output: u32::try_from(slot).unwrap_or(u32::MAX),
+        if let Some(found) = decided_non_resource(resource) {
+            return Err(DeclarationError::NotAResource {
+                site: ResourceSite::Output(u32::try_from(slot).unwrap_or(u32::MAX)),
                 found,
             });
         }
@@ -820,10 +826,12 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     // written down; an expression over inputs meets the same refusal at
     // routing, where it is evaluated.
     if let Some(expr) = denomination
-        && let Some(found) = decided_class(expr)
-        && !names_a_resource(found)
+        && let Some(found) = decided_non_resource(expr)
     {
-        return Err(DeclarationError::NotAResource { clause, found });
+        return Err(DeclarationError::NotAResource {
+            site: ResourceSite::Clause(clause),
+            found,
+        });
     }
     Ok(())
 }
@@ -999,10 +1007,12 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
         // admission refuses the evaluated expression, and one already
         // written down is that refusal decidable where the author is.
         if let Some(expr) = denomination
-            && let Some(found) = decided_class(expr)
-            && !names_a_resource(found)
+            && let Some(found) = decided_non_resource(expr)
         {
-            return Err(DeclarationError::ParamNotAResource { param, found });
+            return Err(DeclarationError::NotAResource {
+                site: ResourceSite::Param(param),
+                found,
+            });
         }
     }
     // A mark is the name a resource is declared under, and the
@@ -2678,7 +2688,7 @@ mod tests {
                 Some(component)
             )),
             Err(DeclarationError::NotAResource {
-                clause: 0,
+                site: ResourceSite::Clause(0),
                 found: AddressClass::Component
             })
         );
@@ -2702,7 +2712,7 @@ mod tests {
                 Some(Expr::SelfAddr)
             )),
             Err(DeclarationError::NotAResource {
-                clause: 0,
+                site: ResourceSite::Clause(0),
                 found: AddressClass::Component
             })
         );
@@ -2781,8 +2791,8 @@ mod tests {
         };
         assert_eq!(
             check_declarations(&denominated(component())),
-            Err(DeclarationError::ParamNotAResource {
-                param: 0,
+            Err(DeclarationError::NotAResource {
+                site: ResourceSite::Param(0),
                 found: AddressClass::Component
             })
         );
@@ -2795,8 +2805,8 @@ mod tests {
         };
         assert_eq!(
             check_declarations(&projecting(Expr::SelfAddr)),
-            Err(DeclarationError::OutputNotAResource {
-                output: 0,
+            Err(DeclarationError::NotAResource {
+                site: ResourceSite::Output(0),
                 found: AddressClass::Component
             })
         );
@@ -2806,8 +2816,8 @@ mod tests {
                 resource: Box::new(component()),
                 ids: Box::new(Expr::Arg(0)),
             })),
-            Err(DeclarationError::OutputNotAResource {
-                output: 0,
+            Err(DeclarationError::NotAResource {
+                site: ResourceSite::Output(0),
                 found: AddressClass::Component
             })
         );

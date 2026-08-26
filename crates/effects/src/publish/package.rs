@@ -141,6 +141,18 @@ pub enum MetadataError {
 /// [`MetadataError`]; verdicts are deterministic and identical on
 /// every node.
 pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataError> {
+    check_table_caps(metadata)?;
+    for (name, signature) in &metadata.methods {
+        check_signature_bounds(signature).map_err(|source| MetadataError::Method {
+            name: name.clone(),
+            source,
+        })?;
+    }
+    check_table_agreement(metadata)
+}
+
+/// The three table caps: what an index into each can reach.
+const fn check_table_caps(metadata: &PackageMetadata) -> Result<(), MetadataError> {
     if metadata.events.len() > MAX_EVENT_TYPES as usize {
         return Err(MetadataError::EventTable(metadata.events.len()));
     }
@@ -150,12 +162,13 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataError> {
     if metadata.config.len() > MAX_CONFIG_FIELDS {
         return Err(MetadataError::ConfigTable(metadata.config.len()));
     }
-    for (name, signature) in &metadata.methods {
-        check_signature_bounds(signature).map_err(|source| MetadataError::Method {
-            name: name.clone(),
-            source,
-        })?;
-    }
+    Ok(())
+}
+
+/// Whether the tables, read together, say one thing: every event has a
+/// shape and one name, every declared shape resolves, and every slot
+/// sits in the package band holding something readable.
+fn check_table_agreement(metadata: &PackageMetadata) -> Result<(), MetadataError> {
     let mut named = BTreeSet::new();
     for name in &metadata.events {
         if !metadata.types.contains_key(name) {
@@ -202,14 +215,20 @@ pub struct CheckedMetadata {
 }
 
 impl CheckedMetadata {
-    /// Judge the whole metadata and mint the witness.
+    /// Judge the package-wide gate and mint the witness.
+    ///
+    /// The tables' caps and their agreement. Each method's signature is
+    /// [`check_signature`](super::check_signature)'s question, asked by
+    /// the cache door beside this one; a standalone caller wanting both
+    /// scopes in one call asks [`check_metadata`].
     ///
     /// # Errors
     ///
     /// [`MetadataError`]; verdicts are deterministic and identical on
     /// every node.
     pub fn judge(metadata: PackageMetadata) -> Result<Self, MetadataError> {
-        check_metadata(&metadata)?;
+        check_table_caps(&metadata)?;
+        check_table_agreement(&metadata)?;
         Ok(Self { metadata })
     }
 
