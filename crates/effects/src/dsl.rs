@@ -26,6 +26,7 @@ use crate::resource::{
     GrantedBehaviour, GrantsExpr, GrantsResolveError, ResourceGrants, ResourceKind, ResourceMeta,
 };
 use crate::rule::{Rule, RuleExpr, RuleLeaf};
+use crate::signature::MAX_MINTS_PER_SIGNATURE;
 use crate::types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_ITEMS, PACKAGE_SLOT_BASE, SlotId,
     Value, child_key, collection_id, granting_resource_address, order_key,
@@ -866,6 +867,13 @@ pub enum EvalError {
         /// The collection's length.
         len: usize,
     },
+    /// A declaration that evaluated to more minted claims than
+    /// [`MAX_MINTS_PER_SIGNATURE`]. Publish counts the `Mints` clauses
+    /// against the same cap, so this is reachable only where one clause
+    /// yields many claims — a `Mints` inside a `for-each`, multiplied by
+    /// the list a caller supplied.
+    #[error("the declaration mints more than {MAX_MINTS_PER_SIGNATURE} claims")]
+    MintsPastCap,
     /// An expression nested past [`MAX_EXPR_DEPTH`].
     #[error("expression nests deeper than {MAX_EXPR_DEPTH}")]
     ExpressionTooDeep,
@@ -1600,6 +1608,13 @@ fn eval_clauses(
                 // judge an equality walk.
                 if claim.instance.is_some() {
                     out.mints.push(Claim::of_subject(claim.subject));
+                }
+                // The cap is on the claims, and publish counting the
+                // clauses cannot see how many a loop yields — so the set
+                // every presenting node will copy is held to it here,
+                // where the multiplication happens.
+                if out.mints.len() > MAX_MINTS_PER_SIGNATURE {
+                    return Err(EvalError::MintsPastCap);
                 }
             }
             Clause::ForEach { list, body, .. } => {
@@ -2502,9 +2517,9 @@ mod tests {
 
     use super::{
         Clause, EvalBudget, EvalError, EvalInputs, Expr, KERNEL_SLOT_BASE, MAX_CLAUSE_DEPTH,
-        MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_VALUE_ITEMS, ModeExpr, NF_VAULT,
-        PACKAGE_SLOT_BASE, SlotRef, TargetExpr, VAULT, evaluate_declaration, evaluate_effects,
-        evaluate_expr, fresh_id, fresh_local,
+        MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_MINTS_PER_SIGNATURE, MAX_VALUE_ITEMS, ModeExpr,
+        NF_VAULT, PACKAGE_SLOT_BASE, SlotRef, TargetExpr, VAULT, evaluate_declaration,
+        evaluate_effects, evaluate_expr, fresh_id, fresh_local,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::instance::InstanceMeta;
@@ -3971,6 +3986,40 @@ mod tests {
                 expected: AddressClass::Resource,
                 found: AddressClass::Component,
             })),
+        );
+    }
+
+    /// The minted set is capped where it is built, so one `Mints` clause
+    /// in a `for-each` — which publish counts once — cannot yield more
+    /// claims than the cap the count stands for.
+    #[test]
+    fn a_loop_cannot_mint_past_the_signature_cap() {
+        let badges = |n: usize| {
+            Expr::Literal(Value::List(
+                (0..n)
+                    .map(|i| {
+                        let mut body = [0xB0u8; 31];
+                        body[0] = u8::try_from(i).expect("a small loop");
+                        Value::Address(Address::new(body, AddressClass::Resource))
+                    })
+                    .collect(),
+            ))
+        };
+        let minting = |n: usize| {
+            [Clause::ForEach {
+                guard: None,
+                list: badges(n),
+                body: vec![Clause::Mints {
+                    guard: None,
+                    claim: Expr::Binding(0),
+                }],
+            }]
+        };
+        let ins = inputs(&[], &[]);
+        assert!(evaluate_declaration(&minting(MAX_MINTS_PER_SIGNATURE), &ins, &TestHasher).is_ok());
+        assert_eq!(
+            evaluate_declaration(&minting(MAX_MINTS_PER_SIGNATURE + 1), &ins, &TestHasher),
+            Err(EvalError::MintsPastCap),
         );
     }
 

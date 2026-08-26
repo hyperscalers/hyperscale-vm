@@ -274,6 +274,12 @@ pub const MAX_ISSUANCES_PER_SIGNATURE: usize = 16;
 /// free to mint thousands would let one evidence edge carry thousands,
 /// and a graph of them would cost the ingress that admits it far more
 /// than the sender pays to be refused.
+///
+/// Held in two places, because the two counts differ: publish counts the
+/// `Mints` clauses a signature writes, and evaluation counts the claims
+/// they yield — one clause in a `for-each` yields as many as the list a
+/// caller supplies, and only the evaluated count is the set a presenting
+/// node copies.
 pub const MAX_MINTS_PER_SIGNATURE: usize = 8;
 
 /// Which directions a declared issuance takes.
