@@ -332,13 +332,28 @@ pub fn parse_gate(
     }
     let auth = syn::Ident::new("auth", claim.span());
     let rule = cell(&auth)?;
-    let position = |named: &syn::Ident| {
-        params
-            .iter()
-            .position(|(p, _)| named == p.as_str())
-            .map(|index| u32::try_from(index).expect("a parameter list is shorter than u32"))
-            .ok_or_else(|| syn::Error::new(named.span(), "not a parameter of this method"))
-    };
+    // The named parameter, held to the type the emitted read gives it:
+    // the runtime reads a badge as an address and an instance id as a
+    // `u64`, so a parameter declared anything else would compile here
+    // and trap at the first call, spanning nothing.
+    let position =
+        |named: &syn::Ident, admits: fn(&syn::Type) -> bool, expected: &str| -> syn::Result<u32> {
+            let index = params
+                .iter()
+                .position(|(p, _)| named == p.as_str())
+                .ok_or_else(|| syn::Error::new(named.span(), "not a parameter of this method"))?;
+            let (_, ty) = &params[index];
+            if !admits(ty) {
+                let declared = quote!(#ty);
+                return Err(syn::Error::new(
+                    named.span(),
+                    format!("`{named}` is declared `{declared}`, and {expected}"),
+                ));
+            }
+            Ok(u32::try_from(index).expect("a parameter list is shorter than u32"))
+        };
+    let badge_position =
+        |named: &syn::Ident| position(named, crate::is_address, "a badge is an address");
     // `proves(badge)` and `proves(badge[id])`: the stored rule,
     // possession of the badge, and the badge's mint.
     match &claim {
@@ -346,7 +361,7 @@ pub fn parse_gate(
             let badge = badge.path.require_ident()?;
             Ok(Gate::Custodial {
                 rule,
-                badge: position(badge)?,
+                badge: badge_position(badge)?,
                 id: None,
             })
         }
@@ -362,8 +377,12 @@ pub fn parse_gate(
             };
             Ok(Gate::Custodial {
                 rule,
-                badge: position(badge.path.require_ident()?)?,
-                id: Some(position(id.path.require_ident()?)?),
+                badge: badge_position(badge.path.require_ident()?)?,
+                id: Some(position(
+                    id.path.require_ident()?,
+                    |ty| crate::is_named(ty, "u64"),
+                    "an instance id is a `u64`",
+                )?),
             })
         }
         _ => Err(syn::Error::new(

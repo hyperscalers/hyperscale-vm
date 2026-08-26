@@ -1,0 +1,5 @@
+error: `badge` is declared `Quantity`, and a badge is an address
+  --> tests/refusals/mistyped_badge.rs:14:18
+   |
+14 |         #[proves(badge)]
+   |                  ^^^^^

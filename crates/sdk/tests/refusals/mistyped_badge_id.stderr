@@ -1,0 +1,5 @@
+error: `id` is declared `Address`, and an instance id is a `u64`
+  --> tests/refusals/mistyped_badge_id.rs:14:24
+   |
+14 |         #[proves(badge[id])]
+   |                        ^^

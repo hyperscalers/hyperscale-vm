@@ -159,6 +159,17 @@ fn the_lowering_refuses_authority_a_caller_names() {
     refuse.compile_fail("tests/refusals/caller_named_threshold.rs");
 }
 
+/// A `#[proves]` parameter is held to the type the emitted read gives
+/// it: an address for the badge, a `u64` for the instance id. The
+/// alternative is a package that compiles and traps at its first call,
+/// with no method name and no line.
+#[test]
+fn the_lowering_refuses_a_mistyped_proof_parameter() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/mistyped_badge.rs");
+    refuse.compile_fail("tests/refusals/mistyped_badge_id.rs");
+}
+
 /// A method carries one gate.
 ///
 /// The gate attributes are collected before any is read, so a second one
