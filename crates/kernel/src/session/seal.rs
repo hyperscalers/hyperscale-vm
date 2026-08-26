@@ -24,10 +24,10 @@ pub const DOMAIN_SEALED_DRAW: &[u8] = b"hyperscale/vm/sealed-draw";
 /// Eight little-endian bytes and nothing else, because the kernel is the
 /// only writer: anything of another width is a package that wrote over
 /// its own seal through the same handle it opens with.
-fn sealed_epoch(rep: u32, held: &[u8]) -> Result<u64, SessionTrap> {
+fn sealed_epoch(site: u32, held: &[u8]) -> Result<u64, SessionTrap> {
     held.try_into()
         .map(u64::from_le_bytes)
-        .map_err(|_| SessionTrap::NotASeal(rep))
+        .map_err(|_| SessionTrap::NotASeal(site))
 }
 
 impl KernelSession {
@@ -50,6 +50,13 @@ impl KernelSession {
         // open is a re-roll of a draw somebody has already read — and a
         // package left to enforce that itself would be a package one
         // careless method away from offering the re-roll.
+        //
+        // A cell holding anything that is not a seal takes none either:
+        // a seal cell is dedicated. Writing the epoch over a guest's own
+        // bytes would destroy them through the very handle that wrote
+        // them, so the repurposed cell is refused as `NotASeal` rather
+        // than silently emptied — a fresh cell is where a first seal
+        // goes.
         if let Some(held) = self.store.read(key)?
             && !matches!(
                 self.matured_seed(sealed_epoch(site, &held)?),
@@ -210,6 +217,22 @@ mod tests {
 
         assert!(matches!(words[0], Drawn::Ready(_)));
         assert_eq!(words[0], words[1], "the attempt is not an input");
+    }
+
+    /// A seal cell is dedicated: a cell that has held anything but a
+    /// seal takes none, however stale what it holds. The refusal is the
+    /// guest's own bytes' protection — writing the epoch over them would
+    /// destroy them through the very handle that wrote them — and it is
+    /// the same `NotASeal` an opened-over cell answers, because both are
+    /// one fact: this cell does not hold a seal.
+    #[test]
+    fn a_cell_holding_guest_bytes_takes_no_seal() {
+        let set = writing(key(1));
+        let mut session = session_for(MemoryStore::new(), &set, sealed_env(9), tx(1));
+        session
+            .write_cell_set(0, 0, vec![0xAB; 3])
+            .expect("a write handle sets");
+        assert_eq!(session.seal(0, 0), Err(SessionTrap::NotASeal(0)));
     }
 
     /// Two cells, one epoch, two words. The cell's key is what separates

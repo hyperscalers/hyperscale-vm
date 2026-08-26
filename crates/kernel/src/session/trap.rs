@@ -59,7 +59,9 @@ pub enum SessionTrap {
     /// Only the kernel writes a seal, so the bytes under one are its own
     /// eight — unless a guest wrote over them through the same write
     /// handle, which is its declaration and its body disagreeing about
-    /// what the leaf is for.
+    /// what the leaf is for. The same refusal meets `seal` over such a
+    /// cell: a seal cell is dedicated, and a first seal goes into a
+    /// fresh one rather than over bytes a body still holds.
     #[error("handle {0} names a cell that holds no seal")]
     NotASeal(u32),
     /// A handle whose clause was guarded out, reached anyway.
