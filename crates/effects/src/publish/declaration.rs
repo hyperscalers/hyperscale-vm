@@ -196,16 +196,6 @@ pub enum DeclarationError {
         /// effects.
         clause: u32,
     },
-    /// A granted gate over a resource this method does not move.
-    #[error(
-        "condition clause {clause} reads a granted rule of a resource this method never \
-         denominates, so a caller satisfies it with a resource of their own over value it \
-         says nothing about"
-    )]
-    GrantOverAnother {
-        /// The offending clause.
-        clause: u32,
-    },
     /// A condition whose rule reads what the caller supplies.
     #[error(
         "condition clause {clause} requires authority the caller names, and would admit everyone"

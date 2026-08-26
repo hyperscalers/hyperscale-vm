@@ -274,28 +274,6 @@ pub enum AdmissionError {
         /// The offending node.
         node: u32,
     },
-    /// A guarded method whose required identity does not evaluate to an
-    /// address — a package whose declaration is unsatisfiable by anyone.
-    #[error("node {node} requires an authority that is not an address")]
-    AuthorityType {
-        /// The offending node.
-        node: u32,
-    },
-    /// A custodial method whose badge does not evaluate to a resource
-    /// address — a gate with nothing possessable to verify.
-    #[error("node {node} mints an identity that is not a resource address")]
-    MintType {
-        /// The offending node.
-        node: u32,
-    },
-    /// A gate's rule cell expression that does not evaluate to a key —
-    /// a declaration whose shape passed and whose expression answers the
-    /// wrong kind of value.
-    #[error("node {node}: the rule cell expression does not evaluate to a key")]
-    RuleCellType {
-        /// The offending node.
-        node: u32,
-    },
     /// A proof drawn from an intent signature in an unsigned graph.
     #[error("node {node} presents a signature proof, and its intent is unsigned")]
     UnsignedEvidence {
@@ -675,9 +653,6 @@ impl AdmissionError {
             | Self::MovementUnanswerable { node, .. }
             | Self::EvidenceUnsatisfied { node, .. }
             | Self::UnexpectedEvidence { node, .. }
-            | Self::AuthorityType { node, .. }
-            | Self::MintType { node, .. }
-            | Self::RuleCellType { node, .. }
             | Self::UnsignedEvidence { node, .. }
             | Self::SignatureForGuarded { node, .. }
             | Self::ArityMismatch { node, .. }
