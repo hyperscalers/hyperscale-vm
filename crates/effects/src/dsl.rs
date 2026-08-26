@@ -1681,6 +1681,32 @@ fn eval_reach(
     }))
 }
 
+/// The slot a target names, and the material keying it there.
+///
+/// Both point shapes and both collection shapes carry one: a child key
+/// spells the slot beside its material, and a collection carries it as
+/// the identity its entries hang under. A fresh key is the exception and
+/// answers `None` — it is a local id minted under the owner rather than
+/// a child of any slot, so there is nothing for the vocabulary to be
+/// about.
+#[must_use]
+pub fn slot_of(target: &TargetExpr) -> Option<(&SlotRef, &[Expr])> {
+    match target {
+        TargetExpr::Point(Expr::ChildKey { slot, material, .. }) => Some((slot, material)),
+        TargetExpr::Point(_) => None,
+        TargetExpr::Entry {
+            collection,
+            material,
+            ..
+        }
+        | TargetExpr::Range {
+            collection,
+            material,
+            ..
+        } => Some((collection, material)),
+    }
+}
+
 /// The expression a target's key is derived from first.
 ///
 /// What a reach is admitted by: a reaching target is keyed first by the
