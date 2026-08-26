@@ -161,7 +161,7 @@ impl EffectSet {
                     .iter()
                     .any(|mode| mode.kind().conflict_class() == class)
             };
-            (claims(ConflictClass::Write) && claims(ConflictClass::Commutative)).then_some(*key)
+            (claims(ConflictClass::Write) && claims(ConflictClass::Movement)).then_some(*key)
         })
     }
 }
@@ -269,7 +269,7 @@ mod tests {
             for right in ModeKind::ALL {
                 let classes = [left.conflict_class(), right.conflict_class()];
                 let split = classes.contains(&ConflictClass::Write)
-                    && classes.contains(&ConflictClass::Commutative);
+                    && classes.contains(&ConflictClass::Movement);
                 let pair = [mode_of(left), mode_of(right)];
                 assert_eq!(
                     set_of(&pair).self_conflicting(),

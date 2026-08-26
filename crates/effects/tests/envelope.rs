@@ -377,7 +377,7 @@ fn param_consumption_is_exactly_once() {
     unused.subintents[0].decl.graph.nodes[2] = withdraw(BOB, RES_Y, 1);
     assert_eq!(
         admit_composed(&unused),
-        Err(AdmissionError::UnreachedSocket {
+        Err(AdmissionError::UnconsumedSocket {
             intent: 1,
             socket: 0
         })

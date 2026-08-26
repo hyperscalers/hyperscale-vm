@@ -152,7 +152,7 @@ fn a_presented_declaration_that_discharges_nothing_is_refused() {
     let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     assert!(matches!(
         env.present(BOB, malformed),
-        Err(EnvelopeError::UnreachedSocket {
+        Err(EnvelopeError::UnconsumedSocket {
             intent: 1,
             socket: 1
         })
@@ -171,7 +171,7 @@ fn a_hole_the_graph_never_consumes_is_refused() {
     account::deposit(&mut root, ALICE, funds).unwrap();
     assert!(matches!(
         env.seal(root),
-        Err(EnvelopeError::UnreachedSocket {
+        Err(EnvelopeError::UnconsumedSocket {
             intent: 0,
             socket: 0
         })

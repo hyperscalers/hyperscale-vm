@@ -62,7 +62,7 @@ pub enum EnvelopeError {
     /// A socket no node of the declaring graph reaches, so nothing
     /// would consume what the composition puts in it.
     #[error("intent {intent} socket {socket} is never reached")]
-    UnreachedSocket {
+    UnconsumedSocket {
         /// The declaring intent.
         intent: u32,
         /// Its position in the declaration.
@@ -446,7 +446,7 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// [`EnvelopeError::UnreachedSocket`], [`EnvelopeError::SocketReused`]
+    /// [`EnvelopeError::UnconsumedSocket`], [`EnvelopeError::SocketReused`]
     /// or [`EnvelopeError::UnknownSocket`] for a declaration its graph does
     /// not discharge; [`EnvelopeError::TooManySockets`]; or the graph's
     /// own refusal.
@@ -614,7 +614,7 @@ fn check_sockets(
     for (position, count) in uses.iter().enumerate() {
         let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
         if *count == 0 {
-            return Err(EnvelopeError::UnreachedSocket { intent, socket });
+            return Err(EnvelopeError::UnconsumedSocket { intent, socket });
         }
         // Value is conserved and authority is not: an edge fills one
         // argument, and a claim presented twice says nothing presenting

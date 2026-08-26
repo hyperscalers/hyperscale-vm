@@ -171,7 +171,8 @@ pub enum AbiParam {
     /// configuration rather than on the signature. A plain clause is one
     /// site of its own, named at site zero.
     ///
-    /// The width is the instance's rather than the signature's, which is
+    /// How many elements a site covers is the instance's answer rather
+    /// than the signature's, which is
     /// why one parameter covers a whole site and not one element of it — a
     /// body's arity stays a function of what it declares, and the list a
     /// loop maps over stays the configuration's business. An element the

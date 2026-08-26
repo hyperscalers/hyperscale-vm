@@ -68,7 +68,7 @@ pub use explain::{
     explain_resource, grants_read_config,
 };
 pub use footprint::{
-    DEPTH_UNITS, EXCLUSIVITY_FLOOR, SCAN_SEEK_ENTRIES, TARGET_UNITS, WIDTH_UNITS, effect_units,
+    DEPTH_UNITS, EXCLUSIVITY_FLOOR, SCAN_SEEK_ENTRIES, SPAN_UNITS, TARGET_UNITS, effect_units,
     footprint,
 };
 pub use graph::{

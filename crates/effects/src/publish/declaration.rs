@@ -422,7 +422,7 @@ fn judge_reach(
     }
     let names_its_cell = match reached {
         ReachedCell::Halt => slot.fixed() == Some(HALT),
-        ReachedCell::Holding => denomination.is_some(),
+        ReachedCell::Value => denomination.is_some(),
     };
     if !names_its_cell {
         return Err(DeclarationError::ReachesAnotherCell { clause, behaviour });

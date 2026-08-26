@@ -79,7 +79,7 @@ pub(super) const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 pub(super) fn holding(ordered: &[Effect]) -> Vec<DeclaredAccess> {
     let value: BTreeSet<Contents> = ordered
         .iter()
-        .filter(|effect| effect.mode.kind().conflict_class() == ConflictClass::Commutative)
+        .filter(|effect| effect.mode.kind().conflict_class() == ConflictClass::Movement)
         .map(|effect| contents_of(effect.target))
         .collect();
     ordered

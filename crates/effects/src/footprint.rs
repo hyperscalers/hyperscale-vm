@@ -16,7 +16,7 @@
 //! space and reads one entry is expensive on one axis and cheap on the
 //! other, and both are true.
 //!
-//! Width is the axis a per-effect price misses, and missing it is not
+//! Span is the axis a per-effect price misses, and missing it is not
 //! neutral: conflict on a collection is interval overlap
 //! (`vm-kernel`'s `targets_overlap`), so an interval spanning the whole
 //! order-key space excludes every other declaration on that collection
@@ -43,7 +43,11 @@ use hyperscale_vm_types::{Effect, EffectSet, EffectTarget, ModeKind, compatible}
 pub const TARGET_UNITS: u64 = 1;
 
 /// Units charged per order-key bit of a range's span.
-pub const WIDTH_UNITS: u64 = 1;
+///
+/// Named for the axis the module doc names, which is the point: the
+/// footprint's three axes are span, weight and depth, and "width" is a
+/// byte count everywhere else in the vocabulary.
+pub const SPAN_UNITS: u64 = 1;
 
 /// Units charged per entry a declaration lets execution touch.
 pub const DEPTH_UNITS: u64 = 1;
@@ -116,7 +120,7 @@ const fn span_units(target: &EffectTarget) -> u64 {
     match target {
         EffectTarget::Point(_) | EffectTarget::Entry { .. } => TARGET_UNITS,
         EffectTarget::Range { lo, hi, .. } => {
-            TARGET_UNITS.saturating_add(WIDTH_UNITS.saturating_mul(order_bits(*lo, *hi)))
+            TARGET_UNITS.saturating_add(SPAN_UNITS.saturating_mul(order_bits(*lo, *hi)))
         }
     }
 }

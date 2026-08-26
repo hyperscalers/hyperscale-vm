@@ -490,7 +490,7 @@ impl PointClasses {
     fn push(&mut self, index: usize, kind: ModeKind) {
         match kind.conflict_class() {
             ConflictClass::Read => self.reads.push(index),
-            ConflictClass::Commutative => self.commutative.push(index),
+            ConflictClass::Movement => self.commutative.push(index),
             ConflictClass::Write => self.writes.push(index),
         }
     }

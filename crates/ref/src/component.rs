@@ -49,8 +49,8 @@ pub enum HandleKind {
     /// `bucket`: the world's only owned resource, and so the only one a
     /// guest can keep past a call or discard.
     Bucket,
-    /// `site`: one declared access, whatever its width and whichever
-    /// mode the capability at each element carries.
+    /// `site`: one declared access, however many elements it covers and
+    /// whichever mode the capability at each element carries.
     Site,
 }
 

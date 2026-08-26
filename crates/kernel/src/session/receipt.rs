@@ -196,7 +196,11 @@ enum Movements {
 
 /// How a session's reservations settled: the per-cell amounts, or the
 /// outcome the transaction aborts with instead.
-enum Settlement {
+///
+/// Named for the phase rather than for the moment, because
+/// `Settlement` beside it is *when* one movement is judged and this is
+/// *how* the whole reservation phase ended.
+enum Reserved {
     Settled(BTreeMap<SubstateKey, Movement>),
     Aborted(Outcome),
 }
@@ -377,11 +381,11 @@ impl KernelSession {
     /// taken share, and the remainder goes back untouched.
     ///
     /// The error is a kernel defect; a refusal the caller aborts the
-    /// transaction with comes back as [`Settlement::Aborted`].
+    /// transaction with comes back as [`Reserved::Aborted`].
     fn settle_reservations(
         &mut self,
         denominations: &Denominations,
-    ) -> Result<Settlement, FinishError> {
+    ) -> Result<Reserved, FinishError> {
         let mut settles = BTreeMap::new();
         let mut seen = BTreeSet::new();
         for index in 0..self.table.len() {
@@ -422,10 +426,10 @@ impl KernelSession {
                             .store
                             .held_reservation(key, self.tx)
                             .unwrap_or_default();
-                        return Ok(Settlement::Aborted(Outcome::Infeasible { key, amount }));
+                        return Ok(Reserved::Aborted(Outcome::Infeasible { key, amount }));
                     }
                     Fault::Declaration(error) => {
-                        return Ok(Settlement::Aborted(Outcome::UserError {
+                        return Ok(Reserved::Aborted(Outcome::UserError {
                             reason: error.into(),
                         }));
                     }
@@ -433,7 +437,7 @@ impl KernelSession {
                 },
             }
         }
-        Ok(Settlement::Settled(settles))
+        Ok(Reserved::Settled(settles))
     }
 
     /// The queued deltas as checked totals, judged against the floor on
@@ -578,8 +582,8 @@ impl KernelSession {
             Movements::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
         };
         let settles = match self.settle_reservations(&denominations)? {
-            Settlement::Settled(settles) => settles,
-            Settlement::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
+            Reserved::Settled(settles) => settles,
+            Reserved::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
         };
         // Committing spends every subintent: the nullifier cell records
         // the consuming transaction. The write goes into the same layer

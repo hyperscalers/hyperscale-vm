@@ -1141,7 +1141,7 @@ pub struct Declaration {
     /// separately.
     pub set: EffectSet,
     /// The same accesses in clause-evaluation order, one entry per clause
-    /// the evaluation reached, `for-each` bodies expanded in place.
+    /// the evaluation took, `for-each` bodies expanded in place.
     ///
     /// This is what capability materialization reads, because a handle's
     /// rep is its index into the materialized table and the guest's
@@ -1171,7 +1171,7 @@ pub struct Declaration {
     /// method's, so the walk resolves it against that method's frame.
     pub clause_spans: Vec<(u32, u32)>,
     /// The evaluated conditions, in clause-evaluation order: every
-    /// `Requires` clause the evaluation reached and whose guard held.
+    /// `Requires` clause the evaluation took and whose guard held.
     ///
     /// Contributing nothing to [`Declaration::set`] or
     /// [`Declaration::ordered`] — a condition is a judgment, not an
@@ -2916,7 +2916,7 @@ mod tests {
         let ins = inputs(&[], &[]);
         let declaration = evaluate_declaration(&clauses, &ins, &TestHasher).unwrap();
 
-        assert_eq!(declaration.ordered.len(), 3, "one entry per clause reached");
+        assert_eq!(declaration.ordered.len(), 3, "one entry per clause taken");
         assert_eq!(declaration.set.len(), 2, "the set folds the repeat");
         assert_eq!(
             declaration.ordered[0], declaration.ordered[2],

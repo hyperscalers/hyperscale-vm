@@ -178,7 +178,7 @@ pub enum ReachedCell {
     /// The holder's halt flag, at the vocabulary's slot for it.
     Halt,
     /// Whatever cell the holder keeps the resource in.
-    Holding,
+    Value,
 }
 
 /// A behaviour a resource's granted rules govern.
@@ -376,7 +376,7 @@ impl GrantedBehaviour {
     pub const fn reaches(self) -> Option<ReachedCell> {
         match self {
             Self::Halt => Some(ReachedCell::Halt),
-            Self::Recall => Some(ReachedCell::Holding),
+            Self::Recall => Some(ReachedCell::Value),
             Self::Mint | Self::Burn | Self::Withdraw | Self::Deposit => None,
         }
     }

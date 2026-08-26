@@ -7,7 +7,7 @@
 //! declare, each carrying a value edge or a proof. So [`admit_intents`]
 //! takes a slice of [`IntentView`] and everything below it is
 //! shape-agnostic: bindings and socket consumption per intent, a
-//! deterministic interleave over the sockets each node reaches, then one
+//! deterministic interleave over the sockets each node names, then one
 //! pass over the flattened node order checking arity, kinds, linearity,
 //! and constraints.
 //!
@@ -200,7 +200,7 @@ pub enum AdmissionError {
     /// A socket no node of the declaring graph reaches, so nothing
     /// would consume what the composition puts in it.
     #[error("intent {intent} socket {socket} is never reached")]
-    UnreachedSocket {
+    UnconsumedSocket {
         /// The declaring intent.
         intent: u32,
         /// Its position in the declaration.
@@ -784,7 +784,7 @@ impl AdmissionError {
             | Self::TooManySockets { intent, .. }
             | Self::UnknownBinding { intent, .. }
             | Self::SocketResourceMismatch { intent, .. }
-            | Self::UnreachedSocket { intent, .. }
+            | Self::UnconsumedSocket { intent, .. }
             | Self::SocketReused { intent, .. }
             | Self::UnmintedSocket { intent, .. } => Placed {
                 intent: Some(*intent),
@@ -1203,7 +1203,7 @@ fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
         for (position, count) in uses.iter().enumerate() {
             let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
             if *count == 0 {
-                return Err(AdmissionError::UnreachedSocket {
+                return Err(AdmissionError::UnconsumedSocket {
                     intent: intent_index,
                     socket,
                 });
@@ -1464,7 +1464,7 @@ impl Lower<'_> {
         self.calls.push(lower_call(
             node_index,
             signature,
-            Lowering {
+            CallBinding {
                 package: meta.package,
                 declaration: &frame,
                 offset,
@@ -2728,7 +2728,7 @@ fn declare_read(frame: &mut Declaration, target: EffectTarget) {
 }
 
 /// What lowering one frame's binding needs beyond the frame itself.
-struct Lowering<'a> {
+struct CallBinding<'a> {
     package: PackageHash,
     declaration: &'a Declaration,
     offset: u32,
@@ -2832,9 +2832,9 @@ fn bind_site(
 fn lower_call(
     node_index: u32,
     signature: &MethodSignature,
-    lowering: Lowering<'_>,
+    binding: CallBinding<'_>,
 ) -> Result<NodeCall, AdmissionError> {
-    let Lowering {
+    let CallBinding {
         package,
         declaration,
         offset,
@@ -2847,7 +2847,7 @@ fn lower_call(
         issues,
         inputs,
         hasher,
-    } = lowering;
+    } = binding;
     let mut args = Vec::with_capacity(signature.abi.len());
     for (position, binding) in signature.abi.iter().enumerate() {
         let param = u32::try_from(position).unwrap_or(u32::MAX);

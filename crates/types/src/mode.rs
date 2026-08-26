@@ -214,15 +214,21 @@ pub const fn compatible(a: ModeKind, b: ModeKind) -> bool {
 pub enum ConflictClass {
     /// Fresh reads: internally compatible.
     Read = 0,
-    /// The commutative movements: delta, credit and reserve.
-    Commutative = 1,
+    /// The movement modes: delta, credit and reserve.
+    ///
+    /// Named for what they are rather than for how they compose. Delta
+    /// and credit commute; a reserve does not commute with either, and
+    /// the class holds all three because what a class answers is which
+    /// declarations *may share a cell* — which a reserve does, losing
+    /// the race where it does not fit.
+    Movement = 1,
     /// Exclusive writes: compatible with nothing that conflicts at all.
     Write = 2,
 }
 
 impl ConflictClass {
     /// Every class, ordered by discriminant.
-    pub const ALL: [Self; 3] = [Self::Read, Self::Commutative, Self::Write];
+    pub const ALL: [Self; 3] = [Self::Read, Self::Movement, Self::Write];
 
     /// A mode kind standing for this class.
     ///
@@ -233,7 +239,7 @@ impl ConflictClass {
     pub const fn representative(self) -> ModeKind {
         match self {
             Self::Read => ModeKind::Read,
-            Self::Commutative => ModeKind::Delta,
+            Self::Movement => ModeKind::Delta,
             Self::Write => ModeKind::Write,
         }
     }
@@ -265,7 +271,7 @@ impl ModeKind {
     pub const fn conflict_class(self) -> ConflictClass {
         match self {
             Self::Read => ConflictClass::Read,
-            Self::Delta | Self::Credit | Self::Reserve => ConflictClass::Commutative,
+            Self::Delta | Self::Credit | Self::Reserve => ConflictClass::Movement,
             Self::Write => ConflictClass::Write,
         }
     }
