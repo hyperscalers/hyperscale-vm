@@ -37,7 +37,7 @@ use hyperscale_vm_types::{Address, AddressClass, CallTarget, PrincipalAddr};
 
 use crate::args::Args;
 use crate::builder::{Bucket, BuildError, GraphBuilder};
-use crate::projection::{earned_claims, eval_inputs, output_resources, typed_values};
+use crate::projection::{earned_claims, eval_inputs, gated_claims, output_resources, typed_values};
 use crate::unpack::{Arity, Unpacked};
 
 /// Why a call could not be typed against the target's signature.
@@ -129,7 +129,8 @@ pub enum TypedError {
         /// The method called.
         method: String,
     },
-    /// A guarded call composed without a proof — admission's
+    /// A guarded call composed without a proof, naming no claim the
+    /// composer could prove from the signer's own account — admission's
     /// [`SignatureForGuarded`](hyperscale_vm_effects::AdmissionError::SignatureForGuarded)
     /// verdict, reached at the call site. A signature signs in through
     /// an authorizing method; what it proves there is what a guarded
@@ -647,6 +648,26 @@ impl<'a> TypedBuilder<'a> {
         earned_claims(signature, args, &inputs, known, self.chain, self.hasher)
     }
 
+    /// The claims the method's own gate names, evaluated as far as the
+    /// composer can.
+    ///
+    /// The counterpart of [`earned`](Self::earned) for the rule the
+    /// declaration itself writes, read so a guarded call composed
+    /// without a proof can be answered from the signer's own account
+    /// before it is refused.
+    fn gated(
+        &self,
+        signature: &MethodSignature,
+        target: CallTarget,
+        record: &InstanceMeta,
+        values: &[Value],
+        known: &[bool],
+    ) -> Vec<Claim> {
+        let budget = EvalBudget::default();
+        let inputs = eval_inputs(target.address(), values, record, 0, &budget);
+        gated_claims(signature, &inputs, known, self.hasher)
+    }
+
     /// The node proving `claim`, composing one where this intent has
     /// none yet.
     ///
@@ -760,16 +781,28 @@ impl<'a> TypedBuilder<'a> {
         // the builder overruling them.
         let wanted = self.earned(signature, target, meta, &args, &values, &known);
         // A signature signs in, so it reaches only a gate that reads a
-        // rule; a claim a declaration names takes a proof. Judged before
-        // anything is proven ahead of the call, so the refusal leaves
-        // the graph exactly as it was — the sign-in nodes the walk below
-        // appends are only ever appended for a call that goes on to
-        // reference them.
-        if signature.requires_evidence() && proofs.is_empty() && !signature.reads_a_rule() {
-            return Err(TypedError::SignatureForGuarded {
-                method: method.to_owned(),
-            });
-        }
+        // rule; a claim a declaration names takes a proof — and what the
+        // gate names that the signer's own account can prove is proven
+        // ahead of the call, exactly as injected requirements are. Only
+        // a gate whose every claim is beyond the composer's reach
+        // refuses, and proving nothing appends nothing, so the refusal
+        // leaves the graph as it was.
+        let gated: Vec<Proof> =
+            if signature.requires_evidence() && proofs.is_empty() && !signature.reads_a_rule() {
+                let proven: Vec<Proof> = self
+                    .gated(signature, target, meta, &values, &known)
+                    .iter()
+                    .filter_map(|claim| self.present(*claim))
+                    .collect();
+                if proven.is_empty() {
+                    return Err(TypedError::SignatureForGuarded {
+                        method: method.to_owned(),
+                    });
+                }
+                proven
+            } else {
+                Vec::new()
+            };
         let earned = if proofs.is_empty() {
             wanted
                 .iter()
@@ -816,9 +849,16 @@ impl<'a> TypedBuilder<'a> {
                 });
             }
             // A method reading only a rule takes the intent's signature;
-            // the guarded case was refused above, before anything was
-            // proven ahead of the call.
-            (true, []) => BTreeSet::from([EvidenceRef::IntentSignature]),
+            // a guarded one presents what the walk above proved of its
+            // gate, and was refused there if that was nothing.
+            (true, []) if signature.reads_a_rule() => {
+                BTreeSet::from([EvidenceRef::IntentSignature])
+            }
+            (true, []) => gated
+                .iter()
+                .chain(earned.iter())
+                .map(|proof| proof.reference())
+                .collect(),
             (true, presented) => presented.iter().map(|proof| proof.reference()).collect(),
         };
         let outputs = resources.len();

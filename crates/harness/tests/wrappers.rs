@@ -242,6 +242,38 @@ fn a_threshold_sign_in_composes() {
     );
 }
 
+/// A guarded call composed without a proof is answered from the
+/// signer's own account where its gate names something the composer can
+/// prove: here the signer's own claim, so a sign-in is proven ahead of
+/// the call and presented to it, with nothing written by hand.
+#[test]
+fn a_guarded_call_without_a_proof_is_answered_from_the_signers_account() {
+    let graph = admits(|b| {
+        let funds = b.call(ALICE, "withdraw", (BASE, 100_u128))?.one()?;
+        account::deposit(b, BOB, funds)
+    });
+    assert_eq!(
+        graph.nodes[1].evidence,
+        BTreeSet::from([EvidenceRef::Node(0)])
+    );
+}
+
+/// A badge gate answered the same way: the composer reads the badge the
+/// gate names off the declaration and presents it from the signer's
+/// account — the present-badge node it proves, then the call citing it.
+#[test]
+fn a_badge_gate_without_a_proof_is_answered_from_the_signers_account() {
+    let gated = address("nf", vec![Value::Address(BASE.address())]);
+    let graph = admits(|b| {
+        b.call(gated, "operate", ())?.none()?;
+        Ok(())
+    });
+    assert_eq!(
+        graph.nodes[1].evidence,
+        BTreeSet::from([EvidenceRef::Node(0)])
+    );
+}
+
 /// Misplaced evidence refuses at the call site, mirroring admission: a
 /// proof to a method admitting anyone, a bare signature to a guarded
 /// one, a proof asked of a method that proves nothing.
@@ -256,7 +288,7 @@ fn misplaced_evidence_is_refused_at_the_call_site() {
         Err(TypedError::UnexpectedEvidence { .. })
     ));
     assert!(matches!(
-        b.call(ALICE, "withdraw", (BASE, 100_u128)),
+        b.call(BOB, "withdraw", (BASE, 100_u128)),
         Err(TypedError::SignatureForGuarded { .. })
     ));
     assert!(matches!(

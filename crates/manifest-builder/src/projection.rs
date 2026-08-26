@@ -16,7 +16,7 @@ use hyperscale_vm_effects::{
     ChainRecords, Claim, Clause, Constraint, EdgeContent, EvalBudget, EvalInputs, Expr,
     GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph,
     ManifestHash, MethodSignature, ParamType, PresentedGrants, ResourceGrants, ResourceMeta,
-    SealedLeaf, Value, evaluate_expr, founds_its_resource, keying_resource,
+    RuleLeaf, SealedLeaf, Value, evaluate_expr, founds_its_resource, keying_resource,
 };
 use hyperscale_vm_types::{Address, CallTarget, ResourceAddr};
 
@@ -249,6 +249,54 @@ pub(crate) fn earned_claims(
             continue;
         };
         ask(&record.rules, behaviour);
+    }
+    wanted
+}
+
+/// The claims a method's own gate names, as far as construction can
+/// evaluate them.
+///
+/// The declaration-side counterpart of [`earned_claims`]: those mirror
+/// what admission injects from the resources a call touches, these read
+/// the `Requires` clauses the author wrote. Only `Claim` leaves are
+/// collected — a stored rule takes the intent's signature, and a
+/// presence leaf is answered from the store rather than from evidence —
+/// and only where the expression resolves over what the construction
+/// knows. A claim this cannot evaluate is left to the caller, exactly
+/// as one beyond the composer's reach is.
+pub(crate) fn gated_claims(
+    signature: &MethodSignature,
+    inputs: &EvalInputs<'_>,
+    known: &[bool],
+    hasher: &dyn Hasher,
+) -> Vec<Claim> {
+    let mut wanted = Vec::new();
+    let rules = signature
+        .effects
+        .iter()
+        .flat_map(Clause::effects)
+        .filter_map(|clause| match clause {
+            Clause::Requires { rule, .. } if !rule.reads_state_only() => Some(rule),
+            _ => None,
+        });
+    for rule in rules {
+        for leaf in rule.leaves() {
+            let RuleLeaf::Claim(expr) = leaf else {
+                continue;
+            };
+            if !resolvable(expr, known, 0) {
+                continue;
+            }
+            let Ok(value) = evaluate_expr(expr, inputs, hasher) else {
+                continue;
+            };
+            let Some(claim) = Claim::of(&value) else {
+                continue;
+            };
+            if !wanted.contains(&claim) {
+                wanted.push(claim);
+            }
+        }
     }
     wanted
 }
