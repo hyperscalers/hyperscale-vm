@@ -594,7 +594,7 @@ impl Names<'_> {
                     out,
                     "{pad}{number:>3}  {}{} {}{held}{under}",
                     guard(condition),
-                    self.mode(mode),
+                    self.mode(mode, target, denomination.is_some()),
                     self.target(target)
                 );
             }
@@ -664,19 +664,29 @@ impl Names<'_> {
     }
 
     /// How a cell is reached.
-    fn mode(&self, mode: &ModeExpr) -> String {
+    ///
+    /// An exclusive write says which way value moves under it, and the
+    /// verb that says so is the cell's: a balance is credited and
+    /// debited, a collection is filed into and taken from. Rendered
+    /// only where the cell holds value at all — a direction on a byte
+    /// cell moves nothing and the kernel drops it, so writing it down
+    /// would be the rendering saying more than the declaration means.
+    fn mode(&self, mode: &ModeExpr, target: &TargetExpr, holds_value: bool) -> String {
         match mode {
             ModeExpr::Read => "read".to_owned(),
             ModeExpr::Delta => "delta".to_owned(),
             ModeExpr::Credit => "credit".to_owned(),
             ModeExpr::Reserve(amount) => format!("reserve {}", self.expr(amount, ATOM)),
-            // The verb a direction makes of a write: filing puts
-            // entries in and never takes them out, taking does the
-            // reverse, and a write that says neither does both.
-            ModeExpr::Write { moves } => match moves {
-                Moves::In => "file".to_owned(),
-                Moves::Out => "take".to_owned(),
-                Moves::Both => "write".to_owned(),
+            ModeExpr::Write { moves } => match (moves, holds_value) {
+                (Moves::Both, _) | (_, false) => "write".to_owned(),
+                (Moves::In, true) => match target {
+                    TargetExpr::Point(_) => "credit-only".to_owned(),
+                    TargetExpr::Entry { .. } | TargetExpr::Range { .. } => "file".to_owned(),
+                },
+                (Moves::Out, true) => match target {
+                    TargetExpr::Point(_) => "debit-only".to_owned(),
+                    TargetExpr::Entry { .. } | TargetExpr::Range { .. } => "take".to_owned(),
+                },
             },
         }
     }
@@ -1222,7 +1232,7 @@ fn hex(raw: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::TypeShape;
-    use hyperscale_vm_types::Presence;
+    use hyperscale_vm_types::{Address, AddressClass, Moves, Presence};
 
     use super::{SlotRef, explain, explain_method};
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, self_child};
@@ -1232,6 +1242,66 @@ mod tests {
     use crate::signature::{MethodSignature, ParamType, Totality};
     use crate::types::{SlotId, Value, package_slot};
     use crate::vocabulary::VAULT;
+
+    /// The verb a directional write reads as is the cell's own, and a
+    /// cell that holds no value has no direction to read.
+    ///
+    /// A balance is credited and debited; a collection is filed into
+    /// and taken from. The one thing both give up is the other
+    /// direction, and the rendering has to say which — a declaration
+    /// that gave up the debit is asked for the receiving credential
+    /// alone, and a reader deciding whether to call it needs to see
+    /// that before the entry does.
+    #[test]
+    fn a_directional_write_reads_as_the_verb_its_cell_takes() {
+        let resource = || {
+            Expr::Literal(Value::Address(Address::new(
+                [0xE1; 31],
+                AddressClass::Resource,
+            )))
+        };
+        let clause = |target, moves, held: bool| Clause::Effect {
+            reach: None,
+            guard: None,
+            target,
+            mode: ModeExpr::Write { moves },
+            denomination: held.then(|| Box::new(resource())),
+        };
+        let balance = || TargetExpr::Point(self_child(VAULT, vec![resource()]));
+        let entries = || TargetExpr::Range {
+            owner: Expr::SelfAddr,
+            collection: SlotRef::Fixed(package_slot(0)),
+            material: vec![resource()],
+            lo: Expr::Literal(Value::U128(0)),
+            hi: Expr::Literal(Value::U128(1)),
+            cap: Expr::Literal(Value::U64(1)),
+        };
+        let rendered = |target: TargetExpr, moves, held| {
+            explain_method(
+                &package("m", declaring(vec![clause(target, moves, held)])),
+                "m",
+            )
+            .expect("the method renders")
+        };
+
+        assert!(rendered(balance(), Moves::In, true).contains("credit-only"));
+        assert!(rendered(balance(), Moves::Out, true).contains("debit-only"));
+        assert!(rendered(entries(), Moves::In, true).contains("file"));
+        assert!(rendered(entries(), Moves::Out, true).contains("take"));
+
+        // Both directions is what a write saying nothing means, and so
+        // is a cell holding no value: the kernel drops the direction
+        // there, so the rendering says no more than the declaration.
+        for target in [balance(), entries()] {
+            assert!(rendered(target.clone(), Moves::Both, true).contains("write"));
+            for moves in [Moves::In, Moves::Out, Moves::Both] {
+                assert!(
+                    rendered(target.clone(), moves, false).contains("write"),
+                    "a byte cell has no direction to read"
+                );
+            }
+        }
+    }
 
     /// A package declaring one method, so a rendering has a name table
     /// to resolve through.
