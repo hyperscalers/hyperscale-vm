@@ -243,6 +243,23 @@ impl DualInstance<'_> {
         }
     }
 
+    /// The reference lane's own error, in the canonical ABI's words.
+    ///
+    /// Both lanes agree on *whether* a boundary call failed, and a
+    /// comparison of the two says nothing finer: wasmtime words its
+    /// boundary refusals in prose and resolves them to no trap kind, so
+    /// both flatten to one `AbortReason`. A test meaning one specific
+    /// boundary check — a handle of the wrong type, rather than any of
+    /// the several ways a handle can be wrong — asks the interpreter,
+    /// after [`Self::invoke_both`] has established the lanes agree.
+    ///
+    /// # Errors
+    ///
+    /// Fails where the invocation itself cannot be made.
+    pub fn reference_error(&mut self, export: &str, args: &[CVal]) -> Result<Option<ExecError>> {
+        Ok(self.reference.invoke(export, args)?.err())
+    }
+
     fn invoke_reference(&mut self, export: &str, args: &[CVal]) -> Result<DualOutcome> {
         match self.reference.invoke(export, args)? {
             Ok(values) => Ok(DualOutcome::Values(values)),

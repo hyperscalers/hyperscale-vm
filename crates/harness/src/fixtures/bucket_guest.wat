@@ -116,6 +116,23 @@
       local.get 0
       call $drop_read)
 
+    ;; The held bucket's index, read as though it named a site.
+    ;;
+    ;; Owned and borrowed handles share one table, so the index a bucket
+    ;; was lowered at is an index the site table also has an entry
+    ;; shape for — which is what makes the type, rather than the number,
+    ;; the thing the canonical ABI has to check.
+    (func (export "read-held") (param i32) (result i64)
+      local.get 0
+      global.set $held
+      global.get $held
+      i32.const 0
+      i32.const 8
+      call $read_get
+      i32.const 12
+      i32.load
+      i64.extend_i32_u)
+
     (func (export "discard") (param i32) (result i64)
       local.get 0
       i64.extend_i32_u
@@ -358,6 +375,9 @@
   (func (export "peek")
     (param "c" (borrow $rcell)) (result u64)
     (canon lift (core func $i "peek")))
+  (func (export "read-held")
+    (param "b" (own $bucket)) (result u64)
+    (canon lift (core func $i "read-held")))
   (func (export "discard")
     (param "b" (own $bucket)) (result u64)
     (canon lift (core func $i "discard")))

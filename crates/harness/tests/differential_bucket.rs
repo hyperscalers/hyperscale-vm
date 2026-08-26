@@ -17,7 +17,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::dual::{DualGuest, DualOutcome, materialize, rep_where};
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
 use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore};
-use hyperscale_vm_ref::{CVal, HandleKind};
+use hyperscale_vm_ref::{CVal, CanonError, ExecError, HandleKind};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Moves,
     Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
@@ -1090,5 +1090,35 @@ fn a_balance_read_agrees_between_the_engines() -> Result<()> {
         .scalar()
         .map_err(|other| format_err!("peek: {other}"))?;
     assert_eq!(u128::from(held), BALANCE);
+    Ok(())
+}
+
+/// A bucket's handle index, handed to a call that names a site, is the
+/// wrong type on both engines.
+///
+/// The one canonical-ABI handle-type check left. Eleven access-mode
+/// resource types collapsed into one `site`, so a handle passed where a
+/// different *mode* is expected is the kernel's question now, answered
+/// at the operation — which leaves the bucket-versus-site distinction as
+/// the only one the boundary itself decides. Owned and borrowed handles
+/// share one table, so the index is a live one: what is wrong about the
+/// call is the type it was looked up as, not the number.
+#[test]
+fn a_bucket_index_read_as_a_site_is_the_wrong_handle_type() -> Result<()> {
+    let fx = fixture();
+    let (_, held, _) = session(&fx);
+    let mut dual = GUEST.instantiate(FUEL, || session(&fx).0)?;
+    // `invoke_both` establishes the lanes agree; the interpreter says
+    // which check answered, because the blessed engine words its
+    // boundary refusals in prose and resolves them to no trap kind.
+    let outcome = dual.invoke_both("read-held", &[CVal::Own(held)])?;
+    assert_eq!(outcome, DualOutcome::Trapped(AbortReason::AbiViolation));
+    assert!(
+        matches!(
+            dual.reference_error("read-held", &[CVal::Own(held)])?,
+            Some(ExecError::Canon(CanonError::WrongHandleType))
+        ),
+        "the boundary answered on the handle's type, not on its number",
+    );
     Ok(())
 }
