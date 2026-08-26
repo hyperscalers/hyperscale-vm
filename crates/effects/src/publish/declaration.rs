@@ -799,6 +799,7 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     // are one expression written twice. A fresh key carries no material
     // and so holds no value: nothing could find it again to take any
     // out.
+
     if let Some(held) = denomination
         && slot_of(target).is_none_or(|(_, material)| material.first() != Some(held))
     {
@@ -3070,6 +3071,45 @@ mod tests {
     /// An entry admits a reach for what that entry is about, so the cell
     /// is named two different ways — a halt flag by its slot, a holding
     /// by its denomination, which is the only thing that says a cell
+    /// A reach takes its value out of a cell holding the resource that
+    /// admitted the reach, and not some other one.
+    ///
+    /// The entry judged is the one the *key* derives from — the first
+    /// material term — while what the value counts as is the
+    /// denomination. Two different resources there would be an authority
+    /// over one converted into value of another, which is a mint no
+    /// entry granted. The general keying rule already says a cell is
+    /// denominated in what its key names; this is that rule reaching the
+    /// one clause shape that names a stranger's prefix.
+    #[test]
+    fn a_reach_takes_out_what_its_key_admitted_it_to() {
+        let holder = || Expr::Arg(0);
+        let other = || {
+            Expr::Literal(Value::Address(Address::new(
+                [9; 31],
+                AddressClass::Resource,
+            )))
+        };
+        // The argument-named slot: what makes a recall total over every
+        // slot a holder keeps value at, and the one shape the per-slot
+        // table has no constant to dispatch on.
+        let recall = |denomination: Expr| {
+            check_declarations(&one_reach(
+                GrantedBehaviour::Recall,
+                point_under(holder(), told(), vec![a_resource()]),
+                ModeExpr::Reserve(Expr::Arg(2)),
+                Some(denomination),
+            ))
+        };
+
+        assert_eq!(recall(a_resource()), Ok(()));
+        assert_eq!(
+            recall(other()),
+            Err(DeclarationError::DenominationNotKeyed { clause: 0 }),
+            "an authority over one resource does not take value of another"
+        );
+    }
+
     /// A reach over a resource this package issues answers to the entry
     /// that resource grants — and a mark granting nothing admits nobody.
     ///
