@@ -190,7 +190,7 @@ mod tests {
     use crate::instance::{InstanceMeta, ResolveError};
     use crate::invoke::CallArg;
     use crate::manifest::Bounds;
-    use crate::metadata::{MetadataCache, PackageMetadata};
+    use crate::metadata::{MetadataCache, PackageMetadata, PublishRefusal};
     use crate::publish::{AbiError, SignatureError};
     use crate::records::{ChainRecords, Records};
     use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
@@ -850,8 +850,11 @@ mod tests {
             .expect_err("an unguarded clause has no verdict to bind");
         assert!(
             matches!(
-                refusal.source,
-                SignatureError::Abi(AbiError::UnguardedClause { clause: 1, .. })
+                refusal,
+                PublishRefusal::Method {
+                    source: SignatureError::Abi(AbiError::UnguardedClause { clause: 1, .. }),
+                    ..
+                }
             ),
             "unexpected refusal: {refusal:?}"
         );
@@ -882,12 +885,15 @@ mod tests {
             .expect_err("the loop declares no second site");
         assert!(
             matches!(
-                refusal.source,
-                SignatureError::Abi(AbiError::NotALoopedAccess {
-                    clause: 0,
-                    site: 1,
+                refusal,
+                PublishRefusal::Method {
+                    source: SignatureError::Abi(AbiError::NotALoopedAccess {
+                        clause: 0,
+                        site: 1,
+                        ..
+                    }),
                     ..
-                })
+                }
             ),
             "unexpected refusal: {refusal:?}"
         );
@@ -1170,9 +1176,14 @@ mod tests {
         let refusal = MetadataCache::new()
             .publish(pkg("bad"), package)
             .expect_err("a malformed binding cannot be published");
-        assert_eq!(refusal.method, "m");
         assert!(
-            matches!(refusal.source, SignatureError::Abi(_)),
+            matches!(
+                &refusal,
+                PublishRefusal::Method {
+                    method,
+                    source: SignatureError::Abi(_),
+                } if method == "m"
+            ),
             "unexpected refusal: {refusal:?}"
         );
     }

@@ -187,6 +187,53 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataError> {
     check_slot_contents(metadata)
 }
 
+/// Metadata the package-wide gate has passed.
+///
+/// The witness [`CheckedMetadata::judge`] mints, and what the cache's own
+/// store demands — so a record reaching admission without the tables
+/// having been read together is unrepresentable rather than a rule
+/// stated in prose. [`CheckedSignature`] says the same of one signature;
+/// the two scopes each have one.
+///
+/// [`CheckedSignature`]: super::CheckedSignature
+#[derive(Clone, Debug)]
+pub struct CheckedMetadata {
+    metadata: PackageMetadata,
+}
+
+impl CheckedMetadata {
+    /// Judge the whole metadata and mint the witness.
+    ///
+    /// # Errors
+    ///
+    /// [`MetadataError`]; verdicts are deterministic and identical on
+    /// every node.
+    pub fn judge(metadata: PackageMetadata) -> Result<Self, MetadataError> {
+        check_metadata(&metadata)?;
+        Ok(Self { metadata })
+    }
+
+    /// Mint the witness without judging — for the fixtures whose tables
+    /// state the one property a test is about rather than the whole
+    /// vocabulary. Everything the gate guarantees is that caller's to
+    /// keep, which is why the hatch compiles only where they do.
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) const fn trusted(metadata: PackageMetadata) -> Self {
+        Self { metadata }
+    }
+
+    /// The metadata itself.
+    #[must_use]
+    pub const fn metadata(&self) -> &PackageMetadata {
+        &self.metadata
+    }
+
+    /// Take it back out.
+    pub(crate) fn into_metadata(self) -> PackageMetadata {
+        self.metadata
+    }
+}
+
 /// Which leaves a slot numbers: a cell's, or a collection's entries.
 ///
 /// Two spaces rather than one, because `child_key` and `collection_id`

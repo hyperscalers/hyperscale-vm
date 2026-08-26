@@ -15,7 +15,9 @@ use hyperscale_vm_types::{
 
 use crate::KERNEL_SLOT_BASE;
 use crate::hash::{Hash32, Hasher};
-use crate::publish::{CheckedSignature, SignatureError, check_signature, seals};
+use crate::publish::{
+    CheckedMetadata, CheckedSignature, MetadataError, SignatureError, check_signature, seals,
+};
 use crate::signature::MethodSignature;
 use crate::types::{SlotId, child_key};
 
@@ -58,14 +60,23 @@ pub fn package_key(
 }
 
 /// Why a record was refused at the cache door.
+///
+/// The two scopes the publish gate judges in, so a refusal says which
+/// question the record failed rather than only that it did.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("method {method:?}: {source}")]
-pub struct PublishRefusal {
-    /// The method whose signature was refused.
-    pub method: String,
-    /// The judgment that refused it.
-    #[source]
-    pub source: SignatureError,
+pub enum PublishRefusal {
+    /// One method's signature was refused.
+    #[error("method {method:?}: {source}")]
+    Method {
+        /// The method whose signature was refused.
+        method: String,
+        /// The judgment that refused it.
+        #[source]
+        source: SignatureError,
+    },
+    /// The package's tables, read together, say more than one thing.
+    #[error(transparent)]
+    Package(#[from] MetadataError),
 }
 
 /// The names the protocol's own types hold, under the shapes those types
@@ -348,21 +359,27 @@ impl MetadataCache {
     /// [`CheckedSignature`] witnesses, so a record that never passed the
     /// composed check cannot be behind one.
     ///
+    /// Both scopes, because a package is more than its methods one at a
+    /// time. What two of them say a slot holds is a question only the
+    /// whole metadata answers, and a record admitted without it asked
+    /// would let a balance be written as bytes and debited as value.
+    ///
     /// # Errors
     ///
-    /// [`PublishRefusal`], naming the first refused method.
+    /// [`PublishRefusal`], naming the first refused method or the table
+    /// the package disagrees with itself about.
     pub fn publish(
         &mut self,
         hash: PackageHash,
         metadata: PackageMetadata,
     ) -> Result<(), PublishRefusal> {
         for (name, signature) in &metadata.methods {
-            check_signature(signature).map_err(|source| PublishRefusal {
+            check_signature(signature).map_err(|source| PublishRefusal::Method {
                 method: name.clone(),
                 source,
             })?;
         }
-        self.store(hash, metadata);
+        self.store(hash, CheckedMetadata::judge(metadata)?);
         Ok(())
     }
 
@@ -372,10 +389,11 @@ impl MetadataCache {
     /// to keep.
     #[cfg(any(test, feature = "testing"))]
     pub fn publish_unchecked(&mut self, hash: PackageHash, metadata: PackageMetadata) {
-        self.store(hash, metadata);
+        self.store(hash, CheckedMetadata::trusted(metadata));
     }
 
-    fn store(&mut self, hash: PackageHash, metadata: PackageMetadata) {
+    fn store(&mut self, hash: PackageHash, checked: CheckedMetadata) {
+        let metadata = checked.into_metadata();
         match self.packages.entry(hash) {
             Entry::Vacant(slot) => {
                 slot.insert(Arc::new(metadata));
@@ -432,5 +450,28 @@ mod tests {
         cache.publish(hash, record.clone()).expect("publishes");
         cache.publish(hash, record.clone()).expect("republishes");
         assert_eq!(cache.get(hash), Some(&record));
+    }
+
+    /// The door asks what only the whole metadata answers.
+    ///
+    /// An event named with no shape is a package-scope disagreement and
+    /// nothing else: every signature here passes on its own, so a door
+    /// that judged only signatures would let it through and leave the
+    /// verdict to whichever consumer happened to decode the artifact.
+    #[test]
+    fn a_record_whose_tables_disagree_is_refused_at_the_door() {
+        let hash = PackageHash(Hash32([2; 32]));
+        let mut record = PackageMetadata::default();
+        record.events.push("paid".into());
+        let refusal = MetadataCache::new()
+            .publish(hash, record)
+            .expect_err("an event with no shape opens to nothing");
+        assert!(
+            matches!(
+                refusal,
+                PublishRefusal::Package(MetadataError::EventWithoutShape { .. })
+            ),
+            "unexpected refusal: {refusal:?}"
+        );
     }
 }
