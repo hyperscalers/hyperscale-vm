@@ -1,0 +1,11 @@
+error: a package declares one `#[config]` struct — fold the fields into it
+  --> tests/refusals/duplicate_config.rs:20:12
+   |
+20 |     struct MoreTerms {
+   |            ^^^^^^^^^
+
+error: the configuration this package already declares
+  --> tests/refusals/duplicate_config.rs:15:12
+   |
+15 |     struct Terms {
+   |            ^^^^^

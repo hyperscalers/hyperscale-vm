@@ -269,11 +269,26 @@ pub fn parse_state(
     // exactly when the package declares a configuration struct.
     let reserved = accessors(None);
     let mut fields = BTreeMap::new();
-    let mut config_name = None;
+    let mut config_name: Option<syn::Ident> = None;
     for item in items {
         if let syn::Item::Struct(item) = item
             && item.attrs.iter().any(|a| a.path().is_ident("config"))
         {
+            // One struct, because `config.<field>` resolves against one
+            // namespace: letting a later struct win would leave a gate
+            // naming the earlier one refused over a field the author can
+            // see declared.
+            if let Some(first) = &config_name {
+                let mut refusal = syn::Error::new(
+                    item.ident.span(),
+                    "a package declares one `#[config]` struct — fold the fields into it",
+                );
+                refusal.combine(syn::Error::new(
+                    first.span(),
+                    "the configuration this package already declares",
+                ));
+                return Err(refusal);
+            }
             config_name = Some(item.ident.clone());
         }
     }
@@ -358,12 +373,29 @@ pub fn parse_state(
 /// author holds under two names with nothing keeping them in step.
 pub fn state_struct(items: &mut Vec<syn::Item>, module: &syn::Ident) -> syn::Result<syn::Ident> {
     let expected = pascal(&module.to_string());
-    let stated = items.iter().find_map(|item| match item {
+    let mut stated_structs = items.iter().filter_map(|item| match item {
         syn::Item::Struct(item) if item.attrs.iter().any(|a| a.path().is_ident("state")) => {
             Some(&item.ident)
         }
         _ => None,
     });
+    let stated = stated_structs.next();
+    // One struct, because the slot table is one table: a second would
+    // fold its fields in under the shared counter, and splitting the
+    // pinned from the unpinned across two structs is exactly the
+    // insertion-renumbers hazard the per-struct discipline exists to
+    // close.
+    if let (Some(first), Some(second)) = (stated, stated_structs.next()) {
+        let mut refusal = syn::Error::new(
+            second.span(),
+            "a component declares one `#[state]` struct — fold the fields into it",
+        );
+        refusal.combine(syn::Error::new(
+            first.span(),
+            "the state this component already declares",
+        ));
+        return Err(refusal);
+    }
     let Some(stated) = stated else {
         let ident = syn::Ident::new(&expected, module.span());
         items.insert(0, syn::parse_quote!(#[state] struct #ident;));

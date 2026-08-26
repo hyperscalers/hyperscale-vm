@@ -1,0 +1,11 @@
+error: a component declares one `#[state]` struct — fold the fields into it
+  --> tests/refusals/split_pinning.rs:16:12
+   |
+16 |     struct Pinned {
+   |            ^^^^^^
+
+error: the state this component already declares
+  --> tests/refusals/split_pinning.rs:11:12
+   |
+11 |     struct Contract {
+   |            ^^^^^^^^

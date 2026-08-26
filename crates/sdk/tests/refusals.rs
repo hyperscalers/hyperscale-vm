@@ -173,6 +173,22 @@ fn the_lowering_refuses_a_second_gate() {
     refuse.compile_fail("tests/refusals/duplicate_requires.rs");
 }
 
+/// One `#[state]` struct, one `#[config]` struct.
+///
+/// Each names a namespace that is one namespace — the slot table, the
+/// configuration fields — so a second struct is refused with both spans
+/// rather than merged under the shared slot counter or silently
+/// shadowing the first. The split-pinning case pins that the refusal
+/// also closes the way around the pin-all-or-none discipline, which is
+/// judged per struct.
+#[test]
+fn the_lowering_refuses_a_second_marker_struct() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/duplicate_state.rs");
+    refuse.compile_fail("tests/refusals/duplicate_config.rs");
+    refuse.compile_fail("tests/refusals/split_pinning.rs");
+}
+
 /// Possession is not a rule leaf, at any depth.
 ///
 /// `#[requires]` is a match over presented claims and `#[proves]` is

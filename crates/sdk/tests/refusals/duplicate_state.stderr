@@ -1,0 +1,11 @@
+error: a component declares one `#[state]` struct — fold the fields into it
+  --> tests/refusals/duplicate_state.rs:15:12
+   |
+15 |     struct Extra {
+   |            ^^^^^
+
+error: the state this component already declares
+ --> tests/refusals/duplicate_state.rs:8:12
+  |
+8 |     struct Contract {
+  |            ^^^^^^^^
