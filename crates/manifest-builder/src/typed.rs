@@ -384,8 +384,24 @@ pub struct TypedBuilder<'a> {
     /// after the recursion. A claim named here is left to the ancestor
     /// already minting it, so a self-earning account metadata a hostile
     /// chain serves refuses at admission rather than overflowing here.
+    ///
+    /// An entry is written on the way in and taken out on the way back,
+    /// so this holds exactly the frames between the outermost `present`
+    /// and the one running: its length is the depth, which is what
+    /// [`MAX_PRESENT_DEPTH`] bounds.
     presenting: BTreeSet<(Address, Option<u64>)>,
 }
+
+/// How deep the composer will chain proofs it mints for itself.
+///
+/// Repetition is what the `presenting` memo catches, and a chain that
+/// never repeats escapes it: each badge's record can name a claim on a
+/// fresh badge, so the metadata an untrusted chain view serves decides
+/// how far this walk goes. The claims are what the *resources* a call
+/// names demand, so a legitimate chain is one badge whose movement is
+/// gated on holding another; the protocol's own account mints from
+/// bodies that declare nothing at all and never reaches two.
+const MAX_PRESENT_DEPTH: usize = 4;
 
 impl<'a> TypedBuilder<'a> {
     /// A builder with no nodes, typing its calls and resolving its
@@ -676,10 +692,21 @@ impl<'a> TypedBuilder<'a> {
     /// intent's signature, because both gate on the rule governing the
     /// signer's own address — so neither takes a proof of its own and
     /// the composition stays one node deep.
+    ///
+    /// Answers `None` for a claim it will not mint, which is what the
+    /// two bounds below and an unmintable subject all come back as: the
+    /// claim is left to whoever can, exactly as one on another party's
+    /// identity always was.
     fn present(&mut self, claim: Claim) -> Option<Proof> {
         let key = (claim.subject, claim.instance);
         if let Some(proof) = self.minted.get(&key) {
             return Some(*proof);
+        }
+        // Past the depth a chain of gated badges is composed to; the
+        // records naming each next claim are the chain view's, so
+        // nothing here bounds the walk except this.
+        if self.presenting.len() >= MAX_PRESENT_DEPTH {
+            return None;
         }
         // Already minting this claim's proof further up the stack; the
         // ancestor call will file it, and recursing to compose a second
