@@ -124,8 +124,8 @@ pub fn extract_metadata(artifact: &[u8]) -> Result<Option<PackageMetadata>, Gate
 /// vocabulary fixes, every method it describes is a function the
 /// component actually exports, and each method's ABI binding agrees with
 /// that export's own type — same arity, a capability handle where the
-/// export takes a borrow of the resource the clause's mode implies, a
-/// bucket's amount where it takes bytes. Whether a signature
+/// export takes a borrowed `site`, a bucket's amount where it takes
+/// bytes. Whether a signature
 /// over-approximates the code it describes is a compiler's judgement,
 /// and this is not one — an under-declaration is harmless because the
 /// capability gate never materialises a handle the declaration did not

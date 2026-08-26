@@ -13,10 +13,10 @@ use crate::role::Role;
 
 /// One inherent `emit` per event type, at the index the name table fixes.
 ///
-/// The index is the macro's, never the author's: a constant beside a name
-/// table is the one thing in the old four-document shape that nothing
-/// checked. What crosses is the event's own encoding, so the payload's
-/// shape and the type declaring it cannot drift.
+/// The index is the macro's, never the author's: a constant written
+/// beside a name table is a number nothing checks. What crosses is the
+/// event's own encoding, so the payload's shape and the type declaring
+/// it cannot drift.
 pub fn event_emitters(events: &[(syn::Ident, String)], role: Role) -> Vec<syn::Item> {
     events
         .iter()

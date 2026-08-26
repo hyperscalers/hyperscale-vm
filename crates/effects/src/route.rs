@@ -427,8 +427,7 @@ mod tests {
                 .map(|admitted| route(&admitted, &resolver()))
         };
 
-        // The size at which the old budget started refusing admissible
-        // manifests.
+        // A size well inside the cap, and the cap itself.
         assert!(admit_at(1_025).is_ok());
         assert!(admit_at(MAX_MANIFEST_NODES).is_ok());
         assert_eq!(

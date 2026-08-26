@@ -1,11 +1,11 @@
-//! What an export may put a `for-each` site's run in, refused at publish.
+//! What an export may put a `for-each` site in, refused at publish.
 //!
-//! A run is a capability parameter like any other: it names one site of
-//! one loop, and nothing a value crosses as can stand in its place. A
-//! binding that put one somewhere else is a disagreement between a
-//! package's code and its signature that would otherwise surface at
-//! invocation, through whatever error channel the runtime it met
-//! happened to have.
+//! A loop's site is a capability parameter like any other: it names one
+//! site of one loop, and nothing a value crosses as can stand in its
+//! place. A binding that put one somewhere else is a disagreement
+//! between a package's code and its signature that would otherwise
+//! surface at invocation, through whatever error channel the runtime it
+//! met happened to have.
 
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, SlotRef,
@@ -26,9 +26,9 @@ fn taking(resource: Option<&str>) -> Vec<u8> {
                 format!(
                     r#"(import "hyperscale:kernel/state" (instance $state
     (export "{resource}" (type $c (sub resource)))))
-  (alias export $state "{resource}" (type $run))"#
+  (alias export $state "{resource}" (type $site))"#
                 ),
-                "(borrow $run)",
+                "(borrow $site)",
                 "i32",
             )
         },
@@ -87,8 +87,8 @@ fn spreading(abi: Vec<AbiParam>) -> PackageMetadata {
 }
 
 #[test]
-fn a_derived_value_does_not_fill_a_run_parameter() {
-    // A run is a borrow on what the kernel owns, and a derived value is
+fn a_derived_value_does_not_fill_a_site_parameter() {
+    // A site is a borrow on what the kernel owns, and a derived value is
     // a copy the declaration evaluated — so nothing about the two lines
     // up, and the mismatch is refused where every other capability
     // parameter's is.

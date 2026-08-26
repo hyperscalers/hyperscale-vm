@@ -32,7 +32,7 @@ The authority model is [06-authority.md](06-authority.md); what a host needs fro
 
 **Satisfaction needs the target's own state, so it lands at execution** (INV-VM-AUTH-2). Every claim a method can require is one the target itself names, and every cell a gate reads is one the method's own declaration carries — so the verdict is provisioned by the ordinary read-set machinery of §1 and never reaches state under a prefix the manifest did not name. A call presenting too little aborts identically on every replica and its sender pays the ceiling they signed.
 
-One consequence the host relies on elsewhere: the payer shard's fee-binding check is the same stored-rule verdict, asked with the envelope signer and the account's primary role, so who may spend from an account and who may act as it are one question with one answer.
+One consequence the host relies on elsewhere: the payer shard's fee-binding check is the same stored-rule verdict, asked with the envelope signer and the account's governing rule, so who may spend from an account and who may act as it are one question with one answer.
 
 ## 4. What the host provides the environment
 

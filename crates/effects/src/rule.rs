@@ -13,12 +13,18 @@
 //! algebra, and nothing justified the split.
 //!
 //! The caps bound a rule before anything evaluates it. Depth, branch
-//! width, and degenerate thresholds — a count of zero, which anyone
-//! satisfies, or one past the branch count, which no one does — are
-//! refused at decode — where a rule is written, never at evaluation — so
+//! width, and a count past the branches it is over are refused at decode
+//! — where a rule is written, never at evaluation — so
 //! [`Rule::satisfied_by`] walks a structure whose size is a constant of
-//! the vocabulary, not of the input, and a stored rule always names
-//! someone it admits and someone it refuses.
+//! the vocabulary, not of the input.
+//!
+//! The threshold over *no* branches is the exception, and it is how this
+//! algebra spells its two constants: a count of zero over nothing admits
+//! everyone, a count of one over nothing admits nobody. Both are
+//! storable, both have exactly one spelling ([`always()`] and [`never()`]),
+//! and a constant standing beside real branches is refused for the same
+//! reason a degenerate count would be — everyone-may beside anything is
+//! everyone-may, and no-one-may beside it is the rest of the threshold.
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 use hyperscale_vm_types::{Presence, ResourceAddr};
@@ -218,8 +224,6 @@ pub enum RuleLeaf {
 }
 
 impl RuleLeaf {
-    /// Whether the leaf reads what the caller supplies — the claim's own
-    /// expression, or the cell a stored rule is read from.
     /// Whether this leaf's answer is in the store rather than in what a
     /// caller presents.
     ///
@@ -233,6 +237,8 @@ impl RuleLeaf {
         matches!(self, Self::Presence { .. })
     }
 
+    /// Whether the leaf reads what the caller supplies — the claim's own
+    /// expression, or the cell a stored rule is read from.
     pub(crate) fn reads_call_inputs(&self) -> bool {
         match self {
             Self::Claim(expr) => expr.reads_call_inputs(),
@@ -329,23 +335,6 @@ impl Rule<RuleLeaf> {
 /// are the caps the granted set is held to wherever it is judged.
 pub type GrantRuleExpr = Rule<GrantClaim>;
 
-/// The threshold rule one node meets, wherever the rule came from.
-///
-/// A count of one through the branch count, so the vocabulary holds no
-/// rule that admits everyone or no one, over a branch list within the
-/// width cap.
-///
-/// One node rather than a tree, which is what lets every side share it.
-/// As a decode gate it runs per value, so branches judge themselves and
-/// the check never recurses; inside [`Rule::within_caps`] it is what the
-/// walk applies at each node; the tracer's `n_of` and the macro's
-/// threshold lowering judge each node they build through it, so a
-/// refusal cannot fork between the span-bearing copy and the one that
-/// panics. Depth is absent because it is the one cap the sides do not
-/// share a mechanism for — a stored rule takes it from the decoder's own
-/// nesting bound, a declared one from the caps walk, a written one from
-/// the lowering's counter.
-///
 /// How many leaves a tree holds, over every branch of it.
 fn leaves<L>(rule: &Rule<L>) -> usize {
     let mut total = 0;
@@ -359,6 +348,24 @@ fn leaves<L>(rule: &Rule<L>) -> usize {
     total
 }
 
+/// The threshold rule one node meets, wherever the rule came from.
+///
+/// A count within the branch count, over a branch list within the width
+/// cap. The empty threshold is admitted at both ends and means what it
+/// reads as: a count of zero over no branches admits everyone, and a
+/// count of one over no branches admits nobody.
+///
+/// One node rather than a tree, which is what lets every side share it.
+/// As a decode gate it runs per value, so branches judge themselves and
+/// the check never recurses; inside [`Rule::within_caps`] it is what the
+/// walk applies at each node; the tracer's `n_of` and the macro's
+/// threshold lowering judge each node they build through it, so a
+/// refusal cannot fork between the span-bearing copy and the one that
+/// panics. Depth is absent because it is the one cap the sides do not
+/// share a mechanism for — a stored rule takes it from the decoder's own
+/// nesting bound, a declared one from the caps walk, a written one from
+/// the lowering's counter.
+///
 /// # Errors
 ///
 /// The refusal, phrased for whoever wrote the rule: each caller adds its

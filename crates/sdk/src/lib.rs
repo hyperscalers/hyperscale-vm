@@ -49,20 +49,23 @@
 //! assert_eq!(metadata.methods["swap"].outputs.len(), 1);
 //! ```
 //!
-//! # Why tracing rather than macros
+//! # Why tracing rather than reading the body
 //!
-//! The obvious approach — a proc macro over the method body — cannot work
-//! for the field that matters. Recovering [`hyperscale_vm_effects::Clause`]
-//! trees from contract code is abstract interpretation of a Turing-complete
-//! language into a deliberately weaker one: undecidable in general, and
-//! quiet when it fails. So the author writes the declaration separately,
-//! and the SDK runs it once with symbolic inputs. See [`trace`].
+//! `#[blueprint]` is a proc macro over the method body, but it does not
+//! *read* the body for the field that matters. Recovering
+//! [`hyperscale_vm_effects::Clause`] trees out of contract code would be
+//! abstract interpretation of a Turing-complete language into a
+//! deliberately weaker one: undecidable in general, and quiet when it
+//! fails. So the macro lowers the body into this crate's own vocabulary
+//! and then *runs* it, once, with symbolic inputs — and the declaration
+//! is what that run recorded rather than what a reader inferred. See
+//! [`trace`].
 //!
-//! What this costs the author is real and inherent, not a gap the SDK could
-//! close with more cleverness: keys must be *stated*, because routing runs
-//! before execution and state-free, so a key the body computes is a key
-//! that arrives too late to route on. Tracing makes stating it look like
-//! Rust; it does not make it inferred.
+//! What this costs the author is real and inherent, not a gap the SDK
+//! could close with more cleverness: keys must be *stated*, because
+//! routing runs before execution and state-free, so a key the body
+//! computes is a key that arrives too late to route on. The macro makes
+//! stating it look like Rust; it does not make it inferred.
 //!
 //! # What the derivation refuses
 //!
@@ -126,13 +129,15 @@
 //!
 //! # Why a wrong declaration is not a safety problem
 //!
-//! `hyperscale:kernel/state` has no open-cell-by-key import. Every accessor
-//! takes a `borrow` the kernel materialized, and each mode is its own
-//! resource type. A method that under-declares does not get an unchecked
-//! access — it gets a handle that does not exist. So the tracer's
-//! correctness governs whether a contract *works*, not whether the VM
-//! holds, which is what makes generated metadata acceptable inside a
-//! content-addressed package at all.
+//! `hyperscale:kernel/state` has no open-cell-by-key import. Every
+//! accessor takes a `borrow` the kernel materialized, and what that
+//! handle may do is the capability's answer, held by the kernel at every
+//! operation rather than carried by the handle's type. A method that
+//! under-declares does not get an unchecked access — it gets a handle
+//! that does not exist, or one whose capability refuses what it asks. So
+//! the tracer's correctness governs whether a contract *works*, not
+//! whether the VM holds, which is what makes generated metadata
+//! acceptable inside a content-addressed package at all.
 
 /// The canonical encoding, re-exported so a contract crate reaches it
 /// through the SDK alone.

@@ -286,9 +286,9 @@ pub(super) fn inject_destruction_rules(
 /// makes the entry judged always the entry of the thing actually
 /// reached.
 ///
-/// Absence withholds, and here that is the whole of the old refusal: a
-/// resource granting no entry for the behaviour is one nobody may reach
-/// a holder of, which is every resource until its issuer says otherwise.
+/// Absence withholds, and here that is the whole of it: a resource
+/// granting no entry for the behaviour is one nobody may reach a holder
+/// of, which is every resource until its issuer says otherwise.
 pub(super) fn inject_reach_rules(
     grants: &PresentedGrants,
     frame: &Declaration,

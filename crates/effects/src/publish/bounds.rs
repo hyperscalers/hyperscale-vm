@@ -73,6 +73,12 @@ fn check_rule_bounds(rule: &RuleExpr) -> Result<(), SignatureBoundsError> {
     }
 }
 
+/// Every cap one signature is held to, in one walk.
+///
+/// The projections, the denominations and the derived ABI arguments are
+/// expressions and go through the expression bound; the issuances are
+/// counted and their grants walked; the effects are walked last, because
+/// the clause walk is the one that counts as it goes.
 pub(super) fn check_signature_bounds(
     signature: &MethodSignature,
 ) -> Result<(), SignatureBoundsError> {

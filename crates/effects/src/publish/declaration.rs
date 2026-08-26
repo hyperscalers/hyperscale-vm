@@ -343,13 +343,6 @@ pub enum DeclarationError {
     },
 }
 
-/// Whether a target names the declaring instance's own prefix.
-///
-/// The owner half of a key is either written as `SelfAddr` or derived
-/// under it: a fresh key is minted under the instance that creates it, and
-/// a child key names its owner outright. Everything else — an argument, a
-/// configuration slot, a `for-each` binding, a literal — is another
-/// object's prefix, whatever the author meant by it.
 /// Judge a clause that reaches a prefix that is not the declaring
 /// instance's own.
 ///
@@ -420,6 +413,13 @@ fn judge_reach(
     Ok(())
 }
 
+/// Whether a target names the declaring instance's own prefix.
+///
+/// The owner half of a key is either written as `SelfAddr` or derived
+/// under it: a fresh key is minted under the instance that creates it, and
+/// a child key names its owner outright. Everything else — an argument, a
+/// configuration slot, a `for-each` binding, a literal — is another
+/// object's prefix, whatever the author meant by it.
 fn targets_own_prefix(target: &TargetExpr) -> bool {
     match target {
         TargetExpr::Point(key) => match key {
@@ -1284,11 +1284,6 @@ fn check_conditions(flat: &[&Clause]) -> Result<(), DeclarationError> {
 /// so the claim minted and the thing held are one resource because one
 /// expression writes both.
 fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
-    // Minting one's own identity takes satisfying one's own stored rule;
-    // minting a badge takes that plus holding it, the possession read
-    // keyed by the same expressions the mint names — so the claim minted
-    // and the thing held are one resource because one expression writes
-    // both.
     for (index, clause) in flat.iter().enumerate() {
         let Clause::Mints { guard, claim } = clause else {
             continue;

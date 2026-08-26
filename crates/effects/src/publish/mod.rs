@@ -50,9 +50,9 @@ pub enum SignatureError {
 /// A signature every publish-time judgment has passed.
 ///
 /// The witness [`check_signature`] mints, and the only thing the checked
-/// judgments hand out: a consumer holding one no longer has to know the
-/// list of checks, and a fold that forgot one is unrepresentable rather
-/// than an ordering nothing states.
+/// judgments hand out: a consumer holding one need not know the list of
+/// checks, and a fold that forgot one is unrepresentable rather than an
+/// ordering nothing states.
 #[derive(Clone, Copy, Debug)]
 pub struct CheckedSignature<'a> {
     signature: &'a MethodSignature,

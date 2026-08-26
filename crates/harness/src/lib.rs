@@ -231,7 +231,8 @@ pub mod fixtures {
             .map_err(|error| format_err!("{name}: {error}"))
     }
 
-    /// The kernel-world component guest, exercising the per-mode surface.
+    /// The kernel-world component guest, exercising the world's handle
+    /// surface.
     ///
     /// Written as WAT so its memory representation is readable in this
     /// source, and so it can reach shapes no compiled guest expresses: a
@@ -245,9 +246,9 @@ pub mod fixtures {
     /// `scan-sum`
     /// folds a read interval's entry and order bytes; `fill` rewrites entry
     /// zero and removes the last entry of a write interval; `place` inserts
-    /// order 42; `escape` reads bytes through a handle the declaration
-    /// lent as a commutative movement (the mode-escape trap); `forge` passes a handle index the host never
-    /// lowered; `read-value` reads whatever read cell it is handed, which
+    /// order 42; `escape` reads bytes through a handle the declaration lent
+    /// as a commutative movement, which the capability refuses; `forge`
+    /// passes a handle index the host never lowered; `read-value` reads whatever read cell it is handed, which
     /// is how a test reaches the rep a clause nobody declared would have
     /// occupied; `leak` never drops its borrow; `no-such-entry` removes
     /// past the interval's last entry (a deterministic kernel refusal).
@@ -269,9 +270,9 @@ pub mod fixtures {
     /// handing back the bucket it produced rather than a number; and
     /// `take-reserve-twice` asks one grant the same question twice, which
     /// is the one thing a take can refuse that the read beside it could
-    /// not. `issue` is the one bucket with no cell behind it, and the
-    /// only export here whose handle is an authority rather than a
-    /// target. `put-write` and `put-delta` are the credits, each
+    /// not. `issue` is the one bucket with no cell behind it: it takes a
+    /// grant index rather than a handle, because what admits a mint is
+    /// the declaration's own issuance and not anything lent to the body. `put-write` and `put-delta` are the credits, each
     /// consuming the bucket it was handed; `put-write-then-drop` reaches
     /// for the handle afterwards, which is the one thing a put makes
     /// impossible. `take-two` debits two cells and hands both back at

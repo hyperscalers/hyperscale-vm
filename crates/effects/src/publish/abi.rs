@@ -292,10 +292,8 @@ mod tests {
     use crate::rule::{Rule, RuleLeaf};
     use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
 
-    /// Every name table is bounded by what reaches an entry: the kernel
-    /// checks an emitted event type and a returned error code without
-    /// holding the metadata, and a gate carries a role's band offset —
-    /// so a table longer than its ceiling names entries nothing could
+    /// One ordinary effect clause, for the bindings that are about the
+    /// parameter rather than about what it points at.
     fn clause() -> Clause {
         Clause::Effect {
             reach: None,
