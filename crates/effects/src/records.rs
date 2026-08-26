@@ -21,6 +21,7 @@
 //! same reason; a package's metadata is too big to copy per lookup, so
 //! the handle is shared instead of cloned.
 
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -154,18 +155,41 @@ impl ChainRecords for Records {
     /// a live chain keeps the index instead, on the terms the type's own
     /// doc sets.
     fn resource(&self, resource: ResourceAddr, hasher: &dyn Hasher) -> Option<ResourceMeta> {
-        self.instances
-            .components()
-            .filter_map(|(issuer, meta)| Some((issuer, meta, self.packages.get(meta.package)?)))
-            .flat_map(|(issuer, meta, package)| {
-                package
-                    .methods
-                    .values()
-                    .flat_map(|signature| &signature.issues)
-                    .filter_map(move |issuance| issued_record(hasher, issuer, meta, issuance))
-            })
-            .find(|record| record.address(hasher) == resource)
+        issued_among(
+            self.instances.components().filter_map(|(issuer, meta)| {
+                Some((issuer, meta, self.packages.get(meta.package)?))
+            }),
+            resource,
+            hasher,
+        )
     }
+}
+
+/// The record among `holders` whose derivation is `resource`, where one
+/// is.
+///
+/// The one walk answering a resource by derivation: every instance's
+/// package declares which resources it issues, and each of those
+/// re-derives against the instance issuing it. The caller says only
+/// which instances stand as issuers and where their packages come from.
+fn issued_among<'a, P: Borrow<PackageMetadata>>(
+    holders: impl Iterator<Item = (Address, &'a InstanceMeta, P)>,
+    resource: ResourceAddr,
+    hasher: &dyn Hasher,
+) -> Option<ResourceMeta> {
+    for (issuer, meta, package) in holders {
+        for signature in package.borrow().methods.values() {
+            for issuance in &signature.issues {
+                let Some(record) = issued_record(hasher, issuer, meta, issuance) else {
+                    continue;
+                };
+                if record.address(hasher) == resource {
+                    return Some(record);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// The record one declared issuance commits, resolved against the
@@ -174,11 +198,6 @@ impl ChainRecords for Records {
 /// `None` where the grant tree names something the instance's own
 /// configuration does not resolve — a resource that instance could never
 /// issue, and so one no address of this world's names.
-/// One declared issuance's record, resolved against the instance issuing
-/// it.
-///
-/// `None` where the grant tree names something the instance's own
-/// configuration does not resolve.
 #[must_use]
 pub fn issued_record(
     hasher: &dyn Hasher,
@@ -240,19 +259,17 @@ impl ChainRecords for Composed<'_> {
     /// displace a committed one.
     fn resource(&self, resource: ResourceAddr, hasher: &dyn Hasher) -> Option<ResourceMeta> {
         self.base.resource(resource, hasher).or_else(|| {
-            self.presented
-                .values()
-                .filter_map(|meta| Some((meta, self.base.package(meta.package)?)))
-                .flat_map(|(meta, package)| {
-                    let issuer = meta.address(hasher).address();
-                    package
-                        .methods
-                        .values()
-                        .flat_map(|signature| &signature.issues)
-                        .filter_map(move |issuance| issued_record(hasher, issuer, meta, issuance))
-                        .collect::<Vec<_>>()
-                })
-                .find(|record| record.address(hasher) == resource)
+            issued_among(
+                self.presented.values().filter_map(|meta| {
+                    Some((
+                        meta.address(hasher).address(),
+                        meta.as_ref(),
+                        self.base.package(meta.package)?,
+                    ))
+                }),
+                resource,
+                hasher,
+            )
         })
     }
 }
