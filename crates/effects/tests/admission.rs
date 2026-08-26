@@ -19,6 +19,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
+    WrongClass,
 };
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{any, proptest};
@@ -920,13 +921,30 @@ fn a_component_address_where_a_resource_belongs_is_refused() {
             },
         ],
     };
+    let refused =
+        admit(&graph, ALICE, &chain, &TestHasher).expect_err("a component is not a resource");
     assert!(matches!(
-        admit(&graph, ALICE, &chain, &TestHasher),
-        Err(AdmissionError::Eval {
+        &refused,
+        AdmissionError::Eval {
             node: 2,
             source: EvalError::NotAResource(err),
-        }) if err.found == AddressClass::Component
+        } if err.found == AddressClass::Component
     ));
+    // And the reason is in the message, not only in the source. A
+    // composer reads whatever a `{}` handed them, and the node alone
+    // says nothing about which expression refused or why.
+    let told = refused.to_string();
+    assert!(told.contains("node 2"), "{told}");
+    assert!(
+        told.contains(
+            &EvalError::NotAResource(WrongClass {
+                expected: AddressClass::Resource,
+                found: AddressClass::Component,
+            })
+            .to_string()
+        ),
+        "the cause: {told}"
+    );
 }
 
 proptest! {

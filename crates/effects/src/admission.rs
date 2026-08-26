@@ -558,7 +558,13 @@ pub enum AdmissionError {
     #[error(transparent)]
     Conflict(#[from] EffectConflict),
     /// An expression that failed to evaluate during admission.
-    #[error("evaluating node {node}")]
+    ///
+    /// The reason is in the message as well as in the source. A composer
+    /// reads whatever a `{}` gave them, and `EvalError`'s own messages —
+    /// `argument 2 out of range`, `slot 5 keeps no value, so nothing
+    /// reaches it` — are the whole of what says which expression, and
+    /// were reaching nobody.
+    #[error("evaluating node {node}: {source}")]
     Eval {
         /// The offending node.
         node: u32,
