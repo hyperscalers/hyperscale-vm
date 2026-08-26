@@ -317,8 +317,9 @@ fn wrapper(
             Presenting::Proof => {
                 quote!(builder.call_proving_as(proof, #target, #published, (#(#args,)*)))
             }
-            // A proving gate reads a rule, so it is never a threshold.
-            Presenting::Proofs => unreachable!("a proving gate presents one proof"),
+            Presenting::Proofs => {
+                quote!(builder.call_proving_presenting(proofs, #target, #published, (#(#args,)*)))
+            }
         };
         (quote!(#proof_ty), call)
     } else {
@@ -361,15 +362,18 @@ fn wrapper(
 /// Every wrapper one method takes.
 ///
 /// A gate that reads a rule can be satisfied by the intent's own
-/// signature or by a proof proven earlier, so it takes both forms; one
-/// that names an identity takes the proof alone, and a public method
-/// presents nothing at all.
+/// signature, by a proof proven earlier, or by a set of proofs where
+/// the stored rule is a threshold — the gate's written form never says
+/// which, because what is stored is the target's own business — so it
+/// takes all three forms. One that names an identity takes the proof
+/// alone, and a public method presents nothing at all.
 fn wrappers(method: &Method, serves: Serves) -> Vec<TokenStream2> {
     let shape = method.shape;
     if shape.reads_a_rule() {
         return vec![
             wrapper(method, serves, Presenting::Signature, None),
             wrapper(method, serves, Presenting::Proof, Some("as")),
+            wrapper(method, serves, Presenting::Proofs, Some("presenting")),
         ];
     }
     let presenting = match shape {

@@ -224,6 +224,24 @@ fn a_chained_sign_in_admits() {
     );
 }
 
+/// A stored rule can be a threshold, so a sign-in can take a set of
+/// proofs: the `presenting` form carries every one to the gate, and the
+/// judgment against the stored rule stays where it always is.
+#[test]
+fn a_threshold_sign_in_composes() {
+    let graph = admits(|b| {
+        let bob = account::authorize(b, BOB)?;
+        let carol = account::authorize(b, CAROL)?;
+        let alice = account::authorize_presenting(b, &[bob, carol], ALICE)?;
+        let funds = account::withdraw(b, alice, BASE, 100)?;
+        account::deposit(b, BOB, funds)
+    });
+    assert_eq!(
+        graph.nodes[2].evidence,
+        BTreeSet::from([EvidenceRef::Node(0), EvidenceRef::Node(1)])
+    );
+}
+
 /// Misplaced evidence refuses at the call site, mirroring admission: a
 /// proof to a method admitting anyone, a bare signature to a guarded
 /// one, a proof asked of a method that proves nothing.
