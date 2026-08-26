@@ -6,9 +6,10 @@
 //! checked against the same call made directly.
 
 use hyperscale_vm_effects::{
-    Claim, Constraint, GrantedBehaviour, Hash32, Hasher, InstanceMeta, PackageHash,
-    PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
-    StoredRule, TestHasher, Value, admit, footprint, route,
+    Claim, Clause, Constraint, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
+    MethodSignature, PackageHash, PackageMetadata, PrefixShardResolver, Records, ResourceGrants,
+    ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, Totality, Value, admit,
+    footprint, route,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, EnvelopeBuilder, IntentBuilder, PreflightError, TypedBuilder, preflight,
@@ -256,6 +257,93 @@ fn note_meta() -> ResourceMeta {
         material: vec![b"note".to_vec()],
         rules,
     }
+}
+
+/// The venue whose approval the ticket's entry names: a component, so
+/// nothing signs for it — its own method mints the proof instead.
+fn venue_metadata() -> PackageMetadata {
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "approve".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            effects: vec![Clause::Mints {
+                guard: None,
+                claim: Expr::SelfAddr,
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    package
+}
+
+fn venue_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("venue"),
+        config: Vec::new(),
+        salt: Hash32([7; 32]),
+    }
+}
+
+/// A ticket that moves only with the venue's approval in hand.
+fn ticket_meta() -> ResourceMeta {
+    let venue = venue_meta().address(&TestHasher);
+    let mut rules = ResourceGrants::new();
+    rules.set(
+        GrantedBehaviour::Withdraw,
+        RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(venue.address())))
+            .expect("a rule within the caps encodes"),
+    );
+    ResourceMeta {
+        namespace: MINTER,
+        kind: ResourceKind::Fungible,
+        material: vec![b"ticket".to_vec()],
+        rules,
+    }
+}
+
+/// A claim on a component is satisfiable by the transaction that mints
+/// it: the venue pattern. The report used to call the branch
+/// satisfiable-by-nobody — a false alarm handed to the wallet over a
+/// transaction that admits and completes — because the verdict never
+/// consulted the evidence the node already carries.
+#[test]
+fn a_component_claim_the_transaction_mints_is_satisfiable() {
+    let mut chain = world();
+    chain
+        .packages
+        .publish_unchecked(pkg("venue"), venue_metadata());
+    chain.instances.create(&TestHasher, venue_meta());
+    let venue = venue_meta().address(&TestHasher);
+    let ticket = ticket_meta().address(&TestHasher);
+
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
+    let approval = root.call_minting(venue, "approve", ()).unwrap();
+    let alice = account::authorize(&mut root, ALICE).unwrap();
+    let funds = root
+        .call_presenting(&[alice, approval], ALICE, "withdraw", (ticket, 3u128))
+        .unwrap()
+        .one()
+        .unwrap();
+    account::deposit(&mut root, BOB, funds).unwrap();
+    env.seal(root).unwrap().none().unwrap();
+    env.resource(ticket_meta());
+    let tree = env.build().unwrap();
+
+    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let withdrawing = report
+        .authority
+        .iter()
+        .find(|required| required.method == "withdraw")
+        .expect("the ticket is withdrawn");
+    assert_eq!(
+        withdrawing.authority,
+        Authority::Threshold {
+            count: 2,
+            branches: vec![Authority::Signature(ALICE), Authority::MintedInTransaction,],
+        }
+    );
+    assert_eq!(report.unsatisfiable().count(), 0);
 }
 
 /// A withdrawal of a governed note answers to its account's gate and to

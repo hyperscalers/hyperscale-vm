@@ -67,8 +67,16 @@ pub enum Authority {
     Held,
     /// An identity no key derives — an instance's own address, or a
     /// configured slot holding one. Nothing signs for a hash of what an
-    /// object is, so a method requiring one cannot be named by anyone.
+    /// object is, so a method requiring one cannot be named by anyone —
+    /// except by carrying a proof that instance's own method minted,
+    /// which is [`MintedInTransaction`](Self::MintedInTransaction).
     TargetHasNoKey,
+    /// An identity no key derives, whose claim this node nonetheless
+    /// carries: a proof minted inside the transaction — the venue and
+    /// registrar pattern — resolved from the node's own presented
+    /// evidence. Satisfiable because it is already satisfied, so it
+    /// never lands in [`Report::unsatisfiable`].
+    MintedInTransaction,
     /// A badge the caller must present: possession of the resource, or
     /// of the one instance of it named here. No signature satisfies it
     /// on its own — the holder presents it through a custodial call,
@@ -113,6 +121,7 @@ impl Authority {
             | Self::Signature(_)
             | Self::StoredRule
             | Self::Held
+            | Self::MintedInTransaction
             | Self::Badge { .. } => true,
         }
     }
@@ -142,6 +151,7 @@ impl Authority {
             }
             Self::Anyone
             | Self::TargetHasNoKey
+            | Self::MintedInTransaction
             | Self::Held
             | Self::Badge { .. }
             | Self::Threshold { .. } => {}
@@ -159,7 +169,11 @@ impl Authority {
                     branch.names(out);
                 }
             }
-            Self::Anyone | Self::StoredRule | Self::Held | Self::TargetHasNoKey => {}
+            Self::Anyone
+            | Self::StoredRule
+            | Self::Held
+            | Self::TargetHasNoKey
+            | Self::MintedInTransaction => {}
         }
     }
 }
@@ -218,14 +232,23 @@ fn governing(rule: &Rule<JudgedLeaf>) -> Option<SubstateKey> {
 /// for; every other class derives from a hash of what it is, and
 /// nothing signs for that. What a claim's subject is, is its class's
 /// answer, asked here because here is where it matters.
-fn claimed(claim: &Claim) -> Authority {
+fn claimed(claim: &Claim, evidence: &[Claim]) -> Authority {
     match (claim.badge(), claim.callable()) {
         (Some(resource), _) => Authority::Badge {
             resource,
             instance: claim.instance,
         },
         (None, Some(CallTarget::Principal(principal))) => Authority::Signature(principal),
-        (None, Some(CallTarget::Component(_)) | None) => Authority::TargetHasNoKey,
+        // Nothing signs for a hash of what an object is — but the
+        // object's own methods mint proofs of it, and a node already
+        // carrying one is the venue pattern, not a dead end.
+        (None, Some(CallTarget::Component(_)) | None) => {
+            if evidence.contains(claim) {
+                Authority::MintedInTransaction
+            } else {
+                Authority::TargetHasNoKey
+            }
+        }
     }
 }
 
@@ -237,17 +260,20 @@ fn claimed(claim: &Claim) -> Authority {
 /// derives. Two branches, one question, and a holder is owed the
 /// question rather than the spelling. The recursion is bounded by the
 /// caps every rule is decoded and evaluated under.
-fn authority_of(rule: &Rule<JudgedLeaf>) -> Authority {
+fn authority_of(rule: &Rule<JudgedLeaf>, evidence: &[Claim]) -> Authority {
     if governing(rule).is_some() {
         return Authority::StoredRule;
     }
     match rule {
-        Rule::Require(JudgedLeaf::Claim(claim)) => claimed(claim),
+        Rule::Require(JudgedLeaf::Claim(claim)) => claimed(claim, evidence),
         Rule::Require(JudgedLeaf::Stored { .. }) => Authority::StoredRule,
         Rule::Require(JudgedLeaf::Presence { .. }) => Authority::Held,
         Rule::CountOf { count, rules } => Authority::Threshold {
             count: *count,
-            branches: rules.iter().map(authority_of).collect(),
+            branches: rules
+                .iter()
+                .map(|rule| authority_of(rule, evidence))
+                .collect(),
         },
     }
 }
@@ -413,15 +439,19 @@ fn report(
     // execution will judge, over the node's real bound inputs.
     let mut authority = Vec::with_capacity(admitted.manifest().nodes.len());
     for (index, node) in admitted.manifest().nodes.iter().enumerate() {
+        let evidence = admitted.calls()[index].evidence.as_slice();
         let required = match admitted.calls()[index].requires.as_slice() {
             [] => Authority::Anyone,
-            [rule] => authority_of(rule),
+            [rule] => authority_of(rule, evidence),
             // Several required rules conjoin: the threshold whose count
             // is its width, so the report says every one of them is
             // asked, and what each asks.
             rules => Authority::Threshold {
                 count: u8::try_from(rules.len()).unwrap_or(u8::MAX),
-                branches: rules.iter().map(authority_of).collect(),
+                branches: rules
+                    .iter()
+                    .map(|rule| authority_of(rule, evidence))
+                    .collect(),
             },
         };
         authority.push(Required {
