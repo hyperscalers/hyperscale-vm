@@ -7,18 +7,13 @@
 //! names, and the bounds an envelope's own inputs have to clear before
 //! any of it runs.
 
-use std::collections::BTreeSet;
+use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
 
-use hyperscale_vm_types::{Address, MAX_MANIFEST_NODES, PrincipalAddr, ResourceAddr};
-
-use super::{AdmissionError, Admitted, Lower, MAX_SOCKETS};
-use crate::dsl::{Declaration, EvalBudget, PresentedGrants};
+use super::{AdmissionError, MAX_SOCKETS};
 use crate::envelope::{Binding, Socket};
 use crate::graph::{Constraint, GraphArg, ManifestGraph};
-use crate::hash::Hasher;
 use crate::instance::InstanceMeta;
-use crate::manifest::{Bounds, Manifest, ManifestHash, NodeInput};
-use crate::records::ChainRecords;
+use crate::manifest::{Bounds, NodeInput};
 use crate::resource::ResourceKind;
 use crate::signature::ParamType;
 use crate::types::{EdgeContent, MAX_VALUE_DEPTH, Value};
@@ -174,85 +169,10 @@ pub struct IntentView<'a> {
     pub signer: Option<PrincipalAddr>,
 }
 
-/// Check every intent's bindings and socket consumption, interleave the
-/// intents into one flattened node order over the sockets they declare,
-/// and run the node-by-node admission check over that order.
-pub fn admit_intents(
-    intents: &[IntentView<'_>],
-    identity: ManifestHash,
-    chain: &dyn ChainRecords,
-    presented: &BTreeSet<Address>,
-    grants: &PresentedGrants,
-    hasher: &dyn Hasher,
-) -> Result<Admitted, AdmissionError> {
-    let total: usize = intents.iter().map(|view| view.graph.nodes.len()).sum();
-    if total > MAX_MANIFEST_NODES {
-        return Err(AdmissionError::TooManyNodes);
-    }
-
-    check_bindings(intents)?;
-
-    let (flat_of, order) = interleave(intents, total)?;
-
-    let budget = EvalBudget::default();
-    let mut lower = Lower {
-        intents,
-        identity,
-        chain,
-        presented,
-        grants,
-        hasher,
-        flat_of: &flat_of,
-        budget: &budget,
-        outputs: Vec::with_capacity(total),
-        consumed: Vec::with_capacity(total),
-        minted: Vec::with_capacity(total),
-        lowered: Vec::with_capacity(total),
-        frames: Vec::with_capacity(total),
-        injected: Vec::with_capacity(total),
-        calls: Vec::with_capacity(total),
-        declaration: Declaration::default(),
-        table_len: 0,
-    };
-    for &(intent_index, local_index) in &order {
-        lower.lower_node(intent_index, local_index)?;
-    }
-    let Lower {
-        consumed,
-        lowered,
-        frames,
-        injected,
-        calls,
-        declaration,
-        ..
-    } = lower;
-
-    // Linearity: nothing dangles, yields included.
-    for (producer, counts) in consumed.iter().enumerate() {
-        for (output, count) in counts.iter().enumerate() {
-            if *count == 0 {
-                return Err(AdmissionError::UnconsumedOutput {
-                    producer: u32::try_from(producer).unwrap_or(u32::MAX),
-                    output: u32::try_from(output).unwrap_or(u32::MAX),
-                });
-            }
-        }
-    }
-
-    Ok(Admitted {
-        manifest: Manifest { nodes: lowered },
-        identity,
-        frames,
-        injected,
-        calls,
-        declaration,
-    })
-}
-
 /// Bindings and parameter consumption, intent by intent: one binding
 /// per socket, every binding naming a real source, every
 /// parameter consumed by exactly one node argument.
-fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
+pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
     for (index, intent) in intents.iter().enumerate() {
         if intent.sockets.len() > MAX_SOCKETS {
             return Err(AdmissionError::TooManySockets {

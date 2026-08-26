@@ -31,13 +31,12 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use abi::{CallBinding, lower_call};
-use compose::bind_edge;
-pub(crate) use compose::{
-    IntentView, admit_intents, check_instance_values, check_value_depth, interleave,
-};
+pub(crate) use compose::{IntentView, check_instance_values, check_value_depth, interleave};
+use compose::{bind_edge, check_bindings};
 pub use error::{AdmissionError, Placed};
 use hyperscale_vm_types::{
-    Address, CallTarget, Effect, EffectTarget, Mode, Presence, PrincipalAddr, ResourceAddr,
+    Address, CallTarget, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Presence, PrincipalAddr,
+    ResourceAddr,
 };
 pub use inject::{Asks, Injected};
 use inject::{
@@ -190,6 +189,81 @@ pub fn admit_presenting(
         grants,
         hasher,
     )
+}
+
+/// Check every intent's bindings and socket consumption, interleave the
+/// intents into one flattened node order over the sockets they declare,
+/// and run the node-by-node admission check over that order.
+pub(crate) fn admit_intents(
+    intents: &[IntentView<'_>],
+    identity: ManifestHash,
+    chain: &dyn ChainRecords,
+    presented: &BTreeSet<Address>,
+    grants: &PresentedGrants,
+    hasher: &dyn Hasher,
+) -> Result<Admitted, AdmissionError> {
+    let total: usize = intents.iter().map(|view| view.graph.nodes.len()).sum();
+    if total > MAX_MANIFEST_NODES {
+        return Err(AdmissionError::TooManyNodes);
+    }
+
+    check_bindings(intents)?;
+
+    let (flat_of, order) = interleave(intents, total)?;
+
+    let budget = EvalBudget::default();
+    let mut lower = Lower {
+        intents,
+        identity,
+        chain,
+        presented,
+        grants,
+        hasher,
+        flat_of: &flat_of,
+        budget: &budget,
+        outputs: Vec::with_capacity(total),
+        consumed: Vec::with_capacity(total),
+        minted: Vec::with_capacity(total),
+        lowered: Vec::with_capacity(total),
+        frames: Vec::with_capacity(total),
+        injected: Vec::with_capacity(total),
+        calls: Vec::with_capacity(total),
+        declaration: Declaration::default(),
+        table_len: 0,
+    };
+    for &(intent_index, local_index) in &order {
+        lower.lower_node(intent_index, local_index)?;
+    }
+    let Lower {
+        consumed,
+        lowered,
+        frames,
+        injected,
+        calls,
+        declaration,
+        ..
+    } = lower;
+
+    // Linearity: nothing dangles, yields included.
+    for (producer, counts) in consumed.iter().enumerate() {
+        for (output, count) in counts.iter().enumerate() {
+            if *count == 0 {
+                return Err(AdmissionError::UnconsumedOutput {
+                    producer: u32::try_from(producer).unwrap_or(u32::MAX),
+                    output: u32::try_from(output).unwrap_or(u32::MAX),
+                });
+            }
+        }
+    }
+
+    Ok(Admitted {
+        manifest: Manifest { nodes: lowered },
+        identity,
+        frames,
+        injected,
+        calls,
+        declaration,
+    })
 }
 
 /// The two records one call resolves through, held as long as the
