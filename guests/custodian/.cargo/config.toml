@@ -1,0 +1,24 @@
+# Panic formatting is the only thing in a Rust guest that recurses: the
+# `core::fmt` machinery calls itself, which leaves the core call graph
+# cyclic and the deploy-time stack bound unprovable. `immediate-abort`
+# elides it, and the profile does not bend per toolchain.
+#
+# It carries the abort strategy with it, which is why the release profile
+# names none: `panic = "abort"` there would reach the crate's host builds
+# too, and a test binary is compiled to unwind whatever the profile says.
+[unstable]
+build-std = ["std", "panic_abort"]
+
+# The profile requires a declared memory maximum; 16 MiB = the profile's
+# 256-page ceiling.
+#
+# `--strip-all` drops the name section: its mangled symbols embed
+# crate-disambiguator hashes that cargo salts with the build host, and
+# a consensus artifact carries no debug payload.
+[target.wasm32-unknown-unknown]
+rustflags = [
+    "-C", "link-arg=--max-memory=16777216",
+    "-C", "link-arg=--strip-all",
+    "-Z", "unstable-options",
+    "-C", "panic=immediate-abort",
+]
