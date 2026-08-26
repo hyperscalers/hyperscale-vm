@@ -23,6 +23,7 @@ use hyperscale_vm_types::{
     Mode, Presence, PrincipalAddr, ResourceAddr,
 };
 
+use crate::auth::RuleBytes;
 use crate::dsl::{
     Clause, Condition, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs,
     PresentedGrants, Reach, evaluate_declaration, evaluate_expr, supports,
@@ -1931,6 +1932,57 @@ fn judge_prefixes(
     Ok(())
 }
 
+/// The requirement one entry puts on a frame speaking as `speaking_for`,
+/// or nothing where it demands nothing of it.
+///
+/// The one door every actor question goes through. What separates
+/// issuance, destruction and reach is where the entry is found — a
+/// declaration derives one, a presented record carries the other two —
+/// and from there they are one question asked three times: does the
+/// entry decode, does the frame's own claim already satisfy it, and what
+/// is left for the caller to answer.
+///
+/// Asking it in one place is what keeps the answer one answer. A
+/// composer predicts this to know what to present, so a site that
+/// subtracted where another did not would emit a graph admission
+/// refuses — and there is no way to notice that from either site alone.
+///
+/// # Errors
+///
+/// [`AdmissionError::Unadmitted`] where no entry admits the behaviour,
+/// and [`AdmissionError::EntryMalformed`] where the entry's bytes are
+/// not a rule an actor question may carry.
+fn injected_entry(
+    entry: Option<&RuleBytes>,
+    resource: ResourceAddr,
+    behaviour: GrantedBehaviour,
+    speaking_for: Option<Presented>,
+    node_index: u32,
+) -> Result<Option<Injected>, AdmissionError> {
+    let malformed = || AdmissionError::EntryMalformed {
+        node: node_index,
+        resource,
+        behaviour,
+    };
+    let sealed = entry.ok_or(AdmissionError::Unadmitted {
+        node: node_index,
+        resource,
+        behaviour,
+    })?;
+    let Some(rule) = behaviour
+        .demanded(sealed, speaking_for)
+        .map_err(|_| malformed())?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(Injected {
+        rule: judged_claims(&rule).ok_or_else(malformed)?,
+        asks: Asks::Entry(rule),
+        resource,
+        behaviour,
+    }))
+}
+
 /// Resolve the resource this frame issues, and inject the authority
 /// entries its direction is held to.
 ///
@@ -2053,28 +2105,14 @@ fn inject_issuance_rules(
             behaviour: GrantedBehaviour::Mint,
         })?;
         for behaviour in issuance.direction.behaviours() {
-            let malformed = || AdmissionError::EntryMalformed {
-                node: node_index,
+            let entry = injected_entry(
+                rules.get(*behaviour),
                 resource,
-                behaviour: *behaviour,
-            };
-            let sealed = rules.get(*behaviour).ok_or(AdmissionError::Unadmitted {
-                node: node_index,
-                resource,
-                behaviour: *behaviour,
-            })?;
-            let Some(rule) = behaviour
-                .demanded(sealed, Some(own))
-                .map_err(|_| malformed())?
-            else {
-                continue;
-            };
-            injected.push(Injected {
-                rule: judged_claims(&rule).ok_or_else(malformed)?,
-                asks: Asks::Entry(rule),
-                resource,
-                behaviour: *behaviour,
-            });
+                *behaviour,
+                Some(own),
+                node_index,
+            )?;
+            injected.extend(entry);
         }
     }
     Ok((granted, injected))
@@ -2114,41 +2152,25 @@ fn inject_destruction_rules(
                 param: *param,
             });
         };
-        let refused = || AdmissionError::Unadmitted {
-            node: node_index,
-            resource: *resource,
-            behaviour: GrantedBehaviour::Burn,
-        };
-        let malformed = || AdmissionError::EntryMalformed {
-            node: node_index,
-            resource: *resource,
-            behaviour: GrantedBehaviour::Burn,
-        };
-        let sealed = grants
-            .rules(*resource)
-            .and_then(|rules| rules.get(GrantedBehaviour::Burn))
-            .ok_or_else(refused)?;
+        // The frame speaks for itself here too, though it rarely is the
+        // party: an account destroying a token it holds is not the
+        // token's issuer, so a rule naming the issuer reaches the call
+        // and the caller answers for it.
+        let entry = injected_entry(
+            grants
+                .rules(*resource)
+                .and_then(|rules| rules.get(GrantedBehaviour::Burn)),
+            *resource,
+            GrantedBehaviour::Burn,
+            Presented::of_address(evidence_of),
+            node_index,
+        )?;
         granted.push(IssuanceGrant {
             resource: *resource,
             kind: content.kind(),
             direction: Issued::Burned,
         });
-        // The frame speaks for itself here too, though it rarely is the
-        // party: an account destroying a token it holds is not the
-        // token's issuer, so a rule naming the issuer reaches the call
-        // and the caller answers for it.
-        let Some(rule) = GrantedBehaviour::Burn
-            .demanded(sealed, Presented::of_address(evidence_of))
-            .map_err(|_| malformed())?
-        else {
-            continue;
-        };
-        injected.push(Injected {
-            rule: judged_claims(&rule).ok_or_else(malformed)?,
-            asks: Asks::Entry(rule),
-            resource: *resource,
-            behaviour: GrantedBehaviour::Burn,
-        });
+        injected.extend(entry);
     }
     Ok((granted, injected))
 }
@@ -2186,35 +2208,20 @@ fn inject_reach_rules(
         resource,
     } in wanted
     {
-        let malformed = || AdmissionError::EntryMalformed {
-            node: node_index,
-            resource,
-            behaviour,
-        };
-        let sealed = grants
-            .rules(resource)
-            .and_then(|rules| rules.get(behaviour))
-            .ok_or(AdmissionError::Unadmitted {
-                node: node_index,
-                resource,
-                behaviour,
-            })?;
         // The frame speaks for itself here as it does at every other
         // injected authority entry: an issuer whose own entry names it
         // is the authority, and asking it to prove it is asking for a
         // claim on a component, which only that component can mint.
-        let Some(rule) = behaviour
-            .demanded(sealed, Presented::of_address(reaching))
-            .map_err(|_| malformed())?
-        else {
-            continue;
-        };
-        injected.push(Injected {
-            rule: judged_claims(&rule).ok_or_else(malformed)?,
-            asks: Asks::Entry(rule),
+        let entry = injected_entry(
+            grants
+                .rules(resource)
+                .and_then(|rules| rules.get(behaviour)),
             resource,
             behaviour,
-        });
+            Presented::of_address(reaching),
+            node_index,
+        )?;
+        injected.extend(entry);
     }
     Ok(injected)
 }
