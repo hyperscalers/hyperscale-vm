@@ -36,11 +36,10 @@ use crate::invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall};
 use crate::manifest::{Bounds, Judged, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{PackageHash, PackageMetadata};
 use crate::presented::Presented;
-use crate::publish::{CheckedSignature, seals};
+use crate::publish::{CheckedSignature, founds_its_resource, seals};
 use crate::records::ChainRecords;
 use crate::resource::{
     GrantedBehaviour, ResourceKind, granting_issued_resource, holdings_collection,
-    resource_record_key,
 };
 use crate::route::FrameDeclaration;
 use crate::rule::{Holding, Rule, SealedLeaf, StoredRule, never};
@@ -1522,7 +1521,7 @@ impl Lower<'_> {
         // to the call. Before evidence, because what a caller must
         // present is a property of the conditions the frame carries.
         let (mut issues, issuance) =
-            inject_issuance_rules(self.hasher, signature, target, config, frame, node_index)?;
+            inject_issuance_rules(self.hasher, signature, target, config, node_index)?;
         injected.extend(issuance);
         // Appended after them, so the index a body passes to a mint is
         // the position its own declaration fixed: a destruction names no
@@ -2092,7 +2091,6 @@ fn inject_issuance_rules(
     signature: &MethodSignature,
     target: Address,
     config: &[Value],
-    frame: &Declaration,
     node_index: u32,
 ) -> Result<(Vec<IssuanceGrant>, Vec<Injected>), AdmissionError> {
     let mut granted = Vec::with_capacity(signature.issues.len());
@@ -2119,14 +2117,16 @@ fn inject_issuance_rules(
         // founding its supply, and founding is not minting: the record's
         // own absent-door is the cap, so a resource granting no `Mint`
         // entry comes up holding what its creation says and can never
-        // hold more. Read off the declaration rather than declared, on
-        // the terms the instantiation fence is — a node that writes the
-        // leaf is the creation itself.
-        let record = EffectTarget::Point(resource_record_key(hasher, target, resource));
-        let founding = frame.ordered.iter().any(|access| {
-            access.effect.target == record && matches!(access.effect.mode, Mode::Write { .. })
-        });
-        if founding {
+        // hold more.
+        //
+        // Asked of the signature, which is where publish asks it. The
+        // exemption is the one thing standing between an issuance and
+        // the entry that governs it, so the two sides deciding it
+        // separately is the two sides disagreeing about who may mint:
+        // publish holds a founding clause to naming this issuance's own
+        // `SelfResource`, and an evaluated key matching the record is a
+        // weaker thing to be — a caller-named argument reaches it too.
+        if founds_its_resource(issuance, signature) {
             continue;
         }
         // A resource is not an acting identity, so a target that issues

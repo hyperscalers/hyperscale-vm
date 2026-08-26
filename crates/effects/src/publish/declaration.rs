@@ -1588,6 +1588,70 @@ mod tests {
         );
     }
 
+    /// Founding is the frame writing *this issuance's own* record, and
+    /// nothing that merely lands on the same cell.
+    ///
+    /// The exemption is the whole of what stands between an issuance and
+    /// the entry that governs it, so what counts as founding decides who
+    /// may mint. A clause whose material is a caller's argument reaches
+    /// the record when the caller names it — and if that were founding,
+    /// a caller could take the exemption a package wrote for its own
+    /// creation call.
+    ///
+    /// Admission asks this same predicate, so the strictness here is the
+    /// strictness there.
+    #[test]
+    fn founding_is_the_frame_writing_its_own_record_and_not_a_caller_reaching_it() {
+        let issuance = || Issuance {
+            mark: b"unit".to_vec(),
+            kind: ResourceKind::Fungible,
+            direction: Issued::Minted,
+            grants: minting(),
+        };
+        let record = |material: Vec<Expr>| MethodSignature {
+            issues: vec![issuance()],
+            effects: vec![Clause::Effect {
+                reach: None,
+                guard: None,
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: SlotRef::Fixed(RESOURCE),
+                    material,
+                }),
+                mode: ModeExpr::Write { moves: Moves::Both },
+                denomination: None,
+            }],
+            ..MethodSignature::default()
+        };
+
+        let own = vec![Expr::SelfResource {
+            kind: ResourceKind::Fungible,
+            grants: minting(),
+            material: vec![Expr::Literal(Value::Bytes(b"unit".to_vec()))],
+        }];
+        assert!(
+            founds_its_resource(&issuance(), &record(own)),
+            "the frame writes the record its own issuance derives"
+        );
+
+        // The same cell, named by whatever the caller passed.
+        assert!(
+            !founds_its_resource(&issuance(), &record(vec![Expr::Arg(0)])),
+            "a caller-named argument reaches the cell without being the creation"
+        );
+
+        // And a mark that is not this issuance's own.
+        let other = vec![Expr::SelfResource {
+            kind: ResourceKind::Fungible,
+            grants: minting(),
+            material: vec![Expr::Literal(Value::Bytes(b"other".to_vec()))],
+        }];
+        assert!(
+            !founds_its_resource(&issuance(), &record(other)),
+            "founding one resource is not founding the next"
+        );
+    }
+
     /// A mint is justified by a condition the same declaration carries,
     /// or it does not publish: identity takes the stored rule, a badge
     /// takes that plus possession keyed by the same expression.
