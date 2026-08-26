@@ -530,6 +530,26 @@ pub enum AdmissionError {
         /// The prefix it reached for.
         owner: Address,
     },
+    /// A frame reaching under an authority and naming its own prefix.
+    ///
+    /// A reaching access carries no injected movement requirement of any
+    /// kind, because the party reached is by construction the one every
+    /// requirement would fire against. Where that party is the frame
+    /// itself the exemption has nothing to justify it: the access does
+    /// what a plain access does and is judged by less, so a component
+    /// would be exempt from the entries of the very resources it holds.
+    ///
+    /// Refused at publish where the owner is spelled `SelfAddr`, and
+    /// here for every other spelling — which is all of them that matter,
+    /// since a reach names its owner by argument and publish sees an
+    /// expression rather than an address.
+    #[error("node {node} reaches under an authority at effect {clause} and names its own prefix")]
+    ReachesItself {
+        /// The manifest node whose frame reached it.
+        node: u32,
+        /// Which of the frame's evaluated effects it is, in clause order.
+        clause: u32,
+    },
     /// The capability table outgrew the index a handle is named by.
     #[error("the capability table exceeds the addressable handle space")]
     TableOverflow,
@@ -1170,7 +1190,7 @@ impl Lower<'_> {
                 node: node_index,
                 source,
             })?;
-        own_prefix_only(&frame, node.target.address(), node_index)?;
+        judge_prefixes(&frame, node.target.address(), node_index)?;
         let fence = self.fence(node.target, &mut frame)?;
         let (issues, injected) = self.inject(
             signature,
@@ -1847,43 +1867,59 @@ fn project_outputs(
     Ok(node_outputs)
 }
 
-/// Refuse a frame declaring an effect on a prefix that is not its own.
+/// Refuse a frame whose declared prefix does not answer to the
+/// authority it claimed.
 ///
-/// A declaration bounds what execution may touch; this bounds what a
-/// declaration may claim. Without it the two are the same sentence read
-/// twice, and a package reaches any cell it can name — a stranger's
-/// balance among them — with no method's accessibility in the path,
-/// because reaching for a cell is not calling the object that owns it.
+/// One rule with two halves, and they are the same sentence read in
+/// both directions: **an access reaching under no authority names its
+/// own prefix, and an access reaching under one names another's.**
 ///
-/// Judged on the evaluated effect rather than on the expression that
-/// produced it. The publish gate refuses the expression, so an author
-/// hears about it first; this cannot be outgrown by an expression shape
-/// nobody anticipated, because an effect either carries the frame's own
-/// owner or it does not.
+/// The first half is what bounds a declaration. Without it a package
+/// reaches any cell it can name — a stranger's balance among them —
+/// with no method's accessibility in the path, because reaching for a
+/// cell is not calling the object that owns it.
+///
+/// The second is what keeps the reach from being a way out of the
+/// injections. A reaching access earns no movement requirement of any
+/// kind, which is right where the party reached is the one every
+/// requirement would fire against and wrong where that party is the
+/// frame itself: a component naming its own prefix under an authority
+/// would be exempt from its own resources' entries while doing nothing
+/// a plain access could not do.
+///
+/// Both halves are judged on the evaluated effect rather than on the
+/// expression that produced it, and the second is the reason that
+/// matters. The publish gate refuses an owner spelled `SelfAddr`, so an
+/// author hears about it first — but every reach names its owner by
+/// argument, so publish sees an expression rather than an address and
+/// only the evaluated effect can answer.
 ///
 /// The nullifier a bound subintent spends is not judged here: it sits
 /// under its signer's prefix, no signature declared it, and it reaches
 /// the routing view as a kernel effect rather than through any frame.
-fn own_prefix_only(
+fn judge_prefixes(
     declaration: &Declaration,
     instance: Address,
     node_index: u32,
 ) -> Result<(), AdmissionError> {
     for (position, access) in declaration.ordered.iter().enumerate() {
-        // A reaching access says which authority lets it name somebody
-        // else's prefix, and the entry that authority names is injected
-        // beside it — so the question here is only whether an access
-        // that claimed no authority stayed home.
-        if access.reach.is_some() {
-            continue;
-        }
+        let clause = u32::try_from(position).unwrap_or(u32::MAX);
         let owner = access.effect.target.owner();
-        if owner != instance {
-            return Err(AdmissionError::ForeignDeclaration {
-                node: node_index,
-                clause: u32::try_from(position).unwrap_or(u32::MAX),
-                owner,
-            });
+        match (access.reach.is_some(), owner == instance) {
+            (false, false) => {
+                return Err(AdmissionError::ForeignDeclaration {
+                    node: node_index,
+                    clause,
+                    owner,
+                });
+            }
+            (true, true) => {
+                return Err(AdmissionError::ReachesItself {
+                    node: node_index,
+                    clause,
+                });
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -2194,7 +2230,7 @@ fn inject_reach_rules(
 /// name it, since a rule asked twice is one question. Each holding
 /// resolves against the access's own owner, and the read it names is
 /// appended so the state is provisioned wherever the call runs — the
-/// owner is the frame's own instance, which `own_prefix_only` has already
+/// owner is the frame's own instance, which [`judge_prefixes`] has already
 /// held every access to, so nothing here adds a participant.
 fn inject_movement_rules(
     hasher: &dyn Hasher,

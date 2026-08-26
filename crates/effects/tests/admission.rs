@@ -1259,6 +1259,80 @@ fn bailiff_world() -> (Records, ComponentAddr) {
     (chain, issuer)
 }
 
+/// A reach names somebody else's prefix, and the frame's own is
+/// somebody else's to nobody.
+///
+/// The exemption is what makes this matter rather than the naming. A
+/// reaching access earns no injected movement requirement at all —
+/// right where the party reached is the one every requirement would
+/// fire against, and an escape hatch where that party is the frame
+/// itself. Judged on the evaluated owner because a reach names its
+/// owner by argument, so the publish gate sees an expression and only
+/// this can see an address.
+#[test]
+fn a_reach_may_not_name_the_reaching_instance_s_own_prefix() {
+    let record = seizable_meta();
+    let seized = record.address(&TestHasher);
+    let (chain, issuer) = bailiff_world();
+    let presented = PresentedGrants::from_presented(&TestHasher, std::slice::from_ref(&record));
+    let reaching = |owner: Address| ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE.into(),
+                method: "authorize".into(),
+                args: vec![],
+                evidence: [EvidenceRef::IntentSignature].into(),
+            },
+            GraphNode {
+                target: issuer.into(),
+                method: "seize".into(),
+                args: vec![
+                    GraphArg::Literal(Value::Address(owner)),
+                    GraphArg::Literal(Value::U64(u64::from(VAULT.0))),
+                    GraphArg::Literal(Value::Address(seized.address())),
+                ],
+                evidence: [EvidenceRef::Node(0)].into(),
+            },
+            GraphNode {
+                target: ALICE.into(),
+                method: "deposit".into(),
+                args: vec![GraphArg::Edge {
+                    edge: EdgeRef {
+                        producer: 1,
+                        output: 0,
+                    },
+                    constraints: Vec::new(),
+                }],
+                evidence: BTreeSet::default(),
+            },
+        ],
+    };
+
+    // Somebody else's prefix, which is what the authority is for.
+    assert!(
+        admit_presenting(
+            &reaching(BOB.address()),
+            ALICE,
+            &chain,
+            &presented,
+            &TestHasher
+        )
+        .is_ok()
+    );
+
+    // Its own, which the authority says nothing about.
+    assert_eq!(
+        admit_presenting(
+            &reaching(issuer.address()),
+            ALICE,
+            &chain,
+            &presented,
+            &TestHasher
+        ),
+        Err(AdmissionError::ReachesItself { node: 1, clause: 0 }),
+    );
+}
+
 #[test]
 fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
     let record = seizable_meta();
