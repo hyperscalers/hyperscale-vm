@@ -12,7 +12,7 @@ pub mod interp;
 pub mod module;
 pub mod ops;
 
-pub use component::{CVal, HandleKind, RefComponent, RefComponentInstance};
+pub use component::{CVal, HandleKind, HostFn, RefComponent, RefComponentInstance};
 pub use error::{DecodeError, InstantiateError, Trap};
 pub use interp::{CanonError, ExecError, MAX_CALL_DEPTH, RefInstance};
 pub use module::{RefModule, translate};

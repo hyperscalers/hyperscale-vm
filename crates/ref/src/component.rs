@@ -115,11 +115,11 @@ impl From<&GuestArg<'_>> for CVal {
 
 /// A kernel-world import, one variant per function the world declares.
 ///
-/// Named for the function itself, so the mapping in
-/// [`RefComponent::host_fn`] is the only place the world's spelling and
-/// this crate's meet.
+/// Named for the function itself, so [`HostFn::named`] is the only place
+/// the world's spelling and this crate's meet.
+#[allow(missing_docs)] // one variant per world function; the world is the documentation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HostFn {
+pub enum HostFn {
     SiteGet,
     SiteSet,
     SiteClear,
@@ -157,55 +157,110 @@ enum HostFn {
     SiteDeclared,
 }
 
-/// How many core parameters one kernel operation takes.
-const fn host_params(op: HostFn) -> usize {
-    match op {
-        // The grant is the invocation's, so a burn names the bucket it
-        // consumes and nothing else; a site's own count names the site.
-        HostFn::Burn | HostFn::SiteLen => 1,
-        // Every site operation names the site and the element it acts on
-        // before anything of its own. A take's bucket comes back as a
-        // flat handle, so it costs no return-area pointer where the read
-        // beside it needs one for the amount — which is why each take
-        // counts one lower than the read it stands next to.
-        HostFn::SiteCount
-        | HostFn::SiteCovered
-        | HostFn::SiteReserveTake
-        | HostFn::SiteClear
-        | HostFn::SiteSeal
-        | HostFn::SiteDeclared
-        | HostFn::BucketAmount
-        | HostFn::BucketPut => 2,
-        // An issue names the grant it draws on before what it creates —
-        // an amount flattening to two, an id list to a pointer and a
-        // count.
-        HostFn::SiteGet
-        | HostFn::SiteBalance
-        | HostFn::SiteRemove
-        | HostFn::SitePut
-        | HostFn::SiteOpenSeal
-        | HostFn::BucketTake
-        | HostFn::Mint
-        | HostFn::MintInstances
-        | HostFn::Hash
-        | HostFn::Emit => 3,
-        HostFn::SiteSet
-        | HostFn::SiteTake
-        | HostFn::SiteOrder
-        | HostFn::SiteEntry
-        | HostFn::SiteInstanceTake => 4,
-        HostFn::SiteInstancePut | HostFn::SiteEntrySet => 5,
-        HostFn::SiteInsert => 6,
-        // A `wide` flattens to four `i64`s, and a result wider
-        // than one flat value travels through a return pointer
-        // the caller appends: `fraction-cmp` returns an enum and
-        // so has none, and every other arm here does.
-        HostFn::FixedPow => 7,
-        HostFn::BucketSplit | HostFn::GeometricMean => 9,
-        HostFn::MulDiv => 14,
-        HostFn::FractionCmp => 16,
-        HostFn::FractionCompose => 17,
-        HostFn::Clock => 0,
+impl HostFn {
+    /// The import an interface and a function name resolve to, where the
+    /// world declares one.
+    ///
+    /// The one place the world's spelling and this crate's meet, which
+    /// is what `host_surface` holds the world to.
+    #[must_use]
+    pub fn named(interface: &str, name: &str) -> Option<Self> {
+        match (interface, name) {
+            ("state", "site-get") => Some(Self::SiteGet),
+            ("state", "site-set") => Some(Self::SiteSet),
+            ("state", "site-clear") => Some(Self::SiteClear),
+            ("state", "site-seal") => Some(Self::SiteSeal),
+            ("state", "site-open-seal") => Some(Self::SiteOpenSeal),
+            ("state", "site-balance") => Some(Self::SiteBalance),
+            ("state", "site-take") => Some(Self::SiteTake),
+            ("state", "site-put") => Some(Self::SitePut),
+            ("state", "site-reserve-take") => Some(Self::SiteReserveTake),
+            ("state", "site-count") => Some(Self::SiteCount),
+            ("state", "site-covered") => Some(Self::SiteCovered),
+            ("state", "site-order") => Some(Self::SiteOrder),
+            ("state", "site-entry") => Some(Self::SiteEntry),
+            ("state", "site-entry-set") => Some(Self::SiteEntrySet),
+            ("state", "site-insert") => Some(Self::SiteInsert),
+            ("state", "site-remove") => Some(Self::SiteRemove),
+            ("state", "site-instance-take") => Some(Self::SiteInstanceTake),
+            ("state", "site-instance-put") => Some(Self::SiteInstancePut),
+            ("state", "site-len") => Some(Self::SiteLen),
+            ("state", "site-declared") => Some(Self::SiteDeclared),
+            ("state", "bucket-take") => Some(Self::BucketTake),
+            ("state", "bucket-split") => Some(Self::BucketSplit),
+            ("state", "bucket-put") => Some(Self::BucketPut),
+            ("state", "bucket-amount") => Some(Self::BucketAmount),
+            ("state", "mint") => Some(Self::Mint),
+            ("state", "mint-instances") => Some(Self::MintInstances),
+            ("state", "burn") => Some(Self::Burn),
+            ("math", "mul-div") => Some(Self::MulDiv),
+            ("math", "geometric-mean") => Some(Self::GeometricMean),
+            ("math", "fraction-compose") => Some(Self::FractionCompose),
+            ("math", "fraction-cmp") => Some(Self::FractionCmp),
+            ("math", "fixed-pow") => Some(Self::FixedPow),
+            ("env", "clock") => Some(Self::Clock),
+            ("crypto", "hash") => Some(Self::Hash),
+            ("events", "emit") => Some(Self::Emit),
+            _ => None,
+        }
+    }
+
+    /// How many core parameters this operation takes, once the
+    /// canonical ABI has flattened its signature.
+    ///
+    /// `host_surface` computes the same number off the world file and
+    /// holds the two to each other, which is what makes an arity written
+    /// here by hand a build failure rather than a trap at a call.
+    #[must_use]
+    pub const fn params(self) -> usize {
+        match self {
+            // The grant is the invocation's, so a burn names the bucket it
+            // consumes and nothing else; a site's own count names the site.
+            Self::Burn | Self::SiteLen => 1,
+            // Every site operation names the site and the element it acts on
+            // before anything of its own. A take's bucket comes back as a
+            // flat handle, so it costs no return-area pointer where the read
+            // beside it needs one for the amount — which is why each take
+            // counts one lower than the read it stands next to.
+            Self::SiteCount
+            | Self::SiteCovered
+            | Self::SiteReserveTake
+            | Self::SiteClear
+            | Self::SiteSeal
+            | Self::SiteDeclared
+            | Self::BucketAmount
+            | Self::BucketPut => 2,
+            // An issue names the grant it draws on before what it creates —
+            // an amount flattening to two, an id list to a pointer and a
+            // count.
+            Self::SiteGet
+            | Self::SiteBalance
+            | Self::SiteRemove
+            | Self::SitePut
+            | Self::SiteOpenSeal
+            | Self::BucketTake
+            | Self::Mint
+            | Self::MintInstances
+            | Self::Hash
+            | Self::Emit => 3,
+            Self::SiteSet
+            | Self::SiteTake
+            | Self::SiteOrder
+            | Self::SiteEntry
+            | Self::SiteInstanceTake => 4,
+            Self::SiteInstancePut | Self::SiteEntrySet => 5,
+            Self::SiteInsert => 6,
+            // A `wide` flattens to four `i64`s, and a result wider
+            // than one flat value travels through a return pointer
+            // the caller appends: `fraction-cmp` returns an enum and
+            // so has none, and every other arm here does.
+            Self::FixedPow => 7,
+            Self::BucketSplit | Self::GeometricMean => 9,
+            Self::MulDiv => 14,
+            Self::FractionCmp => 16,
+            Self::FractionCompose => 17,
+            Self::Clock => 0,
+        }
     }
 }
 
@@ -716,46 +771,8 @@ impl RefComponent {
         let suffix = interface
             .rsplit_once('/')
             .map_or(interface.as_str(), |(_, s)| s);
-        match (suffix, name) {
-            ("state", "site-get") => Ok(HostFn::SiteGet),
-            ("state", "site-set") => Ok(HostFn::SiteSet),
-            ("state", "site-clear") => Ok(HostFn::SiteClear),
-            ("state", "site-seal") => Ok(HostFn::SiteSeal),
-            ("state", "site-open-seal") => Ok(HostFn::SiteOpenSeal),
-            ("state", "site-balance") => Ok(HostFn::SiteBalance),
-            ("state", "site-take") => Ok(HostFn::SiteTake),
-            ("state", "site-put") => Ok(HostFn::SitePut),
-            ("state", "site-reserve-take") => Ok(HostFn::SiteReserveTake),
-            ("state", "site-count") => Ok(HostFn::SiteCount),
-            ("state", "site-covered") => Ok(HostFn::SiteCovered),
-            ("state", "site-order") => Ok(HostFn::SiteOrder),
-            ("state", "site-entry") => Ok(HostFn::SiteEntry),
-            ("state", "site-entry-set") => Ok(HostFn::SiteEntrySet),
-            ("state", "site-insert") => Ok(HostFn::SiteInsert),
-            ("state", "site-remove") => Ok(HostFn::SiteRemove),
-            ("state", "site-instance-take") => Ok(HostFn::SiteInstanceTake),
-            ("state", "site-instance-put") => Ok(HostFn::SiteInstancePut),
-            ("state", "site-len") => Ok(HostFn::SiteLen),
-            ("state", "site-declared") => Ok(HostFn::SiteDeclared),
-            ("state", "bucket-take") => Ok(HostFn::BucketTake),
-            ("state", "bucket-split") => Ok(HostFn::BucketSplit),
-            ("state", "bucket-put") => Ok(HostFn::BucketPut),
-            ("state", "bucket-amount") => Ok(HostFn::BucketAmount),
-            ("state", "mint") => Ok(HostFn::Mint),
-            ("state", "mint-instances") => Ok(HostFn::MintInstances),
-            ("state", "burn") => Ok(HostFn::Burn),
-            ("math", "mul-div") => Ok(HostFn::MulDiv),
-            ("math", "geometric-mean") => Ok(HostFn::GeometricMean),
-            ("math", "fraction-compose") => Ok(HostFn::FractionCompose),
-            ("math", "fraction-cmp") => Ok(HostFn::FractionCmp),
-            ("math", "fixed-pow") => Ok(HostFn::FixedPow),
-            ("env", "clock") => Ok(HostFn::Clock),
-            ("crypto", "hash") => Ok(HostFn::Hash),
-            ("events", "emit") => Ok(HostFn::Emit),
-            _ => Err(DecodeError::Unsupported(format!(
-                "kernel import {interface}#{name}"
-            ))),
-        }
+        HostFn::named(suffix, name)
+            .ok_or_else(|| DecodeError::Unsupported(format!("kernel import {interface}#{name}")))
     }
 
     fn record_canon(&mut self, canon: &CanonicalFunction) -> Result<(), DecodeError> {
@@ -870,7 +887,7 @@ fn host_param_count(comp: &RefComponent, id: u32) -> Result<usize, DecodeError> 
             .get(*func as usize)
             .ok_or_else(|| DecodeError::Malformed("component func index".to_string()))?
         {
-            CompFunc::Host(op) => Ok(host_params(*op)),
+            CompFunc::Host(op) => Ok(HostFn::params(*op)),
             CompFunc::Lifted { .. } => Ok(0),
         },
         CoreFuncDef::Alias { .. } => Err(DecodeError::Malformed(
@@ -1899,7 +1916,7 @@ impl<H: KernelHost> CanonDispatch for KernelCanon<'_, H> {
             // acts on before anything of its own, so the arity is the
             // operation's alone.
             CoreFuncDef::Lower { func, .. } => match self.comp.comp_funcs[*func as usize] {
-                CompFunc::Host(op) => host_params(op),
+                CompFunc::Host(op) => HostFn::params(op),
                 CompFunc::Lifted { .. } => 0,
             },
             CoreFuncDef::Alias { .. } => unreachable!("aliases resolve to wasm addresses"),

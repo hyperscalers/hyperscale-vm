@@ -370,6 +370,20 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Host("site-put")],
         ),
         (
+            "site-len",
+            |p| {
+                let _ = meter::site_len(p, 0);
+            },
+            vec![Host("site-len")],
+        ),
+        (
+            "site-declared",
+            |p| {
+                let _ = meter::site_declared(p, 0, 0);
+            },
+            vec![Host("site-declared")],
+        ),
+        (
             "site-reserve-take",
             |p| {
                 let _ = meter::site_reserve_take(p, 0, 0);
