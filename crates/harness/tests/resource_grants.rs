@@ -115,7 +115,7 @@ fn governed_tree(entry: RuleBytes) -> Result<EnvelopeTree> {
     };
     build(&mut root).context("the withdrawal types against the account")?;
     env.resource(governed_meta(entry));
-    env.seal(root).context("the root grants")?;
+    env.seal(root).context("the root grants")?.none()?;
     env.build().context("the tree builds")
 }
 
@@ -193,7 +193,7 @@ fn an_unpresented_record_refuses_at_admission() -> Result<()> {
     };
     build(&mut root).context("the withdrawal types")?;
     let mut env = env;
-    env.seal(root).context("the root grants")?;
+    env.seal(root).context("the root grants")?.none()?;
     let tree = env.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
     assert!(
@@ -227,7 +227,7 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     }));
     assert_ne!(forged.address(&TestHasher), governed(entry));
     env.resource(forged);
-    env.seal(root).context("the root grants")?;
+    env.seal(root).context("the root grants")?.none()?;
     let tree = env.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
     assert!(
@@ -300,7 +300,7 @@ fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
     };
     build(&mut root).context("the transfer types")?;
     env.resource(governed_meta(entry.clone()));
-    env.seal(root).context("the root grants")?;
+    env.seal(root).context("the root grants")?.none()?;
     let tree = env.build().context("the tree builds")?;
 
     let sent = batch_entry(&tree, HOLDER)?;
@@ -476,7 +476,7 @@ fn admitted_tree(entry: RuleBytes, recipient: PrincipalAddr) -> Result<EnvelopeT
     };
     build(&mut root).context("the transfer types against the account")?;
     env.resource(admitting_meta(entry));
-    env.seal(root).context("the root grants")?;
+    env.seal(root).context("the root grants")?.none()?;
     env.build().context("the tree builds")
 }
 

@@ -530,11 +530,11 @@ fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeErr
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR);
     let registrar = account::authorize(&mut root, REGISTRAR)?;
     let offered = root.offer(registrar);
-    let [wants] = env
+    let wants = env
         .present(ALICE, request)?
-        .try_into()
+        .one()
         .expect("the request declares one socket");
-    env.seal(root)?;
+    env.seal(root)?.none()?;
     env.bind(wants, offered);
     env.build()
 }

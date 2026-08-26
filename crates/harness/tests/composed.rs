@@ -60,15 +60,15 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
     let paid_y = sub.export(funds);
     account::deposit(&mut sub, BOB, taken).expect("deposit types");
 
-    let [wants_y] = env
+    let wants_y = env
         .seal(root)
         .expect("the root discharges its declaration")
-        .try_into()
+        .one()
         .expect("the root declares one parameter");
-    let [wants_x] = env
+    let wants_x = env
         .seal(sub)
         .expect("the subintent discharges its declaration")
-        .try_into()
+        .one()
         .expect("the subintent declares one parameter");
     env.bind(wants_y, paid_y);
     env.bind(wants_x, paid_x);

@@ -95,6 +95,17 @@ pub enum EnvelopeError {
         /// Its position in the declaration.
         socket: u32,
     },
+    /// Open sockets unpacked into a different arity than the intent
+    /// declares.
+    #[error("intent {intent} declares {declared} sockets, unpacked as {claimed}")]
+    SocketArity {
+        /// The declaring intent.
+        intent: u32,
+        /// The intent's declared socket count.
+        declared: usize,
+        /// The arity the composer unpacked into.
+        claimed: usize,
+    },
     /// An intent declaring more sockets than admission accepts.
     #[error("intent {intent} declares more than {MAX_SOCKETS} sockets")]
     TooManySockets {
@@ -124,6 +135,84 @@ pub struct OpenSocket {
     envelope: u64,
     intent: u32,
     position: u32,
+}
+
+/// The open sockets an intent enters an envelope with, in declaration
+/// order — what [`EnvelopeBuilder::seal`] and [`EnvelopeBuilder::present`]
+/// answer.
+///
+/// The declared count is the intent's, so the composer unpacks by
+/// asserting it: [`one`](Self::one) for the common single socket,
+/// [`into_array`](Self::into_array) to destructure several,
+/// [`none`](Self::none) to discharge an intent declaring none. A wrong
+/// count is [`EnvelopeError::SocketArity`] at the unpack rather than a
+/// miswired binding at admission.
+#[must_use = "every open socket must be bound for the envelope to build"]
+pub struct Sockets {
+    intent: u32,
+    sockets: Vec<OpenSocket>,
+}
+
+impl Sockets {
+    /// How many sockets the intent declared.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.sockets.len()
+    }
+
+    /// Whether the intent declared no sockets.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.sockets.is_empty()
+    }
+
+    /// Unpack into an array, most often by destructuring — `let [wants,
+    /// approval] = ….into_array()?` — which is where `N` comes from.
+    ///
+    /// # Errors
+    ///
+    /// [`EnvelopeError::SocketArity`] when the intent declares some other
+    /// number of sockets.
+    pub fn into_array<const N: usize>(self) -> Result<[OpenSocket; N], EnvelopeError> {
+        let Self { intent, sockets } = self;
+        let declared = sockets.len();
+        sockets.try_into().map_err(|_| EnvelopeError::SocketArity {
+            intent,
+            declared,
+            claimed: N,
+        })
+    }
+
+    /// The single socket of an intent declaring one.
+    ///
+    /// # Errors
+    ///
+    /// [`EnvelopeError::SocketArity`] when the intent declares some other
+    /// number of sockets.
+    pub fn one(self) -> Result<OpenSocket, EnvelopeError> {
+        let [socket] = self.into_array()?;
+        Ok(socket)
+    }
+
+    /// Every socket the intent declared, in declaration order.
+    ///
+    /// What a composer wants where the count is the declaration's answer
+    /// rather than a number the composing site knows.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<OpenSocket> {
+        self.sockets
+    }
+
+    /// Discharge an intent that declares no sockets.
+    ///
+    /// # Errors
+    ///
+    /// [`EnvelopeError::SocketArity`] when the intent declares one, which
+    /// would then go unbound.
+    pub fn none(self) -> Result<(), EnvelopeError> {
+        let [] = self.into_array()?;
+        Ok(())
+    }
 }
 
 /// What one intent hands the composition to fill a socket with: an edge
@@ -401,8 +490,8 @@ impl<'a> EnvelopeBuilder<'a> {
         }
     }
 
-    /// Bind a declaration its signer already signed, answering one
-    /// [`OpenSocket`] per socket it declares, in declaration order.
+    /// Bind a declaration its signer already signed, answering its
+    /// [`Sockets`].
     ///
     /// This is what a subintent is for. The signer put their name to a
     /// graph over sockets before any composer existed; the composition
@@ -428,7 +517,7 @@ impl<'a> EnvelopeBuilder<'a> {
         &mut self,
         signer: PrincipalAddr,
         decl: IntentDecl,
-    ) -> Result<Vec<OpenSocket>, EnvelopeError> {
+    ) -> Result<Sockets, EnvelopeError> {
         let intent = u32::try_from(self.intents.len()).expect("intents fit an index");
         if decl.sockets.len() > MAX_SOCKETS {
             return Err(EnvelopeError::TooManySockets { intent });
@@ -441,8 +530,7 @@ impl<'a> EnvelopeBuilder<'a> {
         Ok(sockets)
     }
 
-    /// Seal an intent into the envelope, answering one [`OpenSocket`] per
-    /// socket it declared, in declaration order.
+    /// Seal an intent into the envelope, answering its [`Sockets`].
     ///
     /// # Errors
     ///
@@ -454,7 +542,7 @@ impl<'a> EnvelopeBuilder<'a> {
     /// # Panics
     ///
     /// On an intent from a different envelope, or one sealed twice.
-    pub fn seal(&mut self, intent: IntentBuilder<'a>) -> Result<Vec<OpenSocket>, EnvelopeError> {
+    pub fn seal(&mut self, intent: IntentBuilder<'a>) -> Result<Sockets, EnvelopeError> {
         assert_eq!(
             intent.envelope, self.id,
             "an intent must be sealed into the envelope that opened it"
@@ -490,14 +578,17 @@ impl<'a> EnvelopeBuilder<'a> {
 
     /// One open socket per socket `intent` declares, in declaration
     /// order.
-    fn open_sockets(&self, intent: u32, declared: usize) -> Vec<OpenSocket> {
-        (0..declared)
-            .map(|position| OpenSocket {
-                envelope: self.id,
-                intent,
-                position: u32::try_from(position).expect("bounded by MAX_SOCKETS"),
-            })
-            .collect()
+    fn open_sockets(&self, intent: u32, declared: usize) -> Sockets {
+        Sockets {
+            intent,
+            sockets: (0..declared)
+                .map(|position| OpenSocket {
+                    envelope: self.id,
+                    intent,
+                    position: u32::try_from(position).expect("bounded by MAX_SOCKETS"),
+                })
+                .collect(),
+        }
     }
 
     /// Fill a socket with what another intent offers — the edge it

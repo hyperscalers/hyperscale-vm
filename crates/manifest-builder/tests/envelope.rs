@@ -12,9 +12,7 @@ use hyperscale_vm_effects::{
     PackageHash, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, StoredRule,
     TestHasher, admit_tree,
 };
-use hyperscale_vm_manifest_builder::{
-    EnvelopeBuilder, EnvelopeError, IntentBuilder, OpenSocket, SocketRef,
-};
+use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder, SocketRef};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr, ResourceAddr};
 use proptest::prelude::{prop, proptest};
@@ -41,12 +39,6 @@ fn admits(tree: &EnvelopeTree) {
     admit_tree(tree, ALICE, identity, &chain, &TestHasher).expect("a composed envelope admits");
 }
 
-/// The single open socket of an intent declaring one.
-fn only(sockets: Vec<OpenSocket>) -> OpenSocket {
-    let [socket] = sockets.try_into().expect("one socket");
-    socket
-}
-
 /// The two-sided trade: each signer withdraws what they pay, exports it,
 /// and deposits what the other side yields. Neither graph mentions the
 /// other; the envelope is the two edges between them.
@@ -67,8 +59,8 @@ fn swap(pay_x: u128, pay_y: u128) -> Result<EnvelopeTree, EnvelopeError> {
     let paid_y = sub.export(funds);
     account::deposit(&mut sub, BOB, taken_x)?;
 
-    let wants_y = only(env.seal(root)?);
-    let wants_x = only(env.seal(sub)?);
+    let wants_y = env.seal(root)?.one()?;
+    let wants_x = env.seal(sub)?.one()?;
     env.bind(wants_y, paid_y);
     env.bind(wants_x, paid_x);
     env.build()
@@ -108,8 +100,8 @@ fn a_presented_declaration_is_carried_verbatim() {
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
     let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     let paid = root.export(funds);
-    let wants = only(env.present(BOB, request).unwrap());
-    env.seal(root).unwrap();
+    let wants = env.present(BOB, request).unwrap().one().unwrap();
+    env.seal(root).unwrap().none().unwrap();
     env.bind(wants, paid);
     let tree = env.build().unwrap();
 
@@ -128,12 +120,29 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
     let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut root, ALICE, funds).unwrap();
-    env.seal(root).unwrap();
+    env.seal(root).unwrap().none().unwrap();
     assert_eq!(
         env.build(),
         Err(EnvelopeError::UnfilledSocket {
             intent: 1,
             socket: 0
+        })
+    );
+}
+
+#[test]
+fn sockets_unpacked_at_the_wrong_arity_are_refused() {
+    let chain = world();
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
+    let wants = env.present(BOB, payment_request(100)).unwrap();
+    // The composer expected an intent declaring nothing; the count is the
+    // declaration's answer, not theirs.
+    assert_eq!(
+        wants.none(),
+        Err(EnvelopeError::SocketArity {
+            intent: 1,
+            declared: 1,
+            claimed: 0
         })
     );
 }
@@ -216,7 +225,7 @@ fn a_hole_the_composition_never_bound_is_refused() {
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     let taken = root.declare(RES_Y, []);
     account::deposit(&mut root, ALICE, taken).unwrap();
-    env.seal(root).unwrap();
+    let _wants = env.seal(root).unwrap();
     // The graph discharged its side of the declaration; the composition
     // never discharged its own.
     assert_eq!(
@@ -236,7 +245,7 @@ fn an_intent_still_under_construction_is_refused() {
     let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut root, BOB, funds).unwrap();
     let _sub = env.subintent(BOB);
-    env.seal(root).unwrap();
+    env.seal(root).unwrap().none().unwrap();
     assert_eq!(
         env.build(),
         Err(EnvelopeError::UnsealedIntent { intent: 1 })
@@ -250,7 +259,7 @@ fn a_handle_from_another_envelope_is_refused() {
     let (mut mine, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, BOB);
     let taken = root.declare(RES_X, []);
     account::deposit(&mut root, ALICE, taken).unwrap();
-    let wants = only(mine.seal(root).unwrap());
+    let wants = mine.seal(root).unwrap().one().unwrap();
 
     let (_theirs, mut other) = EnvelopeBuilder::new(&chain, &TestHasher, BOB);
     let bob_proof = account::authorize(&mut other, BOB).unwrap();
@@ -278,7 +287,7 @@ proptest! {
             paid.push(root.export(funds));
             account::deposit(&mut root, ALICE, taken).unwrap();
         }
-        let mut wiring = env.seal(root).unwrap();
+        let mut wiring = env.seal(root).unwrap().into_vec();
 
         for (index, (_, receive)) in legs.iter().enumerate() {
             let signer = PrincipalAddr::new([u8::try_from(index).unwrap() + 1; 31]);
@@ -288,7 +297,7 @@ proptest! {
     let funds = account::withdraw(&mut leg, signer_proof, RES_Y, *receive).unwrap();
             let yielded = leg.export(funds);
             account::deposit(&mut leg, signer, taken).unwrap();
-            let wants = only(env.seal(leg).unwrap());
+            let wants = env.seal(leg).unwrap().one().unwrap();
             env.bind(wiring.remove(0), yielded);
             env.bind(wants, paid.remove(0));
         }
@@ -352,8 +361,8 @@ fn approved(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK);
     let desk = account::authorize(&mut root, DESK)?;
     let offered = root.offer(desk);
-    let wants = only(env.present(BOB, request)?);
-    env.seal(root)?;
+    let wants = env.present(BOB, request)?.one()?;
+    env.seal(root)?.none()?;
     env.bind(wants, offered);
     env.resource(note_meta());
     env.build()
