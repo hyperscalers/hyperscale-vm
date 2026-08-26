@@ -18,7 +18,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{ALICE, BOB, pkg, world};
+use common::{ALICE, BOB, meta_granting, pkg, world};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, Claim, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg,
@@ -42,17 +42,12 @@ fn sealed(rule: &StoredRule) -> RuleBytes {
 }
 
 fn governed_meta() -> ResourceMeta {
-    let mut rules = ResourceGrants::new();
-    rules.set(
+    meta_granting(
+        ISSUER,
+        b"governed",
         GrantedBehaviour::Withdraw,
-        sealed(&StoredRule::held(BADGE, Holding::Balance)),
-    );
-    ResourceMeta {
-        namespace: ISSUER,
-        kind: ResourceKind::Fungible,
-        material: vec![b"governed".to_vec()],
-        rules,
-    }
+        &StoredRule::held(BADGE, Holding::Balance),
+    )
 }
 
 fn governed() -> ResourceAddr {
@@ -62,17 +57,12 @@ fn governed() -> ResourceAddr {
 /// The same shape from the other end: a resource whose entry governs who
 /// may be credited rather than who may debit.
 fn admitting_meta() -> ResourceMeta {
-    let mut rules = ResourceGrants::new();
-    rules.set(
+    meta_granting(
+        ISSUER,
+        b"admitting",
         GrantedBehaviour::Deposit,
-        sealed(&StoredRule::held(BADGE, Holding::Balance)),
-    );
-    ResourceMeta {
-        namespace: ISSUER,
-        kind: ResourceKind::Fungible,
-        material: vec![b"admitting".to_vec()],
-        rules,
-    }
+        &StoredRule::held(BADGE, Holding::Balance),
+    )
 }
 
 /// The same again, granting a halt: an issuer who can stop a holder

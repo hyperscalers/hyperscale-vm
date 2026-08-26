@@ -15,13 +15,11 @@
 //! carries — the halt fence among them, since the party being reached
 //! is by construction the party each of those rules would refuse.
 
-use std::fmt::Write as _;
-
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_testing::{
     Chain, Component, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition, Verdict,
-    account, package, principal,
+    account, address_text, package, principal,
 };
 use security_guest::security;
 
@@ -124,15 +122,10 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
     // refused them or why.
     let told = refused.refused_as();
     assert!(told.contains("withdraw"), "the behaviour: {told}");
-    let hex = share
-        .address()
-        .to_bytes()
-        .iter()
-        .fold(String::new(), |mut text, byte| {
-            let _ = write!(text, "{byte:02x}");
-            text
-        });
-    assert!(told.contains(&hex), "the resource: {told}");
+    assert!(
+        told.contains(&address_text(share.address())),
+        "the resource: {told}"
+    );
     assert!(
         told.contains("not halted"),
         "and the question it asked: {told}"

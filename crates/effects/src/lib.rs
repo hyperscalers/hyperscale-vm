@@ -64,8 +64,8 @@ pub use envelope::{
     Subintent, SubintentHash, SubintentRecord, admit_tree, encode_tree, nullifier_key, route_tree,
 };
 pub use explain::{
-    explain, explain_admission, explain_admission_tree, explain_method, explain_refusal,
-    explain_requirements, explain_resource, grants_read_config,
+    address_text, explain, explain_admission, explain_admission_tree, explain_method,
+    explain_refusal, explain_requirements, explain_resource, grants_read_config,
 };
 pub use footprint::{
     DEPTH_UNITS, EXCLUSIVITY_FLOOR, SCAN_SEEK_ENTRIES, SPAN_UNITS, TARGET_UNITS, effect_units,

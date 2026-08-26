@@ -55,7 +55,8 @@ use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 /// test derives the addresses its instance issues, and the hasher it
 /// derives them under is one this crate already fixes.
 pub use hyperscale_vm_effects::{
-    AdmissionError, EvalError, GrantedBehaviour, ResourceKind, TestHasher, package_slot,
+    AdmissionError, EvalError, GrantedBehaviour, ResourceKind, TestHasher, address_text,
+    package_slot,
 };
 use hyperscale_vm_effects::{
     ChainRecords, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, PresentedGrants,

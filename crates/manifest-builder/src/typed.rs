@@ -776,6 +776,26 @@ impl<'a> TypedBuilder<'a> {
         self.graph.id()
     }
 
+    /// Build a whole graph in one closure: construct, write, emit.
+    ///
+    /// The shape every test that wants "a graph doing X" reaches for,
+    /// offered here so it is written once rather than per test file.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError`], from the closure's own calls or from
+    /// [`build`](Self::build).
+    pub fn compose(
+        chain: &'a dyn ChainRecords,
+        hasher: &'a dyn Hasher,
+        signer: PrincipalAddr,
+        write: impl FnOnce(&mut Self) -> Result<(), TypedError>,
+    ) -> Result<ManifestGraph, TypedError> {
+        let mut builder = Self::new(chain, hasher, signer);
+        write(&mut builder)?;
+        builder.build()
+    }
+
     fn append(
         &mut self,
         target: CallTarget,

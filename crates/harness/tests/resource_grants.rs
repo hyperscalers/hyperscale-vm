@@ -12,20 +12,23 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    AdmissionError, EnvelopeTree, GrantedBehaviour, Hasher, Holding, PackageHash,
-    PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
-    StoredRule, TestHasher, Totality, admit_tree, holdings_collection, never, route_tree,
+    AdmissionError, EnvelopeTree, GrantedBehaviour, Holding, Records, ResourceGrants, ResourceKind,
+    ResourceMeta, RuleBytes, StoredRule, TestHasher, Totality, admit_tree, holdings_collection,
+    never,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
 use hyperscale_vm_manifest_builder::{EnvelopeBuilder, TypedError};
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, account};
+use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, AddressClass, EffectTarget, Outcome, Presence, PrincipalAddr, ResourceAddr, TxHash,
+    Address, AddressClass, EffectTarget, Outcome, Presence, PrincipalAddr, ResourceAddr,
     UnmetCondition,
 };
 use wasmtime::Result;
-use wasmtime::error::{Context, ensure};
+use wasmtime::error::Context;
+
+mod common;
+use common::world::{account_lanes, account_world};
 
 /// The account that holds the granting resource.
 const HOLDER: PrincipalAddr = PrincipalAddr::new([0x61; 31]);
@@ -40,39 +43,15 @@ const fn env() -> EnvInputs {
     EnvInputs::unsealed(5_000)
 }
 
-fn account_pkg() -> PackageHash {
-    PackageHash(TestHasher.hash(b"package", &[b"account"]))
-}
-
 fn world() -> Records {
-    let mut chain = Records::new();
-    chain
-        .packages
-        .publish(account_pkg(), account::metadata())
-        .expect("the account publishes");
-    chain.instances.serve_principals(account_pkg());
-    chain
+    account_world()
 }
 
 fn batch_entry(tree: &EnvelopeTree, composer: PrincipalAddr) -> Result<BatchTx> {
-    let chain = world();
-    let identity = tree.hash(&TestHasher);
-    let admitted =
-        admit_tree(tree, composer, identity, &chain, &TestHasher).context("admission")?;
-    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
-    ensure!(routing.per_shard.len() == 1, "one shard");
-    Ok(
-        BatchTx::new(TxHash(identity.0), routing.declaration().clone(), env())
-            .with_calls(routing.calls),
-    )
+    common::world::batch_entry(&world(), tree, composer, env())
 }
 
-static LANES: LazyLock<Lanes> = LazyLock::new(|| {
-    let mut lanes = Lanes::new();
-    lanes.seed(account_pkg(), ACCOUNT_COMPONENT);
-    lanes.seed_native(account_pkg(), account::invoke);
-    lanes
-});
+static LANES: LazyLock<Lanes> = LazyLock::new(account_lanes);
 
 fn run(store: &MemoryStore, batch: &[BatchTx]) -> (BatchOutcome, MemoryStore) {
     run_lanes(&LANES, store, batch)

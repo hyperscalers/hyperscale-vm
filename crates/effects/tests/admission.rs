@@ -7,7 +7,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{ALICE, BOB, RES_X, payouts, pkg, resolver, shard_of, vault, world};
+use common::{ALICE, BOB, RES_X, meta_granting, payouts, pkg, resolver, shard_of, vault, world};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, HALT, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, AdmissionError, Claim, Clause, Condition, Constraint, EdgeRef, EvalError,
@@ -1685,18 +1685,12 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
 /// direction for an authority.
 /// The record of a resource whose `Recall` entry names [`ALICE`].
 fn seizable_meta() -> ResourceMeta {
-    let mut rules = ResourceGrants::new();
-    rules.set(
+    meta_granting(
+        Address::new([0x6A; 31], AddressClass::Component),
+        b"seized",
         GrantedBehaviour::Recall,
-        RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(ALICE)))
-            .expect("a rule within the caps encodes"),
-    );
-    ResourceMeta {
-        namespace: Address::new([0x6A; 31], AddressClass::Component),
-        kind: ResourceKind::Fungible,
-        material: vec![b"seized".to_vec()],
-        rules,
-    }
+        &StoredRule::claim(Claim::of_subject(ALICE)),
+    )
 }
 
 /// A world holding a package whose one method reaches value under a

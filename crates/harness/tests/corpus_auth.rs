@@ -73,7 +73,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("securify must complete; got {:?}", results[0]);
     };
-    let cell_bytes = rule_of(BOB).in_cell();
+    let cell_bytes = stored_rule(BOB).in_cell();
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
         Some(&Some(cell_bytes)),
@@ -142,8 +142,8 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
 fn chained_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(MAKER, RES_X), encode_amount(150).to_vec());
-    store.write(auth(ALICE), rule_of(BOB).in_cell());
-    store.write(auth(MAKER), rule_of(ALICE).in_cell());
+    store.write(auth(ALICE), stored_rule(BOB).in_cell());
+    store.write(auth(MAKER), stored_rule(ALICE).in_cell());
     store
 }
 
@@ -270,12 +270,6 @@ fn nobody_rule() -> RuleBytes {
     RuleBytes::try_from(&never()).expect("the empty threshold encodes")
 }
 
-/// One identity, as the rule a cell stores.
-fn rule_of(who: PrincipalAddr) -> RuleBytes {
-    RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(who)))
-        .expect("a rule within the vocabulary caps")
-}
-
 /// The split setup every recovery test starts from: Alice governs, Bob
 /// may replace her, the maker may enact a replacement early, and the
 /// corpus delay separates a replacement from the instant it may be
@@ -286,9 +280,9 @@ fn rule_of(who: PrincipalAddr) -> RuleBytes {
 fn recovered_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
-    store.write(auth(ALICE), rule_of(ALICE).in_cell());
-    store.write(own_cell(ALICE, 2), rule_of(BOB).in_cell());
-    store.write(own_cell(ALICE, 3), rule_of(MAKER).in_cell());
+    store.write(auth(ALICE), stored_rule(ALICE).in_cell());
+    store.write(own_cell(ALICE, 2), stored_rule(BOB).in_cell());
+    store.write(own_cell(ALICE, 3), stored_rule(MAKER).in_cell());
     store.write(own_cell(ALICE, 5), DAY_MS.to_le_bytes().to_vec());
     store
 }
@@ -377,7 +371,7 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
         panic!("propose must complete; got {:?}", results[0]);
     };
     let mut waiting = MemoryStore::new();
-    seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &rule_of(BOB), DAY_MS);
+    seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &stored_rule(BOB), DAY_MS);
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
         Some(&waiting.cell(own_cell(ALICE, 4))),
@@ -701,9 +695,9 @@ fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
     seed_authority(
         &mut store,
         ALICE,
-        &rule_of(ALICE),
-        &rule_of(BOB),
-        &rule_of(MAKER),
+        &stored_rule(ALICE),
+        &stored_rule(BOB),
+        &stored_rule(MAKER),
         u64::MAX,
     );
     let t0 = env().clock_ms;
@@ -754,9 +748,9 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     seed_authority(
         &mut store,
         ALICE,
-        &rule_of(ALICE),
-        &rule_of(BOB),
-        &rule_of(MAKER),
+        &stored_rule(ALICE),
+        &stored_rule(BOB),
+        &stored_rule(MAKER),
         u64::MAX,
     );
     let t0 = env().clock_ms;
@@ -866,7 +860,7 @@ fn confirmation_enacts_a_proposal_early() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(rule_of(BOB).in_cell())),
+        Some(&Some(stored_rule(BOB).in_cell())),
         "confirm promotes the proposal whole"
     );
 
@@ -882,7 +876,16 @@ const HOUR_MS: u64 = 3_600_000;
 /// Propose Bob for all three rules, naming `delay_ms` as the wait every
 /// replacement after this one serves.
 fn propose_at_delay(delay_ms: u64) -> ManifestGraph {
-    graph(|b| account::propose(b, ALICE, rule_of(BOB), rule_of(BOB), rule_of(BOB), delay_ms))
+    graph(|b| {
+        account::propose(
+            b,
+            ALICE,
+            stored_rule(BOB),
+            stored_rule(BOB),
+            stored_rule(BOB),
+            delay_ms,
+        )
+    })
 }
 
 /// The delay is the fourth thing a replacement replaces, and it starts
@@ -912,7 +915,7 @@ fn a_replacement_replaces_the_delay_too_and_not_before_it_is_enacted() {
         panic!("propose must complete; got {:?}", results[0]);
     };
     let mut waiting = MemoryStore::new();
-    seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &rule_of(BOB), HOUR_MS);
+    seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &stored_rule(BOB), HOUR_MS);
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
         Some(&waiting.cell(own_cell(ALICE, 4))),
@@ -955,7 +958,7 @@ fn a_replacement_replaces_the_delay_too_and_not_before_it_is_enacted() {
         panic!("the second propose must complete; got {:?}", results[0]);
     };
     let mut sooner = MemoryStore::new();
-    seed_pending(&mut sooner, ALICE, at + HOUR_MS, &rule_of(BOB), HOUR_MS);
+    seed_pending(&mut sooner, ALICE, at + HOUR_MS, &stored_rule(BOB), HOUR_MS);
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
         Some(&sooner.cell(own_cell(ALICE, 4))),
@@ -986,9 +989,9 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         account::propose(
             b,
             ALICE,
-            rule_of(MAKER),
-            rule_of(MAKER),
-            rule_of(MAKER),
+            stored_rule(MAKER),
+            stored_rule(MAKER),
+            stored_rule(MAKER),
             DAY_MS,
         )
     });
@@ -1007,7 +1010,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         &mut replaced,
         ALICE,
         later + DAY_MS,
-        &rule_of(MAKER),
+        &stored_rule(MAKER),
         DAY_MS,
     );
     assert_eq!(
@@ -1024,8 +1027,16 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     // account nobody has written to.
     let mut virtual_store = sealed_store();
     virtual_store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
-    let own_propose =
-        graph(|b| account::propose(b, ALICE, rule_of(BOB), rule_of(BOB), rule_of(BOB), DAY_MS));
+    let own_propose = graph(|b| {
+        account::propose(
+            b,
+            ALICE,
+            stored_rule(BOB),
+            stored_rule(BOB),
+            stored_rule(BOB),
+            DAY_MS,
+        )
+    });
     let (results, _) = run_both_signed(
         &world,
         &virtual_store,

@@ -1485,7 +1485,11 @@ fn bytes(raw: &[u8]) -> String {
 
 /// An address as its class and its whole body: a declaration's literals
 /// are few, and a truncated one names something a reader cannot check.
-fn address_text(address: Address) -> String {
+///
+/// Public because it is the one spelling every rendering uses, and the
+/// one a test matching rendered text should build expectations with.
+#[must_use]
+pub fn address_text(address: Address) -> String {
     format!("{}:{}", address.class(), hex(&address.to_bytes()))
 }
 

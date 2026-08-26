@@ -18,21 +18,19 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
-    AdmissionError, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, Hasher,
-    InstanceMeta, IntentDecl, ManifestGraph, PackageHash, PrefixShardResolver, Records,
-    ResourceMeta, ResourceRecord, TestHasher, Value, admit_tree, child_key, resource_record_key,
-    route_tree,
+    AdmissionError, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta,
+    IntentDecl, ManifestGraph, Records, ResourceMeta, ResourceRecord, TestHasher, Value,
+    admit_tree, child_key, resource_record_key,
 };
 use hyperscale_vm_fixtures::{FLASHLOAN_COMPONENT, flashloan};
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, account};
-use hyperscale_vm_types::{
-    AddressClass, ComponentAddr, Outcome, PrincipalAddr, ResourceAddr, TxHash,
-};
+use hyperscale_vm_stdlib::account;
+use hyperscale_vm_types::{AddressClass, ComponentAddr, Outcome, PrincipalAddr, ResourceAddr};
 use wasmtime::Result;
-use wasmtime::error::{Context, ensure};
+mod common;
+use common::world::{account_lanes, account_world, pkg};
 
 /// The borrower.
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -43,30 +41,18 @@ const fn env() -> EnvInputs {
     EnvInputs::unsealed(3_000)
 }
 
-fn account_pkg() -> PackageHash {
-    PackageHash(TestHasher.hash(b"package", &[b"account"]))
-}
-
-fn flashloan_pkg() -> PackageHash {
-    PackageHash(TestHasher.hash(b"package", &[b"flashloan"]))
-}
-
 fn world() -> Records {
-    let mut chain = Records::new();
+    let mut chain = account_world();
     chain
         .packages
-        .publish_unchecked(account_pkg(), account::metadata());
-    chain
-        .packages
-        .publish_unchecked(flashloan_pkg(), flashloan::metadata());
-    chain.instances.serve_principals(account_pkg());
+        .publish_unchecked(pkg("flashloan"), flashloan::metadata());
     chain.instances.create(&TestHasher, pool_meta());
     chain
 }
 
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
-        package: flashloan_pkg(),
+        package: pkg("flashloan"),
         config: vec![Value::Address(XRD.address())],
         salt: Hash32([2; 32]),
     }
@@ -134,10 +120,8 @@ fn funded_store() -> MemoryStore {
 }
 
 fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -> ManifestGraph {
-    let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    write(&mut b).expect("every call types against its signature");
-    b.build().expect("every output is consumed")
+    TypedBuilder::compose(&world(), &TestHasher, ALICE, write)
+        .expect("every call types and every output is consumed")
 }
 
 /// One intent, presenting the obligation's record — which a composer
@@ -156,23 +140,13 @@ fn intent(graph: ManifestGraph) -> EnvelopeTree {
 }
 
 fn batch_entry(world: &Records, tree: &EnvelopeTree, composer: PrincipalAddr) -> Result<BatchTx> {
-    let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(tree, composer, identity, world, &TestHasher).context("admission")?;
-    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
-    ensure!(
-        routing.per_shard.len() == 1,
-        "the null resolver routes to one shard"
-    );
-    let declaration = routing.declaration().clone();
-    Ok(BatchTx::new(TxHash(identity.0), declaration, env()).with_calls(routing.calls))
+    common::world::batch_entry(world, tree, composer, env())
 }
 
 static LANES: LazyLock<Lanes> = LazyLock::new(|| {
-    let mut lanes = Lanes::new();
-    lanes.seed(account_pkg(), ACCOUNT_COMPONENT);
-    lanes.seed(flashloan_pkg(), FLASHLOAN_COMPONENT);
-    lanes.seed_native(account_pkg(), account::invoke);
-    lanes.seed_native(flashloan_pkg(), flashloan::invoke);
+    let mut lanes = account_lanes();
+    lanes.seed(pkg("flashloan"), FLASHLOAN_COMPONENT);
+    lanes.seed_native(pkg("flashloan"), flashloan::invoke);
     lanes
 });
 

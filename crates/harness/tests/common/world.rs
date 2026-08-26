@@ -20,14 +20,14 @@ use hyperscale_vm_kernel::{
     MemoryStore, OverlayStore, Receipt, RunResult,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError, graph_records};
-use hyperscale_vm_stdlib::account;
+use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, account};
 use hyperscale_vm_types::{
     AbortReason, Address, CollectionId, ComponentAddr, Effect, EffectSet, EffectTarget, EntryKey,
     Mode, Outcome, PrincipalAddr, ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey,
     TxHash, encode_amount,
 };
 use wasmtime::Result;
-use wasmtime::error::{Error as WasmtimeError, ensure};
+use wasmtime::error::{Context, Error as WasmtimeError, ensure};
 
 pub const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 
@@ -73,6 +73,49 @@ pub fn env() -> EnvInputs {
 
 pub fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
+}
+
+/// The account alone: the world an account-seam test needs, with
+/// nothing else published to get in the way of its refusals. A test
+/// wanting more publishes beside it.
+pub fn account_world() -> Records {
+    let mut chain = Records::new();
+    chain
+        .packages
+        .publish(pkg("account"), account::metadata())
+        .expect("the account publishes");
+    chain.instances.serve_principals(pkg("account"));
+    chain
+}
+
+/// The lanes an account-only test starts from; a test seeds its own
+/// packages beside the account's.
+pub fn account_lanes() -> Lanes {
+    let mut lanes = Lanes::new();
+    lanes.seed(pkg("account"), ACCOUNT_COMPONENT);
+    lanes.seed_native(pkg("account"), account::invoke);
+    lanes
+}
+
+/// One admitted, routed batch entry over `world`, under the null
+/// resolver's single shard.
+pub fn batch_entry(
+    world: &Records,
+    tree: &EnvelopeTree,
+    composer: PrincipalAddr,
+    env: EnvInputs,
+) -> Result<BatchTx> {
+    let identity = tree.hash(&TestHasher);
+    let admitted = admit_tree(tree, composer, identity, world, &TestHasher).context("admission")?;
+    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
+    ensure!(
+        routing.per_shard.len() == 1,
+        "the null resolver routes to one shard"
+    );
+    Ok(
+        BatchTx::new(TxHash(identity.0), routing.declaration().clone(), env)
+            .with_calls(routing.calls),
+    )
 }
 
 /// The account's own quarantine vault for a resource — its second
@@ -847,9 +890,8 @@ pub fn graph_in(
     world: &Records,
     write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
 ) -> ManifestGraph {
-    let mut b = TypedBuilder::new(&world, &TestHasher, ALICE);
-    write(&mut b).expect("every call types against its signature");
-    b.build().expect("every output is consumed")
+    TypedBuilder::compose(world, &TestHasher, ALICE, write)
+        .expect("every call types and every output is consumed")
 }
 
 pub fn transfer_graph() -> ManifestGraph {

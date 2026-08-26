@@ -4,10 +4,11 @@
 
 pub use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    Clause, Expr, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestHash, MetadataCache,
-    MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
-    Records, ShardId, ShardResolver, SlotId, SlotRef, TargetExpr, TestHasher, Totality, Value,
-    child_key, package_slot,
+    Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestHash,
+    MetadataCache, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType,
+    PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, ShardId,
+    ShardResolver, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Totality, Value, child_key,
+    package_slot,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, payouts};
@@ -36,6 +37,28 @@ fn self_child(slot: SlotId, material: Vec<Expr>) -> Expr {
 }
 
 #[must_use]
+/// A fungible record granting one behaviour one rule, marked by the
+/// behaviour's own word — the fixture several files were each spelling
+/// for themselves.
+pub fn meta_granting(
+    namespace: Address,
+    mark: &[u8],
+    behaviour: GrantedBehaviour,
+    rule: &StoredRule,
+) -> ResourceMeta {
+    let mut rules = ResourceGrants::new();
+    rules.set(
+        behaviour,
+        RuleBytes::try_from(rule).expect("a rule within the caps encodes"),
+    );
+    ResourceMeta {
+        namespace,
+        kind: ResourceKind::Fungible,
+        material: vec![mark.to_vec()],
+        rules,
+    }
+}
+
 pub fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
 }

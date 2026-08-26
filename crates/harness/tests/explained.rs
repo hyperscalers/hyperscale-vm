@@ -14,26 +14,16 @@
 //! that reads it back is the injection itself: every requirement was
 //! built from something, and that something is kept beside it.
 
-use std::fmt::Write as _;
-
-use hyperscale_vm_effects::{Hash32, explain_refusal, explain_requirements};
+use hyperscale_vm_effects::{Hash32, address_text, explain_refusal, explain_requirements};
 use hyperscale_vm_types::{Address, Outcome, TxHash, UnmetCondition};
 
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
 use common::world::*;
 
-/// An address as the rendering spells one: its class, then its bytes.
+/// An address as the rendering spells one.
 fn addr(address: impl Into<Address>) -> String {
-    let address = address.into();
-    let hex = address
-        .to_bytes()
-        .iter()
-        .fold(String::new(), |mut text, byte| {
-            let _ = write!(text, "{byte:02x}");
-            text
-        });
-    format!("{}:{hex}", address.class())
+    address_text(address.into())
 }
 
 /// Every requirement the protocol put on the transaction, marked as the
