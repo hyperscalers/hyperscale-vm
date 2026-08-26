@@ -142,6 +142,16 @@ pub enum EnvelopeError {
         /// The record's position among the presented instances.
         instance: u32,
     },
+    /// A socket filled from the intent that declared it. Admission
+    /// refuses the shape as a cycle over the whole tree; here it is one
+    /// wiring, named against the intent the author wrote.
+    #[error("intent {intent} socket {socket} is filled from the intent that declared it")]
+    SelfFilledSocket {
+        /// The declaring intent, offering to itself.
+        intent: u32,
+        /// Its position in the declaration.
+        socket: u32,
+    },
     /// An intent's own graph refused to build or type.
     #[error(transparent)]
     Intent(#[from] TypedError),
@@ -672,6 +682,20 @@ impl<'a> EnvelopeBuilder<'a> {
             socket.envelope == self.id && offered.envelope == self.id,
             "a socket is filled within the envelope that opened it"
         );
+        // A socket is a dependency on another intent; one filled from
+        // its own would stall the interleave and die at admission as
+        // `CyclicSockets`, in coordinates the author never wrote.
+        if socket.intent == offered.intent {
+            let cause = EnvelopeError::SelfFilledSocket {
+                intent: socket.intent,
+                socket: socket.position,
+            };
+            return Err(BindRefusal {
+                socket,
+                offered,
+                cause,
+            });
+        }
         let slot = usize::try_from(socket.intent).expect("minted indices fit");
         let position = usize::try_from(socket.position).expect("bounded by MAX_SOCKETS");
         let declared = &self.intents[slot]

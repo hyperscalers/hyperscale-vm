@@ -333,6 +333,32 @@ fn a_handle_from_another_envelope_is_refused() {
     let _ = mine.bind(wants, elsewhere);
 }
 
+/// An intent filling its own socket used to build fine and die at
+/// admission as `CyclicSockets`, in flattened-tree coordinates. The
+/// wiring refuses it against the intent the author wrote — with the
+/// handles handed back, like every other wiring refusal.
+#[test]
+fn an_intent_filling_its_own_socket_is_refused_at_the_wiring() {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
+    let taken = root.declare(RES_X, []);
+    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
+    let funds = account::withdraw(&mut root, alice_proof, RES_X, 5).unwrap();
+    let paid = root.export(funds);
+    account::deposit(&mut root, ALICE, taken).unwrap();
+    let wants = env.seal(root).unwrap().one().unwrap();
+    let refused = env
+        .bind(wants, paid)
+        .expect_err("an intent cannot fill its own socket");
+    assert_eq!(
+        refused.cause,
+        EnvelopeError::SelfFilledSocket {
+            intent: 0,
+            socket: 0
+        }
+    );
+}
+
 /// A proof's node index means nothing in another intent's graph, and
 /// offering one across intents used to compile — surfacing at admission
 /// as a claim mismatch in flattened-tree coordinates. The handle
