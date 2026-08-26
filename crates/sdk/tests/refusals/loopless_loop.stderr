@@ -1,4 +1,4 @@
-error: this loop's body declares no access, so there is no site for the guest to walk and no element for it to read
+error: this loop's body declares no access, so there is no site for the guest to walk and no element for it to read — reach a declared cell inside it, or drop the loop, whose only effect on a declaration is the sites its body opens
   --> tests/refusals/loopless_loop.rs:19:13
    |
 19 |             for &row in &self.config().rows {

@@ -308,12 +308,17 @@ pub enum Code {
     /// A declared term. The guest reaches it only through an export
     /// parameter, so one is bound where a value is actually wanted and
     /// nowhere else — which is what keeps key material out of the ABI.
-    Term(Term),
+    ///
+    /// Carries where the body read it. A term is a shape rather than
+    /// syntax — the same `Arg(0)` is derived at every use — so nothing
+    /// about it names a line, and the expression it was read from is the
+    /// line a refusal about it belongs on.
+    Term(Span, Term),
     /// A bucket parameter, which the guest holds under the name the
     /// author gave it. Deferred like a term: an edge a method only
     /// forwards is one whose amount its own guest never reads, and
     /// nothing in its ABI carries it.
-    Bucket(u32),
+    Bucket(Span, u32),
     /// The instance's configuration record, whole. Deferred like a
     /// term: the record is fields the kernel evaluates one at a time, so
     /// a body that only projects it binds nothing and one that passes it
@@ -992,7 +997,7 @@ impl<'a> Lowerer<'a> {
             // An edge the method was handed and hands on: it carries the
             // resource the manifest routed it as, and forwarding one is
             // the case `check_abi` already admits.
-            Val::Term(term) if matches!(eval.code, Code::Bucket(_)) => Some(self.forwarded(term)),
+            Val::Term(term) if matches!(eval.code, Code::Bucket(..)) => Some(self.forwarded(term)),
             _ => None,
         };
         let code = self.value(eval.code);
@@ -1395,7 +1400,7 @@ impl<'a> Lowerer<'a> {
     fn edge_resource(eval: &Eval) -> Option<Term> {
         match &eval.val {
             Val::Produced(term) => Some(term.clone()),
-            Val::Term(term) if matches!(eval.code, Code::Bucket(_)) => {
+            Val::Term(term) if matches!(eval.code, Code::Bucket(..)) => {
                 Some(Term::ResourceOf(Box::new(term.clone())))
             }
             _ => None,
@@ -1505,7 +1510,7 @@ impl<'a> Lowerer<'a> {
             form: Form::Slot,
             span: call.span(),
         });
-        let record = self.need(&Need::Derived(Term::SelfRecord));
+        let record = self.need(call.span(), &Need::Derived(Term::SelfRecord));
         Eval::plain(quote!(#leaf.set(#record)))
     }
 
@@ -1744,7 +1749,7 @@ impl<'a> Lowerer<'a> {
             );
         };
         match (&eval.val, &eval.code) {
-            (Val::Term(edge), Code::Bucket(param)) => {
+            (Val::Term(edge), Code::Bucket(_, param)) => {
                 if !self
                     .params
                     .get(*param as usize)
@@ -2436,8 +2441,8 @@ impl<'a> Lowerer<'a> {
                     }
                 }
             }
-            Code::Term(term) => self.term_value(&term),
-            Code::Bucket(param) => self.need(&Need::Amount(param)),
+            Code::Term(span, term) => self.term_value(span, &term),
+            Code::Bucket(span, param) => self.need(span, &Need::Amount(param)),
             Code::Record(span) => self.config_record(span),
             Code::Absent(span, why) => {
                 // Only where nothing else has been said. Most values
@@ -2456,8 +2461,9 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// The guest code for a declared term.
-    fn term_value(&mut self, term: &Term) -> TokenStream {
+    /// The guest code for a declared term, refused on the line the body
+    /// read it from where the guest has no reach to it.
+    fn term_value(&mut self, span: Span, term: &Term) -> TokenStream {
         match term {
             Term::LitU64(value) => quote!(#value),
             Term::LitU128(value) => quote!(#value),
@@ -2466,8 +2472,8 @@ impl<'a> Lowerer<'a> {
                 // two halves itself rather than taking the packed key —
                 // which is what makes a price and a sequence id two
                 // parameters instead of one opaque cell.
-                let hi = self.term_value(hi);
-                let lo = self.term_value(lo);
+                let hi = self.term_value(span, hi);
+                let lo = self.term_value(span, lo);
                 quote!(::hyperscale_vm_sdk::state::pack(#hi, #lo))
             }
             // Everything the evaluator can reach from the call's own
@@ -2507,7 +2513,7 @@ impl<'a> Lowerer<'a> {
                 // ever bind.
                 if term.reads_element() {
                     self.error(
-                        Span::call_site(),
+                        span,
                         "this reads a `for-each` element, which exists only inside the \
                          evaluation of the loop that binds it — a body reaches an element \
                          as a key and never as a value. A package that needs the element \
@@ -2516,26 +2522,26 @@ impl<'a> Lowerer<'a> {
                     );
                     return quote!(::core::unimplemented!());
                 }
-                self.need(&Need::Derived(term.clone()))
+                self.need(span, &Need::Derived(term.clone()))
             }
             // A judgment has no guest representation, so what crosses is
             // its operands and the guest does the comparison — which is
             // what a body that branches on one was doing before the
             // declaration could read it.
             Term::Not(inner) => {
-                let inner = self.term_value(inner);
+                let inner = self.term_value(span, inner);
                 quote!(!#inner)
             }
-            Term::And(left, right) => self.judgment(left, right, &quote!(&&)),
-            Term::Or(left, right) => self.judgment(left, right, &quote!(||)),
-            Term::Eq(left, right) => self.judgment(left, right, &quote!(==)),
-            Term::Lt(left, right) => self.judgment(left, right, &quote!(<)),
+            Term::And(left, right) => self.judgment(span, left, right, &quote!(&&)),
+            Term::Or(left, right) => self.judgment(span, left, right, &quote!(||)),
+            Term::Eq(left, right) => self.judgment(span, left, right, &quote!(==)),
+            Term::Lt(left, right) => self.judgment(span, left, right, &quote!(<)),
             Term::List(elements) => {
-                let elements: Vec<_> = elements.iter().map(|e| self.term_value(e)).collect();
+                let elements: Vec<_> = elements.iter().map(|e| self.term_value(span, e)).collect();
                 quote!([#(#elements),*])
             }
             Term::Tuple(fields) => {
-                let fields: Vec<_> = fields.iter().map(|f| self.term_value(f)).collect();
+                let fields: Vec<_> = fields.iter().map(|f| self.term_value(span, f)).collect();
                 quote!((#(#fields),*))
             }
             // An element read as a value is read out of the list its loop
@@ -2546,20 +2552,19 @@ impl<'a> Lowerer<'a> {
                 let depth = *depth;
                 let Some(list) = self.binders.get(depth).map(|(_, list)| list.clone()) else {
                     self.error(
-                        Span::call_site(),
-                        "this reads a `for-each` element outside the loop that binds it",
+                        span,
+                        "this reads a `for-each` element outside the loop that binds it \
+                         — an element is a key inside its own loop and nothing outside it",
                     );
                     return quote!(::core::unimplemented!());
                 };
-                let held = self.need(&Need::Derived(list));
+                let held = self.need(span, &Need::Derived(list));
                 let at = element_index_ident(depth);
                 quote!(#held[#at as usize])
             }
             Term::NfBucket { .. } => {
-                // A term names no line of its own; the whole invocation
-                // is the nearest anchor.
                 self.error(
-                    Span::call_site(),
+                    span,
                     "an edge is a routable summary rather than a value: what it carries \
                      is the declaration's answer, and a body reaches it through the \
                      capability the edge justified",
@@ -2591,7 +2596,7 @@ impl<'a> Lowerer<'a> {
             .map(|(index, (field, _))| {
                 let slot =
                     u32::try_from(index).expect("a configuration record is shorter than u32");
-                let value = self.need(&Need::Derived(Term::Config(slot)));
+                let value = self.need(span, &Need::Derived(Term::Config(slot)));
                 let field = syn::Ident::new(field, span);
                 quote!(#field: #value)
             })
@@ -2600,15 +2605,15 @@ impl<'a> Lowerer<'a> {
     }
 
     /// One binary judgment, rebuilt over its operands' guest values.
-    fn judgment(&mut self, left: &Term, right: &Term, op: &TokenStream) -> TokenStream {
-        let left = self.term_value(left);
-        let right = self.term_value(right);
+    fn judgment(&mut self, span: Span, left: &Term, right: &Term, op: &TokenStream) -> TokenStream {
+        let left = self.term_value(span, left);
+        let right = self.term_value(span, right);
         quote!((#left #op #right))
     }
 
     /// The export parameter carrying `need`, binding one if the body has
     /// not needed it before.
-    fn need(&mut self, need: &Need) -> TokenStream {
+    fn need(&mut self, span: Span, need: &Need) -> TokenStream {
         // A value with no shape is one no export parameter can carry.
         // Refused here rather than at the emission, where it would land
         // on the macro as a missing trait impl instead of on the line
@@ -2620,7 +2625,7 @@ impl<'a> Lowerer<'a> {
             && self.errors.is_empty()
         {
             self.error(
-                Span::call_site(),
+                span,
                 "this value crosses the call boundary as nothing an export parameter can \
                  carry — a sequence crosses as the numbers it holds, and only a byte \
                  string crosses as the bytes a guest decodes",
@@ -2738,7 +2743,7 @@ impl<'a> Lowerer<'a> {
                 // it could reassign it, because a rebound name is no
                 // longer the term and the statement rebinding it needs
                 // somewhere to write.
-                let deferred = matches!(eval.code, Code::Term(_))
+                let deferred = matches!(eval.code, Code::Term(..))
                     && diverge.is_none()
                     && matches!(
                         unwrap_pat(&local.pat),
@@ -2960,12 +2965,13 @@ impl<'a> Lowerer<'a> {
                 self.error(
                     branch.if_token.span,
                     "the arms of this selection cross the call boundary as different \
-                     shapes, so no one export parameter can carry what it chooses",
+                     shapes, so no one export parameter can carry what it chooses — \
+                     give both arms the shape the value is used at",
                 );
             }
             return Eval {
                 val: Val::Term(term.clone()),
-                code: Code::Term(term),
+                code: Code::Term(branch.span(), term),
             };
         }
         let cond = self.value(cond.code);
@@ -3136,6 +3142,7 @@ impl<'a> Lowerer<'a> {
     /// table says is held in the declaration a caller routes on.
     fn sequence<'e>(
         &mut self,
+        span: Span,
         elements: impl Iterator<Item = &'e syn::Expr>,
         listed: bool,
     ) -> Eval {
@@ -3155,7 +3162,7 @@ impl<'a> Lowerer<'a> {
             };
             return Eval {
                 val: Val::Term(term.clone()),
-                code: Code::Term(term),
+                code: Code::Term(span, term),
             };
         }
         let codes: Vec<_> = evals
@@ -3288,7 +3295,7 @@ impl<'a> Lowerer<'a> {
                 if let Some(term) = judgment(binary.op, &left.val, &right.val) {
                     return Eval {
                         val: Val::Term(term.clone()),
-                        code: Code::Term(term),
+                        code: Code::Term(binary.span(), term),
                     };
                 }
                 let left = self.value(left.code);
@@ -3310,7 +3317,7 @@ impl<'a> Lowerer<'a> {
                     let term = Term::Add(Box::new(l.clone()), Box::new(r.clone()));
                     return Eval {
                         val: Val::Term(term.clone()),
-                        code: Code::Term(term),
+                        code: Code::Term(binary.span(), term),
                     };
                 }
                 let left = self.value(left.code);
@@ -3339,14 +3346,14 @@ impl<'a> Lowerer<'a> {
                     let term = Term::Not(Box::new(term.clone()));
                     return Eval {
                         val: Val::Term(term.clone()),
-                        code: Code::Term(term),
+                        code: Code::Term(unary.span(), term),
                     };
                 }
                 let inner = self.value(inner.code);
                 let op = unary.op;
                 Eval::plain(quote!(#op #inner))
             }
-            syn::Expr::Tuple(tuple) => self.sequence(tuple.elems.iter(), false),
+            syn::Expr::Tuple(tuple) => self.sequence(tuple.span(), tuple.elems.iter(), false),
             // A cast can truncate, so the result is not the term it was
             // cast from.
             syn::Expr::Cast(cast) => {
@@ -3363,7 +3370,7 @@ impl<'a> Lowerer<'a> {
                 let subscript = self.code(&index.index);
                 Eval::plain(quote!(#base[#subscript]))
             }
-            syn::Expr::Array(array) => self.sequence(array.elems.iter(), true),
+            syn::Expr::Array(array) => self.sequence(array.span(), array.elems.iter(), true),
             syn::Expr::Repeat(repeat) => {
                 let element = self.code(&repeat.expr);
                 let len = self.code(&repeat.len);
@@ -3528,7 +3535,7 @@ impl<'a> Lowerer<'a> {
             // reads it and nothing where the declaration does.
             let code = match &slot {
                 Slot::Config => Code::Record(path.span()),
-                Slot::Deferred(term) => Code::Term(term.clone()),
+                Slot::Deferred(term) => Code::Term(path.span(), term.clone()),
                 _ => Code::Rust(quote!(#ident)),
             };
             return Eval {
@@ -3545,9 +3552,9 @@ impl<'a> Lowerer<'a> {
                 // reads it: one consumed as key material is in the
                 // declaration and nowhere else.
                 code: if is_bucket(&self.params[index].1) {
-                    Code::Bucket(slot)
+                    Code::Bucket(path.span(), slot)
                 } else {
-                    Code::Term(term)
+                    Code::Term(path.span(), term)
                 },
             };
         }
@@ -3618,7 +3625,7 @@ impl<'a> Lowerer<'a> {
                 let term = Term::Field(Box::new(term.clone()), index.index);
                 Eval {
                     val: Val::Term(term.clone()),
-                    code: Code::Term(term),
+                    code: Code::Term(field.span(), term),
                 }
             }
             _ => {
@@ -3651,7 +3658,7 @@ impl<'a> Lowerer<'a> {
             Term::Config(u32::try_from(index).expect("a configuration record is shorter than u32"));
         Eval {
             val: Val::Term(term.clone()),
-            code: Code::Term(term),
+            code: Code::Term(field.span(), term),
         }
     }
 
@@ -3679,7 +3686,7 @@ impl<'a> Lowerer<'a> {
             let term = Term::FreshId(site);
             return Eval {
                 val: Val::Term(term.clone()),
-                code: Code::Term(term),
+                code: Code::Term(call.span(), term),
             };
         }
         // `Resource::mint(..)` — the one edge with no cell behind it. The
@@ -3794,7 +3801,7 @@ impl<'a> Lowerer<'a> {
             let term = Term::SelfResource(issued.kind, issued.mark);
             return Eval {
                 val: Val::Term(term.clone()),
-                code: Code::Term(term),
+                code: Code::Term(call.span(), term),
             };
         }
         if name == "issued" {
@@ -3809,7 +3816,7 @@ impl<'a> Lowerer<'a> {
             };
             return Eval {
                 val: Val::Term(term.clone()),
-                code: Code::Term(term),
+                code: Code::Term(call.span(), term),
             };
         }
         let evals: Vec<Eval> = call.args.iter().map(|a| self.expr(a)).collect();
@@ -3821,7 +3828,7 @@ impl<'a> Lowerer<'a> {
             };
             return Eval {
                 val: Val::Term(term.clone()),
-                code: Code::Term(term),
+                code: Code::Term(call.span(), term),
             };
         }
         let func = self.code(&call.func);
@@ -4227,7 +4234,7 @@ impl<'a> Lowerer<'a> {
             // anything the guest already holds.
             Val::Produced(resource) if method == "resource" => Eval {
                 val: Val::Term(resource.clone()),
-                code: Code::Term(resource),
+                code: Code::Term(call.span(), resource),
             },
             Val::Produced(resource) => {
                 let code = self.pass_through(&receiver, &method, evals, call);
@@ -4240,7 +4247,7 @@ impl<'a> Lowerer<'a> {
             // A split of a value edge is a value edge, carrying the same
             // resource: the receiver is a bucket the body holds, and what
             // comes off it is the kernel's own subtraction.
-            Val::Term(term) if method == "take" && matches!(receiver.code, Code::Bucket(_)) => {
+            Val::Term(term) if method == "take" && matches!(receiver.code, Code::Bucket(..)) => {
                 let code = self.pass_through(&receiver, &method, evals, call);
                 Eval {
                     val: Val::Produced(Term::ResourceOf(Box::new(term))),
@@ -4250,13 +4257,13 @@ impl<'a> Lowerer<'a> {
             Val::Term(term) => match method.as_str() {
                 "resource" => Eval {
                     val: Val::Term(Term::ResourceOf(Box::new(term.clone()))),
-                    code: Code::Term(Term::ResourceOf(Box::new(term))),
+                    code: Code::Term(call.span(), Term::ResourceOf(Box::new(term))),
                 },
                 // The count of what the receiver names: an edge's
                 // instances, or a list argument's elements — which is
                 // what derives a move's cap from the move itself.
                 "count" => {
-                    let inner = if matches!(receiver.code, Code::Bucket(_)) {
+                    let inner = if matches!(receiver.code, Code::Bucket(..)) {
                         Term::IdsOf(Box::new(term))
                     } else {
                         term
@@ -4264,7 +4271,7 @@ impl<'a> Lowerer<'a> {
                     let counted = Term::Len(Box::new(inner));
                     Eval {
                         val: Val::Term(counted.clone()),
-                        code: Code::Term(counted),
+                        code: Code::Term(call.span(), counted),
                     }
                 }
                 // A clone is the value it was taken from: what a term
@@ -4276,7 +4283,7 @@ impl<'a> Lowerer<'a> {
                 // checker is not one the guest half repeats.
                 "clone" if evals.is_empty() => Eval {
                     val: Val::Term(term.clone()),
-                    code: Code::Term(term),
+                    code: Code::Term(call.span(), term),
                 },
                 "lookup" | "get" | "contains" if matches!(args.first(), Some(Val::Term(_))) => {
                     let Some(Val::Term(key)) = args.first() else {
@@ -4294,7 +4301,7 @@ impl<'a> Lowerer<'a> {
                     };
                     Eval {
                         val: Val::Term(term.clone()),
-                        code: Code::Term(term),
+                        code: Code::Term(call.span(), term),
                     }
                 }
                 _ => {
@@ -4689,7 +4696,7 @@ impl<'a> Lowerer<'a> {
 
     /// The guest-side value one ordered-collection entry resolves to.
     fn entry(&mut self, site: usize, order: &Term, span: Span) -> Eval {
-        let order = self.term_value(order);
+        let order = self.term_value(span, order);
         Eval {
             val: Val::Handle(site),
             code: Code::Handle {
@@ -4824,7 +4831,9 @@ impl<'a> Lowerer<'a> {
             self.error(
                 span,
                 "this loop's body declares no access, so there is no site for the guest \
-                 to walk and no element for it to read",
+                 to walk and no element for it to read — reach a declared cell inside \
+                 it, or drop the loop, whose only effect on a declaration is the sites \
+                 its body opens",
             );
             return quote!(::core::unimplemented!());
         };
