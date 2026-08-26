@@ -1,0 +1,5 @@
+error: `TooSmall` carries fields, and a refusal crosses the boundary as a bare code — the error table holds names alone
+  --> tests/refusals/fielded_error.rs:14:9
+   |
+14 |         TooSmall { got: u64 },
+   |         ^^^^^^^^

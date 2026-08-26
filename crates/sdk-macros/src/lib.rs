@@ -425,19 +425,32 @@ fn event_names(items: &[syn::Item]) -> syn::Result<Vec<(syn::Ident, String)>> {
 /// The package's error names, in the order a declined invocation's code
 /// refers to.
 fn error_names(items: &[syn::Item]) -> syn::Result<Vec<String>> {
-    distinct_band(
-        "errors",
-        items
-            .iter()
-            .filter_map(|item| match item {
-                syn::Item::Enum(item) if item.attrs.iter().any(|a| a.path().is_ident("error")) => {
-                    Some(&item.variants)
-                }
-                _ => None,
-            })
-            .flatten()
-            .map(|variant| &variant.ident),
-    )
+    let variants = items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Enum(item) if item.attrs.iter().any(|a| a.path().is_ident("error")) => {
+                Some(&item.variants)
+            }
+            _ => None,
+        })
+        .flatten();
+    // A refusal crosses the boundary as its code; the variant's name is
+    // everything the table carries. Fields would silently vanish there,
+    // and the generated cast would blame the `#[blueprint]` line — so a
+    // fielded variant is refused where it was written.
+    for variant in variants.clone() {
+        if !matches!(variant.fields, syn::Fields::Unit) {
+            return Err(syn::Error::new(
+                variant.ident.span(),
+                format!(
+                    "`{}` carries fields, and a refusal crosses the boundary as a bare \
+                     code — the error table holds names alone",
+                    variant.ident
+                ),
+            ));
+        }
+    }
+    distinct_band("errors", variants.map(|variant| &variant.ident))
 }
 
 /// The `#[total]` attribute, where a method claims the mark the publish
