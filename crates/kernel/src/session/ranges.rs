@@ -17,7 +17,8 @@ use crate::store::WorkingStore;
 /// figure. Structural for the reason [`SCAN_SEEK_ENTRIES`] states: the
 /// seek walks both overlay layers and the base whether or not the
 /// interval holds anything, so a page's cost is not proportional to what
-/// it returns and an empty one is not free.
+/// it returns and an empty one is not free. A cap-zero read is — no
+/// layer or base is walked, and the charge follows the walk.
 pub const SCAN_SEEK_BYTES: usize = SCAN_SEEK_ENTRIES * AMOUNT_CELL_BYTES;
 
 /// One materialized page, and what has been learned about it.
@@ -127,7 +128,9 @@ impl KernelSession {
     /// [`Self::take_scan_debt`].
     ///
     /// The seek is charged whatever the run holds, because walking the
-    /// layers and the base is what an empty one costs too.
+    /// layers and the base is what an empty one costs too. A cap of zero
+    /// or an inverted span takes no walk at all — the store answers
+    /// empty without touching a layer — so those charge nothing.
     fn lift(
         &mut self,
         owner: Address,
@@ -139,7 +142,14 @@ impl KernelSession {
         let entries = self
             .store
             .entries_in_range(owner, collection, lo, hi, cap)?;
-        let lifted = entries.iter().fold(SCAN_SEEK_BYTES, |total, (_, value)| {
+        // Mirrors the store's own short-circuit: where it walked nothing,
+        // there is no seek to charge a floor for.
+        let seek = if cap == 0 || lo > hi {
+            0
+        } else {
+            SCAN_SEEK_BYTES
+        };
+        let lifted = entries.iter().fold(seek, |total, (_, value)| {
             total
                 .saturating_add(AMOUNT_CELL_BYTES)
                 .saturating_add(value.len())
@@ -982,6 +992,33 @@ mod tests {
         }
         let mut session = session_over(MemoryStore::new(), &at_cap(0));
         assert!(!session.range_covered(0, 0).unwrap());
+    }
+
+    /// The charge follows the walk: a cap-zero read short-circuits in
+    /// the store without touching a layer, so it owes no seek floor —
+    /// while the cap-one neighbour pays it, entries or none.
+    #[test]
+    fn a_cap_zero_read_owes_no_seek() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let at_cap = |cap| {
+            declared(&[Effect {
+                target: EffectTarget::Range {
+                    owner,
+                    collection: CollectionId([4; 16]),
+                    lo: 0,
+                    hi: u128::MAX,
+                    cap,
+                },
+                mode: Mode::Read,
+            }])
+        };
+        let mut session = session_over(MemoryStore::new(), &at_cap(0));
+        session.range_count(0, 0).unwrap();
+        assert_eq!(session.take_scan_debt(), 0, "no walk, no floor");
+
+        let mut session = session_over(MemoryStore::new(), &at_cap(1));
+        session.range_count(0, 0).unwrap();
+        assert_eq!(session.take_scan_debt(), SCAN_SEEK_BYTES);
     }
 
     #[test]
