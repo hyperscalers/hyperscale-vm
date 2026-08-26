@@ -343,3 +343,163 @@ pub fn package(dir: &Path) -> Result<PathBuf, BuildError> {
     write(dir.join("rust-toolchain.toml"), TOOLCHAIN.to_owned())?;
     Ok(dir.to_path_buf())
 }
+
+/// The manifest a workspace member carries: the crate alone. The
+/// profile, the pins and the build configuration are the workspace's,
+/// so restating any of them here is the drift the merge deleted.
+fn member_manifest(name: &str) -> String {
+    format!(
+        "[package]\n\
+         name = \"{name}\"\n\
+         version = \"0.0.0\"\n\
+         edition = \"2024\"\n\
+         publish = false\n\
+         \n\
+         [lib]\n\
+         crate-type = [\"cdylib\", \"rlib\"]\n\
+         \n\
+         [dependencies]\n\
+         wit-bindgen.workspace = true\n\
+         hyperscale-vm-sdk.workspace = true\n\
+         \n\
+         [dev-dependencies]\n\
+         hyperscale-vm-testing.workspace = true\n"
+    )
+}
+
+/// Write a guest crate at `dir` as a member of the workspace enclosing
+/// it, and add it to that workspace's members list.
+///
+/// The standalone shape is for an author outside this repository; a
+/// member carries none of it — no `[workspace]` terminator, no profile,
+/// no toolchain or cargo config of its own — because every one of those
+/// is the enclosing workspace's to state once.
+///
+/// # Errors
+///
+/// [`BuildError`] if the directory already holds a crate, if the parent
+/// holds no workspace manifest with a members list, or if any file
+/// cannot be written.
+pub fn member(dir: &Path) -> Result<PathBuf, BuildError> {
+    let name = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| BuildError(format!("{} is not a package name", dir.display())))?
+        .to_owned();
+    if dir.join("Cargo.toml").exists() {
+        return Err(BuildError(format!(
+            "{} already holds a crate",
+            dir.display()
+        )));
+    }
+    let workspace = dir
+        .parent()
+        .map(|parent| parent.join("Cargo.toml"))
+        .filter(|manifest| manifest.exists())
+        .ok_or_else(|| {
+            BuildError(format!(
+                "{} has no enclosing workspace manifest — `--member` scaffolds into one",
+                dir.display()
+            ))
+        })?;
+    let module = name.replace('-', "_");
+
+    let write = |path: PathBuf, body: String| -> Result<(), BuildError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| BuildError(format!("create {}: {error}", parent.display())))?;
+        }
+        std::fs::write(&path, body)
+            .map_err(|error| BuildError(format!("write {}: {error}", path.display())))
+    };
+
+    write(dir.join("Cargo.toml"), member_manifest(&name))?;
+    write(dir.join("src/lib.rs"), library(&module))?;
+    write(
+        dir.join(format!("src/bin/{module}-metadata.rs")),
+        declaration_bin(&module, &module),
+    )?;
+    write(dir.join("tests/first.rs"), first_test(&module))?;
+    enroll(&workspace, &name)?;
+    Ok(dir.to_path_buf())
+}
+
+/// Add `name` to the members list of the workspace manifest at `path`,
+/// in the sorted position the list keeps.
+fn enroll(path: &Path, name: &str) -> Result<(), BuildError> {
+    let manifest = std::fs::read_to_string(path)
+        .map_err(|error| BuildError(format!("read {}: {error}", path.display())))?;
+    let entry = format!("    \"{name}\",\n");
+    if manifest.contains(entry.trim_start()) {
+        return Ok(());
+    }
+    let open = manifest
+        .find("members = [")
+        .ok_or_else(|| BuildError(format!("{} declares no members list", path.display())))?;
+    let list = open + "members = [".len();
+    let close = manifest[list..]
+        .find(']')
+        .map(|at| list + at)
+        .ok_or_else(|| BuildError(format!("{} members list does not close", path.display())))?;
+    // The sorted position, so the list stays legible however many the
+    // scaffold adds.
+    let at = manifest[list..close]
+        .split_inclusive('\n')
+        .scan(list, |cursor, line| {
+            let start = *cursor;
+            *cursor += line.len();
+            Some((start, line))
+        })
+        .find(|(_, line)| {
+            let listed = line.trim().trim_matches(|c| c == '"' || c == ',');
+            !listed.is_empty() && listed > name
+        })
+        .map_or(close, |(start, _)| start);
+    let mut updated = manifest;
+    updated.insert_str(at, &entry);
+    std::fs::write(path, updated)
+        .map_err(|error| BuildError(format!("write {}: {error}", path.display())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::member;
+
+    /// A member carries the crate alone and joins the members list in
+    /// sorted position. Everything else — profile, pins, build
+    /// configuration — is the workspace's to state once, and restating
+    /// any of it is the drift the merge deleted seventeen copies of.
+    #[test]
+    fn a_member_scaffold_joins_the_workspace_and_restates_nothing() {
+        let root =
+            std::env::temp_dir().join(format!("hyperscale-scaffold-member-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nresolver = \"3\"\nmembers = [\n    \"aardvark\",\n    \"zebra\",\n]\n",
+        )
+        .unwrap();
+        let dir = root.join("middling");
+        std::fs::create_dir_all(&dir).unwrap();
+        member(&dir).unwrap();
+
+        let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+        assert!(!manifest.contains("[workspace]"), "{manifest}");
+        assert!(!manifest.contains("[profile"), "{manifest}");
+        assert!(!manifest.contains("cargo-features"), "{manifest}");
+        assert!(manifest.contains("hyperscale-vm-sdk.workspace = true"));
+        assert!(!dir.join(".cargo/config.toml").exists());
+        assert!(!dir.join("rust-toolchain.toml").exists());
+
+        let members = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        let first = members.find("aardvark").unwrap();
+        let added = members.find("middling").unwrap();
+        let last = members.find("zebra").unwrap();
+        assert!(
+            first < added && added < last,
+            "sorted into place:\n{members}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

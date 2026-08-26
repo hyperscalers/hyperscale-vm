@@ -24,7 +24,9 @@ use hyperscale_vm_cli::{
 const USAGE: &str = "\
 cargo hyperscale — build a package crate into an artifact the chain admits
 
-    cargo hyperscale new <path>      scaffold a package crate
+    cargo hyperscale new <path>      scaffold a package crate; --member joins
+                                     the enclosing guests workspace instead of
+                                     standing alone
     cargo hyperscale build [dir]     build, attach, and admit; writes the artifact
     cargo hyperscale check [dir]     the same verdict, without the write
     cargo hyperscale explain [dir]   print what the package declares
@@ -68,6 +70,7 @@ struct Invocation {
     /// The arguments that are not flags and not the command, in order.
     positional: Vec<String>,
     protocol: bool,
+    member: bool,
     method: Option<String>,
     resources: bool,
     /// The configuration a resource's rules seal against, by field name.
@@ -94,6 +97,7 @@ impl Invocation {
             command: args.first().cloned(),
             positional: Vec::new(),
             protocol: false,
+            member: false,
             method: None,
             resources: false,
             config: BTreeMap::new(),
@@ -103,6 +107,7 @@ impl Invocation {
         while let Some(arg) = rest.next() {
             match arg.as_str() {
                 "--protocol" => invocation.protocol = true,
+                "--member" => invocation.member = true,
                 "--resources" => invocation.resources = true,
                 "--config" => {
                     let pair = rest
@@ -167,7 +172,11 @@ fn run(args: &[String]) -> Result<String, BuildError> {
             // form can be taken against somewhere that exists.
             std::fs::create_dir_all(&dir)
                 .map_err(|error| BuildError(format!("create {}: {error}", dir.display())))?;
-            scaffold::package(&dir)?;
+            if invocation.member {
+                scaffold::member(&dir)?;
+            } else {
+                scaffold::package(&dir)?;
+            }
             Ok(format!(
                 "scaffolded {}\n    cargo hyperscale check {}",
                 dir.display(),
