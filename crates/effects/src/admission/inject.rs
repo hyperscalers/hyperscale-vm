@@ -11,6 +11,8 @@
 //! subtracted where another did not would emit a graph admission
 //! refuses.
 
+use std::collections::BTreeSet;
+
 use hyperscale_vm_types::{
     Address, AddressClass, Effect, EffectTarget, Mode, Presence, ResourceAddr,
 };
@@ -356,7 +358,12 @@ pub(super) fn inject_movement_rules(
     let mut injected = Vec::new();
     // Which requirements this frame earns, before any is built: an access
     // whose mode reaches both directions earns both, and only a
-    // reservation carries its own.
+    // reservation carries its own. Membership is the set's and order is
+    // the vector's — this runs at ingress over as many accesses as a
+    // signature may declare, where a scan per access is the cost class
+    // the envelope budget exists to bound, and the entries keep the
+    // order the declaration named them in.
+    let mut seen: BTreeSet<(Address, ResourceAddr, GrantedBehaviour)> = BTreeSet::new();
     let mut wanted: Vec<(Address, ResourceAddr, GrantedBehaviour)> = Vec::new();
     for access in &frame.ordered {
         // A reaching access earns none of them, and the exemption is the
@@ -379,12 +386,16 @@ pub(super) fn inject_movement_rules(
         };
         for behaviour in GrantedBehaviour::earned_by(moves) {
             let entry = (owner, resource, *behaviour);
-            if !wanted.contains(&entry) {
+            if seen.insert(entry) {
                 wanted.push(entry);
             }
         }
     }
 
+    // The (party, resource) pairs already fenced, keyed rather than
+    // found by scanning what was built: one flag answers every movement,
+    // and the scan this replaces was per wanted entry.
+    let mut fenced: BTreeSet<(Address, ResourceAddr)> = BTreeSet::new();
     for (owner, resource, behaviour) in wanted {
         // A resource whose record was not presented grants nothing here,
         // and what tells that apart from a bypass is the address itself:
@@ -407,7 +418,9 @@ pub(super) fn inject_movement_rules(
         // made to. Granting `Halt` is what puts the resource in the
         // class whose record cannot be withheld, so the read fails
         // closed.
-        if rules.get(GrantedBehaviour::Halt).is_some() {
+        // Once per party and resource however many directions the
+        // access moves in: one flag answers every movement of it.
+        if rules.get(GrantedBehaviour::Halt).is_some() && fenced.insert((owner, resource)) {
             let halted = EffectTarget::Point(child_key(
                 hasher,
                 owner,
@@ -415,9 +428,7 @@ pub(super) fn inject_movement_rules(
                 &[Value::Address(resource.address()).canonical_bytes()],
             ));
             declare_read(frame, halted);
-            // Once per party and resource however many directions the
-            // access moves in: one flag answers every movement of it.
-            let fence = Injected {
+            injected.push(Injected {
                 rule: Rule::Require(JudgedLeaf::Presence {
                     target: halted,
                     expect: Presence::Absent,
@@ -425,10 +436,7 @@ pub(super) fn inject_movement_rules(
                 asks: Asks::Unhalted,
                 resource,
                 behaviour: GrantedBehaviour::Halt,
-            };
-            if !injected.contains(&fence) {
-                injected.push(fence);
-            }
+            });
         }
         let Some(sealed) = rules.get(behaviour) else {
             continue;

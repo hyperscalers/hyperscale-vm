@@ -984,6 +984,113 @@ fn a_component_address_where_a_resource_belongs_is_refused() {
     );
 }
 
+/// The injection dedup is work the envelope pays for.
+///
+/// Injecting a movement rule scans the frame's conditions for a
+/// duplicate, rule-tree equality per condition — so a signature shaped
+/// to maximize both sides makes the scan quadratic, at ingress, before
+/// any signature is checked or fee assured. The scan is charged against
+/// the envelope budget, so the shape is refused as too much work instead
+/// of running free.
+#[test]
+fn the_injection_dedup_scan_is_charged_work() {
+    // Enough moved resources times enough declared conditions to cross
+    // the envelope's work cap through the scan alone, while every
+    // per-clause charge stays modest.
+    const MOVED: usize = 1024;
+    const CONDITIONS: usize = 3072;
+
+    let claim =
+        RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(ALICE))).expect("a rule encodes");
+    let records: Vec<ResourceMeta> = (0..MOVED)
+        .map(|i| {
+            let mut rules = ResourceGrants::new();
+            rules.set(GrantedBehaviour::Withdraw, claim.clone());
+            ResourceMeta {
+                namespace: ALICE.address(),
+                kind: ResourceKind::Fungible,
+                material: vec![
+                    u32::try_from(i)
+                        .expect("a small roster")
+                        .to_le_bytes()
+                        .to_vec(),
+                ],
+                rules,
+            }
+        })
+        .collect();
+    let presented = PresentedGrants::from_presented(&TestHasher, &records);
+
+    // One moving clause per resource, then conditions judged nowhere
+    // near admission — presence leaves — so nothing refuses before the
+    // scan the test is about.
+    let mut effects: Vec<Clause> = records
+        .iter()
+        .map(|record| {
+            let resource = Expr::Literal(Value::Address(record.address(&TestHasher).address()));
+            Clause::Effect {
+                reach: None,
+                guard: None,
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: SlotRef::Fixed(VAULT),
+                    material: vec![resource.clone()],
+                }),
+                mode: ModeExpr::Delta { moves: Moves::Both },
+                denomination: Some(Box::new(resource)),
+            }
+        })
+        .collect();
+    effects.extend((0..CONDITIONS).map(|_| Clause::Requires {
+        guard: None,
+        rule: RuleExpr::Require(RuleLeaf::Presence {
+            target: Box::new(TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: SlotRef::Fixed(AUTH),
+                material: vec![],
+            })),
+            expect: Presence::Present,
+        }),
+    }));
+
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "drain".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            effects,
+            ..MethodSignature::default()
+        },
+    );
+    let mut chain = setup();
+    chain.packages.publish_unchecked(pkg("mover"), package);
+    let meta = InstanceMeta {
+        package: pkg("mover"),
+        config: Vec::new(),
+        salt: Hash32([0x5C; 32]),
+    };
+    let mover = meta.address(&TestHasher);
+    chain.instances.create(&TestHasher, meta);
+
+    let graph = ManifestGraph {
+        nodes: vec![GraphNode {
+            target: mover.into(),
+            method: "drain".into(),
+            args: vec![],
+            evidence: BTreeSet::new(),
+        }],
+    };
+    let refused = admit_presenting(&graph, ALICE, &chain, &presented, &TestHasher)
+        .expect_err("the scan is charged, and this shape exhausts the envelope");
+    assert!(matches!(
+        refused,
+        AdmissionError::Eval {
+            node: 0,
+            source: EvalError::EnvelopeTooMuchWork,
+        }
+    ));
+}
+
 proptest! {
     /// Any multiset of bounds admits exactly when its conjunction is
     /// satisfiable, independent of the order they are written in.

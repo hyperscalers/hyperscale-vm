@@ -649,6 +649,16 @@ impl Lower<'_> {
         issues.extend(destroyed);
         injected.extend(destruction);
         for requirement in &injected {
+            // The dedup scan compares rule trees, per injected entry over
+            // every condition the frame holds — ingress work over
+            // unverified bytes, charged like the claim copies are: per
+            // rule compared, before anyone has paid for it.
+            self.budget
+                .spend(frame.required().count())
+                .map_err(|source| AdmissionError::Eval {
+                    node: node_index,
+                    source,
+                })?;
             if !frame.required().any(|rule| *rule == requirement.rule) {
                 frame
                     .conditions
