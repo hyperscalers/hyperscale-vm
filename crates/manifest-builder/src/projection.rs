@@ -18,7 +18,7 @@ use hyperscale_vm_effects::{
     ManifestHash, MethodSignature, ParamType, PresentedGrants, ResourceGrants, ResourceMeta,
     SealedLeaf, Value, evaluate_expr, founds_its_resource, keying_resource,
 };
-use hyperscale_vm_types::{CallTarget, ResourceAddr};
+use hyperscale_vm_types::{Address, CallTarget, ResourceAddr};
 
 use crate::typed::TypedError;
 
@@ -36,7 +36,7 @@ pub(crate) const UNBOUND: ManifestHash = ManifestHash(Hash32([0; 32]));
 ///
 /// This is admission's own per-argument check, run against the same
 /// declared parameters, one graph earlier.
-pub(crate) fn type_args(
+fn type_args(
     method: &str,
     args: &[GraphArg],
     params: &[ParamType],
@@ -107,6 +107,43 @@ pub(crate) fn type_args(
     Ok(inputs)
 }
 
+/// [`type_args`] split as every consumer holds it: each position's value
+/// with [`unknown`] standing in where nothing at construction determines
+/// one, beside which of them are real.
+pub(crate) fn typed_values(
+    method: &str,
+    args: &[GraphArg],
+    params: &[ParamType],
+) -> Result<(Vec<Value>, Vec<bool>), TypedError> {
+    let inputs = type_args(method, args, params)?;
+    let known = inputs.iter().map(Option::is_some).collect();
+    let values = inputs
+        .into_iter()
+        .map(|value| value.unwrap_or_else(unknown))
+        .collect();
+    Ok((values, known))
+}
+
+/// The inputs a construction-time evaluation runs under: the caller's
+/// own meter, an [`UNBOUND`] identity, nothing presented.
+pub(crate) fn eval_inputs<'a>(
+    self_addr: Address,
+    values: &'a [Value],
+    record: &'a InstanceMeta,
+    node_index: u32,
+    budget: &'a EvalBudget,
+) -> EvalInputs<'a> {
+    EvalInputs {
+        self_addr,
+        args: values,
+        record,
+        node_index,
+        identity: UNBOUND,
+        grants: PresentedGrants::none(),
+        budget,
+    }
+}
+
 /// What each of a method's declared outputs carries, where the inputs
 /// feeding the declaration are known.
 ///
@@ -127,15 +164,7 @@ pub(crate) fn output_resources(
     // A builder-side projection, not admission: the meter is this
     // call's own, and nothing here reaches a chain verdict.
     let budget = EvalBudget::default();
-    let inputs = EvalInputs {
-        self_addr: target.address(),
-        args: values,
-        record,
-        node_index,
-        identity: UNBOUND,
-        grants: PresentedGrants::none(),
-        budget: &budget,
-    };
+    let inputs = eval_inputs(target.address(), values, record, node_index, &budget);
     signature
         .outputs
         .iter()
@@ -262,24 +291,17 @@ pub fn graph_records(
         let Some(signature) = package.methods.get(&node.method) else {
             continue;
         };
-        let Ok(inputs) = type_args(&node.method, &node.args, &signature.params) else {
+        let Ok((values, known)) = typed_values(&node.method, &node.args, &signature.params) else {
             continue;
         };
-        let known: Vec<bool> = inputs.iter().map(Option::is_some).collect();
-        let values: Vec<Value> = inputs
-            .into_iter()
-            .map(|value| value.unwrap_or_else(unknown))
-            .collect();
         let budget = EvalBudget::default();
-        let inputs = EvalInputs {
-            self_addr: node.target.address(),
-            args: &values,
-            record: &meta,
-            node_index: u32::try_from(index).unwrap_or(u32::MAX),
-            identity: UNBOUND,
-            grants: PresentedGrants::none(),
-            budget: &budget,
-        };
+        let inputs = eval_inputs(
+            node.target.address(),
+            &values,
+            &meta,
+            u32::try_from(index).unwrap_or(u32::MAX),
+            &budget,
+        );
         for (resource, _) in governing(signature, &node.args, &inputs, &known, hasher) {
             if let std::collections::btree_map::Entry::Vacant(slot) = found.entry(resource)
                 && let Some(record) = chain.resource(resource, hasher)

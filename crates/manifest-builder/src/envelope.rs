@@ -32,7 +32,6 @@
 
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
     Binding, ChainRecords, Claim, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, Hasher,
@@ -41,9 +40,10 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_types::{CallTarget, MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
-use crate::builder::{Bucket, SocketRef};
+use crate::builder::{Bucket, SocketRef, next_space};
 use crate::projection::graph_records;
 use crate::typed::{Proof, TypedBuilder, TypedError};
+use crate::unpack::{Arity, Unpacked};
 
 /// Why an envelope could not be composed.
 ///
@@ -158,10 +158,6 @@ pub enum EnvelopeError {
     Intent(#[from] TypedError),
 }
 
-/// Distinguishes concurrently live envelopes, so a handle minted by one
-/// cannot be wired into another's slots.
-static NEXT_ENVELOPE: AtomicU64 = AtomicU64::new(0);
-
 /// One intent's declared socket, as the composition names it — the side
 /// a binding fills, against the [`SocketRef`] the intent's own graph
 /// reaches it by.
@@ -180,76 +176,28 @@ pub struct OpenSocket {
 /// answer.
 ///
 /// The declared count is the intent's, so the composer unpacks by
-/// asserting it: [`one`](Self::one) for the common single socket,
-/// [`into_array`](Self::into_array) to destructure several,
-/// [`none`](Self::none) to discharge an intent declaring none. A wrong
-/// count is [`EnvelopeError::SocketArity`] at the unpack rather than a
-/// miswired binding at admission.
-#[must_use = "every open socket must be bound for the envelope to build"]
-pub struct Sockets {
-    intent: u32,
-    sockets: Vec<OpenSocket>,
+/// asserting it: [`one`](Unpacked::one) for the common single socket,
+/// [`into_array`](Unpacked::into_array) to destructure several,
+/// [`none`](Unpacked::none) to discharge an intent declaring none. A
+/// wrong count is [`EnvelopeError::SocketArity`] at the unpack rather
+/// than a miswired binding at admission.
+pub type Sockets = Unpacked<OpenSocket, DeclaredBy>;
+
+/// The intent whose declaration answers a [`Sockets`] arity claim.
+#[derive(Debug)]
+pub struct DeclaredBy {
+    pub(crate) intent: u32,
 }
 
-impl Sockets {
-    /// How many sockets the intent declared.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.sockets.len()
-    }
+impl Arity for DeclaredBy {
+    type Error = EnvelopeError;
 
-    /// Whether the intent declared no sockets.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.sockets.is_empty()
-    }
-
-    /// Unpack into an array, most often by destructuring — `let [wants,
-    /// approval] = ….into_array()?` — which is where `N` comes from.
-    ///
-    /// # Errors
-    ///
-    /// [`EnvelopeError::SocketArity`] when the intent declares some other
-    /// number of sockets.
-    pub fn into_array<const N: usize>(self) -> Result<[OpenSocket; N], EnvelopeError> {
-        let Self { intent, sockets } = self;
-        let declared = sockets.len();
-        sockets.try_into().map_err(|_| EnvelopeError::SocketArity {
-            intent,
+    fn refuse(self, declared: usize, claimed: usize) -> EnvelopeError {
+        EnvelopeError::SocketArity {
+            intent: self.intent,
             declared,
-            claimed: N,
-        })
-    }
-
-    /// The single socket of an intent declaring one.
-    ///
-    /// # Errors
-    ///
-    /// [`EnvelopeError::SocketArity`] when the intent declares some other
-    /// number of sockets.
-    pub fn one(self) -> Result<OpenSocket, EnvelopeError> {
-        let [socket] = self.into_array()?;
-        Ok(socket)
-    }
-
-    /// Every socket the intent declared, in declaration order.
-    ///
-    /// What a composer wants where the count is the declaration's answer
-    /// rather than a number the composing site knows.
-    #[must_use]
-    pub fn into_vec(self) -> Vec<OpenSocket> {
-        self.sockets
-    }
-
-    /// Discharge an intent that declares no sockets.
-    ///
-    /// # Errors
-    ///
-    /// [`EnvelopeError::SocketArity`] when the intent declares one, which
-    /// would then go unbound.
-    pub fn none(self) -> Result<(), EnvelopeError> {
-        let [] = self.into_array()?;
-        Ok(())
+            claimed,
+        }
     }
 }
 
@@ -333,7 +281,7 @@ impl<'a> IntentBuilder<'a> {
     ) -> Self {
         Self {
             graph: TypedBuilder::new(chain, hasher, signer),
-            envelope: NEXT_ENVELOPE.fetch_add(1, Ordering::Relaxed),
+            envelope: next_space(),
             intent: 0,
             sockets: Vec::new(),
         }
@@ -503,7 +451,7 @@ impl<'a> EnvelopeBuilder<'a> {
         hasher: &'a dyn Hasher,
         signer: PrincipalAddr,
     ) -> (Self, IntentBuilder<'a>) {
-        let id = NEXT_ENVELOPE.fetch_add(1, Ordering::Relaxed);
+        let id = next_space();
         let envelope = Self {
             chain,
             hasher,
@@ -650,8 +598,8 @@ impl<'a> EnvelopeBuilder<'a> {
     /// order.
     fn open_sockets(&self, intent: u32, declared: usize) -> Sockets {
         Sockets {
-            intent,
-            sockets: (0..declared)
+            context: DeclaredBy { intent },
+            items: (0..declared)
                 .map(|position| OpenSocket {
                     envelope: self.id,
                     intent,

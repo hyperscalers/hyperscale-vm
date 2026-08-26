@@ -165,9 +165,16 @@ pub struct SocketRef {
     pub(crate) position: u32,
 }
 
-/// Distinguishes concurrently live builders, so a [`Bucket`] minted by one
-/// cannot be quietly spent in another's index space.
-static NEXT_BUILDER: AtomicU64 = AtomicU64::new(0);
+/// Distinguishes concurrently live handle spaces — builders and
+/// envelopes draw from one sequence, so a [`Bucket`] minted by one
+/// builder cannot be quietly spent in another's index space, and no
+/// envelope shares a provenance number with anything else alive.
+static NEXT_SPACE: AtomicU64 = AtomicU64::new(0);
+
+/// Mint a fresh handle-space id.
+pub(crate) fn next_space() -> u64 {
+    NEXT_SPACE.fetch_add(1, Ordering::Relaxed)
+}
 
 /// An append-only [`ManifestGraph`] under construction.
 ///
@@ -205,7 +212,7 @@ impl GraphBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            id: NEXT_BUILDER.fetch_add(1, Ordering::Relaxed),
+            id: next_space(),
             nodes: Vec::new(),
             outputs: Vec::new(),
             rest: None,

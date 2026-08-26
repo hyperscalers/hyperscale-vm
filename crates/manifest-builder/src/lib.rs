@@ -41,6 +41,7 @@ pub mod projection;
 pub mod render;
 pub mod signing;
 pub mod typed;
+pub mod unpack;
 
 pub use args::{AddressArg, Arg, Args, BucketArg};
 pub use builder::{Bucket, BuildError, GraphBuilder, SocketRef};

@@ -30,15 +30,15 @@ use hyperscale_vm_effects::vocabulary::{
     AUTHORIZE_METHOD, PRESENT_BADGE_METHOD, PRESENT_INSTANCE_METHOD,
 };
 use hyperscale_vm_effects::{
-    ChainRecords, Claim, EdgeRef, EvalBudget, EvalInputs, EvidenceRef, GraphArg, Hasher,
-    InstanceMeta, ManifestGraph, MethodSignature, PackageHash, PackageMetadata, PresentedGrants,
-    Value,
+    ChainRecords, Claim, EdgeRef, EvalBudget, EvidenceRef, GraphArg, Hasher, InstanceMeta,
+    ManifestGraph, MethodSignature, PackageHash, PackageMetadata, Value,
 };
 use hyperscale_vm_types::{Address, AddressClass, CallTarget, PrincipalAddr};
 
 use crate::args::Args;
 use crate::builder::{Bucket, BuildError, GraphBuilder};
-use crate::projection::{UNBOUND, earned_claims, output_resources, type_args, unknown};
+use crate::projection::{earned_claims, eval_inputs, output_resources, typed_values};
+use crate::unpack::{Arity, Unpacked};
 
 /// Why a call could not be typed against the target's signature.
 ///
@@ -238,82 +238,30 @@ impl Proof {
 /// Held as a group rather than an array because a method's output count is
 /// its signature's, not the caller's: there is no arity to name here, which
 /// is what makes naming a slot the producer does not have inexpressible.
-/// [`into_array`](Self::into_array) is where a caller states an expected
-/// shape and is held to it.
+/// [`into_array`](Unpacked::into_array) is where a caller states an
+/// expected shape and is held to it.
+pub type Outputs = Unpacked<Bucket, ProducedBy>;
+
+/// The call whose signature answers an [`Outputs`] arity claim.
 #[derive(Debug)]
-#[must_use = "every minted output must be consumed for the graph to build"]
-pub struct Outputs {
-    method: String,
-    buckets: Vec<Bucket>,
-    node: u32,
+pub struct ProducedBy {
+    pub(crate) method: String,
+    pub(crate) node: u32,
+}
+
+impl Arity for ProducedBy {
+    type Error = TypedError;
+
+    fn refuse(self, declared: usize, claimed: usize) -> TypedError {
+        TypedError::OutputArity {
+            method: self.method,
+            declared,
+            claimed,
+        }
+    }
 }
 
 impl Outputs {
-    /// How many edges the call produced.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.buckets.len()
-    }
-
-    /// Whether the call produced no edges.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.buckets.is_empty()
-    }
-
-    /// Unpack into an array, most often by destructuring — `let [taken,
-    /// rest] = ….into_array()?` — which is where `N` comes from.
-    ///
-    /// # Errors
-    ///
-    /// [`TypedError::OutputArity`] when the method declares some other
-    /// number of outputs.
-    pub fn into_array<const N: usize>(self) -> Result<[Bucket; N], TypedError> {
-        let Self {
-            method, buckets, ..
-        } = self;
-        let declared = buckets.len();
-        buckets.try_into().map_err(|_| TypedError::OutputArity {
-            method,
-            declared,
-            claimed: N,
-        })
-    }
-
-    /// The single edge of a call that produces one.
-    ///
-    /// # Errors
-    ///
-    /// [`TypedError::OutputArity`] when the method produces some other
-    /// number of outputs.
-    pub fn one(self) -> Result<Bucket, TypedError> {
-        let [bucket] = self.into_array()?;
-        Ok(bucket)
-    }
-
-    /// Every edge the call produced, in the order its declaration
-    /// yields them.
-    ///
-    /// What a caller wants where the arity is the callee's answer rather
-    /// than a number the call site knows — a bring-up founds one edge
-    /// per supply its package states, and the composer files each by the
-    /// kind of the resource it founds.
-    #[must_use]
-    pub fn into_vec(self) -> Vec<Bucket> {
-        self.buckets
-    }
-
-    /// Discharge a call that produces nothing.
-    ///
-    /// # Errors
-    ///
-    /// [`TypedError::OutputArity`] when the method produces an output,
-    /// which would then dangle.
-    pub fn none(self) -> Result<(), TypedError> {
-        let [] = self.into_array()?;
-        Ok(())
-    }
-
     /// Split off the handle on what this call answered with, leaving the
     /// edges beside it to be discharged like any other call's.
     ///
@@ -328,7 +276,7 @@ impl Outputs {
     /// count the calls before it.
     pub fn answering<T>(self) -> (Answered<T>, Self) {
         let handle = Answered {
-            node: self.node,
+            node: self.context.node,
             answer: PhantomData,
         };
         (handle, self)
@@ -696,15 +644,7 @@ impl<'a> TypedBuilder<'a> {
         known: &[bool],
     ) -> Vec<Claim> {
         let budget = EvalBudget::default();
-        let inputs = EvalInputs {
-            self_addr: target.address(),
-            args: values,
-            record,
-            node_index: 0,
-            identity: UNBOUND,
-            grants: PresentedGrants::none(),
-            budget: &budget,
-        };
+        let inputs = eval_inputs(target.address(), values, record, 0, &budget);
         earned_claims(signature, args, &inputs, known, self.chain, self.hasher)
     }
 
@@ -806,12 +746,7 @@ impl<'a> TypedBuilder<'a> {
         let hasher = self.hasher;
 
         let args = args.bind_all(&self.graph);
-        let inputs = type_args(method, &args, &signature.params)?;
-        let known: Vec<bool> = inputs.iter().map(Option::is_some).collect();
-        let values: Vec<Value> = inputs
-            .into_iter()
-            .map(|value| value.unwrap_or_else(unknown))
-            .collect();
+        let (values, known) = typed_values(method, &args, &signature.params)?;
 
         // What the resources this call moves and the authority it
         // exercises demand of it — admission's own injection, mirrored,
@@ -900,9 +835,11 @@ impl<'a> TypedBuilder<'a> {
         Ok((
             producer,
             Outputs {
-                method: method.to_owned(),
-                buckets,
-                node: producer,
+                context: ProducedBy {
+                    method: method.to_owned(),
+                    node: producer,
+                },
+                items: buckets,
             },
         ))
     }
