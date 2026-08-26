@@ -267,6 +267,32 @@ enum Offering {
     Proof(u32),
 }
 
+/// A wrong-half offering, refused with both handles handed back.
+///
+/// An open socket can never be re-minted — its intent seals once — so a
+/// refusal that consumed the pair would leave `UnfilledSocket` at build
+/// as the only reachable outcome. Affinity holds because the handles
+/// ride the error rather than a copy: recover them, route the right
+/// halves, and the composition continues.
+#[derive(Debug, thiserror::Error)]
+#[error("{cause}")]
+pub struct BindRefusal {
+    /// The socket, still open.
+    pub socket: OpenSocket,
+    /// The offering, still unrouted.
+    pub offered: Offered,
+    /// Why the wiring was refused.
+    pub cause: EnvelopeError,
+}
+
+// A caller converting through `?` chose not to recover the handles; the
+// refusal itself is the envelope vocabulary's.
+impl From<BindRefusal> for EnvelopeError {
+    fn from(refusal: BindRefusal) -> Self {
+        refusal.cause
+    }
+}
+
 /// One intent under construction: a [`TypedBuilder`] that also declares
 /// sockets and exports edges.
 ///
@@ -625,23 +651,19 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// The whole of composition: a link is added between two graphs and
     /// neither is touched. The socket's own declaration types the link,
-    /// so an offering of the wrong half is refused at the wiring, while
-    /// the composer can still route the right one.
+    /// so an offering of the wrong half is refused at the wiring — and
+    /// the refusal hands both handles back, so the composer can still
+    /// route the right one.
     ///
     /// # Errors
     ///
-    /// [`EnvelopeError::ProofForValueSocket`] or
-    /// [`EnvelopeError::EdgeForAuthoritySocket`] where the offering is
-    /// not the half the socket declares it takes.
+    /// [`BindRefusal`], carrying the socket and the offering, where the
+    /// offering is not the half the socket declares it takes.
     ///
     /// # Panics
     ///
     /// On a handle minted by a different envelope.
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "taking both handles by value is the wiring; a borrow would let one end serve twice"
-    )]
-    pub fn bind(&mut self, socket: OpenSocket, offered: Offered) -> Result<(), EnvelopeError> {
+    pub fn bind(&mut self, socket: OpenSocket, offered: Offered) -> Result<(), BindRefusal> {
         assert!(
             socket.envelope == self.id && offered.envelope == self.id,
             "a socket is filled within the envelope that opened it"
@@ -662,15 +684,25 @@ impl<'a> EnvelopeBuilder<'a> {
                 producer,
             },
             (Socket::Value { .. }, Offering::Proof(_)) => {
-                return Err(EnvelopeError::ProofForValueSocket {
+                let cause = EnvelopeError::ProofForValueSocket {
                     intent: socket.intent,
                     socket: socket.position,
+                };
+                return Err(BindRefusal {
+                    socket,
+                    offered,
+                    cause,
                 });
             }
             (Socket::Authority(_), Offering::Edge(_)) => {
-                return Err(EnvelopeError::EdgeForAuthoritySocket {
+                let cause = EnvelopeError::EdgeForAuthoritySocket {
                     intent: socket.intent,
                     socket: socket.position,
+                };
+                return Err(BindRefusal {
+                    socket,
+                    offered,
+                    cause,
                 });
             }
         };

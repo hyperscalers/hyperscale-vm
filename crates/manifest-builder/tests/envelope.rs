@@ -187,13 +187,23 @@ fn a_proof_offered_to_a_value_socket_is_refused() {
         .unwrap();
     // The socket asks for funds; authority is not funds, however the
     // composer wired it.
+    let refused = env
+        .bind(wants, offered)
+        .expect_err("a proof does not fill a value socket");
     assert_eq!(
-        env.bind(wants, offered),
-        Err(EnvelopeError::ProofForValueSocket {
+        refused.cause,
+        EnvelopeError::ProofForValueSocket {
             intent: 1,
             socket: 0
-        })
+        }
     );
+    // Both handles came back: route the right half through the same
+    // socket and the composition completes.
+    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
+    let paid = root.export(funds);
+    env.bind(refused.socket, paid).unwrap();
+    env.seal(root).unwrap().none().unwrap();
+    env.build().expect("the recovered socket was still open");
 }
 
 #[test]
@@ -498,11 +508,14 @@ fn an_edge_offered_to_an_authority_socket_is_refused() {
     let funds = account::withdraw(&mut root, desk, RES_X, 5).unwrap();
     let paid = root.export(funds);
     let wants = env.present(BOB, request).unwrap().one().unwrap();
+    let refused = env
+        .bind(wants, paid)
+        .expect_err("an edge does not fill an authority socket");
     assert_eq!(
-        env.bind(wants, paid),
-        Err(EnvelopeError::EdgeForAuthoritySocket {
+        refused.cause,
+        EnvelopeError::EdgeForAuthoritySocket {
             intent: 1,
             socket: 0
-        })
+        }
     );
 }
