@@ -102,6 +102,21 @@ pub enum DeclarationError {
         /// The behaviour the reach was declared under.
         behaviour: GrantedBehaviour,
     },
+    /// A reach over a mark this package issues and does not grant the
+    /// reaching behaviour on.
+    ///
+    /// Decidable here because the grant tree rides the expression naming
+    /// the resource, and a reach nothing admits is a method every call
+    /// meets the same refusal at.
+    #[error(
+        "clause {clause} reaches under {behaviour:?}, which the resource it names grants to nobody"
+    )]
+    ReachUnadmitted {
+        /// The clause's index in the signature's preorder.
+        clause: u32,
+        /// The behaviour the reach was declared under.
+        behaviour: GrantedBehaviour,
+    },
     /// A slot named by an argument on a clause that reaches nothing —
     /// where the shape table has a constant to dispatch on and expects
     /// one. Only a reach makes [`SlotRef::Reached`] admissible.
@@ -375,11 +390,24 @@ fn judge_reach(
     let Some((slot, material)) = slot_of(target) else {
         return Err(DeclarationError::UnkeyedReach { clause });
     };
-    let keyed_by_a_resource = material
-        .first()
-        .is_some_and(|first| decided_class(first).is_none_or(names_a_resource));
-    if !keyed_by_a_resource {
+    let Some(resource) = material.first() else {
         return Err(DeclarationError::UnkeyedReach { clause });
+    };
+    if !decided_class(resource).is_none_or(names_a_resource) {
+        return Err(DeclarationError::UnkeyedReach { clause });
+    }
+    // A reach into a stranger's prefix is admitted by the reached
+    // resource's own entry, and where that resource is one this package
+    // issues, the entry is decidable here — the grant tree rides the
+    // expression naming it. A reach over a mark that grants nothing is
+    // statically dead: there is nothing for a caller to satisfy, so
+    // every call meets the same refusal at admission. Told here, where
+    // the pair was written. A stranger's resource is not this package's
+    // to answer for; its entries are on the chain.
+    if let Expr::SelfResource { grants, .. } = resource
+        && grants.get(behaviour).is_none()
+    {
+        return Err(DeclarationError::ReachUnadmitted { clause, behaviour });
     }
     let names_its_cell = match reached {
         ReachedCell::Halt => slot.fixed() == Some(HALT),
@@ -3042,6 +3070,55 @@ mod tests {
     /// An entry admits a reach for what that entry is about, so the cell
     /// is named two different ways — a halt flag by its slot, a holding
     /// by its denomination, which is the only thing that says a cell
+    /// A reach over a resource this package issues answers to the entry
+    /// that resource grants — and a mark granting nothing admits nobody.
+    ///
+    /// The other half of the reach's gate, and the half decidable here:
+    /// the grant tree rides the expression naming the resource, so a
+    /// package reaching over its own mark carries both sides of the
+    /// question. Told where the pair was written rather than at every
+    /// call that meets it — a reach nothing admits is not a narrow
+    /// method, it is a dead one.
+    #[test]
+    fn a_reach_over_an_ungranted_mark_of_this_packages_own_is_refused() {
+        let own = |grants: GrantsExpr| Expr::SelfResource {
+            kind: ResourceKind::Fungible,
+            grants,
+            material: vec![Expr::Literal(Value::Bytes(b"seat".to_vec()))],
+        };
+        let freezing = || {
+            let mut grants = GrantsExpr::new();
+            grants.set(
+                GrantedBehaviour::Freeze,
+                GrantRuleExpr::Require(GrantClaim::SelfAddr),
+            );
+            grants
+        };
+        let halt_of = |resource: Expr| {
+            check_declarations(&one_reach(
+                GrantedBehaviour::Freeze,
+                point_under(Expr::Arg(0), SlotRef::Fixed(HALT), vec![resource]),
+                ModeExpr::Write { moves: Moves::Both },
+                None,
+            ))
+        };
+
+        assert_eq!(halt_of(own(freezing())), Ok(()));
+        assert_eq!(
+            halt_of(own(GrantsExpr::new())),
+            Err(DeclarationError::ReachUnadmitted {
+                clause: 0,
+                behaviour: GrantedBehaviour::Freeze
+            }),
+            "a mark granting nothing is a mark nobody may reach a holder of"
+        );
+
+        // A stranger's resource is not this package's to answer for: its
+        // entries are on the chain, and admission is where they are read.
+        assert_eq!(halt_of(a_resource()), Ok(()));
+        assert_eq!(halt_of(Expr::Arg(1)), Ok(()));
+    }
+
     /// holds value at all.
     #[test]
     fn a_reach_names_the_cell_its_authority_governs() {
