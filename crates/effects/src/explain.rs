@@ -307,18 +307,25 @@ fn unmet_presence(
     // could have matched anyway, so the fallback below is the
     // same answer either way.
     let at = node.and_then(|node| usize::try_from(node).ok());
-    let injected = at
+    // Every requirement the leaf could have come from, not whichever was
+    // written first. Resolving a holding hashes the party and the badge
+    // together, so a resource whose `withdraw` and `deposit` entries ask
+    // about one holding produces two requirements over the same leaf —
+    // the verdict cannot tell them apart, and a reading that named one
+    // would be picking by declaration order.
+    let matched: Vec<&Injected> = at
         .and_then(|at| admitted.injected().get(at))
         .map(Vec::as_slice)
         .unwrap_or_default()
         .iter()
-        .find(|injected| {
+        .filter(|injected| {
             injected.rule.leaves().any(|leaf| {
                 matches!(leaf, JudgedLeaf::Presence { target: named, expect }
                     if named == target && *expect == required)
             })
-        });
-    let Some(injected) = injected else {
+        })
+        .collect();
+    if matched.is_empty() {
         return format!(
             "{}the package's own condition on {}: it must be {}, and it is not — a rule \
              its author wrote, so its declaration says what it is for",
@@ -326,11 +333,22 @@ fn unmet_presence(
             target_text(target),
             presence_text(required)
         );
-    };
+    }
     let at = at.unwrap_or_default();
     let called = admitted.manifest().nodes.get(at);
+    let entries = joined(matched.iter().map(|injected| {
+        format!(
+            "{} of {}",
+            behaviour_name(injected.behaviour),
+            address_text(injected.resource.address())
+        )
+    }));
+    let asks = joined(matched.iter().map(|injected| match &injected.asks {
+        Asks::Entry(entry) => sealed_rule(entry, None),
+        Asks::Unhalted => "the moving party is not halted".to_owned(),
+    }));
     format!(
-        "{}: {} of {} asks that {} — and it does not hold. Nothing declared this: it \
+        "{}: {entries} asks that {asks} — and it does not hold. Nothing declared this: it \
          is the resource's own entry, put on the call because the call moves it.",
         called.map_or_else(
             || format!("node {at}"),
@@ -340,13 +358,23 @@ fn unmet_presence(
                 called.method
             )
         ),
-        behaviour_name(injected.behaviour),
-        address_text(injected.resource.address()),
-        match &injected.asks {
-            Asks::Entry(entry) => sealed_rule(entry, None),
-            Asks::Unhalted => "the moving party is not halted".to_owned(),
-        }
     )
+}
+
+/// Distinct renderings, in the order they were met, joined as
+/// alternatives.
+///
+/// A tie is reported as a tie. Two requirements the verdict cannot
+/// separate read as `withdraw of R or deposit of R`, and two that say the
+/// same thing collapse to the one thing they say.
+fn joined(parts: impl Iterator<Item = String>) -> String {
+    let mut distinct: Vec<String> = Vec::new();
+    for part in parts {
+        if !distinct.contains(&part) {
+            distinct.push(part);
+        }
+    }
+    distinct.join(" or ")
 }
 
 /// The refusal a rule over presented claims reads back to.
@@ -1359,7 +1387,7 @@ mod tests {
     use hyperscale_hbor::TypeShape;
     use hyperscale_vm_types::{Address, AddressClass, Moves, Presence};
 
-    use super::{SlotRef, explain, explain_method};
+    use super::{SlotRef, explain, explain_method, joined};
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, self_child};
     use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape};
     use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
@@ -1367,6 +1395,38 @@ mod tests {
     use crate::signature::{MethodSignature, ParamType, Totality};
     use crate::types::{SlotId, Value, package_slot};
     use crate::vocabulary::VAULT;
+
+    /// A refusal the verdict cannot attribute reads as every entry it
+    /// could have come from.
+    ///
+    /// Resolving a holding hashes the party and the badge together, so
+    /// two entries of one resource asking the same thing of the same
+    /// party land on one leaf and the receipt carries no way back to
+    /// which. One access moving both directions earns both entries —
+    /// `GrantedBehaviour::earned_by(Moves::Both)` is `[Withdraw,
+    /// Deposit]` — so the pair arrives on one node, and reporting
+    /// whichever came first would be picking by declaration order.
+    ///
+    /// Latent in the corpus rather than reachable from it: no guest
+    /// declares a both-direction access on a restricted resource today,
+    /// which is why the first-match reading went unnoticed.
+    #[test]
+    fn requirements_one_leaf_cannot_separate_read_as_alternatives() {
+        assert_eq!(
+            joined(["withdraw of R".to_owned(), "deposit of R".to_owned()].into_iter()),
+            "withdraw of R or deposit of R"
+        );
+        // Two entries asking the same thing are one thing asked.
+        assert_eq!(
+            joined(["not halted".to_owned(), "not halted".to_owned()].into_iter()),
+            "not halted"
+        );
+        // And one is itself, so the common case reads as it always did.
+        assert_eq!(
+            joined(["withdraw of R".to_owned()].into_iter()),
+            "withdraw of R"
+        );
+    }
 
     /// The verb a directional write reads as is the cell's own, and a
     /// cell that holds no value has no direction to read.
