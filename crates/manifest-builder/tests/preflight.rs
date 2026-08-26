@@ -150,6 +150,13 @@ fn the_operator_surface_is_the_badge_holders_custody() {
     );
     assert_eq!(report.signers(), std::iter::once(OPERATOR).collect());
     assert_eq!(report.unsatisfiable().count(), 0);
+    // The report names the badge it just handed the caller, so a wallet
+    // can render the credential the surface asks for.
+    assert_eq!(
+        report.text(badge()),
+        report.named.get(&badge().address()).map(String::as_str)
+    );
+    assert!(report.text(badge()).is_some());
 }
 
 #[test]

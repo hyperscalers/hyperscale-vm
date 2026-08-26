@@ -364,6 +364,10 @@ fn report(
                 .iter()
                 .filter_map(|required| match required.authority {
                     Authority::Signature(principal) => Some(principal.address()),
+                    // The badge a holder presents: named here so
+                    // `text` answers for the address the report itself
+                    // hands the caller.
+                    Authority::Badge { resource, .. } => Some(resource.address()),
                     _ => None,
                 }),
         )
