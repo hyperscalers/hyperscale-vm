@@ -7,9 +7,11 @@
 use hyperscale_vm_types::{Address, EffectConflict, ResourceAddr};
 
 use super::MAX_SOCKETS;
+use crate::claim::Claim;
 use crate::dsl::EvalError;
 use crate::instance::ResolveError;
 use crate::resource::{GrantedBehaviour, ResourceKind};
+use crate::rule::Rule;
 use crate::types::MAX_VALUE_DEPTH;
 
 /// Why admission rejected a graph or an envelope tree.
@@ -284,6 +286,13 @@ pub enum AdmissionError {
     EvidenceUnsatisfied {
         /// The offending node.
         node: u32,
+        /// The rule the evidence was judged against, where this stage
+        /// held one in claim form — what lets a refusal be read leaf by
+        /// leaf rather than as a bare verdict.
+        rule: Option<Box<Rule<Claim>>>,
+        /// The claims the node actually presented, widened as the
+        /// proving calls widened them.
+        presented: Vec<Claim>,
     },
     /// Evidence presented to a method that requires none.
     ///

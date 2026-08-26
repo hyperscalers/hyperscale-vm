@@ -647,7 +647,7 @@ pub fn execute_manifest(
         // reports it rather than failing: nothing about it is a defect
         // in the driver, and it is exactly the refusal a wallet hears
         // before it signs.
-        Err(AdmissionError::EvidenceUnsatisfied { node }) => {
+        Err(AdmissionError::EvidenceUnsatisfied { node, .. }) => {
             return Ok((TxResult::Inadmissible(node), store));
         }
         Err(source) => return Err(WasmtimeError::new(source).context("admission")),

@@ -567,7 +567,54 @@ fn explain_placed(
     {
         let _ = write!(out, "\n  clause {clause}: {}", listing.trim_end());
     }
+    if let AdmissionError::EvidenceUnsatisfied {
+        rule: Some(rule),
+        presented,
+        ..
+    } = refusal
+    {
+        out.push_str("\n  the gate requires:");
+        judged_rule(rule, presented, &mut out, 0);
+    }
     out
+}
+
+/// The rule an unsatisfied-evidence refusal was judged against, each
+/// leaf beside what became of it: met by a presented claim, or the
+/// party whose proving call could have met it. What turns the bare
+/// verdict into something a composer can act on — the unmet leaf says
+/// which sign-in or badge presentation the transaction is missing.
+fn judged_rule(rule: &Rule<Claim>, presented: &[Claim], out: &mut String, depth: usize) {
+    let pad = "  ".repeat(depth + 2);
+    match rule {
+        Rule::Require(claim) => {
+            let met = presented.contains(claim);
+            let word = if met { "met" } else { "unmet" };
+            let _ = write!(out, "\n{pad}{word:>5}  claim {}", claim_text(claim));
+            if !met {
+                let _ = write!(out, " — {}", proven_by(claim));
+            }
+        }
+        Rule::CountOf { count, rules } => {
+            let _ = write!(out, "\n{pad}{count} of:");
+            for branch in rules {
+                judged_rule(branch, presented, out, depth + 1);
+            }
+        }
+    }
+}
+
+/// The proving call that would meet an unmet claim leaf, read off the
+/// claim's own class: an identity is signed into, a badge is presented
+/// by whoever holds it.
+fn proven_by(claim: &Claim) -> String {
+    match (claim.subject.class(), claim.instance) {
+        (AddressClass::Principal, _) => {
+            format!("proven by signing in as {}", address_text(claim.subject))
+        }
+        (_, None) => "proven by a holder presenting the badge".to_owned(),
+        (_, Some(id)) => format!("proven by a holder presenting instance {id}"),
+    }
 }
 
 /// The ABI binding a refusal is about, described as the exports line

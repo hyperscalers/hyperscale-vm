@@ -1029,11 +1029,19 @@ fn judge_presented(
             // A rule this stage judges reads claims alone, which is what
             // put it here.
             JudgedLeaf::Presence { .. } | JudgedLeaf::Stored { .. } => {
-                Err(AdmissionError::EvidenceUnsatisfied { node: node_index })
+                Err(AdmissionError::EvidenceUnsatisfied {
+                    node: node_index,
+                    rule: None,
+                    presented: evidence.to_vec(),
+                })
             }
         })?;
         if !judged.satisfied_by(evidence) {
-            return Err(AdmissionError::EvidenceUnsatisfied { node: node_index });
+            return Err(AdmissionError::EvidenceUnsatisfied {
+                node: node_index,
+                rule: Some(Box::new(judged)),
+                presented: evidence.to_vec(),
+            });
         }
     }
     Ok(())

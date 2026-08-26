@@ -619,6 +619,73 @@ fn a_refusal_reads_back_into_the_graph_that_earned_it() {
     );
 }
 
+/// An unsatisfied gate reads back leaf by leaf: the rule it was judged
+/// against, each leaf marked met or unmet against what the node
+/// presented, and the proving call that would meet an unmet one.
+#[test]
+fn an_unsatisfied_gate_reads_back_leaf_by_leaf() {
+    let held = ResourceAddr::new([0xB0; 31]);
+    let missing = ResourceAddr::new([0xB1; 31]);
+    let (mut chain, custodian) = custodian_world(
+        &Presenting::Fungible(Expr::Config(0)),
+        vec![
+            Value::Address(held.address()),
+            Value::Address(missing.address()),
+        ],
+    );
+    // A gatekeeper gated on both configured badges at once — the
+    // sign-in beside it proves only the first, so the threshold is
+    // short by exactly one leaf.
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "operate".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            effects: vec![Clause::Requires {
+                guard: None,
+                rule: RuleExpr::CountOf {
+                    count: 2,
+                    rules: vec![
+                        RuleExpr::claim(Expr::Config(0)),
+                        RuleExpr::claim(Expr::Config(1)),
+                    ],
+                },
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    chain.packages.publish_unchecked(pkg("gatekeeper"), package);
+    let meta = InstanceMeta {
+        package: pkg("gatekeeper"),
+        config: vec![
+            Value::Address(held.address()),
+            Value::Address(missing.address()),
+        ],
+        salt: Hash32([11; 32]),
+    };
+    let gatekeeper = meta.address(&TestHasher);
+    chain.instances.create(&TestHasher, meta);
+
+    let mut graph = custodian_graph(custodian);
+    graph.nodes[1].target = gatekeeper.into();
+    let refusal = admit(&graph, ALICE, &chain, &TestHasher)
+        .expect_err("one badge does not meet a threshold of two");
+    assert!(matches!(
+        refusal,
+        AdmissionError::EvidenceUnsatisfied { .. }
+    ));
+
+    let told = explain_admission(&graph, &chain, &refusal);
+    assert!(told.contains("the gate requires:"), "{told}");
+    assert!(told.contains("2 of:"), "{told}");
+    assert!(told.contains("met  claim"), "the held badge: {told}");
+    assert!(told.contains("unmet  claim"), "the missing badge: {told}");
+    assert!(
+        told.contains("proven by a holder presenting the badge"),
+        "how to meet it: {told}"
+    );
+}
+
 #[test]
 #[allow(clippy::too_many_lines)] // one assertion block per mutation class
 fn every_malformed_mutation_rejects() {
