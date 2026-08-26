@@ -136,6 +136,7 @@ impl Routing {
             reach: None,
             effect,
             holds: None,
+            clause: None,
         });
     }
 }

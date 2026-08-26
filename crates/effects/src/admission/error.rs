@@ -508,7 +508,9 @@ pub enum AdmissionError {
     ForeignDeclaration {
         /// The manifest node whose frame reached it.
         node: u32,
-        /// Which of the frame's evaluated effects it is, in clause order.
+        /// The clause that declared it, numbered in the preorder walk of
+        /// the method's effects — the numbering the rendered listing
+        /// gives its lines.
         clause: u32,
         /// The prefix it reached for.
         owner: Address,
@@ -530,7 +532,9 @@ pub enum AdmissionError {
     ReachesItself {
         /// The manifest node whose frame reached it.
         node: u32,
-        /// Which of the frame's evaluated effects it is, in clause order.
+        /// The clause that declared it, numbered in the preorder walk of
+        /// the method's effects — the numbering the rendered listing
+        /// gives its lines.
         clause: u32,
     },
     /// The capability table outgrew the index a handle is named by.

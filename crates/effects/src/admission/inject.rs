@@ -566,6 +566,7 @@ fn declare_read(frame: &mut Declaration, target: EffectTarget) {
             effect,
             holds: None,
             reach: None,
+            clause: None,
         });
     }
 }

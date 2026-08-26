@@ -90,6 +90,7 @@ pub(super) fn holding(ordered: &[Effect]) -> Vec<DeclaredAccess> {
             holds: value
                 .contains(&contents_of(effect.target))
                 .then_some(RESOURCE),
+            clause: None,
         })
         .collect()
 }

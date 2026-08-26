@@ -264,6 +264,7 @@ fn session(fx: &Fx) -> Option<KernelSession> {
                 effect,
                 holds,
                 reach: None,
+                clause: None,
             })
             .collect(),
         ..Declaration::default()

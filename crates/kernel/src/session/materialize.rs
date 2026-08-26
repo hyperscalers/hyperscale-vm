@@ -1425,11 +1425,13 @@ mod tests {
                             reach: None,
                             effect: write,
                             holds: holds[0],
+                            clause: None,
                         },
                         DeclaredAccess {
                             reach: None,
                             effect: write,
                             holds: holds[1],
+                            clause: None,
                         },
                     ],
                     ..Declaration::default()
@@ -1491,11 +1493,13 @@ mod tests {
                             reach: None,
                             effect: wide,
                             holds: Some(RESOURCE),
+                            clause: None,
                         },
                         DeclaredAccess {
                             reach: None,
                             effect: narrow,
                             holds: None,
+                            clause: None,
                         },
                     ],
                     ..Declaration::default()

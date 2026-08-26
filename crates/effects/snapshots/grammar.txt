@@ -20,7 +20,7 @@ accrue(u128) — infallible
       0  for each of config.assets
         1  debit-only self.vault[element] holding element
         2  credit self.fees[element] holding element
-  exports  handle for clause 0 site 0, handle for clause 0 site 1, arg0
+  exports  handle for clause 1, handle for clause 2, arg0
 
 charge(u64) — infallible
   declares
@@ -37,7 +37,7 @@ escrow(u128) — infallible
       0  for each of config.assets
         1  reserve arg0 self.vault[element] holding element
         2  credit self.fees[element] holding element
-  exports  handle for clause 0 site 0, handle for clause 0 site 1
+  exports  handle for clause 1, handle for clause 2
 
 file(ids) — infallible
   declares
@@ -81,7 +81,7 @@ owe-each() — infallible
   declares
       0  for each of config.windows
         1  write self.owed[element]
-  exports  handle for clause 0 site 0, config.windows
+  exports  handle for clause 1, config.windows
 
 raise() — infallible, answers
   declares
@@ -99,7 +99,7 @@ restow(ids) — infallible
   declares
       0  for each of config.marks
         1  write self.nf-vault[element] over 0..=u128::MAX, at most (len(arg0) + len(ids-of(edge(element × arg0)))) entries holding element
-  exports  handle for clause 0 site 0, arg0
+  exports  handle for clause 1, arg0
 
 scheduled(u64) — infallible
   declares
@@ -132,13 +132,13 @@ spread(u64) — infallible
   declares
       0  for each of config.sides
         1  write self.owed[element]
-  exports  handle for clause 0 site 0, arg0
+  exports  handle for clause 1, arg0
 
 spread-to(u64, address) — infallible
   declares
       0  for each of config.sides
         1  when element == arg1 → write self.owed[element]
-  exports  handle for clause 0 site 0, arg0
+  exports  handle for clause 1, arg0
 
 stash(u64) — infallible
   declares
@@ -157,14 +157,14 @@ survey(nf-bucket) — infallible
         1  read self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, element]
       2  write self.noted
   yields   edge 0 = edge(resource-of(arg0) × ids-of(arg0))
-  exports  handle for clause 0 site 0, handle for clause 1, edge arg0
+  exports  handle for clause 1, handle for clause 2, edge arg0
 
 surveyed() — infallible
   declares
       0  for each of config.assets
         1  read self.vault[element] holding element
       2  write self.noted
-  exports  handle for clause 0 site 0, handle for clause 1
+  exports  handle for clause 1, handle for clause 2
 
 sweep(resource-address) — infallible
   declares
@@ -207,7 +207,7 @@ unseat(nf-bucket) — infallible
       0  for each of ids-of(arg0)
         1  requires self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, element] is present
         2  write self.instance[self-issued(non-fungible["seat"]), granting mint to the issuer and burn to the issuer, element]
-  exports  handle for clause 0 site 1, edge arg0
+  exports  handle for clause 2, edge arg0
 
 widest() — infallible
   declares
@@ -220,4 +220,4 @@ windowed(u64) — infallible
         1  read self.entries[element] over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 8 entries
         2  write self.ledger[element] over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 8 entries
       3  write self.noted
-  exports  handle for clause 0 site 0, handle for clause 0 site 1, handle for clause 1, arg0
+  exports  handle for clause 1, handle for clause 2, handle for clause 3, arg0

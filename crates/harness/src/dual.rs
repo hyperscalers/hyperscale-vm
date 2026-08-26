@@ -387,6 +387,7 @@ pub fn materialize(
                     reach: None,
                     effect,
                     holds,
+                    clause: None,
                 })
                 .collect(),
             ..Declaration::default()

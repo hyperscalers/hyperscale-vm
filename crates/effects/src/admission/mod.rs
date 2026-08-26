@@ -517,6 +517,7 @@ impl Lower<'_> {
                 effect,
                 holds: None,
                 reach: None,
+                clause: None,
             });
         }
         Ok(Some(Rule::Require(JudgedLeaf::Presence {
@@ -1086,7 +1087,14 @@ fn judge_prefixes(
     node_index: u32,
 ) -> Result<(), AdmissionError> {
     for (position, access) in declaration.ordered.iter().enumerate() {
-        let clause = u32::try_from(position).unwrap_or(u32::MAX);
+        // The clause the access evaluated from, in the numbering the
+        // rendered listing uses. Every access here is clause-born — this
+        // judgment runs on the frame as evaluated, before anything is
+        // injected beside it — and the evaluated position stands in for
+        // the impossible remainder rather than panicking over it.
+        let clause = access
+            .clause
+            .unwrap_or_else(|| u32::try_from(position).unwrap_or(u32::MAX));
         let owner = access.effect.target.owner();
         match (access.reach.is_some(), owner == instance) {
             (false, false) => {

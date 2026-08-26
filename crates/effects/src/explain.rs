@@ -24,9 +24,11 @@
 //! and both fall through to the number itself.
 //!
 //! Clauses are numbered by the preorder a clause index names, which is
-//! the walk [`check_declarations`] judges them in, so the numbers a
-//! reader matches an ABI binding against are the numbers the binding
-//! means.
+//! the walk [`check_declarations`] judges them in and the numbering a
+//! refusal's clause index counts in. An ABI binding names a top-level
+//! clause and a site of its body; the exports line converts that
+//! coordinate to the listed number of the exact line it covers, so the
+//! numbers a reader matches a binding against are the listing's own.
 //!
 //! [`check_declarations`]: crate::publish::check_declarations
 
@@ -40,7 +42,7 @@ use hyperscale_vm_types::{
 
 use crate::admission::{AdmissionError, Admitted, Asks, Injected, IntentView, Placed, interleave};
 use crate::claim::Claim;
-use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
+use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr, preorder_len};
 use crate::envelope::{EnvelopeTree, NULLIFIER_SLOT};
 use crate::graph::{GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
@@ -599,6 +601,38 @@ fn arg_text(arg: &GraphArg) -> String {
     }
 }
 
+/// The preorder number the listing gives top-level clause `index` — or,
+/// where `site` names a line of that clause's loop body, the body
+/// line's own number. `None` for a coordinate the effects do not hold,
+/// including a sited binding on a clause that is not a loop.
+fn listed_line(effects: &[Clause], index: u32, site: Option<u32>) -> Option<u32> {
+    let mut number = 0u32;
+    for (position, clause) in effects.iter().enumerate() {
+        if position == usize::try_from(index).ok()? {
+            let Some(site) = site else {
+                return Some(number);
+            };
+            let site = usize::try_from(site).ok()?;
+            let Clause::ForEach { body, .. } = clause else {
+                return (site == 0).then_some(number);
+            };
+            if site >= body.len() {
+                return None;
+            }
+            return Some(
+                number
+                    .saturating_add(1)
+                    .saturating_add(preorder_len(&body[..site])),
+            );
+        }
+        number = number.saturating_add(1);
+        if let Clause::ForEach { body, .. } = clause {
+            number = number.saturating_add(preorder_len(body));
+        }
+    }
+    None
+}
+
 /// One clause of the callee's declaration, rendered as `explain_method`
 /// numbers it.
 fn declared_clause(records: &dyn ChainRecords, node: &GraphNode, clause: u32) -> Option<String> {
@@ -1128,24 +1162,23 @@ impl Names<'_> {
 
     /// How one ABI parameter is built.
     ///
-    /// A site is named only where the clause has more than one — a plain
-    /// access is a site of its own, and saying so would be noise on
-    /// every line.
+    /// A binding names a top-level clause, and for a loop one site of
+    /// its body; the listing numbers every line in preorder. What is
+    /// rendered is the listed number of the exact line the binding
+    /// covers — the body line for a sited binding — so the number a
+    /// reader matches against the listing is the number printed here.
     fn abi_param(&self, param: &AbiParam, effects: &[Clause]) -> String {
         match param {
-            AbiParam::Handle { clause, site } => {
-                let looped = usize::try_from(*clause)
-                    .ok()
-                    .and_then(|index| effects.get(index))
-                    .is_some_and(|clause| matches!(clause, Clause::ForEach { .. }));
-                if looped {
-                    format!("handle for clause {clause} site {site}")
-                } else {
-                    format!("handle for clause {clause}")
-                }
-            }
+            AbiParam::Handle { clause, site } => listed_line(effects, *clause, Some(*site))
+                .map_or_else(
+                    || format!("handle for clause {clause} site {site}"),
+                    |line| format!("handle for clause {line}"),
+                ),
             AbiParam::Bucket(position) => format!("edge arg{position}"),
-            AbiParam::Guard(clause) => format!("whether clause {clause} was declared"),
+            AbiParam::Guard(clause) => listed_line(effects, *clause, None).map_or_else(
+                || format!("whether clause {clause} was declared"),
+                |line| format!("whether clause {line} was declared"),
+            ),
             AbiParam::Derived(expr) => self.expr(expr, SELECT),
         }
     }

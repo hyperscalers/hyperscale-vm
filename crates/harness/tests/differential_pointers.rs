@@ -98,6 +98,7 @@ fn session() -> KernelSession {
                     reach: None,
                     effect: *effect,
                     holds: Some(RESOURCE),
+                    clause: None,
                 })
                 .collect(),
             ..Declaration::default()

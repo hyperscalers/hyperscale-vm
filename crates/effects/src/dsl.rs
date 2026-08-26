@@ -1074,6 +1074,16 @@ pub struct DeclaredAccess {
     /// access earns — it does not, because every one of them would fire
     /// against the party being reached — and which entry admits it.
     pub reach: Option<Reach>,
+    /// The clause this access evaluated from, numbered in the preorder
+    /// walk of the method's effects — the numbering a rendered listing
+    /// gives its lines, so a refusal carrying this number points at a
+    /// line the author can read. Every element of a `for-each` carries
+    /// its body clause's one number, because one line declared them all.
+    ///
+    /// `None` for an access no clause wrote: a read admission injects
+    /// beside a condition, or a declaration assembled outside a
+    /// signature's evaluation.
+    pub clause: Option<u32>,
 }
 
 /// What lets one access name a prefix that is not the declaring
@@ -1253,6 +1263,7 @@ impl Declaration {
                 reach: None,
                 effect,
                 holds: None,
+                clause: None,
             })
             .collect();
         let clause_spans = (0..u32::try_from(ordered.len()).unwrap_or(u32::MAX))
@@ -1402,6 +1413,13 @@ struct Budget<'a> {
     /// The top-level clause being evaluated, which is the index a
     /// `for-each`'s expansion map is filed under.
     clause: Cell<u32>,
+    /// The current clause's number in the preorder walk of the method's
+    /// effects — the numbering a rendered listing gives its lines. It
+    /// counts clause *text*: a loop's body numbers once however many
+    /// elements the loop maps over, and a clause whose guard did not
+    /// fire keeps its number, because the line exists whether or not it
+    /// declared anything this run.
+    preorder: Cell<u32>,
     /// The envelope meter every signature in one tree reports into.
     envelope: &'a EvalBudget,
 }
@@ -1414,6 +1432,7 @@ impl<'a> Budget<'a> {
             work: Cell::default(),
             spent: Cell::default(),
             clause: Cell::default(),
+            preorder: Cell::default(),
             envelope,
         }
     }
@@ -1514,6 +1533,11 @@ fn eval_clauses(
         return Err(EvalError::ClausesTooDeep);
     }
     for clause in clauses {
+        // The line this clause is, in the numbering a rendered listing
+        // gives it. Taken before the guard, because the line keeps its
+        // number whether or not it declared anything this run.
+        let number = budget.preorder.get();
+        budget.preorder.set(number.saturating_add(1));
         // A clause depth of zero is a clause an ABI binding can name, so
         // its verdict is one the guest may be handed. Deeper ones are
         // inside a `for-each` body, where no fixed export parameter
@@ -1529,12 +1553,16 @@ fn eval_clauses(
             // A loop whose guard did not fire mapped over no elements,
             // which is the expansion it has: a site of none rather than
             // no run, so a binding that names it reads what a list of
-            // none leaves rather than refusing the call.
-            if let Clause::ForEach { body, .. } = clause
-                && budget.clause_depth.get() == 0
-            {
-                out.expansions
-                    .insert(budget.clause.get(), vec![Vec::new(); body.len()]);
+            // none leaves rather than refusing the call. Its body's
+            // lines keep their numbers all the same.
+            if let Clause::ForEach { body, .. } = clause {
+                budget
+                    .preorder
+                    .set(budget.preorder.get().saturating_add(preorder_len(body)));
+                if budget.clause_depth.get() == 0 {
+                    out.expansions
+                        .insert(budget.clause.get(), vec![Vec::new(); body.len()]);
+                }
             }
             continue;
         }
@@ -1567,6 +1595,7 @@ fn eval_clauses(
                     effect,
                     holds: held,
                     reach: reached,
+                    clause: Some(number),
                 });
             }
             Clause::Requires { rule, .. } => {
@@ -1618,42 +1647,77 @@ fn eval_clauses(
                 }
             }
             Clause::ForEach { list, body, .. } => {
-                // The one place a borrow cannot reach: the loop pushes each
-                // element onto `bindings`, which a list read out of an
-                // enclosing binding would itself be borrowed from. Owned
-                // once per loop, and charged for the copy.
-                let items = as_list(forced(
-                    eval_expr(list, inputs, hasher, bindings, 0, budget)?,
-                    budget,
-                )?)?;
-                if items.len() > MAX_FOREACH_ELEMENTS {
-                    return Err(EvalError::ForEachTooLong { len: items.len() });
-                }
-                // Only a top-level loop is one an ABI binding can name, so
-                // only that one records where its expansions landed.
-                let mut rows = (budget.clause_depth.get() == 0)
-                    .then(|| vec![Vec::with_capacity(items.len()); body.len()]);
-                let clause = budget.clause.get();
-                budget.clause_depth.set(budget.clause_depth.get() + 1);
-                for item in items {
-                    // The iteration is work whether or not the body declares
-                    // anything, so a nest of empty loops is bounded here
-                    // rather than running the product of its levels' widths.
-                    budget.charge()?;
-                    bindings.push(item);
-                    let result =
-                        eval_expansion(body, inputs, hasher, bindings, out, budget, rows.as_mut());
-                    bindings.pop();
-                    result?;
-                }
-                budget.clause_depth.set(budget.clause_depth.get() - 1);
-                if let Some(rows) = rows {
-                    out.expansions.insert(clause, rows);
-                }
+                eval_foreach(list, body, inputs, hasher, bindings, out, budget)?;
             }
         }
     }
     Ok(())
+}
+
+/// One `for-each` clause: evaluate the collection, map the body over
+/// each element, and file the top-level expansion map.
+fn eval_foreach(
+    list: &Expr,
+    body: &[Clause],
+    inputs: &EvalInputs<'_>,
+    hasher: &dyn Hasher,
+    bindings: &mut Vec<Value>,
+    out: &mut Declaration,
+    budget: &Budget<'_>,
+) -> Result<(), EvalError> {
+    // The one place a borrow cannot reach: the loop pushes each
+    // element onto `bindings`, which a list read out of an
+    // enclosing binding would itself be borrowed from. Owned
+    // once per loop, and charged for the copy.
+    let items = as_list(forced(
+        eval_expr(list, inputs, hasher, bindings, 0, budget)?,
+        budget,
+    )?)?;
+    if items.len() > MAX_FOREACH_ELEMENTS {
+        return Err(EvalError::ForEachTooLong { len: items.len() });
+    }
+    // Only a top-level loop is one an ABI binding can name, so
+    // only that one records where its expansions landed.
+    let mut rows =
+        (budget.clause_depth.get() == 0).then(|| vec![Vec::with_capacity(items.len()); body.len()]);
+    let clause = budget.clause.get();
+    // The body's lines number once, however many elements the
+    // loop maps over: each pass restarts at the first body
+    // line, and the walk resumes past the whole body.
+    let body_lines = budget.preorder.get();
+    budget.clause_depth.set(budget.clause_depth.get() + 1);
+    for item in items {
+        // The iteration is work whether or not the body declares
+        // anything, so a nest of empty loops is bounded here
+        // rather than running the product of its levels' widths.
+        budget.charge()?;
+        budget.preorder.set(body_lines);
+        bindings.push(item);
+        let result = eval_expansion(body, inputs, hasher, bindings, out, budget, rows.as_mut());
+        bindings.pop();
+        result?;
+    }
+    budget.clause_depth.set(budget.clause_depth.get() - 1);
+    budget
+        .preorder
+        .set(body_lines.saturating_add(preorder_len(body)));
+    if let Some(rows) = rows {
+        out.expansions.insert(clause, rows);
+    }
+    Ok(())
+}
+
+/// How many lines `clauses` occupies in the preorder numbering a
+/// rendered listing gives a method's effects: one per clause, plus each
+/// `for-each` body's own, counted once.
+pub(crate) fn preorder_len(clauses: &[Clause]) -> u32 {
+    clauses
+        .iter()
+        .map(|clause| match clause {
+            Clause::ForEach { body, .. } => 1u32.saturating_add(preorder_len(body)),
+            _ => 1,
+        })
+        .fold(0, u32::saturating_add)
 }
 
 /// The resource a value cell's clause declares the cell holds.
@@ -2928,12 +2992,17 @@ mod tests {
         assert_eq!(declaration.ordered.len(), 3, "one entry per clause taken");
         assert_eq!(declaration.set.len(), 2, "the set folds the repeat");
         assert_eq!(
-            declaration.ordered[0], declaration.ordered[2],
+            declaration.ordered[0].effect, declaration.ordered[2].effect,
             "the repeated clause is the same effect twice"
+        );
+        assert_eq!(
+            (declaration.ordered[0].clause, declaration.ordered[2].clause),
+            (Some(0), Some(2)),
+            "each entry keeps the line that declared it"
         );
         // The clause order is the author's, so it survives regardless of
         // how the two keys happen to compare.
-        assert_ne!(declaration.ordered[0], declaration.ordered[1]);
+        assert_ne!(declaration.ordered[0].effect, declaration.ordered[1].effect);
         assert_eq!(
             evaluate_effects(&clauses, &ins, &TestHasher).unwrap(),
             declaration.set,

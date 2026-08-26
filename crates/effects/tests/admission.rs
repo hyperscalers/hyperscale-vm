@@ -984,6 +984,85 @@ fn a_component_address_where_a_resource_belongs_is_refused() {
     );
 }
 
+/// A refusal's clause number is the listed line that declared it.
+///
+/// The refusal carries the preorder number the rendered listing gives
+/// its lines, so a `requires` header sitting before the offending access
+/// shifts nothing: the number points at the access's own line, and the
+/// explanation prints that line rather than whichever clause sits at
+/// the same position in the evaluated order.
+#[test]
+fn a_refusal_names_the_listed_clause_that_declared_it() {
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "grab".into(),
+        MethodSignature {
+            totality: Totality::Fallible,
+            effects: vec![
+                Clause::Requires {
+                    guard: None,
+                    rule: RuleExpr::Require(RuleLeaf::Presence {
+                        target: Box::new(TargetExpr::Point(Expr::ChildKey {
+                            owner: Box::new(Expr::SelfAddr),
+                            slot: SlotRef::Fixed(AUTH),
+                            material: vec![],
+                        })),
+                        expect: Presence::Present,
+                    }),
+                },
+                // The access the refusal is about: a write under a prefix
+                // that is not the frame's own, declared with no reach.
+                Clause::Effect {
+                    reach: None,
+                    guard: None,
+                    target: TargetExpr::Point(Expr::ChildKey {
+                        owner: Box::new(Expr::Literal(Value::Address(BOB.address()))),
+                        slot: SlotRef::Fixed(VAULT),
+                        material: vec![Expr::Literal(Value::Address(RES_X.address()))],
+                    }),
+                    mode: ModeExpr::Write { moves: Moves::Both },
+                    denomination: None,
+                },
+            ],
+            ..MethodSignature::default()
+        },
+    );
+    let mut chain = setup();
+    chain.packages.publish_unchecked(pkg("grabber"), package);
+    let meta = InstanceMeta {
+        package: pkg("grabber"),
+        config: Vec::new(),
+        salt: Hash32([0x6B; 32]),
+    };
+    let grabber = meta.address(&TestHasher);
+    chain.instances.create(&TestHasher, meta);
+
+    let graph = ManifestGraph {
+        nodes: vec![GraphNode {
+            target: grabber.into(),
+            method: "grab".into(),
+            args: vec![],
+            evidence: BTreeSet::new(),
+        }],
+    };
+    let refusal = admit(&graph, ALICE, &chain, &TestHasher)
+        .expect_err("a foreign prefix with no reach refuses");
+    assert!(matches!(
+        refusal,
+        AdmissionError::ForeignDeclaration {
+            node: 0,
+            clause: 1,
+            ..
+        }
+    ));
+    let told = explain_admission(&graph, &chain, &refusal);
+    // The line the number names is the access, not the requires header
+    // that happens to sit at the same evaluated position.
+    assert!(told.contains("clause 1"), "{told}");
+    let listed = told.lines().last().expect("a clause line");
+    assert!(!listed.contains("requires"), "{told}");
+}
+
 /// The injection dedup is work the envelope pays for.
 ///
 /// Injecting a movement rule scans the frame's conditions for a

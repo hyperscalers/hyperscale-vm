@@ -62,6 +62,7 @@ fn session(held: u128, reserves: &[u128]) -> (KernelSession, u32) {
                 mode: Mode::Reserve { amount: *amount },
             },
             holds: Some(UNIT),
+            clause: None,
         })
         .collect();
     ordered.push(DeclaredAccess {
@@ -70,6 +71,7 @@ fn session(held: u128, reserves: &[u128]) -> (KernelSession, u32) {
             target: EffectTarget::Point(sink),
             mode: Mode::Delta { moves: Moves::Both },
         },
+        clause: None,
         holds: Some(UNIT),
     });
 

@@ -91,6 +91,7 @@ fn try_session(denominations: &[Option<ResourceAddr>]) -> Result<KernelSession, 
                     reach: None,
                     effect: *effect,
                     holds: *holds,
+                    clause: None,
                 })
                 .collect(),
             ..Declaration::default()
@@ -155,6 +156,7 @@ fn every_producer_stamps_what_its_source_held() {
                     reach: None,
                     effect: *effect,
                     holds,
+                    clause: None,
                 })
                 .collect(),
             ..Declaration::default()
@@ -238,6 +240,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
                     reach: None,
                     effect: *effect,
                     holds,
+                    clause: None,
                 })
                 .collect(),
             ..Declaration::default()

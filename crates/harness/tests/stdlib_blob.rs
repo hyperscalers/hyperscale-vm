@@ -131,6 +131,7 @@ fn session() -> KernelSession {
                     reach: None,
                     effect,
                     holds,
+                    clause: None,
                 })
                 .collect(),
             ..Declaration::default()
@@ -519,6 +520,7 @@ fn lottery_session() -> KernelSession {
                     reach: None,
                     effect,
                     holds: None,
+                    clause: None,
                 })
                 .collect(),
             ..Declaration::default()

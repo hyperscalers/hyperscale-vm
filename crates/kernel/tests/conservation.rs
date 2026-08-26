@@ -402,6 +402,7 @@ mod instances {
                     reach: None,
                     effect: interval,
                     holds: Some(TICKET),
+                    clause: None,
                 }],
                 ..Declaration::default()
             },

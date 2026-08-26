@@ -622,6 +622,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
                     reach: None,
                     effect,
                     holds: None,
+                    clause: None,
                 })
                 .collect(),
             ..Declaration::default()
