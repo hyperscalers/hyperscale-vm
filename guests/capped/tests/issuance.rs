@@ -137,3 +137,69 @@ fn a_resource_granting_no_burn_is_indestructible(chain: Chain) {
     );
     assert_eq!(chain.balance(FOUNDER, fixed), 1_000_000);
 }
+
+/// Minting a seat is the configured minter's, and the issuer's own
+/// address does not open it.
+///
+/// The whole of what "delegated" means: the rule names an identity, and
+/// **nothing can present a claim on a component but that component** —
+/// so the subtraction that lets an issuer mint its own supply does not
+/// apply here, and the requirement reaches the call. The package's code
+/// is the same code either way; what changed is who the entry names.
+#[hyperscale_vm_testing::test]
+fn a_seat_is_minted_by_whoever_the_entry_names(chain: Chain) {
+    let (mut chain, instance) = world(chain);
+    let seat = instance.issued_seat(&TestHasher, terms());
+
+    chain
+        .transact(MINTER, |b| {
+            let minted = instance.issue(b, 40u128)?;
+            account::deposit(b, MINTER, minted)
+        })
+        .expect_completed();
+    assert_eq!(chain.balance(MINTER, seat), 40);
+}
+
+/// And nobody else's signature does, the founder's included.
+///
+/// The founder created the component and holds every founded supply;
+/// what they do not hold is the seat's minting entry, which is a fact
+/// about the resource rather than about the package that issues it.
+#[hyperscale_vm_testing::test]
+fn the_issuers_own_founder_cannot_spend_the_mint_it_delegated(chain: Chain) {
+    let (mut chain, instance) = world(chain);
+    let seat = instance.issued_seat(&TestHasher, terms());
+
+    let refused = chain.try_transact(FOUNDER, |b| {
+        let minted = instance.issue(b, 40u128)?;
+        account::deposit(b, FOUNDER, minted)
+    });
+    assert!(
+        refused.is_err(),
+        "the founder answers for nothing the seat's entry names",
+    );
+    assert_eq!(chain.balance(FOUNDER, seat), 0);
+}
+
+/// A `burn` entry naming the issuer is not one a holder can spend.
+///
+/// The pair with `a_holder_destroys_what_the_resource_lets_them`: the
+/// same operation, the same account, and the entry's subject is the
+/// whole difference. `Circulating` names anyone and `Retired` names the
+/// issuing instance, which no account can answer for.
+#[hyperscale_vm_testing::test]
+fn a_holder_destroys_nothing_whose_burn_names_its_issuer(chain: Chain) {
+    let (mut chain, instance) = world(chain);
+    let retired = instance.issued_retired(&TestHasher);
+
+    let refused = chain.try_transact(FOUNDER, |b| {
+        let holder = account::authorize(b, FOUNDER)?;
+        let funds = account::withdraw(b, holder, retired, 1u128)?;
+        account::burn(b, FOUNDER, funds)
+    });
+    assert!(
+        refused.is_err(),
+        "a burn the issuer keeps is not the holder's to make",
+    );
+    assert_eq!(chain.balance(FOUNDER, retired), 500);
+}

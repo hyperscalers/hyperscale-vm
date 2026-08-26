@@ -55,10 +55,15 @@ fn world(mut chain: Chain) -> (Chain, custodian::client::Custodian, ResourceAddr
             instances: note,
         },
     );
-    // Seeded rather than transferred in: how the notes got there is not
-    // what the case is about, and a deposit would be a second movement
-    // to reason about.
-    chain.credit(keeper.address(), note, 100);
+    // Issued by the package that issues them and paid straight into the
+    // custodian, which is a movement the registrar signs like any other
+    // — the class asks about the transaction and this one is theirs.
+    chain
+        .transact(OFFICER, |b| {
+            let minted = issuer.issue_approved(b, 100u128)?;
+            keeper.deposit(b, minted)
+        })
+        .expect_completed();
     (chain, keeper, note)
 }
 

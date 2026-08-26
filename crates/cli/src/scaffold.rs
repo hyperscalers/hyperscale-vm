@@ -335,7 +335,7 @@ pub fn package(dir: &Path) -> Result<PathBuf, BuildError> {
     )?;
     write(dir.join("src/lib.rs"), library(&module))?;
     write(
-        dir.join("src/bin/metadata.rs"),
+        dir.join(format!("src/bin/{module}-metadata.rs")),
         declaration_bin(&module, &module),
     )?;
     write(dir.join("tests/first.rs"), first_test(&module))?;

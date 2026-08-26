@@ -12,7 +12,7 @@ use custodian_guest::custodian;
 // and the bare `grammar` stays the crate `package!` names.
 use grammar::grammar as shapes;
 use hyperscale_vm_testing::{
-    Chain, Component, IntoSlot, PrincipalAddr, ResourceAddr, TestHasher, account, package,
+    Chain, Component, PrincipalAddr, ResourceAddr, TestHasher, account, package,
     principal, resource,
 };
 

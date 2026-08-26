@@ -198,19 +198,29 @@ pub fn compile(dir: &Path) -> Result<Vec<u8>, BuildError> {
 /// [`BuildError`] if the host build fails, the binary does not run, or
 /// what it printed is not canonical metadata.
 pub fn declaration(dir: &Path) -> Result<PackageMetadata, BuildError> {
-    // Answered before the build, because cargo's own answer to a missing
-    // bin target is that no such target exists, which says nothing about
-    // what a package crate owes.
-    let bin = dir.join("src").join("bin").join("metadata.rs");
-    if !bin.exists() {
+    // Answered before the build, because cargo's own answer is that the
+    // package has no binary to run, which says nothing about what a
+    // package crate owes or what to write.
+    //
+    // The binary is the package's one binary rather than one named here:
+    // a crate's binaries share a name space with every other crate built
+    // beside it, so a fixed name is one every package in a workspace of
+    // packages would collide on.
+    let binaries = std::fs::read_dir(dir.join("src").join("bin"))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|it| it == "rs"))
+        .count();
+    if binaries != 1 {
         return Err(BuildError::new(format!(
-            "{} has no declaration binary — a package's declaration is derived by running \
-             it, so the crate ships one. Its whole content is \
+            "{} has {binaries} binaries under `src/bin`, and a package's declaration is \
+             derived by running its one. Its whole content is \
              `hyperscale_vm_sdk::declaration_main!(<crate>::<module>);`",
             dir.display()
         )));
     }
-    let run = cargo(dir, &["run", "--release", "--quiet", "--bin", "metadata"])?;
+    let run = cargo(dir, &["run", "--release", "--quiet"])?;
     if !run.status.success() {
         return Err(BuildError::new(format!(
             "the package's declaration did not build:\n{}",

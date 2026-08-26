@@ -210,9 +210,13 @@ pub use hyperscale_vm_effects::{
 /// it by name:
 ///
 /// ```ignore
-/// // src/bin/metadata.rs
+/// // src/bin/lottery-metadata.rs
 /// hyperscale_vm_sdk::declaration_main!(lottery_guest::lottery);
 /// ```
+///
+/// The file is named for the package rather than for what it does,
+/// because binaries share a name space with everything built beside
+/// them and `metadata` is what every package would call its own.
 #[macro_export]
 macro_rules! declaration_main {
     ($($module:ident)::+) => {

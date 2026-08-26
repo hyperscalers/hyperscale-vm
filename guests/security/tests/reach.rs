@@ -137,6 +137,21 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
         told.contains("not halted"),
         "and the question it asked: {told}"
     );
+
+    // And the flag lifts. A halt whose absence is the unhalted state is
+    // one whose end is the ending of a cell rather than a second flag,
+    // so what proves it lifted is the movement it was stopping.
+    chain
+        .transact(REGISTRAR, |b| {
+            let registrar = account::authorize(b, REGISTRAR)?;
+            b.call_as(registrar, issuer.address(), "unhalt", (HOLDER.address(),))?
+                .none()
+        })
+        .expect_completed();
+    transfer(&mut chain)
+        .expect("the manifest still admits")
+        .expect_completed();
+    assert_eq!(chain.balance(HOLDER, share), 80, "and the holder moves again");
 }
 
 /// Every rule the share class carries, and the recall reaching past all
