@@ -37,6 +37,7 @@ pub mod args;
 pub mod builder;
 pub mod envelope;
 pub mod preflight;
+pub mod projection;
 pub mod render;
 pub mod signing;
 pub mod typed;
@@ -47,5 +48,6 @@ pub use envelope::{
     BindRefusal, EnvelopeBuilder, EnvelopeError, IntentBuilder, Offered, OpenSocket, Sockets,
 };
 pub use preflight::{Authority, PreflightError, Report, Required, preflight, preflight_tree};
+pub use projection::graph_records;
 pub use render::{Names, render};
-pub use typed::{Answered, Outputs, Proof, TypedBuilder, TypedError, graph_records};
+pub use typed::{Answered, Outputs, Proof, TypedBuilder, TypedError};

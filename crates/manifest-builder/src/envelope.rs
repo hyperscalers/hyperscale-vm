@@ -42,7 +42,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_types::{CallTarget, MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
 use crate::builder::{Bucket, SocketRef};
-use crate::typed::{Proof, TypedBuilder, TypedError, graph_records};
+use crate::projection::graph_records;
+use crate::typed::{Proof, TypedBuilder, TypedError};
 
 /// Why an envelope could not be composed.
 ///

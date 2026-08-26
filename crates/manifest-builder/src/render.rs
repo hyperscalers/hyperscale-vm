@@ -36,7 +36,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_types::{Address, ResourceAddr, SubstateKey, TextError};
 
-use crate::typed::{output_resources, unknown};
+use crate::projection::{output_resources, unknown};
 
 /// What a reader already calls the addresses a graph names.
 ///
