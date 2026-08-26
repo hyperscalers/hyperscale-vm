@@ -83,8 +83,25 @@ pub fn code_at(module: &'static str, compiled_in: &'static str, crate_dir: &str)
 /// ```ignore
 /// let amm = chain.publish(package!(amm_guest::amm));
 /// ```
+///
+/// A test needing a second package names where that crate is, relative
+/// to its own — the wasm lane builds a package from its crate, and no
+/// crate can be asked where another one's source sits:
+///
+/// ```ignore
+/// chain.publish(package!(security_guest::security at "../security"));
+/// ```
 #[macro_export]
 macro_rules! package {
+    ($krate:ident $(:: $segment:ident)* at $dir:literal) => {
+        $crate::Package::new(
+            $krate $(:: $segment)* ::blueprint().metadata(),
+            $crate::Code::Crate(
+                ::std::path::Path::new(::core::env!("CARGO_MANIFEST_DIR")).join($dir),
+            ),
+            $krate $(:: $segment)* ::invoke,
+        )
+    };
     // Segment by segment rather than a `path` fragment: a parsed path is
     // one opaque node, and the expansion has to reach through it — to
     // the `blueprint` the module carries, and to the first segment,

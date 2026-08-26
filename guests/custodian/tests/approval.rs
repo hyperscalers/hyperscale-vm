@@ -16,15 +16,17 @@
 //!
 //! The custodian is the party under test, as it is wherever the movement
 //! seam is: it declares no rule, no gate and no approval, and it is
-//! bound anyway.
+//! bound anyway. What it holds is the security package's `Approved`
+//! class, whose `withdraw` and `deposit` entries name the registrar's
+//! identity — the per-transfer posture, beside the standing register its
+//! `Share` class is.
 
-use hyperscale_vm_effects::TestHasher;
-use hyperscale_vm_fixtures::custodian;
-use hyperscale_vm_sdk::blueprint;
+use custodian_guest::custodian;
 use hyperscale_vm_testing::{
-    AdmissionError, Chain, Component, PrincipalAddr, Refused, ResourceAddr, account, package,
-    principal,
+    AdmissionError, Chain, Component, PrincipalAddr, Refused, ResourceAddr, TestHasher, account,
+    package, principal,
 };
+use security_guest::security;
 
 /// Who the note's `withdraw` entry names.
 const OFFICER: PrincipalAddr = principal(0xD1);
@@ -33,56 +35,21 @@ const ISSUER: PrincipalAddr = principal(0xD2);
 /// Somebody the entry does not name.
 const STRANGER: PrincipalAddr = principal(0xD3);
 
-/// A note that moves only in a transaction the compliance desk signed.
-#[blueprint]
-mod desk {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Quantity};
-
-    /// The asset. Its `withdraw` entry names an identity rather than a
-    /// badge, so what it asks is per-transfer rather than standing: not
-    /// "is the mover on a register" but "did the desk sign this".
-    ///
-    /// An issuer wanting a desk they can replace names their own
-    /// component here — a rule naming an identity is fixed for the life
-    /// of the resource, and a component's identity is fixed at the
-    /// component rather than at whoever runs it.
-    #[resource(grants(mint = self, withdraw = config.officer))]
-    struct Note;
-
-    /// Who signs off on a movement.
-    #[config]
-    struct Terms {
-        officer: Address,
-    }
-
-    #[state]
-    struct Desk {}
-
-    impl Desk {
-        /// Issue notes.
-        pub fn issue(&mut self, amount: Quantity) -> Bucket {
-            Note::mint(amount)
-        }
-    }
-}
-
-const fn terms() -> desk::Terms {
-    desk::Terms {
-        officer: OFFICER.address(),
+const fn terms() -> security::client::Terms {
+    security::client::Terms {
+        registrar: OFFICER.address(),
     }
 }
 
 /// A world where a custodian holds notes and cooperates with nothing.
-fn world() -> (Chain, custodian::Custodian, ResourceAddr) {
-    let mut chain = Chain::native();
-    chain.publish(package!(desk));
-    chain.publish(package!(custodian));
-    let issuer = chain.instantiate::<desk::client::Desk>(ISSUER, terms());
-    let note = issuer.issued_note(&TestHasher, terms());
-    let keeper = chain.instantiate::<custodian::Custodian>(
+fn world(mut chain: Chain) -> (Chain, custodian::client::Custodian, ResourceAddr) {
+    chain.publish(package!(security_guest::security at "../security"));
+    chain.publish(package!(custodian_guest::custodian));
+    let issuer = chain.instantiate::<security::client::Security>(ISSUER, terms());
+    let note = issuer.issued_approved(&TestHasher, terms());
+    let keeper = chain.instantiate::<custodian::client::Custodian>(
         ISSUER,
-        custodian::Terms {
+        custodian::client::Terms {
             asset: note,
             other: note,
             instances: note,
@@ -102,9 +69,9 @@ fn world() -> (Chain, custodian::Custodian, ResourceAddr) {
 /// injected where the declaration is evaluated; the composer reads it
 /// off the record it found and mints the claim it names, because the
 /// party signing is the party the entry names.
-#[test]
-fn a_note_moves_in_a_transaction_the_desk_signed() {
-    let (mut chain, keeper, note) = world();
+#[hyperscale_vm_testing::test]
+fn a_note_moves_in_a_transaction_the_desk_signed(chain: Chain) {
+    let (mut chain, keeper, note) = world(chain);
 
     chain
         .transact(OFFICER, |b| {
@@ -123,9 +90,9 @@ fn a_note_moves_in_a_transaction_the_desk_signed() {
 /// the node's own signed evidence and nothing else, so the stage that
 /// holds the evidence is the stage that decides — before anything routes
 /// and before any fee is assured.
-#[test]
-fn a_note_stands_still_for_anybody_the_entry_does_not_name() {
-    let (mut chain, keeper, note) = world();
+#[hyperscale_vm_testing::test]
+fn a_note_stands_still_for_anybody_the_entry_does_not_name(chain: Chain) {
+    let (mut chain, keeper, note) = world(chain);
 
     let refused = chain
         .try_transact(STRANGER, |b| {
@@ -149,9 +116,9 @@ fn a_note_stands_still_for_anybody_the_entry_does_not_name() {
 /// The custodian's swap moves value between two of its own vaults with
 /// no account in the transaction at all — the case a design that looked
 /// at the caller would find a stranger at and bind nothing.
-#[test]
-fn the_question_follows_the_note_into_a_package_that_declares_nothing() {
-    let (mut chain, keeper, note) = world();
+#[hyperscale_vm_testing::test]
+fn the_question_follows_the_note_into_a_package_that_declares_nothing(chain: Chain) {
+    let (mut chain, keeper, note) = world(chain);
 
     chain
         .transact(OFFICER, |b| {

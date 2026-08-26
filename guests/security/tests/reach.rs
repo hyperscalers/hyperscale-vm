@@ -17,14 +17,13 @@
 
 use std::fmt::Write as _;
 
-use hyperscale_vm_effects::TestHasher;
-use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
-use hyperscale_vm_fixtures::security;
 use hyperscale_vm_sdk::blueprint;
+use hyperscale_vm_testing::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_testing::{
-    Chain, Component, Presence, PrincipalAddr, ResourceAddr, UnmetCondition, Verdict, account,
-    package, principal,
+    Chain, Component, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition, Verdict,
+    account, package, principal,
 };
+use security_guest::security;
 
 /// Who keeps the register, and whom the share's `halt` entry names.
 const REGISTRAR: PrincipalAddr = principal(0xA1);
@@ -33,18 +32,17 @@ const HOLDER: PrincipalAddr = principal(0xA2);
 /// A second registered holder, so a transfer has somewhere to go.
 const OTHER: PrincipalAddr = principal(0xA3);
 
-const fn terms() -> security::Terms {
-    security::Terms {
+const fn terms() -> security::client::Terms {
+    security::client::Terms {
         registrar: REGISTRAR.address(),
     }
 }
 
 /// A world where both parties are on the register and the holder has
 /// shares.
-fn world() -> (Chain, security::Security, ResourceAddr) {
-    let mut chain = Chain::native();
-    chain.publish(package!(security));
-    let issuer = chain.instantiate::<security::Security>(REGISTRAR, terms());
+fn world(mut chain: Chain) -> (Chain, security::client::Security, ResourceAddr) {
+    chain.publish(package!(security_guest::security));
+    let issuer = chain.instantiate::<security::client::Security>(REGISTRAR, terms());
     let share = issuer.issued_share(&TestHasher, terms());
 
     for (id, who) in [(1u64, HOLDER), (2, OTHER)] {
@@ -71,9 +69,9 @@ fn world() -> (Chain, security::Security, ResourceAddr) {
 /// The halt is written under the *holder's* prefix by a package the
 /// holder never called, and read by a declaration the holder's account
 /// never wrote. Neither party cooperated; both are bound.
-#[test]
-fn a_halt_stops_a_holder_who_was_moving_freely() {
-    let (mut chain, issuer, share) = world();
+#[hyperscale_vm_testing::test]
+fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
+    let (mut chain, issuer, share) = world(chain);
 
     let transfer = |chain: &mut Chain| {
         chain.try_transact(HOLDER, |b| {
@@ -156,9 +154,9 @@ fn a_halt_stops_a_holder_who_was_moving_freely() {
 /// foreign prefix carries no injected movement requirement at all. Each
 /// of those requirements would fire against the party being reached,
 /// who by construction fails it.
-#[test]
-fn a_recall_reaches_past_every_rule_the_resource_carries() {
-    let (mut chain, issuer, share) = world();
+#[hyperscale_vm_testing::test]
+fn a_recall_reaches_past_every_rule_the_resource_carries(chain: Chain) {
+    let (mut chain, issuer, share) = world(chain);
     let entry = issuer.issued_registered(&TestHasher, terms());
     // Two slots, because a holder keeps the two in different cells: the
     // share class is a balance and the register entry is an interval, so
@@ -211,6 +209,12 @@ fn a_recall_reaches_past_every_rule_the_resource_carries() {
 }
 
 /// An issuer that keeps its own authority, by naming itself.
+///
+/// Written here rather than as a guest of its own because what it is
+/// about is a posture, not a package: the entries name the issuing
+/// instance. It runs on the native lane alone, which is what a
+/// `#[blueprint]` in a test file can run on — a wasm artifact is built
+/// from a crate's library and this is not in one.
 #[blueprint]
 mod sovereign {
     use hyperscale_vm_sdk::Address;

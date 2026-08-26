@@ -44,13 +44,22 @@
 
 use std::sync::Arc;
 
+/// The slots the protocol names under every owner, which a test reads a
+/// cell at.
+pub use hyperscale_vm_effects::vocabulary;
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 /// The refusals a chain can hand back, so a test can name the one it
 /// meant rather than match on a rendering of it.
-pub use hyperscale_vm_effects::{AdmissionError, EvalError, ResourceKind};
+///
+/// [`TestHasher`] rides here for the same reason: a package crate's own
+/// test derives the addresses its instance issues, and the hasher it
+/// derives them under is one this crate already fixes.
+pub use hyperscale_vm_effects::{
+    AdmissionError, EvalError, ResourceKind, TestHasher, package_slot,
+};
 use hyperscale_vm_effects::{
     ChainRecords, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, PresentedGrants,
-    Records, TestHasher, Value, admit_presenting, child_key, declaration_hash, explain_refusal,
+    Records, Value, admit_presenting, child_key, declaration_hash, explain_refusal,
     holdings_collection, issued_record, issued_resource, route,
 };
 use hyperscale_vm_kernel::{
@@ -59,7 +68,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError, graph_records};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, instantiate};
-pub use hyperscale_vm_types::{Address, ComponentAddr, PrincipalAddr, ResourceAddr};
+pub use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_types::{
     CallTarget, Outcome as KernelOutcome, SubstateKey, TxHash, encode_amount,
 };

@@ -14,13 +14,13 @@
 //! over two representations: a fungible balance is one leaf, and
 //! instances are the entries of an interval.
 
-use hyperscale_vm_effects::vocabulary::NF_VAULT;
-use hyperscale_vm_effects::{TestHasher, package_slot};
-use hyperscale_vm_fixtures::security;
 use hyperscale_vm_sdk::blueprint;
+use hyperscale_vm_testing::vocabulary::NF_VAULT;
 use hyperscale_vm_testing::{
-    Address, AdmissionError, Chain, EvalError, PrincipalAddr, Refused, account, package, principal,
+    Address, AdmissionError, Chain, EvalError, PrincipalAddr, Refused, TestHasher, account,
+    package, package_slot, principal,
 };
+use security_guest::security;
 
 /// Whom both fixtures' entries name.
 const WARDEN: PrincipalAddr = principal(0xB1);
@@ -31,6 +31,10 @@ const STRANGER: PrincipalAddr = principal(0xB3);
 
 /// A non-fungible whose instances its issuer can take back, so the
 /// interval form of the reach has something to be about.
+///
+/// Written here rather than as a guest of its own, and so running on
+/// the native lane alone: a wasm artifact is built from a crate's
+/// library, and a `#[blueprint]` in a test file is not in one.
 #[blueprint]
 mod bailiff {
     use hyperscale_vm_sdk::Address;
@@ -172,8 +176,8 @@ fn a_slot_that_keeps_no_value_is_refused_where_the_argument_is_read() {
     assert!(chain.holds(HOLDER, deed, 1));
 }
 
-const fn share_terms() -> security::Terms {
-    security::Terms {
+const fn share_terms() -> security::client::Terms {
+    security::client::Terms {
         registrar: WARDEN.address(),
     }
 }
@@ -186,11 +190,10 @@ const fn share_terms() -> security::Terms {
 /// miss: the value is under the holder's prefix, in a cell the
 /// protocol derives no key for, and the issuer finds it because the
 /// caller says which slot rather than because anybody enumerated one.
-#[test]
-fn a_recall_finds_value_at_the_slot_the_holder_keeps_it_in() {
-    let mut chain = Chain::native();
-    chain.publish(package!(security));
-    let issuer = chain.instantiate::<security::Security>(WARDEN, share_terms());
+#[hyperscale_vm_testing::test]
+fn a_recall_finds_value_at_the_slot_the_holder_keeps_it_in(mut chain: Chain) {
+    chain.publish(package!(security_guest::security));
+    let issuer = chain.instantiate::<security::client::Security>(WARDEN, share_terms());
     let share = issuer.issued_share(&TestHasher, share_terms());
 
     // Both parties on the register, since the share class asks the

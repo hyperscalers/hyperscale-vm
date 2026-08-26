@@ -5,28 +5,26 @@
 //! rule reaches: a supply nothing may add to, a supply that only falls,
 //! and a mint the issuer's own address cannot open.
 
-use hyperscale_vm_effects::TestHasher;
-use hyperscale_vm_fixtures::capped;
+use capped_guest::capped;
 use hyperscale_vm_testing::{
-    Address, Chain, PrincipalAddr, ResourceAddr, account, package, principal,
+    Address, AddressClass, Chain, PrincipalAddr, ResourceAddr, TestHasher, account, package,
+    principal,
 };
-use hyperscale_vm_types::AddressClass;
 
 const FOUNDER: PrincipalAddr = principal(0x91);
 /// Who the seat's `mint` entry names — an identity rather than this
 /// package, which is the whole of what "delegated" means here.
 const MINTER: PrincipalAddr = principal(0x92);
 
-const fn terms() -> capped::Terms {
-    capped::Terms {
+const fn terms() -> capped::client::Terms {
+    capped::client::Terms {
         minter: MINTER.address(),
     }
 }
 
-fn world() -> (Chain, capped::Capped) {
-    let mut chain = Chain::native();
-    chain.publish(package!(capped));
-    let instance = chain.instantiate::<capped::Capped>(FOUNDER, terms());
+fn world(mut chain: Chain) -> (Chain, capped::client::Capped) {
+    chain.publish(package!(capped_guest::capped));
+    let instance = chain.instantiate::<capped::client::Capped>(FOUNDER, terms());
     (chain, instance)
 }
 
@@ -36,9 +34,9 @@ fn world() -> (Chain, capped::Capped) {
 /// Two of them here, which is the case a single ambient grant could not
 /// reach: the founder walks away holding both, and neither has an entry
 /// admitting a later mint.
-#[test]
-fn a_bring_up_founds_every_supply_its_package_states() {
-    let (chain, instance) = world();
+#[hyperscale_vm_testing::test]
+fn a_bring_up_founds_every_supply_its_package_states(chain: Chain) {
+    let (chain, instance) = world(chain);
     let fixed = instance.issued_fixed(&TestHasher);
     let retired = instance.issued_retired(&TestHasher);
 
@@ -57,9 +55,9 @@ fn a_bring_up_founds_every_supply_its_package_states() {
 /// what creation put there — and neither is `Restricted`, because an
 /// authority entry withholds a capability rather than stopping a
 /// movement anyone could otherwise make.
-#[test]
-fn a_founded_supply_grants_no_mint_and_restricts_no_movement() {
-    let (_, instance) = world();
+#[hyperscale_vm_testing::test]
+fn a_founded_supply_grants_no_mint_and_restricts_no_movement(chain: Chain) {
+    let (_, instance) = world(chain);
     let class = |resource: ResourceAddr| Address::from(resource).class();
 
     for resource in [
@@ -78,9 +76,9 @@ fn a_founded_supply_grants_no_mint_and_restricts_no_movement() {
 
 /// Burning without minting: the two entries are independent, so a
 /// supply can be destroyed by an authority that could never create it.
-#[test]
-fn a_deflationary_supply_only_ever_falls() {
-    let (mut chain, instance) = world();
+#[hyperscale_vm_testing::test]
+fn a_deflationary_supply_only_ever_falls(chain: Chain) {
+    let (mut chain, instance) = world(chain);
     let retired = instance.issued_retired(&TestHasher);
 
     chain
@@ -101,9 +99,9 @@ fn a_deflationary_supply_only_ever_falls() {
 /// What admits it is the resource's own entry, resolved from the record
 /// the transaction presents — so the account, which declares nothing
 /// about any resource, is bound by whatever the issuer wrote.
-#[test]
-fn a_holder_destroys_what_the_resource_lets_them() {
-    let (mut chain, instance) = world();
+#[hyperscale_vm_testing::test]
+fn a_holder_destroys_what_the_resource_lets_them(chain: Chain) {
+    let (mut chain, instance) = world(chain);
     let circulating = instance.issued_circulating(&TestHasher);
 
     chain
@@ -123,9 +121,9 @@ fn a_holder_destroys_what_the_resource_lets_them() {
 /// The refusal is admission's rather than the account's: the account
 /// declares the destruction and the resource declines it, which is the
 /// same shape as a movement seam refusal read from the authority side.
-#[test]
-fn a_resource_granting_no_burn_is_indestructible() {
-    let (mut chain, instance) = world();
+#[hyperscale_vm_testing::test]
+fn a_resource_granting_no_burn_is_indestructible(chain: Chain) {
+    let (mut chain, instance) = world(chain);
     let fixed = instance.issued_fixed(&TestHasher);
 
     let refused = chain.try_transact(FOUNDER, |b| {

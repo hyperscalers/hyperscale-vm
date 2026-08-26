@@ -13,3 +13,6 @@ hyperscale-vm-sdk.workspace = true
 
 [dev-dependencies]
 hyperscale-vm-testing.workspace = true
+# The issuer under test: this package declares nothing about what it
+# holds, so what binds it has to come from a package that does.
+security-guest = { path = "../security" }
