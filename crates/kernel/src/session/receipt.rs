@@ -187,21 +187,14 @@ pub enum FinishError {
     UndenominatedMovement(SubstateKey),
 }
 
-/// How a session's queued deltas judged: the per-cell totals, or the
-/// outcome the transaction aborts with instead.
-enum Movements {
-    Judged(BTreeMap<SubstateKey, Movement>),
-    Aborted(Outcome),
-}
-
-/// How a session's reservations settled: the per-cell amounts, or the
-/// outcome the transaction aborts with instead.
+/// How one phase of finishing ended: what it produced for the receipt,
+/// or the outcome the transaction aborts with instead.
 ///
-/// Named for the phase rather than for the moment, because
-/// `Settlement` beside it is *when* one movement is judged and this is
-/// *how* the whole reservation phase ended.
-enum Reserved {
-    Settled(BTreeMap<SubstateKey, Movement>),
+/// One type for both phases because they are the same kind of step, and
+/// two of them said so in prose while saying it twice in code. What
+/// separates them is what they produce, which is the parameter.
+enum Phase<T> {
+    Produced(T),
     Aborted(Outcome),
 }
 
@@ -381,11 +374,11 @@ impl KernelSession {
     /// taken share, and the remainder goes back untouched.
     ///
     /// The error is a kernel defect; a refusal the caller aborts the
-    /// transaction with comes back as [`Reserved::Aborted`].
+    /// transaction with comes back as [`Phase::Aborted`].
     fn settle_reservations(
         &mut self,
         denominations: &Denominations,
-    ) -> Result<Reserved, FinishError> {
+    ) -> Result<Phase<BTreeMap<SubstateKey, Movement>>, FinishError> {
         let mut settles = BTreeMap::new();
         let mut seen = BTreeSet::new();
         for index in 0..self.table.len() {
@@ -426,10 +419,10 @@ impl KernelSession {
                             .store
                             .held_reservation(key, self.tx)
                             .unwrap_or_default();
-                        return Ok(Reserved::Aborted(Outcome::Infeasible { key, amount }));
+                        return Ok(Phase::Aborted(Outcome::Infeasible { key, amount }));
                     }
                     Fault::Declaration(error) => {
-                        return Ok(Reserved::Aborted(Outcome::UserError {
+                        return Ok(Phase::Aborted(Outcome::UserError {
                             reason: error.into(),
                         }));
                     }
@@ -437,20 +430,18 @@ impl KernelSession {
                 },
             }
         }
-        Ok(Reserved::Settled(settles))
+        Ok(Phase::Produced(settles))
     }
 
     /// The queued deltas as checked totals, judged against the floor on
     /// every cell this shard owns, and folded into it.
     ///
-    /// The same shape as [`Self::settle_reservations`] because it is the
-    /// same kind of step: a phase of finishing that either produces what
-    /// the receipt carries or names the outcome the transaction aborts
-    /// with instead.
-    ///
     /// The error is a kernel defect; a refusal the caller aborts the
-    /// transaction with comes back as [`Movements::Aborted`].
-    fn judge_movements(&mut self, denominations: &Denominations) -> Result<Movements, FinishError> {
+    /// transaction with comes back as [`Phase::Aborted`].
+    fn judge_movements(
+        &mut self,
+        denominations: &Denominations,
+    ) -> Result<Phase<BTreeMap<SubstateKey, Movement>>, FinishError> {
         let mut movements: BTreeMap<SubstateKey, Movement> = BTreeMap::new();
         let queued: Vec<(SubstateKey, Vec<DeltaOp>)> = self.store.pending_deltas().collect();
         for (key, ops) in queued {
@@ -464,7 +455,7 @@ impl KernelSession {
                 // Totals past `u128` are the guest's own arithmetic — it
                 // queued the operations — so the loss is its own.
                 Err(error) => {
-                    return Ok(Movements::Aborted(Outcome::UserError {
+                    return Ok(Phase::Aborted(Outcome::UserError {
                         reason: error.into(),
                     }));
                 }
@@ -497,7 +488,7 @@ impl KernelSession {
                     Fault::Defect => return Err(defect.into()),
                 },
             };
-            return Ok(Movements::Aborted(refusal));
+            return Ok(Phase::Aborted(refusal));
         }
         // A movement on a key this shard does not own folds at the owning
         // shard, never here: the receipt already carries it as the
@@ -512,13 +503,13 @@ impl KernelSession {
             // not a declaration defect — is the kernel disagreeing with
             // itself.
             return match defect.fault() {
-                Fault::Declaration(error) => Ok(Movements::Aborted(Outcome::UserError {
+                Fault::Declaration(error) => Ok(Phase::Aborted(Outcome::UserError {
                     reason: error.into(),
                 })),
                 Fault::Floor | Fault::Defect => Err(defect.into()),
             };
         }
-        Ok(Movements::Judged(movements))
+        Ok(Phase::Produced(movements))
     }
 
     /// Close the session for a guest that completed: fold queued deltas,
@@ -578,12 +569,12 @@ impl KernelSession {
         }
         let denominations = self.denominations();
         let movements = match self.judge_movements(&denominations)? {
-            Movements::Judged(movements) => movements,
-            Movements::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
+            Phase::Produced(movements) => movements,
+            Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
         };
         let settles = match self.settle_reservations(&denominations)? {
-            Reserved::Settled(settles) => settles,
-            Reserved::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
+            Phase::Produced(settles) => settles,
+            Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
         };
         // Committing spends every subintent: the nullifier cell records
         // the consuming transaction. The write goes into the same layer
