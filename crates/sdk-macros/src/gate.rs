@@ -173,7 +173,7 @@ pub fn guarded_identity(
                     format!("`{named}` is not a configuration field of this package"),
                 ));
             };
-            let slot = u32::try_from(slot).unwrap_or(u32::MAX);
+            let slot = u32::try_from(slot).expect("a configuration list is shorter than u32");
             Ok((
                 quote!(__t.config::<::hyperscale_vm_sdk::Addr>(#slot)),
                 false,

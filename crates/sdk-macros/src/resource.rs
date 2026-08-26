@@ -533,7 +533,7 @@ pub fn granted_claim(
                         format!("`{named}` is not a configuration field of this package"),
                     )
                 })?;
-            let slot = u32::try_from(slot).unwrap_or(u32::MAX);
+            let slot = u32::try_from(slot).expect("a configuration list is shorter than u32");
             Ok((quote!(::hyperscale_vm_sdk::GrantClaim::Config(#slot)), true))
         }
         // A badge the issuing instance also issues.

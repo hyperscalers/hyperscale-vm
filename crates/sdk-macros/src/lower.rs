@@ -3993,7 +3993,7 @@ impl<'a> Lowerer<'a> {
                     // impossible.
                     let vocabulary = Op::VOCABULARY.join(", ");
                     self.error(
-                        call.span(),
+                        call.method.span(),
                         &format!(
                             "`{method}` names no operation a declaration can carry, so what it reaches the kernel for is not what this method declares. One of: {vocabulary}"
                         ),

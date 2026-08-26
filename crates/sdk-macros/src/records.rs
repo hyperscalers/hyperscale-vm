@@ -22,7 +22,7 @@ pub fn event_emitters(events: &[(syn::Ident, String)], role: Role) -> Vec<syn::I
         .iter()
         .enumerate()
         .map(|(index, (ident, _))| {
-            let index = u32::try_from(index).unwrap_or(u32::MAX);
+            let index = u32::try_from(index).expect("an event table is shorter than u32");
             // The one kernel call an author reaches without an accessor.
             // A publisher carries both routings and the target picks;
             // everybody else has only the session to emit into.
