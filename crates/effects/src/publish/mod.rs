@@ -1,11 +1,15 @@
 //! Publish-time judging, as the composed verdict of three gates.
 //!
-//! [`bounds`] asks what a signature and a package's tables may hold at
-//! all, [`declaration`] asks whether the accesses one method declares are
-//! its to declare, and [`abi`] asks whether a guest's export can be
-//! bound to them. Three because they are three questions with three
-//! answers and nothing between them: each has its own verdict type, and
-//! [`check_signature`] is the only thing that knows the order.
+//! Two scopes and two composers. [`check_signature`] asks the three
+//! questions one signature answers: [`bounds`] what it may hold at all,
+//! [`declaration`] whether the accesses it declares are its to declare,
+//! and [`abi`] whether a guest's export can be bound to them.
+//! [`check_metadata`] asks the one question only the whole metadata can
+//! answer — whether a package's tables, read together, say one thing —
+//! and that is [`package`]'s.
+//!
+//! Each gate has its own verdict type and nothing between them; the two
+//! composers are the only things that know an order.
 //!
 //! Every verdict is a pure function of the metadata, identical on every
 //! node: refused at publish, and refused again at routing for a package
@@ -16,13 +20,15 @@ mod bounds;
 mod declaration;
 #[cfg(test)]
 mod fixtures;
+mod package;
 
 pub use abi::{AbiError, check_abi};
+pub use bounds::SignatureBoundsError;
 use bounds::check_signature_bounds;
-pub use bounds::{MetadataBoundsError, SignatureBoundsError, check_metadata};
 pub use declaration::{
     DeclarationError, check_declarations, founds_its_resource, seal_clauses, seals,
 };
+pub use package::{MetadataError, check_metadata};
 
 use crate::signature::MethodSignature;
 

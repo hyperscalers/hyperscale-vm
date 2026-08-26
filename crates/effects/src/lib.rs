@@ -91,7 +91,7 @@ pub use metadata::{
     reserved_shape,
 };
 pub use publish::{
-    AbiError, CheckedSignature, DeclarationError, MetadataBoundsError, SignatureBoundsError,
+    AbiError, CheckedSignature, DeclarationError, MetadataError, SignatureBoundsError,
     SignatureError, check_abi, check_declarations, check_metadata, check_signature,
     founds_its_resource, seal_clauses, seals,
 };
