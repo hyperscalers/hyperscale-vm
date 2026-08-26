@@ -445,7 +445,7 @@ pub fn granted_badge(
         // whichever kind it is — the reading `#[requires(..)]`
         // already gives the same words.
         (_, None) => Ok((
-            quote!(::hyperscale_vm_sdk::GrantClaim::SelfBadge {
+            quote!(::hyperscale_vm_sdk::GrantSubject::SelfBadge {
                 mark: #mark.to_vec(),
                 kind: #kind,
                 rules: #rules,
@@ -453,7 +453,7 @@ pub fn granted_badge(
             reads_config,
         )),
         (ResourceKind::NonFungible, Some(id)) => Ok((
-            quote!(::hyperscale_vm_sdk::GrantClaim::SelfInstance {
+            quote!(::hyperscale_vm_sdk::GrantSubject::SelfInstance {
                 mark: #mark.to_vec(),
                 id: #id,
                 rules: #rules,
@@ -490,7 +490,7 @@ pub fn granted_claim(
     match expr {
         // The issuing instance, acting as itself.
         syn::Expr::Path(path) if path.path.is_ident("self") => {
-            Ok((quote!(::hyperscale_vm_sdk::GrantClaim::SelfAddr), false))
+            Ok((quote!(::hyperscale_vm_sdk::GrantSubject::SelfAddr), false))
         }
         // A bare name is not a leaf; the shared diagnosis says which
         // spelling the author meant.
@@ -514,7 +514,10 @@ pub fn granted_claim(
                 return Err(refuse(access.span()));
             };
             let slot = slot?;
-            Ok((quote!(::hyperscale_vm_sdk::GrantClaim::Config(#slot)), true))
+            Ok((
+                quote!(::hyperscale_vm_sdk::GrantSubject::Config(#slot)),
+                true,
+            ))
         }
         // A badge the issuing instance also issues.
         syn::Expr::Call(call) if calls(&call.func, "issued") => granted_badge(call, resources),

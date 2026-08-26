@@ -15,7 +15,7 @@ use crate::auth::RuleBytes;
 use crate::claim::Claim;
 use crate::dsl::{Expr, SlotRef, TargetExpr};
 use crate::hash::{Hash32, Hasher};
-use crate::rule::{GrantClaim, GrantRuleExpr, Holding, SealedLeaf, StoredRule, always, never};
+use crate::rule::{GrantRuleExpr, GrantSubject, Holding, SealedLeaf, StoredRule, always, never};
 use crate::types::{
     Value, child_key, collection_id, genesis_publisher, granting_resource_address, resource_address,
 };
@@ -675,16 +675,16 @@ fn resolve_claim(
     hasher: &dyn Hasher,
     instance: Address,
     config: &[Value],
-    claim: &GrantClaim,
+    claim: &GrantSubject,
     link: usize,
 ) -> Result<Claim, GrantsResolveError> {
     Ok(match claim {
-        GrantClaim::SelfAddr => Claim::of_address(instance)
+        GrantSubject::SelfAddr => Claim::of_address(instance)
             .expect("an instance issuing a resource is a callable address"),
-        GrantClaim::SelfBadge { mark, kind, rules } => Claim::of_subject(self_badge(
+        GrantSubject::SelfBadge { mark, kind, rules } => Claim::of_subject(self_badge(
             hasher, instance, config, *kind, mark, rules, link,
         )?),
-        GrantClaim::SelfInstance { mark, id, rules } => Claim::of_instance(
+        GrantSubject::SelfInstance { mark, id, rules } => Claim::of_instance(
             self_badge(
                 hasher,
                 instance,
@@ -696,7 +696,7 @@ fn resolve_claim(
             )?,
             *id,
         ),
-        GrantClaim::Config(slot) => configured(config, *slot)?,
+        GrantSubject::Config(slot) => configured(config, *slot)?,
     })
 }
 
@@ -719,7 +719,7 @@ fn resolve_holding(
     hasher: &dyn Hasher,
     instance: Address,
     config: &[Value],
-    claim: &GrantClaim,
+    claim: &GrantSubject,
     link: usize,
 ) -> Result<StoredRule, GrantsResolveError> {
     let (badge, holding) = match claim {
@@ -730,20 +730,20 @@ fn resolve_holding(
         // their own component here — a rule naming an identity is frozen
         // for the life of the resource, and one naming a component's is
         // frozen at the component rather than at whoever runs it.
-        GrantClaim::SelfAddr => {
+        GrantSubject::SelfAddr => {
             return Ok(StoredRule::claim(
                 Claim::of_address(instance)
                     .expect("an instance issuing a resource is a callable address"),
             ));
         }
-        GrantClaim::SelfBadge { mark, kind, rules } => (
+        GrantSubject::SelfBadge { mark, kind, rules } => (
             self_badge(hasher, instance, config, *kind, mark, rules, link)?,
             match kind {
                 ResourceKind::Fungible => Holding::Balance,
                 ResourceKind::NonFungible => Holding::AnyInstance,
             },
         ),
-        GrantClaim::SelfInstance { mark, id, rules } => (
+        GrantSubject::SelfInstance { mark, id, rules } => (
             self_badge(
                 hasher,
                 instance,
@@ -755,10 +755,10 @@ fn resolve_holding(
             )?,
             Holding::Instance(*id),
         ),
-        GrantClaim::Config(slot) => {
+        GrantSubject::Config(slot) => {
             let named = configured(config, *slot)?;
             let Some(badge) = named.badge() else {
-                // A configured identity, on [`GrantClaim::SelfAddr`]'s
+                // A configured identity, on [`GrantSubject::SelfAddr`]'s
                 // terms: nothing holds it, so what the entry asks is
                 // whether this transaction carried a claim on it.
                 return Ok(StoredRule::claim(named));

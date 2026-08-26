@@ -317,7 +317,12 @@ impl RuleLeaf {
 /// [`check_metadata`]: crate::check_metadata
 pub type RuleExpr = Rule<RuleLeaf>;
 
-/// A granted rule's leaf: a claim a resource's own derivation commits to.
+/// A granted rule's leaf: the subject a resource's own derivation
+/// commits to.
+///
+/// The behaviour owns the question — an actor question resolves it to a
+/// claim, a holder question to a holding — so the leaf names only the
+/// subject both ask about.
 ///
 /// Its own closed vocabulary rather than [`RuleLeaf`], because a granted
 /// rule is folded into an address rather than judged against a cell.
@@ -341,7 +346,7 @@ pub type RuleExpr = Rule<RuleLeaf>;
 /// depth is a property of the resource rather than of how deeply its
 /// author nested. A cycle is unreachable for the same reason.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
-pub enum GrantClaim {
+pub enum GrantSubject {
     /// The issuing instance, acting as itself.
     SelfAddr,
     /// A badge the issuing instance also issues, at the material
@@ -361,7 +366,7 @@ pub enum GrantClaim {
     /// One named instance of a non-fungible badge the issuing instance
     /// also issues.
     SelfInstance {
-        /// The mark, as [`GrantClaim::SelfBadge`] states it.
+        /// The mark, as [`GrantSubject::SelfBadge`] states it.
         mark: Vec<u8>,
         /// Which instance of it.
         id: u64,
@@ -389,7 +394,7 @@ impl<L: Leaf> Rule<L> {
 /// The shape is static and only the leaves resolve, on the terms
 /// [`RuleExpr`] states — so the caps a declaration is held to at publish
 /// are the caps the granted set is held to wherever it is judged.
-pub type GrantRuleExpr = Rule<GrantClaim>;
+pub type GrantRuleExpr = Rule<GrantSubject>;
 
 /// How many leaves a tree holds, over every branch of it.
 fn leaves<L>(rule: &Rule<L>) -> usize {

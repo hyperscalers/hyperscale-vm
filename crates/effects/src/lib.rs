@@ -104,7 +104,7 @@ pub use resource::{
 };
 pub use route::{FrameDeclaration, PrefixShardResolver, Routing, ShardResolver, route};
 pub use rule::{
-    Answers, GrantClaim, GrantRuleExpr, Holding, Leaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
+    Answers, GrantRuleExpr, GrantSubject, Holding, Leaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
     MAX_RULE_LEAVES, MAX_RULE_WIRE_DEPTH, NOBODY_BYTES, Rule, RuleExpr, RuleLeaf, SealedLeaf,
     StoredRule, always, never, well_formed,
 };

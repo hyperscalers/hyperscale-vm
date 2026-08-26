@@ -9,7 +9,7 @@
 //! comes back, before anything downstream can file or consume it.
 
 use hyperscale_vm_effects::{
-    Expr, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, Issuance, Issued,
+    Expr, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issuance, Issued,
     MethodSignature, PackageMetadata, ResourceKind, Totality, Value,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
@@ -31,7 +31,7 @@ fn badge_grants() -> GrantsExpr {
     let mut grants = GrantsExpr::new();
     grants.set(
         GrantedBehaviour::Mint,
-        GrantRuleExpr::Require(GrantClaim::SelfAddr),
+        GrantRuleExpr::Require(GrantSubject::SelfAddr),
     );
     grants
 }

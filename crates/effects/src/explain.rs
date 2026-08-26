@@ -51,7 +51,7 @@ use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotSha
 use crate::records::ChainRecords;
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind, ResourceMeta};
 use crate::rule::{
-    GrantClaim, GrantRuleExpr, Holding, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule, always,
+    GrantRuleExpr, GrantSubject, Holding, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule, always,
     never,
 };
 use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, Totality};
@@ -438,17 +438,18 @@ pub fn grants_read_config(grants: &GrantsExpr) -> BTreeSet<u32> {
     fn walk(rule: &GrantRuleExpr, into: &mut BTreeSet<u32>) {
         match rule {
             GrantRuleExpr::Require(claim) => match claim {
-                GrantClaim::Config(slot) => {
+                GrantSubject::Config(slot) => {
                     into.insert(*slot);
                 }
                 // A badge's own rules are folded into its address, so a
                 // field they read is a field this set reads.
-                GrantClaim::SelfBadge { rules, .. } | GrantClaim::SelfInstance { rules, .. } => {
+                GrantSubject::SelfBadge { rules, .. }
+                | GrantSubject::SelfInstance { rules, .. } => {
                     for (_, nested) in rules.iter() {
                         walk(nested, into);
                     }
                 }
-                GrantClaim::SelfAddr => {}
+                GrantSubject::SelfAddr => {}
             },
             GrantRuleExpr::CountOf { rules, .. } => {
                 for branch in rules {
@@ -1243,13 +1244,13 @@ impl Names<'_> {
             return self.grant_rule(rule);
         }
         match rule {
-            Rule::Require(GrantClaim::SelfAddr) => {
+            Rule::Require(GrantSubject::SelfAddr) => {
                 "whatever transaction the issuer approves".to_owned()
             }
-            Rule::Require(GrantClaim::Config(field)) => {
+            Rule::Require(GrantSubject::Config(field)) => {
                 format!("whoever answers for {}", self.config(*field))
             }
-            Rule::Require(GrantClaim::SelfBadge { .. } | GrantClaim::SelfInstance { .. }) => {
+            Rule::Require(GrantSubject::SelfBadge { .. } | GrantSubject::SelfInstance { .. }) => {
                 format!("whoever holds {}", self.grant_rule(rule))
             }
             // A threshold over subjects that need not agree about which
@@ -1277,14 +1278,14 @@ impl Names<'_> {
     }
 
     /// What one declared claim names.
-    fn grant_claim(&self, claim: &GrantClaim) -> String {
+    fn grant_claim(&self, claim: &GrantSubject) -> String {
         match claim {
-            GrantClaim::SelfAddr => "the issuer".to_owned(),
-            GrantClaim::SelfBadge { mark, .. } => format!("the issuer's {} badge", bytes(mark)),
-            GrantClaim::SelfInstance { mark, id, .. } => {
+            GrantSubject::SelfAddr => "the issuer".to_owned(),
+            GrantSubject::SelfBadge { mark, .. } => format!("the issuer's {} badge", bytes(mark)),
+            GrantSubject::SelfInstance { mark, id, .. } => {
                 format!("instance {id} of the issuer's {} badge", bytes(mark))
             }
-            GrantClaim::Config(field) => self.config(*field),
+            GrantSubject::Config(field) => self.config(*field),
         }
     }
 
@@ -1527,7 +1528,7 @@ mod tests {
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, self_child};
     use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape};
     use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
-    use crate::rule::{GrantClaim, GrantRuleExpr, Rule, RuleLeaf};
+    use crate::rule::{GrantRuleExpr, GrantSubject, Rule, RuleLeaf};
     use crate::signature::{MethodSignature, ParamType, Totality};
     use crate::types::{SlotId, Value, package_slot};
     use crate::vocabulary::VAULT;
@@ -1843,7 +1844,7 @@ mod tests {
         let mut grants = GrantsExpr::new();
         grants.set(
             GrantedBehaviour::Deposit,
-            GrantRuleExpr::Require(GrantClaim::SelfBadge {
+            GrantRuleExpr::Require(GrantSubject::SelfBadge {
                 mark: b"owner-badge".to_vec(),
                 kind: ResourceKind::Fungible,
                 rules: GrantsExpr::new(),

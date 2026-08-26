@@ -9,8 +9,9 @@
 //! the grant that mints it all read one registration.
 
 use hyperscale_vm_effects::{
-    Claim, Clause, Expr, GrantClaim, GrantedBehaviour, Holding, ResourceGrants, ResourceKind, Rule,
-    RuleBytes, RuleLeaf, StoredRule, TestHasher, Value, granting_issued_resource, issued_resource,
+    Claim, Clause, Expr, GrantSubject, GrantedBehaviour, Holding, ResourceGrants, ResourceKind,
+    Rule, RuleBytes, RuleLeaf, StoredRule, TestHasher, Value, granting_issued_resource,
+    issued_resource,
 };
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::{Address, Chain, PrincipalAddr, account, package, principal};
@@ -113,7 +114,7 @@ fn a_badge_named_without_an_instance_means_any_of_it_at_every_site() {
         grants
             .iter()
             .find_map(|(behaviour, rule)| match rule {
-                Rule::Require(GrantClaim::SelfBadge { mark, kind, rules })
+                Rule::Require(GrantSubject::SelfBadge { mark, kind, rules })
                     if behaviour == wanted =>
                 {
                     Some((*kind, mark.clone(), rules.clone()))

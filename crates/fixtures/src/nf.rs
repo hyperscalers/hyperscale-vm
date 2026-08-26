@@ -9,7 +9,7 @@
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::INSTANCE;
 use hyperscale_vm_effects::{
-    AbiParam, Expr, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, Hasher, Issuance,
+    AbiParam, Expr, GrantSubject, GrantRuleExpr, GrantedBehaviour, GrantsExpr, Hasher, Issuance,
     Issued, MethodSignature, PackageMetadata, ParamType, ResourceKind, RuleExpr, RuleLeaf, SlotRef,
     Totality, Value, granting_issued_resource, holdings_range,
 };
@@ -35,7 +35,7 @@ pub const BADGE: &[u8] = b"badge";
 pub fn badge_grants() -> GrantsExpr {
     let mut grants = GrantsExpr::new();
     for behaviour in [GrantedBehaviour::Mint, GrantedBehaviour::Burn] {
-        grants.set(behaviour, GrantRuleExpr::Require(GrantClaim::SelfAddr));
+        grants.set(behaviour, GrantRuleExpr::Require(GrantSubject::SelfAddr));
     }
     grants
 }

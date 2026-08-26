@@ -198,7 +198,7 @@ pub fn nobody() -> RuleBytes {
 }
 
 pub use hyperscale_vm_effects::{
-    GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, Issued, LeafForm, ParamType,
+    GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issued, LeafForm, ParamType,
     ResourceKind, RuleBytes, SlotId, SlotKind, encode_metadata,
 };
 /// The declaration binary a package crate ships: one line, and the

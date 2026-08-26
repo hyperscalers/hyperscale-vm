@@ -23,7 +23,7 @@ use hyperscale_vm_sdk::sym::{
     Addr, Bucket, Sym, U64, U128, eq, lit_u64, pack, select, self_record,
 };
 use hyperscale_vm_sdk::{
-    Blueprint, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, ResourceKind, Trace,
+    Blueprint, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, ResourceKind, Trace,
 };
 use hyperscale_vm_stdlib::account as account_package;
 
@@ -211,7 +211,7 @@ const SHARE: &[u8] = b"share";
 fn issuer_only(directions: &[GrantedBehaviour]) -> GrantsExpr {
     let mut grants = GrantsExpr::new();
     for behaviour in directions {
-        grants.set(*behaviour, GrantRuleExpr::Require(GrantClaim::SelfAddr));
+        grants.set(*behaviour, GrantRuleExpr::Require(GrantSubject::SelfAddr));
     }
     grants
 }

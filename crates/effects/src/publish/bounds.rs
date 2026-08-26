@@ -11,7 +11,7 @@ use crate::dsl::{
 };
 use crate::resource::GrantsExpr;
 use crate::rule::{
-    GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, RuleExpr, RuleLeaf, always,
+    GrantSubject, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, RuleExpr, RuleLeaf, always,
     never,
 };
 use crate::signature::{
@@ -345,7 +345,7 @@ fn check_grants_bounds(grants: &GrantsExpr) -> Result<(), SignatureBoundsError> 
             0
         } else {
             rule.leaves()
-                .filter(|leaf| matches!(leaf, GrantClaim::Config(_)))
+                .filter(|leaf| matches!(leaf, GrantSubject::Config(_)))
                 .count()
         };
         if !rule.within_caps(usize::from(widening > 0)) {
@@ -372,18 +372,18 @@ fn check_grants_bounds(grants: &GrantsExpr) -> Result<(), SignatureBoundsError> 
 /// the depth of a derivation is a property of the resource rather than of
 /// how deeply its author nested. The verdict is here as well as at
 /// resolution because publish is where a package author can read it.
-fn check_grant_leaf(claim: &GrantClaim) -> Result<(), SignatureBoundsError> {
+fn check_grant_leaf(claim: &GrantSubject) -> Result<(), SignatureBoundsError> {
     let rules = match claim {
-        GrantClaim::SelfAddr | GrantClaim::Config(_) => return Ok(()),
-        GrantClaim::SelfBadge { rules, .. } | GrantClaim::SelfInstance { rules, .. } => rules,
+        GrantSubject::SelfAddr | GrantSubject::Config(_) => return Ok(()),
+        GrantSubject::SelfBadge { rules, .. } | GrantSubject::SelfInstance { rules, .. } => rules,
     };
     rules.iter().try_for_each(|(_, rule)| {
         if !rule.within_caps(0) {
             return Err(SignatureBoundsError::RuleCaps);
         }
         rule.leaves().try_for_each(|leaf| match leaf {
-            GrantClaim::SelfAddr | GrantClaim::Config(_) => Ok(()),
-            GrantClaim::SelfBadge { .. } | GrantClaim::SelfInstance { .. } => {
+            GrantSubject::SelfAddr | GrantSubject::Config(_) => Ok(()),
+            GrantSubject::SelfBadge { .. } | GrantSubject::SelfInstance { .. } => {
                 Err(SignatureBoundsError::BadgeChainTooDeep)
             }
         })
@@ -753,7 +753,7 @@ mod tests {
         // Leaves in groups the branch cap admits, so what this varies is
         // the leaf count and nothing else.
         let leaves_of = |count: usize| {
-            let leaf = || GrantRuleExpr::Require(GrantClaim::Config(0));
+            let leaf = || GrantRuleExpr::Require(GrantSubject::Config(0));
             let mut branches: Vec<GrantRuleExpr> = Vec::new();
             let mut left = count;
             while left > 0 {

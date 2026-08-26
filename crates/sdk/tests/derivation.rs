@@ -17,7 +17,7 @@
 #![allow(dead_code)]
 
 use hyperscale_vm_effects::{
-    Clause, GrantClaim, GrantRuleExpr, GrantedBehaviour, GrantsExpr, ModeExpr, ResourceKind,
+    Clause, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, ModeExpr, ResourceKind,
     RuleExpr, SlotRef,
 };
 use hyperscale_vm_sdk::blueprint;
@@ -353,7 +353,7 @@ fn an_instance_issues_resources_its_own_address_derives() {
     let mut issuer_mints = GrantsExpr::new();
     issuer_mints.set(
         GrantedBehaviour::Mint,
-        GrantRuleExpr::Require(GrantClaim::SelfAddr),
+        GrantRuleExpr::Require(GrantSubject::SelfAddr),
     );
     assert_eq!(
         metadata.methods["stake"].outputs,

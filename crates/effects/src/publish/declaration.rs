@@ -1371,7 +1371,7 @@ mod tests {
     use crate::envelope::NULLIFIER_SLOT;
     use crate::metadata::PACKAGE_SLOT;
     use crate::resource::{GrantsExpr, ResourceKind};
-    use crate::rule::{GrantClaim, GrantRuleExpr, RuleExpr, RuleLeaf};
+    use crate::rule::{GrantRuleExpr, GrantSubject, RuleExpr, RuleLeaf};
     use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, ParamType, Totality};
     use crate::types::{SlotId, package_slot};
     use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
@@ -1576,7 +1576,7 @@ mod tests {
         let mut grants = GrantsExpr::new();
         grants.set(
             GrantedBehaviour::Mint,
-            GrantRuleExpr::Require(GrantClaim::SelfAddr),
+            GrantRuleExpr::Require(GrantSubject::SelfAddr),
         );
         grants
     }
@@ -1606,7 +1606,7 @@ mod tests {
             let mut grants = GrantsExpr::new();
             grants.set(
                 GrantedBehaviour::Burn,
-                GrantRuleExpr::Require(GrantClaim::SelfAddr),
+                GrantRuleExpr::Require(GrantSubject::SelfAddr),
             );
             grants
         };
@@ -1614,7 +1614,7 @@ mod tests {
             let mut grants = minting();
             grants.set(
                 GrantedBehaviour::Burn,
-                GrantRuleExpr::Require(GrantClaim::SelfAddr),
+                GrantRuleExpr::Require(GrantSubject::SelfAddr),
             );
             grants
         };
@@ -3219,7 +3219,7 @@ mod tests {
             let mut grants = GrantsExpr::new();
             grants.set(
                 GrantedBehaviour::Halt,
-                GrantRuleExpr::Require(GrantClaim::SelfAddr),
+                GrantRuleExpr::Require(GrantSubject::SelfAddr),
             );
             grants
         };
