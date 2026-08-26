@@ -1,0 +1,5 @@
+error: `Ungranted` grants no `burn`, and an address admits only what its declaration grants — state `grants(burn = self)` on `Ungranted`, where `self` is the issuing instance
+  --> tests/refusals/ungranted_burn.rs:15:13
+   |
+15 |             Ungranted::burn(funds);
+   |             ^^^^^^^^^

@@ -47,7 +47,7 @@ use quote::quote;
 use syn::spanned::Spanned;
 
 use crate::term::{Op, Slot, SlotRef, Term};
-use crate::{Declared, Resource, holds_rule, is_named};
+use crate::{Declared, Resource, behaviour_word, holds_rule, is_named};
 
 /// What kind of state a component field holds, and under which slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -797,6 +797,7 @@ impl<'a> Lowerer<'a> {
         &mut self,
         call: &'c syn::ExprCall,
         op: &str,
+        behaviour: GrantedBehaviour,
     ) -> (Vec<&'c syn::Expr>, Option<Term>) {
         let named: Vec<&syn::Expr> = call.args.iter().collect();
         let Some(mark) = free_call_mark(call) else {
@@ -806,10 +807,48 @@ impl<'a> Lowerer<'a> {
             self.error(mark.span(), &undeclared_mark(op));
             return (Vec::new(), None);
         };
+        self.granted(&declared, behaviour, call.func.span());
         (
             named,
             Some(Term::SelfResource(declared.kind, declared.mark)),
         )
+    }
+
+    /// Refuse an operation on one of the package's own marks where that
+    /// mark's declaration grants nobody the behaviour.
+    ///
+    /// The macro holds both halves at expansion — the `grants(…)` the
+    /// attribute states and the call reaching for it — so the mistake is
+    /// answerable on the token that made it. Left to the layers below,
+    /// an issuance is refused at publish, which has only a package to
+    /// point at, and a reach is refused at every admission, which has
+    /// only a caller.
+    fn granted(&mut self, issued: &Resource, behaviour: GrantedBehaviour, at: Span) {
+        if issued.grants.behaviours.contains(&behaviour) {
+            return;
+        }
+        let (name, word) = (&issued.name, behaviour_word(behaviour));
+        // A mint is the one behaviour with a second answer: an author
+        // who wanted the supply the component comes up holding wanted an
+        // attribute rather than a body.
+        let remedy = if behaviour == GrantedBehaviour::Mint {
+            format!(
+                "state `grants(mint = self)` on `{name}`, or found the supply it comes up \
+                 holding with `initial(<n>)`"
+            )
+        } else {
+            format!(
+                "state `grants({word} = self)` on `{name}`, where `self` is the issuing \
+                 instance"
+            )
+        };
+        self.error(
+            at,
+            &format!(
+                "`{name}` grants no `{word}`, and an address admits only what its \
+                 declaration grants — {remedy}"
+            ),
+        );
     }
 
     /// The declaration a name refers to, where it refers to one.
@@ -2024,7 +2063,7 @@ impl<'a> Lowerer<'a> {
         // `Resource::halt(holder)` names the resource by its mark and the
         // holder alone; the free form names both, for the resource a
         // package does not issue and has no mark for.
-        let (named, marked) = self.reached_resource(call, spelling);
+        let (named, marked) = self.reached_resource(call, spelling, GrantedBehaviour::Freeze);
         let holder = match (named.as_slice(), marked) {
             ([holder], Some(resource)) => Some((*holder, resource)),
             ([holder, resource], None) => self.expr(resource).val.term().map(|r| (*holder, r)),
@@ -2142,7 +2181,7 @@ impl<'a> Lowerer<'a> {
         } else {
             "recall"
         };
-        let (named, marked) = self.reached_resource(call, spelling);
+        let (named, marked) = self.reached_resource(call, spelling, GrantedBehaviour::Recall);
         let reached = match (named.as_slice(), marked) {
             ([holder, slot, moved], Some(resource)) => Some((*holder, *slot, *moved, resource)),
             ([holder, slot, resource, moved], None) => self
@@ -3648,10 +3687,18 @@ impl<'a> Lowerer<'a> {
         // derives an address from one, so the output projection and the
         // issuance grant come out of the same call, and the kind it
         // states is what picks between a quantity and a list of ids.
-        if name == "mint" {
-            let Some(issued) = self.issuing_mark(call, "mint") else {
+        // `Resource::__found(..)` — the same issuance under the one word
+        // that is not minting. The generated `instantiate` writes it and
+        // an authored body cannot: founding is the supply a component
+        // comes up holding, so no `Mint` entry governs it and the mark's
+        // own grants have no say.
+        if name == "mint" || name == "__found" {
+            let Some(issued) = self.issuing_mark(call, &name) else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
+            if name == "mint" {
+                self.granted(&issued, GrantedBehaviour::Mint, call.func.span());
+            }
             return match issued.kind {
                 ResourceKind::NonFungible => self.lower_mint_nf(&issued, call),
                 ResourceKind::Fungible => self.lower_mint(&issued, call),
@@ -3708,6 +3755,7 @@ impl<'a> Lowerer<'a> {
             let Some(issued) = self.issuing_mark(call, "burn") else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
+            self.granted(&issued, GrantedBehaviour::Burn, call.func.span());
             return match issued.kind {
                 ResourceKind::NonFungible => self.lower_burn_nf(&issued, call),
                 ResourceKind::Fungible => self.lower_burn(&issued.mark, call),

@@ -9,7 +9,7 @@ mod contract {
         holder: u64,
     }
 
-    #[resource(non_fungible)]
+    #[resource(non_fungible, grants(mint = self))]
     struct Pass {
         holder: u64,
     }

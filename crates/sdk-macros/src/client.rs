@@ -452,12 +452,12 @@ fn issued(resources: &[Resource], config: Option<&syn::Ident>) -> Vec<TokenStrea
                 ResourceKind::Fungible => quote!(#kind_ty::Fungible),
                 ResourceKind::NonFungible => quote!(#kind_ty::NonFungible),
             };
-            let grants = &resource.grants;
+            let grants = &resource.grants.rendered;
             let doc = format!(
                 "The address of the `{}` this instance issues.",
                 resource.name
             );
-            let (param, config_values) = match (resource.grants_config, config) {
+            let (param, config_values) = match (resource.grants.reads_config, config) {
                 (true, Some(config)) => (
                     quote!(config: super::#config,),
                     quote!(&::hyperscale_vm_sdk::client::ConfigValues::values(config)),

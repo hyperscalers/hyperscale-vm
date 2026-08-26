@@ -1,0 +1,5 @@
+error: `Ungranted` grants no `mint`, and an address admits only what its declaration grants — state `grants(mint = self)` on `Ungranted`, or found the supply it comes up holding with `initial(<n>)`
+  --> tests/refusals/ungranted_mint.rs:15:13
+   |
+15 |             Ungranted::mint(amount)
+   |             ^^^^^^^^^

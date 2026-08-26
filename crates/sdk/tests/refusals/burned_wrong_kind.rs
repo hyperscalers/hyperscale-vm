@@ -4,7 +4,7 @@ use hyperscale_vm_sdk::blueprint;
 mod contract {
     use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity};
 
-    #[resource(non_fungible)]
+    #[resource(non_fungible, grants(burn = self))]
     struct OwnerBadge;
 
     #[state]

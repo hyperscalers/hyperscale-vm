@@ -1,0 +1,5 @@
+error: `Ungranted` grants no `recall`, and an address admits only what its declaration grants — state `grants(recall = self)` on `Ungranted`, where `self` is the issuing instance
+  --> tests/refusals/ungranted_recall.rs:16:13
+   |
+16 |             Ungranted::recall(holder, slot, amount)
+   |             ^^^^^^^^^

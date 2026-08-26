@@ -124,6 +124,10 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/fungible_instance_read.rs");
     refuse.compile_fail("tests/refusals/held_foreign_edge.rs");
     refuse.compile_fail("tests/refusals/burned_what_it_minted.rs");
+    refuse.compile_fail("tests/refusals/ungranted_mint.rs");
+    refuse.compile_fail("tests/refusals/ungranted_burn.rs");
+    refuse.compile_fail("tests/refusals/ungranted_halt.rs");
+    refuse.compile_fail("tests/refusals/ungranted_recall.rs");
 }
 
 /// A mark the macro can already tell is unsupportable, refused where the

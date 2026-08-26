@@ -5,7 +5,7 @@ mod contract {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{Cell, Quantity, Vault};
 
-    #[resource]
+    #[resource(grants(mint = self))]
     struct Unit;
 
     #[config]

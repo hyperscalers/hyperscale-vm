@@ -105,7 +105,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use hyperscale_vm_effects::{
-    MAX_RULE_DEPTH, PACKAGE_SLOT_BASE, ResourceKind, Rule, SlotId, well_formed,
+    GrantedBehaviour, MAX_RULE_DEPTH, PACKAGE_SLOT_BASE, ResourceKind, Rule, SlotId, well_formed,
 };
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -114,7 +114,7 @@ use syn::spanned::Spanned;
 
 use crate::lower::{Field, FieldKind, Lowerer};
 use crate::role::Role;
-use crate::term::emit_kind;
+use crate::term::{emit_behaviour, emit_kind};
 
 /// Derive a contract's package from its module: the declaration routing
 /// reads, and the component that executes it.
@@ -1675,10 +1675,10 @@ fn instantiate_method(resources: &[Resource], gate: Option<&syn::Attribute>) -> 
         // A balance is founded in subunits and an instance by its id, so
         // the literal a mark states means whichever its kind takes.
         match resource.kind {
-            ResourceKind::Fungible => quote!(#name::mint(
+            ResourceKind::Fungible => quote!(#name::__found(
                 ::hyperscale_vm_sdk::state::Quantity::from_subunits(#initial)
             )),
-            ResourceKind::NonFungible => quote!(#name::mint(#initial)),
+            ResourceKind::NonFungible => quote!(#name::__found(#initial)),
         }
     });
     let (returns, supply) = match supplied.len() {
@@ -1989,20 +1989,14 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
         .zip(marks)
         .zip(rendered)
         .map(
-            |(
-                ((ident, kind, display_digits, initial, _, schema), mark),
-                (grants, grants_config),
-            )| {
-                Resource {
-                    name: ident.to_string(),
-                    mark: mark.into_bytes(),
-                    kind,
-                    display_digits,
-                    initial,
-                    grants,
-                    grants_config,
-                    schema,
-                }
+            |(((ident, kind, display_digits, initial, _, schema), mark), grants)| Resource {
+                name: ident.to_string(),
+                mark: mark.into_bytes(),
+                kind,
+                display_digits,
+                initial,
+                grants,
+                schema,
             },
         )
         .collect();
@@ -2017,11 +2011,14 @@ fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<Vec<R
 /// keeps a gate, a key and a mint from deriving three addresses. A
 /// package that grants nothing emits nothing.
 fn grant_registrations(resources: &[Resource]) -> TokenStream2 {
-    let registered = resources.iter().filter(|r| !r.grants.is_empty()).map(|r| {
-        let mark = syn::LitByteStr::new(&r.mark, Span::call_site());
-        let grants = &r.grants;
-        quote!(__t.grant(#mark, #grants);)
-    });
+    let registered = resources
+        .iter()
+        .filter(|r| !r.grants.behaviours.is_empty())
+        .map(|r| {
+            let mark = syn::LitByteStr::new(&r.mark, Span::call_site());
+            let grants = &r.grants.rendered;
+            quote!(__t.grant(#mark, #grants);)
+        });
     quote!(#(#registered)*)
 }
 
@@ -2043,33 +2040,18 @@ fn granted_rules(
     attr: &syn::MetaList,
     resources: &[Nameable<'_>],
     config_fields: &[String],
-) -> syn::Result<(TokenStream2, bool)> {
+) -> syn::Result<Grants> {
     let entries = attr.parse_args_with(
         syn::punctuated::Punctuated::<syn::MetaNameValue, syn::Token![,]>::parse_terminated,
     )?;
     let mut granted = Vec::new();
-    let mut named: Vec<String> = Vec::new();
+    let mut behaviours: Vec<GrantedBehaviour> = Vec::new();
     // Whether any leaf names configuration, which is what decides
     // whether the address is derivable from the handle alone.
     let mut reads_config = false;
     for entry in &entries {
-        let behaviour = match entry.path.get_ident().map(ToString::to_string).as_deref() {
-            Some("mint") => quote!(Mint),
-            Some("burn") => quote!(Burn),
-            Some("withdraw") => quote!(Withdraw),
-            Some("deposit") => quote!(Deposit),
-            Some("freeze") => quote!(Freeze),
-            Some("recall") => quote!(Recall),
-            _ => {
-                return Err(syn::Error::new(
-                    entry.path.span(),
-                    "a granted behaviour is `mint`, `burn`, `withdraw`, `deposit`, \
-                     `freeze`, or `recall`",
-                ));
-            }
-        };
-        let name = behaviour.to_string();
-        if named.contains(&name) {
+        let behaviour = granted_behaviour(&entry.path)?;
+        if behaviours.contains(&behaviour) {
             return Err(syn::Error::new(
                 entry.path.span(),
                 format!(
@@ -2079,19 +2061,92 @@ fn granted_rules(
                 ),
             ));
         }
-        named.push(name);
+        behaviours.push(behaviour);
         let (rule, names_config) = granted_entry(&entry.value, resources, config_fields)?;
         reads_config |= names_config;
-        granted.push(quote!(
-            __seals.set(::hyperscale_vm_sdk::GrantedBehaviour::#behaviour, #rule);
-        ));
+        let path = emit_behaviour(behaviour);
+        granted.push(quote!(__seals.set(#path, #rule);));
     }
     let rendered = quote!({
         let mut __seals = ::hyperscale_vm_sdk::GrantsExpr::new();
         #(#granted)*
         __seals
     });
-    Ok((rendered, reads_config))
+    Ok(Grants {
+        rendered,
+        reads_config,
+        behaviours,
+    })
+}
+
+/// How a `grants(…)` key spells a behaviour, and how a refusal about one
+/// names it back.
+///
+/// One place, because the attribute the author writes and the operation
+/// the lowering holds to it are the same word — a second spelling would
+/// be a resource granting one thing and refusing another.
+pub(crate) const fn behaviour_word(behaviour: GrantedBehaviour) -> &'static str {
+    match behaviour {
+        GrantedBehaviour::Mint => "mint",
+        GrantedBehaviour::Burn => "burn",
+        GrantedBehaviour::Withdraw => "withdraw",
+        GrantedBehaviour::Deposit => "deposit",
+        GrantedBehaviour::Freeze => "freeze",
+        GrantedBehaviour::Recall => "recall",
+    }
+}
+
+/// The behaviour a `grants(<behaviour> = …)` key names.
+fn granted_behaviour(path: &syn::Path) -> syn::Result<GrantedBehaviour> {
+    let named = path.get_ident().map(ToString::to_string);
+    GrantedBehaviour::ALL
+        .into_iter()
+        .find(|b| named.as_deref() == Some(behaviour_word(*b)))
+        .ok_or_else(|| {
+            let spellings: Vec<String> = GrantedBehaviour::ALL
+                .iter()
+                .map(|b| format!("`{}`", behaviour_word(*b)))
+                .collect();
+            let (last, rest) = spellings
+                .split_last()
+                .expect("the behaviours are not empty");
+            syn::Error::new(
+                path.span(),
+                format!("a granted behaviour is {}, or {last}", rest.join(", ")),
+            )
+        })
+}
+
+/// What a `#[resource]`'s `grants(…)` states, in the three shapes its
+/// readers need it in.
+///
+/// One value rather than three returns, because the rendering, the
+/// derivability flag and the behaviour list are one reading of one
+/// attribute — and a resource whose address folded rules the lowering
+/// did not think it granted would be the drift this exists to close.
+#[derive(Clone)]
+struct Grants {
+    /// The rules its address commits, as the expression that builds
+    /// them.
+    rendered: TokenStream2,
+    /// Whether those rules name configuration, which decides whether the
+    /// address is derivable from a handle alone.
+    reads_config: bool,
+    /// The behaviours it states a rule for. What the lowering holds an
+    /// operation on the mark to: a resource grants what it says it
+    /// grants, and nothing else.
+    behaviours: Vec<GrantedBehaviour>,
+}
+
+impl Grants {
+    /// A resource whose attribute states no rules at all.
+    fn none() -> Self {
+        Self {
+            rendered: quote!(::hyperscale_vm_sdk::GrantsExpr::new()),
+            reads_config: false,
+            behaviours: Vec::new(),
+        }
+    }
 }
 
 /// Every declared mark's granted set, rendered against the whole set.
@@ -2108,8 +2163,7 @@ fn granted_rules(
 fn declared_grants(
     structs: &[DeclaredResource<'_>],
     config_fields: &[String],
-) -> syn::Result<Vec<(TokenStream2, bool)>> {
-    let ungranted = || (quote!(::hyperscale_vm_sdk::GrantsExpr::new()), false);
+) -> syn::Result<Vec<Grants>> {
     let unnameable: Vec<Nameable<'_>> = structs
         .iter()
         .map(|(ident, kind, ..)| Nameable {
@@ -2122,7 +2176,7 @@ fn declared_grants(
         .iter()
         .map(|(ident, kind, _, _, grants, _)| {
             let rules = match grants {
-                None => Some(ungranted()),
+                None => Some(Grants::none()),
                 Some(list) if names_a_badge(list)? => None,
                 Some(list) => Some(granted_rules(list, &unnameable, config_fields)?),
             };
@@ -2137,7 +2191,7 @@ fn declared_grants(
         .iter()
         .map(|(_, _, _, _, grants, _)| {
             grants.as_ref().map_or_else(
-                || Ok(ungranted()),
+                || Ok(Grants::none()),
                 |list| granted_rules(list, &named, config_fields),
             )
         })
@@ -2164,9 +2218,8 @@ type DeclaredResource<'a> = (
 struct Nameable<'a> {
     ident: &'a syn::Ident,
     kind: ResourceKind,
-    /// The mark's own rules and whether they read configuration, where
-    /// the mark is nameable at all.
-    rules: Option<(TokenStream2, bool)>,
+    /// The mark's own grants, where the mark is nameable at all.
+    rules: Option<Grants>,
 }
 
 /// Whether a granted set names a badge anywhere in it, which is what
@@ -2296,7 +2349,7 @@ fn granted_badge(
     // carries them. What it may not carry is a badge of its own:
     // the chain one address folds is one link long, so a mark
     // whose rules name a badge is not nameable from one.
-    let Some((rules, reads_config)) = badge.rules.as_ref() else {
+    let Some(granted) = badge.rules.as_ref() else {
         return Err(syn::Error::new(
             call.span(),
             format!(
@@ -2307,6 +2360,7 @@ fn granted_badge(
             ),
         ));
     };
+    let (rules, reads_config) = (&granted.rendered, granted.reads_config);
     let mark = syn::LitByteStr::new(kebab(&named).as_bytes(), badge.ident.span());
     let kind = match badge.kind {
         ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::ResourceKind::Fungible),
@@ -2324,7 +2378,7 @@ fn granted_badge(
                 kind: #kind,
                 rules: #rules,
             }),
-            *reads_config,
+            reads_config,
         )),
         (ResourceKind::NonFungible, Some(id)) => Ok((
             quote!(::hyperscale_vm_sdk::GrantClaim::SelfInstance {
@@ -2332,7 +2386,7 @@ fn granted_badge(
                 id: #id,
                 rules: #rules,
             }),
-            *reads_config,
+            reads_config,
         )),
         (ResourceKind::Fungible, Some(id)) => Err(syn::Error::new(
             id.span(),
@@ -2432,14 +2486,11 @@ struct Resource {
     /// states one: a quantity for a fungible mark, an instance id for a
     /// non-fungible one — the same split the mint itself takes.
     initial: Option<syn::LitInt>,
-    /// The rules its address commits, as the expression that builds
-    /// them. Rendered once here because three sites emit it — a gate
-    /// naming the resource, a term over it, and the grant that mints it
-    /// — and an address they disagreed about would be three resources.
-    grants: TokenStream2,
-    /// Whether those rules name configuration, which decides whether the
-    /// address is derivable from a handle alone.
-    grants_config: bool,
+    /// What its attribute grants. Rendered once here because three sites
+    /// emit it — a gate naming the resource, a term over it, and the
+    /// grant that mints it — and an address they disagreed about would
+    /// be three resources.
+    grants: Grants,
     /// Whether the struct has fields, which is what makes it an
     /// instance's data schema and not only a bare mark.
     schema: bool,
