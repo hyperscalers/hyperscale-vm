@@ -1077,7 +1077,8 @@ mod tests {
 
     use hyperscale_vm_effects::{Declaration, Hash32, SlotId, TestHasher, child_key};
     use hyperscale_vm_types::{
-        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Moves, TxHash,
+        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, ModeKind,
+        Moves, TxHash,
     };
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
@@ -1091,20 +1092,31 @@ mod tests {
     const BOOK: Address = Address::new([0x77; 31], AddressClass::Component);
     const ASKS: CollectionId = CollectionId([4; 16]);
 
-    const fn nth_mode(index: u8) -> Mode {
-        match index {
-            0 => Mode::Read,
-            1 => Mode::Delta,
-            2 => Mode::Reserve { amount: 1 },
-            _ => Mode::Write { moves: Moves::Both },
+    /// A mode standing for each kind, so a generated declaration reaches
+    /// every row of the lattice. Total over [`ModeKind`], so a kind added
+    /// later has to choose its parameters here.
+    const fn mode_of(kind: ModeKind) -> Mode {
+        match kind {
+            ModeKind::Read => Mode::Read,
+            ModeKind::Delta => Mode::Delta,
+            ModeKind::Credit => Mode::Credit,
+            ModeKind::Reserve => Mode::Reserve { amount: 1 },
+            ModeKind::Write => Mode::Write { moves: Moves::Both },
         }
+    }
+
+    /// How many modes the generators choose between.
+    const KINDS: usize = ModeKind::ALL.len();
+
+    const fn nth_mode(index: usize) -> Mode {
+        mode_of(ModeKind::ALL[index])
     }
 
     /// One generated declaration, over a key space small enough that
     /// transactions actually collide.
     fn arb_effect() -> impl Strategy<Value = Effect> {
         prop_oneof![
-            (0u8..4, 0u8..4).prop_map(|(key, mode)| Effect {
+            (0u8..4, 0usize..KINDS).prop_map(|(key, mode)| Effect {
                 target: EffectTarget::Point(child_key(
                     &TestHasher,
                     Address::new([0xC0 + key; 31], AddressClass::Component),
@@ -1117,7 +1129,7 @@ mod tests {
             // the commutative modes are what make a read conflict with
             // something a read does not, and the sweep collapses reads
             // precisely when one arrives.
-            (0u128..6, 0u8..4).prop_map(|(order, mode)| Effect {
+            (0u128..6, 0usize..KINDS).prop_map(|(order, mode)| Effect {
                 target: EffectTarget::Entry {
                     owner: BOOK,
                     collection: ASKS,
@@ -1125,7 +1137,7 @@ mod tests {
                 },
                 mode: nth_mode(mode),
             }),
-            (0u128..6, 0u128..6, 0u8..4).prop_map(|(a, b, mode)| Effect {
+            (0u128..6, 0u128..6, 0usize..KINDS).prop_map(|(a, b, mode)| Effect {
                 target: EffectTarget::Range {
                     owner: BOOK,
                     collection: ASKS,
@@ -1136,7 +1148,7 @@ mod tests {
                 mode: nth_mode(mode),
             }),
             // Inverted intervals name nothing and must group nothing.
-            (0u128..6, 0u128..6, 0u8..4).prop_map(|(a, b, mode)| Effect {
+            (0u128..6, 0u128..6, 0usize..KINDS).prop_map(|(a, b, mode)| Effect {
                 target: EffectTarget::Range {
                     owner: BOOK,
                     collection: ASKS,

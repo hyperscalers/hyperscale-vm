@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a7117162d84b6319b5aa229ac3059818272cfbacd4f300c480be8b11520fbd46 # shrinks to declarations = [[Effect { target: Entry { owner: Address(7777777777777777777777777777777777777777777777777777777777777702), collection: CollectionId(04040404040404040404040404040404), order: 3 }, mode: Read }], [Effect { target: Range { owner: Address(7777777777777777777777777777777777777777777777777777777777777702), collection: CollectionId(04040404040404040404040404040404), lo: 0, hi: 3, cap: 4 }, mode: Credit }]]

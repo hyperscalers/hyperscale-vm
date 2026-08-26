@@ -292,18 +292,22 @@ mod tests {
         assert_eq!(Presence::Absent.meet(Presence::Present), None);
         assert_eq!(Presence::Present.meet(Presence::Absent), None);
     }
+    /// The relation in full, row for row against [`ModeKind::ALL`], so
+    /// a kind added later is a table that no longer fits rather than an
+    /// untested row.
     #[test]
     fn compatibility_matrix() {
-        use ModeKind::{Delta, Read, Reserve, Write};
-        let kinds = [Read, Delta, Reserve, Write];
+        // Read, Delta, Credit, Reserve, Write — `ModeKind::ALL`'s order.
         let table = [
-            [true, false, false, false],
-            [false, true, true, false],
-            [false, true, true, false],
-            [false, false, false, false],
+            [true, false, false, false, false],
+            [false, true, true, true, false],
+            [false, true, true, true, false],
+            [false, true, true, true, false],
+            [false, false, false, false, false],
         ];
-        for (i, &a) in kinds.iter().enumerate() {
-            for (j, &b) in kinds.iter().enumerate() {
+        assert_eq!(table.len(), ModeKind::ALL.len(), "a kind with no row");
+        for (i, &a) in ModeKind::ALL.iter().enumerate() {
+            for (j, &b) in ModeKind::ALL.iter().enumerate() {
                 assert_eq!(compatible(a, b), table[i][j], "{a:?} vs {b:?}");
                 assert_eq!(compatible(a, b), compatible(b, a), "symmetry {a:?}/{b:?}");
             }

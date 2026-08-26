@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{Declaration, DeclaredAccess, Hash32, SlotId, TestHasher, child_key};
 use hyperscale_vm_types::{
-    Address, AddressClass, Effect, EffectSet, Mode, ResourceAddr, SubstateKey, TxHash,
+    Address, AddressClass, ConflictClass, Effect, EffectSet, ResourceAddr, SubstateKey, TxHash,
 };
 
 use super::materialize::{Contents, contents_of};
@@ -67,7 +67,9 @@ pub(super) const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// A movement names a cell that holds value, and a hand-built set has
 /// no clause left to say what — so a fixture standing in for a
 /// signature says it here, or the movement is refused before any body
-/// runs.
+/// runs. Which modes those are is read off the conflict class: the
+/// commutative modes are the ones that move value and do nothing else,
+/// which is exactly the set `capability_for` demands a denomination of.
 ///
 /// Answered per cell rather than per clause, because that is the
 /// shape of the fact: every clause reaching a cell some movement
@@ -77,7 +79,7 @@ pub(super) const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 pub(super) fn holding(ordered: &[Effect]) -> Vec<DeclaredAccess> {
     let value: BTreeSet<Contents> = ordered
         .iter()
-        .filter(|effect| matches!(effect.mode, Mode::Delta | Mode::Reserve { .. }))
+        .filter(|effect| effect.mode.kind().conflict_class() == ConflictClass::Commutative)
         .map(|effect| contents_of(effect.target))
         .collect();
     ordered
