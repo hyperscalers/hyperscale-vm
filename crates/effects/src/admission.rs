@@ -240,7 +240,8 @@ pub enum AdmissionError {
     /// answers with; presenting one is only ever how a component that
     /// does not exist yet is brought up.
     #[error(
-        "node {node} presents a record and calls `{method}`, which is not its component's seal"
+        "node {node} presents a record and calls `{method}`, which is not its component's seal \
+         — drop the record from the envelope, or call the method that seals it"
     )]
     PresentedForCall {
         /// The offending node.
@@ -642,6 +643,25 @@ pub enum AdmissionError {
         /// The parameter position.
         param: u32,
     },
+    /// A socket shaped for authority, passed where an argument goes.
+    ///
+    /// The parameter is not what is wrong: an argument takes value, and a
+    /// proof is not value. What the composition wants is the socket
+    /// presented as evidence rather than passed as an argument, and
+    /// saying so is the difference between a refusal an author can act on
+    /// and one that sends them to change the signature.
+    #[error(
+        "node {node} passes authority socket {socket} as argument {param}: an authority socket \
+         is presented as evidence, never passed as a value"
+    )]
+    AuthoritySocketAsArgument {
+        /// The offending node.
+        node: u32,
+        /// The parameter position it was passed at.
+        param: u32,
+        /// The socket, in the intent that declared it.
+        socket: u32,
+    },
     /// A presented instance record's configuration value nested past
     /// [`MAX_VALUE_DEPTH`].
     #[error("instance record {instance}: configuration value nests deeper than {MAX_VALUE_DEPTH}")]
@@ -722,6 +742,7 @@ impl AdmissionError {
             | Self::DenominationType { node, param, .. }
             | Self::UnbindableAbiParam { node, param, .. }
             | Self::SocketForValueParam { node, param, .. }
+            | Self::AuthoritySocketAsArgument { node, param, .. }
             | Self::ValueTooDeep { node, param, .. } => Placed {
                 intent: None,
                 node: Some(*node),
@@ -1822,9 +1843,10 @@ impl Lower<'_> {
         else {
             // A socket shaped for authority fills no argument: an
             // argument takes value, and a proof is not value.
-            return Err(AdmissionError::SocketForValueParam {
+            return Err(AdmissionError::AuthoritySocketAsArgument {
                 node: node_index,
                 param: param_index,
+                socket: *reference,
             });
         };
         let source_intent =

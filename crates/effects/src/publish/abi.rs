@@ -39,29 +39,31 @@ pub enum AbiError {
         /// The clause it names.
         clause: u32,
     },
-    /// A handle binding naming a clause that is not a single access.
+    /// A handle binding naming a site an access does not have.
     ///
-    /// A `for-each` clause expands over configuration, so it backs no
-    /// fixed export parameter — a refusal routing would otherwise reach
-    /// by arity, made here where the signature is judged.
-    #[error("ABI parameter {position} borrows clause {clause}, which is not a single access")]
-    NotAnAccess {
+    /// One access is one site, numbered zero. Sites past it belong to a
+    /// `for-each`, which expands over configuration and has one per
+    /// element — so a site on a plain access is a position nothing
+    /// occupies rather than a clause of the wrong shape.
+    #[error(
+        "ABI parameter {position} borrows site {site} of clause {clause}, which is one access \
+         and has only site 0"
+    )]
+    NoSuchSite {
         /// The ABI parameter position.
         position: u32,
         /// The clause it names.
         clause: u32,
-    },
-    /// A handle binding naming a site of a clause that is not a
-    /// `for-each`.
-    ///
-    /// Only a loop has sites past its first: a plain clause is one
-    /// access of its own, named at site zero.
-    #[error(
-        "ABI parameter {position} borrows site {site} of clause {clause}, which is not a `for-each`"
-    )]
-    NotALoop {
-        /// The site within that clause.
+        /// The site it named within that clause.
         site: u32,
+    },
+    /// A handle binding naming a clause that declares no capability.
+    ///
+    /// A handle is borrowed from an access, and a condition or a mint is
+    /// neither an access nor a loop over them — so there is nothing for
+    /// the parameter to be handed, at any site.
+    #[error("ABI parameter {position} borrows clause {clause}, which declares no capability")]
+    NotACapability {
         /// The ABI parameter position.
         position: u32,
         /// The clause it names.
@@ -139,13 +141,14 @@ pub enum AbiError {
     },
 }
 
-/// Judge one handle binding onto a site inside a loop, so both halves of
-/// the name are checked.
+/// Judge that a handle binding names a site something declares.
 ///
-/// Anything else is a binding nothing could resolve — a condition
-/// declares no capability, and a nested loop's own expansions are not
-/// addressable by an index over the outer one's elements.
-fn looped_site(
+/// A plain clause is one site of its own, named at site zero; anything
+/// past that names a site of a `for-each` body. Each way of getting it
+/// wrong earns its own refusal, because they send an author to different
+/// places: a site an access does not have, a body position declaring no
+/// access, and a clause that declares no capability at any site.
+fn declares_a_site(
     signature: &MethodSignature,
     position: u32,
     clause: u32,
@@ -154,22 +157,35 @@ fn looped_site(
     let declared = usize::try_from(clause)
         .ok()
         .and_then(|index| signature.effects.get(index));
-    let Some(Clause::ForEach { body, .. }) = declared else {
-        return Err(AbiError::NotALoop {
+    let Some(declared) = declared else {
+        return Err(AbiError::NoSuchClause {
             position,
             clause,
-            site,
+            declared: u32::try_from(signature.effects.len()).unwrap_or(u32::MAX),
         });
     };
-    let inside = usize::try_from(site).ok().and_then(|index| body.get(index));
-    if matches!(inside, Some(Clause::Effect { .. })) {
-        Ok(())
-    } else {
-        Err(AbiError::NotALoopedAccess {
+    match declared {
+        Clause::Effect { .. } if site == 0 => Ok(()),
+        Clause::Effect { .. } => Err(AbiError::NoSuchSite {
             position,
             clause,
             site,
-        })
+        }),
+        // A loop's sites are its body's positions, and only the ones
+        // declaring an access back a handle.
+        Clause::ForEach { body, .. } => {
+            let inside = usize::try_from(site).ok().and_then(|at| body.get(at));
+            if matches!(inside, Some(Clause::Effect { .. })) {
+                Ok(())
+            } else {
+                Err(AbiError::NotALoopedAccess {
+                    position,
+                    clause,
+                    site,
+                })
+            }
+        }
+        _ => Err(AbiError::NotACapability { position, clause }),
     }
 }
 
@@ -195,29 +211,8 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
     for (index, binding) in signature.abi.iter().enumerate() {
         let position = bound(index);
         match binding {
-            // A plain clause is one site of its own, named at site zero;
-            // anything past that names a site of a `for-each` body.
             AbiParam::Handle { clause, site } => {
-                let declared = usize::try_from(*clause)
-                    .ok()
-                    .and_then(|index| signature.effects.get(index));
-                let Some(declared) = declared else {
-                    return Err(AbiError::NoSuchClause {
-                        position,
-                        clause: *clause,
-                        declared: bound(signature.effects.len()),
-                    });
-                };
-                match declared {
-                    Clause::Effect { .. } if *site == 0 => {}
-                    Clause::Effect { .. } => {
-                        return Err(AbiError::NotAnAccess {
-                            position,
-                            clause: *clause,
-                        });
-                    }
-                    _ => looped_site(signature, position, *clause, *site)?,
-                }
+                declares_a_site(signature, position, *clause, *site)?;
                 if !borrowed.insert((*clause, *site)) {
                     return Err(AbiError::SiteBorrowedTwice {
                         position,
@@ -290,8 +285,11 @@ pub fn check_abi(signature: &MethodSignature) -> Result<(), AbiError> {
 #[cfg(test)]
 mod tests {
 
+    use hyperscale_vm_types::Presence;
+
     use super::*;
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
+    use crate::rule::{Rule, RuleLeaf};
     use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
 
     /// Every name table is bounded by what reaches an entry: the kernel
@@ -341,6 +339,48 @@ mod tests {
         assert!(matches!(
             check_abi(&signature(vec![], vec![AbiParam::Bucket(3)])),
             Err(AbiError::NoSuchParam { param: 3, .. })
+        ));
+    }
+
+    /// Each shape a handle binding can name wrongly earns its own
+    /// refusal, saying what the author actually wrote.
+    ///
+    /// One access is one site. Naming a second used to read "clause 0,
+    /// which is not a single access" — of a clause that is exactly a
+    /// single access, and has no site 1. Naming a condition used to fall
+    /// through to the loop check and read "which is not a `for-each`",
+    /// sending an author to look for a loop they never wrote.
+    #[test]
+    fn a_binding_names_the_shape_it_got_wrong() {
+        // A site past the one an access has.
+        assert!(matches!(
+            check_abi(&signature(
+                vec![],
+                vec![AbiParam::Handle { clause: 0, site: 1 }]
+            )),
+            Err(AbiError::NoSuchSite {
+                clause: 0,
+                site: 1,
+                ..
+            })
+        ));
+
+        // A clause that declares no capability at all, at any site.
+        let conditional = MethodSignature {
+            totality: Totality::Fallible,
+            abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
+            effects: vec![Clause::Requires {
+                guard: None,
+                rule: Rule::Require(RuleLeaf::Presence {
+                    target: Box::new(TargetExpr::Point(Expr::SelfAddr)),
+                    expect: Presence::Present,
+                }),
+            }],
+            ..MethodSignature::default()
+        };
+        assert!(matches!(
+            check_abi(&conditional),
+            Err(AbiError::NotACapability { clause: 0, .. })
         ));
     }
 
