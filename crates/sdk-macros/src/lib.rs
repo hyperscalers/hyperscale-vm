@@ -671,6 +671,7 @@ fn lower_methods(
     serves: client::Serves,
 ) -> syn::Result<Vec<Lowered>> {
     let mut lowered = Vec::new();
+    let mut published: Vec<String> = Vec::new();
     for item in items {
         let syn::Item::Impl(block) = item else {
             continue;
@@ -701,24 +702,35 @@ fn lower_methods(
             }
             if matches!(method.vis, syn::Visibility::Public(_)) {
                 // The published name, not the Rust one: `#[name(..)]`
-                // reaches the same collision, and the builder would
-                // catch it as a panic from inside a generated
-                // `blueprint()` rather than at the line that wrote it.
-                if matches!(serves, client::Serves::Instances)
-                    && method_name(method)? == INSTANTIATE
-                {
-                    let at = method
+                // reaches the same collisions, and the builder would
+                // catch them as a panic from inside a generated
+                // `blueprint()` rather than at the line that wrote them.
+                let name = method_name(method)?;
+                let at = || {
+                    method
                         .attrs
                         .iter()
                         .find(|attr| attr.path().is_ident("name"))
-                        .map_or_else(|| method.sig.ident.span(), Spanned::span);
+                        .map_or_else(|| method.sig.ident.span(), Spanned::span)
+                };
+                if matches!(serves, client::Serves::Instances) && name == INSTANTIATE {
                     return Err(syn::Error::new(
-                        at,
+                        at(),
                         "`instantiate` is the generated seal: the macro derives it for \
                          every instance-serving package, so an authored method cannot \
                          publish under the name",
                     ));
                 }
+                if published.contains(&name) {
+                    return Err(syn::Error::new(
+                        at(),
+                        format!(
+                            "another method already publishes as `{name}`, and a \
+                             published name names one export"
+                        ),
+                    ));
+                }
+                published.push(name);
                 lowered.push(lower_method(method, declared, serves)?);
             }
         }

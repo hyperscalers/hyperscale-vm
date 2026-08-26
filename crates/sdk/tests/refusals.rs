@@ -188,6 +188,16 @@ fn the_lowering_refuses_a_gate_on_a_private_method() {
     refuse.compile_fail("tests/refusals/private_gated.rs");
 }
 
+/// A published name names one export. The collision the `instantiate`
+/// check already caught for the seal is every name's hazard, and it
+/// refuses at the line that wrote it rather than panicking inside the
+/// generated `blueprint()`.
+#[test]
+fn the_lowering_refuses_a_published_name_collision() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/colliding_name.rs");
+}
+
 /// A method carries one gate.
 ///
 /// The gate attributes are collected before any is read, so a second one

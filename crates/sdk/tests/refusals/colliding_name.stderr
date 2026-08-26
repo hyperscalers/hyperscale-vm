@@ -1,0 +1,5 @@
+error: another method already publishes as `tally`, and a published name names one export
+  --> tests/refusals/colliding_name.rs:19:9
+   |
+19 |         #[name("tally")]
+   |         ^
