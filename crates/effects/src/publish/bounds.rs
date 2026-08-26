@@ -19,6 +19,53 @@ use crate::signature::{
 };
 use crate::types::{MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, value_within_width};
 
+/// A bound crossed, and where in the signature the walk was when it
+/// found it.
+///
+/// The position is what turns "expression nests deeper than 32" from a
+/// bisection exercise into a line: an author of a forty-clause method
+/// gets the clause, in the preorder numbering the rendered listing gives
+/// its lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{site}: {cause}")]
+pub struct PlacedBounds {
+    /// Where the walk was.
+    pub site: SignatureSite,
+    /// The bound it crossed.
+    pub cause: SignatureBoundsError,
+}
+
+/// Where in a signature a bounds walk is: which of the lists it judges,
+/// and the position within it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignatureSite {
+    /// The output expression at this position.
+    Output(u32),
+    /// The denomination declared on the parameter at this position.
+    Denomination(u32),
+    /// The ABI binding at this position.
+    Abi(u32),
+    /// The declared issuance at this position, its granted rules
+    /// included. A count past the issuance cap names the first position
+    /// over it.
+    Issuance(u32),
+    /// The clause at this number, in the preorder walk of the method's
+    /// effects — the numbering the rendered listing gives its lines.
+    Clause(u32),
+}
+
+impl std::fmt::Display for SignatureSite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Output(index) => write!(f, "output {index}"),
+            Self::Denomination(param) => write!(f, "parameter {param}'s denomination"),
+            Self::Abi(index) => write!(f, "ABI binding {index}"),
+            Self::Issuance(index) => write!(f, "issuance {index}"),
+            Self::Clause(number) => write!(f, "clause {number}"),
+        }
+    }
+}
+
 /// Why one signature is past a bound the vocabulary fixes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SignatureBoundsError {
@@ -79,29 +126,43 @@ fn check_rule_bounds(rule: &RuleExpr) -> Result<(), SignatureBoundsError> {
 /// expressions and go through the expression bound; the issuances are
 /// counted and their grants walked; the effects are walked last, because
 /// the clause walk is the one that counts as it goes.
-pub(super) fn check_signature_bounds(
-    signature: &MethodSignature,
-) -> Result<(), SignatureBoundsError> {
-    for output in &signature.outputs {
-        check_expr_bounds(output, 0)?;
+pub(super) fn check_signature_bounds(signature: &MethodSignature) -> Result<(), PlacedBounds> {
+    let at = |site: SignatureSite| move |cause| PlacedBounds { site, cause };
+    let position = |index: usize| u32::try_from(index).unwrap_or(u32::MAX);
+    for (index, output) in signature.outputs.iter().enumerate() {
+        check_expr_bounds(output, 0).map_err(at(SignatureSite::Output(position(index))))?;
     }
-    for denomination in signature.denominations.iter().flatten() {
-        check_expr_bounds(denomination, 0)?;
+    for (param, denomination) in signature.denominations.iter().enumerate() {
+        if let Some(denomination) = denomination {
+            check_expr_bounds(denomination, 0)
+                .map_err(at(SignatureSite::Denomination(position(param))))?;
+        }
     }
-    for param in &signature.abi {
+    for (index, param) in signature.abi.iter().enumerate() {
         if let AbiParam::Derived(expr) = param {
-            check_expr_bounds(expr, 0)?;
+            check_expr_bounds(expr, 0).map_err(at(SignatureSite::Abi(position(index))))?;
         }
     }
     if signature.issues.len() > MAX_ISSUANCES_PER_SIGNATURE {
-        return Err(SignatureBoundsError::TooManyIssuances);
+        return Err(PlacedBounds {
+            site: SignatureSite::Issuance(position(MAX_ISSUANCES_PER_SIGNATURE)),
+            cause: SignatureBoundsError::TooManyIssuances,
+        });
     }
-    for issuance in &signature.issues {
-        check_grants_bounds(&issuance.grants)?;
+    for (index, issuance) in signature.issues.iter().enumerate() {
+        check_grants_bounds(&issuance.grants)
+            .map_err(at(SignatureSite::Issuance(position(index))))?;
     }
     let mut declared = 0usize;
     let mut minted = 0usize;
-    check_clause_bounds(&signature.effects, 0, &mut declared, &mut minted)
+    let mut number = 0u32;
+    check_clause_bounds(
+        &signature.effects,
+        0,
+        &mut declared,
+        &mut minted,
+        &mut number,
+    )
 }
 
 fn check_clause_bounds(
@@ -109,11 +170,20 @@ fn check_clause_bounds(
     depth: usize,
     declared: &mut usize,
     minted: &mut usize,
-) -> Result<(), SignatureBoundsError> {
+    number: &mut u32,
+) -> Result<(), PlacedBounds> {
     if depth > MAX_CLAUSE_DEPTH {
-        return Err(SignatureBoundsError::ClauseDepth);
+        // The clause about to be numbered is the first of the body that
+        // nests too deep.
+        return Err(PlacedBounds {
+            site: SignatureSite::Clause(*number),
+            cause: SignatureBoundsError::ClauseDepth,
+        });
     }
     for clause in clauses {
+        let here = SignatureSite::Clause(*number);
+        let at = |cause| PlacedBounds { site: here, cause };
+        *number = number.saturating_add(1);
         match clause {
             Clause::Effect {
                 guard,
@@ -123,42 +193,42 @@ fn check_clause_bounds(
                 reach: _,
             } => {
                 if let Some(cond) = guard {
-                    check_expr_bounds(cond, 0)?;
+                    check_expr_bounds(cond, 0).map_err(at)?;
                 }
                 *declared += 1;
                 if *declared > MAX_EFFECTS_PER_SIGNATURE {
-                    return Err(SignatureBoundsError::TooManyEffects);
+                    return Err(at(SignatureBoundsError::TooManyEffects));
                 }
-                check_target_bounds(target)?;
-                check_mode_bounds(mode)?;
+                check_target_bounds(target).map_err(at)?;
+                check_mode_bounds(mode).map_err(at)?;
                 if let Some(denomination) = denomination {
-                    check_expr_bounds(denomination, 0)?;
+                    check_expr_bounds(denomination, 0).map_err(at)?;
                 }
             }
             Clause::ForEach { guard, list, body } => {
                 if let Some(cond) = guard {
-                    check_expr_bounds(cond, 0)?;
+                    check_expr_bounds(cond, 0).map_err(at)?;
                 }
-                check_expr_bounds(list, 0)?;
-                check_clause_bounds(body, depth + 1, declared, minted)?;
+                check_expr_bounds(list, 0).map_err(at)?;
+                check_clause_bounds(body, depth + 1, declared, minted, number)?;
             }
             Clause::Requires { guard, rule } => {
                 if let Some(cond) = guard {
-                    check_expr_bounds(cond, 0)?;
+                    check_expr_bounds(cond, 0).map_err(at)?;
                 }
                 *declared += 1;
                 if *declared > MAX_EFFECTS_PER_SIGNATURE {
-                    return Err(SignatureBoundsError::TooManyEffects);
+                    return Err(at(SignatureBoundsError::TooManyEffects));
                 }
-                check_rule_bounds(rule)?;
+                check_rule_bounds(rule).map_err(at)?;
             }
             Clause::Mints { guard, claim } => {
                 if let Some(cond) = guard {
-                    check_expr_bounds(cond, 0)?;
+                    check_expr_bounds(cond, 0).map_err(at)?;
                 }
                 *declared += 1;
                 if *declared > MAX_EFFECTS_PER_SIGNATURE {
-                    return Err(SignatureBoundsError::TooManyEffects);
+                    return Err(at(SignatureBoundsError::TooManyEffects));
                 }
                 // Minting carries its own ceiling as well as the shared
                 // one: what a mint costs is not the clause but the copy
@@ -166,9 +236,9 @@ fn check_clause_bounds(
                 // budget is the wrong size to bound it by.
                 *minted += 1;
                 if *minted > MAX_MINTS_PER_SIGNATURE {
-                    return Err(SignatureBoundsError::TooManyMints);
+                    return Err(at(SignatureBoundsError::TooManyMints));
                 }
-                check_expr_bounds(claim, 0)?;
+                check_expr_bounds(claim, 0).map_err(at)?;
             }
         }
     }
@@ -362,6 +432,59 @@ mod tests {
 
     /// Both sides of a bound: the structure at it is admitted, the one
     /// past it refused.
+    /// A bounds refusal names where it was found — the clause in the
+    /// listing's preorder numbering, or the position in whichever list
+    /// outside the clauses the walk was judging.
+    #[test]
+    fn a_bounds_refusal_carries_its_position() {
+        let deep = nested_projection(MAX_EXPR_DEPTH + 1);
+        let read = Clause::Effect {
+            reach: None,
+            guard: None,
+            target: TargetExpr::Point(Expr::SelfAddr),
+            mode: ModeExpr::Read,
+            denomination: None,
+        };
+        // Clause 0 is fine; clause 1 is the loop; clause 2 — its body's
+        // first line — holds the too-deep expression.
+        let signature = MethodSignature {
+            effects: vec![
+                read,
+                Clause::ForEach {
+                    guard: None,
+                    list: Expr::Arg(0),
+                    body: vec![Clause::Effect {
+                        reach: None,
+                        guard: None,
+                        target: TargetExpr::Point(deep.clone()),
+                        mode: ModeExpr::Read,
+                        denomination: None,
+                    }],
+                },
+            ],
+            ..MethodSignature::default()
+        };
+        assert_eq!(
+            check_signature_bounds(&signature),
+            Err(PlacedBounds {
+                site: SignatureSite::Clause(2),
+                cause: SignatureBoundsError::ExprDepth,
+            })
+        );
+
+        let signature = MethodSignature {
+            denominations: vec![None, Some(deep)],
+            ..MethodSignature::default()
+        };
+        assert_eq!(
+            check_signature_bounds(&signature),
+            Err(PlacedBounds {
+                site: SignatureSite::Denomination(1),
+                cause: SignatureBoundsError::ExprDepth,
+            })
+        );
+    }
+
     fn assert_bounded(admitted: &PackageMetadata, refused: &PackageMetadata) {
         assert_eq!(check_metadata(admitted), Ok(()));
         assert!(

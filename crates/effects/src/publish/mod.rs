@@ -23,8 +23,8 @@ mod fixtures;
 mod package;
 
 pub use abi::{AbiError, check_abi};
-pub use bounds::SignatureBoundsError;
 use bounds::check_signature_bounds;
+pub use bounds::{PlacedBounds, SignatureBoundsError, SignatureSite};
 pub use declaration::{
     DeclarationError, check_declarations, founds_its_resource, seal_clauses, seals,
 };
@@ -36,9 +36,9 @@ use crate::signature::MethodSignature;
 /// judgment the vocabulary makes of one.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SignatureError {
-    /// Past a structural bound.
+    /// Past a structural bound, at the named position.
     #[error(transparent)]
-    Bounds(#[from] SignatureBoundsError),
+    Bounds(#[from] PlacedBounds),
     /// A declaration rule refused it.
     #[error(transparent)]
     Declaration(#[from] DeclarationError),

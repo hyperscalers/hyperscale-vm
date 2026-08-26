@@ -76,12 +76,20 @@ pub enum DeclarationError {
         clause: u32,
     },
     /// An issuance whose mark names nothing.
-    #[error("the issued resource carries no mark, and a mark is a resource's own name")]
-    UnmarkedIssuance,
+    #[error("issuance {issuance} carries no mark, and a mark is a resource's own name")]
+    UnmarkedIssuance {
+        /// The issuance's position in the declared list.
+        issuance: u32,
+    },
     /// One mark issued twice by one method, which would give its body two
     /// indices for one resource.
-    #[error("this method issues one mark twice, and a mark names one grant")]
-    IssuanceNamedTwice,
+    #[error(
+        "issuance {issuance} names a mark an earlier issuance names, and a mark names one grant"
+    )]
+    IssuanceNamedTwice {
+        /// The position of the later of the two.
+        issuance: u32,
+    },
     /// A reach declared under a behaviour that governs no foreign
     /// prefix — a movement entry, which is about the holder rather than
     /// about somebody reaching them.
@@ -1001,12 +1009,12 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // derivation folds it as one part of the material. An empty one
     // names nothing and folds to no material at all, which is an address
     // reached by saying less rather than by saying something.
-    if signature
-        .issues
-        .iter()
-        .any(|issuance| issuance.mark.is_empty())
-    {
-        return Err(DeclarationError::UnmarkedIssuance);
+    for (position, issuance) in signature.issues.iter().enumerate() {
+        if issuance.mark.is_empty() {
+            return Err(DeclarationError::UnmarkedIssuance {
+                issuance: u32::try_from(position).unwrap_or(u32::MAX),
+            });
+        }
     }
     // One mark names one grant, so a method naming a mark twice would
     // hand its body two indices for one resource and two entries to
@@ -1017,7 +1025,9 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
             .iter()
             .any(|earlier| earlier.mark == issuance.mark && earlier.kind == issuance.kind)
         {
-            return Err(DeclarationError::IssuanceNamedTwice);
+            return Err(DeclarationError::IssuanceNamedTwice {
+                issuance: u32::try_from(position).unwrap_or(u32::MAX),
+            });
         }
     }
     // A destroyed edge is a value edge, and named once: the grant is per
@@ -1545,7 +1555,10 @@ mod tests {
             })
         };
         assert_eq!(issues(b"unit"), Ok(()));
-        assert_eq!(issues(b""), Err(DeclarationError::UnmarkedIssuance));
+        assert_eq!(
+            issues(b""),
+            Err(DeclarationError::UnmarkedIssuance { issuance: 0 })
+        );
     }
 
     /// The entry a resource grants for the direction its issuer takes.

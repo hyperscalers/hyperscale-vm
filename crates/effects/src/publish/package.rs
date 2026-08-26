@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use hyperscale_hbor::{Resolution, ShapeFault};
 use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES};
 
-use super::bounds::{SignatureBoundsError, check_signature_bounds};
+use super::bounds::{PlacedBounds, check_signature_bounds};
 use crate::dsl::{Clause, TargetExpr, slot_of};
 use crate::instance::MAX_CONFIG_FIELDS;
 use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
@@ -37,9 +37,9 @@ pub enum MetadataError {
     Method {
         /// The method whose signature is refused.
         name: String,
-        /// What is past its bound.
+        /// What is past its bound, and where in the signature.
         #[source]
-        source: SignatureBoundsError,
+        source: PlacedBounds,
     },
     /// A declared type whose shape cannot be read.
     #[error("type {name:?}: {source}")]
