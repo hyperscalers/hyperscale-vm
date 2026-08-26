@@ -535,7 +535,7 @@ fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeErr
         .one()
         .expect("the request declares one socket");
     env.seal(root)?.none()?;
-    env.bind(wants, offered);
+    env.bind(wants, offered)?;
     env.build()
 }
 

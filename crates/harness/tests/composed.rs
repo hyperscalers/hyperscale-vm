@@ -70,8 +70,8 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
         .expect("the subintent discharges its declaration")
         .one()
         .expect("the subintent declares one parameter");
-    env.bind(wants_y, paid_y);
-    env.bind(wants_x, paid_x);
+    env.bind(wants_y, paid_y).expect("the socket takes an edge");
+    env.bind(wants_x, paid_x).expect("the socket takes an edge");
     env.build().expect("every socket is bound")
 }
 

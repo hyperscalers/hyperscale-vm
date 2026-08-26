@@ -220,8 +220,8 @@ fn a_composition_names_every_signer_it_needs() {
 
     let wants_y = env.seal(root).unwrap().one().unwrap();
     let wants_x = env.seal(sub).unwrap().one().unwrap();
-    env.bind(wants_y, paid_y);
-    env.bind(wants_x, paid_x);
+    env.bind(wants_y, paid_y).unwrap();
+    env.bind(wants_x, paid_x).unwrap();
     let tree = env.build().unwrap();
 
     let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();

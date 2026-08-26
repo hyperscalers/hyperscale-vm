@@ -45,9 +45,11 @@ use crate::typed::{Proof, TypedBuilder, TypedError, graph_records};
 
 /// Why an envelope could not be composed.
 ///
-/// Every variant is a verdict [`admit_tree`] would also reach, named
-/// against the intent the author wrote rather than against a flattened
-/// tree they have not finished composing.
+/// Every variant is a verdict [`admit_tree`] would also reach —
+/// [`SocketArity`](Self::SocketArity) as the socket a miscounting
+/// composer leaves unbound — named against the intent the author wrote
+/// rather than against a flattened tree they have not finished
+/// composing.
 ///
 /// [`admit_tree`]: hyperscale_vm_effects::admit_tree
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -105,6 +107,22 @@ pub enum EnvelopeError {
         declared: usize,
         /// The arity the composer unpacked into.
         claimed: usize,
+    },
+    /// A proof offered to a socket that declares value.
+    #[error("intent {intent} socket {socket} carries value, which no proof fills")]
+    ProofForValueSocket {
+        /// The declaring intent.
+        intent: u32,
+        /// Its position in the declaration.
+        socket: u32,
+    },
+    /// An edge offered to a socket that declares authority.
+    #[error("intent {intent} socket {socket} carries authority, which no edge fills")]
+    EdgeForAuthoritySocket {
+        /// The declaring intent.
+        intent: u32,
+        /// Its position in the declaration.
+        socket: u32,
     },
     /// An intent declaring more sockets than admission accepts.
     #[error("intent {intent} declares more than {MAX_SOCKETS} sockets")]
@@ -595,7 +613,15 @@ impl<'a> EnvelopeBuilder<'a> {
     /// exported, or the proof one of its nodes mints.
     ///
     /// The whole of composition: a link is added between two graphs and
-    /// neither is touched.
+    /// neither is touched. The socket's own declaration types the link,
+    /// so an offering of the wrong half is refused at the wiring, while
+    /// the composer can still route the right one.
+    ///
+    /// # Errors
+    ///
+    /// [`EnvelopeError::ProofForValueSocket`] or
+    /// [`EnvelopeError::EdgeForAuthoritySocket`] where the offering is
+    /// not the half the socket declares it takes.
     ///
     /// # Panics
     ///
@@ -604,23 +630,42 @@ impl<'a> EnvelopeBuilder<'a> {
         clippy::needless_pass_by_value,
         reason = "taking both handles by value is the wiring; a borrow would let one end serve twice"
     )]
-    pub fn bind(&mut self, socket: OpenSocket, offered: Offered) {
+    pub fn bind(&mut self, socket: OpenSocket, offered: Offered) -> Result<(), EnvelopeError> {
         assert!(
             socket.envelope == self.id && offered.envelope == self.id,
             "a socket is filled within the envelope that opened it"
         );
-        let binding = match offered.offering {
-            Offering::Edge(edge) => Binding::Value {
+        let slot = usize::try_from(socket.intent).expect("minted indices fit");
+        let position = usize::try_from(socket.position).expect("bounded by MAX_SOCKETS");
+        let declared = &self.intents[slot]
+            .as_ref()
+            .expect("an open socket names an intent the envelope holds")
+            .sockets[position];
+        let binding = match (declared, offered.offering) {
+            (Socket::Value { .. }, Offering::Edge(edge)) => Binding::Value {
                 intent: offered.intent,
                 edge,
             },
-            Offering::Proof(producer) => Binding::Authority {
+            (Socket::Authority(_), Offering::Proof(producer)) => Binding::Authority {
                 intent: offered.intent,
                 producer,
             },
+            (Socket::Value { .. }, Offering::Proof(_)) => {
+                return Err(EnvelopeError::ProofForValueSocket {
+                    intent: socket.intent,
+                    socket: socket.position,
+                });
+            }
+            (Socket::Authority(_), Offering::Edge(_)) => {
+                return Err(EnvelopeError::EdgeForAuthoritySocket {
+                    intent: socket.intent,
+                    socket: socket.position,
+                });
+            }
         };
         self.bindings
             .insert((socket.intent, socket.position), binding);
+        Ok(())
     }
 
     /// Emit the tree: every intent sealed, every socket bound.

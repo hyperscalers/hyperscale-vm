@@ -61,8 +61,8 @@ fn swap(pay_x: u128, pay_y: u128) -> Result<EnvelopeTree, EnvelopeError> {
 
     let wants_y = env.seal(root)?.one()?;
     let wants_x = env.seal(sub)?.one()?;
-    env.bind(wants_y, paid_y);
-    env.bind(wants_x, paid_x);
+    env.bind(wants_y, paid_y)?;
+    env.bind(wants_x, paid_x)?;
     env.build()
 }
 
@@ -102,7 +102,7 @@ fn a_presented_declaration_is_carried_verbatim() {
     let paid = root.export(funds);
     let wants = env.present(BOB, request).unwrap().one().unwrap();
     env.seal(root).unwrap().none().unwrap();
-    env.bind(wants, paid);
+    env.bind(wants, paid).unwrap();
     let tree = env.build().unwrap();
 
     assert_eq!(tree.subintents[0].decl.hash(&TestHasher), signed);
@@ -143,6 +143,28 @@ fn sockets_unpacked_at_the_wrong_arity_are_refused() {
             intent: 1,
             declared: 1,
             claimed: 0
+        })
+    );
+}
+
+#[test]
+fn a_proof_offered_to_a_value_socket_is_refused() {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
+    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
+    let offered = root.offer(alice_proof);
+    let wants = env
+        .present(BOB, payment_request(100))
+        .unwrap()
+        .one()
+        .unwrap();
+    // The socket asks for funds; authority is not funds, however the
+    // composer wired it.
+    assert_eq!(
+        env.bind(wants, offered),
+        Err(EnvelopeError::ProofForValueSocket {
+            intent: 1,
+            socket: 0
         })
     );
 }
@@ -265,7 +287,7 @@ fn a_handle_from_another_envelope_is_refused() {
     let bob_proof = account::authorize(&mut other, BOB).unwrap();
     let funds = account::withdraw(&mut other, bob_proof, RES_X, 100).unwrap();
     let elsewhere = other.export(funds);
-    mine.bind(wants, elsewhere);
+    let _ = mine.bind(wants, elsewhere);
 }
 
 proptest! {
@@ -298,8 +320,8 @@ proptest! {
             let yielded = leg.export(funds);
             account::deposit(&mut leg, signer, taken).unwrap();
             let wants = env.seal(leg).unwrap().one().unwrap();
-            env.bind(wiring.remove(0), yielded);
-            env.bind(wants, paid.remove(0));
+            env.bind(wiring.remove(0), yielded).unwrap();
+            env.bind(wants, paid.remove(0)).unwrap();
         }
 
         let tree = env.build().expect("every socket is bound");
@@ -363,7 +385,7 @@ fn approved(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let offered = root.offer(desk);
     let wants = env.present(BOB, request)?.one()?;
     env.seal(root)?.none()?;
-    env.bind(wants, offered);
+    env.bind(wants, offered)?;
     env.resource(note_meta());
     env.build()
 }
@@ -429,5 +451,25 @@ fn a_hole_bound_to_the_wrong_claim_is_refused() {
             node: 1,
             socket: 0
         }),
+    );
+}
+
+/// The other half of the same wiring check: the socket asks for the
+/// desk's approval, and an exported edge is not authority.
+#[test]
+fn an_edge_offered_to_an_authority_socket_is_refused() {
+    let request = note_request(Claim::of_subject(DESK));
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK);
+    let desk = account::authorize(&mut root, DESK).unwrap();
+    let funds = account::withdraw(&mut root, desk, RES_X, 5).unwrap();
+    let paid = root.export(funds);
+    let wants = env.present(BOB, request).unwrap().one().unwrap();
+    assert_eq!(
+        env.bind(wants, paid),
+        Err(EnvelopeError::EdgeForAuthoritySocket {
+            intent: 1,
+            socket: 0
+        })
     );
 }
