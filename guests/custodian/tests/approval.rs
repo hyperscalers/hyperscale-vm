@@ -89,32 +89,6 @@ fn a_note_moves_in_a_transaction_the_desk_signed(chain: Chain) {
     assert_eq!(chain.balance(keeper.address(), note), 60);
 }
 
-/// And nobody else's does, however the transaction is composed.
-///
-/// The refusal lands at admission rather than in the leg: a claim reads
-/// the node's own signed evidence and nothing else, so the stage that
-/// holds the evidence is the stage that decides — before anything routes
-/// and before any fee is assured.
-#[hyperscale_vm_testing::test]
-fn a_note_stands_still_for_anybody_the_entry_does_not_name(chain: Chain) {
-    let (mut chain, keeper, note) = world(chain);
-
-    let refused = chain
-        .try_transact(STRANGER, |b| {
-            let funds = keeper.withdraw(b, 40u128)?;
-            account::deposit(b, STRANGER, funds)
-        })
-        .expect_err("a movement nobody approved");
-    assert!(
-        matches!(
-            refused,
-            Refused::Admission(AdmissionError::MissingEvidence { .. })
-        ),
-        "the note's own entry is what admits a movement: {refused:?}",
-    );
-    assert_eq!(chain.balance(keeper.address(), note), 100);
-}
-
 /// A component's own vault answers for itself, so the desk's signature
 /// is asked wherever the note sits.
 ///

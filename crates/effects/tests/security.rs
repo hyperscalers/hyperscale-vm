@@ -24,9 +24,9 @@ use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::{
-    EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode, Hash32,
-    InstanceMeta, IntentDecl, Issuance, JudgedLeaf, ManifestGraph, Records, ResourceMeta, Rule,
-    TestHasher, Value, admit_tree, granting_issued_resource, holdings_collection,
+    AdmissionError, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode,
+    Hash32, InstanceMeta, IntentDecl, Issuance, JudgedLeaf, ManifestGraph, Records, ResourceMeta,
+    Rule, TestHasher, Value, admit_tree, granting_issued_resource, holdings_collection,
 };
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_types::{
@@ -320,10 +320,18 @@ fn the_register_entry_is_soulbound() {
     env.resources = vec![record(issuer, b"registered")];
     let refusal = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
         .expect_err("no holder may debit their own register entry");
-    let said = refusal.to_string();
+    // The sentence itself — "grants Withdraw to nobody", per direction —
+    // is resource_grants' pin; what this adds is that the macro-derived
+    // entry reaches the same verdict.
     assert!(
-        said.contains("grants Withdraw to nobody"),
-        "the refusal names the direction it refused: {said}",
+        matches!(
+            refusal,
+            AdmissionError::MovementForbidden {
+                behaviour: GrantedBehaviour::Withdraw,
+                ..
+            }
+        ),
+        "the entry forbids the debit: {refusal:?}",
     );
 }
 

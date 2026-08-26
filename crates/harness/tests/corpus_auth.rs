@@ -564,9 +564,9 @@ fn recovery_rotates_a_hostile_primary_out() {
         })]
     );
 
-    // Recovery proposes its replacement and waits it out. Nothing enacts
-    // itself: before the instant the attempt changes nothing, and at the
-    // instant anybody may enact what the clock has licensed.
+    // Recovery proposes its replacement and waits it out. The maturity
+    // boundary itself is pinned once, by the proposal test; what this
+    // adds is that the rotation lands on a frozen account.
     let (results, store) = run_both_signed(
         &world,
         &store,
@@ -574,18 +574,7 @@ fn recovery_rotates_a_hostile_primary_out() {
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
-    let before = t0 + DAY_MS - 1;
     let at = t0 + DAY_MS;
-    let (results, early) = run_both_at(
-        &world,
-        &store,
-        &[(&promote_graph(), TxHash(Hash32([0x94; 32])))],
-        Some(TAKER),
-        before,
-    );
-    assert!(matches!(&results[0], TxResult::Completed(_)));
-    assert_acts(&world, &early, BOB, before, false, 0x95);
-
     let (results, enacted) = run_both_at(
         &world,
         &store,
@@ -640,10 +629,9 @@ fn a_freeze_keeps_the_proposal_it_finds_pending() {
     );
 
     // The instant the replacement was already serving is the instant it
-    // may be enacted: the freeze moved nothing about it.
+    // may be enacted: the freeze moved nothing about it. The boundary
+    // itself is the proposal test's pin.
     let at = t0 + DAY_MS;
-    assert_acts(&world, &store, ALICE, at - 1, false, 0xA2);
-    assert_acts(&world, &store, BOB, at - 1, false, 0xA3);
     let (results, enacted) = run_both_at(
         &world,
         &store,

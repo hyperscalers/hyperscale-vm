@@ -18,9 +18,10 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
-    AdmissionError, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl,
-    ManifestGraph, PackageHash, PrefixShardResolver, Records, ResourceMeta, ResourceRecord,
-    TestHasher, Value, admit_tree, child_key, resource_record_key, route_tree,
+    AdmissionError, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, Hasher,
+    InstanceMeta, IntentDecl, ManifestGraph, PackageHash, PrefixShardResolver, Records,
+    ResourceMeta, ResourceRecord, TestHasher, Value, admit_tree, child_key, resource_record_key,
+    route_tree,
 };
 use hyperscale_vm_fixtures::{FLASHLOAN_COMPONENT, flashloan};
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
@@ -179,18 +180,6 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> (BatchOutcome, MemoryStor
     run_lanes(&LANES, store, batch)
 }
 
-/// The obligation's own address says its rules bind a movement.
-///
-/// The one fact a reader gets without resolving anything, and the reason
-/// a composer knows to present the record at all: a resource whose
-/// entries can stop a movement carries the tag, and the pool's lent
-/// asset — which grants nothing — does not.
-#[test]
-fn the_obligation_carries_the_restricted_class() {
-    assert_eq!(debt().address().class(), AddressClass::Restricted);
-    assert_eq!(XRD.address().class(), AddressClass::Resource);
-}
-
 /// The loan goes out, travels through a holder's account, and comes
 /// back, and the obligation is burned with it.
 #[test]
@@ -267,15 +256,25 @@ fn the_obligation_cannot_be_routed_into_a_vault() {
     let tree = intent(parked);
     let refusal = admit_tree(&tree, ALICE, tree.hash(&TestHasher), &world(), &TestHasher)
         .expect_err("no vault may hold the obligation");
-    let said = refusal.to_string();
+    // The rendered sentence, per direction, is resource_grants' pin;
+    // the variant is what this composition adds.
     assert!(
-        said.contains("grants Deposit to nobody"),
-        "the refusal names the direction it refused, not the other one: {said}",
+        matches!(
+            refusal,
+            AdmissionError::MovementForbidden {
+                behaviour: GrantedBehaviour::Deposit,
+                ..
+            }
+        ),
+        "the entry forbids the deposit: {refusal:?}",
     );
 
     // And the record is what makes that verdict reachable rather than
     // assumed: withholding it is its own refusal, which is what the
-    // class byte on the obligation's address exists to force.
+    // class byte on the obligation's address exists to force — the tag
+    // the composer read to know a record was wanted at all. The
+    // derivation rule itself is security.rs's pin.
+    assert_eq!(debt().address().class(), AddressClass::Restricted);
     let mut withheld = tree;
     withheld.resources = Vec::new();
     let refusal = admit_tree(

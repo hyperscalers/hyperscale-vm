@@ -10,10 +10,10 @@ use hyperscale_vm_effects::{
     ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants, Records,
     Routing, RuleBytes, ShardId, ShardResolver, SlotId, StarShape, StoredRule, TestHasher, Value,
     admit_presenting, admit_tree, child_key, classify as classify_star, collection_id,
-    package_slot, route, route_tree,
+    holdings_collection, package_slot, route, route_tree,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
-use hyperscale_vm_harness::driver::{Lanes, run_lanes, test_hash};
+use hyperscale_vm_harness::driver::{Lanes, run_lanes, test_hash, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, EnvInputs, GuestBackend, GuestRunner, KernelSession, ManifestWalk,
@@ -24,7 +24,7 @@ use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     AbortReason, Address, CollectionId, ComponentAddr, Effect, EffectSet, EffectTarget, EntryKey,
     Mode, Outcome, PrincipalAddr, ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey,
-    TxHash,
+    TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::{Error as WasmtimeError, ensure};
@@ -419,6 +419,50 @@ pub fn register_pool_meta() -> InstanceMeta {
         ],
         salt: Hash32([13; 32]),
     }
+}
+
+/// A trade of the register-mode class: Alice pays X and is paid in
+/// shares.
+pub fn register_swap_graph(min_out: u128) -> ManifestGraph {
+    graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, RES_X, 500)?;
+        let out = register_pool().swap(b, funds, min_out)?;
+        account::deposit(b, ALICE, out)
+    })
+}
+
+/// One registration for `holder`, as the register keeps them: an entry
+/// of their own interval for the badge, at the registration's id.
+///
+/// Seeded rather than transacted for the venue, which has no method that
+/// takes a badge — a pool declares nothing about the register and cannot
+/// be made to. What the seam reads is the leaf, so the leaf is the fact.
+pub fn register(store: &mut MemoryStore, holder: impl Into<Address>, id: u64) {
+    let holder = holder.into();
+    store.entry_write(
+        holder,
+        holdings_collection(&TestHasher, holder, registered()),
+        u128::from(id),
+        vec![1],
+    );
+}
+
+/// The venue stocked and both parties admitted, or the venue left off
+/// the register.
+pub fn register_store(venue_admitted: bool) -> MemoryStore {
+    let mut store = sealed_store();
+    store.write(vault(ALICE, RES_X), encode_amount(600).to_vec());
+    store.write(vault(register_pool(), RES_X), encode_amount(1_000).to_vec());
+    store.write(
+        vault(register_pool(), share()),
+        encode_amount(1_000).to_vec(),
+    );
+    register(&mut store, ALICE, 1);
+    if venue_admitted {
+        register(&mut store, register_pool(), 2);
+    }
+    store
 }
 
 /// The register-mode pool.

@@ -371,50 +371,6 @@ fn a_configuration_reads_by_name_from_metadata() {
     assert_eq!(named[1].1, &Value::Address(RES_Y.address()));
 }
 
-/// A trade of the register-mode class: Alice pays X and is paid in
-/// shares.
-fn register_swap_graph(min_out: u128) -> ManifestGraph {
-    graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, RES_X, 500)?;
-        let out = register_pool().swap(b, funds, min_out)?;
-        account::deposit(b, ALICE, out)
-    })
-}
-
-/// One registration for `holder`, as the register keeps them: an entry
-/// of their own interval for the badge, at the registration's id.
-///
-/// Seeded rather than transacted for the venue, which has no method that
-/// takes a badge — a pool declares nothing about the register and cannot
-/// be made to. What the seam reads is the leaf, so the leaf is the fact.
-fn register(store: &mut MemoryStore, holder: impl Into<Address>, id: u64) {
-    let holder = holder.into();
-    store.entry_write(
-        holder,
-        holdings_collection(&TestHasher, holder, registered()),
-        u128::from(id),
-        vec![1],
-    );
-}
-
-/// The venue stocked and both parties admitted, or the venue left off
-/// the register.
-fn register_store(venue_admitted: bool) -> MemoryStore {
-    let mut store = sealed_store();
-    store.write(vault(ALICE, RES_X), encode_amount(600).to_vec());
-    store.write(vault(register_pool(), RES_X), encode_amount(1_000).to_vec());
-    store.write(
-        vault(register_pool(), share()),
-        encode_amount(1_000).to_vec(),
-    );
-    register(&mut store, ALICE, 1);
-    if venue_admitted {
-        register(&mut store, register_pool(), 2);
-    }
-    store
-}
-
 /// The restricted class trades through a real venue, and the venue is
 /// bound by the same entry the holder is.
 ///
