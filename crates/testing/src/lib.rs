@@ -81,7 +81,7 @@ pub use hyperscale_vm_stdlib::account;
 pub use hyperscale_vm_types::{Outcome as Verdict, Presence, UnmetCondition};
 pub use native::{Dispatch, Native};
 pub use outcome::Outcome;
-pub use package::Package;
+pub use package::{Code, Package, code_at};
 pub use wasm::{Blessed, FUEL_CEILING};
 
 /// An address the chain holds no instance of the wanted package at.

@@ -29,7 +29,7 @@ use hyperscale_vm_effects::{
     Value, xrd as protocol_xrd,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
-use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
+use hyperscale_vm_testing::{Chain, Code, Package, account, principal, resource};
 use hyperscale_vm_types::{
     AbortReason, Address, ComponentAddr, Moves, Presence, PrincipalAddr, ResourceAddr,
     encode_amount,
@@ -136,7 +136,7 @@ fn a_package_cannot_assign_itself_a_balance() {
     let mut chain = Chain::native();
     let package = chain.publish(Package::new(
         counterfeiter(),
-        env!("CARGO_MANIFEST_DIR"),
+        Code::Unreachable("this package is written in the test file itself".to_owned()),
         forge,
     ));
     let mint = chain.instantiate_raw(ATTACKER, package, ());
@@ -227,7 +227,7 @@ fn one_cell_is_not_a_vault_and_a_byte_cell_at_once() {
     let mut chain = Chain::native();
     chain.publish(Package::new(
         aliased(),
-        env!("CARGO_MANIFEST_DIR"),
+        Code::Unreachable("this package is written in the test file itself".to_owned()),
         alias_body,
     ));
 }
@@ -317,7 +317,7 @@ fn one_slot_is_not_a_vault_in_one_method_and_a_byte_cell_in_another() {
     let mut chain = Chain::native();
     chain.publish(Package::new(
         two_faced(),
-        env!("CARGO_MANIFEST_DIR"),
+        Code::Unreachable("this package is written in the test file itself".to_owned()),
         two_faced_body,
     ));
 }
@@ -483,12 +483,12 @@ fn a_badge_a_package_never_held_opens_nothing() {
     let mut chain = Chain::native();
     let impostor_pkg = chain.publish(Package::new(
         impostor(),
-        env!("CARGO_MANIFEST_DIR"),
+        Code::Unreachable("this package is written in the test file itself".to_owned()),
         impostor_body,
     ));
     let treasury_pkg = chain.publish(Package::new(
         treasury(),
-        env!("CARGO_MANIFEST_DIR"),
+        Code::Unreachable("this package is written in the test file itself".to_owned()),
         treasury_body,
     ));
     let front: ComponentAddr = chain.instantiate_raw(ATTACKER, impostor_pkg, ());
@@ -575,7 +575,7 @@ fn a_cell_that_says_nothing_takes_no_value() {
     let mut chain = Chain::native();
     let package = chain.publish(Package::new(
         silent(),
-        env!("CARGO_MANIFEST_DIR"),
+        Code::Unreachable("this package is written in the test file itself".to_owned()),
         silent_body,
     ));
     let pot = chain.instantiate_raw(ATTACKER, package, ());

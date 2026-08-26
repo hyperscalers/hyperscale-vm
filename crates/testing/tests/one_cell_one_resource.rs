@@ -16,7 +16,7 @@ use hyperscale_vm_effects::{
     TargetExpr, Totality, Value,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
-use hyperscale_vm_testing::{Chain, Package, account, principal, resource};
+use hyperscale_vm_testing::{Chain, Code, Package, account, principal, resource};
 use hyperscale_vm_types::{AbortReason, ComponentAddr, Moves, PrincipalAddr, ResourceAddr};
 
 const ATTACKER: PrincipalAddr = principal(0x22);
@@ -122,7 +122,7 @@ fn value_does_not_change_resource_by_crossing_a_cell() {
     let mut chain = Chain::native();
     let package = chain.publish(Package::new(
         mixer(),
-        env!("CARGO_MANIFEST_DIR"),
+        Code::Unreachable("this package is written in the test file itself".to_owned()),
         mixer_body,
     ));
     let mixer: ComponentAddr = chain.instantiate_raw(ATTACKER, package, ());

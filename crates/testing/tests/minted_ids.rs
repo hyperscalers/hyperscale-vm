@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     MethodSignature, PackageMetadata, ResourceKind, Totality, Value,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
-use hyperscale_vm_testing::{Chain, Package, PrincipalAddr, account, principal};
+use hyperscale_vm_testing::{Chain, Code, Package, PrincipalAddr, account, principal};
 use hyperscale_vm_types::{AbortReason, ComponentAddr};
 
 const MINTER: PrincipalAddr = principal(0x41);
@@ -120,7 +120,7 @@ fn minting<const MINTED: u64>() -> (Chain, ComponentAddr) {
     let mut chain = Chain::native();
     let hash = chain.publish(Package::new(
         issuer(),
-        env!("CARGO_MANIFEST_DIR"),
+        Code::Unreachable("this package is written in the test file itself".to_owned()),
         body::<MINTED>,
     ));
     let instance = chain.instantiate_raw(MINTER, hash, ());
@@ -187,7 +187,7 @@ fn an_edge_of_another_shape_than_the_declaration_is_refused() {
     let mut chain = Chain::native();
     let hash = chain.publish(Package::new(
         miscast_issuer(),
-        env!("CARGO_MANIFEST_DIR"),
+        Code::Unreachable("this package is written in the test file itself".to_owned()),
         body::<DECLARED>,
     ));
     let instance = chain.instantiate_raw(MINTER, hash, ());

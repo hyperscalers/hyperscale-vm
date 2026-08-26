@@ -18,7 +18,7 @@ use hyperscale_vm_types::AbortReason;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Engine, Store};
 
-use crate::Package;
+use crate::{Code, Package};
 
 /// The ceiling one invocation may consume.
 ///
@@ -76,8 +76,18 @@ impl Blessed {
     /// Panics if the crate does not build, or on anything [`Self::seed`]
     /// panics on.
     pub fn build(&mut self, package: PackageHash, at: &Package) {
-        let component = compile(&at.crate_dir)
-            .unwrap_or_else(|error| panic!("the package crate did not build: {error}"));
+        let Code::Crate(dir) = &at.code else {
+            let Code::Unreachable(why) = &at.code else {
+                unreachable!("a package's code is one of two things")
+            };
+            panic!(
+                "this package has no code the wasm lane can build: {why}. The wasm lane \
+                 runs from the package's own crate; a test written elsewhere reaches the \
+                 bodies through `Chain::native()`"
+            );
+        };
+        let component =
+            compile(dir).unwrap_or_else(|error| panic!("the package crate did not build: {error}"));
         self.seed(package, &component);
     }
 }

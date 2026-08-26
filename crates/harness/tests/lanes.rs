@@ -22,7 +22,7 @@ use hyperscale_vm_kernel::modes::decode_amount;
 use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
 use hyperscale_vm_sdk::state::{Table, UnitFixed};
 use hyperscale_vm_testing::{
-    Chain, Package, PrincipalAddr, Refused, ResourceAddr, account, principal, resource,
+    Chain, Code, Package, PrincipalAddr, Refused, ResourceAddr, account, principal, resource,
 };
 use hyperscale_vm_types::{Answer, Outcome, Presence, UnmetCondition};
 
@@ -37,7 +37,7 @@ const Y: ResourceAddr = resource(0xE2);
 fn amm() -> Package {
     Package::new(
         amm::metadata(),
-        repo_root().join("guests").join("amm"),
+        Code::Crate(repo_root().join("guests").join("amm")),
         amm::invoke,
     )
 }
@@ -60,7 +60,7 @@ fn terms() -> grammar::Terms {
 fn grammar() -> Package {
     Package::new(
         grammar::metadata(),
-        repo_root().join("guests").join("grammar"),
+        Code::Crate(repo_root().join("guests").join("grammar")),
         grammar::invoke,
     )
 }
