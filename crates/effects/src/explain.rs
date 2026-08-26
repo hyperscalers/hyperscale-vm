@@ -167,19 +167,12 @@ const fn heard(judged: Judged) -> &'static str {
 /// whose cell moves is somebody else entirely.
 fn sealed_rule(rule: &StoredRule, issuer: Option<Address>) -> String {
     match rule {
-        Rule::Require(SealedLeaf::Claim(claim)) if issuer == Some(claim.subject) => format!(
-            "approval on the issuer{}",
-            claim
-                .instance
-                .map_or_else(String::new, |id| format!(", instance {id}"))
-        ),
-        Rule::Require(SealedLeaf::Claim(claim)) => format!(
-            "approval on {}{}",
-            address_text(claim.subject),
-            claim
-                .instance
-                .map_or_else(String::new, |id| format!(", instance {id}"))
-        ),
+        Rule::Require(SealedLeaf::Claim(claim)) if issuer == Some(claim.subject) => {
+            format!("approval on the issuer{}", instance_text(claim))
+        }
+        Rule::Require(SealedLeaf::Claim(claim)) => {
+            format!("approval on {}", claim_text(claim))
+        }
         Rule::Require(SealedLeaf::Held { badge, holding }) => format!(
             "the moving party holds {} of {}",
             match holding {
@@ -383,11 +376,7 @@ fn unsatisfied_claims(admitted: &Admitted, node: u32) -> String {
             if node.evidence.is_empty() {
                 "nothing".to_owned()
             } else {
-                let claims: Vec<String> = node
-                    .evidence
-                    .iter()
-                    .map(|claim| address_text(claim.subject))
-                    .collect();
+                let claims: Vec<String> = node.evidence.iter().map(claim_text).collect();
                 claims.join(", ")
             }
         },
@@ -1236,6 +1225,23 @@ fn bytes(raw: &[u8]) -> String {
 /// are few, and a truncated one names something a reader cannot check.
 fn address_text(address: Address) -> String {
     format!("{}:{}", address.class(), hex(&address.to_bytes()))
+}
+
+/// One claim, subject and instance both.
+///
+/// The instance is half of what a claim names: an approval on instance 3
+/// and one on instance 7 are two different claims about one badge, and a
+/// rendering that drops it says the right badge was presented and
+/// mysteriously refused.
+fn claim_text(claim: &Presented) -> String {
+    format!("{}{}", address_text(claim.subject), instance_text(claim))
+}
+
+/// The instance half of a claim, where it names one.
+fn instance_text(claim: &Presented) -> String {
+    claim
+        .instance
+        .map_or_else(String::new, |id| format!(", instance {id}"))
 }
 
 /// Lowercase hex, with no separator.

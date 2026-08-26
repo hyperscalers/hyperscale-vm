@@ -222,7 +222,7 @@ fn alias_body(
 }
 
 #[test]
-#[should_panic(expected = "names a cell another clause says holds something else")]
+#[should_panic(expected = "effect clause 1 names a cell clause 0 says holds something else")]
 fn one_cell_is_not_a_vault_and_a_byte_cell_at_once() {
     let mut chain = Chain::native();
     chain.publish(Package::new(

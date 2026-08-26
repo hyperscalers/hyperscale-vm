@@ -163,6 +163,23 @@ fn an_unseeded_registry_refuses_its_surface_as_the_routed_absence() {
     );
 }
 
+/// A refusal names which instance was presented, not just which badge.
+///
+/// An approval on instance 3 and one on instance 7 are two different
+/// claims about one resource. A rendering that drops the instance says
+/// the right badge was presented and mysteriously refused, which sends
+/// the reader looking for the wrong fault.
+#[test]
+fn a_refusal_names_the_instance_that_was_presented() {
+    let (mut chain, instance) = setup();
+    let refused = chain.transact(FOUNDER, |b| {
+        let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
+        b.call_as(held, instance, "set-flag", (7u128,))?.none()
+    });
+    let told = refused.refused_as();
+    assert!(told.contains("instance 0"), "{told}");
+}
+
 /// Seeding the table opens the surface to whoever holds the badge its
 /// rules name — the badge the bring-up already minted.
 #[test]

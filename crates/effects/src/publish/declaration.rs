@@ -45,8 +45,16 @@ pub enum DeclarationError {
     /// can be authored rather than derived: the macro sees the body and
     /// refuses at the second call site, and this sees only what was
     /// published.
-    #[error("two write clauses on one target require opposite presences")]
-    PresenceConflict,
+    #[error("effect clauses {prior} and {clause} require opposite presences of one target")]
+    PresenceConflict {
+        /// The clause whose requirement met a contradiction, in a
+        /// preorder walk of the signature's effects.
+        clause: u32,
+        /// The earlier clause it contradicts. Named because a method may
+        /// declare forty clauses and a target is what these two share:
+        /// with one index the author has to find the other by eye.
+        prior: u32,
+    },
     /// A condition naming a target no access declares under a mode that
     /// can carry the judgment.
     ///
@@ -334,11 +342,14 @@ pub enum DeclarationError {
     ///
     /// Refused again at materialization, which has the evaluated keys;
     /// this is the same verdict where an author can hear it.
-    #[error("effect clause {clause} names a cell another clause says holds something else")]
+    #[error("effect clause {clause} names a cell clause {prior} says holds something else")]
     MixedContents {
         /// The clause's position in a preorder walk of the signature's
         /// effects.
         clause: u32,
+        /// The earlier clause that reached the same contents and said
+        /// otherwise.
+        prior: u32,
     },
 }
 
@@ -1110,6 +1121,18 @@ fn founding(issuance: &Issuance, flat: &[&Clause]) -> bool {
     })
 }
 
+/// One clause's presence requirement on a target, as the pairwise walk
+/// below reads it.
+struct Requirement<'a> {
+    /// The clause's position in a preorder walk of the signature's
+    /// effects.
+    clause: u32,
+    /// What has to hold for the clause to fire at all.
+    guard: Option<&'a Expr>,
+    /// What it requires of the target.
+    expect: Presence,
+}
+
 /// The agreement pass: two clauses reaching one target say the same
 /// thing about it — what has to be there, and whether it holds value —
 /// or the declaration names a leaf no execution has.
@@ -1140,30 +1163,30 @@ fn check_agreement(flat: &[&Clause]) -> Result<(), DeclarationError> {
     // meets everything, so an accumulated requirement is only ever one
     // of the two it came from, and a contradiction a fold could reach is
     // one some pair already has.
-    let mut required: BTreeMap<&TargetExpr, Vec<(Option<&Expr>, Presence)>> = BTreeMap::new();
-    for clause in flat {
+    let mut required: BTreeMap<&TargetExpr, Vec<Requirement<'_>>> = BTreeMap::new();
+    for (index, clause) in flat.iter().enumerate() {
         if let Clause::Requires {
             guard,
-            rule:
-                Rule::Require(RuleLeaf::Presence {
-                    target,
-                    expect: presence,
-                }),
+            rule: Rule::Require(RuleLeaf::Presence { target, expect }),
         } = clause
         {
-            required
-                .entry(target)
-                .or_default()
-                .push((guard.as_deref(), *presence));
+            required.entry(target).or_default().push(Requirement {
+                clause: u32::try_from(index).unwrap_or(u32::MAX),
+                guard: guard.as_deref(),
+                expect: *expect,
+            });
         }
     }
     for shared in required.values() {
-        for (index, (guard, requires)) in shared.iter().enumerate() {
-            for (seen_guard, prior) in &shared[..index] {
-                if !complementary(*seen_guard, *guard) {
-                    prior
-                        .meet(*requires)
-                        .ok_or(DeclarationError::PresenceConflict)?;
+        for (index, requires) in shared.iter().enumerate() {
+            for prior in &shared[..index] {
+                if !complementary(prior.guard, requires.guard) {
+                    prior.expect.meet(requires.expect).ok_or(
+                        DeclarationError::PresenceConflict {
+                            clause: requires.clause,
+                            prior: prior.clause,
+                        },
+                    )?;
                 }
             }
         }
@@ -1183,7 +1206,7 @@ fn check_agreement(flat: &[&Clause]) -> Result<(), DeclarationError> {
     // a question one execution answers, and complementary arms answer it
     // differently on purpose; what a cell holds is not a question an
     // execution answers at all.
-    let mut contents_hold_value: BTreeMap<ContentsExpr<'_>, bool> = BTreeMap::new();
+    let mut contents_hold_value: BTreeMap<ContentsExpr<'_>, (u32, bool)> = BTreeMap::new();
     for (index, clause) in flat.iter().enumerate() {
         let Clause::Effect {
             reach: None,
@@ -1196,8 +1219,11 @@ fn check_agreement(flat: &[&Clause]) -> Result<(), DeclarationError> {
         };
         let clause = u32::try_from(index).unwrap_or(u32::MAX);
         let value = denomination.is_some();
-        if *contents_hold_value.entry(contents(target)).or_insert(value) != value {
-            return Err(DeclarationError::MixedContents { clause });
+        let (prior, said) = *contents_hold_value
+            .entry(contents(target))
+            .or_insert((clause, value));
+        if said != value {
+            return Err(DeclarationError::MixedContents { clause, prior });
         }
     }
     Ok(())
@@ -2000,7 +2026,10 @@ mod tests {
                 write(Some(cond()), Presence::Absent),
                 write(Some(other), Presence::Present),
             ]),
-            Err(DeclarationError::PresenceConflict)
+            Err(DeclarationError::PresenceConflict {
+                clause: 2,
+                prior: 1
+            })
         );
 
         // And a guard is complementary to nothing when the other clause
@@ -2010,7 +2039,10 @@ mod tests {
                 write(Some(cond()), Presence::Absent),
                 write(None, Presence::Present),
             ]),
-            Err(DeclarationError::PresenceConflict)
+            Err(DeclarationError::PresenceConflict {
+                clause: 2,
+                prior: 1
+            })
         );
     }
 
@@ -2058,7 +2090,10 @@ mod tests {
                 write(Some(Expr::Not(Box::new(cond()))), Presence::Present),
                 write(None, Presence::Absent),
             ]),
-            Err(DeclarationError::PresenceConflict)
+            Err(DeclarationError::PresenceConflict {
+                clause: 3,
+                prior: 2
+            })
         );
         // The same three in the order that hides it best: the always-
         // firing clause is written first, so the arm that agrees with it
@@ -2069,7 +2104,10 @@ mod tests {
                 write(Some(cond()), Presence::Absent),
                 write(Some(Expr::Not(Box::new(cond()))), Presence::Present),
             ]),
-            Err(DeclarationError::PresenceConflict)
+            Err(DeclarationError::PresenceConflict {
+                clause: 3,
+                prior: 1
+            })
         );
         // And the shape that is not a contradiction still stands beside
         // a third clause nothing disagrees with.
@@ -2218,11 +2256,17 @@ mod tests {
 
         assert_eq!(
             declared(vec![write(Presence::Absent), write(Presence::Present)]),
-            Err(DeclarationError::PresenceConflict)
+            Err(DeclarationError::PresenceConflict {
+                clause: 2,
+                prior: 1
+            })
         );
         assert_eq!(
             declared(vec![write(Presence::Present), write(Presence::Absent)]),
-            Err(DeclarationError::PresenceConflict)
+            Err(DeclarationError::PresenceConflict {
+                clause: 2,
+                prior: 1
+            })
         );
 
         // A requirement still meets its opposite across an agreeing one
@@ -2233,7 +2277,10 @@ mod tests {
                 write(Presence::Absent),
                 write(Presence::Present),
             ]),
-            Err(DeclarationError::PresenceConflict)
+            Err(DeclarationError::PresenceConflict {
+                clause: 3,
+                prior: 1
+            })
         );
 
         // What is not a contradiction: the same requirement twice, and
@@ -2764,6 +2811,32 @@ mod tests {
         assert_eq!(check_declarations(&projecting(Expr::Arg(0))), Ok(()));
     }
 
+    /// The declaration pass over a bare method holding `clauses`.
+    fn declared(clauses: Vec<Clause>) -> Result<(), DeclarationError> {
+        check_declarations(&MethodSignature {
+            effects: clauses,
+            ..MethodSignature::default()
+        })
+    }
+
+    /// One unguarded effect clause.
+    fn effect(target: TargetExpr, mode: ModeExpr, denomination: Option<Expr>) -> Clause {
+        Clause::Effect {
+            reach: None,
+            guard: None,
+            target,
+            mode,
+            denomination: denomination.map(Box::new),
+        }
+    }
+
+    /// The verdict the two disagreeing clauses below earn: the second is
+    /// what refuses, and the first is what it disagrees with.
+    const MIXED: Result<(), DeclarationError> = Err(DeclarationError::MixedContents {
+        clause: 1,
+        prior: 0,
+    });
+
     /// One cell holds one thing, and a signature says so once.
     ///
     /// The denomination chooses which handle a clause materializes, so a
@@ -2776,20 +2849,7 @@ mod tests {
     #[test]
     fn one_cell_is_not_a_vault_and_a_byte_cell_at_once() {
         let held = || Some(a_resource());
-        let declared = |clauses: Vec<Clause>| {
-            check_declarations(&MethodSignature {
-                effects: clauses,
-                ..MethodSignature::default()
-            })
-        };
         let write = || ModeExpr::Write { moves: Moves::Both };
-        let effect = |target, mode, denomination: Option<Expr>| Clause::Effect {
-            reach: None,
-            guard: None,
-            target,
-            mode,
-            denomination: denomination.map(Box::new),
-        };
 
         // One leaf, two answers — the shape that would mint.
         let leaf = || own_point(package_slot(0), vec![a_resource()]);
@@ -2798,7 +2858,7 @@ mod tests {
                 effect(leaf(), write(), held()),
                 effect(leaf(), write(), None),
             ]),
-            Err(DeclarationError::MixedContents { clause: 1 })
+            MIXED
         );
         // The reading modes are no exception: a read of a vault and a
         // byte read of the same leaf still disagree about what came out.
@@ -2807,7 +2867,7 @@ mod tests {
                 effect(leaf(), ModeExpr::Delta, held()),
                 effect(leaf(), ModeExpr::Read, None),
             ]),
-            Err(DeclarationError::MixedContents { clause: 1 })
+            MIXED
         );
         // Nor does a guard make them arms of one answer: what a cell
         // holds is not a question an execution answers.
@@ -2824,44 +2884,7 @@ mod tests {
                 guarded(cond.clone(), Some(Box::new(a_resource()))),
                 guarded(Expr::Not(Box::new(cond)), None),
             ]),
-            Err(DeclarationError::MixedContents { clause: 1 })
-        );
-
-        // Two intervals of one collection are two targets over one set of
-        // entries, so the disagreement is about the entries and comparing
-        // targets would let it through. Overlapping or not: what the
-        // collection holds is the collection's.
-        let interval = |hi| TargetExpr::Range {
-            owner: Expr::SelfAddr,
-            collection: SlotRef::Fixed(package_slot(1)),
-            material: vec![a_resource()],
-            lo: Expr::Literal(Value::U128(0)),
-            hi: Expr::Literal(Value::U128(hi)),
-            cap: Expr::Literal(Value::U64(4)),
-        };
-        assert_eq!(
-            declared(vec![
-                effect(interval(u128::MAX), write(), held()),
-                effect(interval(10), write(), None),
-            ]),
-            Err(DeclarationError::MixedContents { clause: 1 })
-        );
-        // And an entry of it is the same statement at width one.
-        assert_eq!(
-            declared(vec![
-                effect(interval(u128::MAX), write(), held()),
-                effect(
-                    TargetExpr::Entry {
-                        owner: Expr::SelfAddr,
-                        collection: SlotRef::Fixed(package_slot(1)),
-                        material: vec![a_resource()],
-                        order: Expr::Literal(Value::U128(3)),
-                    },
-                    write(),
-                    None,
-                ),
-            ]),
-            Err(DeclarationError::MixedContents { clause: 1 })
+            MIXED
         );
 
         // Agreeing clauses are what a body that reads and writes one cell
@@ -2888,6 +2911,50 @@ mod tests {
                 effect(bytes(), write(), None),
             ]),
             Ok(())
+        );
+    }
+
+    /// The same statement about a collection, where two clauses name one
+    /// set of entries through two targets.
+    #[test]
+    fn one_collection_is_not_a_vault_and_a_byte_cell_at_once() {
+        let held = || Some(a_resource());
+        let write = || ModeExpr::Write { moves: Moves::Both };
+        // Two intervals of one collection are two targets over one set of
+        // entries, so the disagreement is about the entries and comparing
+        // targets would let it through. Overlapping or not: what the
+        // collection holds is the collection's.
+        let interval = |hi| TargetExpr::Range {
+            owner: Expr::SelfAddr,
+            collection: SlotRef::Fixed(package_slot(1)),
+            material: vec![a_resource()],
+            lo: Expr::Literal(Value::U128(0)),
+            hi: Expr::Literal(Value::U128(hi)),
+            cap: Expr::Literal(Value::U64(4)),
+        };
+        assert_eq!(
+            declared(vec![
+                effect(interval(u128::MAX), write(), held()),
+                effect(interval(10), write(), None),
+            ]),
+            MIXED
+        );
+        // And an entry of it is the same statement at width one.
+        assert_eq!(
+            declared(vec![
+                effect(interval(u128::MAX), write(), held()),
+                effect(
+                    TargetExpr::Entry {
+                        owner: Expr::SelfAddr,
+                        collection: SlotRef::Fixed(package_slot(1)),
+                        material: vec![a_resource()],
+                        order: Expr::Literal(Value::U128(3)),
+                    },
+                    write(),
+                    None,
+                ),
+            ]),
+            MIXED
         );
     }
 
