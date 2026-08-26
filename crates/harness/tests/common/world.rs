@@ -909,7 +909,7 @@ pub fn authorized_transfer_graph() -> ManifestGraph {
     graph(|b| {
         let proof = account::authorize(b, ALICE)?;
         let funds = b
-            .call_as(proof, ALICE, "withdraw", (RES_X, 100u128))?
+            .call_presenting(proof, ALICE, "withdraw", (RES_X, 100u128))?
             .one()?;
         account::deposit(b, BOB, funds)
     })

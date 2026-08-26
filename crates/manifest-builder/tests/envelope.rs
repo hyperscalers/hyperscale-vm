@@ -460,7 +460,7 @@ fn note_request(approver: Claim) -> IntentDecl {
     // Two proofs at one node: the holder's own gate takes theirs, and
     // the note's injected entry takes the desk's.
     let funds = decl
-        .call_presenting(&[bob, approval], BOB, "withdraw", (note, 40u128))
+        .call_presenting([bob, approval], BOB, "withdraw", (note, 40u128))
         .unwrap()
         .one()
         .unwrap();

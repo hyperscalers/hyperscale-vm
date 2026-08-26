@@ -467,11 +467,11 @@ fn approval_request(approver: Claim) -> IntentDecl {
     let alice = account::authorize(&mut decl, ALICE).expect("sign-in types");
     let funds = account::withdraw(&mut decl, alice, RES_X, 500).expect("withdraw types");
     let out = decl
-        .call_presenting(&[approval], approval_pool(), "swap", (funds, 300u128))
+        .call_presenting([approval], approval_pool(), "swap", (funds, 300u128))
         .expect("the swap types")
         .one()
         .expect("a swap answers with the bought side");
-    decl.call_presenting(&[approval], ALICE, "deposit", (out,))
+    decl.call_presenting([approval], ALICE, "deposit", (out,))
         .expect("the deposit types")
         .none()
         .expect("a deposit yields nothing");

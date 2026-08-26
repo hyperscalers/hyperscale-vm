@@ -315,7 +315,7 @@ fn wrapper(
                 quote!(builder.call_proving(#target, #published, (#(#args,)*)))
             }
             Presenting::Proof => {
-                quote!(builder.call_proving_as(proof, #target, #published, (#(#args,)*)))
+                quote!(builder.call_proving_presenting(proof, #target, #published, (#(#args,)*)))
             }
             Presenting::Proofs => {
                 quote!(builder.call_proving_presenting(proofs, #target, #published, (#(#args,)*)))
@@ -326,7 +326,9 @@ fn wrapper(
         let (returns, projection) = produced(method);
         let call = match presenting {
             Presenting::Signature => quote!(builder.call(#target, #published, (#(#args,)*))),
-            Presenting::Proof => quote!(builder.call_as(proof, #target, #published, (#(#args,)*))),
+            Presenting::Proof => {
+                quote!(builder.call_presenting(proof, #target, #published, (#(#args,)*)))
+            }
             Presenting::Proofs => {
                 quote!(builder.call_presenting(proofs, #target, #published, (#(#args,)*)))
             }

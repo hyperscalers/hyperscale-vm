@@ -213,7 +213,7 @@ fn a_proof_opens_only_the_account_that_minted_it() {
     let theft = graph(|b| {
         let alice = account::authorize(b, ALICE)?;
         let funds = b
-            .call_as(alice, BOB, "withdraw", (RES_X, 100_u128))?
+            .call_presenting(alice, BOB, "withdraw", (RES_X, 100_u128))?
             .one()?;
         account::deposit(b, ALICE, funds)
     });

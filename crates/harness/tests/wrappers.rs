@@ -284,7 +284,7 @@ fn misplaced_evidence_is_refused_at_the_call_site() {
     let alice = account::authorize(&mut b, ALICE).unwrap();
     let funds = account::withdraw(&mut b, alice, BASE, 100).unwrap();
     assert!(matches!(
-        b.call_as(alice, BOB, "deposit", (funds,)),
+        b.call_presenting(alice, BOB, "deposit", (funds,)),
         Err(TypedError::UnexpectedEvidence { .. })
     ));
     assert!(matches!(

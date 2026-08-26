@@ -232,7 +232,8 @@ fn validator_leaf(pool: impl Into<Address>, validator: u64) -> SubstateKey {
 fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
     graph(|b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
-        b.call_as(operator, pool(), method, (validator,))?.none()
+        b.call_presenting(operator, pool(), method, (validator,))?
+            .none()
     })
 }
 
@@ -601,7 +602,9 @@ fn bring_up_graph() -> ManifestGraph {
 fn hand_written_bring_up() -> ManifestGraph {
     graph(|b| {
         let founder = account::authorize(b, OPERATOR)?;
-        let badge = b.call_as(founder, pool(), "instantiate", ())?.one()?;
+        let badge = b
+            .call_presenting(founder, pool(), "instantiate", ())?
+            .one()?;
         account::deposit_nf(b, OPERATOR, badge)
     })
 }

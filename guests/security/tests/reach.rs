@@ -92,7 +92,7 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
     chain
         .transact(REGISTRAR, |b| {
             let registrar = account::authorize(b, REGISTRAR)?;
-            b.call_as(registrar, issuer.address(), "halt", (HOLDER.address(),))?
+            b.call_presenting(registrar, issuer.address(), "halt", (HOLDER.address(),))?
                 .none()
         })
         .expect_completed();
@@ -137,7 +137,7 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
     chain
         .transact(REGISTRAR, |b| {
             let registrar = account::authorize(b, REGISTRAR)?;
-            b.call_as(registrar, issuer.address(), "unhalt", (HOLDER.address(),))?
+            b.call_presenting(registrar, issuer.address(), "unhalt", (HOLDER.address(),))?
                 .none()
         })
         .expect_completed();

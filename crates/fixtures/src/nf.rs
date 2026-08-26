@@ -339,7 +339,7 @@ pub fn operate_instance(
     proof: Proof,
 ) -> Result<(), TypedError> {
     builder
-        .call_as(proof, gated, "operate-instance", ())?
+        .call_presenting(proof, gated, "operate-instance", ())?
         .none()
 }
 
@@ -355,5 +355,5 @@ pub fn operate(
     gated: ComponentAddr,
     proof: Proof,
 ) -> Result<(), TypedError> {
-    builder.call_as(proof, gated, "operate", ())?.none()
+    builder.call_presenting(proof, gated, "operate", ())?.none()
 }

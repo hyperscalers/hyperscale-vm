@@ -51,4 +51,4 @@ pub use envelope::{
 pub use preflight::{Authority, PreflightError, Report, Required, preflight, preflight_tree};
 pub use projection::graph_records;
 pub use render::{Names, render};
-pub use typed::{Answered, Outputs, Proof, TypedBuilder, TypedError};
+pub use typed::{Answered, Evidence, Outputs, Proof, TypedBuilder, TypedError};

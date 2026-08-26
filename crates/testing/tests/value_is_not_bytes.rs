@@ -512,7 +512,9 @@ fn a_badge_a_package_never_held_opens_nothing() {
     // So the gate reads an empty vault and proves nothing.
     let outcome = chain.transact(ATTACKER, |b| {
         let proof = b.call_proving(front, "present", (Address::from(BADGE),))?;
-        let funds = b.call_as(proof, vault, "payout", (500_000_u64,))?.one()?;
+        let funds = b
+            .call_presenting(proof, vault, "payout", (500_000_u64,))?
+            .one()?;
         account::deposit(b, ATTACKER, funds)
     });
     assert!(

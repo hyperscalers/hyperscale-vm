@@ -166,6 +166,57 @@ pub enum TypedError {
     Build(#[from] BuildError),
 }
 
+mod sealed {
+    /// The sealing marker for [`Evidence`](super::Evidence).
+    pub trait Sealed {}
+    impl Sealed for super::Proof {}
+    impl Sealed for &super::Proof {}
+    impl Sealed for &[super::Proof] {}
+    impl<const N: usize> Sealed for [super::Proof; N] {}
+    impl<const N: usize> Sealed for &[super::Proof; N] {}
+}
+
+/// What a presenting call hands its target: one proof, or a set of them
+/// where the gate is a threshold.
+///
+/// One parameter for both, because how many claims a gate takes is the
+/// gate's own business — a stored rule can be a threshold, and nothing
+/// at the call site says so.
+pub trait Evidence: sealed::Sealed {
+    /// The proofs presented, in the order given.
+    fn proofs(self) -> Vec<Proof>;
+}
+
+impl Evidence for Proof {
+    fn proofs(self) -> Vec<Proof> {
+        vec![self]
+    }
+}
+
+impl Evidence for &Proof {
+    fn proofs(self) -> Vec<Proof> {
+        vec![*self]
+    }
+}
+
+impl Evidence for &[Proof] {
+    fn proofs(self) -> Vec<Proof> {
+        self.to_vec()
+    }
+}
+
+impl<const N: usize> Evidence for [Proof; N] {
+    fn proofs(self) -> Vec<Proof> {
+        self.to_vec()
+    }
+}
+
+impl<const N: usize> Evidence for &[Proof; N] {
+    fn proofs(self) -> Vec<Proof> {
+        self.to_vec()
+    }
+}
+
 /// The identity an authorizing node proves, as a later call of the same
 /// graph presents it.
 ///
@@ -444,35 +495,11 @@ impl<'a> TypedBuilder<'a> {
             .map(|(_, outputs)| outputs)
     }
 
-    /// The same call, presenting `proof` instead of the intent's
+    /// The same call, presenting `evidence` instead of the intent's
     /// signature proof — how a call acts as the account an earlier
-    /// authorizing node signed in.
-    ///
-    /// # Errors
-    ///
-    /// [`TypedError::UnexpectedEvidence`] on a method that admits anyone,
-    /// and everything [`call`](Self::call) refuses.
-    ///
-    /// # Panics
-    ///
-    /// As [`call`](Self::call).
-    pub fn call_as(
-        &mut self,
-        proof: Proof,
-        target: impl Into<CallTarget>,
-        method: &str,
-        args: impl Args,
-    ) -> Result<Outputs, TypedError> {
-        self.append(target.into(), method, args, &[proof])
-            .map(|(_, outputs)| outputs)
-    }
-
-    /// The same call, presenting every proof in `proofs`.
-    ///
-    /// What a threshold gate takes: satisfying two of three means
-    /// presenting two, and each is a node of its own earlier in the same
-    /// intent. One proof is [`call_as`](Self::call_as); this is the
-    /// general form behind it.
+    /// authorizing node signed in, and how a threshold gate is met:
+    /// satisfying two of three means presenting two, each a node of its
+    /// own earlier in the same intent.
     ///
     /// # Errors
     ///
@@ -484,12 +511,12 @@ impl<'a> TypedBuilder<'a> {
     /// As [`call`](Self::call).
     pub fn call_presenting(
         &mut self,
-        proofs: &[Proof],
+        evidence: impl Evidence,
         target: impl Into<CallTarget>,
         method: &str,
         args: impl Args,
     ) -> Result<Outputs, TypedError> {
-        self.append(target.into(), method, args, proofs)
+        self.append(target.into(), method, args, &evidence.proofs())
             .map(|(_, outputs)| outputs)
     }
 
@@ -518,33 +545,12 @@ impl<'a> TypedBuilder<'a> {
         self.prove(target.into(), method, args, &[])
     }
 
-    /// The same proving call, presenting `proof` instead of the intent's
-    /// signature — how a target whose stored rule names another
+    /// The same proving call, presenting `evidence` instead of the
+    /// intent's signature — how a target whose stored rule names another
     /// account's identity is signed into through that account's own
-    /// sign-in, and the only way in when the rule names no key the
-    /// intent could carry.
-    ///
-    /// # Errors
-    ///
-    /// As [`call_proving`](Self::call_proving).
-    ///
-    /// # Panics
-    ///
-    /// As [`call`](Self::call).
-    pub fn call_proving_as(
-        &mut self,
-        proof: Proof,
-        target: impl Into<CallTarget>,
-        method: &str,
-        args: impl Args,
-    ) -> Result<Proof, TypedError> {
-        self.prove(target.into(), method, args, &[proof])
-    }
-
-    /// The same proving call, presenting every proof in `proofs`.
-    ///
-    /// What a proving gate over a threshold takes, and the general form
-    /// the two above are the empty and one-proof cases of.
+    /// sign-in, the only way in when the rule names no key the intent
+    /// could carry, and with several proofs where the stored rule is a
+    /// threshold.
     ///
     /// # Errors
     ///
@@ -555,12 +561,12 @@ impl<'a> TypedBuilder<'a> {
     /// As [`call`](Self::call).
     pub fn call_proving_presenting(
         &mut self,
-        proofs: &[Proof],
+        evidence: impl Evidence,
         target: impl Into<CallTarget>,
         method: &str,
         args: impl Args,
     ) -> Result<Proof, TypedError> {
-        self.prove(target.into(), method, args, proofs)
+        self.prove(target.into(), method, args, &evidence.proofs())
     }
 
     fn prove<A: Args>(

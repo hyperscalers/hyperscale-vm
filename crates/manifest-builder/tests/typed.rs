@@ -103,7 +103,7 @@ fn a_typed_edge_asserts_its_own_resource() {
     // declared output does, and the deposit carries the assertion.
     let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
+        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -119,7 +119,7 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
+        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -158,7 +158,7 @@ fn a_pool_types_its_units_by_itself() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
+        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -227,7 +227,7 @@ fn a_typed_edge_refuses_a_contradicting_assertion() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
+        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -263,12 +263,12 @@ fn a_call_is_typed_against_the_signature_it_names() {
     ));
     let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let one = b
-        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
+        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
     let two = b
-        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
+        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -284,7 +284,7 @@ fn a_refused_call_appends_nothing() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_as(alice, ALICE, "withdraw", (RES, 100u128))
+        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -321,7 +321,9 @@ fn outputs_unpack_only_into_the_arity_the_method_declares() {
     // Naming a slot the producer does not have takes stating an arity,
     // and the signature is what an arity is checked against.
     let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
-    let outputs = b.call_as(alice, ALICE, "withdraw", (RES, 100u128)).unwrap();
+    let outputs = b
+        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
+        .unwrap();
     assert_eq!(outputs.len(), 1);
     assert!(matches!(
         outputs.into_array::<2>(),

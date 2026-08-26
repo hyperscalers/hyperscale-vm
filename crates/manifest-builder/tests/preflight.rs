@@ -292,7 +292,7 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     let approval = root.declare_proof(Claim::of_subject(DESK));
     let alice = account::authorize(&mut root, ALICE).unwrap();
     let funds = root
-        .call_presenting(&[alice, approval], ALICE, "withdraw", (note, 5u128))
+        .call_presenting([alice, approval], ALICE, "withdraw", (note, 5u128))
         .unwrap()
         .one()
         .unwrap();
@@ -420,7 +420,7 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
     let approval = root.call_proving(venue, "approve", ()).unwrap();
     let alice = account::authorize(&mut root, ALICE).unwrap();
     let funds = root
-        .call_presenting(&[alice, approval], ALICE, "withdraw", (ticket, 3u128))
+        .call_presenting([alice, approval], ALICE, "withdraw", (ticket, 3u128))
         .unwrap()
         .one()
         .unwrap();
@@ -456,7 +456,7 @@ fn a_conjunction_reports_what_each_branch_asks() {
     let approval = request.declare_proof(Claim::of_subject(DESK));
     let bob = account::authorize(&mut request, BOB).unwrap();
     let funds = request
-        .call_presenting(&[bob, approval], BOB, "withdraw", (note, 40u128))
+        .call_presenting([bob, approval], BOB, "withdraw", (note, 40u128))
         .unwrap()
         .one()
         .unwrap();

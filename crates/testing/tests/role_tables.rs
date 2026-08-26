@@ -171,7 +171,8 @@ fn a_refusal_names_the_instance_that_was_presented() {
     let (mut chain, instance) = setup();
     let refused = chain.transact(FOUNDER, |b| {
         let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
-        b.call_as(held, instance, "set-flag", (7u128,))?.none()
+        b.call_presenting(held, instance, "set-flag", (7u128,))?
+            .none()
     });
     let told = refused.refused_as();
     assert!(told.contains("instance 0"), "{told}");
@@ -185,7 +186,8 @@ fn a_seeded_table_opens_the_surface_to_the_badge_holder() {
     chain
         .transact(FOUNDER, |b| {
             let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
-            b.call_as(held, instance, "set-flag", (7u128,))?.none()
+            b.call_presenting(held, instance, "set-flag", (7u128,))?
+                .none()
         })
         .expect_completed();
 }
@@ -237,7 +239,8 @@ fn a_transferred_badge_rotates_the_admin_without_touching_the_registry() {
     let outcome = chain
         .transact(FOUNDER, |b| {
             let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
-            b.call_as(held, instance, "set-flag", (9u128,))?.none()
+            b.call_presenting(held, instance, "set-flag", (9u128,))?
+                .none()
         })
         .refused()
         .cloned()
@@ -256,7 +259,8 @@ fn a_transferred_badge_rotates_the_admin_without_touching_the_registry() {
     chain
         .transact(SUCCESSOR, |b| {
             let held = account::present_instance(b, SUCCESSOR, badge(instance), 0)?;
-            b.call_as(held, instance, "set-flag", (9u128,))?.none()
+            b.call_presenting(held, instance, "set-flag", (9u128,))?
+                .none()
         })
         .expect_completed();
 }
@@ -272,7 +276,8 @@ fn a_rotation_governs_only_after_the_stored_delay() {
         .transact(FOUNDER, |b| {
             let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
             let rule = stored(&StoredRule::claim(Claim::of_subject(SUCCESSOR)));
-            b.call_as(held, instance, "propose-admin", (rule,))?.none()
+            b.call_presenting(held, instance, "propose-admin", (rule,))?
+                .none()
         })
         .expect_completed();
 
@@ -287,7 +292,8 @@ fn a_rotation_governs_only_after_the_stored_delay() {
     chain
         .transact(FOUNDER, |b| {
             let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
-            b.call_as(held, instance, "set-flag", (3u128,))?.none()
+            b.call_presenting(held, instance, "set-flag", (3u128,))?
+                .none()
         })
         .expect_completed();
 
@@ -311,7 +317,8 @@ fn a_rotation_governs_only_after_the_stored_delay() {
         chain
             .transact(FOUNDER, |b| {
                 let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
-                b.call_as(held, instance, "set-flag", (4u128,))?.none()
+                b.call_presenting(held, instance, "set-flag", (4u128,))?
+                    .none()
             })
             .refused()
             .is_some(),

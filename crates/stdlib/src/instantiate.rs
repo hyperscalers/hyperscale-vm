@@ -51,7 +51,7 @@ pub fn instantiate(
     // yields no edge.
     let outputs = if signature.requires_evidence() {
         let signed_in = account::authorize(root, founder)?;
-        root.call_as(signed_in, address, &seal, ())?
+        root.call_presenting(signed_in, address, &seal, ())?
     } else {
         root.call(address, &seal, ())?
     };
