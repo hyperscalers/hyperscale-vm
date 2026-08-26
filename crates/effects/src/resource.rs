@@ -291,7 +291,17 @@ impl GrantedBehaviour {
         speaking_for: Option<Presented>,
     ) -> Result<Option<StoredRule>, DecodeError> {
         let rule = entry.decode()?;
-        if self.asks_about_the_actor() && speaking_for.is_some_and(|own| rule.satisfied_by(&[own]))
+        // Only a rule about claims can be discharged by the actor being
+        // who it is. One holding a holding is a rule this question
+        // cannot ask, so it is carried rather than subtracted — the
+        // graph it emits is one admission refuses, which is the signal.
+        let claims = rule.claims_only();
+        if self.asks_about_the_actor()
+            && speaking_for.is_some_and(|own| {
+                claims
+                    .as_ref()
+                    .is_some_and(|claims| claims.satisfied_by(&[own]))
+            })
         {
             return Ok(None);
         }

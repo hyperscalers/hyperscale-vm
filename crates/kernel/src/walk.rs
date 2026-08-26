@@ -434,9 +434,14 @@ fn satisfies(
             // so the kernel reads what is there and nothing else. Bytes
             // that do not decode are not a rule either: the write path
             // refuses such bytes, so a cell that cannot be read fails
-            // closed.
-            let verdict =
-                RuleBytes::rule_in_cell(&bytes).is_ok_and(|rule| rule.satisfied_by(&call.evidence));
+            // closed. A rule asking about a holding is the third way to
+            // be unreadable here: this judge holds the call's evidence
+            // and nothing about who holds what, so it fails closed with
+            // the other two rather than answering the part it can see.
+            let verdict = RuleBytes::rule_in_cell(&bytes)
+                .ok()
+                .and_then(|rule| rule.claims_only())
+                .is_some_and(|claims| claims.satisfied_by(&call.evidence));
             judged.insert(*cell, verdict);
             Ok(verdict)
         }

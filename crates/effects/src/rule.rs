@@ -484,7 +484,7 @@ impl<L> Rule<L> {
     }
 }
 
-impl StoredRule {
+impl Rule<Presented> {
     /// Whether the presented claims satisfy this rule.
     ///
     /// Total over any presented set, including degenerate thresholds
@@ -494,21 +494,16 @@ impl StoredRule {
     /// Recursion is bounded by the decode gate: a rule this crate
     /// decoded nests at most [`MAX_RULE_DEPTH`] deep.
     ///
-    /// The stored instantiation alone. A declared rule's leaves are
-    /// expressions, and asking whether an expression is among those
+    /// Claims and nothing else. A holding is not a claim and a declared
+    /// leaf is an expression, and asking whether either is among those
     /// presented compares two spellings rather than two claims — a
     /// question with an answer and no meaning. What turns one into the
-    /// other is [`Rule::map_leaves`], and there is no way round it.
+    /// other is [`Rule::map_leaves`], and there is no way round it: a
+    /// rule holding a leaf this judge cannot read does not reach it.
     #[must_use]
     pub fn satisfied_by(&self, presented: &[Presented]) -> bool {
         match self {
-            // A holding is not a claim, so a claims-only judge cannot
-            // meet one. Nothing routes such a rule here: an actor
-            // question's rule holds claims alone, refused otherwise where
-            // the rule is sealed, and a holder question's holdings are
-            // resolved to presence leaves before anything is judged.
-            Self::Require(SealedLeaf::Held { .. }) => false,
-            Self::Require(SealedLeaf::Claim(claim)) => presented.contains(claim),
+            Self::Require(claim) => presented.contains(claim),
             Self::CountOf { count, rules } => {
                 let met = rules
                     .iter()
@@ -517,6 +512,24 @@ impl StoredRule {
                 met >= usize::from(*count)
             }
         }
+    }
+}
+
+impl StoredRule {
+    /// The claims this rule asks about, or nothing where it asks about
+    /// something else.
+    ///
+    /// A holding is resolved to the presence of a key before anything
+    /// judges it, so a stored rule still holding one is a rule no
+    /// claims-only judge can answer — and the answer to a question that
+    /// cannot be asked is not "no", it is that there is no answer.
+    #[must_use]
+    pub fn claims_only(&self) -> Option<Rule<Presented>> {
+        self.map_leaves(&mut |leaf| match leaf {
+            SealedLeaf::Claim(claim) => Ok(*claim),
+            SealedLeaf::Held { .. } => Err(()),
+        })
+        .ok()
     }
 
     /// The rule's canonical wire bytes.
@@ -640,11 +653,12 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::{DecodeError, assert_canonical, to_vec};
+    use hyperscale_vm_types::ResourceAddr;
 
     use super::testing::{WideRule, chain, identity, wide_chain};
     use super::{
-        MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, NOBODY_BYTES, Rule, SealedLeaf,
-        StoredRule, always, never,
+        Holding, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, NOBODY_BYTES, Rule,
+        SealedLeaf, StoredRule, always, never,
     };
     use crate::types::MAX_VALUE_BYTES;
 
@@ -703,14 +717,53 @@ mod tests {
         ));
     }
 
+    /// A claims judge is handed claims, and a rule holding anything else
+    /// does not reach it.
+    ///
+    /// The old shape answered `false` for a holding leaf and leaned on a
+    /// comment saying nothing routes one there. `false` is an answer,
+    /// and the wrong one: a threshold could reach its count around the
+    /// leaf, and `GrantedBehaviour::demanded`'s self-subtraction reads
+    /// the same verdict to decide an actor already discharges a rule.
+    /// Nothing reaches the judge now — the leaf has no place in its
+    /// argument type — and `claims_only` is where the refusal happens.
+    #[test]
+    fn a_rule_about_a_holding_never_reaches_a_claims_judge() {
+        let holding = StoredRule::Require(SealedLeaf::Held {
+            badge: ResourceAddr::new([0xBA; 31]),
+            holding: Holding::Balance,
+        });
+        assert_eq!(holding.claims_only(), None);
+
+        // And one branch of it is enough: the rule is not partly
+        // answerable.
+        let mixed = StoredRule::CountOf {
+            count: 1,
+            rules: vec![StoredRule::claim(identity(1)), holding],
+        };
+        assert_eq!(mixed.claims_only(), None);
+
+        // What does reach it carries over leaf for leaf.
+        let claims = StoredRule::CountOf {
+            count: 1,
+            rules: vec![StoredRule::claim(identity(1))],
+        };
+        assert!(
+            claims
+                .claims_only()
+                .expect("claims alone")
+                .satisfied_by(&[identity(1)])
+        );
+    }
+
     #[test]
     fn a_threshold_is_satisfied_at_its_count_and_not_below() {
-        let two_of_three = StoredRule::CountOf {
+        let two_of_three = Rule::CountOf {
             count: 2,
             rules: vec![
-                StoredRule::claim(identity(1)),
-                StoredRule::claim(identity(2)),
-                StoredRule::claim(identity(3)),
+                Rule::Require(identity(1)),
+                Rule::Require(identity(2)),
+                Rule::Require(identity(3)),
             ],
         };
         assert!(two_of_three.satisfied_by(&[identity(1), identity(3)]));
@@ -721,16 +774,13 @@ mod tests {
 
         // A nested branch counts as one branch however many identities
         // satisfy its inside.
-        let key_or_guardians = StoredRule::CountOf {
+        let key_or_guardians = Rule::CountOf {
             count: 1,
             rules: vec![
-                StoredRule::claim(identity(1)),
-                StoredRule::CountOf {
+                Rule::Require(identity(1)),
+                Rule::CountOf {
                     count: 2,
-                    rules: vec![
-                        StoredRule::claim(identity(2)),
-                        StoredRule::claim(identity(3)),
-                    ],
+                    rules: vec![Rule::Require(identity(2)), Rule::Require(identity(3))],
                 },
             ],
         };
@@ -742,26 +792,23 @@ mod tests {
     #[test]
     fn evaluation_is_total_over_degenerate_forms() {
         // Requiring nothing is satisfied by anyone, including no one.
-        let vacuous = StoredRule::CountOf {
+        let vacuous = Rule::CountOf {
             count: 0,
-            rules: vec![],
+            rules: Vec::new(),
         };
         assert!(vacuous.satisfied_by(&[]));
 
         // Requiring more than the branches offer is satisfied by no one.
-        let unsatisfiable = StoredRule::CountOf {
+        let unsatisfiable = Rule::CountOf {
             count: 2,
-            rules: vec![StoredRule::claim(identity(1))],
+            rules: vec![Rule::Require(identity(1))],
         };
         assert!(!unsatisfiable.satisfied_by(&[identity(1), identity(2)]));
 
         // A repeated branch counts once per appearance.
-        let doubled = StoredRule::CountOf {
+        let doubled = Rule::CountOf {
             count: 2,
-            rules: vec![
-                StoredRule::claim(identity(1)),
-                StoredRule::claim(identity(1)),
-            ],
+            rules: vec![Rule::Require(identity(1)), Rule::Require(identity(1))],
         };
         assert!(doubled.satisfied_by(&[identity(1)]));
     }
@@ -851,10 +898,15 @@ mod tests {
         let anyone: StoredRule = always();
         let nobody: StoredRule = never();
 
-        assert!(anyone.satisfied_by(&[]));
-        assert!(anyone.satisfied_by(&[identity(1)]));
-        assert!(!nobody.satisfied_by(&[]));
-        assert!(!nobody.satisfied_by(&[identity(1)]));
+        // Leafless, so both carry over to a claims judge whole.
+        let (anyone_claims, nobody_claims) = (
+            anyone.claims_only().expect("no leaf to refuse"),
+            nobody.claims_only().expect("no leaf to refuse"),
+        );
+        assert!(anyone_claims.satisfied_by(&[]));
+        assert!(anyone_claims.satisfied_by(&[identity(1)]));
+        assert!(!nobody_claims.satisfied_by(&[]));
+        assert!(!nobody_claims.satisfied_by(&[identity(1)]));
 
         for rule in [&anyone, &nobody] {
             let bytes = rule.to_bytes().unwrap();

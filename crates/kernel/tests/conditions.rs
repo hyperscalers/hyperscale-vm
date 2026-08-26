@@ -409,6 +409,8 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
         assert_eq!(
             RuleBytes::rule_in_cell(&cell)
                 .unwrap()
+                .claims_only()
+                .expect("a rule about claims")
                 .satisfied_by(std::slice::from_ref(&evidence)),
             expected
         );

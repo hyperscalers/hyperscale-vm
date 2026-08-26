@@ -616,9 +616,11 @@ fn judge(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<Judgement,
                 }
             })
         }
-        // A leaf reading evidence cannot be answered here, and admission
-        // never routes a rule holding one this way.
-        Rule::Require(_) => Ok(Judgement::Met),
+        // A leaf reading evidence is not a question about state, and
+        // admission never routes a rule holding one this way. Refused
+        // rather than counted: a judge that cannot ask a question is not
+        // the one to decide it was answered.
+        Rule::Require(_) => Ok(Judgement::Unanswerable),
         Rule::CountOf { count, rules } => {
             let mut got = 0usize;
             let mut first_unmet = None;
@@ -628,7 +630,10 @@ fn judge(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<Judgement,
                     Judgement::Unmet { target, required } => {
                         first_unmet.get_or_insert(Judgement::Unmet { target, required });
                     }
-                    Judgement::Unanswerable => {}
+                    // A threshold reaching its count around a branch it
+                    // could not read is a verdict on a rule this judge
+                    // only partly saw.
+                    Judgement::Unanswerable => return Ok(Judgement::Unanswerable),
                 }
             }
             if got >= usize::from(*count) {
@@ -812,7 +817,7 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        Condition, Declaration, DeclaredAccess, JudgedLeaf, Rule, SlotRef, rule,
+        Condition, Declaration, DeclaredAccess, JudgedLeaf, Presented, Rule, SlotRef, rule,
     };
     use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Moves, Presence,
@@ -893,6 +898,65 @@ mod tests {
             .expect_err("a rule nobody satisfies is not satisfied"),
             MaterializeError::ConditionUnanswerable { node: None }
         );
+    }
+
+    /// A judge answers what it can ask about, and refuses the rest.
+    ///
+    /// Committed state answers a presence and nothing else. A claim is
+    /// about evidence the calling node presented and a stored leaf about
+    /// a rule in a cell, and `Rule::judged` sends both elsewhere — so a
+    /// rule holding one arriving here is a routing mistake, and the
+    /// judge that cannot ask the question is not the one to decide it
+    /// was answered. That includes a threshold that reaches its count
+    /// around such a branch: a verdict on a rule this judge only partly
+    /// saw is not a verdict.
+    #[test]
+    fn a_condition_this_judge_cannot_ask_refuses() {
+        let target = EffectTarget::Point(key(0xC3));
+        let claim = JudgedLeaf::Claim(Presented::of_subject(Address::new(
+            [0xC4; 31],
+            AddressClass::Principal,
+        )));
+        let unaskable = [
+            Rule::Require(claim.clone()),
+            Rule::Require(JudgedLeaf::Stored { cell: key(0xC5) }),
+            // Met on its presence branch alone, and still refused.
+            Rule::CountOf {
+                count: 1,
+                rules: vec![
+                    Rule::Require(JudgedLeaf::Presence {
+                        target,
+                        expect: Presence::Absent,
+                    }),
+                    Rule::Require(claim),
+                ],
+            },
+        ];
+        for rule in unaskable {
+            let set = declared(&[Effect {
+                target,
+                mode: Mode::Write { moves: Moves::Both },
+            }]);
+            let ordered = ord(&set);
+            assert_eq!(
+                KernelSession::materialize(
+                    OverlayStore::new(Arc::new(MemoryStore::new())),
+                    &Declaration {
+                        set,
+                        ordered: holding(&ordered),
+                        conditions: vec![Condition::declared(rule.clone())],
+                        ..Declaration::default()
+                    },
+                    tx(1),
+                    env(),
+                    hash,
+                )
+                .map(|_| ())
+                .expect_err("committed state cannot answer this"),
+                MaterializeError::ConditionUnanswerable { node: None },
+                "{rule:?}",
+            );
+        }
     }
 
     /// A declaration says what it requires of a leaf, and the shard

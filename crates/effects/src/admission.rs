@@ -1801,7 +1801,7 @@ fn judge_presented(
         .filter(|rule| rule.judged() == Judged::AtAdmission)
     {
         let judged = rule.map_leaves(&mut |leaf| match leaf {
-            JudgedLeaf::Claim(claim) => Ok(SealedLeaf::Claim(*claim)),
+            JudgedLeaf::Claim(claim) => Ok(*claim),
             // A rule this stage judges reads claims alone, which is what
             // put it here.
             JudgedLeaf::Presence { .. } | JudgedLeaf::Stored { .. } => {
