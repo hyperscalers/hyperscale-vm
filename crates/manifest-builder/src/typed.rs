@@ -616,6 +616,17 @@ impl<'a> TypedBuilder<'a> {
                 method: method.to_owned(),
             });
         }
+        // Judged before the call is appended, so the refusal leaves the
+        // graph exactly as it was: a minting call whose outputs would
+        // dangle never becomes a node the author has to unwind.
+        let declared = package.methods[method].outputs.len();
+        if declared != 0 {
+            return Err(TypedError::OutputArity {
+                method: method.to_owned(),
+                declared,
+                claimed: 0,
+            });
+        }
         let (node, outputs) = self.append(target, method, args, proofs)?;
         outputs.none()?;
         Ok(Proof {
@@ -770,6 +781,17 @@ impl<'a> TypedBuilder<'a> {
         // composed is one they meant, and a second beside it would be
         // the builder overruling them.
         let wanted = self.earned(signature, target, meta, &args, &values, &known);
+        // A signature signs in, so it reaches only a gate that reads a
+        // rule; a claim a declaration names takes a proof. Judged before
+        // anything is minted ahead of the call, so the refusal leaves
+        // the graph exactly as it was — the sign-in nodes the walk below
+        // appends are only ever appended for a call that goes on to
+        // reference them.
+        if signature.requires_evidence() && proofs.is_empty() && !signature.reads_a_rule() {
+            return Err(TypedError::SignatureForGuarded {
+                method: method.to_owned(),
+            });
+        }
         let earned = if proofs.is_empty() {
             wanted
                 .iter()
@@ -815,17 +837,10 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            (true, []) => {
-                // A signature signs in, so it reaches only a gate that
-                // reads a rule; a claim a declaration names takes a
-                // proof.
-                if !signature.reads_a_rule() {
-                    return Err(TypedError::SignatureForGuarded {
-                        method: method.to_owned(),
-                    });
-                }
-                BTreeSet::from([EvidenceRef::IntentSignature])
-            }
+            // A method reading only a rule takes the intent's signature;
+            // the guarded case was refused above, before anything was
+            // minted ahead of the call.
+            (true, []) => BTreeSet::from([EvidenceRef::IntentSignature]),
             (true, presented) => presented.iter().map(|proof| proof.reference()).collect(),
         };
         let outputs = resources.len();
