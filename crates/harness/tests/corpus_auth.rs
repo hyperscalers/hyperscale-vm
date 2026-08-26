@@ -248,12 +248,19 @@ fn seed_authority(
 }
 
 /// The replacement `owner` has waiting, as the account writes it.
-fn seed_pending(store: &mut MemoryStore, owner: PrincipalAddr, at_ms: u64, rule: &RuleBytes) {
+fn seed_pending(
+    store: &mut MemoryStore,
+    owner: PrincipalAddr,
+    at_ms: u64,
+    rule: &RuleBytes,
+    delay_ms: u64,
+) {
     let pending = account::Pending {
         effective_at_ms: at_ms,
         primary: rule.clone(),
         recovery: rule.clone(),
         confirmation: rule.clone(),
+        delay_ms,
     };
     store.write(own_cell(owner, 4), account::encode_pending(&pending));
 }
@@ -370,7 +377,7 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
         panic!("propose must complete; got {:?}", results[0]);
     };
     let mut waiting = MemoryStore::new();
-    seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &rule_of(BOB));
+    seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &rule_of(BOB), DAY_MS);
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
         Some(&waiting.cell(own_cell(ALICE, 4))),
@@ -880,6 +887,94 @@ fn confirmation_enacts_a_proposal_early() {
     assert_acts(&world, &store, ALICE, t0, false, 0x71);
 }
 
+/// One hour, against the corpus day: a delay a proposal may name and
+/// this account does not yet hold.
+const HOUR_MS: u64 = 3_600_000;
+
+/// Propose Bob for all three rules, naming `delay_ms` as the wait every
+/// replacement after this one serves.
+fn propose_at_delay(delay_ms: u64) -> ManifestGraph {
+    graph(|b| account::propose(b, ALICE, rule_of(BOB), rule_of(BOB), rule_of(BOB), delay_ms))
+}
+
+/// The delay is the fourth thing a replacement replaces, and it starts
+/// governing when the replacement does.
+///
+/// Both halves matter and only together. That it moves at all is what
+/// keeps the one security parameter an account most wants to tune from
+/// being fixed at the moment its holder knew least about it — `securify`
+/// is one-way, so a delay set once would be set forever. That it moves
+/// only on enactment is what stops a recovery factor in the wrong hands
+/// shortening its own takeover: the number a proposal names binds
+/// whoever comes after it, never the proposal carrying it.
+#[test]
+fn a_replacement_replaces_the_delay_too_and_not_before_it_is_enacted() {
+    let world = world();
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+
+    // Bob proposes an hour where a day governs. The wait is the day.
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&propose_at_delay(HOUR_MS), TxHash(Hash32([0x75; 32])))],
+        Some(BOB),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("propose must complete; got {:?}", results[0]);
+    };
+    let mut waiting = MemoryStore::new();
+    seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &rule_of(BOB), HOUR_MS);
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&waiting.cell(own_cell(ALICE, 4))),
+        "the proposer names the next delay and serves the current one"
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 5)),
+        None,
+        "and a delay proposed is not a delay in force"
+    );
+
+    // Enacted a day later, and the hour is what governs from here.
+    let at = t0 + DAY_MS;
+    let (results, store) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_graph(), TxHash(Hash32([0x76; 32])))],
+        Some(TAKER),
+        at,
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("promote must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 5)),
+        Some(&Some(HOUR_MS.to_le_bytes().to_vec())),
+        "promotion writes the delay beside the three rules"
+    );
+
+    // Bob governs and Bob may replace, so the next proposal is his — and
+    // it waits the hour he bought rather than the day he served.
+    let (results, _) = run_both_at(
+        &world,
+        &store,
+        &[(&propose_at_delay(HOUR_MS), TxHash(Hash32([0x77; 32])))],
+        Some(BOB),
+        at,
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("the second propose must complete; got {:?}", results[0]);
+    };
+    let mut sooner = MemoryStore::new();
+    seed_pending(&mut sooner, ALICE, at + HOUR_MS, &rule_of(BOB), HOUR_MS);
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&sooner.cell(own_cell(ALICE, 4))),
+        "the delay a replacement carried is the one the next one serves"
+    );
+}
+
 /// A second propose replaces an unmatured proposal — its timer restarts
 /// from the replacing clock — and an unsecurified account has nothing
 /// to propose against.
@@ -899,8 +994,16 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
 
     // Replace it half a day later: one proposal, the fresh instant.
     let later = t0 + DAY_MS / 2;
-    let replace =
-        graph(|b| account::propose(b, ALICE, rule_of(MAKER), rule_of(MAKER), rule_of(MAKER)));
+    let replace = graph(|b| {
+        account::propose(
+            b,
+            ALICE,
+            rule_of(MAKER),
+            rule_of(MAKER),
+            rule_of(MAKER),
+            DAY_MS,
+        )
+    });
     let (results, _) = run_both_at(
         &world,
         &store,
@@ -912,7 +1015,13 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         panic!("propose must complete; got {:?}", results[0]);
     };
     let mut replaced = MemoryStore::new();
-    seed_pending(&mut replaced, ALICE, later + DAY_MS, &rule_of(MAKER));
+    seed_pending(
+        &mut replaced,
+        ALICE,
+        later + DAY_MS,
+        &rule_of(MAKER),
+        DAY_MS,
+    );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
         Some(&replaced.cell(own_cell(ALICE, 4))),
@@ -928,7 +1037,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     let mut virtual_store = sealed_store();
     virtual_store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
     let own_propose =
-        graph(|b| account::propose(b, ALICE, rule_of(BOB), rule_of(BOB), rule_of(BOB)));
+        graph(|b| account::propose(b, ALICE, rule_of(BOB), rule_of(BOB), rule_of(BOB), DAY_MS));
     let (results, _) = run_both_signed(
         &world,
         &virtual_store,

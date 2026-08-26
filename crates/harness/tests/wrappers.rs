@@ -159,7 +159,7 @@ fn the_account_wrappers_match_their_signatures() {
         )?;
         let rule = RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(BOB)))
             .expect("a rule within the vocabulary caps");
-        account::propose(b, ALICE, rule.clone(), rule.clone(), rule)?;
+        account::propose(b, ALICE, rule.clone(), rule.clone(), rule, 86_400_000)?;
         account::cancel(b, ALICE)?;
         account::confirm(b, ALICE)
     });

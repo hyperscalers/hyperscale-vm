@@ -39,8 +39,8 @@ pub mod account {
         amount: Quantity,
     }
 
-    /// A replacement for all three rules, waiting on the delay that
-    /// governed when it was made.
+    /// A replacement for the whole recovery surface, waiting on the
+    /// delay that governed when it was made.
     #[record]
     struct Pending {
         /// When it may be enacted without a confirmation.
@@ -49,6 +49,14 @@ pub mod account {
         primary: RuleBytes,
         recovery: RuleBytes,
         confirmation: RuleBytes,
+        /// How long the proposals after this one wait.
+        ///
+        /// Carried rather than kept, because it is the fourth thing a
+        /// replacement replaces: an account whose delay could never move
+        /// again would have one security parameter fixed at the moment
+        /// its holder knew least about what it was for, and `securify`
+        /// is one-way.
+        delay_ms: u64,
     }
 
     /// What the account keeps beyond the governing rule every address
@@ -85,6 +93,10 @@ pub mod account {
         /// The replacement waiting, where one is.
         pending: Cell<Option<Pending>>,
         /// How long a proposal waits when nothing confirms it.
+        ///
+        /// A cell rather than a constant of the account, because a
+        /// replacement replaces this too — `securify` sets the first one
+        /// and every enacted proposal sets the next.
         delay_ms: Cell<u64>,
     }
 
@@ -235,7 +247,8 @@ pub mod account {
         #[proves(badge[id])]
         pub fn present_instance(&mut self, badge: Address, id: u64) {}
 
-        /// Store the three rules that govern from here on.
+        /// Store the three rules that govern from here on, and the delay
+        /// the first replacement of them waits.
         ///
         /// The governing cell being absent is this body's own refusal,
         /// judged against committed state before it runs — and it is what
@@ -260,13 +273,17 @@ pub mod account {
         ///
         /// The wait comes from the delay that governs now, never from the
         /// proposer: a proposal's own delay starts governing when the
-        /// proposal does.
+        /// proposal does. So a recovery factor in the wrong hands cannot
+        /// shorten its own takeover — the number it names binds whoever
+        /// comes after it, and by the time it governs, this proposal has
+        /// already been enacted or dropped.
         #[requires(governs(recovery))]
         pub fn propose(
             &mut self,
             primary: RuleBytes,
             recovery: RuleBytes,
             confirmation: RuleBytes,
+            delay_ms: u64,
         ) {
             let effective_at_ms = clock_ms().saturating_add(self.delay_ms.get());
             self.pending.set(Some(Pending {
@@ -274,6 +291,7 @@ pub mod account {
                 primary,
                 recovery,
                 confirmation,
+                delay_ms,
             }));
         }
 
@@ -290,6 +308,7 @@ pub mod account {
                 self.auth().set(Some(pending.primary));
                 self.recovery.set(Some(pending.recovery));
                 self.confirmation.set(Some(pending.confirmation));
+                self.delay_ms.set(pending.delay_ms);
                 self.pending.set(None);
             }
         }
@@ -314,6 +333,7 @@ pub mod account {
                 self.auth().set(Some(pending.primary));
                 self.recovery.set(Some(pending.recovery));
                 self.confirmation.set(Some(pending.confirmation));
+                self.delay_ms.set(pending.delay_ms);
                 self.pending.set(None);
             }
         }

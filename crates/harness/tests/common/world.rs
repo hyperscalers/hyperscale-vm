@@ -841,6 +841,7 @@ pub fn propose_graph() -> ManifestGraph {
             stored_rule(BOB),
             stored_rule(BOB),
             stored_rule(BOB),
+            DAY_MS,
         )
     })
 }

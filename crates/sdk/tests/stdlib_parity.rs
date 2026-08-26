@@ -153,7 +153,12 @@ fn account() -> Blueprint {
         )
         .method(
             "propose",
-            &[ParamType::Rule, ParamType::Rule, ParamType::Rule],
+            &[
+                ParamType::Rule,
+                ParamType::Rule,
+                ParamType::Rule,
+                ParamType::U64,
+            ],
             |t: &mut Trace| {
                 let holder = t.self_addr();
                 t.point(&holder.child(own(2), &[])).read();
@@ -168,6 +173,7 @@ fn account() -> Blueprint {
             t.point(&holder.child(AUTH, &[])).write();
             t.point(&holder.child(own(2), &[])).write();
             t.point(&holder.child(own(3), &[])).write();
+            t.point(&holder.child(own(5), &[])).write();
         })
         .method("cancel", &[], |t: &mut Trace| {
             let holder = t.self_addr();
@@ -181,6 +187,7 @@ fn account() -> Blueprint {
             t.point(&holder.child(AUTH, &[])).write();
             t.point(&holder.child(own(2), &[])).write();
             t.point(&holder.child(own(3), &[])).write();
+            t.point(&holder.child(own(5), &[])).write();
             t.governed_by_what_it_writes(own(3));
         })
         .method("freeze", &[], |t: &mut Trace| {
