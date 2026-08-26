@@ -1,0 +1,487 @@
+//! The gate grammar: who a method requires, and what it proves.
+//!
+//! `#[requires(…)]` and `#[proves(…)]` over the leaf grammar in
+//! [`rule`](super::rule), plus what a gate lowers to — the declared
+//! reads its rule needs provisioned, and the shape check that holds a
+//! body's parameters to the gate it was written with.
+
+use proc_macro2::TokenStream as TokenStream2;
+use quote::quote;
+use syn::spanned::Spanned as _;
+
+use crate::Declared;
+use crate::lower::{self};
+use crate::resource::Resource;
+use crate::rule::{RuleAst, calls, parse_rule};
+use crate::state::holds_rule;
+use crate::term::emit_kind;
+
+/// Whose authority naming a method requires, as its own attribute says.
+pub enum Gate {
+    /// Anyone may name it.
+    Public,
+    /// A rule over identities the target itself names.
+    Guarded {
+        /// The rule, as a tracer call answering a `Requirement`.
+        rule: TokenStream2,
+        /// Whether the rule is the target's own address and nothing
+        /// else, which is what lets a call take its target from the
+        /// proof presented.
+        on_self: bool,
+        /// Whether meeting it can take more than one claim, so a caller
+        /// presents a set rather than a proof.
+        threshold: bool,
+    },
+    /// The target's own stored rule, read at the named field's cell.
+    Authorizing(u16),
+    /// The rule stored at a declared cell, or — while nothing is stored
+    /// there — the identity that address itself derives.
+    Governed(u16),
+    /// The target's rule and its possession of the badge a parameter
+    /// names: the field the rule is stored at, and the parameter's index.
+    Custodial {
+        /// The slot of the state field holding the target's stored rule.
+        rule: u16,
+        /// The parameter naming the badge.
+        badge: u32,
+        /// The parameter naming which instance of it, where the badge is
+        /// non-fungible. Absent for a fungible badge, whose possession
+        /// is an amount rather than a named thing.
+        id: Option<u32>,
+    },
+}
+
+/// The rule a `#[guarded]` method requires, as a tracer call answering a
+/// `Requirement`.
+///
+/// Rust's own operators carry the algebra: `||` is a count of one, `&&`
+/// a count of every branch, and `n_of(k, …)` the threshold no operator
+/// expresses. Precedence and grouping are the language's, so an author
+/// reads a gate the way they read any other condition — and a chain of
+/// one operator flattens into one threshold rather than nesting, because
+/// depth is the cap that binds first.
+///
+/// Answers the rule, whether it is the target's own address alone, and
+/// whether meeting it can take more than one claim.
+pub fn guarded_rule(
+    expr: &syn::Expr,
+    config_fields: &[(String, syn::Type)],
+    resources: &[Resource],
+    params: &[(String, syn::Type)],
+    depth: usize,
+) -> syn::Result<(TokenStream2, bool, bool)> {
+    let rule = parse_rule(expr, "a gate", depth, &mut |leaf| {
+        guarded_identity(leaf, config_fields, resources, params)
+    })?;
+    match &rule {
+        // Whether the rule is the target's own address is a question
+        // about a single claim; a threshold is answerable for its
+        // branches and not for itself.
+        RuleAst::Leaf((identity, on_self)) => Ok((quote!(__t.claim(&#identity)), *on_self, false)),
+        node @ RuleAst::CountOf { .. } => Ok((emit_guarded(node), false, true)),
+    }
+}
+
+/// A gate's rule, as a tracer call answering a `Requirement`.
+pub fn emit_guarded(rule: &RuleAst<(TokenStream2, bool)>) -> TokenStream2 {
+    match rule {
+        RuleAst::Leaf((identity, _)) => quote!(__t.claim(&#identity)),
+        RuleAst::CountOf { count, branches } => {
+            let lowered = branches.iter().map(emit_guarded);
+            quote!(__t.n_of(#count, ::std::vec![#(#lowered),*]))
+        }
+    }
+}
+
+/// The identity a `#[guarded]` method requires, as a tracer call.
+///
+/// Every identity a method can require is one the target itself names.
+/// A caller who names the identity they must present can always present
+/// it, so a gate over an argument reads as guarded and admits everyone —
+/// which is the refusal `check_abi` makes at publish, made here on the
+/// line that wrote it.
+pub fn guarded_identity(
+    identity: &syn::Expr,
+    config_fields: &[(String, syn::Type)],
+    resources: &[Resource],
+    params: &[(String, syn::Type)],
+) -> syn::Result<(TokenStream2, bool)> {
+    // Possession has its own authoring surface, and `#[requires]` is
+    // not it: a rule is a match over presented claims, and a `holds`
+    // anywhere in one — beside a rule under a conjunction as much as
+    // within it under a disjunction — would make authority a predicate
+    // engine, which is the fence this grammar keeps.
+    if let syn::Expr::Call(call) = identity
+        && matches!(call.func.as_ref(), syn::Expr::Path(path) if path.path.is_ident("holds"))
+    {
+        return Err(syn::Error::new(
+            identity.span(),
+            "a `#[requires]` rule names claims only; possession is spelled \
+             `#[proves(badge)]`",
+        ));
+    }
+    let refuse = || {
+        syn::Error::new(
+            identity.span(),
+            "a guarded method names `self`, `config.<field>`, or `issued(<Resource>)`",
+        )
+    };
+    match identity {
+        syn::Expr::Path(path) if path.path.is_ident("self") => Ok((quote!(__t.self_addr()), true)),
+        // A bare name is not a leaf. It was two things once — a badge and
+        // a configuration field in one namespace — and each now has its
+        // own spelling, so the refusal can say which one this is.
+        syn::Expr::Path(path) if path.path.get_ident().is_some() => {
+            let name = path.path.get_ident().expect("checked").to_string();
+            if params.iter().any(|(p, _)| *p == name) {
+                return Err(syn::Error::new(
+                    identity.span(),
+                    "the authority this method requires is one its caller names, so \
+                     the gate would admit everyone — name `self`, `config.<field>`, \
+                     or `issued(<Resource>)` instead",
+                ));
+            }
+            if resources.iter().any(|r| r.name == name) {
+                return Err(syn::Error::new(
+                    identity.span(),
+                    format!("a badge the package issues is named `issued({name})`"),
+                ));
+            }
+            if config_fields.iter().any(|(f, _)| *f == name) {
+                return Err(syn::Error::new(
+                    identity.span(),
+                    format!("a configuration field is named `config.{name}`"),
+                ));
+            }
+            Err(refuse())
+        }
+        // Creation-fixed, so the claim is the target's own: an object
+        // whose address derives from no key admits somebody by naming
+        // them where it was created.
+        syn::Expr::Field(access) => {
+            let named = match (&*access.base, &access.member) {
+                (syn::Expr::Path(base), syn::Member::Named(field))
+                    if base.path.is_ident("config") =>
+                {
+                    field.to_string()
+                }
+                _ => return Err(refuse()),
+            };
+            let Some(slot) = config_fields.iter().position(|(f, _)| *f == named) else {
+                return Err(syn::Error::new(
+                    identity.span(),
+                    format!("`{named}` is not a configuration field of this package"),
+                ));
+            };
+            let slot = u32::try_from(slot).unwrap_or(u32::MAX);
+            Ok((
+                quote!(__t.config::<::hyperscale_vm_sdk::Addr>(#slot)),
+                false,
+            ))
+        }
+        // A badge the instance issues: holding it is operating the
+        // instance, and it derives from the address rather than from
+        // anything a caller supplies. `issued(Name)` names a declared
+        // `#[resource]` struct, because the derivation folds the kind
+        // and the declaration is where a kind is stated.
+        syn::Expr::Call(call) => {
+            let named = match &*call.func {
+                syn::Expr::Path(path) => path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|s| s.ident == "issued"),
+                _ => false,
+            };
+            let resolved = call
+                .args
+                .first()
+                .and_then(|arg| match arg {
+                    syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
+                    _ => None,
+                })
+                .and_then(|name| resources.iter().find(|r| r.name == name));
+            match (named, resolved) {
+                (true, Some(issued)) => {
+                    let kind = emit_kind(issued.kind);
+                    let mark = syn::LitByteStr::new(&issued.mark, identity.span());
+                    Ok((quote!(__t.self_resource(#kind, #mark)), false))
+                }
+                _ => Err(refuse()),
+            }
+        }
+        _ => Err(refuse()),
+    }
+}
+
+/// The `#[requires(<rule>)]` grammar: the stored-rule form `auth[role]`,
+/// or a rule over claims the declaration names.
+pub fn parse_requires(
+    attr: &syn::Attribute,
+    declared: &Declared<'_>,
+    params: &[(String, syn::Type)],
+) -> syn::Result<Gate> {
+    let written: syn::Expr = attr.parse_args()?;
+    // The stored-rule form: `governs(<field>)` names the cell whose rule
+    // governs, which is the address's own `auth` cell or one a package
+    // keeps itself. What governs while nothing is stored there is the
+    // rule's own second branch rather than anything the kernel supplies.
+    if let syn::Expr::Call(call) = &written
+        && calls(&call.func, "governs")
+    {
+        let named = match call.args.first() {
+            Some(syn::Expr::Path(path)) => path.path.require_ident()?,
+            _ => {
+                return Err(syn::Error::new(
+                    call.span(),
+                    "`governs(..)` names the cell whose stored rule governs",
+                ));
+            }
+        };
+        let name = named.to_string();
+        let Some(field) = declared
+            .accessors
+            .get(&name)
+            .or_else(|| declared.fields.get(&name))
+        else {
+            return Err(syn::Error::new(
+                named.span(),
+                "not a cell of this package — `governs(auth)` names the address's own \
+                 governing rule, and a package keeping others names one of its fields",
+            ));
+        };
+        if !holds_rule(field) {
+            return Err(syn::Error::new(
+                named.span(),
+                "this cell does not hold a rule — a stored rule lives in a \
+                 `Cell<Option<RuleBytes>>` field",
+            ));
+        }
+        return Ok(Gate::Governed(field.slot));
+    }
+    let (rule, on_self, threshold) = guarded_rule(
+        &written,
+        declared.config_fields,
+        declared.resources,
+        params,
+        0,
+    )?;
+    Ok(Gate::Guarded {
+        rule,
+        on_self,
+        threshold,
+    })
+}
+
+/// Read a method's gate off its attributes.
+pub fn parse_gate(
+    method: &syn::ImplItemFn,
+    declared: &Declared<'_>,
+    params: &[(String, syn::Type)],
+) -> syn::Result<Gate> {
+    // A gate names the cell its rule lives in the way a body would, and a
+    // body reaches the protocol's own cells by accessor.
+    let cell = |name: &syn::Ident| {
+        declared
+            .fields
+            .get(&name.to_string())
+            .or_else(|| declared.accessors.get(&name.to_string()))
+            .map(|f| f.slot)
+            .ok_or_else(|| {
+                syn::Error::new(
+                    name.span(),
+                    "not a cell of the component's state — name a declared field or one of \
+                     the protocol's own cells",
+                )
+            })
+    };
+    for attr in &method.attrs {
+        if attr.path().is_ident("requires") {
+            return parse_requires(attr, declared, params);
+        }
+        if attr.path().is_ident("proves") {
+            let claim: syn::Expr = attr.parse_args()?;
+            // `proves(self)`: satisfying one's own stored rule, minting
+            // one's own identity.
+            if let syn::Expr::Path(path) = &claim
+                && path.path.is_ident("self")
+            {
+                let auth = syn::Ident::new("auth", claim.span());
+                return Ok(Gate::Authorizing(cell(&auth)?));
+            }
+            let auth = syn::Ident::new("auth", claim.span());
+            let rule = cell(&auth)?;
+            let position = |named: &syn::Ident| {
+                params
+                    .iter()
+                    .position(|(p, _)| named == p.as_str())
+                    .map(|index| {
+                        u32::try_from(index).expect("a parameter list is shorter than u32")
+                    })
+                    .ok_or_else(|| syn::Error::new(named.span(), "not a parameter of this method"))
+            };
+            // `proves(badge)` and `proves(badge[id])`: the stored rule,
+            // possession of the badge, and the badge's mint.
+            return match &claim {
+                syn::Expr::Path(badge) => {
+                    let badge = badge.path.require_ident()?;
+                    Ok(Gate::Custodial {
+                        rule,
+                        badge: position(badge)?,
+                        id: None,
+                    })
+                }
+                syn::Expr::Index(index) => {
+                    let (syn::Expr::Path(badge), syn::Expr::Path(id)) =
+                        (index.expr.as_ref(), index.index.as_ref())
+                    else {
+                        return Err(syn::Error::new(
+                            index.span(),
+                            "an instance claim is written `badge[id]`, both parameters of \
+                             this method",
+                        ));
+                    };
+                    Ok(Gate::Custodial {
+                        rule,
+                        badge: position(badge.path.require_ident()?)?,
+                        id: Some(position(id.path.require_ident()?)?),
+                    })
+                }
+                _ => Err(syn::Error::new(
+                    claim.span(),
+                    "a call proves `self`, a badge parameter, or `badge[id]`",
+                )),
+            };
+        }
+    }
+    Ok(Gate::Public)
+}
+
+/// The tracer calls a gate becomes.
+///
+/// An authorizing method's clause is the gate's, not the body's: the
+/// kernel reads the stored rule before the export runs, so the read is
+/// declared here and no handle is bound for it.
+pub fn gate_calls(gate: &Gate, lowered: &lower::Lowered) -> TokenStream2 {
+    match gate {
+        Gate::Public => quote!(),
+        Gate::Guarded { rule, .. } => quote!({
+            let __rule = #rule;
+            __t.guarded_by(__rule);
+        }),
+        Gate::Authorizing(slot) => quote!({
+            let __owner = __t.self_addr();
+            let __key = __owner.child(::hyperscale_vm_sdk::SlotId(#slot), &[]);
+            __t.point(&__key).read();
+            __t.authorizing();
+        }),
+        // A governing gate declares its own read — unless the body
+        // already reaches the cell, in which case the gate rides the
+        // body's own clause: one cell is one clause, and two declarations
+        // of it would be a self-conflict.
+        Gate::Governed(slot) => {
+            if lowered.point_site(*slot).is_some() {
+                quote!(__t.governed_by_what_it_writes(::hyperscale_vm_sdk::SlotId(#slot));)
+            } else {
+                quote!({
+                    let __owner = __t.self_addr();
+                    let __key = __owner.child(::hyperscale_vm_sdk::SlotId(#slot), &[]);
+                    __t.point(&__key).read();
+                    __t.governed_by();
+                })
+            }
+        }
+        // A custody gate is two reads and neither is the body's: the
+        // kernel judges the holder's stored rule and their possession of
+        // the badge before the export runs, so what the clauses do is
+        // provision the cells it reads. The possession read is pinned to
+        // the protocol's own slot, keyed by exactly the expressions the
+        // mint names — which is what ties what is minted to what is
+        // held. It says what it holds too: a vault is a value cell in
+        // every mode it is reached in, and a read that said nothing
+        // would be a read of bytes.
+        Gate::Custodial {
+            rule,
+            badge,
+            id: None,
+        } => quote!({
+            let __owner = __t.self_addr();
+            let __badge = __t.arg::<::hyperscale_vm_sdk::Addr>(#badge);
+            let __material = [__badge.clone().cast::<::hyperscale_vm_sdk::Opaque>()];
+            let __rule = __owner.child(::hyperscale_vm_sdk::SlotId(#rule), &[]);
+            __t.point(&__rule).read();
+            let __vault = __owner.child(::hyperscale_vm_sdk::VAULT, &__material);
+            __t.point(&__vault).holding(&__badge).read();
+            __t.custodial(&__badge);
+        }),
+        Gate::Custodial {
+            rule,
+            badge,
+            id: Some(id),
+        } => quote!({
+            let __owner = __t.self_addr();
+            let __badge = __t.arg::<::hyperscale_vm_sdk::Addr>(#badge);
+            let __id = __t
+                .arg::<::hyperscale_vm_sdk::U64>(#id)
+                .cast::<::hyperscale_vm_sdk::U128>();
+            let __material = [__badge.clone().cast::<::hyperscale_vm_sdk::Opaque>()];
+            let __rule = __owner.child(::hyperscale_vm_sdk::SlotId(#rule), &[]);
+            __t.point(&__rule).read();
+            // The entry at the instance's own id: holding that one, not
+            // holding any.
+            __t.entry(
+                &__owner,
+                ::hyperscale_vm_sdk::NF_VAULT,
+                &__material,
+                &__id,
+            )
+            .holding(&__badge)
+            .read();
+            __t.custodial_instance(&__badge, &__id);
+        }),
+    }
+}
+
+/// Hold a gate to the declaration shape the publish gate pins for it.
+///
+/// The same rules `hyperscale_vm_effects::check_abi` applies to a
+/// published artifact, applied to the body that would produce one — so an
+/// author hears about it on the offending line rather than at the moment
+/// they try to publish.
+pub fn check_gate_shape(
+    gate: &Gate,
+    lowered: &lower::Lowered,
+    method: &syn::ImplItemFn,
+) -> syn::Result<()> {
+    let refuse = |message: &str| Err(syn::Error::new(method.sig.ident.span(), message));
+    match gate {
+        // A public method, a gate over claims, and a gate over a stored
+        // rule all put no shape on the body: what governs a cell nothing
+        // has written is the rule's own second branch, so a rewrite needs
+        // no reading of what it replaces.
+        Gate::Public | Gate::Guarded { .. } | Gate::Governed(_) => Ok(()),
+        Gate::Authorizing(_) => {
+            if lowered.sites.is_empty() {
+                Ok(())
+            } else {
+                refuse(
+                    "an authorizing method declares exactly one point read — the cell its \
+                     stored rule lives in, which the kernel reads before the export runs. \
+                     The body has nothing left to say, so it must be empty",
+                )
+            }
+        }
+        Gate::Custodial { .. } => {
+            if lowered.sites.is_empty() {
+                Ok(())
+            } else {
+                refuse(
+                    "a custodial method declares two reads — its rule cell, and the \
+                     badge-keyed vault or holdings entry its claim names — and the \
+                     kernel makes both before the export runs. The body has nothing \
+                     left to say, so it must be empty",
+                )
+            }
+        }
+    }
+}

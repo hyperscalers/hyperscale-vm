@@ -46,8 +46,10 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
 
+use crate::resource::Resource;
+use crate::state::holds_rule;
 use crate::term::{Op, Slot, SlotRef, Term};
-use crate::{Declared, Resource, holds_rule, is_named};
+use crate::{Declared, is_named};
 
 /// What kind of state a component field holds, and under which slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

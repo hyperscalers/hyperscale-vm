@@ -19,7 +19,9 @@ use hyperscale_vm_effects::ResourceKind;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 
-use crate::{Gate, INSTANTIATE, Resource, is_named, kebab};
+use crate::gate::Gate;
+use crate::resource::Resource;
+use crate::{INSTANTIATE, is_named, kebab};
 
 /// Which addresses a package's instances sit at, and so how it is
 /// called.
