@@ -9,7 +9,8 @@ use hyperscale_vm_effects::{
     EdgeRef, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl,
     MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput,
     PackageHash, PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket, Subintent,
-    TestHasher, Value, admit, admit_tree, child_key, nullifier_key, route_tree,
+    TestHasher, Value, admit, admit_tree, child_key, explain_admission_tree, nullifier_key,
+    route_tree,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -115,6 +116,69 @@ fn admit_composed(tree: &EnvelopeTree) -> Result<AdmittedTree, AdmissionError> {
     let chain = world();
     let identity = tree.hash(&TestHasher);
     admit_tree(tree, ALICE, identity, &chain, &TestHasher)
+}
+
+/// A refusal placed by flattened node index is explained at the call
+/// the interleave put there — not the call sitting at that index in
+/// concatenation order.
+///
+/// The root's only node waits on a socket the subintent fills, so the
+/// emission order leads with the subintent's nodes: flattened node 0 is
+/// the subintent's sign-in, while concatenation would call it the root's
+/// deposit. The refusal is planted on the sign-in, and the explanation
+/// must name it.
+#[test]
+fn a_tree_refusal_is_explained_at_the_interleaved_node() {
+    let broken_authorize = GraphNode::signed(
+        BOB,
+        "authorize",
+        // One argument to a method declaring none: an arity refusal at
+        // whatever flattened index this node is emitted at — which is 0,
+        // since the root's node cannot go first.
+        vec![GraphArg::Literal(Value::U64(7))],
+    );
+    let tree = EnvelopeTree {
+        root: IntentDecl {
+            graph: ManifestGraph {
+                nodes: vec![deposit_param(ALICE, 0)],
+            },
+            sockets: vec![Socket::Value {
+                resource: RES_X,
+                constraints: vec![],
+            }],
+        },
+        root_bindings: vec![Binding::Value {
+            intent: 1,
+            edge: EdgeRef {
+                producer: 1,
+                output: 0,
+            },
+        }],
+        subintents: vec![Subintent {
+            decl: IntentDecl {
+                graph: ManifestGraph {
+                    nodes: vec![broken_authorize, withdraw(BOB, RES_X, 5)],
+                },
+                sockets: vec![],
+            },
+            signer: BOB,
+            bindings: vec![],
+        }],
+        instances: Vec::new(),
+        resources: Vec::new(),
+    };
+    let chain = world();
+    let refusal = admit_composed(&tree).expect_err("one argument to a method declaring none");
+    assert!(matches!(
+        refusal,
+        AdmissionError::ArityMismatch { node: 0, .. }
+    ));
+    let told = explain_admission_tree(&tree, &chain, &refusal);
+    // The call at flattened node 0 is the subintent's sign-in; the
+    // node at index 0 of the concatenation is the root's deposit, and
+    // naming it would send the composer to the one call that is fine.
+    assert!(told.contains("authorize"), "{told}");
+    assert!(!told.contains("deposit"), "{told}");
 }
 
 #[test]

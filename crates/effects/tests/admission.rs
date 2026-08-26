@@ -598,7 +598,7 @@ fn a_refusal_reads_back_into_the_graph_that_earned_it() {
     let refusal = admit(&wrong_kind, ALICE, &chain, &TestHasher)
         .expect_err("a u64 does not fill a u128 parameter");
 
-    let told = explain_admission(&[&wrong_kind], &chain, &refusal);
+    let told = explain_admission(&wrong_kind, &chain, &refusal);
     // The sentence it already had.
     assert!(told.contains("expected u128"), "{told}");
     // The call the index names, and the method — neither in the verdict.
@@ -614,7 +614,7 @@ fn a_refusal_reads_back_into_the_graph_that_earned_it() {
     // that its own sentence does not, and adds nothing.
     let whole = AdmissionError::CyclicSockets;
     assert_eq!(
-        explain_admission(&[&wrong_kind], &chain, &whole),
+        explain_admission(&wrong_kind, &chain, &whole),
         whole.to_string()
     );
 }

@@ -38,10 +38,10 @@ use hyperscale_vm_types::{
     Address, AddressClass, EffectTarget, Moves, Presence, SubstateKey, UnmetCondition,
 };
 
-use crate::admission::{AdmissionError, Admitted, Asks, Injected, Placed};
+use crate::admission::{AdmissionError, Admitted, Asks, Injected, IntentView, Placed, interleave};
 use crate::claim::Claim;
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
-use crate::envelope::NULLIFIER_SLOT;
+use crate::envelope::{EnvelopeTree, NULLIFIER_SLOT};
 use crate::graph::{GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::manifest::{Judged, JudgedLeaf};
@@ -462,28 +462,82 @@ pub fn grants_read_config(grants: &GrantsExpr) -> BTreeSet<u32> {
     read
 }
 
-/// A refusal at admission, with the place it points to spelled out.
+/// A refusal at admitting a bare graph, with the place it points to
+/// spelled out.
 ///
 /// The sentence a composer gets carries indices — node 7, argument 2,
 /// clause 4 — and an index means nothing without the thing it indexes.
-/// `intents` is the composition as written, one graph per intent and one
-/// graph for a bare one, so a node index resolves to the call the author
-/// wrote and an argument index to the argument they put there. The
-/// clause resolves through the callee's own declaration, which is the
-/// only place a clause number is a line.
+/// `graph` is the composition as written, so a node index resolves to
+/// the call the author wrote and an argument index to the argument they
+/// put there. The clause resolves through the callee's own declaration,
+/// which is the only place a clause number is a line. A refusal from a
+/// composed tree goes through [`explain_admission_tree`], which holds
+/// the tree's own node numbering.
 ///
 /// Whatever cannot be resolved is left out rather than guessed at. A
 /// refusal about the whole composition renders as its own sentence,
 /// which is already the whole answer.
 #[must_use]
 pub fn explain_admission(
+    graph: &ManifestGraph,
+    records: &dyn ChainRecords,
+    refusal: &AdmissionError,
+) -> String {
+    // A bare graph is one intent with no sockets, so the interleave
+    // emits its nodes in author order and the flattened numbering is the
+    // graph's own.
+    explain_placed(&[graph], None, records, refusal)
+}
+
+/// A refusal at admitting an envelope tree, with the place it points to
+/// spelled out on [`explain_admission`]'s terms.
+///
+/// A flattened node index numbers the emission order of the same
+/// interleave admission ran — a subintent's node comes before the node
+/// that consumes its socket, whichever intent wrote it — so the walk is
+/// re-run here over the tree rather than guessed from concatenation.
+/// The intents themselves are the tree's own: the root, then the
+/// subintents in declaration order.
+#[must_use]
+pub fn explain_admission_tree(
+    tree: &EnvelopeTree,
+    records: &dyn ChainRecords,
+    refusal: &AdmissionError,
+) -> String {
+    let mut views = Vec::with_capacity(1 + tree.subintents.len());
+    views.push(IntentView {
+        graph: &tree.root.graph,
+        sockets: &tree.root.sockets,
+        bindings: &tree.root_bindings,
+        signer: None,
+    });
+    for subintent in &tree.subintents {
+        views.push(IntentView {
+            graph: &subintent.decl.graph,
+            sockets: &subintent.decl.sockets,
+            bindings: &subintent.bindings,
+            signer: None,
+        });
+    }
+    let total: usize = views.iter().map(|view| view.graph.nodes.len()).sum();
+    // A tree the interleave cannot order has no flattened numbering to
+    // resolve against, and its refusal says so on its own.
+    let order = interleave(&views, total).ok().map(|(_, order)| order);
+    let graphs: Vec<&ManifestGraph> = views.iter().map(|view| view.graph).collect();
+    explain_placed(&graphs, order.as_deref(), records, refusal)
+}
+
+/// The shared rendering: resolve where the refusal points, and append
+/// the call, the argument, and the clause it names.
+fn explain_placed(
     intents: &[&ManifestGraph],
+    order: Option<&[(usize, usize)]>,
     records: &dyn ChainRecords,
     refusal: &AdmissionError,
 ) -> String {
     let mut out = refusal.to_string();
     let at = refusal.at();
-    let Some(node) = placed_node(intents, at) else {
+    let Some(node) = placed_node(intents, order, at) else {
         return out;
     };
     let _ = write!(
@@ -510,24 +564,27 @@ pub fn explain_admission(
 
 /// The node a refusal points at.
 ///
-/// An intent-local index is that intent's; a flattened one walks the
-/// intents in the order the manifest concatenates them, which is the
-/// order `intents` is given in.
-fn placed_node<'a>(intents: &[&'a ManifestGraph], at: Placed) -> Option<&'a GraphNode> {
+/// An intent-local index is that intent's own. A flattened one numbers
+/// the interleave's emission order, resolved through `order` where the
+/// composition has one; a lone intent's emission order is its author
+/// order, so no map is needed to hold the two apart.
+fn placed_node<'a>(
+    intents: &[&'a ManifestGraph],
+    order: Option<&[(usize, usize)]>,
+    at: Placed,
+) -> Option<&'a GraphNode> {
     let node = usize::try_from(at.node?).ok()?;
     if let Some(intent) = at.intent {
         return intents.get(usize::try_from(intent).ok()?)?.nodes.get(node);
     }
-    // A flattened index counts through the intents in the order the
-    // manifest concatenates them, which is the order they are given in.
-    let mut seen = 0;
-    for graph in intents {
-        if let Some(found) = node.checked_sub(seen).and_then(|at| graph.nodes.get(at)) {
-            return Some(found);
-        }
-        seen += graph.nodes.len();
+    if let Some(order) = order {
+        let &(intent, local) = order.get(node)?;
+        return intents.get(intent)?.nodes.get(local);
     }
-    None
+    let [graph] = intents else {
+        return None;
+    };
+    graph.nodes.get(node)
 }
 
 /// One argument as the composer wrote it.

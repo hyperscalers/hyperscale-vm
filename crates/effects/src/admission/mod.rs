@@ -32,7 +32,9 @@ use std::sync::Arc;
 
 use abi::{CallBinding, lower_call};
 use compose::bind_edge;
-pub(crate) use compose::{IntentView, admit_intents, check_instance_values, check_value_depth};
+pub(crate) use compose::{
+    IntentView, admit_intents, check_instance_values, check_value_depth, interleave,
+};
 pub use error::{AdmissionError, Placed};
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectTarget, Mode, Presence, PrincipalAddr, ResourceAddr,

@@ -323,7 +323,7 @@ fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
 /// Returns the flattened position per (intent, local node) and the
 /// emission order.
 #[allow(clippy::type_complexity)] // the two halves of one interleave
-fn interleave(
+pub fn interleave(
     intents: &[IntentView<'_>],
     total: usize,
 ) -> Result<(Vec<Vec<u32>>, Vec<(usize, usize)>), AdmissionError> {
