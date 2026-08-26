@@ -465,6 +465,31 @@ fn enroll(path: &Path, name: &str) -> Result<(), BuildError> {
 mod tests {
     use super::member;
 
+    /// The two copies that only fail in a new author's lap: the
+    /// scaffold's pins against the guests workspace's own tracked
+    /// files. CI and the regenerate script carry the same pin and run on
+    /// every push, so a drift there fails loudly on its own; these two
+    /// surface only when somebody scaffolds. The prose above each pin is
+    /// its own — one speaks of a package, the other of the workspace —
+    /// so what is held identical is the pin, from `[toolchain]` on.
+    #[test]
+    fn the_scaffolded_pins_are_the_guests_workspaces_own() {
+        let pin = |text: &str| {
+            let at = text.find("[toolchain]").expect("a toolchain section");
+            text[at..].to_owned()
+        };
+        assert_eq!(
+            pin(super::TOOLCHAIN),
+            pin(include_str!("../../../guests/rust-toolchain.toml")),
+            "the scaffold ships new authors the workspace's own toolchain"
+        );
+        assert_eq!(
+            super::CARGO_CONFIG,
+            include_str!("../../../guests/.cargo/config.toml"),
+            "the scaffold ships new authors the workspace's own link terms"
+        );
+    }
+
     /// A member carries the crate alone and joins the members list in
     /// sorted position. Everything else — profile, pins, build
     /// configuration — is the workspace's to state once, and restating
