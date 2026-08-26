@@ -1935,6 +1935,15 @@ fn judge_prefixes(
 /// The requirement one entry puts on a frame speaking as `speaking_for`,
 /// or nothing where it demands nothing of it.
 ///
+/// **A frame speaks for itself.** An entry the executing instance's own
+/// claim already satisfies is not appended at all — which reproduces the
+/// derivation gate exactly, leaves a rule naming a badge meaning
+/// delegated authority, and costs the ordinary issuer nothing. The
+/// extension is this entry's alone and never the node's evidence: a
+/// claim on the target minted into that set would satisfy every
+/// `Claim(SelfAddr)` gate standing beside it, which is the shape an
+/// account's own spending gates take.
+///
 /// The one door every actor question goes through. What separates
 /// issuance, destruction and reach is where the entry is found — a
 /// declaration derives one, a presented record carries the other two —
@@ -1983,23 +1992,6 @@ fn injected_entry(
     }))
 }
 
-/// Resolve the resource this frame issues, and inject the authority
-/// entries its direction is held to.
-///
-/// The entry comes from the declaration rather than from a presented
-/// record, and the asymmetry with a movement entry is the honest one: a
-/// movement rule governs a resource a *caller* named, so the presented
-/// record is what makes it trustworthy; an issuance rule governs one the
-/// *declaration* derives, and re-derivation is the address itself.
-///
-/// **A frame speaks for itself.** An entry the executing instance's own
-/// claim already satisfies is not appended at all — which reproduces the
-/// derivation gate exactly, leaves a rule naming a badge meaning
-/// delegated issuance, and costs the ordinary issuer nothing. The
-/// extension is this entry's alone and never the node's evidence: a
-/// claim on the target minted into that set would satisfy every
-/// `Claim(SelfAddr)` gate standing beside it, which is the shape an
-/// account's own spending gates take.
 /// A requirement the protocol put on a frame, and the entry that put it
 /// there.
 ///
@@ -2010,6 +2002,10 @@ fn injected_entry(
 /// carried out of the injection rather than pushed into the frame and
 /// forgotten: the rule alone says what must hold and cannot say who
 /// asked, and a key is a hash that inverts to nothing.
+///
+/// [`Condition`] keeps the same provenance one layer down, where a
+/// frame's conditions join every other frame's in the union
+/// declaration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Injected {
     /// What must hold, resolved: every holding a key under the party the
@@ -2055,6 +2051,14 @@ fn judged_claims(rule: &StoredRule) -> Option<Rule<JudgedLeaf>> {
     .ok()
 }
 
+/// Resolve the resource this frame issues, and inject the authority
+/// entries its direction is held to.
+///
+/// The entry comes from the declaration rather than from a presented
+/// record, and the asymmetry with a movement entry is the honest one: a
+/// movement rule governs a resource a *caller* named, so the presented
+/// record is what makes it trustworthy; an issuance rule governs one the
+/// *declaration* derives, and re-derivation is the address itself.
 fn inject_issuance_rules(
     hasher: &dyn Hasher,
     signature: &MethodSignature,

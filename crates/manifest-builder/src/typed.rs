@@ -710,17 +710,17 @@ impl<'a> TypedBuilder<'a> {
             .map(|value| value.unwrap_or_else(unknown))
             .collect();
 
-        // The claims this call's injected entries will ask for, minted
-        // ahead of it — before the node index is read, since each is a
-        // node of its own. Only where the author presented nothing: a
-        // proof they composed is one they meant, and a second beside it
-        // would be the builder overruling them.
         // What the resources this call moves and the authority it
         // exercises demand of it — admission's own injection, mirrored,
         // because none of it is anything the signature says. Computed
-        // whether or not the author presented something: it is what
-        // says a proof is wanted here, and where nothing can mint one
-        // it is still the answer.
+        // whether or not the author presented something: it is what says
+        // a proof is wanted here, and where nothing can mint one it is
+        // still the answer.
+        //
+        // Minted ahead of the call, since each claim is a node of its
+        // own, and only where the author presented nothing: a proof they
+        // composed is one they meant, and a second beside it would be
+        // the builder overruling them.
         let wanted = self.earned(signature, target, meta, &args, &values, &known);
         let earned = if proofs.is_empty() {
             wanted
