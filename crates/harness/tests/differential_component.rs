@@ -613,3 +613,61 @@ fn leaked_borrows_agree() -> Result<()> {
     assert_eq!(outcome, LaneOutcome::BorrowsRemain);
     Ok(())
 }
+
+/// A kernel import the world does not give the shape the guest declared
+/// for it.
+///
+/// `site-len` names a site and nothing else; this asks for one parameter
+/// more. The profile admits it — imports are gated on the interface a
+/// name belongs to, not on the signature behind it — so the artifact is
+/// deployable, and what each engine makes of it is the question.
+const ARITY_MISMATCH_WAT: &str = r#"(component
+  (import "hyperscale:kernel/state" (instance $state
+    (export "site" (type $ac (sub resource)))
+    (export "site-len" (func (param "c" (borrow $ac)) (param "extra" u32) (result u32)))))
+  (alias export $state "site-len" (func $len))
+  (core func $len_lowered (canon lower (func $len)))
+  (core module $m
+    (import "state" "site-len" (func $len (param i32 i32) (result i32)))
+    (func (export "run") (result i32) (i32.const 0) (i32.const 0) (call $len))
+    (memory (export "memory") 1 1))
+  (core instance $si (export "site-len" (func $len_lowered)))
+  (core instance $inst (instantiate $m (with "state" (instance $si))))
+  (func (export "run") (result u32) (canon lift (core func $inst "run")))
+)"#;
+
+/// A deployable artifact whose import disagrees with the world refuses on
+/// both engines, at the same moment, and neither aborts.
+///
+/// The blessed engine's linker refuses it: nothing it holds matches what
+/// the component asked for. The spec has to reach the same verdict
+/// before any body runs, because after instantiation it has only the
+/// module's word for how many values a call takes — and taking that word
+/// means reading arguments the caller never pushed, off the end of the
+/// stack.
+#[test]
+fn a_kernel_import_of_the_wrong_shape_refuses_on_both_engines() -> Result<()> {
+    let bytes = parse_str(ARITY_MISMATCH_WAT)?;
+    validate_component(&bytes).expect("the profile admits it: the interface is the kernel's");
+
+    // Decoding is structural and says nothing about the world, so the
+    // spec gets this far exactly as it does for a well-formed guest.
+    let comp = RefComponent::decode(&bytes)?;
+    let refused = RefComponentInstance::instantiate(&comp, session(&fixture()), u64::MAX)
+        .err()
+        .map(|(_, error)| format!("{error:?}"))
+        .expect("the spec refuses what the world does not provide");
+    assert!(
+        refused.contains("site-len"),
+        "the refusal names the import that disagreed: {refused}"
+    );
+
+    let engine = blessed_engine()?;
+    let component = Component::from_binary(&engine, &bytes)?;
+    let mut store = Store::new(&engine, ());
+    Linker::new(&engine)
+        .instantiate(&mut store, &component)
+        .expect_err("the blessed engine refuses it too");
+
+    Ok(())
+}

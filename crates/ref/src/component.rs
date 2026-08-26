@@ -852,6 +852,33 @@ enum ResolvedItem {
     Table(u32),
 }
 
+/// How many core parameters a lowered canon function takes.
+///
+/// The same answer [`CanonDispatch::param_count`] gives, reachable before
+/// a store exists — instantiation is where a disagreement between what a
+/// module declared and what the world provides has to be caught, because
+/// after it the interpreter has no way to tell the two apart.
+fn host_param_count(comp: &RefComponent, id: u32) -> Result<usize, DecodeError> {
+    match comp
+        .core_funcs
+        .get(id as usize)
+        .ok_or_else(|| DecodeError::Malformed("core func index".to_string()))?
+    {
+        CoreFuncDef::ResourceDrop { .. } => Ok(1),
+        CoreFuncDef::Lower { func, .. } => match comp
+            .comp_funcs
+            .get(*func as usize)
+            .ok_or_else(|| DecodeError::Malformed("component func index".to_string()))?
+        {
+            CompFunc::Host(op) => Ok(host_params(*op)),
+            CompFunc::Lifted { .. } => Ok(0),
+        },
+        CoreFuncDef::Alias { .. } => Err(DecodeError::Malformed(
+            "an alias is not a canon function".to_string(),
+        )),
+    }
+}
+
 /// Resolves a core-function index to a callable address; alias entries look
 /// up already-built instances.
 fn resolve_core_func(
@@ -1117,7 +1144,34 @@ impl<'c, H: KernelHost> RefComponentInstance<'c, H> {
                             DecodeError::Malformed(format!("missing export {}", import.name))
                         })?;
                         match (import.kind, item) {
-                            (CoreImportKind::Func(_), ResolvedItem::Func(addr)) => {
+                            (CoreImportKind::Func(ty), ResolvedItem::Func(addr)) => {
+                                // A kernel import the module declared with
+                                // the wrong shape is refused here, where
+                                // the blessed engine's linker refuses it:
+                                // the world fixes what each operation
+                                // takes, and a lowered import whose core
+                                // type disagrees would have the
+                                // interpreter read arguments the caller
+                                // never pushed.
+                                if let FuncAddr::Canon(id) = addr {
+                                    let declared = m
+                                        .types
+                                        .get(ty as usize)
+                                        .ok_or_else(|| {
+                                            DecodeError::Malformed("import type index".to_string())
+                                        })?
+                                        .params
+                                        .len();
+                                    let expected = host_param_count(comp, *id)?;
+                                    if declared != expected {
+                                        return Err(DecodeError::Malformed(format!(
+                                            "import {} takes {declared} parameters where the \
+                                             kernel world gives it {expected}",
+                                            import.name
+                                        ))
+                                        .into());
+                                    }
+                                }
                                 imported_funcs.push(*addr);
                             }
                             (CoreImportKind::Memory, ResolvedItem::Memory(mem)) => {

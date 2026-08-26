@@ -503,6 +503,11 @@ fn dispatch_call(
             module.func_type(func).params.len()
         }
     };
+    if stack.len() < param_count {
+        return Err(ExecError::Canon(CanonError::Internal(
+            "a call reached its arity with fewer values than the stack holds",
+        )));
+    }
     let args = split_top(stack, param_count);
     let results = call(modules, canon, store, addr, args)?;
     stack.extend(results);
@@ -611,8 +616,14 @@ fn branch(stack: &mut Vec<Value>, control: &mut Vec<Label>, depth: usize, pc: &m
     is_loop
 }
 
+/// The top `n` values, or the whole stack where it holds fewer.
+///
+/// Saturating rather than panicking: every caller's `n` comes from a
+/// declared arity, and a declaration disagreeing with the stack is a
+/// refusal the caller raises — never an abort of the process running the
+/// interpreter, which would take a node down over one artifact.
 fn split_top(stack: &mut Vec<Value>, n: usize) -> Vec<Value> {
-    stack.split_off(stack.len() - n)
+    stack.split_off(stack.len().saturating_sub(n))
 }
 
 const fn extend(bytes: &[u8]) -> [u8; 8] {
