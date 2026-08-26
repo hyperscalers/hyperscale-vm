@@ -159,6 +159,20 @@ fn the_lowering_refuses_authority_a_caller_names() {
     refuse.compile_fail("tests/refusals/caller_named_threshold.rs");
 }
 
+/// A method carries one gate.
+///
+/// The gate attributes are collected before any is read, so a second one
+/// — a `#[proves]` beside a `#[requires]`, or the same attribute twice —
+/// is refused with both spans on the line. Reading the first and
+/// stripping the rest would enforce less than the author wrote, without
+/// a word.
+#[test]
+fn the_lowering_refuses_a_second_gate() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/two_gates.rs");
+    refuse.compile_fail("tests/refusals/duplicate_requires.rs");
+}
+
 /// Possession is not a rule leaf, at any depth.
 ///
 /// `#[requires]` is a match over presented claims and `#[proves]` is

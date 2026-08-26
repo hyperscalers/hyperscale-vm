@@ -1,0 +1,11 @@
+error: a method carries one gate — combine what it asks into a single `#[requires(…)]`
+  --> tests/refusals/duplicate_requires.rs:13:9
+   |
+13 |         #[requires(self)]
+   |         ^^^^^^^^^^^^^^^^^
+
+error: the gate this method already carries
+  --> tests/refusals/duplicate_requires.rs:12:9
+   |
+12 |         #[requires(self)]
+   |         ^^^^^^^^^^^^^^^^^

@@ -295,66 +295,82 @@ pub fn parse_gate(
                 )
             })
     };
-    for attr in &method.attrs {
-        if attr.path().is_ident("requires") {
-            return parse_requires(attr, declared, params);
-        }
-        if attr.path().is_ident("proves") {
-            let claim: syn::Expr = attr.parse_args()?;
-            // `proves(self)`: satisfying one's own stored rule, minting
-            // one's own identity.
-            if let syn::Expr::Path(path) = &claim
-                && path.path.is_ident("self")
-            {
-                let auth = syn::Ident::new("auth", claim.span());
-                return Ok(Gate::Authorizing(cell(&auth)?));
-            }
-            let auth = syn::Ident::new("auth", claim.span());
-            let rule = cell(&auth)?;
-            let position = |named: &syn::Ident| {
-                params
-                    .iter()
-                    .position(|(p, _)| named == p.as_str())
-                    .map(|index| {
-                        u32::try_from(index).expect("a parameter list is shorter than u32")
-                    })
-                    .ok_or_else(|| syn::Error::new(named.span(), "not a parameter of this method"))
-            };
-            // `proves(badge)` and `proves(badge[id])`: the stored rule,
-            // possession of the badge, and the badge's mint.
-            return match &claim {
-                syn::Expr::Path(badge) => {
-                    let badge = badge.path.require_ident()?;
-                    Ok(Gate::Custodial {
-                        rule,
-                        badge: position(badge)?,
-                        id: None,
-                    })
-                }
-                syn::Expr::Index(index) => {
-                    let (syn::Expr::Path(badge), syn::Expr::Path(id)) =
-                        (index.expr.as_ref(), index.index.as_ref())
-                    else {
-                        return Err(syn::Error::new(
-                            index.span(),
-                            "an instance claim is written `badge[id]`, both parameters of \
-                             this method",
-                        ));
-                    };
-                    Ok(Gate::Custodial {
-                        rule,
-                        badge: position(badge.path.require_ident()?)?,
-                        id: Some(position(id.path.require_ident()?)?),
-                    })
-                }
-                _ => Err(syn::Error::new(
-                    claim.span(),
-                    "a call proves `self`, a badge parameter, or `badge[id]`",
-                )),
-            };
-        }
+    // Collected before any is read, because a method's gate is one gate:
+    // reading the first and stopping would take a second attribute's word
+    // for nothing while `strip` removed it, and a declaration that is
+    // silently smaller than what the author wrote is the failure this
+    // derivation must not have.
+    let mut gates = method
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("requires") || attr.path().is_ident("proves"));
+    let Some(attr) = gates.next() else {
+        return Ok(Gate::Public);
+    };
+    if let Some(second) = gates.next() {
+        let mut refusal = syn::Error::new_spanned(
+            second,
+            "a method carries one gate — combine what it asks into a single `#[requires(…)]`",
+        );
+        refusal.combine(syn::Error::new_spanned(
+            attr,
+            "the gate this method already carries",
+        ));
+        return Err(refusal);
     }
-    Ok(Gate::Public)
+    if attr.path().is_ident("requires") {
+        return parse_requires(attr, declared, params);
+    }
+    let claim: syn::Expr = attr.parse_args()?;
+    // `proves(self)`: satisfying one's own stored rule, minting
+    // one's own identity.
+    if let syn::Expr::Path(path) = &claim
+        && path.path.is_ident("self")
+    {
+        let auth = syn::Ident::new("auth", claim.span());
+        return Ok(Gate::Authorizing(cell(&auth)?));
+    }
+    let auth = syn::Ident::new("auth", claim.span());
+    let rule = cell(&auth)?;
+    let position = |named: &syn::Ident| {
+        params
+            .iter()
+            .position(|(p, _)| named == p.as_str())
+            .map(|index| u32::try_from(index).expect("a parameter list is shorter than u32"))
+            .ok_or_else(|| syn::Error::new(named.span(), "not a parameter of this method"))
+    };
+    // `proves(badge)` and `proves(badge[id])`: the stored rule,
+    // possession of the badge, and the badge's mint.
+    match &claim {
+        syn::Expr::Path(badge) => {
+            let badge = badge.path.require_ident()?;
+            Ok(Gate::Custodial {
+                rule,
+                badge: position(badge)?,
+                id: None,
+            })
+        }
+        syn::Expr::Index(index) => {
+            let (syn::Expr::Path(badge), syn::Expr::Path(id)) =
+                (index.expr.as_ref(), index.index.as_ref())
+            else {
+                return Err(syn::Error::new(
+                    index.span(),
+                    "an instance claim is written `badge[id]`, both parameters of \
+                     this method",
+                ));
+            };
+            Ok(Gate::Custodial {
+                rule,
+                badge: position(badge.path.require_ident()?)?,
+                id: Some(position(id.path.require_ident()?)?),
+            })
+        }
+        _ => Err(syn::Error::new(
+            claim.span(),
+            "a call proves `self`, a badge parameter, or `badge[id]`",
+        )),
+    }
 }
 
 /// The tracer calls a gate becomes.
