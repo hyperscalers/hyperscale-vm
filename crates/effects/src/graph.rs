@@ -74,7 +74,7 @@ pub const MAX_EVIDENCE_PER_NODE: usize = 8;
 /// callee, so a call into one package cannot carry authority the author
 /// meant for another. Two of the three sources are scoped to the node's
 /// own intent — a signature proof to the intent whose signature produced
-/// it, a node proof to the intent whose node minted it. A socket is the
+/// it, a node proof to the intent whose node proved it. A socket is the
 /// one that is not, which is why the declaration shapes it and the
 /// composition answers for what fills it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
@@ -82,11 +82,11 @@ pub enum EvidenceRef {
     /// The proof the enclosing intent's own signature produces, carrying
     /// the identity of whoever signed that intent.
     IntentSignature,
-    /// The proof an earlier node of the same intent minted, carrying the
+    /// The proof an earlier node of the same intent proved, carrying the
     /// identity of that node's target.
     ///
     /// Admission resolves the index against the intent's own node list
-    /// and refuses one that is not earlier or whose method does not mint.
+    /// and refuses one that is not earlier or whose method does not prove.
     /// Nothing checks the proof later: if the producing node's own gate
     /// refuses, that node aborts the transaction, so a consumer only ever
     /// runs in a world where the producer succeeded.
@@ -96,9 +96,9 @@ pub enum EvidenceRef {
     ///
     /// A node reference names a node of the same intent, and a signer
     /// signs their own intent whole, so nothing inside an intent can
-    /// reach a proof somebody else's node mints. A socket can: the
+    /// reach a proof somebody else's node proves. A socket can: the
     /// declaration shapes it with the claim it wants and the composition
-    /// names the node that mints one, so the signer signs which
+    /// names the node that proves one, so the signer signs which
     /// authority they asked for and the composer answers for finding it.
     Socket(u32),
 }
@@ -178,7 +178,7 @@ impl GraphNode {
         }
     }
 
-    /// A call presenting the proof the intent's node `producer` minted —
+    /// A call presenting the proof drawn from the intent's node `producer` —
     /// what a guarded method takes.
     #[must_use]
     pub fn bearing(

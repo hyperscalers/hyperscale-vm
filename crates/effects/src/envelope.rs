@@ -89,7 +89,7 @@ pub enum Socket {
     /// The claim is the declaration's, so a holder signs *which
     /// authority they are asking for* and never who supplies it — and
     /// admission presents that claim alone, never whatever else the
-    /// minting node happened to mint, so a composition cannot smuggle
+    /// proving node happened to prove, so a composition cannot smuggle
     /// authority into an intent its signer never offered.
     Authority(Claim),
 }
@@ -159,11 +159,11 @@ pub enum Binding {
         /// The produced edge within that intent's graph.
         edge: EdgeRef,
     },
-    /// The claim node `producer` of `intent` mints.
+    /// The claim node `producer` of `intent` proves.
     Authority {
         /// The producing intent, numbered as above.
         intent: u32,
-        /// The minting node within that intent's graph.
+        /// The proving node within that intent's graph.
         producer: u32,
     },
 }

@@ -39,7 +39,7 @@ use crate::vocabulary::{HALT, VAULT};
 /// derivation gate exactly, leaves a rule naming a badge meaning
 /// delegated authority, and costs the ordinary issuer nothing. The
 /// extension is this entry's alone and never the node's evidence: a
-/// claim on the target minted into that set would satisfy every
+/// claim on the target proven into that set would satisfy every
 /// `Claim(SelfAddr)` gate standing beside it, which is the shape an
 /// account's own spending gates take.
 ///
@@ -312,7 +312,7 @@ pub(super) fn inject_reach_rules(
         // The frame speaks for itself here as it does at every other
         // injected authority entry: an issuer whose own entry names it
         // is the authority, and asking it to prove it is asking for a
-        // claim on a component, which only that component can mint.
+        // claim on a component, which only that component can prove.
         let entry = injected_entry(
             grants
                 .rules(resource)

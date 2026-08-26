@@ -5,7 +5,7 @@
 //! only name an earlier node and `ForwardEdge` has no spelling. A
 //! [`Bucket`] is not `Copy` and every consumption takes it by value, so
 //! `DoubleConsumption` is a move error at compile time. The one linearity
-//! rule an affine type cannot carry — every minted output *must* be
+//! rule an affine type cannot carry — every output edge *must* be
 //! consumed — is [`GraphBuilder::build`]'s check, surfaced as
 //! [`BuildError::DanglingOutput`] before a signature is ever made.
 
@@ -50,7 +50,7 @@ pub enum BuildError {
 /// signed form carries them: on the consuming argument, not the producer.
 #[derive(Debug)]
 pub struct Bucket {
-    /// The minting builder's identity; binding checks it, because an
+    /// The making builder's identity; binding checks it, because an
     /// edge reference is meaningless in any other builder's index space.
     pub(crate) builder: u64,
     /// The edge this handle stands for.
@@ -166,7 +166,7 @@ pub struct SocketRef {
 }
 
 /// Distinguishes concurrently live handle spaces — builders and
-/// envelopes draw from one sequence, so a [`Bucket`] minted by one
+/// envelopes draw from one sequence, so a [`Bucket`] made by one
 /// builder cannot be quietly spent in another's index space, and no
 /// envelope shares a provenance number with anything else alive.
 static NEXT_SPACE: AtomicU64 = AtomicU64::new(0);
@@ -193,14 +193,14 @@ pub(crate) fn next_space() -> u64 {
 pub struct GraphBuilder {
     id: u64,
     nodes: Vec<GraphNode>,
-    /// One entry per minted output, per node, in node order.
+    /// One entry per output edge, per node, in node order.
     outputs: Vec<Vec<Output>>,
     /// Where unconsumed outputs go at [`build`](Self::build), if the
     /// author named somewhere.
     rest: Option<PrincipalAddr>,
 }
 
-/// One minted output slot: what it carries, and whether anything took it.
+/// One output edge slot: what it carries, and whether anything took it.
 #[derive(Debug)]
 struct Output {
     resource: Option<ResourceAddr>,
@@ -252,11 +252,11 @@ impl GraphBuilder {
     ///
     /// # Panics
     ///
-    /// On a [`Bucket`] argument minted by a different builder, and on more
+    /// On a [`Bucket`] argument made by a different builder, and on more
     /// nodes or outputs than a `u32` can address — the latter far past
     /// [`MAX_MANIFEST_NODES`], which [`build`](Self::build) enforces as an
     /// error rather than a panic.
-    #[must_use = "every minted output must be consumed for the graph to build"]
+    #[must_use = "every output edge must be consumed for the graph to build"]
     pub fn call<const N: usize>(
         &mut self,
         target: impl Into<CallTarget>,
@@ -276,7 +276,7 @@ impl GraphBuilder {
     /// # Panics
     ///
     /// As [`call`](Self::call).
-    #[must_use = "every minted output must be consumed for the graph to build"]
+    #[must_use = "every output edge must be consumed for the graph to build"]
     pub fn call_signed<const N: usize>(
         &mut self,
         target: impl Into<CallTarget>,
@@ -302,7 +302,7 @@ impl GraphBuilder {
     /// # Panics
     ///
     /// As [`call`](Self::call).
-    #[must_use = "every minted output must be consumed for the graph to build"]
+    #[must_use = "every output edge must be consumed for the graph to build"]
     pub fn call_bearing<const N: usize>(
         &mut self,
         target: impl Into<CallTarget>,
@@ -318,7 +318,7 @@ impl GraphBuilder {
         )
     }
 
-    #[must_use = "every minted output must be consumed for the graph to build"]
+    #[must_use = "every output edge must be consumed for the graph to build"]
     fn call_presenting<const N: usize>(
         &mut self,
         target: impl Into<CallTarget>,
@@ -329,7 +329,7 @@ impl GraphBuilder {
         let args = args.bind_all(self);
         let producer = self.push(target.into(), method.into(), args, vec![None; N], evidence);
         std::array::from_fn(|output| {
-            self.mint(
+            self.edge(
                 producer,
                 u32::try_from(output).expect("more outputs than an edge can name"),
             )
@@ -376,15 +376,15 @@ impl GraphBuilder {
         producer
     }
 
-    /// A handle on one of a pushed node's minted outputs, carrying the
+    /// A handle on one of a pushed node's output edges, carrying the
     /// resource its producing signature typed the slot with.
     ///
     /// # Panics
     ///
-    /// On a slot this builder never minted.
-    pub(crate) fn mint(&self, producer: u32, output: u32) -> Bucket {
-        let slot = &self.outputs[usize::try_from(producer).expect("minted indices fit")]
-            [usize::try_from(output).expect("minted indices fit")];
+    /// On a slot this builder never made.
+    pub(crate) fn edge(&self, producer: u32, output: u32) -> Bucket {
+        let slot = &self.outputs[usize::try_from(producer).expect("edge indices fit")]
+            [usize::try_from(output).expect("edge indices fit")];
         Bucket {
             builder: self.id,
             edge: EdgeRef { producer, output },
@@ -417,11 +417,11 @@ impl GraphBuilder {
     ///
     /// # Panics
     ///
-    /// On a bucket minted by a different builder.
+    /// On a bucket made by a different builder.
     pub(crate) fn check(&self, bucket: &Bucket) {
         assert_eq!(
             bucket.builder, self.id,
-            "a bucket must be consumed by the builder that minted it"
+            "a bucket must be consumed by the builder that made it"
         );
     }
 
@@ -438,7 +438,7 @@ impl GraphBuilder {
     ///
     /// On a bucket carrying constraints — a yield's constraints are the
     /// declaration of the socket it fills, and accepting them here would
-    /// drop them silently — and on a bucket minted by a different builder.
+    /// drop them silently — and on a bucket made by a different builder.
     ///
     /// [`Binding`]: hyperscale_vm_effects::Binding
     #[allow(
@@ -455,16 +455,16 @@ impl GraphBuilder {
         bucket.edge
     }
 
-    /// Mark one minted output consumed. Called once per bucket by
+    /// Mark one output edge consumed. Called once per bucket by
     /// construction: every caller takes the bucket by value.
     fn consume(&mut self, edge: EdgeRef) {
-        let producer = usize::try_from(edge.producer).expect("minted indices fit");
-        let output = usize::try_from(edge.output).expect("minted indices fit");
+        let producer = usize::try_from(edge.producer).expect("edge indices fit");
+        let output = usize::try_from(edge.output).expect("edge indices fit");
         self.outputs[producer][output].consumed = true;
     }
 
     /// Emit the graph, checking the one linearity rule the handles cannot
-    /// carry: every minted output was consumed — by an argument or by
+    /// carry: every output edge was consumed — by an argument or by
     /// [`export`](Self::export).
     ///
     /// A builder carrying a [`rest_to`](Self::rest_to) policy deposits
@@ -482,7 +482,7 @@ impl GraphBuilder {
             // table the walk reads.
             let rests: Vec<EdgeRef> = self.dangling().collect();
             for edge in rests {
-                let arg = self.mint(edge.producer, edge.output).into_arg();
+                let arg = self.edge(edge.producer, edge.output).into_arg();
                 self.push(
                     sink.into(),
                     DEPOSIT_METHOD.into(),
@@ -504,7 +504,7 @@ impl GraphBuilder {
         Ok(ManifestGraph { nodes: self.nodes })
     }
 
-    /// Every minted output nothing has taken, in node order.
+    /// Every output edge nothing has taken, in node order.
     fn dangling(&self) -> impl Iterator<Item = EdgeRef> + '_ {
         self.outputs
             .iter()
@@ -515,8 +515,8 @@ impl GraphBuilder {
                     .enumerate()
                     .filter(|(_, slot)| !slot.consumed)
                     .map(move |(output, _)| EdgeRef {
-                        producer: u32::try_from(producer).expect("minted indices fit"),
-                        output: u32::try_from(output).expect("minted indices fit"),
+                        producer: u32::try_from(producer).expect("edge indices fit"),
+                        output: u32::try_from(output).expect("edge indices fit"),
                     })
             })
     }
@@ -641,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "the builder that minted it")]
+    #[should_panic(expected = "the builder that made it")]
     fn a_foreign_bucket_is_refused() {
         let mut minting = GraphBuilder::new();
         let [funds] = minting.call_signed(ALICE, "withdraw", (RES, 100u128));

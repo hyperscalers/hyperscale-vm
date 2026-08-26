@@ -291,7 +291,7 @@ pub fn interleave(
             // one: an argument consuming the edge that fills it, and
             // evidence presenting the proof that does. Both are
             // dependencies on another intent's node, and a proof left
-            // out of this scan would let a node present a claim minted
+            // out of this scan would let a node present a claim proven
             // after it ran.
             for socket in node.sockets() {
                 // An out-of-range socket carries no dependency; the

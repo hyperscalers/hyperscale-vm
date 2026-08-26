@@ -331,7 +331,7 @@ fn a_stored_rate_folds_to_an_exclusive_write_never_a_movement() {
         .iter()
         .map(|clause| match clause {
             Clause::Effect { reach: _, mode, .. } => mode.clone(),
-            Clause::ForEach { .. } | Clause::Requires { .. } | Clause::Mints { .. } => {
+            Clause::ForEach { .. } | Clause::Requires { .. } | Clause::Proves { .. } => {
                 panic!("the accrual maps over nothing and requires nothing")
             }
         })

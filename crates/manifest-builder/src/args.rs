@@ -24,7 +24,7 @@ mod sealed {
 /// One value that can bind as a node argument.
 pub trait Arg: sealed::Sealed {
     /// Bind against `builder`, whose only say is refusing an edge it did
-    /// not mint. Binding does not consume: the edge is spent when the node
+    /// not make. Binding does not consume: the edge is spent when the node
     /// carrying it is appended, so a layer that judges bound arguments
     /// before appending can refuse without having spent anything.
     fn bind(self, builder: &GraphBuilder) -> GraphArg;

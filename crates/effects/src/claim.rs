@@ -1,7 +1,7 @@
 //! What a proof carries.
 //!
 //! An authority verdict is a comparison, and this is the thing compared:
-//! the claim a gate mints and a rule names. One subject, and — where the
+//! the claim a gate proves and a rule names. One subject, and — where the
 //! subject is a non-fungible badge — which instance of it, because a
 //! claim that could not tell two holders of one badge apart would admit
 //! either wherever it named one.
@@ -13,7 +13,7 @@
 //! which site built it, and the three spellings of `issued(Badge)` that
 //! once meant three different things were what that cost.
 //!
-//! A claim is never caller-supplied. Every one is minted by a gate that
+//! A claim is never caller-supplied. Every one is proven by a gate that
 //! read state to verify it, resolved at admission from what the target's
 //! own declaration names, so widening what a proof says widens nothing
 //! about who may say it.
@@ -73,7 +73,7 @@ impl Claim {
     /// value that names no claim at all.
     ///
     /// An address that is neither callable nor a resource — a package, a
-    /// protocol role — names no claim: no gate mints one, so a rule
+    /// protocol role — names no claim: no gate proves one, so a rule
     /// naming one could never be satisfied anyway, and refusing it at the
     /// naming is the honest spelling of that.
     #[must_use]
@@ -143,7 +143,7 @@ mod tests {
         // Every class, so each one's answer is written down rather than
         // left to whichever ones a case happened to list. An address
         // that is neither callable nor a resource names no claim: no
-        // gate can mint one, so a rule naming one could never be
+        // gate can prove one, so a rule naming one could never be
         // satisfied — refused at the naming instead.
         let claimed = [
             (AddressClass::Principal, Names::Callable),

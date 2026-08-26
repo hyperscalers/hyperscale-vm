@@ -227,7 +227,7 @@ pub mod account {
 
         /// Nothing but its own gate, like `authorize`: the kernel judges
         /// the holder's rule and the badge-keyed vault before the export
-        /// runs, and what the call mints is the badge's address.
+        /// runs, and what the call proves is the badge's address.
         ///
         /// For a fungible badge, where holding any of it is the whole
         /// claim. One instance of a non-fungible one is `present-instance`.
@@ -236,7 +236,7 @@ pub mod account {
 
         /// The same gate over one instance: the kernel judges the
         /// holder's rule and the holdings entry at `id` before the
-        /// export runs, and the call mints that instance and the badge
+        /// export runs, and the call proves that instance and the badge
         /// it is an instance of.
         ///
         /// Both, because a holder of an instance holds the badge — so a

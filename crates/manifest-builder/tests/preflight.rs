@@ -344,7 +344,7 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
 #[test]
 fn a_threshold_is_satisfiable_where_enough_branches_are() {
     assert!(!Authority::TargetHasNoKey.satisfiable());
-    assert!(Authority::MintedInTransaction.satisfiable());
+    assert!(Authority::ProvenInTransaction.satisfiable());
     let one_of = |branches| Authority::Threshold { count: 1, branches };
     assert!(one_of(vec![Authority::TargetHasNoKey, Authority::Signature(ALICE)]).satisfiable());
     assert!(!one_of(vec![Authority::TargetHasNoKey]).satisfiable());
@@ -366,7 +366,7 @@ fn venue_metadata() -> PackageMetadata {
         "approve".into(),
         MethodSignature {
             totality: Totality::Fallible,
-            effects: vec![Clause::Mints {
+            effects: vec![Clause::Proves {
                 guard: None,
                 claim: Expr::SelfAddr,
             }],
@@ -417,7 +417,7 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
     let ticket = ticket_meta().address(&TestHasher);
 
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
-    let approval = root.call_minting(venue, "approve", ()).unwrap();
+    let approval = root.call_proving(venue, "approve", ()).unwrap();
     let alice = account::authorize(&mut root, ALICE).unwrap();
     let funds = root
         .call_presenting(&[alice, approval], ALICE, "withdraw", (ticket, 3u128))
@@ -439,7 +439,7 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
         withdrawing.authority,
         Authority::Threshold {
             count: 2,
-            branches: vec![Authority::Signature(ALICE), Authority::MintedInTransaction,],
+            branches: vec![Authority::Signature(ALICE), Authority::ProvenInTransaction,],
         }
     );
     assert_eq!(report.unsatisfiable().count(), 0);

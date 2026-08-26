@@ -131,7 +131,7 @@ proptest! {
             // No `resource_is` anywhere below: `withdraw` declares its
             // output's type and `take` carries it, so the assertions are
             // the signatures' rather than the author's.
-            let proof = b.call_minting(ACCOUNTS[t.from], "authorize", ()).unwrap();
+            let proof = b.call_proving(ACCOUNTS[t.from], "authorize", ()).unwrap();
             let mut funds = b.call_as(proof, ACCOUNTS[t.from], "withdraw", (RES, t.amount)).unwrap().one().unwrap();
             if let Some((min, max)) = t.bounds {
                 funds = funds.min(min).max(max);

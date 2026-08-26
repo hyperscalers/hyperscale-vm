@@ -223,7 +223,7 @@ pub(crate) fn admit_intents(
         budget: &budget,
         outputs: Vec::with_capacity(total),
         consumed: Vec::with_capacity(total),
-        minted: Vec::with_capacity(total),
+        proven: Vec::with_capacity(total),
         lowered: Vec::with_capacity(total),
         frames: Vec::with_capacity(total),
         injected: Vec::with_capacity(total),
@@ -289,7 +289,7 @@ impl Resolved {
 
 /// The admission accumulator: everything one interleaved walk threads
 /// through [`admit_intents`] — the tree's one budget, the outputs and
-/// consumption each node's edges resolve against, the minted claims,
+/// consumption each node's edges resolve against, the proven claims,
 /// the lowered nodes, and the union declaration.
 struct Admission<'a> {
     intents: &'a [IntentView<'a>],
@@ -317,12 +317,12 @@ struct Admission<'a> {
     outputs: Vec<Vec<(ResourceAddr, EdgeContent)>>,
     /// Consumption count per output slot, per flattened node.
     consumed: Vec<Vec<u32>>,
-    /// What each flattened node mints: an authorizing method's own
+    /// What each flattened node proves: an authorizing method's own
     /// identity, a custodial method's badge, and an empty set from
     /// anything else. A proof drawn from a node draws the whole set, so
     /// a gate that verifies more than one thing about its caller
     /// presents all of it.
-    minted: Vec<Vec<Claim>>,
+    proven: Vec<Vec<Claim>>,
     lowered: Vec<Node>,
     frames: Vec<FrameDeclaration>,
     /// What the protocol put on each frame, beside it.
@@ -472,9 +472,9 @@ impl Admission<'_> {
             self.declaration.set.insert(access.effect)?;
             self.declaration.ordered.push(*access);
         }
-        // What this node mints is read off its declared clauses, the
+        // What this node proves is read off its declared clauses, the
         // widening already applied where the evaluation resolved them.
-        self.minted.push(frame.mints);
+        self.proven.push(frame.proves);
         self.frames.push(FrameDeclaration {
             node: node_index,
             ordered: frame.ordered,
@@ -908,10 +908,10 @@ impl Admission<'_> {
                     evidence.push(Claim::of_subject(signer));
                 }
                 EvidenceRef::Node(producer) => {
-                    // An earlier node of the same intent, whose minted
+                    // An earlier node of the same intent, whose proven
                     // claims — the target's own statement, resolved when
                     // that node was judged — are what this proof
-                    // presents. A node that minted nothing mints an
+                    // presents. A node that proved nothing proves an
                     // empty set, which is nothing to present.
                     let flat = usize::try_from(*producer)
                         .ok()
@@ -924,16 +924,16 @@ impl Admission<'_> {
                             producer: *producer,
                         })?;
                     let claims = self
-                        .minted
+                        .proven
                         .get(flat)
                         .filter(|claims| !claims.is_empty())
-                        .ok_or_else(|| AdmissionError::UnmintingProof {
+                        .ok_or_else(|| AdmissionError::ProvesNothing {
                             intent: Self::intent_of(intent_index),
                             node: local,
                             producer: *producer,
                         })?;
                     // Charged, because the copy is the cost. A claim is
-                    // evaluated once by the node that mints it and then
+                    // evaluated once by the node that proves it and then
                     // carried by every later node presenting that node's
                     // proof, so the work an envelope does here is the
                     // product of two caps rather than either of them —
@@ -951,7 +951,7 @@ impl Admission<'_> {
                     // A socket the declaration typed and the composition
                     // filled. What is presented is the claim the
                     // *declaration* named — never whatever else the
-                    // minting node happened to mint — so a composition
+                    // proving node happened to prove — so a composition
                     // cannot hand an intent authority its signer never
                     // asked for.
                     let Some((
@@ -984,13 +984,13 @@ impl Admission<'_> {
                             socket: *reference,
                         })?;
                     // The interleave orders a node after every socket it
-                    // reaches, so the minting node has been judged and
+                    // reaches, so the proving node has been judged and
                     // its claims are in hand.
-                    let minted = self
-                        .minted
+                    let proven = self
+                        .proven
                         .get(source)
-                        .expect("the interleave orders the minting node earlier");
-                    if !minted.contains(wanted) {
+                        .expect("the interleave orders the proving node earlier");
+                    if !proven.contains(wanted) {
                         return Err(AdmissionError::SocketClaimMismatch {
                             intent: Self::intent_of(intent_index),
                             node: local,

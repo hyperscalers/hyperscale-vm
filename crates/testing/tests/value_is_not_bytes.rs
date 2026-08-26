@@ -325,7 +325,7 @@ fn one_slot_is_not_a_vault_in_one_method_and_a_byte_cell_in_another() {
 // ─── and a badge is held, never declared ───────────────────────────────
 
 /// `arm(badge)` writes the two cells a custody gate reads; `present(badge)`
-/// is the custodial method that would mint the badge claim off them.
+/// is the custodial method that would prove the badge claim off them.
 fn impostor() -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
@@ -372,7 +372,7 @@ fn impostor() -> PackageMetadata {
                         expect: Presence::Present,
                     }),
                 },
-                Clause::Mints {
+                Clause::Proves {
                     guard: None,
                     claim: Expr::Arg(0),
                 },
@@ -509,9 +509,9 @@ fn a_badge_a_package_never_held_opens_nothing() {
     });
     assert_eq!(armed.aborted(), Some(AbortReason::HandleWrongMode));
 
-    // So the gate reads an empty vault and mints nothing.
+    // So the gate reads an empty vault and proves nothing.
     let outcome = chain.transact(ATTACKER, |b| {
-        let proof = b.call_minting(front, "present", (Address::from(BADGE),))?;
+        let proof = b.call_proving(front, "present", (Address::from(BADGE),))?;
         let funds = b.call_as(proof, vault, "payout", (500_000_u64,))?.one()?;
         account::deposit(b, ATTACKER, funds)
     });

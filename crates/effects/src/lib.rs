@@ -109,7 +109,7 @@ pub use rule::{
     StoredRule, always, never, well_formed,
 };
 pub use signature::{
-    AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MAX_MINTS_PER_SIGNATURE,
+    AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MAX_PROVEN_PER_SIGNATURE,
     MethodSignature, ParamType, Totality,
 };
 pub use star::{MAX_STAGED_DEPTH, Role, StarShape, Strategy, classify};

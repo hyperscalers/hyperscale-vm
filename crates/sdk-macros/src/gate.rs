@@ -307,7 +307,7 @@ pub fn parse_gate(
         return parse_requires(attr, declared, params);
     }
     let claim: syn::Expr = attr.parse_args()?;
-    // `proves(self)`: satisfying one's own stored rule, minting
+    // `proves(self)`: satisfying one's own stored rule, proving
     // one's own identity.
     if let syn::Expr::Path(path) = &claim
         && path.path.is_ident("self")

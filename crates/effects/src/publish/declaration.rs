@@ -183,23 +183,23 @@ pub enum DeclarationError {
          rule saying who may"
     )]
     IssuanceUnadmitted(GrantedBehaviour),
-    /// A mint no condition justifies: minting one's own identity takes
-    /// satisfying one's own stored rule, and letting a declaration mint
+    /// A proof no condition justifies: proving one's own identity takes
+    /// satisfying one's own stored rule, and letting a declaration prove
     /// without one would be forgeable identity.
-    #[error("mint clause {clause} is justified by no stored-rule condition beside it")]
-    UnjustifiedMint {
+    #[error("proves clause {clause} is justified by no stored-rule condition beside it")]
+    UnjustifiedProof {
         /// The clause's position in a preorder walk of the signature's
         /// effects.
         clause: u32,
     },
-    /// A badge mint whose possession read is missing, or keyed by a
+    /// A badge proof whose possession read is missing, or keyed by a
     /// different expression than the claim — which would let the claim
-    /// minted and the thing held name different resources.
+    /// proven and the thing held name different resources.
     #[error(
-        "mint clause {clause} mints a badge without the possession condition keyed by the \
+        "proves clause {clause} proves a badge without the possession condition keyed by the \
          same expression"
     )]
-    MintUnheld {
+    ProofUnheld {
         /// The clause's position in a preorder walk of the signature's
         /// effects.
         clause: u32,
@@ -1304,7 +1304,7 @@ fn check_conditions(flat: &[&Clause]) -> Result<(), DeclarationError> {
 /// expression writes both.
 fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
     for (index, clause) in flat.iter().enumerate() {
-        let Clause::Mints { guard, claim } = clause else {
+        let Clause::Proves { guard, claim } = clause else {
             continue;
         };
         let clause = u32::try_from(index).unwrap_or(u32::MAX);
@@ -1322,7 +1322,7 @@ fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
             )
         });
         if !justified {
-            return Err(DeclarationError::UnjustifiedMint { clause });
+            return Err(DeclarationError::UnjustifiedProof { clause });
         }
         let possession = match claim {
             // The target's own identity: the stored rule alone is the
@@ -1354,7 +1354,7 @@ fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
             )
         });
         if !held {
-            return Err(DeclarationError::MintUnheld { clause });
+            return Err(DeclarationError::ProofUnheld { clause });
         }
     }
     Ok(())
@@ -1756,7 +1756,7 @@ mod tests {
                 expect: Presence::Present,
             }),
         };
-        let mints = |claim| Clause::Mints { guard: None, claim };
+        let proves = |claim| Clause::Proves { guard: None, claim };
         let declared = |clauses: Vec<Clause>| {
             check_declarations(&MethodSignature {
                 effects: clauses,
@@ -1769,14 +1769,14 @@ mod tests {
             declared(vec![
                 read(TargetExpr::Point(auth_cell())),
                 satisfies(),
-                mints(Expr::SelfAddr),
+                proves(Expr::SelfAddr),
             ]),
             Ok(())
         );
         // No stored-rule condition beside it: forgeable identity.
         assert_eq!(
-            declared(vec![mints(Expr::SelfAddr)]),
-            Err(DeclarationError::UnjustifiedMint { clause: 0 })
+            declared(vec![proves(Expr::SelfAddr)]),
+            Err(DeclarationError::UnjustifiedProof { clause: 0 })
         );
         assert_eq!(
             declared(vec![
@@ -1784,9 +1784,9 @@ mod tests {
                     guard: None,
                     rule: RuleExpr::claim(Expr::Config(0)),
                 },
-                mints(Expr::SelfAddr),
+                proves(Expr::SelfAddr),
             ]),
-            Err(DeclarationError::UnjustifiedMint { clause: 1 }),
+            Err(DeclarationError::UnjustifiedProof { clause: 1 }),
             "a claim-only rule verifies no stored authority"
         );
 
@@ -1799,13 +1799,13 @@ mod tests {
                 read_vault(possession_key.clone()),
                 satisfies(),
                 holds(vault(possession_key)),
-                mints(Expr::Config(0)),
+                proves(Expr::Config(0)),
             ])
         };
         assert_eq!(badge_mint(Expr::Config(0)), Ok(()));
         assert_eq!(
             badge_mint(Expr::Config(1)),
-            Err(DeclarationError::MintUnheld { clause: 5 }),
+            Err(DeclarationError::ProofUnheld { clause: 5 }),
             "possession of some other cell holds nothing about this claim"
         );
         // Possession required, but never stated at all.
@@ -1813,9 +1813,9 @@ mod tests {
             declared(vec![
                 read(TargetExpr::Point(auth_cell())),
                 satisfies(),
-                mints(Expr::Config(0)),
+                proves(Expr::Config(0)),
             ]),
-            Err(DeclarationError::MintUnheld { clause: 2 })
+            Err(DeclarationError::ProofUnheld { clause: 2 })
         );
     }
 

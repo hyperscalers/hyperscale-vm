@@ -132,19 +132,19 @@ pub enum TypedError {
     /// A guarded call composed without a proof — admission's
     /// [`SignatureForGuarded`](hyperscale_vm_effects::AdmissionError::SignatureForGuarded)
     /// verdict, reached at the call site. A signature signs in through
-    /// an authorizing method; what it mints there is what a guarded
+    /// an authorizing method; what it proves there is what a guarded
     /// method takes.
-    #[error("`{method}` takes a minted proof; a signature only signs in")]
+    #[error("`{method}` takes a proven claim; a signature only signs in")]
     SignatureForGuarded {
         /// The method called.
         method: String,
     },
-    /// A proof requested from a method that does not mint — admission's
-    /// [`UnmintingProof`](hyperscale_vm_effects::AdmissionError::UnmintingProof)
+    /// A proof requested from a method that proves nothing — admission's
+    /// [`ProvesNothing`](hyperscale_vm_effects::AdmissionError::ProvesNothing)
     /// verdict, reached where the proof is requested rather than where it
     /// would be presented.
-    #[error("`{method}` mints no identity")]
-    UnmintingProof {
+    #[error("`{method}` proves no claim")]
+    ProvesNothing {
         /// The method called.
         method: String,
     },
@@ -165,7 +165,7 @@ pub enum TypedError {
     Build(#[from] BuildError),
 }
 
-/// The identity an authorizing node mints, as a later call of the same
+/// The identity an authorizing node proves, as a later call of the same
 /// graph presents it.
 ///
 /// A node reference rather than a value edge: nothing is conserved, and
@@ -178,7 +178,7 @@ pub enum TypedError {
 #[derive(Clone, Copy, Debug)]
 #[must_use = "an unpresented proof authorizes nothing"]
 pub struct Proof {
-    /// The builder that minted it. A node index means nothing in another
+    /// The builder that proved it. A node index means nothing in another
     /// intent's graph, so presenting a foreign proof would compile and
     /// then surface at admission in flattened-tree coordinates — the
     /// failure this tier exists to catch at the compose site.
@@ -217,13 +217,13 @@ impl Proof {
         }
     }
 
-    /// Refuse a proof this builder did not mint, on [`Bucket`]'s terms.
+    /// Refuse a proof this builder did not prove, on [`Bucket`]'s terms.
     ///
     /// [`Bucket`]: crate::Bucket
     pub(crate) fn check(&self, builder: u64) {
         assert_eq!(
             self.builder, builder,
-            "a proof must be presented by the builder that minted it"
+            "a proof must be presented by the builder that proved it"
         );
     }
 
@@ -331,17 +331,17 @@ pub struct TypedBuilder<'a> {
     /// declaration to it. A wrong name is a refusal at the node that
     /// reads it, never a forgery.
     signer: PrincipalAddr,
-    /// The nodes already minting a claim, so a second call wanting one
+    /// The nodes already proving a claim, so a second call wanting one
     /// presents the same proof rather than composing a second node.
-    minted: BTreeMap<(Address, Option<u64>), Proof>,
+    proven: BTreeMap<(Address, Option<u64>), Proof>,
     /// The claims whose proof is being composed further up the stack.
     ///
-    /// A proof is minted by a call, and that call earns claims of its
-    /// own; where one of them is the claim being minted, presenting it
+    /// A proof is proven by a call, and that call earns claims of its
+    /// own; where one of them is the claim being proven, presenting it
     /// again would recurse without end. The memo above cannot break the
     /// cycle — its entry is written only once the node exists, which is
     /// after the recursion. A claim named here is left to the ancestor
-    /// already minting it, so a self-earning account metadata a hostile
+    /// already proving it, so a self-earning account metadata a hostile
     /// chain serves refuses at admission rather than overflowing here.
     ///
     /// An entry is written on the way in and taken out on the way back,
@@ -351,14 +351,14 @@ pub struct TypedBuilder<'a> {
     presenting: BTreeSet<(Address, Option<u64>)>,
 }
 
-/// How deep the composer will chain proofs it mints for itself.
+/// How deep the composer will chain proofs it proves for itself.
 ///
 /// Repetition is what the `presenting` memo catches, and a chain that
 /// never repeats escapes it: each badge's record can name a claim on a
 /// fresh badge, so the metadata an untrusted chain view serves decides
 /// how far this walk goes. The claims are what the *resources* a call
 /// names demand, so a legitimate chain is one badge whose movement is
-/// gated on holding another; the protocol's own account mints from
+/// gated on holding another; the protocol's own account proves from
 /// bodies that declare nothing at all and never reaches two.
 const MAX_PRESENT_DEPTH: usize = 4;
 
@@ -371,7 +371,7 @@ impl<'a> TypedBuilder<'a> {
             chain,
             hasher,
             signer,
-            minted: BTreeMap::new(),
+            proven: BTreeMap::new(),
             presenting: BTreeSet::new(),
         }
     }
@@ -432,7 +432,7 @@ impl<'a> TypedBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// On a [`Bucket`] argument minted by a different builder.
+    /// On a [`Bucket`] argument made by a different builder.
     pub fn call(
         &mut self,
         target: impl Into<CallTarget>,
@@ -492,8 +492,8 @@ impl<'a> TypedBuilder<'a> {
             .map(|(_, outputs)| outputs)
     }
 
-    /// Append an invocation of `method`, a minting method of `target`,
-    /// and return the proof it mints.
+    /// Append an invocation of `method`, a proving method of `target`,
+    /// and return the proof it proves.
     ///
     /// The call presents the intent's signature proof to its own gate —
     /// signing in starts from a signature. The arguments are the gate's
@@ -502,22 +502,22 @@ impl<'a> TypedBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// [`TypedError::UnmintingProof`] when the method's accessibility
-    /// does not mint, and everything [`call`](Self::call) refuses.
+    /// [`TypedError::ProvesNothing`] when the method's accessibility
+    /// proves nothing, and everything [`call`](Self::call) refuses.
     ///
     /// # Panics
     ///
     /// As [`call`](Self::call).
-    pub fn call_minting(
+    pub fn call_proving(
         &mut self,
         target: impl Into<CallTarget>,
         method: &str,
         args: impl Args,
     ) -> Result<Proof, TypedError> {
-        self.mint(target.into(), method, args, &[])
+        self.prove(target.into(), method, args, &[])
     }
 
-    /// The same minting call, presenting `proof` instead of the intent's
+    /// The same proving call, presenting `proof` instead of the intent's
     /// signature — how a target whose stored rule names another
     /// account's identity is signed into through that account's own
     /// sign-in, and the only way in when the rule names no key the
@@ -525,44 +525,44 @@ impl<'a> TypedBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// As [`call_minting`](Self::call_minting).
+    /// As [`call_proving`](Self::call_proving).
     ///
     /// # Panics
     ///
     /// As [`call`](Self::call).
-    pub fn call_minting_as(
+    pub fn call_proving_as(
         &mut self,
         proof: Proof,
         target: impl Into<CallTarget>,
         method: &str,
         args: impl Args,
     ) -> Result<Proof, TypedError> {
-        self.mint(target.into(), method, args, &[proof])
+        self.prove(target.into(), method, args, &[proof])
     }
 
-    /// The same minting call, presenting every proof in `proofs`.
+    /// The same proving call, presenting every proof in `proofs`.
     ///
-    /// What a minting gate over a threshold takes, and the general form
+    /// What a proving gate over a threshold takes, and the general form
     /// the two above are the empty and one-proof cases of.
     ///
     /// # Errors
     ///
-    /// As [`call_minting`](Self::call_minting).
+    /// As [`call_proving`](Self::call_proving).
     ///
     /// # Panics
     ///
     /// As [`call`](Self::call).
-    pub fn call_minting_presenting(
+    pub fn call_proving_presenting(
         &mut self,
         proofs: &[Proof],
         target: impl Into<CallTarget>,
         method: &str,
         args: impl Args,
     ) -> Result<Proof, TypedError> {
-        self.mint(target.into(), method, args, proofs)
+        self.prove(target.into(), method, args, proofs)
     }
 
-    fn mint<A: Args>(
+    fn prove<A: Args>(
         &mut self,
         target: CallTarget,
         method: &str,
@@ -570,13 +570,13 @@ impl<'a> TypedBuilder<'a> {
         proofs: &[Proof],
     ) -> Result<Proof, TypedError> {
         let (_, package) = self.resolve(target, method)?;
-        if !package.methods[method].mints() {
-            return Err(TypedError::UnmintingProof {
+        if !package.methods[method].proves() {
+            return Err(TypedError::ProvesNothing {
                 method: method.to_owned(),
             });
         }
         // Judged before the call is appended, so the refusal leaves the
-        // graph exactly as it was: a minting call whose outputs would
+        // graph exactly as it was: a proving call whose outputs would
         // dangle never becomes a node the author has to unwind.
         let declared = package.methods[method].outputs.len();
         if declared != 0 {
@@ -629,10 +629,10 @@ impl<'a> TypedBuilder<'a> {
     /// from, and decided there: a prediction that comes up short refuses
     /// at admission.
     ///
-    /// What it can mint is what the protocol's own account offers: the
+    /// What it can prove is what the protocol's own account offers: the
     /// signer's own identity, and a badge the signer holds. A claim on
     /// anything else — another party's identity, a component's — is one
-    /// no composer can mint, and it is left for whoever can.
+    /// no composer can prove, and it is left for whoever can.
     fn earned(
         &self,
         signature: &MethodSignature,
@@ -647,7 +647,7 @@ impl<'a> TypedBuilder<'a> {
         earned_claims(signature, args, &inputs, known, self.chain, self.hasher)
     }
 
-    /// The node minting `claim`, composing one where this intent has
+    /// The node proving `claim`, composing one where this intent has
     /// none yet.
     ///
     /// Both forms are the account's own and both are satisfied by the
@@ -655,13 +655,13 @@ impl<'a> TypedBuilder<'a> {
     /// signer's own address — so neither takes a proof of its own and
     /// the composition stays one node deep.
     ///
-    /// Answers `None` for a claim it will not mint, which is what the
-    /// two bounds below and an unmintable subject all come back as: the
+    /// Answers `None` for a claim it will not prove, which is what the
+    /// two bounds below and an unprovable subject all come back as: the
     /// claim is left to whoever can, exactly as one on another party's
     /// identity always was.
     fn present(&mut self, claim: Claim) -> Option<Proof> {
         let key = (claim.subject, claim.instance);
-        if let Some(proof) = self.minted.get(&key) {
+        if let Some(proof) = self.proven.get(&key) {
             return Some(*proof);
         }
         // Past the depth a chain of gated badges is composed to; the
@@ -670,22 +670,22 @@ impl<'a> TypedBuilder<'a> {
         if self.presenting.len() >= MAX_PRESENT_DEPTH {
             return None;
         }
-        // Already minting this claim's proof further up the stack; the
+        // Already proving this claim's proof further up the stack; the
         // ancestor call will file it, and recursing to compose a second
         // would not terminate.
         if !self.presenting.insert(key) {
             return None;
         }
         let signer = self.signer;
-        let minted = match (claim.subject.class(), claim.instance) {
+        let proven = match (claim.subject.class(), claim.instance) {
             (AddressClass::Principal, None) if claim.subject == signer.address() => {
-                self.mint(signer.into(), AUTHORIZE_METHOD, (), &[]).ok()
+                self.prove(signer.into(), AUTHORIZE_METHOD, (), &[]).ok()
             }
             (AddressClass::Resource | AddressClass::Restricted, None) => self
-                .mint(signer.into(), PRESENT_BADGE_METHOD, (claim.subject,), &[])
+                .prove(signer.into(), PRESENT_BADGE_METHOD, (claim.subject,), &[])
                 .ok(),
             (AddressClass::Resource | AddressClass::Restricted, Some(id)) => self
-                .mint(
+                .prove(
                     signer.into(),
                     PRESENT_INSTANCE_METHOD,
                     (claim.subject, id),
@@ -695,13 +695,13 @@ impl<'a> TypedBuilder<'a> {
             _ => None,
         };
         self.presenting.remove(&key);
-        let minted = minted?;
-        self.minted.insert(key, minted);
-        Some(minted)
+        let proven = proven?;
+        self.proven.insert(key, proven);
+        Some(proven)
     }
 
     /// The graph's identity, for the handles that must remember which
-    /// builder minted them.
+    /// builder made them.
     pub(crate) const fn graph_id(&self) -> u64 {
         self.graph.id()
     }
@@ -751,7 +751,7 @@ impl<'a> TypedBuilder<'a> {
         // exercises demand of it — admission's own injection, mirrored,
         // because none of it is anything the signature says. Computed
         // whether or not the author presented something: it is what says
-        // a proof is wanted here, and where nothing can mint one it is
+        // a proof is wanted here, and where nothing can prove one it is
         // still the answer.
         //
         // Minted ahead of the call, since each claim is a node of its
@@ -761,7 +761,7 @@ impl<'a> TypedBuilder<'a> {
         let wanted = self.earned(signature, target, meta, &args, &values, &known);
         // A signature signs in, so it reaches only a gate that reads a
         // rule; a claim a declaration names takes a proof. Judged before
-        // anything is minted ahead of the call, so the refusal leaves
+        // anything is proven ahead of the call, so the refusal leaves
         // the graph exactly as it was — the sign-in nodes the walk below
         // appends are only ever appended for a call that goes on to
         // reference them.
@@ -790,7 +790,7 @@ impl<'a> TypedBuilder<'a> {
 
         // The signature says which methods take evidence at all, so no
         // call site has to. Signing in starts from the intent's
-        // signature; everything guarded presents proofs minted earlier —
+        // signature; everything guarded presents claims proven earlier —
         // more than one where the gate is a threshold, since satisfying
         // two of three means presenting two.
         let evidence = match (signature.requires_evidence(), proofs) {
@@ -817,7 +817,7 @@ impl<'a> TypedBuilder<'a> {
             }
             // A method reading only a rule takes the intent's signature;
             // the guarded case was refused above, before anything was
-            // minted ahead of the call.
+            // proven ahead of the call.
             (true, []) => BTreeSet::from([EvidenceRef::IntentSignature]),
             (true, presented) => presented.iter().map(|proof| proof.reference()).collect(),
         };
@@ -828,7 +828,7 @@ impl<'a> TypedBuilder<'a> {
         let buckets = (0..outputs)
             .map(|slot| {
                 let slot = u32::try_from(slot).expect("outputs are bounded by the signature");
-                self.graph.mint(producer, slot)
+                self.graph.edge(producer, slot)
             })
             .collect();
         Ok((
@@ -847,7 +847,7 @@ impl<'a> TypedBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// On a bucket carrying constraints, or one minted by a different
+    /// On a bucket carrying constraints, or one made by a different
     /// builder.
     pub fn export(&mut self, bucket: Bucket) -> EdgeRef {
         self.graph.export(bucket)
@@ -872,7 +872,7 @@ impl<'a> TypedBuilder<'a> {
         &mut self.graph
     }
 
-    /// Emit the graph, checking that every minted output was consumed.
+    /// Emit the graph, checking that every output edge was consumed.
     ///
     /// # Errors
     ///

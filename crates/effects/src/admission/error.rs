@@ -251,14 +251,14 @@ pub enum AdmissionError {
         /// The behaviour the entry governs.
         behaviour: GrantedBehaviour,
     },
-    /// A proof socket bound to a node that does not mint the claim the
+    /// A proof socket bound to a node that does not prove the claim the
     /// declaration named.
     ///
     /// What makes a socket worth signing: the signer says which
     /// authority they are asking for, and a composition that supplies
     /// some other one is refused rather than quietly presenting it. A
-    /// filling node that minted nothing at all is the same refusal —
-    /// no claim it minted matches, because it minted none.
+    /// filling node that proved nothing at all is the same refusal —
+    /// no claim it proved matches, because it proved none.
     ///
     /// A socket is declared per intent, so the intent is what says which
     /// socket `socket` names — and the node is stated in the same
@@ -300,7 +300,7 @@ pub enum AdmissionError {
         /// The offending node.
         node: u32,
     },
-    /// A signature proof presented to a method that only minted proofs
+    /// A signature proof presented to a method that only proven claims
     /// open.
     ///
     /// A signature signs in; a proof acts. The identity a signature
@@ -308,7 +308,7 @@ pub enum AdmissionError {
     /// address still holds its account's authority is state only the
     /// account's rule knows — so the one gate a signature may reach is
     /// an authorizing one, where that rule is read.
-    #[error("node {node} presents a signature proof to a method only a minted proof opens")]
+    #[error("node {node} presents a signature proof to a method only a proven claim opens")]
     SignatureForGuarded {
         /// The offending node.
         node: u32,
@@ -330,15 +330,15 @@ pub enum AdmissionError {
         /// The producer the proof claims, in that intent.
         producer: u32,
     },
-    /// A proof drawn from a node whose method mints no identity.
+    /// A proof drawn from a node whose method proves no claim.
     ///
     /// Both indices are the intent's own, so this refusal and the one
     /// above read in one numbering — a composer comparing them is
     /// comparing the same two things.
     #[error(
-        "intent {intent}: node {node} draws a proof from node {producer}, whose method does not mint"
+        "intent {intent}: node {node} draws a proof from node {producer}, whose method proves nothing"
     )]
-    UnmintingProof {
+    ProvesNothing {
         /// The intent both indices are numbered within.
         intent: u32,
         /// The consuming node, in that intent.
@@ -730,7 +730,7 @@ impl AdmissionError {
             // Stated in the intent's own numbering, because the other
             // index in the sentence has no flattened form.
             Self::ForwardProof { intent, node, .. }
-            | Self::UnmintingProof { intent, node, .. }
+            | Self::ProvesNothing { intent, node, .. }
             | Self::ForwardEdge { intent, node, .. }
             | Self::UnknownSocket { intent, node, .. }
             | Self::SocketClaimMismatch { intent, node, .. } => Placed {

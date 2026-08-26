@@ -354,7 +354,7 @@ fn every_authored_method_declares_who_may_call_it() {
                         Clause::Requires { rule, .. } if !rule.reads_state_only() => {
                             requires.push(rule.clone());
                         }
-                        Clause::Mints { claim, .. } => mints.push(claim.clone()),
+                        Clause::Proves { claim, .. } => mints.push(claim.clone()),
                         _ => {}
                     }
                 }

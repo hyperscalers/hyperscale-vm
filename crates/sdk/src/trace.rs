@@ -188,7 +188,7 @@ impl Trace {
             },
             Clause::ForEach { list, body, .. } => Clause::ForEach { guard, list, body },
             Clause::Requires { rule, .. } => Clause::Requires { guard, rule },
-            Clause::Mints { claim, .. } => Clause::Mints { guard, claim },
+            Clause::Proves { claim, .. } => Clause::Proves { guard, claim },
         }
     }
 
@@ -774,7 +774,7 @@ impl Trace {
             guard: None,
             rule: governs(cell),
         });
-        self.emit(Clause::Mints {
+        self.emit(Clause::Proves {
             guard: None,
             claim: Expr::SelfAddr,
         });
@@ -808,7 +808,7 @@ impl Trace {
     pub fn custodial(&mut self, badge: &Sym<Addr>) {
         let badge = self.lower(badge.expr().clone());
         self.custody(badge.clone());
-        self.emit(Clause::Mints {
+        self.emit(Clause::Proves {
             guard: None,
             claim: badge,
         });
@@ -821,7 +821,7 @@ impl Trace {
         let badge = self.lower(badge.expr().clone());
         let id = self.lower(id.expr().clone());
         self.custody(badge.clone());
-        self.emit(Clause::Mints {
+        self.emit(Clause::Proves {
             guard: None,
             claim: Expr::Tuple(vec![badge, id]),
         });

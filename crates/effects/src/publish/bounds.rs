@@ -15,7 +15,7 @@ use crate::rule::{
     never,
 };
 use crate::signature::{
-    AbiParam, MAX_ISSUANCES_PER_SIGNATURE, MAX_MINTS_PER_SIGNATURE, MethodSignature,
+    AbiParam, MAX_ISSUANCES_PER_SIGNATURE, MAX_PROVEN_PER_SIGNATURE, MethodSignature,
 };
 use crate::types::{MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, value_within_width};
 
@@ -75,9 +75,9 @@ pub enum SignatureBoundsError {
     /// More issuances than one signature may carry.
     #[error("a method issues more than {MAX_ISSUANCES_PER_SIGNATURE} resources")]
     TooManyIssuances,
-    /// More minting clauses than one signature may carry.
-    #[error("a method mints more than {MAX_MINTS_PER_SIGNATURE} claims")]
-    TooManyMints,
+    /// More proving clauses than one signature may carry.
+    #[error("a method proves more than {MAX_PROVEN_PER_SIGNATURE} claims")]
+    TooManyProves,
     /// A granted rule naming a badge whose own rules name a badge.
     #[error("a granted rule names a badge whose own rules name a badge")]
     BadgeChainTooDeep,
@@ -154,13 +154,13 @@ pub(super) fn check_signature_bounds(signature: &MethodSignature) -> Result<(), 
             .map_err(at(SignatureSite::Issuance(position(index))))?;
     }
     let mut declared = 0usize;
-    let mut minted = 0usize;
+    let mut proven = 0usize;
     let mut number = 0u32;
     check_clause_bounds(
         &signature.effects,
         0,
         &mut declared,
-        &mut minted,
+        &mut proven,
         &mut number,
     )
 }
@@ -169,7 +169,7 @@ fn check_clause_bounds(
     clauses: &[Clause],
     depth: usize,
     declared: &mut usize,
-    minted: &mut usize,
+    proven: &mut usize,
     number: &mut u32,
 ) -> Result<(), PlacedBounds> {
     if depth > MAX_CLAUSE_DEPTH {
@@ -210,7 +210,7 @@ fn check_clause_bounds(
                     check_expr_bounds(cond, 0).map_err(at)?;
                 }
                 check_expr_bounds(list, 0).map_err(at)?;
-                check_clause_bounds(body, depth + 1, declared, minted, number)?;
+                check_clause_bounds(body, depth + 1, declared, proven, number)?;
             }
             Clause::Requires { guard, rule } => {
                 if let Some(cond) = guard {
@@ -222,7 +222,7 @@ fn check_clause_bounds(
                 }
                 check_rule_bounds(rule).map_err(at)?;
             }
-            Clause::Mints { guard, claim } => {
+            Clause::Proves { guard, claim } => {
                 if let Some(cond) = guard {
                     check_expr_bounds(cond, 0).map_err(at)?;
                 }
@@ -230,13 +230,13 @@ fn check_clause_bounds(
                 if *declared > MAX_EFFECTS_PER_SIGNATURE {
                     return Err(at(SignatureBoundsError::TooManyEffects));
                 }
-                // Minting carries its own ceiling as well as the shared
+                // Proving carries its own ceiling as well as the shared
                 // one: what a mint costs is not the clause but the copy
                 // every later node presenting it makes, so the shared
                 // budget is the wrong size to bound it by.
-                *minted += 1;
-                if *minted > MAX_MINTS_PER_SIGNATURE {
-                    return Err(at(SignatureBoundsError::TooManyMints));
+                *proven += 1;
+                if *proven > MAX_PROVEN_PER_SIGNATURE {
+                    return Err(at(SignatureBoundsError::TooManyProves));
                 }
                 check_expr_bounds(claim, 0).map_err(at)?;
             }
@@ -617,20 +617,20 @@ mod tests {
     /// wrong size for a set every later node presenting this one copies.
     #[test]
     fn a_signature_minting_more_than_a_gate_needs_is_refused() {
-        let mints = Clause::Mints {
+        let proves = Clause::Proves {
             guard: None,
             claim: Expr::SelfAddr,
         };
         let with = |count: usize| {
             one_method(MethodSignature {
                 totality: Totality::Fallible,
-                effects: vec![mints.clone(); count],
+                effects: vec![proves.clone(); count],
                 ..MethodSignature::default()
             })
         };
         assert_bounded(
-            &with(MAX_MINTS_PER_SIGNATURE),
-            &with(MAX_MINTS_PER_SIGNATURE + 1),
+            &with(MAX_PROVEN_PER_SIGNATURE),
+            &with(MAX_PROVEN_PER_SIGNATURE + 1),
         );
     }
 

@@ -26,7 +26,7 @@ use crate::resource::{
     GrantedBehaviour, GrantsExpr, GrantsResolveError, ResourceGrants, ResourceKind, ResourceMeta,
 };
 use crate::rule::{Rule, RuleExpr, RuleLeaf};
-use crate::signature::MAX_MINTS_PER_SIGNATURE;
+use crate::signature::MAX_PROVEN_PER_SIGNATURE;
 use crate::types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_ITEMS, PACKAGE_SLOT_BASE, SlotId,
     Value, child_key, collection_id, granting_resource_address, order_key,
@@ -740,18 +740,18 @@ pub enum Clause {
         /// those its leaves reach and is stated nowhere.
         rule: RuleExpr,
     },
-    /// A claim this call mints as evidence for the intent's later nodes.
+    /// A claim this call proves as evidence for the intent's later nodes.
     ///
     /// Justified by a condition the same declaration carries, and the
-    /// publish check refuses one that is not: minting one's own identity
-    /// takes satisfying one's own stored rule, and minting a badge takes
+    /// publish check refuses one that is not: proving one's own identity
+    /// takes satisfying one's own stored rule, and proving a badge takes
     /// that plus holding it — the possession read keyed by the same
-    /// expression, so the claim minted and the thing held are one
+    /// expression, so the claim proven and the thing held are one
     /// resource because one expression writes both.
-    Mints {
+    Proves {
         /// When this clause is declared at all, or always where absent.
         guard: Option<Box<Expr>>,
-        /// What is minted: the target's own address for an identity, a
+        /// What is proven: the target's own address for an identity, a
         /// badge resource, or a `(badge, id)` pair for one instance.
         claim: Expr,
     },
@@ -765,7 +765,7 @@ impl Clause {
             Self::Effect { guard, .. }
             | Self::ForEach { guard, .. }
             | Self::Requires { guard, .. }
-            | Self::Mints { guard, .. } => match guard {
+            | Self::Proves { guard, .. } => match guard {
                 Some(cond) => Some(cond),
                 None => None,
             },
@@ -867,13 +867,13 @@ pub enum EvalError {
         /// The collection's length.
         len: usize,
     },
-    /// A declaration that evaluated to more minted claims than
-    /// [`MAX_MINTS_PER_SIGNATURE`]. Publish counts the `Mints` clauses
+    /// A declaration that evaluated to more proven claims than
+    /// [`MAX_PROVEN_PER_SIGNATURE`]. Publish counts the `Proves` clauses
     /// against the same cap, so this is reachable only where one clause
-    /// yields many claims — a `Mints` inside a `for-each`, multiplied by
+    /// yields many claims — a `Proves` inside a `for-each`, multiplied by
     /// the list a caller supplied.
-    #[error("the declaration mints more than {MAX_MINTS_PER_SIGNATURE} claims")]
-    MintsPastCap,
+    #[error("the declaration proves more than {MAX_PROVEN_PER_SIGNATURE} claims")]
+    ProvesPastCap,
     /// An expression nested past [`MAX_EXPR_DEPTH`].
     #[error("expression nests deeper than {MAX_EXPR_DEPTH}")]
     ExpressionTooDeep,
@@ -1190,10 +1190,10 @@ pub struct Declaration {
     /// [`Declaration::ordered`] — a condition is a judgment, not an
     /// access — and judged where each kind's state lives.
     pub conditions: Vec<Condition>,
-    /// The claims this declaration mints, evaluated, an instance mint
+    /// The claims this declaration proves, evaluated, an instance claim
     /// widened to its resource. What admission hands the intent's later
     /// nodes as this node's evidence.
-    pub mints: Vec<Claim>,
+    pub proves: Vec<Claim>,
     /// Whether each top-level clause was declared at all, in clause order.
     ///
     /// True where the clause carries no guard, and where its guard held.
@@ -1272,7 +1272,7 @@ impl Declaration {
         Self {
             clause_taken: vec![true; ordered.len()],
             conditions: Vec::new(),
-            mints: Vec::new(),
+            proves: Vec::new(),
             set,
             ordered,
             clause_spans,
@@ -1604,42 +1604,42 @@ fn eval_clauses(
                     out.conditions.push(Condition::declared(judged));
                 }
             }
-            Clause::Mints { claim, .. } => {
+            Clause::Proves { claim, .. } => {
                 budget.charge()?;
                 let value = eval_expr(claim, inputs, hasher, bindings, 0, budget)?;
-                let minted = Claim::of(&value).ok_or_else(|| EvalError::TypeMismatch {
+                let proven = Claim::of(&value).ok_or_else(|| EvalError::TypeMismatch {
                     expected: "claim",
                     found: value.kind(),
                 })?;
                 // A claim about something that is not a badge is a claim
                 // about somebody acting as themselves, and the only such
-                // claim a declaration may mint is its own target's,
+                // claim a declaration may prove is its own target's,
                 // spelled as itself: any other expression evaluating to
                 // a callable address would be forgeable — satisfying
                 // one's own stored rule is no feat — so the refusal is
                 // structural rather than the publish check's alone.
-                if minted.badge().is_none() && !matches!(claim, Expr::SelfAddr) {
+                if proven.badge().is_none() && !matches!(claim, Expr::SelfAddr) {
                     return Err(EvalError::TypeMismatch {
                         expected: "badge",
                         found: "identity",
                     });
                 }
-                let claim = minted;
-                out.mints.push(claim);
+                let claim = proven;
+                out.proves.push(claim);
                 // An instance holder holds the badge, so presenting one
                 // satisfies a rule naming the resource as well as a rule
-                // naming the instance. The widening happens at the mint,
+                // naming the instance. The widening happens where it is proven,
                 // where possession was verified, which is what keeps the
                 // judge an equality walk.
                 if claim.instance.is_some() {
-                    out.mints.push(Claim::of_subject(claim.subject));
+                    out.proves.push(Claim::of_subject(claim.subject));
                 }
                 // The cap is on the claims, and publish counting the
                 // clauses cannot see how many a loop yields — so the set
                 // every presenting node will copy is held to it here,
                 // where the multiplication happens.
-                if out.mints.len() > MAX_MINTS_PER_SIGNATURE {
-                    return Err(EvalError::MintsPastCap);
+                if out.proves.len() > MAX_PROVEN_PER_SIGNATURE {
+                    return Err(EvalError::ProvesPastCap);
                 }
             }
             Clause::ForEach { list, body, .. } => {
@@ -2577,7 +2577,7 @@ mod tests {
 
     use super::{
         Clause, EvalBudget, EvalError, EvalInputs, Expr, KERNEL_SLOT_BASE, MAX_CLAUSE_DEPTH,
-        MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_MINTS_PER_SIGNATURE, MAX_VALUE_ITEMS, ModeExpr,
+        MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_PROVEN_PER_SIGNATURE, MAX_VALUE_ITEMS, ModeExpr,
         NF_VAULT, PACKAGE_SLOT_BASE, SlotRef, TargetExpr, VAULT, evaluate_declaration,
         evaluate_effects, evaluate_expr, fresh_id, fresh_local,
     };
@@ -4054,11 +4054,11 @@ mod tests {
         );
     }
 
-    /// The minted set is capped where it is built, so one `Mints` clause
+    /// The proven set is capped where it is built, so one `Proves` clause
     /// in a `for-each` — which publish counts once — cannot yield more
     /// claims than the cap the count stands for.
     #[test]
-    fn a_loop_cannot_mint_past_the_signature_cap() {
+    fn a_loop_cannot_prove_past_the_signature_cap() {
         let badges = |n: usize| {
             Expr::Literal(Value::List(
                 (0..n)
@@ -4070,21 +4070,23 @@ mod tests {
                     .collect(),
             ))
         };
-        let minting = |n: usize| {
+        let proving = |n: usize| {
             [Clause::ForEach {
                 guard: None,
                 list: badges(n),
-                body: vec![Clause::Mints {
+                body: vec![Clause::Proves {
                     guard: None,
                     claim: Expr::Binding(0),
                 }],
             }]
         };
         let ins = inputs(&[], &[]);
-        assert!(evaluate_declaration(&minting(MAX_MINTS_PER_SIGNATURE), &ins, &TestHasher).is_ok());
+        assert!(
+            evaluate_declaration(&proving(MAX_PROVEN_PER_SIGNATURE), &ins, &TestHasher).is_ok()
+        );
         assert_eq!(
-            evaluate_declaration(&minting(MAX_MINTS_PER_SIGNATURE + 1), &ins, &TestHasher),
-            Err(EvalError::MintsPastCap),
+            evaluate_declaration(&proving(MAX_PROVEN_PER_SIGNATURE + 1), &ins, &TestHasher),
+            Err(EvalError::ProvesPastCap),
         );
     }
 

@@ -95,7 +95,7 @@ fn account() -> PackageMetadata {
         "authorize".into(),
         MethodSignature {
             totality: Totality::Fallible,
-            effects: vec![Clause::Mints {
+            effects: vec![Clause::Proves {
                 guard: None,
                 claim: Expr::SelfAddr,
             }],
@@ -125,7 +125,7 @@ fn account() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![
-                Clause::Mints {
+                Clause::Proves {
                     guard: None,
                     claim: Expr::SelfAddr,
                 },
@@ -155,7 +155,7 @@ fn a_minting_call_whose_outputs_would_dangle_appends_nothing() {
     let chain = Principals::new();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let refused = b
-        .call_minting(ALICE, "stash", ())
+        .call_proving(ALICE, "stash", ())
         .expect_err("a proof of a producing method would dangle its edge");
     assert!(matches!(refused, TypedError::OutputArity { .. }));
     let graph = b.build().expect("nothing dangles after a refusal");

@@ -232,7 +232,7 @@ fn evidence_is_presented_exactly_where_it_is_required() {
 }
 
 /// Authorize Alice, withdraw on her proof rather than on the signature,
-/// deposit to Bob — the minted-proof shape, fully consumed.
+/// deposit to Bob — the proven-claim shape, fully consumed.
 fn proof_graph() -> ManifestGraph {
     ManifestGraph {
         nodes: vec![
@@ -267,11 +267,11 @@ fn proof_graph() -> ManifestGraph {
     }
 }
 
-/// A minted proof resolves at admission to its producer's target — the
+/// A proven claim resolves at admission to its producer's target — the
 /// same address set an intent signature would have produced for a
 /// virtual account, reached through the authorizing node instead.
 #[test]
-fn a_minted_proof_resolves_to_its_producers_target() {
+fn a_proven_claim_resolves_to_its_producers_target() {
     let chain = setup();
     let admitted = admit(&proof_graph(), ALICE, &chain, &TestHasher).expect("admits");
 
@@ -312,12 +312,12 @@ fn a_minted_proof_resolves_to_its_producers_target() {
     let _ = route(&admitted, &resolver());
 }
 
-/// A custodian fixture: an authorizing method minting whatever identity
+/// A custodian fixture: an authorizing method proving whatever identity
 /// its metadata names, and a guarded method opening for the configured
 /// one.
-/// What the custodian's `present` method declares: `Identity` mints the
+/// What the custodian's `present` method declares: `Identity` proves the
 /// target's own address off its stored rule alone; the badge shapes add
-/// the possession read, its condition, and the badge's mint.
+/// the possession read, its condition, and what the badge proves.
 enum Presenting {
     Identity,
     Fungible(Expr),
@@ -348,7 +348,7 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
             expect: Presence::Present,
         }),
     };
-    let mints = |claim| Clause::Mints { guard: None, claim };
+    let proves = |claim| Clause::Proves { guard: None, claim };
     let vault = |badge: &Expr| {
         TargetExpr::Point(Expr::ChildKey {
             owner: Box::new(Expr::SelfAddr),
@@ -360,21 +360,21 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
         Presenting::Identity => vec![
             read(TargetExpr::Point(auth_cell())),
             satisfies(),
-            mints(Expr::SelfAddr),
+            proves(Expr::SelfAddr),
         ],
         Presenting::Fungible(badge) => vec![
             read(TargetExpr::Point(auth_cell())),
             read(vault(badge)),
             satisfies(),
             holds(vault(badge)),
-            mints(badge.clone()),
+            proves(badge.clone()),
         ],
         Presenting::Instance(badge, id) => vec![
             read(TargetExpr::Point(auth_cell())),
             read(holdings_entry(badge.clone(), id.clone())),
             satisfies(),
             holds(holdings_entry(badge.clone(), id.clone())),
-            mints(Expr::Tuple(vec![badge.clone(), id.clone()])),
+            proves(Expr::Tuple(vec![badge.clone(), id.clone()])),
         ],
     };
     let mut package = PackageMetadata::default();
@@ -386,11 +386,11 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
             ..MethodSignature::default()
         },
     );
-    // The gate names what the sign-in beside it mints: a badge where
+    // The gate names what the sign-in beside it proves: a badge where
     // the custodian presents one, and the custodian's own address where
     // it presents itself. Admission judges a claim rule against the
     // resolved evidence, so a fixture whose two halves named different
-    // subjects would be testing the mismatch rather than the mint.
+    // subjects would be testing the mismatch rather than the proving.
     let gated = match presenting {
         Presenting::Identity => Expr::SelfAddr,
         Presenting::Fungible(_) | Presenting::Instance(..) => Expr::Config(0),
@@ -564,7 +564,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     });
     assert_eq!(
         admit(&unminting, ALICE, &chain, &TestHasher),
-        Err(AdmissionError::UnmintingProof {
+        Err(AdmissionError::ProvesNothing {
             intent: 0,
             node: 3,
             producer: 2

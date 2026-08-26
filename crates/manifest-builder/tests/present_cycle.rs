@@ -92,7 +92,7 @@ fn hostile_account() -> PackageMetadata {
         "authorize".into(),
         MethodSignature {
             effects: vec![
-                Clause::Mints {
+                Clause::Proves {
                     guard: None,
                     claim: Expr::SelfAddr,
                 },
@@ -119,7 +119,7 @@ fn a_self_earning_account_does_not_recurse_without_end() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     // Without the cycle break this call recurses until the stack is
     // exhausted; the assertion is that it returns at all.
-    let _ = b.call_minting(ALICE, "authorize", ());
+    let _ = b.call_proving(ALICE, "authorize", ());
 }
 
 /// A chain view answering for every resource, each record naming a badge
@@ -202,7 +202,7 @@ fn chaining_account() -> PackageMetadata {
         MethodSignature {
             params: vec![ParamType::Address],
             effects: vec![
-                Clause::Mints {
+                Clause::Proves {
                     guard: None,
                     claim: Expr::SelfAddr,
                 },

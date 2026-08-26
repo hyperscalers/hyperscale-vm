@@ -360,8 +360,8 @@ fn an_intent_filling_its_own_socket_is_refused_at_the_wiring() {
 /// site rather than reaching admission as a claim mismatch in
 /// flattened-tree coordinates.
 #[test]
-#[should_panic(expected = "the builder that minted it")]
-fn a_proof_minted_by_another_intent_cannot_be_offered() {
+#[should_panic(expected = "the builder that proved it")]
+fn a_proof_proved_by_another_intent_cannot_be_offered() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();

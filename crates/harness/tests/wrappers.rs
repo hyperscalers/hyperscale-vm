@@ -209,7 +209,7 @@ fn the_empty_threshold_reaches_the_account() {
 }
 
 /// A chained sign-in composes and admits: the second authorize presents
-/// the first's minted proof rather than the intent's signature.
+/// the first's proven claim rather than the intent's signature.
 #[test]
 fn a_chained_sign_in_admits() {
     let graph = admits(|b| {
@@ -226,7 +226,7 @@ fn a_chained_sign_in_admits() {
 
 /// Misplaced evidence refuses at the call site, mirroring admission: a
 /// proof to a method admitting anyone, a bare signature to a guarded
-/// one, a minted proof asked of a method that mints nothing.
+/// one, a proof asked of a method that proves nothing.
 #[test]
 fn misplaced_evidence_is_refused_at_the_call_site() {
     let chain = world();
@@ -242,8 +242,8 @@ fn misplaced_evidence_is_refused_at_the_call_site() {
         Err(TypedError::SignatureForGuarded { .. })
     ));
     assert!(matches!(
-        b.call_minting(ALICE, "withdraw", ()),
-        Err(TypedError::UnmintingProof { .. })
+        b.call_proving(ALICE, "withdraw", ()),
+        Err(TypedError::ProvesNothing { .. })
     ));
 }
 

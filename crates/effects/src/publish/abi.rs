@@ -59,7 +59,7 @@ pub enum AbiError {
     },
     /// A handle binding naming a clause that declares no capability.
     ///
-    /// A handle is borrowed from an access, and a condition or a mint is
+    /// A handle is borrowed from an access, and a condition or a proves is
     /// neither an access nor a loop over them — so there is nothing for
     /// the parameter to be handed, at any site.
     #[error("ABI parameter {position} borrows clause {clause}, which declares no capability")]

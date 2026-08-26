@@ -905,13 +905,13 @@ impl Names<'_> {
                     self.rule(rule)
                 );
             }
-            Clause::Mints {
+            Clause::Proves {
                 guard: condition,
                 claim,
             } => {
                 let _ = writeln!(
                     out,
-                    "{pad}{number:>3}  {}mints {}",
+                    "{pad}{number:>3}  {}proves {}",
                     guard(condition),
                     self.expr(claim, ATOM)
                 );
@@ -1756,7 +1756,7 @@ mod tests {
                 list: Expr::IdsOf(Box::new(Expr::Arg(0))),
                 body: vec![read(Expr::Binding(0)), read(Expr::Binding(1))],
             },
-            Clause::Mints {
+            Clause::Proves {
                 guard: None,
                 claim: Expr::SelfAddr,
             },

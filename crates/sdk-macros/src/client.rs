@@ -46,11 +46,11 @@ pub enum Shape {
     /// than from an argument. `threshold` is where meeting it can take
     /// more than one claim, so a caller presents a set.
     Guarded { on_self: bool, threshold: bool },
-    /// The target's stored primary, minting the target's identity.
+    /// The target's stored primary, proving the target's identity.
     Authorizing,
-    /// A rule the target stores beside its primary, minting nothing.
+    /// A rule the target stores beside its primary, proving nothing.
     Governed,
-    /// The holder's rule and its possession of a badge, minting that
+    /// The holder's rule and its possession of a badge, proving that
     /// badge.
     Custodial,
 }
@@ -83,8 +83,8 @@ impl Shape {
         matches!(self, Self::Authorizing | Self::Governed | Self::Custodial)
     }
 
-    /// Whether naming the method mints evidence for later nodes.
-    const fn mints(self) -> bool {
+    /// Whether naming the method proves evidence for later nodes.
+    const fn proves(self) -> bool {
         matches!(self, Self::Authorizing | Self::Custodial)
     }
 }
@@ -252,7 +252,7 @@ fn produced(method: &Method) -> (TokenStream2, TokenStream2) {
 enum Presenting {
     /// The enclosing intent's own signature.
     Signature,
-    /// A proof an earlier node minted.
+    /// A proof an earlier node proved.
     Proof,
     /// A set of them: what a threshold takes, where one claim is not
     /// enough and the wrapper cannot say which are.
@@ -309,16 +309,16 @@ fn wrapper(
         Presenting::Signature => None,
     };
 
-    let (returns, body) = if method.shape.mints() {
+    let (returns, body) = if method.shape.proves() {
         let call = match presenting {
             Presenting::Signature => {
-                quote!(builder.call_minting(#target, #published, (#(#args,)*)))
+                quote!(builder.call_proving(#target, #published, (#(#args,)*)))
             }
             Presenting::Proof => {
-                quote!(builder.call_minting_as(proof, #target, #published, (#(#args,)*)))
+                quote!(builder.call_proving_as(proof, #target, #published, (#(#args,)*)))
             }
-            // A minting gate reads a rule, so it is never a threshold.
-            Presenting::Proofs => unreachable!("a minting gate presents one proof"),
+            // A proving gate reads a rule, so it is never a threshold.
+            Presenting::Proofs => unreachable!("a proving gate presents one proof"),
         };
         (quote!(#proof_ty), call)
     } else {
@@ -361,7 +361,7 @@ fn wrapper(
 /// Every wrapper one method takes.
 ///
 /// A gate that reads a rule can be satisfied by the intent's own
-/// signature or by a proof minted earlier, so it takes both forms; one
+/// signature or by a proof proven earlier, so it takes both forms; one
 /// that names an identity takes the proof alone, and a public method
 /// presents nothing at all.
 fn wrappers(method: &Method, serves: Serves) -> Vec<TokenStream2> {

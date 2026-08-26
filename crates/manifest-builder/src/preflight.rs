@@ -68,15 +68,15 @@ pub enum Authority {
     /// An identity no key derives — an instance's own address, or a
     /// configured slot holding one. Nothing signs for a hash of what an
     /// object is, so a method requiring one cannot be named by anyone —
-    /// except by carrying a proof that instance's own method minted,
-    /// which is [`MintedInTransaction`](Self::MintedInTransaction).
+    /// except by carrying a proof that instance's own method proved,
+    /// which is [`ProvenInTransaction`](Self::ProvenInTransaction).
     TargetHasNoKey,
     /// An identity no key derives, whose claim this node nonetheless
-    /// carries: a proof minted inside the transaction — the venue and
+    /// carries: a claim proven inside the transaction — the venue and
     /// registrar pattern — resolved from the node's own presented
     /// evidence. Satisfiable because it is already satisfied, so it
     /// never lands in [`Report::unsatisfiable`].
-    MintedInTransaction,
+    ProvenInTransaction,
     /// A badge the caller must present: possession of the resource, or
     /// of the one instance of it named here. No signature satisfies it
     /// on its own — the holder presents it through a custodial call,
@@ -121,7 +121,7 @@ impl Authority {
             | Self::Signature(_)
             | Self::StoredRule
             | Self::Held
-            | Self::MintedInTransaction
+            | Self::ProvenInTransaction
             | Self::Badge { .. } => true,
         }
     }
@@ -151,7 +151,7 @@ impl Authority {
             }
             Self::Anyone
             | Self::TargetHasNoKey
-            | Self::MintedInTransaction
+            | Self::ProvenInTransaction
             | Self::Held
             | Self::Badge { .. }
             | Self::Threshold { .. } => {}
@@ -173,7 +173,7 @@ impl Authority {
             | Self::StoredRule
             | Self::Held
             | Self::TargetHasNoKey
-            | Self::MintedInTransaction => {}
+            | Self::ProvenInTransaction => {}
         }
     }
 }
@@ -244,7 +244,7 @@ fn claimed(claim: &Claim, evidence: &[Claim]) -> Authority {
         // carrying one is the venue pattern, not a dead end.
         (None, Some(CallTarget::Component(_)) | None) => {
             if evidence.contains(claim) {
-                Authority::MintedInTransaction
+                Authority::ProvenInTransaction
             } else {
                 Authority::TargetHasNoKey
             }
