@@ -117,6 +117,45 @@ pub enum Rule<L> {
     },
 }
 
+/// Which stage's knowledge answers one leaf: the evidence a caller
+/// presents, the committed state, or the session a leg runs in.
+///
+/// Three stages know three things, and a leaf says which is enough —
+/// which is the whole input to where a rule is judged. Nothing declares
+/// a placement, and no reviewer has to check that a declaration stated
+/// one honestly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answers {
+    /// From what the caller presents: signed content, needing no state.
+    Evidence,
+    /// From committed state, before any body runs.
+    State,
+    /// From the session of the declaring node's own leg — the only stage
+    /// holding evidence and state together.
+    Session,
+}
+
+/// A rule's leaf, at whichever point of its life the rule is: authored,
+/// sealed, or evaluated.
+///
+/// One question — where is this leaf's answer — and every walk over a
+/// rule's placement is a fold over it, written once. That is also what
+/// holds the vocabulary's instantiations to one reading: a sealed leaf
+/// predicts what its evaluated twin will say because both answer here,
+/// per leaf, rather than in parallel folds kept agreeing by hand.
+pub trait Leaf {
+    /// Where this leaf's answer is.
+    fn answered_from(&self) -> Answers;
+
+    /// Whether this leaf's answer is in the store rather than in what a
+    /// caller presents — what separates a feasibility fact from a gate:
+    /// a rule of these alone turns no caller away, so it is not part of
+    /// who may call a method.
+    fn reads_state_only(&self) -> bool {
+        matches!(self.answered_from(), Answers::State)
+    }
+}
+
 /// A rule as it is sealed and judged, its leaves resolved.
 ///
 /// Two sources and no more, because a sealed rule has no call to read and
@@ -136,6 +175,21 @@ pub enum SealedLeaf {
         /// Which of the subject's holdings of it the presence is about.
         holding: Holding,
     },
+}
+
+impl Leaf for SealedLeaf {
+    /// A holding is a standing fact in the store about the moving party;
+    /// a claim stays a claim. Neither can be answered from a session, so
+    /// an entry can never be judged in the leg for reaching a rule —
+    /// settled at the seal, before any holder has been named and before
+    /// any transaction exists, because each sealed leaf maps one-to-one
+    /// onto the evaluated leaf answering from the same place.
+    fn answered_from(&self) -> Answers {
+        match self {
+            Self::Claim(_) => Answers::Evidence,
+            Self::Held { .. } => Answers::State,
+        }
+    }
 }
 
 /// Where a subject's holding of one badge lives, and how much of it the
@@ -223,20 +277,22 @@ pub enum RuleLeaf {
     },
 }
 
-impl RuleLeaf {
-    /// Whether this leaf's answer is in the store rather than in what a
-    /// caller presents.
+impl Leaf for RuleLeaf {
+    /// The authored twin of [`JudgedLeaf`]'s answer: each leaf resolves
+    /// into the evaluated leaf answering from the same place, so what a
+    /// declaration says about placement is what its evaluation does.
     ///
-    /// The authored twin of [`JudgedLeaf::reads_state_only`], and what
-    /// separates a feasibility fact from a gate: a rule of these alone
-    /// turns no caller away, so it is not part of who may call a method.
-    ///
-    /// [`JudgedLeaf::reads_state_only`]: crate::manifest::JudgedLeaf::reads_state_only
-    #[must_use]
-    pub const fn reads_state_only(&self) -> bool {
-        matches!(self, Self::Presence { .. })
+    /// [`JudgedLeaf`]: crate::manifest::JudgedLeaf
+    fn answered_from(&self) -> Answers {
+        match self {
+            Self::Claim(_) => Answers::Evidence,
+            Self::Stored { .. } => Answers::Session,
+            Self::Presence { .. } => Answers::State,
+        }
     }
+}
 
+impl RuleLeaf {
     /// Whether the leaf reads what the caller supplies — the claim's own
     /// expression, or the cell a stored rule is read from.
     pub(crate) fn reads_call_inputs(&self) -> bool {
@@ -318,12 +374,12 @@ pub enum GrantClaim {
     Config(u32),
 }
 
-impl Rule<RuleLeaf> {
+impl<L: Leaf> Rule<L> {
     /// Whether every leaf reads the store alone, which is what keeps a
     /// feasibility fact out of the question of who may call a method.
     #[must_use]
     pub fn reads_state_only(&self) -> bool {
-        self.leaves().all(RuleLeaf::reads_state_only)
+        self.leaves().all(Leaf::reads_state_only)
     }
 }
 

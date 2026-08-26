@@ -104,9 +104,9 @@ pub use resource::{
 };
 pub use route::{FrameDeclaration, PrefixShardResolver, Routing, ShardResolver, route};
 pub use rule::{
-    GrantClaim, GrantRuleExpr, Holding, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES,
-    MAX_RULE_WIRE_DEPTH, NOBODY_BYTES, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule, always,
-    never, well_formed,
+    Answers, GrantClaim, GrantRuleExpr, Holding, Leaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
+    MAX_RULE_LEAVES, MAX_RULE_WIRE_DEPTH, NOBODY_BYTES, Rule, RuleExpr, RuleLeaf, SealedLeaf,
+    StoredRule, always, never, well_formed,
 };
 pub use signature::{
     AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MAX_MINTS_PER_SIGNATURE,

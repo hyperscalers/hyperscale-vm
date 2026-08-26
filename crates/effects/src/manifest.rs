@@ -11,7 +11,7 @@ use hyperscale_vm_types::{Address, EffectTarget, Presence, ResourceAddr, Substat
 
 use crate::claim::Claim;
 use crate::hash::Hash32;
-use crate::rule::{Rule, SealedLeaf};
+use crate::rule::{Answers, Leaf, Rule};
 use crate::types::{EdgeContent, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
@@ -122,12 +122,16 @@ pub enum JudgedLeaf {
     },
 }
 
-impl JudgedLeaf {
-    /// Whether this leaf's answer is in the store rather than in what the
-    /// call presented.
-    #[must_use]
-    pub const fn reads_state_only(&self) -> bool {
-        matches!(self, Self::Presence { .. })
+impl Leaf for JudgedLeaf {
+    /// A presence's answer is in the store; a claim's is in what the
+    /// call presented; a stored rule's is readable only where the
+    /// evidence and the session meet.
+    fn answered_from(&self) -> Answers {
+        match self {
+            Self::Claim(_) => Answers::Evidence,
+            Self::Stored { .. } => Answers::Session,
+            Self::Presence { .. } => Answers::State,
+        }
     }
 }
 
@@ -170,12 +174,23 @@ impl Judged {
     }
 }
 
-impl Rule<JudgedLeaf> {
-    /// Where this rule is judged, read off its leaves.
+impl<L: Leaf> Rule<L> {
+    /// Where this rule is judged, read off its leaves: the earliest
+    /// stage that can answer every one of them.
     ///
-    /// A rule reaching a stored rule needs the session; one mixing
+    /// A rule reaching a session-answered leaf needs the leg; one mixing
     /// evidence with state needs both, and no single earlier stage holds
     /// them. Everything else is answerable at one stage alone.
+    ///
+    /// One fold for every instantiation, which is what pins the reading
+    /// a record's holder is owed to the reading a transaction gets: a
+    /// sealed rule's placement *is* its evaluated twin's, because both
+    /// are this walk over leaves answering from the same place. An entry
+    /// asking a standing fact about the moving party is answered before
+    /// any body runs and turns nobody away mid-transaction; one asking
+    /// whether this transaction was approved is answered before it is a
+    /// transaction at all; one asking both is the only shape that lands
+    /// inside a leg.
     ///
     /// A rule with no leaves is the algebra's own constant — satisfied
     /// by anyone or by no one — and admission decides those as cheaply
@@ -185,48 +200,13 @@ impl Rule<JudgedLeaf> {
         let mut state = false;
         let mut evidence = false;
         for leaf in self.leaves() {
-            match leaf {
-                JudgedLeaf::Stored { .. } => return Judged::InTheLeg,
-                JudgedLeaf::Presence { .. } => state = true,
-                JudgedLeaf::Claim(_) => evidence = true,
+            match leaf.answered_from() {
+                Answers::Session => return Judged::InTheLeg,
+                Answers::State => state = true,
+                Answers::Evidence => evidence = true,
             }
         }
         match (state, evidence) {
-            (true, true) => Judged::InTheLeg,
-            (true, false) => Judged::AtMaterialization,
-            (false, _) => Judged::AtAdmission,
-        }
-    }
-}
-
-impl Rule<SealedLeaf> {
-    /// Where an entry sealing this rule is judged, once something injects
-    /// it.
-    ///
-    /// Settled at the seal, before any holder has been named and before
-    /// any transaction exists — because a sealed leaf maps one-to-one
-    /// onto a judged one: a holding becomes the presence of the moving
-    /// party's own leaf, and a claim stays a claim. Neither can become a
-    /// [`Stored`](JudgedLeaf::Stored) leaf, which is why an entry can
-    /// never be judged in the leg for reaching a rule.
-    ///
-    /// What it buys is a reader of the record learning *when they would
-    /// hear*, from the record alone. An entry asking a standing fact
-    /// about them is answered before any body runs and turns nobody
-    /// away mid-transaction; one asking whether this transaction was
-    /// approved is answered before it is a transaction at all; one
-    /// asking both is the only shape that lands inside a leg.
-    #[must_use]
-    pub fn judged(&self) -> Judged {
-        let mut held = false;
-        let mut claimed = false;
-        for leaf in self.leaves() {
-            match leaf {
-                SealedLeaf::Held { .. } => held = true,
-                SealedLeaf::Claim(_) => claimed = true,
-            }
-        }
-        match (held, claimed) {
             (true, true) => Judged::InTheLeg,
             (true, false) => Judged::AtMaterialization,
             (false, _) => Judged::AtAdmission,
