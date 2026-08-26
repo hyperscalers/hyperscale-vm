@@ -137,6 +137,18 @@ pub enum AddressClass {
 }
 
 impl AddressClass {
+    /// Every class, in declaration order.
+    ///
+    /// The one list a walk over the classes reads.
+    pub const ALL: [Self; 6] = [
+        Self::Principal,
+        Self::Component,
+        Self::Package,
+        Self::Resource,
+        Self::Restricted,
+        Self::Native,
+    ];
+
     /// The trailing byte naming this class.
     #[must_use]
     pub const fn tag(self) -> u8 {
@@ -215,16 +227,7 @@ impl AddressClass {
     /// prefix is checked against before the address bytes are believed.
     #[must_use]
     pub fn from_word(word: &str) -> Option<Self> {
-        [
-            Self::Principal,
-            Self::Component,
-            Self::Package,
-            Self::Resource,
-            Self::Native,
-            Self::Restricted,
-        ]
-        .into_iter()
-        .find(|class| class.word() == word)
+        Self::ALL.into_iter().find(|class| class.word() == word)
     }
 }
 

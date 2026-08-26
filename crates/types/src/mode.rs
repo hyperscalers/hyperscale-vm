@@ -247,6 +247,19 @@ impl ConflictClass {
 }
 
 impl ModeKind {
+    /// Every kind, in declaration order.
+    ///
+    /// The one list a walk over the kinds reads, so the weights, the
+    /// truth tables and the fixtures all move with the lattice rather
+    /// than each keeping their own copy of it.
+    pub const ALL: [Self; 5] = [
+        Self::Read,
+        Self::Delta,
+        Self::Credit,
+        Self::Reserve,
+        Self::Write,
+    ];
+
     /// The conflict class this mode joins.
     #[must_use]
     pub const fn conflict_class(self) -> ConflictClass {
