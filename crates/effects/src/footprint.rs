@@ -63,14 +63,6 @@ pub const SCAN_SEEK_ENTRIES: usize = 4;
 /// mode weight is measured up from.
 pub const EXCLUSIVITY_FLOOR: u64 = 1;
 
-/// Every mode kind, as the exclusion count walks them.
-const KINDS: [ModeKind; 4] = [
-    ModeKind::Read,
-    ModeKind::Delta,
-    ModeKind::Reserve,
-    ModeKind::Write,
-];
-
 /// How much of the lattice `kind` excludes, as a multiplier on span.
 ///
 /// Counted from [`compatible`], so the ordering is the lattice's rather
@@ -86,10 +78,11 @@ const KINDS: [ModeKind; 4] = [
 /// traffic across it.
 #[must_use]
 const fn mode_weight(kind: ModeKind) -> u64 {
+    let kinds = ModeKind::ALL;
     let mut excluded = 0;
     let mut index = 0;
-    while index < KINDS.len() {
-        if !compatible(kind, KINDS[index]) {
+    while index < kinds.len() {
+        if !compatible(kind, kinds[index]) {
             excluded += 1;
         }
         index += 1;
@@ -189,16 +182,9 @@ mod tests {
         mode_weight, order_bits, span_units,
     };
 
-    const KINDS: [ModeKind; 4] = [
-        ModeKind::Read,
-        ModeKind::Delta,
-        ModeKind::Reserve,
-        ModeKind::Write,
-    ];
-
     /// The mode kinds `kind` cannot share a key with.
     fn excluded(kind: ModeKind) -> Vec<ModeKind> {
-        KINDS
+        ModeKind::ALL
             .into_iter()
             .filter(|other| !compatible(kind, *other))
             .collect()
@@ -206,8 +192,8 @@ mod tests {
 
     #[test]
     fn weight_respects_the_exclusion_ordering() {
-        for narrow in KINDS {
-            for wide in KINDS {
+        for narrow in ModeKind::ALL {
+            for wide in ModeKind::ALL {
                 let (narrow_set, wide_set) = (excluded(narrow), excluded(wide));
                 if !narrow_set.iter().all(|kind| wide_set.contains(kind)) {
                     continue;
@@ -249,10 +235,32 @@ mod tests {
         Effect { target, mode }
     }
 
+    /// The schedule itself, kind by kind, so a re-price is a diff here
+    /// rather than an ordering that still happens to hold.
+    #[test]
+    fn every_kind_weighs_what_the_schedule_says() {
+        let schedule = [
+            (ModeKind::Read, 5),
+            (ModeKind::Delta, 3),
+            (ModeKind::Credit, 3),
+            (ModeKind::Reserve, 3),
+            (ModeKind::Write, 6),
+        ];
+        for (kind, weight) in schedule {
+            assert_eq!(mode_weight(kind), weight, "{kind:?}");
+        }
+        assert_eq!(
+            schedule.len(),
+            ModeKind::ALL.len(),
+            "a kind the schedule does not price",
+        );
+    }
+
     #[test]
     fn the_weight_ordering_is_the_lattice_ordering() {
-        // write > read > {delta, reserve}, off `compatible`.
+        // write > read > {delta, credit, reserve}, off `compatible`.
         assert_eq!(mode_weight(ModeKind::Delta), mode_weight(ModeKind::Reserve));
+        assert_eq!(mode_weight(ModeKind::Delta), mode_weight(ModeKind::Credit));
         assert!(mode_weight(ModeKind::Delta) > EXCLUSIVITY_FLOOR);
         assert!(mode_weight(ModeKind::Read) > mode_weight(ModeKind::Delta));
         assert!(mode_weight(ModeKind::Write) > mode_weight(ModeKind::Read));

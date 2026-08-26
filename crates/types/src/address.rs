@@ -809,12 +809,9 @@ mod tests {
         assert!(SubstateKey::from_bytes(bytes).is_err());
     }
 
-    const CLASSES: [AddressClass; 6] =
-        [Principal, Component, Package, Resource, Native, Restricted];
-
     #[test]
     fn a_class_is_recoverable_from_the_address_it_tagged() {
-        for class in CLASSES {
+        for class in AddressClass::ALL {
             let address = Address::new([9; 31], class);
             assert_eq!(address.class(), class);
             assert_eq!(address.body(), [9; 31]);
@@ -825,26 +822,28 @@ mod tests {
 
     #[test]
     fn the_assigned_tags_are_one_through_six() {
-        let tags: Vec<u8> = CLASSES.iter().map(|class| class.tag()).collect();
+        let mut tags: Vec<u8> = AddressClass::ALL.iter().map(|class| class.tag()).collect();
+        tags.sort_unstable();
         assert_eq!(tags, vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
     }
 
     #[test]
     fn a_class_word_names_exactly_one_class() {
-        let words: Vec<&str> = CLASSES.iter().map(|class| class.word()).collect();
-        assert_eq!(
-            words,
-            vec![
-                "account",
-                "component",
-                "package",
-                "resource",
-                "native",
-                "restricted"
-            ]
-        );
-        let unique: std::collections::BTreeSet<&str> = words.iter().copied().collect();
-        assert_eq!(unique.len(), words.len());
+        let worded = [
+            (Principal, "account"),
+            (Component, "component"),
+            (Package, "package"),
+            (Resource, "resource"),
+            (Restricted, "restricted"),
+            (Native, "native"),
+        ];
+        assert_eq!(worded.len(), AddressClass::ALL.len(), "a class unworded");
+        for (class, word) in worded {
+            assert_eq!(class.word(), word);
+        }
+        let unique: std::collections::BTreeSet<&str> =
+            worded.iter().map(|(_, word)| *word).collect();
+        assert_eq!(unique.len(), worded.len());
     }
 
     /// Both resource classes are resources: one narrowing accepts each,
@@ -910,7 +909,7 @@ mod tests {
         assert_eq!(err.expected, Component);
         assert_eq!(err.found, Principal);
 
-        for class in CLASSES {
+        for class in AddressClass::ALL {
             let address = Address::new([2; 31], class);
             assert_eq!(PrincipalAddr::try_from(address).is_ok(), class == Principal);
         }

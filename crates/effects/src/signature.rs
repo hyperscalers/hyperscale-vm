@@ -553,14 +553,7 @@ mod tests {
         // that matters is `Restricted`: it is a resource, so a parameter
         // that admits resources admits it, and a sweep omitting it never
         // exercises the widening it exists to protect.
-        let classes = [
-            AddressClass::Principal,
-            AddressClass::Component,
-            AddressClass::Package,
-            AddressClass::Resource,
-            AddressClass::Restricted,
-            AddressClass::Native,
-        ];
+        let classes = AddressClass::ALL;
         let admitted: &[(ParamType, &[AddressClass])] = &[
             (ParamType::Address, &classes),
             (

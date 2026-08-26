@@ -121,6 +121,14 @@ mod tests {
     /// wherever it appears, and a callable address is something acting as
     /// itself. What the claim carries is the same either way, which is
     /// what keeps one spelling from meaning two things.
+    /// What one address class names, if anything.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Names {
+        Badge,
+        Callable,
+        Nothing,
+    }
+
     #[test]
     fn the_claim_an_address_names_is_the_address_itself() {
         let badge = address(0xB0, AddressClass::Resource);
@@ -132,23 +140,41 @@ mod tests {
         );
         assert_eq!(named.callable(), None);
 
-        for class in [AddressClass::Principal, AddressClass::Component] {
+        // Every class, so each one's answer is written down rather than
+        // left to whichever ones a case happened to list. An address
+        // that is neither callable nor a resource names no claim: no
+        // gate can mint one, so a rule naming one could never be
+        // satisfied — refused at the naming instead.
+        let claimed = [
+            (AddressClass::Principal, Names::Callable),
+            (AddressClass::Component, Names::Callable),
+            (AddressClass::Package, Names::Nothing),
+            (AddressClass::Resource, Names::Badge),
+            (AddressClass::Restricted, Names::Badge),
+            (AddressClass::Native, Names::Nothing),
+        ];
+        assert_eq!(claimed.len(), AddressClass::ALL.len(), "a class unstated");
+        for (class, expected) in claimed {
             let who = address(0x11, class);
-            let named = Presented::of(&Value::Address(who)).expect("a callable names itself");
+            let named = Presented::of(&Value::Address(who));
+            if expected == Names::Nothing {
+                assert_eq!(named, None, "{class}");
+                continue;
+            }
+            let named = named.expect("names a claim");
             assert_eq!(named, Presented::of_subject(who));
-            assert_eq!(named.badge(), None);
+            assert_eq!(
+                named.badge(),
+                (expected == Names::Badge)
+                    .then(|| ResourceAddr::try_from(who).expect("a resource address")),
+                "{class}",
+            );
             assert_eq!(
                 named.callable(),
-                Some(CallTarget::try_from(who).expect("a callable address"))
+                (expected == Names::Callable)
+                    .then(|| CallTarget::try_from(who).expect("a callable address")),
+                "{class}",
             );
-        }
-
-        // An address that is neither callable nor a resource names no
-        // claim: no gate can mint one, so a rule naming one could never
-        // be satisfied — refused at the naming instead.
-        for class in [AddressClass::Package, AddressClass::Native] {
-            let who = address(0x11, class);
-            assert_eq!(Presented::of(&Value::Address(who)), None);
         }
     }
 
