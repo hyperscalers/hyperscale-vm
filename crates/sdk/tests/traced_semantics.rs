@@ -500,3 +500,44 @@ fn an_output_resource_is_a_declaration_not_an_inference() {
         "the same return type, two different declared resources"
     );
 }
+
+/// A body that only receives, and one that only sends, each holding the
+/// same leaf exclusively.
+fn one_way() -> Blueprint {
+    Blueprint::builder()
+        .method("receive", &[], |t: &mut Trace| {
+            let owner = t.self_addr();
+            t.point(&owner.child(VAULT, &[])).inbound();
+        })
+        .method("send", &[], |t: &mut Trace| {
+            let owner = t.self_addr();
+            t.point(&owner.child(VAULT, &[])).outbound();
+        })
+        .build()
+}
+
+/// An exclusive hold says which way value goes, and both ways are
+/// authorable.
+///
+/// The direction is what the resource's own movement entries are read
+/// against: a body that only receives is not asked for the credential a
+/// sender needs, and one that only sends is not asked for the receiver's.
+/// A hold that could only say `Both` would have to answer for a movement
+/// it never makes.
+#[test]
+fn an_exclusive_hold_declares_the_direction_it_moves_value() {
+    let blueprint = one_way();
+    let leaf = child_key(&TestHasher, BASKET, VAULT, &[]);
+
+    for (method, moves) in [("receive", Moves::In), ("send", Moves::Out)] {
+        let signature = blueprint.method(method).unwrap().signature();
+        let set = declared(signature, &[], &[]);
+        assert!(
+            set.contains(&Effect {
+                target: EffectTarget::Point(leaf),
+                mode: Mode::Write { moves },
+            }),
+            "{method} declares a {moves:?} write"
+        );
+    }
+}

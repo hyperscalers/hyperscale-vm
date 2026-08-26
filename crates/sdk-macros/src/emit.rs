@@ -35,8 +35,8 @@ pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     // An interval has no commutative mode: the kernel materializes one
     // capability over the whole span, so a body that moves value through
     // one holds it exclusively rather than queuing against it. What it
-    // can still say is which way value goes — a filing body declares a
-    // write that only takes value in, and is judged on that alone.
+    // can still say is which way value goes — a body that only receives
+    // declares an inbound write, and is judged on that alone.
     if matches!(
         site.target,
         Target::Entry { .. }
@@ -45,11 +45,11 @@ pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
             | Target::Sweep { .. }
     ) {
         let bytes = has(Op::Set).is_some();
-        let files = has(Op::Credit).is_some();
+        let inbound = has(Op::Credit).is_some();
         let both_ways = has(Op::Move).is_some();
-        return match (bytes || both_ways, files, has(Op::Get).is_some()) {
+        return match (bytes || both_ways, inbound, has(Op::Get).is_some()) {
             (true, _, _) => Some((nothing, quote!(.write()))),
-            (false, true, _) => Some((nothing, quote!(.file()))),
+            (false, true, _) => Some((nothing, quote!(.inbound()))),
             (false, false, true) => Some((nothing, quote!(.read()))),
             (false, false, false) => None,
         };

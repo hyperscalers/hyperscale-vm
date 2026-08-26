@@ -44,6 +44,19 @@
 //! could not compute, and that is a residue of the body rather than a
 //! second declaration of it.
 //!
+//! # Names the generated client takes
+//!
+//! Every method gets a client wrapper, and the wrapper's own parameters
+//! are named: `builder` on all of them, `proof` or `proofs` where the
+//! method presents something, and `who` where a principal package's free
+//! functions name the caller. A method parameter of that name would
+//! shadow one of those and is refused.
+//!
+//! The reservation is exactly as wide as the wrapper this method gets,
+//! rather than blanket — which means **adding a gate can reserve a name
+//! that was free before**: an ungated method may take a parameter called
+//! `proof`, and the same method with `#[requires(…)]` may not.
+//!
 //! # What the macro refuses
 //!
 //! Routing evaluates a declaration before execution and never reads state,
@@ -2127,33 +2140,16 @@ fn granted_rules(
     })
 }
 
-/// How a `grants(…)` key spells a behaviour, and how a refusal about one
-/// names it back.
-///
-/// One place, because the attribute the author writes and the operation
-/// the lowering holds to it are the same word — a second spelling would
-/// be a resource granting one thing and refusing another.
-pub(crate) const fn behaviour_word(behaviour: GrantedBehaviour) -> &'static str {
-    match behaviour {
-        GrantedBehaviour::Mint => "mint",
-        GrantedBehaviour::Burn => "burn",
-        GrantedBehaviour::Withdraw => "withdraw",
-        GrantedBehaviour::Deposit => "deposit",
-        GrantedBehaviour::Freeze => "freeze",
-        GrantedBehaviour::Recall => "recall",
-    }
-}
-
 /// The behaviour a `grants(<behaviour> = …)` key names.
 fn granted_behaviour(path: &syn::Path) -> syn::Result<GrantedBehaviour> {
     let named = path.get_ident().map(ToString::to_string);
     GrantedBehaviour::ALL
         .into_iter()
-        .find(|b| named.as_deref() == Some(behaviour_word(*b)))
+        .find(|b| named.as_deref() == Some(b.word()))
         .ok_or_else(|| {
             let spellings: Vec<String> = GrantedBehaviour::ALL
                 .iter()
-                .map(|b| format!("`{}`", behaviour_word(*b)))
+                .map(|b| format!("`{}`", b.word()))
                 .collect();
             let (last, rest) = spellings
                 .split_last()

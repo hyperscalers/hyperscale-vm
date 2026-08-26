@@ -1,4 +1,4 @@
-error: `Ungranted` grants no `freeze`, and an address admits only what its declaration grants — state `grants(freeze = self)` on `Ungranted`, where `self` is the issuing instance
+error: `Ungranted` grants no `halt`, and an address admits only what its declaration grants — state `grants(halt = self)` on `Ungranted`, where `self` is the issuing instance
   --> tests/refusals/ungranted_halt.rs:15:13
    |
 15 |             Ungranted::halt(holder);

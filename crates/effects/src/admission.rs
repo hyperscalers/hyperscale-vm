@@ -2294,7 +2294,7 @@ pub enum Asks {
     /// The entry's own sealed rule.
     Entry(StoredRule),
     /// That the party whose cell moves is not halted — which every
-    /// movement of a resource granting `Freeze` reads, and which no
+    /// movement of a resource granting `Halt` reads, and which no
     /// entry states because it is a fact about the holder rather than a
     /// rule about anyone.
     Unhalted,
@@ -2569,10 +2569,10 @@ fn inject_movement_rules(
         // declared, on the same terms the movement entries are: a
         // package will not declare a fence it does not want, and a
         // component holding value declares no halt leaf and cannot be
-        // made to. Granting `Freeze` is what puts the resource in the
+        // made to. Granting `Halt` is what puts the resource in the
         // class whose record cannot be withheld, so the read fails
         // closed.
-        if rules.get(GrantedBehaviour::Freeze).is_some() {
+        if rules.get(GrantedBehaviour::Halt).is_some() {
             let halted = EffectTarget::Point(child_key(
                 hasher,
                 owner,
@@ -2589,7 +2589,7 @@ fn inject_movement_rules(
                 }),
                 asks: Asks::Unhalted,
                 resource,
-                behaviour: GrantedBehaviour::Freeze,
+                behaviour: GrantedBehaviour::Halt,
             };
             if !injected.contains(&fence) {
                 injected.push(fence);

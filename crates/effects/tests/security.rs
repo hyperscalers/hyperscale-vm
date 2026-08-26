@@ -332,7 +332,7 @@ fn the_register_entry_is_soulbound() {
 ///
 /// `Mint` is here because every resource that is minted carries one:
 /// absence withholds, so a share class nobody could issue is spelled by
-/// leaving it out. `Freeze` is here because granting it is what puts the
+/// leaving it out. `Halt` is here because granting it is what puts the
 /// halt read on every movement of the share — and what puts the share in
 /// the class whose record cannot be withheld, so the read fails closed.
 #[test]
@@ -349,7 +349,7 @@ fn the_guest_grants_what_these_cases_are_about() {
             GrantedBehaviour::Mint,
             GrantedBehaviour::Withdraw,
             GrantedBehaviour::Deposit,
-            GrantedBehaviour::Freeze,
+            GrantedBehaviour::Halt,
             GrantedBehaviour::Recall,
         ]),
         "both movement entries to enforce, the halt that binds a component, and the two \

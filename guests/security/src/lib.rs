@@ -84,7 +84,7 @@ pub mod security {
         mint = self,
         withdraw = issued(Registered),
         deposit = issued(Registered),
-        freeze = config.registrar,
+        halt = config.registrar,
         recall = config.registrar
     ))]
     struct Share;
@@ -130,7 +130,7 @@ pub mod security {
     ///
     /// An identity rather than a badge, and the choice is the
     /// consequential one: a rule naming a badge is mutable by reissuing
-    /// it, and a rule naming an identity is frozen for the life of the
+    /// it, and a rule naming an identity is fixed for the life of the
     /// resource. An issuer wanting the registrar to be replaceable names
     /// their own component here.
     #[config]
@@ -164,20 +164,20 @@ pub mod security {
         ///
         /// The one cell this package writes under somebody else's
         /// prefix, and it declares no gate of its own: what admits the
-        /// reach is the share's own `freeze` entry, injected where the
+        /// reach is the share's own `halt` entry, injected where the
         /// declaration is evaluated. Named on the mark, so the resource
         /// this halts is the resource the declaration derives and there
-        /// is no second spelling to disagree with it. A holder does not have to cooperate
-        /// and cannot be written to cooperate — which is the whole
-        /// difference from a fence a holder's package would have had to
-        /// declare.
-        pub fn freeze(&mut self, holder: Address) {
+        /// is no second spelling to disagree with it. A holder does not
+        /// have to cooperate and cannot be written to cooperate — which
+        /// is the whole difference from a fence a holder's package would
+        /// have had to declare.
+        pub fn halt(&mut self, holder: Address) {
             Share::halt(holder);
         }
 
-        /// Let them move again. The flag's absence is the unfrozen
+        /// Let them move again. The flag's absence is the unhalted
         /// state, so lifting it is ending the cell.
-        pub fn release(&mut self, holder: Address) {
+        pub fn unhalt(&mut self, holder: Address) {
             Share::unhalt(holder);
         }
 
@@ -204,7 +204,7 @@ pub mod security {
         /// were asked, and none of them is: the recall's own entry is
         /// what admits it, and a movement requirement fires against the
         /// party being reached, who by construction fails it. That is
-        /// the whole of why a frozen holder is recallable and a holder
+        /// the whole of why a halted holder is recallable and a holder
         /// off the register is too.
         pub fn recall_shares(&mut self, holder: Address, slot: u64, amount: Quantity) -> Bucket {
             Share::recall(holder, slot, amount)
@@ -214,18 +214,18 @@ pub mod security {
         /// one ever moves.
         ///
         /// `withdraw = nobody` means the holder cannot hand one on and
-        /// no package holding it can be made to release it, so
-        /// revocation is not a courtesy the holder extends — it is the
+        /// no package holding it can be made to hand it over, so a
+        /// recall is not a courtesy the holder extends — it is the
         /// registrar's own entry, read where the declaration is
         /// evaluated.
         ///
         /// The registrations are named rather than counted, which is
         /// what the non-fungible kind was bought for: a registrar
-        /// revoking one of a holder's two says which. Nothing here says
+        /// recalling one of a holder's two says which. Nothing here says
         /// so twice — the same `recall` the share class uses, taking its
         /// cell shape and its edge type from the mark's own declared
         /// kind.
-        pub fn revoke(&mut self, holder: Address, slot: u64, ids: Ids) -> NfBucket {
+        pub fn recall_registrations(&mut self, holder: Address, slot: u64, ids: Ids) -> NfBucket {
             Registered::recall(holder, slot, ids)
         }
     }

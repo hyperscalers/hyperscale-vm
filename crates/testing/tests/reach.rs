@@ -9,7 +9,7 @@
 //! the holder said.
 //!
 //! The two halves are here together because they fail differently. A
-//! freeze writes a flag every movement of the resource then reads, and
+//! halt writes a flag every movement of the resource then reads, and
 //! the refusal it earns lands before any body runs. A recall takes the
 //! value, and what it has to survive is every rule the resource itself
 //! carries — the halt fence among them, since the party being reached
@@ -26,7 +26,7 @@ use hyperscale_vm_testing::{
     package, principal,
 };
 
-/// Who keeps the register, and whom the share's `freeze` entry names.
+/// Who keeps the register, and whom the share's `halt` entry names.
 const REGISTRAR: PrincipalAddr = principal(0xA1);
 /// A holder on the register.
 const HOLDER: PrincipalAddr = principal(0xA2);
@@ -90,13 +90,13 @@ fn a_halt_stops_a_holder_who_was_moving_freely() {
 
     // Composed through the raw call: the requirement is the share's own
     // entry, injected at admission rather than declared, so the
-    // package's signature says `freeze` admits anyone and its generated
+    // package's signature says `halt` admits anyone and its generated
     // client offers no proof-taking form. Attaching the proof is the
     // composer's until the builder resolves grants for itself.
     chain
         .transact(REGISTRAR, |b| {
             let registrar = account::authorize(b, REGISTRAR)?;
-            b.call_as(registrar, issuer.address(), "freeze", (HOLDER.address(),))?
+            b.call_as(registrar, issuer.address(), "halt", (HOLDER.address(),))?
                 .none()
         })
         .expect_completed();
@@ -146,10 +146,10 @@ fn a_halt_stops_a_holder_who_was_moving_freely() {
 ///
 /// One case rather than three, because dropping any one of these
 /// silently disables a different issuer power and the others would go
-/// on passing. A frozen holder is recalled from, so the halt fence does
+/// on passing. A halted holder is recalled from, so the halt fence does
 /// not fence its own issuer; a holder off the register is recalled
 /// from, so a resource nobody unregistered may move is still one the
-/// registrar may take back; and the register entry itself is revoked,
+/// registrar may take back; and the register entry itself is recalled,
 /// which `withdraw = nobody` makes impossible any other way.
 ///
 /// What makes all three work is one sentence: a declaration reaching a
@@ -184,7 +184,7 @@ fn a_recall_reaches_past_every_rule_the_resource_carries() {
         .expect_completed();
     chain
         .transact(REGISTRAR, |b| {
-            let taken = issuer.revoke(b, stranger.address(), holdings, &[3])?;
+            let taken = issuer.recall_registrations(b, stranger.address(), holdings, &[3])?;
             account::deposit_nf(b, REGISTRAR, taken)
         })
         .expect_completed();
@@ -195,7 +195,7 @@ fn a_recall_reaches_past_every_rule_the_resource_carries() {
 
     // And a holder the issuer has stopped moving anything at all.
     chain
-        .transact(REGISTRAR, |b| issuer.freeze(b, HOLDER.address()))
+        .transact(REGISTRAR, |b| issuer.halt(b, HOLDER.address()))
         .expect_completed();
 
     for (holder, taken) in [(HOLDER, 100u128), (stranger, 40u128)] {
@@ -216,7 +216,7 @@ mod sovereign {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{Bucket, Quantity, halt, recall};
 
-    /// A note whose `freeze` and `recall` entries name the issuing
+    /// A note whose `halt` and `recall` entries name the issuing
     /// instance rather than a party outside its code.
     ///
     /// The other posture of an authority entry, and the choice is about
@@ -226,7 +226,7 @@ mod sovereign {
     /// puts it in the code, so what decides is the method's own gate —
     /// this one declares none and is open on purpose, because a package
     /// that wanted a gate would write one.
-    #[resource(grants(mint = self, freeze = self, recall = self))]
+    #[resource(grants(mint = self, halt = self, recall = self))]
     struct Note;
 
     #[state]
@@ -237,11 +237,11 @@ mod sovereign {
             Note::mint(amount)
         }
 
-        pub fn freeze(&mut self, holder: Address) {
+        pub fn halt(&mut self, holder: Address) {
             halt(holder, Note::address());
         }
 
-        pub fn claw_back(&mut self, holder: Address, slot: u64, amount: Quantity) -> Bucket {
+        pub fn recall(&mut self, holder: Address, slot: u64, amount: Quantity) -> Bucket {
             recall(holder, slot, Note::address(), amount)
         }
     }
@@ -253,7 +253,7 @@ mod sovereign {
 /// The entry names the issuing instance, and **nothing can present a
 /// claim on a component but that component** — so an entry demanded of
 /// the frame that already satisfies it is one no caller could ever
-/// answer, and the freeze would be a capability the issuer declared and
+/// answer, and the halt would be a capability the issuer declared and
 /// could never exercise. The subtraction is the same one an issuance and
 /// a destruction get, and it reproduces the derivation gate: being the
 /// executing instance is one way a rule admits you.
@@ -276,11 +276,11 @@ fn an_issuer_whose_entry_names_itself_reaches_presenting_nothing() {
     // Neither call presents anything, and neither has anything it could
     // present: the authority is the component's own.
     chain
-        .transact(REGISTRAR, |b| issuer.freeze(b, holder.address()))
+        .transact(REGISTRAR, |b| issuer.halt(b, holder.address()))
         .expect_completed();
     chain
         .transact(REGISTRAR, |b| {
-            let taken = issuer.claw_back(b, holder.address(), slot, 40u128)?;
+            let taken = issuer.recall(b, holder.address(), slot, 40u128)?;
             account::deposit(b, REGISTRAR, taken)
         })
         .expect_completed();

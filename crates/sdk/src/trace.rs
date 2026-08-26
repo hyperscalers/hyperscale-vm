@@ -1127,7 +1127,7 @@ impl<Shape> Access<'_, Shape> {
         self.declare(ModeExpr::Write { moves: Moves::Both });
     }
 
-    /// The same exclusive hold, filing only: value may arrive under it
+    /// The same exclusive hold, one way in: value may arrive under it
     /// and may not leave.
     ///
     /// What a collection has instead of a credit. The contention is a
@@ -1135,8 +1135,19 @@ impl<Shape> Access<'_, Shape> {
     /// what this gives up is nothing a scheduler reads, and what it buys
     /// is being judged on the movement it actually makes: a body that
     /// only receives is not asked for the credential a sender needs.
-    pub fn file(self) {
+    ///
+    /// Named for the direction rather than for what the cell does with
+    /// it, because the cell already has its own verb — a balance credits
+    /// and a collection files — and an authoring word that picked one
+    /// would be wrong wherever the other is meant.
+    pub fn inbound(self) {
         self.declare(ModeExpr::Write { moves: Moves::In });
+    }
+
+    /// The same exclusive hold, one way out: value may leave under it
+    /// and may not arrive.
+    pub fn outbound(self) {
+        self.declare(ModeExpr::Write { moves: Moves::Out });
     }
 }
 

@@ -37,7 +37,7 @@ pub fn emit_behaviour(behaviour: GrantedBehaviour) -> TokenStream {
         GrantedBehaviour::Burn => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Burn),
         GrantedBehaviour::Withdraw => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Withdraw),
         GrantedBehaviour::Deposit => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Deposit),
-        GrantedBehaviour::Freeze => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Freeze),
+        GrantedBehaviour::Halt => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Halt),
         GrantedBehaviour::Recall => quote!(::hyperscale_vm_sdk::GrantedBehaviour::Recall),
     }
 }

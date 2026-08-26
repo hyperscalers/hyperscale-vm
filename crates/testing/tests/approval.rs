@@ -44,8 +44,8 @@ mod desk {
     /// "is the mover on a register" but "did the desk sign this".
     ///
     /// An issuer wanting a desk they can replace names their own
-    /// component here — a rule naming an identity is frozen for the life
-    /// of the resource, and a component's identity is frozen at the
+    /// component here — a rule naming an identity is fixed for the life
+    /// of the resource, and a component's identity is fixed at the
     /// component rather than at whoever runs it.
     #[resource(grants(mint = self, withdraw = config.officer))]
     struct Note;

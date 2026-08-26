@@ -80,7 +80,7 @@ fn admitting_meta() -> ResourceMeta {
 fn freezable_meta() -> ResourceMeta {
     let mut rules = ResourceGrants::new();
     rules.set(
-        GrantedBehaviour::Freeze,
+        GrantedBehaviour::Halt,
         sealed(&StoredRule::claim(Presented::of_subject(ISSUER))),
     );
     ResourceMeta {

@@ -1601,11 +1601,19 @@ impl Slot<Vault> {
     /// the grant is the bucket and there is no amount to name. Once per
     /// reservation: the kernel refuses a second take of one grant, where
     /// the read this replaces answered every time it was asked.
+    ///
+    /// **`quantity` is read by the macro and not by this function.** It
+    /// is the one argument in the vocabulary the compiler reads
+    /// syntactically rather than the program reading its value: the
+    /// lowering takes the expression into `Mode::Reserve(<term>)`, which
+    /// is what the kernel judged feasible, and the running body has
+    /// nothing left to do with it. Written as an argument because the
+    /// amount is a fact about this call and an author who could not name
+    /// it here would have nowhere to.
     #[must_use]
     #[inline(always)]
     pub fn reserve(&mut self, quantity: Quantity) -> Bucket {
-        let amount = quantity.subunits();
-        let _ = amount;
+        let _ = quantity;
         #[cfg(component)]
         return Bucket::held(crate::guest::reserve_take(self.handle));
         #[cfg(not(component))]

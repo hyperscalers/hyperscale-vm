@@ -142,7 +142,7 @@ pub fn explain_resource(record: &ResourceMeta, hasher: &dyn Hasher) -> String {
                 heard(rule.judged())
             ),
         };
-        let _ = writeln!(out, "  {:<9}  {asks}", behaviour_name(behaviour));
+        let _ = writeln!(out, "  {:<9}  {asks}", behaviour.word());
     }
     out
 }
@@ -238,7 +238,7 @@ pub fn explain_requirements(admitted: &Admitted) -> String {
             let _ = writeln!(
                 out,
                 "         {} of {} — {}, heard {}",
-                behaviour_name(*behaviour),
+                behaviour.word(),
                 address_text(resource.address()),
                 match asks {
                     Asks::Entry(entry) => sealed_rule(entry, None),
@@ -340,7 +340,7 @@ fn unmet_presence(
     let entries = joined(matched.iter().map(|injected| {
         format!(
             "{} of {}",
-            behaviour_name(injected.behaviour),
+            injected.behaviour.word(),
             address_text(injected.resource.address())
         )
     }));
@@ -396,7 +396,7 @@ fn unsatisfied_claims(admitted: &Admitted, node: u32) -> String {
         .map(|injected| {
             format!(
                 "{} of {}",
-                behaviour_name(injected.behaviour),
+                injected.behaviour.word(),
                 address_text(injected.resource.address())
             )
         })
@@ -762,7 +762,7 @@ impl Names<'_> {
                 // clause needs and the only reason the target is not the
                 // declaring instance's own.
                 let under = reach.map_or_else(String::new, |behaviour| {
-                    format!(", reaching under {}", behaviour_name(behaviour))
+                    format!(", reaching under {}", behaviour.word())
                 });
                 let _ = writeln!(
                     out,
@@ -1103,7 +1103,7 @@ impl Names<'_> {
             .map(|(behaviour, entry)| {
                 format!(
                     "{} to {}",
-                    behaviour_name(behaviour),
+                    behaviour.word(),
                     self.grant_entry(behaviour, entry)
                 )
             })
@@ -1363,18 +1363,6 @@ const fn resource_kind(kind: ResourceKind) -> &'static str {
     match kind {
         ResourceKind::Fungible => "fungible",
         ResourceKind::NonFungible => "non-fungible",
-    }
-}
-
-/// What a granted rule governs.
-const fn behaviour_name(behaviour: GrantedBehaviour) -> &'static str {
-    match behaviour {
-        GrantedBehaviour::Mint => "mint",
-        GrantedBehaviour::Burn => "burn",
-        GrantedBehaviour::Withdraw => "withdraw",
-        GrantedBehaviour::Deposit => "deposit",
-        GrantedBehaviour::Freeze => "freeze",
-        GrantedBehaviour::Recall => "recall",
     }
 }
 

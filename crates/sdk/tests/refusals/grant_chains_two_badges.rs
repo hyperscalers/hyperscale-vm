@@ -2,7 +2,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
-    #[resource(non_fungible, grants(freeze = self))]
+    #[resource(non_fungible, grants(halt = self))]
     struct AdminBadge;
 
     // Nameable: a badge carries the rules its own address folds, and

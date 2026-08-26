@@ -115,7 +115,7 @@ fn a_transaction_says_what_the_protocol_asked_of_it() {
     );
     assert!(text.contains("heard before any body runs"), "{text}");
 
-    // And the fence a `Freeze` entry puts on every movement of it, which
+    // And the fence a `Halt` entry puts on every movement of it, which
     // is stated by no entry at all — once per party and resource,
     // however many directions the access moves in.
     assert_eq!(

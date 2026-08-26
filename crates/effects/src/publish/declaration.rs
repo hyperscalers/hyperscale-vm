@@ -101,7 +101,7 @@ pub enum DeclarationError {
         clause: u32,
     },
     /// A reach naming a cell the behaviour admitting it does not govern:
-    /// a freeze somewhere other than the holder's halt flag, or a recall
+    /// a halt somewhere other than the holder's halt flag, or a recall
     /// of a cell that holds no value.
     #[error("clause {clause} reaches under {behaviour:?} and names a cell it does not govern")]
     ReachesAnotherCell {
@@ -373,7 +373,7 @@ pub enum DeclarationError {
 /// something else, and the entry judged is always the entry of the thing
 /// actually reached. And **the cell is the one the behaviour is about**,
 /// because an entry admits a reach for what that entry governs — a
-/// freeze entry says who may raise the holder's flag, not who may write
+/// halt entry says who may raise the holder's flag, not who may write
 /// anything at all under their prefix.
 ///
 /// Which cell that is is the behaviour's answer. A halt flag is one
@@ -3196,14 +3196,14 @@ mod tests {
         let freezing = || {
             let mut grants = GrantsExpr::new();
             grants.set(
-                GrantedBehaviour::Freeze,
+                GrantedBehaviour::Halt,
                 GrantRuleExpr::Require(GrantClaim::SelfAddr),
             );
             grants
         };
         let halt_of = |resource: Expr| {
             check_declarations(&one_reach(
-                GrantedBehaviour::Freeze,
+                GrantedBehaviour::Halt,
                 point_under(Expr::Arg(0), SlotRef::Fixed(HALT), vec![resource]),
                 ModeExpr::Write { moves: Moves::Both },
                 None,
@@ -3215,7 +3215,7 @@ mod tests {
             halt_of(own(GrantsExpr::new())),
             Err(DeclarationError::ReachUnadmitted {
                 clause: 0,
-                behaviour: GrantedBehaviour::Freeze
+                behaviour: GrantedBehaviour::Halt
             }),
             "a mark granting nothing is a mark nobody may reach a holder of"
         );
@@ -3234,7 +3234,7 @@ mod tests {
 
         assert_eq!(
             check_declarations(&one_reach(
-                GrantedBehaviour::Freeze,
+                GrantedBehaviour::Halt,
                 point_under(holder(), SlotRef::Fixed(HALT), vec![a_resource()]),
                 ModeExpr::Write { moves: Moves::Both },
                 None,
@@ -3272,18 +3272,18 @@ mod tests {
             Ok(())
         );
 
-        // A freeze entry admits raising the holder's flag, not writing
+        // A halt entry admits raising the holder's flag, not writing
         // whatever else sits under their prefix.
         assert_eq!(
             check_declarations(&one_reach(
-                GrantedBehaviour::Freeze,
+                GrantedBehaviour::Halt,
                 point_under(holder(), told(), vec![a_resource()]),
                 ModeExpr::Write { moves: Moves::Both },
                 None,
             )),
             Err(DeclarationError::ReachesAnotherCell {
                 clause: 0,
-                behaviour: GrantedBehaviour::Freeze
+                behaviour: GrantedBehaviour::Halt
             })
         );
         // And a recall entry admits taking value, so the cell it names
@@ -3338,7 +3338,7 @@ mod tests {
         // does not need.
         assert_eq!(
             check_declarations(&one_reach(
-                GrantedBehaviour::Freeze,
+                GrantedBehaviour::Halt,
                 point_under(Expr::SelfAddr, SlotRef::Fixed(HALT), vec![a_resource()]),
                 ModeExpr::Write { moves: Moves::Both },
                 None,
@@ -3357,7 +3357,7 @@ mod tests {
         ] {
             assert_eq!(
                 check_declarations(&one_reach(
-                    GrantedBehaviour::Freeze,
+                    GrantedBehaviour::Halt,
                     point_under(holder(), SlotRef::Fixed(HALT), material),
                     ModeExpr::Write { moves: Moves::Both },
                     None,

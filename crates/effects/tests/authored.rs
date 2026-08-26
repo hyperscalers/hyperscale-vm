@@ -304,11 +304,12 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         // is evaluated, so this table sees an open method and the
         // resource sees the caller. Four of them here — the two halves
         // of the halt flag, and the two takings the recall entry admits.
-        ("security", "freeze", open(), vec![]),
+        ("security", "halt", open(), vec![]),
         ("security", "instantiate", open(), vec![]),
         ("security", "issue", open(), vec![]),
         ("security", "issue-approved", open(), vec![]),
         ("security", "issue-bearer", open(), vec![]),
+        ("security", "recall-registrations", open(), vec![]),
         ("security", "recall-shares", open(), vec![]),
         (
             "security",
@@ -316,8 +317,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
             vec![RuleExpr::claim(Expr::Config(0))],
             vec![],
         ),
-        ("security", "release", open(), vec![]),
-        ("security", "revoke", open(), vec![]),
+        ("security", "unhalt", open(), vec![]),
         ("shares", "deposit", open(), vec![]),
         ("shares", "instantiate", open(), vec![]),
         ("shares", "mint", open(), vec![]),

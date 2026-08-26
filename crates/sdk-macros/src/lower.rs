@@ -47,7 +47,7 @@ use quote::quote;
 use syn::spanned::Spanned;
 
 use crate::term::{Op, Slot, SlotRef, Term};
-use crate::{Declared, Resource, behaviour_word, holds_rule, is_named};
+use crate::{Declared, Resource, holds_rule, is_named};
 
 /// What kind of state a component field holds, and under which slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -832,7 +832,7 @@ impl<'a> Lowerer<'a> {
         if issued.grants.behaviours.contains(&behaviour) {
             return;
         }
-        let (name, word) = (&issued.name, behaviour_word(behaviour));
+        let (name, word) = (&issued.name, behaviour.word());
         // A mint is the one behaviour with a second answer: an author
         // who wanted the supply the component comes up holding wanted an
         // attribute rather than a body.
@@ -2057,7 +2057,7 @@ impl<'a> Lowerer<'a> {
     /// The site is a reaching one, so the declaration carries the
     /// authority it acts under and admission carries the entry. Nothing
     /// here judges who may: a package writing this has said it is acting
-    /// as the resource's freezer, and whether it is, is the resource's
+    /// as the resource's halter, and whether it is, is the resource's
     /// answer.
     ///
     /// Two calls rather than a cell a body reads: the flag's whole
@@ -2068,7 +2068,7 @@ impl<'a> Lowerer<'a> {
         // `Resource::halt(holder)` names the resource by its mark and the
         // holder alone; the free form names both, for the resource a
         // package does not issue and has no mark for.
-        let (named, marked) = self.reached_resource(call, spelling, GrantedBehaviour::Freeze);
+        let (named, marked) = self.reached_resource(call, spelling, GrantedBehaviour::Halt);
         let holder = match (named.as_slice(), marked) {
             ([holder], Some(resource)) => Some((*holder, resource)),
             ([holder, resource], None) => self.expr(resource).val.term().map(|r| (*holder, r)),
@@ -2107,7 +2107,7 @@ impl<'a> Lowerer<'a> {
             },
             None,
             None,
-            Some(GrantedBehaviour::Freeze),
+            Some(GrantedBehaviour::Halt),
         );
         self.record(site, Op::Set, None, call.span());
         let handle = self.handle(site, call.span());
@@ -3770,7 +3770,7 @@ impl<'a> Lowerer<'a> {
         }
         // `halt(holder, resource)` — the one cell a package reaches under
         // somebody else's prefix. What admits it is the resource's own
-        // `Freeze` entry, injected where the declaration is evaluated,
+        // `Halt` entry, injected where the declaration is evaluated,
         // so the package names the authority and the resource names who
         // holds it.
         if name == "halt" || name == "unhalt" {

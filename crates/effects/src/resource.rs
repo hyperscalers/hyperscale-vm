@@ -167,7 +167,7 @@ impl ResourceRecord {
 /// there.
 ///
 /// The reach is admitted by the reached resource's own entry, so what it
-/// may touch is what that entry is about. A freeze entry is about the
+/// may touch is what that entry is about. A halt entry is about the
 /// holder's halt flag, which the vocabulary fixes at one slot; a recall
 /// entry is about the value, which the holder keeps at whatever slot
 /// they like — so the first is pinned by its slot and the second by its
@@ -204,7 +204,7 @@ pub enum GrantedBehaviour {
     Deposit,
     /// Halting a holder's movement of the resource, both ways at once.
     #[hbor(discriminant = 4)]
-    Freeze,
+    Halt,
     /// Reaching a holding under a prefix that is not the reacher's.
     #[hbor(discriminant = 5)]
     Recall,
@@ -217,9 +217,28 @@ impl GrantedBehaviour {
         Self::Burn,
         Self::Withdraw,
         Self::Deposit,
-        Self::Freeze,
+        Self::Halt,
         Self::Recall,
     ];
+
+    /// How the vocabulary spells this behaviour: the word an author
+    /// writes in `grants(…)`, and the word a refusal names it by.
+    ///
+    /// One spelling, because an attribute an author writes and a
+    /// diagnostic that quotes it back are the same word — a second table
+    /// somewhere else is a resource granting one thing and refusing
+    /// another.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Mint => "mint",
+            Self::Burn => "burn",
+            Self::Withdraw => "withdraw",
+            Self::Deposit => "deposit",
+            Self::Halt => "halt",
+            Self::Recall => "recall",
+        }
+    }
 
     /// Which movement entries an access moving these directions earns.
     ///
@@ -255,7 +274,7 @@ impl GrantedBehaviour {
     #[must_use]
     pub const fn asks_about_the_actor(self) -> bool {
         match self {
-            Self::Mint | Self::Burn | Self::Freeze | Self::Recall => true,
+            Self::Mint | Self::Burn | Self::Halt | Self::Recall => true,
             Self::Withdraw | Self::Deposit => false,
         }
     }
@@ -356,7 +375,7 @@ impl GrantedBehaviour {
     #[must_use]
     pub const fn reaches(self) -> Option<ReachedCell> {
         match self {
-            Self::Freeze => Some(ReachedCell::Halt),
+            Self::Halt => Some(ReachedCell::Halt),
             Self::Recall => Some(ReachedCell::Holding),
             Self::Mint | Self::Burn | Self::Withdraw | Self::Deposit => None,
         }
@@ -366,13 +385,13 @@ impl GrantedBehaviour {
     /// proceed that the rules forbid — the one question the address
     /// class answers without a lookup.
     ///
-    /// `Freeze` is here despite asking about the actor: granting it puts
+    /// `Halt` is here despite asking about the actor: granting it puts
     /// a halt read on every movement, and that read fails open when the
     /// record is withheld.
     #[must_use]
     pub const fn restricts_movement(self) -> bool {
         match self {
-            Self::Withdraw | Self::Deposit | Self::Freeze => true,
+            Self::Withdraw | Self::Deposit | Self::Halt => true,
             Self::Mint | Self::Burn | Self::Recall => false,
         }
     }

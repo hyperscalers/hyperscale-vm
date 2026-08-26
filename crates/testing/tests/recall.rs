@@ -42,7 +42,7 @@ mod bailiff {
     struct Deed;
 
     /// Who may take one back. An identity rather than a badge, so the
-    /// answer is frozen for the life of the resource.
+    /// answer is fixed for the life of the resource.
     #[config]
     struct Terms {
         warden: Address,
@@ -63,7 +63,7 @@ mod bailiff {
         /// The interval carries no cap of its own: what the walk costs
         /// is the count of the ids this call names, which is the same
         /// derivation a holder's own withdrawal makes.
-        pub fn seize(&mut self, holder: Address, slot: u64, ids: Ids) -> NfBucket {
+        pub fn recall(&mut self, holder: Address, slot: u64, ids: Ids) -> NfBucket {
             recall_instances(holder, slot, Deed::address(), ids)
         }
     }
@@ -102,7 +102,7 @@ fn a_recall_takes_the_instances_it_names_out_of_a_holders_interval() {
 
     chain
         .transact(WARDEN, |b| {
-            let taken = issuer.seize(b, HOLDER.address(), slot, &[1, 3])?;
+            let taken = issuer.recall(b, HOLDER.address(), slot, &[1, 3])?;
             account::deposit_nf(b, WARDEN, taken)
         })
         .expect_completed();
@@ -126,7 +126,7 @@ fn a_recall_by_somebody_the_entry_does_not_name_is_refused() {
 
     let refused = chain
         .try_transact(STRANGER, |b| {
-            let taken = issuer.seize(b, HOLDER.address(), slot, &[1])?;
+            let taken = issuer.recall(b, HOLDER.address(), slot, &[1])?;
             account::deposit_nf(b, STRANGER, taken)
         })
         .expect_err("a reach nobody admitted");
@@ -154,7 +154,7 @@ fn a_slot_that_keeps_no_value_is_refused_where_the_argument_is_read() {
 
     for slot in [0u64, 2, 3, 4, 6, 7, 0xFFFE] {
         let refused = chain.try_transact(WARDEN, |b| {
-            let taken = issuer.seize(b, HOLDER.address(), slot, &[1])?;
+            let taken = issuer.recall(b, HOLDER.address(), slot, &[1])?;
             account::deposit_nf(b, WARDEN, taken)
         });
         let refused = refused.expect_err("a slot nothing reaches");
