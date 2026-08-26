@@ -179,6 +179,11 @@ pub enum TypedError {
 #[derive(Clone, Copy, Debug)]
 #[must_use = "an unpresented proof authorizes nothing"]
 pub struct Proof {
+    /// The builder that minted it. A node index means nothing in another
+    /// intent's graph, so presenting a foreign proof would compile and
+    /// then surface at admission in flattened-tree coordinates — the
+    /// failure this tier exists to catch at the compose site.
+    builder: u64,
     /// How the presenting node names it: a node of the same intent, or
     /// a socket this intent declared for a proof from outside it.
     reference: EvidenceRef,
@@ -201,11 +206,26 @@ impl Proof {
 
     /// The proof a socket will be filled with, presented as this
     /// intent's `position`-th socket.
-    pub(crate) const fn from_socket(position: u32, acting: Option<CallTarget>) -> Self {
+    pub(crate) const fn from_socket(
+        builder: u64,
+        position: u32,
+        acting: Option<CallTarget>,
+    ) -> Self {
         Self {
+            builder,
             reference: EvidenceRef::Socket(position),
             acting,
         }
+    }
+
+    /// Refuse a proof this builder did not mint, on [`Bucket`]'s terms.
+    ///
+    /// [`Bucket`]: crate::Bucket
+    pub(crate) fn check(&self, builder: u64) {
+        assert_eq!(
+            self.builder, builder,
+            "a proof must be presented by the builder that minted it"
+        );
     }
 
     /// How a node presents it.
@@ -630,6 +650,7 @@ impl<'a> TypedBuilder<'a> {
         let (node, outputs) = self.append(target, method, args, proofs)?;
         outputs.none()?;
         Ok(Proof {
+            builder: self.graph.id(),
             reference: EvidenceRef::Node(node),
             acting: Some(target),
         })
@@ -749,6 +770,12 @@ impl<'a> TypedBuilder<'a> {
         Some(minted)
     }
 
+    /// The graph's identity, for the handles that must remember which
+    /// builder minted them.
+    pub(crate) const fn graph_id(&self) -> u64 {
+        self.graph.id()
+    }
+
     fn append(
         &mut self,
         target: CallTarget,
@@ -756,6 +783,12 @@ impl<'a> TypedBuilder<'a> {
         args: impl Args,
         proofs: &[Proof],
     ) -> Result<(u32, Outputs), TypedError> {
+        // A proof's node index means nothing in another intent's graph;
+        // cross-intent authority travels through a socket, never by
+        // presenting a foreign handle.
+        for proof in proofs {
+            proof.check(self.graph.id());
+        }
         let (meta, package) = self.resolve(target, method)?;
         let signature = &package.methods[method];
         let meta = meta.as_ref();

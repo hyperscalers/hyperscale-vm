@@ -148,8 +148,13 @@ impl Arg for Bucket {
 
 impl sealed::Sealed for SocketRef {}
 impl Arg for SocketRef {
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
-        GraphArg::Socket(self.0)
+    fn bind(self, builder: &GraphBuilder) -> GraphArg {
+        assert_eq!(
+            self.builder,
+            builder.id(),
+            "a socket is consumed by the intent that declared it"
+        );
+        GraphArg::Socket(self.position)
     }
 }
 

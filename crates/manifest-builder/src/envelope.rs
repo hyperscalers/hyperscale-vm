@@ -352,7 +352,10 @@ impl<'a> IntentBuilder<'a> {
             resource: resource.into(),
             constraints: constraints.into_iter().collect(),
         });
-        SocketRef(position)
+        SocketRef {
+            builder: self.graph_id(),
+            position,
+        }
     }
 
     /// Declare a socket for a proof carrying `claim`, answering the
@@ -378,7 +381,7 @@ impl<'a> IntentBuilder<'a> {
         // reading the address class gives everywhere.
         let acting = CallTarget::try_from(claim.subject).ok();
         self.sockets.push(Socket::Authority(claim));
-        Proof::from_socket(position, acting)
+        Proof::from_socket(self.graph_id(), position, acting)
     }
 
     /// The declaration, for its signer to sign and hand on.
@@ -432,6 +435,7 @@ impl<'a> IntentBuilder<'a> {
     /// would have to offer it.
     #[must_use]
     pub fn offer(&self, proof: Proof) -> Offered {
+        proof.check(self.graph_id());
         let EvidenceRef::Node(producer) = proof.reference() else {
             panic!("a proof from a socket is not this intent's to offer");
         };

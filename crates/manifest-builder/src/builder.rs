@@ -155,10 +155,15 @@ impl Bucket {
 ///
 /// [`IntentBuilder::declare`]: crate::envelope::IntentBuilder::declare
 #[derive(Debug)]
-pub struct SocketRef(
+pub struct SocketRef {
+    /// The builder whose declaration holds the socket. A position means
+    /// nothing in another intent's declaration, so a foreign token is
+    /// refused where it is bound rather than surfacing at admission in
+    /// tree coordinates.
+    pub(crate) builder: u64,
     /// The socket position within the enclosing intent's declaration.
-    pub(crate) u32,
-);
+    pub(crate) position: u32,
+}
 
 /// Distinguishes concurrently live builders, so a [`Bucket`] minted by one
 /// cannot be quietly spent in another's index space.
@@ -413,6 +418,11 @@ impl GraphBuilder {
         );
     }
 
+    /// This builder's identity, for the handles that must remember it.
+    pub(crate) const fn id(&self) -> u64 {
+        self.id
+    }
+
     /// Consume an output as a yield edge: bound by the enclosing
     /// envelope's [`Binding`] to another intent's socket,
     /// rather than by a node of this graph.
@@ -603,7 +613,14 @@ mod tests {
                 output: 0,
             }
         );
-        let [] = b.call(ALICE, "deposit", (SocketRef(0),));
+        let [] = b.call(
+            ALICE,
+            "deposit",
+            (SocketRef {
+                builder: b.id(),
+                position: 0,
+            },),
+        );
         let graph = b.build().unwrap();
         assert_eq!(graph.nodes[1].args, vec![GraphArg::Socket(0)]);
     }

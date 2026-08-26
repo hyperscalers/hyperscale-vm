@@ -333,6 +333,34 @@ fn a_handle_from_another_envelope_is_refused() {
     let _ = mine.bind(wants, elsewhere);
 }
 
+/// A proof's node index means nothing in another intent's graph, and
+/// offering one across intents used to compile — surfacing at admission
+/// as a claim mismatch in flattened-tree coordinates. The handle
+/// remembers its builder, so the mistake stops at the compose site.
+#[test]
+#[should_panic(expected = "the builder that minted it")]
+fn a_proof_minted_by_another_intent_cannot_be_offered() {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
+    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
+    let sub = env.subintent(BOB);
+    let _ = sub.offer(alice_proof);
+}
+
+/// The same fence for the socket token: a position indexes the
+/// declaration of the intent that declared it, and nothing else's.
+#[test]
+#[should_panic(expected = "the intent that declared it")]
+fn a_socket_token_from_another_intent_cannot_be_consumed() {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
+    let theirs = {
+        let mut sub = env.subintent(BOB);
+        sub.declare(RES_X, [])
+    };
+    account::deposit(&mut root, ALICE, theirs).unwrap();
+}
+
 proptest! {
     /// The tier's whole contract, over compositions of growing width: a
     /// composer paying each of several counterparties, every side's socket
