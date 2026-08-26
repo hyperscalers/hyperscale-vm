@@ -480,6 +480,16 @@ enum Val {
     Opaque,
 }
 
+impl Val {
+    /// The DSL term this reading is, where it is one.
+    fn term(self) -> Option<Term> {
+        match self {
+            Self::Term(term) => Some(term),
+            _ => None,
+        }
+    }
+}
+
 impl From<Slot> for Val {
     fn from(slot: Slot) -> Self {
         match slot {
@@ -767,6 +777,39 @@ impl<'a> Lowerer<'a> {
             return None;
         };
         Some(declared)
+    }
+
+    /// A reach's arguments, and the resource its mark named where it was
+    /// called on one.
+    ///
+    /// Two spellings for one operation, and the split is what the mark
+    /// buys. `Resource::recall(..)` names a resource **this package
+    /// issues**, so the declaration's own kind picks the cell shape and
+    /// the edge type; the free `recall(.., resource, ..)` names one it
+    /// does not, where there is no mark to ask and the spelling is the
+    /// only signal there is.
+    ///
+    /// A mark that names no declaration is refused rather than read as
+    /// the free form: `Whatever::halt(..)` is an author reaching for a
+    /// resource they did not declare, and answering that with an arity
+    /// complaint would be answering the wrong question.
+    fn reached_resource<'c>(
+        &mut self,
+        call: &'c syn::ExprCall,
+        op: &str,
+    ) -> (Vec<&'c syn::Expr>, Option<Term>) {
+        let named: Vec<&syn::Expr> = call.args.iter().collect();
+        let Some(mark) = free_call_mark(call) else {
+            return (named, None);
+        };
+        let Some(declared) = self.resource_named(&mark) else {
+            self.error(mark.span(), &undeclared_mark(op));
+            return (Vec::new(), None);
+        };
+        (
+            named,
+            Some(Term::SelfResource(declared.kind, declared.mark)),
+        )
     }
 
     /// The declaration a name refers to, where it refers to one.
@@ -1978,25 +2021,33 @@ impl<'a> Lowerer<'a> {
     /// the operations and there is nothing to get.
     fn lower_halt(&mut self, raising: bool, call: &syn::ExprCall) -> Eval {
         let spelling = if raising { "halt" } else { "unhalt" };
-        let named: Vec<&syn::Expr> = call.args.iter().collect();
-        let [holder, resource] = named[..] else {
+        // `Resource::halt(holder)` names the resource by its mark and the
+        // holder alone; the free form names both, for the resource a
+        // package does not issue and has no mark for.
+        let (named, marked) = self.reached_resource(call, spelling);
+        let holder = match (named.as_slice(), marked) {
+            ([holder], Some(resource)) => Some((*holder, resource)),
+            ([holder, resource], None) => self.expr(resource).val.term().map(|r| (*holder, r)),
+            _ => None,
+        };
+        let Some((holder, resource)) = holder else {
             self.error(
                 call.args.span(),
                 &format!(
                     "`{spelling}` names the holder whose movement is stopped and the \
-                     resource it is stopped for"
+                     resource it is stopped for — `Resource::{spelling}(holder)` where this \
+                     package issues it, or `{spelling}(holder, resource)` where it does not"
                 ),
             );
             return Eval::absent(call.args.span(), "a halt naming neither party");
         };
         let holder = self.expr(holder);
-        let resource = self.expr(resource);
-        let (Val::Term(holder), Val::Term(resource)) = (holder.val, resource.val) else {
+        let Val::Term(holder) = holder.val else {
             self.error(
                 call.args.span(),
                 &format!(
-                    "`{spelling}` names a holder and a resource the declaration can see — an \
-                     argument, a configuration field, or a resource this package issues"
+                    "`{spelling}` names a holder the declaration can see — an argument, or a \
+                     configuration field"
                 ),
             );
             return Eval::absent(
@@ -2024,9 +2075,47 @@ impl<'a> Lowerer<'a> {
         Eval::plain(body)
     }
 
-    /// Lower `recall(holder, slot, resource, amount)` and
-    /// `recall_instances(holder, slot, resource, ids)` — value taken out
-    /// of a prefix that is not this instance's.
+    /// Which cell shape a recall reaches: the mark's declared kind
+    /// wherever a mark named the resource, and the spelling otherwise.
+    ///
+    /// `None` where the two disagree, which only the free spelling can
+    /// manage — the mark form has one word and takes the kind from the
+    /// declaration. Refused rather than resolved in the mark's favour,
+    /// because an author who wrote `recall` of a non-fungible meant one
+    /// of two things and the compiler cannot tell which.
+    fn recalled_kind(
+        &mut self,
+        resource: &Term,
+        spelled_instances: bool,
+        free_spelling: bool,
+        call: &syn::ExprCall,
+    ) -> Option<bool> {
+        let Term::SelfResource(kind, _) = resource else {
+            return Some(spelled_instances);
+        };
+        let declared = *kind == ResourceKind::NonFungible;
+        if !free_spelling || declared == spelled_instances {
+            return Some(declared);
+        }
+        let (spelling, is, wanted) = if declared {
+            ("recall", "non-fungible", "recall_instances")
+        } else {
+            ("recall_instances", "fungible", "recall")
+        };
+        self.error(
+            call.func.span(),
+            &format!(
+                "this resource is {is}, and `{spelling}` reaches the cell the other kind is \
+                 kept in — `{wanted}`, or the mark's own `Resource::recall(holder, slot, ..)`, \
+                 which takes the kind from the declaration"
+            ),
+        );
+        None
+    }
+
+    /// Lower `Resource::recall(holder, slot, moved)` and the free
+    /// `recall(holder, slot, resource, amount)` beside it — value taken
+    /// out of a prefix that is not this instance's.
     ///
     /// [`Self::lower_halt`]'s shape with a slot the caller names. A
     /// halt has one cell to reach and the vocabulary fixes where it
@@ -2034,44 +2123,68 @@ impl<'a> Lowerer<'a> {
     /// the declaration as an argument and the band it may name is
     /// judged where it has a value.
     ///
+    /// **Which cell shape a recall reaches is the resource's kind**, and
+    /// where a mark says the kind the spelling says nothing: a balance
+    /// is a leaf and instances are entries of an interval, and the two
+    /// are not interchangeable. So a mark picks the shape, and the free
+    /// form — whose resource is a configured address the declaration
+    /// cannot ask a kind of — takes it from `recall` or
+    /// `recall_instances`. A mark named through the free spelling is
+    /// held to its own kind, because the declaration knows the answer
+    /// and a mismatch would otherwise derive a cell nothing can be in.
+    ///
     /// Nothing here judges who may. The package writing this has said it
     /// is acting as the resource's recaller, and whether it is, is the
     /// resource's answer.
-    fn lower_recall(&mut self, instances: bool, call: &syn::ExprCall) -> Eval {
-        let spelling = if instances {
+    fn lower_recall(&mut self, spelled_instances: bool, call: &syn::ExprCall) -> Eval {
+        let spelling = if spelled_instances {
             "recall_instances"
         } else {
             "recall"
+        };
+        let (named, marked) = self.reached_resource(call, spelling);
+        let reached = match (named.as_slice(), marked) {
+            ([holder, slot, moved], Some(resource)) => Some((*holder, *slot, *moved, resource)),
+            ([holder, slot, resource, moved], None) => self
+                .expr(resource)
+                .val
+                .term()
+                .map(|r| (*holder, *slot, *moved, r)),
+            _ => None,
+        };
+        let Some((holder, slot, moved, resource)) = reached else {
+            self.error(
+                call.args.span(),
+                &format!(
+                    "`{spelling}` names the holder reached, the slot they keep the resource \
+                     at, and what is taken — `Resource::recall(holder, slot, ..)` where this \
+                     package issues it, or `{spelling}(holder, slot, resource, ..)` where it \
+                     does not"
+                ),
+            );
+            return Eval::absent(call.args.span(), "a recall naming too little");
+        };
+        let Some(instances) =
+            self.recalled_kind(&resource, spelled_instances, named.len() == 4, call)
+        else {
+            return Eval::absent(call.func.span(), "a recall of the wrong kind");
         };
         let taken = if instances {
             "the instances"
         } else {
             "the amount"
         };
-        let named: Vec<&syn::Expr> = call.args.iter().collect();
-        let [holder, slot, resource, moved] = named[..] else {
-            self.error(
-                call.args.span(),
-                &format!(
-                    "`{spelling}` names the holder reached, the slot they keep the resource \
-                     at, the resource, and {taken} taken"
-                ),
-            );
-            return Eval::absent(call.args.span(), "a recall naming too little");
-        };
         let holder = self.expr(holder);
         let slot = self.expr(slot);
-        let resource = self.expr(resource);
         let moved = self.expr(moved);
-        let (Val::Term(holder), Val::Term(slot), Val::Term(resource), Val::Term(quantity)) =
-            (holder.val, slot.val, resource.val, moved.val.clone())
+        let (Val::Term(holder), Val::Term(slot), Val::Term(quantity)) =
+            (holder.val, slot.val, moved.val.clone())
         else {
             self.error(
                 call.args.span(),
                 &format!(
-                    "`{spelling}` names a holder, a slot, a resource and {taken} the \
-                     declaration can see — an argument, a configuration field, or a \
-                     resource this package issues"
+                    "`{spelling}` names a holder, a slot and {taken} the declaration can \
+                     see — an argument, or a configuration field"
                 ),
             );
             return Eval::absent(

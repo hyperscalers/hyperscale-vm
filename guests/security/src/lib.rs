@@ -42,9 +42,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod security {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{
-        Bucket, Ids, NfBucket, Quantity, halt, recall, recall_instances, unhalt,
-    };
+    use hyperscale_vm_sdk::state::{Bucket, Ids, NfBucket, Quantity};
 
     /// The register entry: one instance per registration.
     ///
@@ -170,18 +168,20 @@ pub mod security {
         /// The one cell this package writes under somebody else's
         /// prefix, and it declares no gate of its own: what admits the
         /// reach is the share's own `freeze` entry, injected where the
-        /// declaration is evaluated. A holder does not have to cooperate
+        /// declaration is evaluated. Named on the mark, so the resource
+        /// this halts is the resource the declaration derives and there
+        /// is no second spelling to disagree with it. A holder does not have to cooperate
         /// and cannot be written to cooperate — which is the whole
         /// difference from a fence a holder's package would have had to
         /// declare.
         pub fn freeze(&mut self, holder: Address) {
-            halt(holder, Share::address());
+            Share::halt(holder);
         }
 
         /// Let them move again. The flag's absence is the unfrozen
         /// state, so lifting it is ending the cell.
         pub fn release(&mut self, holder: Address) {
-            unhalt(holder, Share::address());
+            Share::unhalt(holder);
         }
 
         /// Issue the approval-gated class.
@@ -210,7 +210,7 @@ pub mod security {
         /// the whole of why a frozen holder is recallable and a holder
         /// off the register is too.
         pub fn recall_shares(&mut self, holder: Address, slot: u64, amount: Quantity) -> Bucket {
-            recall(holder, slot, Share::address(), amount)
+            Share::recall(holder, slot, amount)
         }
 
         /// Take the named registrations back, which is the only way
@@ -224,9 +224,12 @@ pub mod security {
         ///
         /// The registrations are named rather than counted, which is
         /// what the non-fungible kind was bought for: a registrar
-        /// revoking one of a holder's two says which.
+        /// revoking one of a holder's two says which. Nothing here says
+        /// so twice — the same `recall` the share class uses, taking its
+        /// cell shape and its edge type from the mark's own declared
+        /// kind.
         pub fn revoke(&mut self, holder: Address, slot: u64, ids: Ids) -> NfBucket {
-            recall_instances(holder, slot, Registered::address(), ids)
+            Registered::recall(holder, slot, ids)
         }
     }
 }

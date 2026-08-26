@@ -1,0 +1,5 @@
+error: this resource is non-fungible, and `recall` reaches the cell the other kind is kept in — `recall_instances`, or the mark's own `Resource::recall(holder, slot, ..)`, which takes the kind from the declaration
+  --> tests/refusals/recalled_wrong_kind.rs:19:13
+   |
+19 |             recall(holder, slot, Registered::address(), amount)
+   |             ^^^^^^

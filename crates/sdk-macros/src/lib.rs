@@ -2619,6 +2619,7 @@ fn issuance(
         ResourceKind::Fungible => value_surface(name, &stub),
         ResourceKind::NonFungible => instance_surface(name, schema, &stub),
     });
+    methods.extend(reach_surface(name, kind, &stub));
     let reading = role.reading();
     syn::parse_quote!(
         #reading
@@ -2664,6 +2665,71 @@ fn record_creation(name: &str, kind: ResourceKind, stub: &TokenStream2) -> syn::
             }
         ),
     }
+}
+
+/// The issuer's own side: reaching a holder's prefix under an entry the
+/// resource itself grants.
+///
+/// On the mark for the reason every other operation is. What a reach
+/// takes out of a holder's cell is a balance or named instances, and
+/// which is the *declaration's* answer — so the mark chooses the
+/// lowering and the edge type, and a body asking for the wrong shape
+/// meets its own argument's type rather than a refusal the macro has to
+/// phrase. The free `recall`/`recall_instances` beside these stay for
+/// the resource a package does not issue, where there is no mark to ask.
+///
+/// `halt` and `unhalt` take no shape from the kind — a halt flag is one
+/// leaf whatever the resource is — but they sit here anyway, because an
+/// author naming the resource twice at one call site is a call site with
+/// two chances to name a different one.
+fn reach_surface(name: &str, kind: ResourceKind, stub: &TokenStream2) -> Vec<syn::ImplItemFn> {
+    let halt_doc = format!("Stop `holder` moving `{name}`, wherever they hold it.");
+    let unhalt_doc = format!("Let `holder` move `{name}` again, by ending the flag.");
+    let recall_doc =
+        format!("Take `{name}` out of the cell `holder` keeps it in at `slot`, as an edge.");
+    let recall: syn::ImplItemFn = match kind {
+        ResourceKind::Fungible => syn::parse_quote!(
+            #[doc = #recall_doc]
+            #[must_use]
+            pub fn recall(
+                holder: ::hyperscale_vm_sdk::Address,
+                slot: u64,
+                quantity: ::hyperscale_vm_sdk::state::Quantity,
+            ) -> ::hyperscale_vm_sdk::state::Bucket {
+                let _ = (holder, slot, quantity);
+                #stub
+            }
+        ),
+        ResourceKind::NonFungible => syn::parse_quote!(
+            #[doc = #recall_doc]
+            #[must_use]
+            pub fn recall(
+                holder: ::hyperscale_vm_sdk::Address,
+                slot: u64,
+                ids: ::hyperscale_vm_sdk::state::Ids,
+            ) -> ::hyperscale_vm_sdk::state::NfBucket {
+                let _ = (holder, slot, &ids);
+                #stub
+            }
+        ),
+    };
+    vec![
+        syn::parse_quote!(
+            #[doc = #halt_doc]
+            pub fn halt(holder: ::hyperscale_vm_sdk::Address) {
+                let _ = holder;
+                #stub
+            }
+        ),
+        syn::parse_quote!(
+            #[doc = #unhalt_doc]
+            pub fn unhalt(holder: ::hyperscale_vm_sdk::Address) {
+                let _ = holder;
+                #stub
+            }
+        ),
+        recall,
+    ]
 }
 
 /// A fungible mark's surface: value in, and value out under the same
