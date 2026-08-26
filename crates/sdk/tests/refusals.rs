@@ -128,6 +128,7 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/ungranted_burn.rs");
     refuse.compile_fail("tests/refusals/ungranted_halt.rs");
     refuse.compile_fail("tests/refusals/ungranted_recall.rs");
+    refuse.compile_fail("tests/refusals/renamed_state.rs");
 }
 
 /// A mark the macro can already tell is unsupportable, refused where the

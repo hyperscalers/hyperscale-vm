@@ -1353,3 +1353,44 @@ fn two_moves_through_one_interval_derive_the_summed_cap() {
         TargetExpr::Range { cap, .. } if *cap == Expr::Add(filed, taken)
     ));
 }
+
+/// A package whose state is the module and nothing else: no `#[state]`
+/// struct, and every accessor still there.
+///
+/// The protocol's own cells exist under every owner, so a package that
+/// stores nothing of its own still reaches them — which is what makes an
+/// empty `#[state]` struct a name an author has to keep in step with the
+/// module's for no other reason.
+#[blueprint]
+mod stateless {
+    use hyperscale_vm_sdk::state::Bucket;
+
+    impl Stateless {
+        /// Credit the vault the arriving edge belongs in.
+        pub fn deposit(&mut self, funds: Bucket) {
+            self.vault(funds.resource()).put(funds);
+        }
+    }
+}
+
+/// The struct the macro writes is the one the module names, and the
+/// declaration it derives is the one the body wrote.
+#[test]
+fn a_module_with_no_state_struct_declares_what_its_body_reaches() {
+    use hyperscale_vm_effects::{Expr, ModeExpr};
+
+    let metadata = stateless::blueprint().metadata();
+    assert!(metadata.state.is_empty(), "no slot is the package's own");
+    let effects = &metadata.methods["deposit"].effects;
+    let [
+        Clause::Effect {
+            mode: ModeExpr::Credit,
+            denomination: Some(resource),
+            ..
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("deposit credits the vault its edge belongs in");
+    };
+    assert_eq!(**resource, Expr::ResourceOf(Box::new(Expr::Arg(0))));
+}

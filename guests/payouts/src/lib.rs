@@ -59,10 +59,6 @@ pub mod payouts {
         BelowOneLot,
     }
 
-    /// The splitter keeps only what it could not divide.
-    #[state]
-    struct Payouts {}
-
     impl Payouts {
         /// Divide a payment three ways and keep what will not divide.
         ///

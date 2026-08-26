@@ -24,6 +24,15 @@
 //! and its key is `ResourceOf(Arg(0))` — all of it read off the body.
 //! Nothing was written twice.
 //!
+//! # One component, one name
+//!
+//! The component is the module: the world a package publishes under is
+//! the module's name, so the `#[state]` struct carries that name in
+//! `PascalCase` and a struct named anything else is refused. A package
+//! that stores nothing of its own writes no `#[state]` struct at all —
+//! the macro writes the one its module implies, and the protocol's own
+//! cells, which exist under every owner, are reachable either way.
+//!
 //! # The two halves
 //!
 //! A host build gets `blueprint()`: the declaration, traced. A
@@ -203,6 +212,24 @@ fn kebab(name: &str) -> String {
                 out.push('-');
             }
             out.extend(ch.to_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// A module's name as the struct standing for it: `flash_loan` is
+/// `FlashLoan`.
+fn pascal(name: &str) -> String {
+    let mut out = String::new();
+    let mut starting = true;
+    for ch in name.chars() {
+        if ch == '_' {
+            starting = true;
+        } else if starting {
+            out.extend(ch.to_uppercase());
+            starting = false;
         } else {
             out.push(ch);
         }
@@ -1074,18 +1101,14 @@ fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
     cells
 }
 
-/// The `#[state]` struct: its name, its fields by slot and shape, and the
+/// The `#[state]` struct's fields by slot and shape, and the
 /// configuration struct its `Config<_>` field names, if it has one.
-fn parse_state(
-    items: &[syn::Item],
-    span: Span,
-) -> syn::Result<(syn::Ident, BTreeMap<String, Field>, Option<syn::Ident>)> {
+fn parse_state(items: &[syn::Item]) -> syn::Result<(BTreeMap<String, Field>, Option<syn::Ident>)> {
     // Named before the state is read, so the refusal below can name every
     // accessor a field would shadow — including `config`, which exists
     // exactly when the package declares a configuration struct.
     let reserved = accessors(None);
     let mut fields = BTreeMap::new();
-    let mut state_name = None;
     let mut config_name = None;
     for item in items {
         if let syn::Item::Struct(item) = item
@@ -1113,7 +1136,6 @@ fn parse_state(
         if !item.attrs.iter().any(|a| a.path().is_ident("state")) {
             continue;
         }
-        state_name = Some(item.ident.clone());
         // Whether this struct pins its slots, decided by its first field
         // and held to by the rest. Declaration order numbers the
         // unpinned, so a mix would let an insertion renumber the fields
@@ -1163,14 +1185,40 @@ fn parse_state(
             fields.insert(name, parsed);
         }
     }
-    let state_name = state_name.ok_or_else(|| {
-        syn::Error::new(
-            span,
-            "`#[blueprint]` needs one `#[state]` struct — it names the slots every key in \
-             the package sits under",
-        )
-    })?;
-    Ok((state_name, fields, config_name))
+    Ok((fields, config_name))
+}
+
+/// The struct the component is, named for the module it lives in.
+///
+/// `#[state]` states the slots a package's keys sit under, and a package
+/// with no state of its own has none to state — so the attribute is
+/// optional and the macro writes the struct its module name implies. A
+/// stated one is held to that name: the world a package publishes under
+/// is the module's, so a struct named anything else is one thing an
+/// author holds under two names with nothing keeping them in step.
+fn state_struct(items: &mut Vec<syn::Item>, module: &syn::Ident) -> syn::Result<syn::Ident> {
+    let expected = pascal(&module.to_string());
+    let stated = items.iter().find_map(|item| match item {
+        syn::Item::Struct(item) if item.attrs.iter().any(|a| a.path().is_ident("state")) => {
+            Some(&item.ident)
+        }
+        _ => None,
+    });
+    let Some(stated) = stated else {
+        let ident = syn::Ident::new(&expected, module.span());
+        items.insert(0, syn::parse_quote!(#[state] struct #ident;));
+        return Ok(ident);
+    };
+    if stated == &expected {
+        return Ok(stated.clone());
+    }
+    Err(syn::Error::new(
+        stated.span(),
+        format!(
+            "`{stated}` is the state of `{module}`, so it is named `{expected}` — one \
+             component, one name, and the package publishes under the module's"
+        ),
+    ))
 }
 
 /// The configuration struct's fields in declaration order — which is what
@@ -3187,7 +3235,8 @@ fn expand(
     role: Role,
 ) -> syn::Result<TokenStream2> {
     let span = module.span();
-    let world = kebab(&module.ident.to_string());
+    let module_name = module.ident.clone();
+    let world = kebab(&module_name.to_string());
     let Some((_, items)) = &mut module.content else {
         return Err(syn::Error::new(
             span,
@@ -3196,7 +3245,8 @@ fn expand(
         ));
     };
 
-    let (state_name, fields, config_name) = parse_state(items, span)?;
+    let state_name = state_struct(items, &module_name)?;
+    let (fields, config_name) = parse_state(items)?;
     let config_fields = config_slots(items, config_name.as_ref());
     let events = event_names(items)?;
     let errors = error_names(items)?;

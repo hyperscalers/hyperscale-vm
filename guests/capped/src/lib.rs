@@ -82,9 +82,6 @@ pub mod capped {
         minter: Address,
     }
 
-    #[state]
-    struct Capped {}
-
     impl Capped {
         /// Retire `funds`, which shrinks the supply and cannot grow it.
         pub fn retire(&mut self, funds: Bucket) {

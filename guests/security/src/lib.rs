@@ -138,9 +138,6 @@ pub mod security {
         registrar: Address,
     }
 
-    #[state]
-    struct Security {}
-
     impl Security {
         /// Admit a holder to the register, as the registration `id`.
         ///

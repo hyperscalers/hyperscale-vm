@@ -58,9 +58,6 @@ pub mod flashloan {
         Short,
     }
 
-    #[state]
-    struct Flashloan {}
-
     impl Flashloan {
         /// Lend `amount`, and mint the obligation to give it back.
         ///

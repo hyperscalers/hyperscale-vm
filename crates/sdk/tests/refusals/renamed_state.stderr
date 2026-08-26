@@ -1,0 +1,5 @@
+error: `Ledger` is the state of `vault`, so it is named `Vault` — one component, one name, and the package publishes under the module's
+ --> tests/refusals/renamed_state.rs:8:12
+  |
+8 |     struct Ledger {
+  |            ^^^^^^

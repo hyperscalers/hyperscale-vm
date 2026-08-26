@@ -36,9 +36,6 @@ pub mod custodian {
         instances: ResourceAddr,
     }
 
-    #[state]
-    struct Custodian {}
-
     impl Custodian {
         /// Take value in and hold it. No gate, no rule, nothing declared
         /// about who may.

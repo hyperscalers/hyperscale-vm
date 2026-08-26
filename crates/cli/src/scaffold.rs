@@ -59,9 +59,28 @@ fn manifest(name: &str, sdk: &str, testing: &str) -> String {
     )
 }
 
+/// A module's name as the struct standing for it, which is the name
+/// `#[blueprint]` holds a `#[state]` struct to.
+fn pascal(module: &str) -> String {
+    let mut out = String::new();
+    let mut starting = true;
+    for ch in module.chars() {
+        if ch == '_' {
+            starting = true;
+        } else if starting {
+            out.extend(ch.to_uppercase());
+            starting = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// The package itself: one module, whose bodies are the declaration and
 /// the component both.
 fn library(module: &str) -> String {
+    let state = pascal(module);
     format!(
         "//! A package: one module, from which the declaration routing reads\n\
          //! and the component that executes it are both derived.\n\
@@ -77,9 +96,9 @@ fn library(module: &str) -> String {
          \x20   /// cells — balances, the delivery fallback, the stored\n\
          \x20   /// authority — every owner has already.\n\
          \x20   #[state]\n\
-         \x20   struct State {{}}\n\
+         \x20   struct {state} {{}}\n\
          \n\
-         \x20   impl State {{\n\
+         \x20   impl {state} {{\n\
          \x20       /// Credit the vault the arriving edge belongs in.\n\
          \x20       pub fn deposit(&mut self, funds: Bucket) {{\n\
          \x20           self.vault(funds.resource()).put(funds);\n\
@@ -125,11 +144,12 @@ fn declaration_bin(krate: &str, module: &str) -> String {
 /// because a package with no test is a package whose author's only
 /// feedback is a deploy.
 fn first_test(module: &str) -> String {
+    let state = pascal(module);
     format!(
         "//! What this package does, against the real kernel.\n\
          \n\
          use hyperscale_vm_testing::{{Chain, account, package, principal, resource}};\n\
-         use {module}::{module}::client::State;\n\
+         use {module}::{module}::client::{state};\n\
          \n\
          // One text, and a test per engine the crate was built with: the\n\
          // bodies at the speed of a function call, and the artifact a\n\
@@ -140,7 +160,7 @@ fn first_test(module: &str) -> String {
          \x20   let xrd = resource(0xE1);\n\
          \n\
          \x20   chain.publish(package!({module}::{module}));\n\
-         \x20   let instance = chain.instantiate::<State>(principal(1), ());\n\
+         \x20   let instance = chain.instantiate::<{state}>(principal(1), ());\n\
          \x20   chain.credit(alice, xrd, 100);\n\
          \n\
          \x20   chain\n\
