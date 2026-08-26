@@ -8,10 +8,11 @@
 //! the obligation beside it has nowhere to go but back. The pool's own
 //! code says nothing about any of it.
 //!
-//! Three cases, and the middle one is the whole point: a graph that
-//! forgets to repay never becomes a transaction, so the failure mode is
-//! a refusal the composer reads rather than value the lender has to
-//! chase.
+//! The case that carries the design is the one nobody has to write into
+//! the lender: a graph that forgets to repay never becomes a
+//! transaction, so the failure mode is a refusal the composer reads
+//! rather than value the lender has to chase. What the pool does check
+//! is the amount, and that check declines rather than trapping.
 
 use std::sync::LazyLock;
 
@@ -289,4 +290,41 @@ fn the_obligation_cannot_be_routed_into_a_vault() {
         matches!(refusal, AdmissionError::RecordWithheld { resource, .. } if resource == debt()),
         "a withheld record is refused for being withheld, not judged: {refusal:?}",
     );
+}
+
+/// Less back than went out is the pool's own refusal, on its error arm.
+///
+/// The obligation carries the property that the loan cannot outlive the
+/// transaction; it does not carry the amount, because a bucket's
+/// quantity is what the body reads and nothing constrains the two edges
+/// to agree. So `repay` is the one place in the package that computes,
+/// and this is the one branch that computation has: the borrower gives
+/// back sixty against an obligation for a hundred, and the method
+/// declines rather than trapping — the pool keeps its float and the
+/// borrower keeps theirs.
+#[test]
+fn a_repayment_that_falls_short_declines_on_the_method_s_own_arm() -> Result<()> {
+    let world = world();
+    let short = graph(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let [loan, debt] = pool().draw(b, 100)?;
+        account::deposit(b, ALICE, loan)?;
+        let funds = account::withdraw(b, alice, XRD, 60)?;
+        pool().repay(b, funds, debt)
+    });
+    let entry = batch_entry(&world, &intent(short), ALICE)?;
+    let (outcome, end) = run_both(&funded_store(), std::slice::from_ref(&entry));
+    let Outcome::Declined { code, .. } = outcome.receipts[&entry.tx].outcome else {
+        panic!(
+            "a short repayment declines: {:?}",
+            outcome.receipts[&entry.tx].outcome,
+        );
+    };
+    assert_eq!(code, flashloan::SHORT);
+
+    // A decline is an abort, so nothing the graph did stands: the loan
+    // is back where it started and the obligation was never burned.
+    assert_eq!(amount_of(&end, vault(pool_addr(), XRD)), 1_000);
+    assert_eq!(amount_of(&end, vault(ALICE, XRD)), 100);
+    Ok(())
 }
