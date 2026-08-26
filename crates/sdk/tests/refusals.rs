@@ -187,6 +187,22 @@ fn the_lowering_refuses_a_leaf_spelled_as_a_bare_name() {
     refuse.compile_fail("tests/refusals/bare_grant_name.rs");
 }
 
+/// One rule grammar, and the position it was written in is the only
+/// difference a refusal shows.
+///
+/// A gate and a granted entry take the same operators over the same
+/// leaves, and used to take them through two parsers that had already
+/// drifted — two spellings of the depth cap, two count parsers, one
+/// `n_of` predicate applied from two places. These two cases sit either
+/// side of the seam: a count that is not a literal, and a nesting past
+/// the cap in the position that is not the gate.
+#[test]
+fn one_rule_grammar_serves_the_gate_and_the_grant() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/countless_threshold.rs");
+    refuse.compile_fail("tests/refusals/granted_nests_too_deep.rs");
+}
+
 /// A threshold the vocabulary holds no rule for, refused where it was
 /// written.
 ///

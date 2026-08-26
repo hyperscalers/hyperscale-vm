@@ -1,0 +1,5 @@
+error: a granted rule nests past the 4 levels the vocabulary admits
+  --> tests/refusals/granted_nests_too_deep.rs:12:40
+   |
+12 |         mint = n_of(1, n_of(1, n_of(1, n_of(1, config.chair))))
+   |                                        ^^^^

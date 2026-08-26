@@ -576,10 +576,52 @@ fn guarded_rule(
     params: &[(String, syn::Type)],
     depth: usize,
 ) -> syn::Result<(TokenStream2, bool, bool)> {
+    let rule = parse_rule(expr, "a gate", depth, &mut |leaf| {
+        guarded_identity(leaf, config_fields, resources, params)
+    })?;
+    match &rule {
+        // Whether the rule is the target's own address is a question
+        // about a single claim; a threshold is answerable for its
+        // branches and not for itself.
+        RuleAst::Leaf((identity, on_self)) => Ok((quote!(__t.claim(&#identity)), *on_self, false)),
+        node @ RuleAst::CountOf { .. } => Ok((emit_guarded(node), false, true)),
+    }
+}
+
+/// One rule as written, before either position turns it into tokens.
+///
+/// A method's gate and a resource's granted entry take the same grammar
+/// over different leaves and emit different types. Parsed once, so the
+/// two cannot drift in the ways they already had: two spellings of one
+/// depth refusal, two count parsers, and one `n_of` predicate applied
+/// from two places.
+enum RuleAst<L> {
+    /// A claim, in whatever shape the position admits.
+    Leaf(L),
+    /// A threshold over branches, its count already held to the
+    /// vocabulary's predicate.
+    CountOf { count: u8, branches: Vec<Self> },
+}
+
+/// The rule grammar, over whatever leaf the position admits.
+///
+/// Rust's own operators carry the algebra: `||` is a count of one, `&&`
+/// a count of every branch, and `n_of(k, …)` the threshold no operator
+/// expresses. Precedence and grouping are the language's, so an author
+/// reads a rule the way they read any other condition — and a chain of
+/// one operator flattens into one threshold rather than nesting, because
+/// depth is the cap that binds first.
+///
+/// `noun` is what a refusal calls the thing being written, and it is the
+/// only difference between the two positions a reader should see.
+fn parse_rule<L>(
+    expr: &syn::Expr,
+    noun: &str,
+    depth: usize,
+    leaf: &mut impl FnMut(&syn::Expr) -> syn::Result<L>,
+) -> syn::Result<RuleAst<L>> {
     match expr {
-        syn::Expr::Paren(inner) => {
-            guarded_rule(&inner.expr, config_fields, resources, params, depth)
-        }
+        syn::Expr::Paren(inner) => parse_rule(&inner.expr, noun, depth, leaf),
         syn::Expr::Binary(binary) => {
             let all = match binary.op {
                 syn::BinOp::Or(_) => false,
@@ -587,62 +629,77 @@ fn guarded_rule(
                 _ => {
                     return Err(syn::Error::new(
                         binary.op.span(),
-                        "a gate combines claims with `||`, `&&`, or `n_of(k, …)`",
+                        format!("{noun} combines claims with `||`, `&&`, or `n_of(k, …)`"),
                     ));
                 }
             };
-            let branches = flatten(expr, &binary.op);
-            let lowered = threshold(
-                expr.span(),
-                &branches,
-                config_fields,
-                resources,
-                params,
-                depth,
-            )?;
+            let branches =
+                parse_branches(expr.span(), &flatten(expr, &binary.op), noun, depth, leaf)?;
             // `||` is a count of one and `&&` a count of every branch, so
             // neither can be a threshold nobody meant: a chain has at
             // least two branches, and both counts sit inside them.
             let count = if all {
-                u8::try_from(lowered.len()).unwrap_or(u8::MAX)
+                u8::try_from(branches.len()).unwrap_or(u8::MAX)
             } else {
                 1
             };
-            check_threshold_node(expr.span(), count, lowered.len())?;
-            Ok((
-                quote!(__t.n_of(#count, ::std::vec![#(#lowered),*])),
-                false,
-                true,
-            ))
+            check_threshold_node(expr.span(), count, branches.len())?;
+            Ok(RuleAst::CountOf { count, branches })
         }
         // A threshold no operator expresses: `n_of(2, a, b, c)`.
-        syn::Expr::Call(call) if named(&call.func, "n_of") => {
+        syn::Expr::Call(call) if calls(&call.func, "n_of") => {
             let mut args = call.args.iter();
             let count = args.next().and_then(count_literal).ok_or_else(|| {
                 syn::Error::new(
                     call.span(),
-                    "`n_of` takes a literal count and then the claims it counts",
+                    "a threshold states its count first: `n_of(2, a, b, c)`",
                 )
             })?;
-            let branches: Vec<_> = args.collect();
-            let lowered = threshold(
-                call.span(),
-                &branches,
-                config_fields,
-                resources,
-                params,
-                depth,
-            )?;
-            check_threshold_node(call.span(), count, lowered.len())?;
-            Ok((
-                quote!(__t.n_of(#count, ::std::vec![#(#lowered),*])),
-                false,
-                true,
-            ))
+            let rest: Vec<_> = args.collect();
+            let branches = parse_branches(call.span(), &rest, noun, depth, leaf)?;
+            check_threshold_node(call.span(), count, branches.len())?;
+            Ok(RuleAst::CountOf { count, branches })
         }
-        leaf => {
-            let (identity, on_self) = guarded_identity(leaf, config_fields, resources, params)?;
-            Ok((quote!(__t.claim(&#identity)), on_self, false))
+        other => Ok(RuleAst::Leaf(leaf(other)?)),
+    }
+}
+
+/// The branches of one threshold, held to the depth the vocabulary
+/// admits.
+///
+/// The cap is read from the vocabulary rather than restated, and it is
+/// checked here rather than at the tracer's own assertion: both refuse
+/// the same trees — a threshold at the deepest level would put its
+/// branches past the cap, which is what `within_caps` walks into — but
+/// only this one can point at the line that wrote it. Depth is a
+/// property of the shape alone, so a rule whose leaves nobody has
+/// evaluated is still answerable for it.
+fn parse_branches<L>(
+    span: Span,
+    branches: &[&syn::Expr],
+    noun: &str,
+    depth: usize,
+    leaf: &mut impl FnMut(&syn::Expr) -> syn::Result<L>,
+) -> syn::Result<Vec<RuleAst<L>>> {
+    if depth + 1 >= MAX_RULE_DEPTH {
+        return Err(syn::Error::new(
+            span,
+            format!("{noun} nests past the {MAX_RULE_DEPTH} levels the vocabulary admits"),
+        ));
+    }
+    branches
+        .iter()
+        .map(|branch| parse_rule(branch, noun, depth + 1, leaf))
+        .collect()
+}
+
+/// A gate's rule, as a tracer call answering a `Requirement`.
+fn emit_guarded(rule: &RuleAst<(TokenStream2, bool)>) -> TokenStream2 {
+    match rule {
+        RuleAst::Leaf((identity, _)) => quote!(__t.claim(&#identity)),
+        RuleAst::CountOf { count, branches } => {
+            let lowered = branches.iter().map(emit_guarded);
+            quote!(__t.n_of(#count, ::std::vec![#(#lowered),*]))
         }
     }
 }
@@ -658,40 +715,6 @@ fn check_threshold_node(span: Span, count: u8, width: usize) -> syn::Result<()> 
         rules: vec![Rule::Require(()); width],
     };
     well_formed(&node).map_err(|reason| syn::Error::new(span, reason))
-}
-
-/// The branches of one threshold, lowered, held to the depth the
-/// vocabulary admits.
-///
-/// The cap is read from the vocabulary rather than restated, and it is
-/// checked here rather than at the tracer's own assertion: both refuse
-/// the same trees — a threshold at the deepest level would put its
-/// branches past the cap, which is what `within_caps` walks into — but
-/// only this one can point at the line that wrote it. Depth is a
-/// property of the shape alone, so a gate whose leaves nobody has
-/// evaluated is still answerable for it; the node's count and width are
-/// judged where each arm knows its count, through the shared predicate.
-fn threshold(
-    span: Span,
-    branches: &[&syn::Expr],
-    config_fields: &[(String, syn::Type)],
-    resources: &[Resource],
-    params: &[(String, syn::Type)],
-    depth: usize,
-) -> syn::Result<Vec<TokenStream2>> {
-    if depth + 1 >= MAX_RULE_DEPTH {
-        return Err(syn::Error::new(
-            span,
-            format!("a gate nests past the {MAX_RULE_DEPTH} levels the vocabulary admits"),
-        ));
-    }
-    branches
-        .iter()
-        .map(|branch| {
-            guarded_rule(branch, config_fields, resources, params, depth + 1)
-                .map(|(rule, _, _)| rule)
-        })
-        .collect()
 }
 
 /// One operator's whole chain as a flat branch list.
@@ -714,12 +737,6 @@ fn flatten<'a>(expr: &'a syn::Expr, op: &syn::BinOp) -> Vec<&'a syn::Expr> {
         }
         other => vec![other],
     }
-}
-
-/// Whether a call names `name`, by its last path segment.
-fn named(func: &syn::Expr, name: &str) -> bool {
-    matches!(func, syn::Expr::Path(path)
-        if path.path.segments.last().is_some_and(|s| s.ident == name))
 }
 
 /// A `u8` count written as a literal.
@@ -2182,69 +2199,32 @@ fn granted_rule(
     config_fields: &[String],
     depth: usize,
 ) -> syn::Result<(TokenStream2, bool)> {
-    match expr {
-        syn::Expr::Paren(inner) => granted_rule(&inner.expr, resources, config_fields, depth),
-        syn::Expr::Binary(binary) => {
-            let all = match binary.op {
-                syn::BinOp::Or(_) => false,
-                syn::BinOp::And(_) => true,
-                _ => {
-                    return Err(syn::Error::new(
-                        binary.op.span(),
-                        "a granted rule combines claims with `||`, `&&`, or `n_of(k, …)`",
-                    ));
-                }
-            };
-            let branches = flatten(expr, &binary.op);
-            let (lowered, names_config) =
-                granted_branches(expr.span(), &branches, resources, config_fields, depth)?;
-            let count = if all {
-                u8::try_from(lowered.len()).unwrap_or(u8::MAX)
-            } else {
-                1u8
-            };
-            check_threshold_node(expr.span(), count, lowered.len())?;
-            Ok((
-                quote!(::hyperscale_vm_sdk::GrantRuleExpr::CountOf {
-                    count: #count,
-                    rules: ::std::vec![#(#lowered),*],
-                }),
-                names_config,
-            ))
+    let rule = parse_rule(expr, "a granted rule", depth, &mut |leaf| {
+        granted_claim(leaf, resources, config_fields)
+    })?;
+    Ok((emit_granted(&rule), reads_config(&rule)))
+}
+
+/// A granted rule, as the expression an address folds.
+fn emit_granted(rule: &RuleAst<(TokenStream2, bool)>) -> TokenStream2 {
+    match rule {
+        RuleAst::Leaf((claim, _)) => quote!(::hyperscale_vm_sdk::GrantRuleExpr::Require(#claim)),
+        RuleAst::CountOf { count, branches } => {
+            let lowered = branches.iter().map(emit_granted);
+            quote!(::hyperscale_vm_sdk::GrantRuleExpr::CountOf {
+                count: #count,
+                rules: ::std::vec![#(#lowered),*],
+            })
         }
-        syn::Expr::Call(call) if calls(&call.func, "n_of") => {
-            let mut args = call.args.iter();
-            let count = match args.next() {
-                Some(syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Int(int),
-                    ..
-                })) => int.base10_parse::<u8>()?,
-                _ => {
-                    return Err(syn::Error::new(
-                        call.span(),
-                        "a threshold states its count first: `n_of(2, a, b, c)`",
-                    ));
-                }
-            };
-            let branches: Vec<&syn::Expr> = args.collect();
-            let (lowered, names_config) =
-                granted_branches(call.span(), &branches, resources, config_fields, depth)?;
-            check_threshold_node(call.span(), count, lowered.len())?;
-            Ok((
-                quote!(::hyperscale_vm_sdk::GrantRuleExpr::CountOf {
-                    count: #count,
-                    rules: ::std::vec![#(#lowered),*],
-                }),
-                names_config,
-            ))
-        }
-        other => {
-            let (claim, names_config) = granted_claim(other, resources, config_fields)?;
-            Ok((
-                quote!(::hyperscale_vm_sdk::GrantRuleExpr::Require(#claim)),
-                names_config,
-            ))
-        }
+    }
+}
+
+/// Whether any leaf reads the instance's configuration — which decides
+/// whether the address is derivable from a handle alone.
+fn reads_config(rule: &RuleAst<(TokenStream2, bool)>) -> bool {
+    match rule {
+        RuleAst::Leaf((_, reads)) => *reads,
+        RuleAst::CountOf { branches, .. } => branches.iter().any(reads_config),
     }
 }
 
@@ -2284,30 +2264,6 @@ fn granted_entry(
         ));
     }
     granted_rule(expr, resources, config_fields, 0)
-}
-
-fn granted_branches(
-    span: Span,
-    branches: &[&syn::Expr],
-    resources: &[Nameable<'_>],
-    config_fields: &[String],
-    depth: usize,
-) -> syn::Result<(Vec<TokenStream2>, bool)> {
-    if depth + 1 >= MAX_RULE_DEPTH {
-        return Err(syn::Error::new(
-            span,
-            format!("a granted rule nests past the {MAX_RULE_DEPTH} levels the vocabulary admits"),
-        ));
-    }
-    let lowered = branches
-        .iter()
-        .map(|branch| granted_rule(branch, resources, config_fields, depth + 1))
-        .collect::<syn::Result<Vec<_>>>()?;
-    let names_config = lowered.iter().any(|(_, names)| *names);
-    Ok((
-        lowered.into_iter().map(|(rule, _)| rule).collect(),
-        names_config,
-    ))
 }
 
 /// The `issued(<Resource>)` leaf: a badge the issuing instance also
