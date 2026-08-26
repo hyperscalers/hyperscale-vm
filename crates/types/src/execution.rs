@@ -522,6 +522,18 @@ pub enum UnmetCondition {
         /// The calling node.
         node: u32,
     },
+    /// The condition is not one the judge it reached could answer, and
+    /// it holds no leaf to name as the reason.
+    ///
+    /// A declaration routed to the wrong judge, refused rather than
+    /// waved through: the judge that cannot answer a question is not the
+    /// one to decide it was satisfied.
+    Unanswerable {
+        /// The node whose frame asked, where the declaration says.
+        ///
+        /// Optional on the same terms [`Self::Holds`] states.
+        node: Option<u32>,
+    },
 }
 
 #[cfg(test)]
@@ -696,6 +708,9 @@ mod tests {
                 required: Presence::Absent,
                 node: Some(1),
             },
+        });
+        assert_canonical(&Outcome::ConditionUnmet {
+            condition: UnmetCondition::Unanswerable { node: Some(1) },
         });
     }
 

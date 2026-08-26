@@ -317,6 +317,18 @@ pub enum MaterializeError {
         /// is every declaration a test builds by hand.
         node: Option<u32>,
     },
+    /// A declared condition committed state cannot answer.
+    ///
+    /// Distinct from [`Self::ConditionUnmet`], which names the leaf that
+    /// refused it. This one has no leaf to name: what reached the judge
+    /// is a rule nothing about state could satisfy, so what a receipt
+    /// carries is the frame that asked and nothing more.
+    #[error("a condition on node {node:?} is not one committed state can answer")]
+    ConditionUnanswerable {
+        /// The manifest node whose frame asked, where the declaration
+        /// says.
+        node: Option<u32>,
+    },
     /// A declared reservation the committed balance cannot cover.
     #[error("reservation of {amount} on {key:?} is infeasible")]
     Infeasible {
@@ -521,36 +533,56 @@ impl KernelSession {
 /// # Errors
 ///
 /// [`MaterializeError::ConditionUnmet`] for a target whose state does not
-/// hold what the condition requires.
+/// hold what the condition requires, or
+/// [`MaterializeError::ConditionUnanswerable`] for a condition with no
+/// such target to name.
 fn judge_conditions(
     store: &mut OverlayStore,
     conditions: &[Condition],
 ) -> Result<(), MaterializeError> {
     for condition in conditions {
-        if met(store, &condition.rule)? {
-            continue;
-        }
-        // What a receipt names is the first leaf the rule holds that was
-        // not met: for the one-leaf rule injection builds that is exact,
-        // and for a threshold it is one of the reasons. Beside it, the
-        // frame that asked — the rule is a leaf and a presence and says
-        // nothing about who wanted either, so a reader without the node
-        // has to guess which call it belonged to.
-        for leaf in condition.rule.leaves() {
-            let JudgedLeaf::Presence { target, expect } = leaf else {
-                continue;
-            };
-            let held = occupied(store, *target)?;
-            if !met_by(*expect, held) {
+        // The verdict and the reason are one walk. What a receipt names
+        // is the first leaf the rule holds that was not met: for the
+        // one-leaf rule injection builds that is exact, and for a
+        // threshold it is one of the reasons. Beside it, the frame that
+        // asked — the rule is a leaf and a presence and says nothing
+        // about who wanted either, so a reader without the node has to
+        // guess which call it belonged to.
+        match judge(store, &condition.rule)? {
+            Judgement::Met => {}
+            Judgement::Unmet { target, required } => {
                 return Err(MaterializeError::ConditionUnmet {
-                    target: *target,
-                    required: *expect,
+                    target,
+                    required,
+                    node: condition.node,
+                });
+            }
+            Judgement::Unanswerable => {
+                return Err(MaterializeError::ConditionUnanswerable {
                     node: condition.node,
                 });
             }
         }
     }
     Ok(())
+}
+
+/// What committed state says about a rule.
+enum Judgement {
+    /// State satisfies it.
+    Met,
+    /// State does not, and this is the first leaf that says so.
+    Unmet {
+        /// The leaf whose state did not meet the condition.
+        target: EffectTarget,
+        /// What it required there.
+        required: Presence,
+    },
+    /// State cannot say, and the rule holds no leaf to point at. A
+    /// threshold over no branches is the shape — this algebra's spelling
+    /// of the rule nobody satisfies — and it refuses, because the
+    /// alternative is a verdict reached by finding nothing to object to.
+    Unanswerable,
 }
 
 /// Whether `expect` is met by state that does or does not hold
@@ -563,26 +595,46 @@ const fn met_by(expect: Presence, held: bool) -> bool {
     }
 }
 
-/// Whether committed state satisfies `rule`.
+/// What committed state says about `rule`, and why.
 ///
 /// Every leaf here reads the store: a rule reaching a call's evidence is
 /// judged at that call, and admission has already sent it there.
-fn met(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<bool, MaterializeError> {
+///
+/// One walk for both halves of the answer. A second walk to find the
+/// reason can disagree with the first about the verdict, and where it
+/// finds nothing to object to the refusal it was asked for does not
+/// happen.
+fn judge(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<Judgement, MaterializeError> {
     match rule {
         Rule::Require(JudgedLeaf::Presence { target, expect }) => {
-            Ok(met_by(*expect, occupied(store, *target)?))
+            Ok(if met_by(*expect, occupied(store, *target)?) {
+                Judgement::Met
+            } else {
+                Judgement::Unmet {
+                    target: *target,
+                    required: *expect,
+                }
+            })
         }
         // A leaf reading evidence cannot be answered here, and admission
         // never routes a rule holding one this way.
-        Rule::Require(_) => Ok(true),
+        Rule::Require(_) => Ok(Judgement::Met),
         Rule::CountOf { count, rules } => {
             let mut got = 0usize;
+            let mut first_unmet = None;
             for branch in rules {
-                if met(store, branch)? {
-                    got += 1;
+                match judge(store, branch)? {
+                    Judgement::Met => got += 1,
+                    Judgement::Unmet { target, required } => {
+                        first_unmet.get_or_insert(Judgement::Unmet { target, required });
+                    }
+                    Judgement::Unanswerable => {}
                 }
             }
-            Ok(got >= usize::from(*count))
+            if got >= usize::from(*count) {
+                return Ok(Judgement::Met);
+            }
+            Ok(first_unmet.unwrap_or(Judgement::Unanswerable))
         }
     }
 }
@@ -760,7 +812,7 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        Condition, Declaration, DeclaredAccess, JudgedLeaf, Rule, SlotRef,
+        Condition, Declaration, DeclaredAccess, JudgedLeaf, Rule, SlotRef, rule,
     };
     use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Moves, Presence,
@@ -805,6 +857,42 @@ mod tests {
             hash,
         )
         .map(|_| ())
+    }
+
+    /// The judge does not reach a verdict by failing to find an
+    /// objection.
+    ///
+    /// `never()` is this algebra's spelling of the rule nobody satisfies
+    /// — one of no branches — so it holds no leaf, and a walk that
+    /// looked for an unmet leaf to blame would find none and let the
+    /// transaction run. `Rule::judged` sends a leafless rule to
+    /// admission today, so nothing routes one here; the last gate before
+    /// a body runs is the wrong place to be relying on that.
+    #[test]
+    fn a_condition_nobody_satisfies_refuses_with_nothing_to_name() {
+        let target = EffectTarget::Point(key(0xC2));
+        let set = declared(&[Effect {
+            target,
+            mode: Mode::Write { moves: Moves::Both },
+        }]);
+        let ordered = ord(&set);
+        assert_eq!(
+            KernelSession::materialize(
+                OverlayStore::new(Arc::new(MemoryStore::new())),
+                &Declaration {
+                    set,
+                    ordered: holding(&ordered),
+                    conditions: vec![Condition::declared(rule::never())],
+                    ..Declaration::default()
+                },
+                tx(1),
+                env(),
+                hash,
+            )
+            .map(|_| ())
+            .expect_err("a rule nobody satisfies is not satisfied"),
+            MaterializeError::ConditionUnanswerable { node: None }
+        );
     }
 
     /// A declaration says what it requires of a leaf, and the shard

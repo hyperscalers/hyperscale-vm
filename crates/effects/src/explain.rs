@@ -289,103 +289,120 @@ pub fn explain_refusal(admitted: &Admitted, unmet: &UnmetCondition) -> String {
             target,
             required,
             node,
-        } => {
-            // The asking node's own requirements and nobody else's. A
-            // condition the verdict cannot place is one no injection
-            // could have matched anyway, so the fallback below is the
-            // same answer either way.
-            let at = node.and_then(|node| usize::try_from(node).ok());
-            let injected = at
-                .and_then(|at| admitted.injected().get(at))
-                .map(Vec::as_slice)
-                .unwrap_or_default()
-                .iter()
-                .find(|injected| {
-                    injected.rule.leaves().any(|leaf| {
-                        matches!(leaf, JudgedLeaf::Presence { target: named, expect }
-                        if named == target && expect == required)
-                    })
-                });
-            let Some(injected) = injected else {
-                return format!(
-                    "{}the package's own condition on {}: it must be {}, and it is not — a rule \
-                     its author wrote, so its declaration says what it is for",
-                    at.map_or_else(String::new, |at| format!("node {at}: ")),
-                    target_text(target),
-                    presence_text(*required)
-                );
-            };
-            let at = at.unwrap_or_default();
-            let called = admitted.manifest().nodes.get(at);
-            format!(
-                "{}: {} of {} asks that {} — and it does not hold. Nothing declared this: it \
-                 is the resource's own entry, put on the call because the call moves it.",
-                called.map_or_else(
-                    || format!("node {at}"),
-                    |called| format!(
-                        "node {at}, {} {}",
-                        address_text(called.target),
-                        called.method
-                    )
-                ),
-                behaviour_name(injected.behaviour),
-                address_text(injected.resource.address()),
-                match &injected.asks {
-                    Asks::Entry(entry) => sealed_rule(entry, None),
-                    Asks::Unhalted => "the moving party is not halted".to_owned(),
-                }
-            )
-        }
-        UnmetCondition::Satisfies { node } => {
-            let at = usize::try_from(*node).unwrap_or(usize::MAX);
-            let asked: Vec<String> = admitted
-                .injected()
-                .get(at)
-                .map(Vec::as_slice)
-                .unwrap_or_default()
-                .iter()
-                .filter(|injected| {
-                    injected
-                        .rule
-                        .leaves()
-                        .any(|leaf| matches!(leaf, JudgedLeaf::Claim(_)))
-                })
-                .map(|injected| {
-                    format!(
-                        "{} of {}",
-                        behaviour_name(injected.behaviour),
-                        address_text(injected.resource.address())
-                    )
-                })
-                .collect();
-            let presented = admitted.manifest().nodes.get(at).map_or_else(
-                || "nothing this can see".to_owned(),
-                |node| {
-                    if node.evidence.is_empty() {
-                        "nothing".to_owned()
-                    } else {
-                        let claims: Vec<String> = node
-                            .evidence
-                            .iter()
-                            .map(|claim| address_text(claim.subject))
-                            .collect();
-                        claims.join(", ")
-                    }
-                },
-            );
-            if asked.is_empty() {
-                return format!(
-                    "node {node} presented {presented}, and the package's own gate is not \
-                     satisfied by it"
-                );
-            }
-            format!(
-                "node {node} presented {presented}, and it does not satisfy what the protocol \
-                 asked for: {}",
-                asked.join(", ")
-            )
-        }
+        } => unmet_presence(admitted, target, *required, *node),
+        UnmetCondition::Satisfies { node } => unsatisfied_claims(admitted, *node),
+        UnmetCondition::Unanswerable { node } => format!(
+            "{}a condition nothing about committed state could have satisfied. The declaration \
+             sent it to a judge that reads state, and it asks about something else — so it was \
+             refused rather than waved through.",
+            node.map_or_else(String::new, |node| format!("node {node}: "))
+        ),
     }
+}
+
+/// The refusal a leaf of committed state reads back to.
+fn unmet_presence(
+    admitted: &Admitted,
+    target: &EffectTarget,
+    required: Presence,
+    node: Option<u32>,
+) -> String {
+    // The asking node's own requirements and nobody else's. A
+    // condition the verdict cannot place is one no injection
+    // could have matched anyway, so the fallback below is the
+    // same answer either way.
+    let at = node.and_then(|node| usize::try_from(node).ok());
+    let injected = at
+        .and_then(|at| admitted.injected().get(at))
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .find(|injected| {
+            injected.rule.leaves().any(|leaf| {
+                matches!(leaf, JudgedLeaf::Presence { target: named, expect }
+                    if named == target && *expect == required)
+            })
+        });
+    let Some(injected) = injected else {
+        return format!(
+            "{}the package's own condition on {}: it must be {}, and it is not — a rule \
+             its author wrote, so its declaration says what it is for",
+            at.map_or_else(String::new, |at| format!("node {at}: ")),
+            target_text(target),
+            presence_text(required)
+        );
+    };
+    let at = at.unwrap_or_default();
+    let called = admitted.manifest().nodes.get(at);
+    format!(
+        "{}: {} of {} asks that {} — and it does not hold. Nothing declared this: it \
+         is the resource's own entry, put on the call because the call moves it.",
+        called.map_or_else(
+            || format!("node {at}"),
+            |called| format!(
+                "node {at}, {} {}",
+                address_text(called.target),
+                called.method
+            )
+        ),
+        behaviour_name(injected.behaviour),
+        address_text(injected.resource.address()),
+        match &injected.asks {
+            Asks::Entry(entry) => sealed_rule(entry, None),
+            Asks::Unhalted => "the moving party is not halted".to_owned(),
+        }
+    )
+}
+
+/// The refusal a rule over presented claims reads back to.
+fn unsatisfied_claims(admitted: &Admitted, node: u32) -> String {
+    let at = usize::try_from(node).unwrap_or(usize::MAX);
+    let asked: Vec<String> = admitted
+        .injected()
+        .get(at)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|injected| {
+            injected
+                .rule
+                .leaves()
+                .any(|leaf| matches!(leaf, JudgedLeaf::Claim(_)))
+        })
+        .map(|injected| {
+            format!(
+                "{} of {}",
+                behaviour_name(injected.behaviour),
+                address_text(injected.resource.address())
+            )
+        })
+        .collect();
+    let presented = admitted.manifest().nodes.get(at).map_or_else(
+        || "nothing this can see".to_owned(),
+        |node| {
+            if node.evidence.is_empty() {
+                "nothing".to_owned()
+            } else {
+                let claims: Vec<String> = node
+                    .evidence
+                    .iter()
+                    .map(|claim| address_text(claim.subject))
+                    .collect();
+                claims.join(", ")
+            }
+        },
+    );
+    if asked.is_empty() {
+        return format!(
+            "node {node} presented {presented}, and the package's own gate is not \
+             satisfied by it"
+        );
+    }
+    format!(
+        "node {node} presented {presented}, and it does not satisfy what the protocol \
+         asked for: {}",
+        asked.join(", ")
+    )
 }
 
 /// What a condition required of a leaf.

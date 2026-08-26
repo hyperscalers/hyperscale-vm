@@ -633,6 +633,9 @@ impl From<MaterializeError> for Outcome {
                     node,
                 },
             },
+            MaterializeError::ConditionUnanswerable { node } => Self::ConditionUnmet {
+                condition: UnmetCondition::Unanswerable { node },
+            },
         }
     }
 }
