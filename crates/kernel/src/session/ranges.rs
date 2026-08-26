@@ -276,8 +276,14 @@ impl KernelSession {
             Some((last, _)) => Some(last + 1),
             None => Some(interval.lo),
         };
+        // The probe is one entry of headroom past a page that filled to
+        // its cap, so a declaration buying at least one entry covers it.
+        // An interval that bought none answers closed instead: it read
+        // nothing, so nothing is known to be covered, and reaching for
+        // the answer would be an access the declaration never bought.
         let covered = match resume {
             None => true,
+            Some(_) if interval.cap == 0 => false,
             Some(resume) => self
                 .lift(interval.owner, interval.collection, resume, interval.hi, 1)?
                 .is_empty(),
@@ -508,6 +514,7 @@ mod tests {
         RESOURCE, declared, env, hash, holding, session_holding, session_over, tx,
     };
     use super::{Held, KernelSession, Op, SCAN_SEEK_BYTES, SessionTrap};
+    use crate::oracle::undeclared_accesses;
     use crate::overlay::OverlayStore;
     use crate::store::MemoryStore;
 
@@ -868,9 +875,19 @@ mod tests {
         assert!(covered(4));
         // A full page of three does not: the probe finds the fourth.
         assert!(!covered(3));
-        // A cap of zero materializes nothing, so coverage is the
-        // interval's emptiness — and this one holds entries.
+        // A cap of zero bought no entry, so nothing is known to be
+        // covered and the probe that would have found out is an access
+        // the declaration never paid for.
         assert!(!covered(0));
+
+        // Which is the whole of it: the ask records nothing the
+        // declaration does not cover, so it cannot take the batch down.
+        let mut session = session_over(store, &at_cap(0));
+        assert!(!session.range_covered(0, 0).unwrap());
+        assert!(
+            undeclared_accesses(session.store.access_log(), &session.declared).is_empty(),
+            "a zero-cap ask reached past what it declared"
+        );
     }
 
     /// A repeated coverage ask answers from the memo — the probe is
@@ -935,8 +952,17 @@ mod tests {
 
     /// An empty interval is covered at any cap — including zero, where
     /// the question degenerates to "is anything there".
+    /// An interval that bought at least one entry proves an empty
+    /// collection empty from headroom alone.
+    ///
+    /// One that bought none cannot, and says so: emptiness and a page it
+    /// may not fill are indistinguishable from inside a cap of zero, and
+    /// the read that would tell them apart is the one it did not
+    /// declare. A caller handing an empty collection to a method whose
+    /// cap counts it declares exactly that, so this is a live answer and
+    /// not a defensive one.
     #[test]
-    fn an_empty_interval_is_covered_at_any_cap() {
+    fn an_empty_interval_is_covered_wherever_a_cap_bought_a_look() {
         let owner = Address::new([9; 31], AddressClass::Component);
         let at_cap = |cap| {
             declared(&[Effect {
@@ -950,10 +976,12 @@ mod tests {
                 mode: Mode::Read,
             }])
         };
-        for cap in [0, 4] {
+        for cap in [1, 4] {
             let mut session = session_over(MemoryStore::new(), &at_cap(cap));
             assert!(session.range_covered(0, 0).unwrap());
         }
+        let mut session = session_over(MemoryStore::new(), &at_cap(0));
+        assert!(!session.range_covered(0, 0).unwrap());
     }
 
     #[test]

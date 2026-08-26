@@ -42,6 +42,14 @@ pub struct Interval {
     /// distinct entries a write interval may change — separately, since a
     /// read-modify-write reaches its whole page and an insert adds
     /// entries no scan returned.
+    ///
+    /// Zero is admissible and means it: a caller handing an empty
+    /// collection to a method whose cap counts it declares an interval
+    /// that excludes its span and reads none of it. The span is what the
+    /// footprint charges for the exclusion, so the declaration is priced
+    /// either way — but a coverage probe and a presence seek each want
+    /// one entry of headroom, so at zero both answer closed rather than
+    /// reaching for an entry nothing bought.
     pub cap: u32,
 }
 
@@ -602,6 +610,10 @@ pub fn occupied(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, 
             collection,
             order,
         } => (owner, collection, order, order),
+        // An interval that bought no entry answers closed: the seek
+        // below would be an access it never declared, and a presence it
+        // may not read is one it does not have.
+        EffectTarget::Range { cap: 0, .. } => return Ok(false),
         EffectTarget::Range {
             owner,
             collection,
