@@ -31,7 +31,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use abi::{CallBinding, lower_call};
-pub(crate) use compose::{IntentView, check_instance_values, check_value_depth, interleave};
+pub(crate) use compose::{IntentView, check_instance_value_depth, check_value_depth, interleave};
 use compose::{bind_edge, check_bindings};
 pub use error::{AdmissionError, Placed};
 use hyperscale_vm_types::{
@@ -212,7 +212,7 @@ pub(crate) fn admit_intents(
     let (flat_of, order) = interleave(intents, total)?;
 
     let budget = EvalBudget::default();
-    let mut lower = Lower {
+    let mut admission = Admission {
         intents,
         identity,
         chain,
@@ -232,9 +232,9 @@ pub(crate) fn admit_intents(
         table_len: 0,
     };
     for &(intent_index, local_index) in &order {
-        lower.lower_node(intent_index, local_index)?;
+        admission.lower_node(intent_index, local_index)?;
     }
-    let Lower {
+    let Admission {
         consumed,
         lowered,
         frames,
@@ -242,7 +242,7 @@ pub(crate) fn admit_intents(
         calls,
         declaration,
         ..
-    } = lower;
+    } = admission;
 
     // Linearity: nothing dangles, yields included.
     for (producer, counts) in consumed.iter().enumerate() {
@@ -287,9 +287,11 @@ impl Resolved {
     }
 }
 
-/// The per-node lowering: everything [`admit_intents`] does with one
-/// emitted node, over the accumulators the flattened order threads.
-struct Lower<'a> {
+/// The admission accumulator: everything one interleaved walk threads
+/// through [`admit_intents`] — the tree's one budget, the outputs and
+/// consumption each node's edges resolve against, the minted claims,
+/// the lowered nodes, and the union declaration.
+struct Admission<'a> {
     intents: &'a [IntentView<'a>],
     identity: ManifestHash,
     chain: &'a dyn ChainRecords,
@@ -365,7 +367,7 @@ fn check_evidence_presence(
     }
 }
 
-impl Lower<'_> {
+impl Admission<'_> {
     fn lower_node(
         &mut self,
         intent_index: usize,

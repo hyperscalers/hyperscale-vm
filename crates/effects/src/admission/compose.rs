@@ -22,7 +22,7 @@ use crate::types::{EdgeContent, MAX_VALUE_DEPTH, Value};
 /// past [`MAX_VALUE_DEPTH`] — the same bound graph literals clear,
 /// judged here so composing the per-envelope registry never meets a
 /// value the vocabulary's own encoders refuse.
-pub fn check_instance_values(records: &[InstanceMeta]) -> Result<(), AdmissionError> {
+pub fn check_instance_value_depth(records: &[InstanceMeta]) -> Result<(), AdmissionError> {
     for (index, meta) in records.iter().enumerate() {
         if meta
             .config

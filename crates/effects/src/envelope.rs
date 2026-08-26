@@ -35,7 +35,7 @@ use hyperscale_vm_types::{
 
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
-    AdmissionError, Admitted, IntentView, MAX_SOCKETS, admit_intents, check_instance_values,
+    AdmissionError, Admitted, IntentView, MAX_SOCKETS, admit_intents, check_instance_value_depth,
     check_value_depth,
 };
 use crate::claim::Claim;
@@ -347,7 +347,7 @@ pub fn admit_tree(
     for subintent in &tree.subintents {
         check_value_depth(&subintent.decl.graph)?;
     }
-    check_instance_values(&tree.instances)?;
+    check_instance_value_depth(&tree.instances)?;
     let mut records = Vec::with_capacity(tree.subintents.len());
     let mut seen = BTreeSet::new();
     for (index, subintent) in tree.subintents.iter().enumerate() {
@@ -381,7 +381,7 @@ pub fn admit_tree(
     }
     // The envelope's own records, layered behind what the chain already
     // answers for. Each stands for the seal of the component it derives
-    // and for nothing else — `Lower` holds every node targeting one to
+    // and for nothing else — `Admission` holds every node targeting one to
     // being that component's seal.
     //
     // Which components the chain happens to hold does not enter it: an

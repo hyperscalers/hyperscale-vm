@@ -241,7 +241,7 @@ pub(super) fn inject_destruction_rules(
     grants: &PresentedGrants,
     signature: &MethodSignature,
     inputs: &[NodeInput],
-    evidence_of: Address,
+    target: Address,
     node_index: u32,
 ) -> Result<(Vec<IssuanceGrant>, Vec<Injected>), AdmissionError> {
     let mut granted = Vec::with_capacity(signature.destroys.len());
@@ -266,7 +266,7 @@ pub(super) fn inject_destruction_rules(
                 .and_then(|rules| rules.get(GrantedBehaviour::Burn)),
             *resource,
             GrantedBehaviour::Burn,
-            Claim::of_address(evidence_of),
+            Claim::of_address(target),
             node_index,
         )?;
         granted.push(IssuanceGrant {
