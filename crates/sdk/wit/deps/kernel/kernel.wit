@@ -78,12 +78,13 @@ interface state {
 
     /// One declared access, borrowed for the call that acts through it.
     ///
-    /// One resource for every mode and every width, because a handle
-    /// type answers which table its rep indexes and nothing else: every
-    /// site indexes the one the declaration lent. What a body may do
-    /// through one is the capability's own answer, held by the kernel at
-    /// every operation — so a mode that grants no `set` refuses one, on
-    /// the same terms it refuses a key that was never declared.
+    /// One resource, whatever the mode and whatever the width, because a
+    /// handle type answers which table its rep indexes and nothing else:
+    /// every site indexes the one the declaration lent. So the type says
+    /// nothing about what a body may do through it, and what a body may
+    /// do is the capability's own answer, held by the kernel at every
+    /// operation — a mode that grants no `set` refuses one on the same
+    /// terms it refuses a key that was never declared.
     ///
     /// A site has a width. A plain access is one element wide; a
     /// `for-each` access is as wide as the collection its loop mapped
