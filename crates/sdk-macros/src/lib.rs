@@ -44,6 +44,44 @@
 //! could not compute, and that is a residue of the body rather than a
 //! second declaration of it.
 //!
+//! # The attributes, and each one's shape
+//!
+//! An index, not a manual — the refusal messages teach the details, and
+//! `guests/*` shows every one of these in use.
+//!
+//! On the module:
+//! - `#[blueprint]` — the module is the package; `#[blueprint(principals)]`
+//!   for the one package that serves principals.
+//!
+//! On items of the module:
+//! - `#[state] struct <Module>` — the slots the package's keys sit under;
+//!   optional, name-checked, at most one. Fields take `#[slot(<n>)]`
+//!   (pin all or none) and `#[denomination(<expr>)]` on a value cell.
+//! - `#[config] struct …` — the creation-fixed fields `config.<field>`
+//!   resolves against; at most one.
+//! - `#[resource(…)] struct …` — a resource the package issues:
+//!   `non_fungible`, `initial(<n>)`, `display_digits = <n>`, and
+//!   `grants(<behaviour> = <rule>, …)` over mint, burn, withdraw,
+//!   deposit, recall, and halt.
+//! - `#[error] enum …` — the refusal table: fieldless variants, crossing
+//!   the boundary as codes.
+//! - `#[event] struct …` / `#[record] struct …` — an emitted event's
+//!   payload; a stored record's shape.
+//!
+//! On a `pub` method:
+//! - `#[requires(<rule>)]` — the gate, over the leaves `self`,
+//!   `config.<field>`, `issued(<Resource>)`, and `governs(<field>)`,
+//!   combined with `||`, `&&`, and `n_of(<k>, …)`.
+//! - `#[proves(self)]`, `#[proves(<badge>)]`, `#[proves(<badge>[<id>])]`
+//!   — sign in as oneself, or prove possession of a badge parameter (an
+//!   address; the id a `u64`).
+//! - `#[total]` — the method cannot refuse or trap; the gate checks the
+//!   claim against the artifact.
+//! - `#[name("…")]` — publish under this name instead of the kebab-cased
+//!   identifier.
+//!
+//! A method carries at most one gate attribute.
+//!
 //! # Names the generated client takes
 //!
 //! Every method gets a client wrapper, and the wrapper's own parameters
