@@ -9,8 +9,8 @@
 
 use hyperscale_vm_types::{Address, EffectTarget, Presence, ResourceAddr, SubstateKey};
 
+use crate::claim::Claim;
 use crate::hash::Hash32;
-use crate::presented::Presented;
 use crate::rule::{Rule, SealedLeaf};
 use crate::types::{EdgeContent, Value};
 
@@ -87,7 +87,7 @@ pub struct Node {
     pub inputs: Vec<NodeInput>,
     /// The claims this call presents, resolved from the signed evidence
     /// the node names. Empty for a call requiring none.
-    pub evidence: Vec<Presented>,
+    pub evidence: Vec<Claim>,
 }
 
 /// A judged rule's leaf: the evaluated twin of
@@ -96,7 +96,7 @@ pub struct Node {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JudgedLeaf {
     /// A claim the presented set must contain.
-    Claim(Presented),
+    Claim(Claim),
     /// The rule stored at this cell, judged where the cell lives — or,
     /// while the cell is unwritten, the virtual rule: the identity the
     /// call's own target derives, which is what makes a key-derived
@@ -257,7 +257,7 @@ mod tests {
     };
 
     use super::{Judged, JudgedLeaf, Rule};
-    use crate::presented::Presented;
+    use crate::claim::Claim;
 
     fn cell() -> SubstateKey {
         SubstateKey {
@@ -267,7 +267,7 @@ mod tests {
     }
 
     fn claim() -> Rule<JudgedLeaf> {
-        Rule::Require(JudgedLeaf::Claim(Presented::of_subject(Address::new(
+        Rule::Require(JudgedLeaf::Claim(Claim::of_subject(Address::new(
             [9; 31],
             AddressClass::Principal,
         ))))

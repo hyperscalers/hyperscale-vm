@@ -2,7 +2,7 @@
 //! math, output floors, and the share vault's rounding.
 
 use hyperscale_vm_effects::{
-    AdmissionError, EnvelopeTree, Hash32, IntentDecl, ManifestGraph, Presented, TestHasher, Value,
+    AdmissionError, Claim, EnvelopeTree, Hash32, IntentDecl, ManifestGraph, TestHasher, Value,
     child_key, holdings_collection,
 };
 use hyperscale_vm_fixtures::{amm, shares};
@@ -504,7 +504,7 @@ fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
 /// the pool's, and her own deposit, whose credit is hers — because a
 /// proof is not conserved and one claim answers every socket that asks
 /// for it.
-fn approval_request(approver: Presented) -> IntentDecl {
+fn approval_request(approver: Claim) -> IntentDecl {
     let chain = world();
     let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE);
     let approval = decl.declare_proof(approver);
@@ -566,7 +566,7 @@ fn approval_store() -> MemoryStore {
 #[test]
 fn an_approved_trade_settles_through_a_venue_holding_no_credential() {
     let world = world();
-    let request = approval_request(Presented::of_subject(REGISTRAR));
+    let request = approval_request(Claim::of_subject(REGISTRAR));
     let signed = request.hash(&TestHasher);
     let tree = approved_composition(request).expect("the registrar composes the approval");
     assert_eq!(

@@ -19,6 +19,7 @@
 pub mod admission;
 pub mod artifact;
 pub mod auth;
+pub mod claim;
 pub mod dsl;
 pub mod envelope;
 pub mod explain;
@@ -29,7 +30,6 @@ pub mod instance;
 pub mod invoke;
 pub mod manifest;
 pub mod metadata;
-pub mod presented;
 pub mod publish;
 pub mod records;
 pub mod resource;
@@ -51,6 +51,7 @@ pub use artifact::{
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
 };
 pub use auth::RuleBytes;
+pub use claim::Claim;
 pub use dsl::{
     Clause, Condition, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, Expr,
     MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_ENVELOPE_EVALUATION_WORK, MAX_EVALUATION_WORK,
@@ -89,7 +90,6 @@ pub use metadata::{
     PackageMetadata, PublishRefusal, SlotKind, SlotShape, package_hash, package_key,
     reserved_shape,
 };
-pub use presented::Presented;
 pub use publish::{
     AbiError, CheckedSignature, DeclarationError, MetadataBoundsError, SignatureBoundsError,
     SignatureError, check_abi, check_declarations, check_metadata, check_signature,

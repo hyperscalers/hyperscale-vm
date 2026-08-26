@@ -8,8 +8,8 @@
 //! crosses.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Constraint, EnvelopeTree, GrantedBehaviour, Hasher, IntentDecl, PackageHash,
-    Presented, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, StoredRule,
+    AdmissionError, Claim, Constraint, EnvelopeTree, GrantedBehaviour, Hasher, IntentDecl,
+    PackageHash, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, StoredRule,
     TestHasher, admit_tree,
 };
 use hyperscale_vm_manifest_builder::{
@@ -309,7 +309,7 @@ fn note_meta() -> ResourceMeta {
     let mut rules = ResourceGrants::new();
     rules.set(
         GrantedBehaviour::Withdraw,
-        RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(DESK)))
+        RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(DESK)))
             .expect("a rule within the caps encodes"),
     );
     ResourceMeta {
@@ -327,7 +327,7 @@ fn note_meta() -> ResourceMeta {
 /// *claim* — the desk's — and leave whose node supplies it to whoever
 /// composes, so the declaration means one thing however it is later
 /// carried and the signer never has to have met the composer.
-fn note_request(approver: Presented) -> IntentDecl {
+fn note_request(approver: Claim) -> IntentDecl {
     let chain = world();
     let note = note_meta().address(&TestHasher);
     let mut decl = IntentBuilder::declaration(&chain, &TestHasher, BOB);
@@ -370,7 +370,7 @@ fn approved(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
 /// desk answers for finding it, and pays.
 #[test]
 fn a_declared_hole_carries_a_proof_across_an_intent_boundary() {
-    let request = note_request(Presented::of_subject(DESK));
+    let request = note_request(Claim::of_subject(DESK));
     let signed = request.hash(&TestHasher);
     let tree = approved(request).expect("the desk composes the approval");
 
@@ -391,8 +391,8 @@ fn a_declared_hole_carries_a_proof_across_an_intent_boundary() {
         .iter()
         .find(|node| node.method == "withdraw")
         .expect("the request withdraws");
-    assert!(withdrawing.evidence.contains(&Presented::of_subject(DESK)));
-    assert!(withdrawing.evidence.contains(&Presented::of_subject(BOB)));
+    assert!(withdrawing.evidence.contains(&Claim::of_subject(DESK)));
+    assert!(withdrawing.evidence.contains(&Claim::of_subject(BOB)));
 }
 
 /// And a composition that binds a node minting some other claim is
@@ -410,7 +410,7 @@ fn a_declared_hole_carries_a_proof_across_an_intent_boundary() {
 /// node 1 is what the composer wrote.
 #[test]
 fn a_hole_bound_to_the_wrong_claim_is_refused() {
-    let request = note_request(Presented::of_subject(ALICE));
+    let request = note_request(Claim::of_subject(ALICE));
     let tree = approved(request).expect("the composition still builds");
     let chain = world();
     assert_eq!(

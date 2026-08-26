@@ -205,6 +205,43 @@ impl Capability {
         }
     }
 
+    /// How a refusal names this capability.
+    ///
+    /// Beside the enum rather than beside the table that reads it, for
+    /// the reason [`Capability::forms`] is: what a new form owes is
+    /// written where a form is added.
+    #[must_use]
+    pub(super) const fn described(&self) -> &'static str {
+        match self {
+            Self::Read(_) => "a fresh read",
+            Self::Write(_) => "an exclusive read-modify-write",
+            Self::Amount {
+                moves: Moves::In, ..
+            } => "an exclusive hold on a cell of value that may only be credited",
+            Self::Amount {
+                moves: Moves::Out, ..
+            } => "an exclusive hold on a cell of value that may only be debited",
+            Self::Amount {
+                moves: Moves::Both, ..
+            } => "an exclusive hold on a cell of value",
+            Self::AmountRead(_) => "a read of a cell of value",
+            Self::Delta(_) => "a commutative movement",
+            Self::Credit(_) => "a commutative credit",
+            Self::Reserve { .. } => "a held reservation",
+            Self::RangeRead(_) => "a read interval",
+            Self::RangeWrite(_) => "a write interval",
+            Self::Instances {
+                moves: Moves::In, ..
+            } => "an interval instances are filed into",
+            Self::Instances {
+                moves: Moves::Out, ..
+            } => "an interval instances are taken from",
+            Self::Instances {
+                moves: Moves::Both, ..
+            } => "an interval of instances",
+        }
+    }
+
     /// Every form, over one cell and one interval — the rows the
     /// permission matrix asks its questions of.
     ///
@@ -817,7 +854,7 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{
-        Condition, Declaration, DeclaredAccess, JudgedLeaf, Presented, Rule, SlotRef, rule,
+        Claim, Condition, Declaration, DeclaredAccess, JudgedLeaf, Rule, SlotRef, rule,
     };
     use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Moves, Presence,
@@ -913,7 +950,7 @@ mod tests {
     #[test]
     fn a_condition_this_judge_cannot_ask_refuses() {
         let target = EffectTarget::Point(key(0xC3));
-        let claim = JudgedLeaf::Claim(Presented::of_subject(Address::new(
+        let claim = JudgedLeaf::Claim(Claim::of_subject(Address::new(
             [0xC4; 31],
             AddressClass::Principal,
         )));

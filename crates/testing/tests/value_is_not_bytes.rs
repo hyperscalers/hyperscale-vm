@@ -24,7 +24,7 @@
 
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, Presented,
+    AbiParam, Claim, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType,
     RuleBytes, RuleExpr, RuleLeaf, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Totality,
     Value, xrd as protocol_xrd,
 };
@@ -399,7 +399,7 @@ fn impostor_body(
             };
             // The stored rule is the package's own business and writes
             // as bytes like any record.
-            let rule = RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(ATTACKER)))
+            let rule = RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(ATTACKER)))
                 .expect("a rule within the caps");
             if let Err(trap) = session.write_cell_set(*auth, 0, rule.0) {
                 return (session, Invoked::Aborted(trap.into()));

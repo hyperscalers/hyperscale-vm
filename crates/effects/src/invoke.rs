@@ -15,9 +15,9 @@
 
 use hyperscale_vm_types::{Address, ResourceAddr};
 
+use crate::claim::Claim;
 use crate::manifest::{Bounds, JudgedLeaf};
 use crate::metadata::PackageHash;
-use crate::presented::Presented;
 use crate::resource::ResourceKind;
 use crate::rule::Rule;
 use crate::signature::Issued;
@@ -182,7 +182,7 @@ pub struct NodeCall {
     pub issues: Vec<IssuanceGrant>,
     /// The claims this call presents, resolved from the signed evidence
     /// the manifest node names.
-    pub evidence: Vec<Presented>,
+    pub evidence: Vec<Claim>,
     /// The authority conditions this node's declaration requires, each a
     /// judged rule over the call's presented evidence and the stored
     /// rules its cells hold. All must be satisfied — a claim leaf by the

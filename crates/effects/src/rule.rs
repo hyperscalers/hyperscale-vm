@@ -23,8 +23,8 @@
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
 use hyperscale_vm_types::{Presence, ResourceAddr};
 
+use crate::claim::Claim;
 use crate::dsl::{Expr, TargetExpr};
-use crate::presented::Presented;
 use crate::resource::{GrantsExpr, ResourceKind};
 
 /// The bound on a rule's nesting depth: a lone identity is one, a
@@ -86,7 +86,7 @@ pub const MAX_RULE_WIRE_DEPTH: usize = 2 * MAX_RULE_DEPTH + 1;
 /// publish say "two of these three" in the same words a stored one does.
 ///
 /// Amounts are deliberately absent — a rule asks which claims are
-/// present, and nothing else. Which claims those are is [`Presented`]'s:
+/// present, and nothing else. Which claims those are is [`Claim`]'s:
 /// an identity acting as itself, a badge resource, or one instance of
 /// one.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
@@ -122,7 +122,7 @@ pub enum Rule<L> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum SealedLeaf {
     /// A claim the presented set must contain.
-    Claim(Presented),
+    Claim(Claim),
     /// The subject holds this badge, in the shape the holding names.
     Held {
         /// The badge held.
@@ -159,7 +159,7 @@ pub type StoredRule = Rule<SealedLeaf>;
 impl Rule<SealedLeaf> {
     /// The one-leaf rule a presented claim satisfies.
     #[must_use]
-    pub const fn claim(presented: Presented) -> Self {
+    pub const fn claim(presented: Claim) -> Self {
         Self::Require(SealedLeaf::Claim(presented))
     }
 
@@ -175,7 +175,7 @@ impl Rule<SealedLeaf> {
 ///
 /// The second is what lets a declared rule reach mutable authority — and
 /// the type is what bounds the reach: a stored rule is
-/// [`Rule<Presented>`], which cannot hold a `Stored` leaf, so a declared
+/// [`Rule<Claim>`], which cannot hold a `Stored` leaf, so a declared
 /// rule reads stored rules exactly one level deep and no chain of cell
 /// reads is expressible. Mixing follows for free — "the configured
 /// owner, or two of the stored admins" is one rule with leaves of both
@@ -308,7 +308,7 @@ pub enum GrantClaim {
     },
     /// The n-th field of the issuing instance's configuration, whose
     /// address class says which claim it makes — the same reading
-    /// [`Presented::of_address`] gives every other declared address.
+    /// [`Claim::of_address`] gives every other declared address.
     Config(u32),
 }
 
@@ -484,7 +484,7 @@ impl<L> Rule<L> {
     }
 }
 
-impl Rule<Presented> {
+impl Rule<Claim> {
     /// Whether the presented claims satisfy this rule.
     ///
     /// Total over any presented set, including degenerate thresholds
@@ -501,7 +501,7 @@ impl Rule<Presented> {
     /// other is [`Rule::map_leaves`], and there is no way round it: a
     /// rule holding a leaf this judge cannot read does not reach it.
     #[must_use]
-    pub fn satisfied_by(&self, presented: &[Presented]) -> bool {
+    pub fn satisfied_by(&self, presented: &[Claim]) -> bool {
         match self {
             Self::Require(claim) => presented.contains(claim),
             Self::CountOf { count, rules } => {
@@ -524,7 +524,7 @@ impl StoredRule {
     /// claims-only judge can answer — and the answer to a question that
     /// cannot be asked is not "no", it is that there is no answer.
     #[must_use]
-    pub fn claims_only(&self) -> Option<Rule<Presented>> {
+    pub fn claims_only(&self) -> Option<Rule<Claim>> {
         self.map_leaves(&mut |leaf| match leaf {
             SealedLeaf::Claim(claim) => Ok(*claim),
             SealedLeaf::Held { .. } => Err(()),
@@ -596,7 +596,7 @@ pub(crate) mod testing {
     use hyperscale_vm_types::{Address, AddressClass, CallTarget};
 
     use super::{SealedLeaf, StoredRule};
-    use crate::presented::Presented;
+    use crate::claim::Claim;
 
     /// The same wire form as [`StoredRule`], with no caps.
     ///
@@ -621,8 +621,8 @@ pub(crate) mod testing {
     }
 
     /// The claim that principal makes acting as itself.
-    pub fn identity(byte: u8) -> Presented {
-        Presented::of_subject(target(byte))
+    pub fn identity(byte: u8) -> Claim {
+        Claim::of_subject(target(byte))
     }
 
     /// `levels` thresholds over one identity: nests `levels + 1` deep.

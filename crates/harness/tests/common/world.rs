@@ -6,10 +6,10 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, EnvelopeTree, EvidenceRef, Hash32, Hasher, InstanceMeta,
-    ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, Presented, PresentedGrants,
-    Records, Routing, RuleBytes, ShardId, ShardResolver, SlotId, StarShape, StoredRule, TestHasher,
-    Value, admit_presenting, admit_tree, child_key, classify as classify_star, collection_id,
+    AdmissionError, Admitted, Claim, EnvelopeTree, EvidenceRef, Hash32, Hasher, InstanceMeta,
+    ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants, Records,
+    Routing, RuleBytes, ShardId, ShardResolver, SlotId, StarShape, StoredRule, TestHasher, Value,
+    admit_presenting, admit_tree, child_key, classify as classify_star, collection_id,
     package_slot, route, route_tree,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
@@ -133,7 +133,7 @@ pub fn own_cell(owner: impl Into<Address>, offset: u16) -> SubstateKey {
 
 /// One identity, as the rule a cell stores.
 pub fn stored_rule(identity: PrincipalAddr) -> RuleBytes {
-    RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(identity)))
+    RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(identity)))
         .expect("a rule within the vocabulary caps")
 }
 

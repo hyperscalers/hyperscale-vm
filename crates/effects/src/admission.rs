@@ -24,6 +24,7 @@ use hyperscale_vm_types::{
 };
 
 use crate::auth::RuleBytes;
+use crate::claim::Claim;
 use crate::dsl::{
     Clause, Condition, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs,
     PresentedGrants, Reach, evaluate_declaration, evaluate_expr, supports,
@@ -35,7 +36,6 @@ use crate::instance::{InstanceMeta, ResolveError};
 use crate::invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall};
 use crate::manifest::{Bounds, Judged, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::{PackageHash, PackageMetadata};
-use crate::presented::Presented;
 use crate::publish::{CheckedSignature, founds_its_resource, seals};
 use crate::records::ChainRecords;
 use crate::resource::{
@@ -1342,7 +1342,7 @@ struct Lower<'a> {
     /// anything else. A proof drawn from a node draws the whole set, so
     /// a gate that verifies more than one thing about its caller
     /// presents all of it.
-    minted: Vec<Vec<Presented>>,
+    minted: Vec<Vec<Claim>>,
     lowered: Vec<Node>,
     frames: Vec<FrameDeclaration>,
     /// What the protocol put on each frame, beside it.
@@ -1888,7 +1888,7 @@ impl Lower<'_> {
         node: &GraphNode,
         frame: &Declaration,
         node_index: u32,
-    ) -> Result<Vec<Presented>, AdmissionError> {
+    ) -> Result<Vec<Claim>, AdmissionError> {
         let intent = &self.intents[intent_index];
         let local = u32::try_from(local_index).map_err(|_| AdmissionError::TooManyNodes)?;
         let required = judged_here(frame);
@@ -1912,7 +1912,7 @@ impl Lower<'_> {
                     let signer = intent
                         .signer
                         .ok_or(AdmissionError::UnsignedEvidence { node: node_index })?;
-                    evidence.push(Presented::of_subject(signer));
+                    evidence.push(Claim::of_subject(signer));
                 }
                 EvidenceRef::Node(producer) => {
                     // An earlier node of the same intent, whose minted
@@ -2028,7 +2028,7 @@ impl Lower<'_> {
 /// commits without waiting carry one at all.
 fn judge_presented(
     required: &[&Rule<JudgedLeaf>],
-    evidence: &[Presented],
+    evidence: &[Claim],
     node_index: u32,
 ) -> Result<(), AdmissionError> {
     for rule in required
@@ -2227,7 +2227,7 @@ fn injected_entry(
     entry: Option<&RuleBytes>,
     resource: ResourceAddr,
     behaviour: GrantedBehaviour,
-    speaking_for: Option<Presented>,
+    speaking_for: Option<Claim>,
     node_index: u32,
 ) -> Result<Option<Injected>, AdmissionError> {
     let malformed = || AdmissionError::EntryMalformed {
@@ -2366,7 +2366,7 @@ fn inject_issuance_rules(
         }
         // A resource is not an acting identity, so a target that issues
         // one is callable and names a claim.
-        let own = Presented::of_address(target).ok_or(AdmissionError::Unadmitted {
+        let own = Claim::of_address(target).ok_or(AdmissionError::Unadmitted {
             node: node_index,
             resource,
             behaviour: GrantedBehaviour::Mint,
@@ -2429,7 +2429,7 @@ fn inject_destruction_rules(
                 .and_then(|rules| rules.get(GrantedBehaviour::Burn)),
             *resource,
             GrantedBehaviour::Burn,
-            Presented::of_address(evidence_of),
+            Claim::of_address(evidence_of),
             node_index,
         )?;
         granted.push(IssuanceGrant {
@@ -2485,7 +2485,7 @@ fn inject_reach_rules(
                 .and_then(|rules| rules.get(behaviour)),
             resource,
             behaviour,
-            Presented::of_address(reaching),
+            Claim::of_address(reaching),
             node_index,
         )?;
         injected.extend(entry);
@@ -2736,7 +2736,7 @@ struct Lowering<'a> {
     method: &'a str,
     node_inputs: &'a [NodeInput],
     node_outputs: &'a [(ResourceAddr, EdgeContent)],
-    evidence: &'a [Presented],
+    evidence: &'a [Claim],
     requires: Vec<Rule<JudgedLeaf>>,
     /// The resource this node issues, already derived where its entries
     /// were injected — so the address a rule was resolved against and

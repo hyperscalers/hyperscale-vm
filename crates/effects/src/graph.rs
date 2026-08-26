@@ -230,7 +230,7 @@ impl ManifestGraph {
             for arg in &node.args {
                 parts.push(to_vec(arg).expect("hashed graphs pass the depth gate first"));
             }
-            // Presented evidence is signed content: a relayer that could
+            // Claim evidence is signed content: a relayer that could
             // add or drop a presentation would be choosing what authority
             // a call carries.
             parts.push(to_vec(&node.evidence).expect("a bounded set encodes"));

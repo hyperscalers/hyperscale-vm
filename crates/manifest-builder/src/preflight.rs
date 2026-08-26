@@ -23,9 +23,9 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, ChainRecords, EnvelopeTree, Hasher, JudgedLeaf, Manifest,
-    ManifestGraph, ManifestHash, Presented, Routing, Rule, ShardId, ShardResolver, SubintentRecord,
-    admit, admit_tree, footprint, route, route_tree,
+    AdmissionError, Admitted, ChainRecords, Claim, EnvelopeTree, Hasher, JudgedLeaf, Manifest,
+    ManifestGraph, ManifestHash, Routing, Rule, ShardId, ShardResolver, SubintentRecord, admit,
+    admit_tree, footprint, route, route_tree,
 };
 use hyperscale_vm_types::{
     Address, CallTarget, EffectTarget, NetworkWord, Presence, PrincipalAddr, ResourceAddr,
@@ -304,7 +304,7 @@ fn report(
     // for that.
     // What a claim's subject is, is its class's answer, asked here
     // because here is where it matters.
-    let claimed = |claim: &Presented| match (claim.badge(), claim.callable()) {
+    let claimed = |claim: &Claim| match (claim.badge(), claim.callable()) {
         (Some(resource), _) => Authority::Badge {
             resource,
             instance: claim.instance,

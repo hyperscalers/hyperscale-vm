@@ -30,9 +30,9 @@ use hyperscale_vm_effects::vocabulary::{
     AUTHORIZE_METHOD, PRESENT_BADGE_METHOD, PRESENT_INSTANCE_METHOD,
 };
 use hyperscale_vm_effects::{
-    ChainRecords, Clause, Constraint, EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef,
-    Expr, GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph,
-    ManifestHash, MethodSignature, PackageHash, PackageMetadata, ParamType, Presented,
+    ChainRecords, Claim, Clause, Constraint, EdgeContent, EdgeRef, EvalBudget, EvalInputs,
+    EvidenceRef, Expr, GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH,
+    ManifestGraph, ManifestHash, MethodSignature, PackageHash, PackageMetadata, ParamType,
     PresentedGrants, ResourceGrants, ResourceMeta, SealedLeaf, Value, evaluate_expr,
     founds_its_resource, keying_resource,
 };
@@ -644,7 +644,7 @@ impl<'a> TypedBuilder<'a> {
         args: &[GraphArg],
         values: &[Value],
         known: &[bool],
-    ) -> Vec<Presented> {
+    ) -> Vec<Claim> {
         let budget = EvalBudget::default();
         let inputs = EvalInputs {
             self_addr: target.address(),
@@ -665,7 +665,7 @@ impl<'a> TypedBuilder<'a> {
     /// intent's signature, because both gate on the rule governing the
     /// signer's own address — so neither takes a proof of its own and
     /// the composition stays one node deep.
-    fn present(&mut self, claim: Presented) -> Option<Proof> {
+    fn present(&mut self, claim: Claim) -> Option<Proof> {
         if let Some(proof) = self.minted.get(&(claim.subject, claim.instance)) {
             return Some(*proof);
         }
@@ -988,8 +988,8 @@ fn earned_claims(
     known: &[bool],
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
-) -> Vec<Presented> {
-    let own = Presented::of_address(inputs.self_addr);
+) -> Vec<Claim> {
+    let own = Claim::of_address(inputs.self_addr);
     let mut wanted = Vec::new();
     let mut ask = |rules: &ResourceGrants, behaviour: GrantedBehaviour| {
         let Some(sealed) = rules.get(behaviour) else {

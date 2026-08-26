@@ -83,6 +83,12 @@ use common::world::*;
 /// propose reach only principals, which have no creation to finish and
 /// take no fence.
 ///
+/// The fingerprint is over the routing's `Debug` rendering, so it is
+/// sensitive to more than routing: renaming a type the declaration holds
+/// moves it too. What that costs is a re-record whenever the vocabulary
+/// does; what it buys is that nothing about a routing can move without
+/// somebody looking at it.
+///
 /// [`Value`]: hyperscale_vm_effects::Value
 #[test]
 fn the_catalogue_routes_to_pinned_vectors() {
@@ -108,13 +114,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "5ca05dceccff4764f18ee59c18c6ea096e46f91133bd7084e5d40adca9865541";
+const PIN_TRANSFER: &str = "ccde12b00ef77753365d89fb1751ed543a6bb9ffb47ab69c3cf28c9d7a522dbd";
 
-const PIN_SWAP: &str = "04996cb1cab50bcce7a37f6fda268913210814d21ef62c0dfc489736095ec195";
+const PIN_SWAP: &str = "d04ae01615343c45f096aa98dc598fedf56f45a11c909cef2fe57b65bc8186b3";
 
-const PIN_FILL: &str = "848e3ae3f840c9d0be6f6c2b1bd95110b765bca3893bf185ac7fbbe671023f1b";
+const PIN_FILL: &str = "35b7a2c031f20ab3f3a6fea7e4c37b0f03b4d7ab5419234cf68ea47e868adeab";
 
-const PIN_PROPOSE: &str = "8cd5f368f269037b81605d8166f3007a4b754203d90c0527c21f4b311c6bd333";
+const PIN_PROPOSE: &str = "b01b49369241a3f0af5cf2a4ab5f29771663f9c7ce70c7688682f18c58b75e85";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

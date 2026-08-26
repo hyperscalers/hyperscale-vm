@@ -12,9 +12,9 @@ use hyperscale_hbor::{
 use hyperscale_vm_types::{Address, AddressClass, CollectionId, Moves, ResourceAddr, SubstateKey};
 
 use crate::auth::RuleBytes;
+use crate::claim::Claim;
 use crate::dsl::{Expr, SlotRef, TargetExpr};
 use crate::hash::{Hash32, Hasher};
-use crate::presented::Presented;
 use crate::rule::{GrantClaim, GrantRuleExpr, Holding, SealedLeaf, StoredRule, always, never};
 use crate::types::{
     Value, child_key, collection_id, genesis_publisher, granting_resource_address, resource_address,
@@ -307,7 +307,7 @@ impl GrantedBehaviour {
     pub fn demanded(
         self,
         entry: &RuleBytes,
-        speaking_for: Option<Presented>,
+        speaking_for: Option<Claim>,
     ) -> Result<Option<StoredRule>, DecodeError> {
         let rule = entry.decode()?;
         // Only a rule about claims can be discharged by the actor being
@@ -677,14 +677,14 @@ fn resolve_claim(
     config: &[Value],
     claim: &GrantClaim,
     link: usize,
-) -> Result<Presented, GrantsResolveError> {
+) -> Result<Claim, GrantsResolveError> {
     Ok(match claim {
-        GrantClaim::SelfAddr => Presented::of_address(instance)
+        GrantClaim::SelfAddr => Claim::of_address(instance)
             .expect("an instance issuing a resource is a callable address"),
-        GrantClaim::SelfBadge { mark, kind, rules } => Presented::of_subject(self_badge(
+        GrantClaim::SelfBadge { mark, kind, rules } => Claim::of_subject(self_badge(
             hasher, instance, config, *kind, mark, rules, link,
         )?),
-        GrantClaim::SelfInstance { mark, id, rules } => Presented::of_instance(
+        GrantClaim::SelfInstance { mark, id, rules } => Claim::of_instance(
             self_badge(
                 hasher,
                 instance,
@@ -708,7 +708,7 @@ fn resolve_claim(
 /// a standing fact about the party whose cell moves, and an identity
 /// asks whether this transaction was approved. Neither is a second
 /// spelling — the address class answers it, the same reading
-/// [`Presented::of_address`] gives every declared address.
+/// [`Claim::of_address`] gives every declared address.
 ///
 /// Where a subject's holding of a badge lives is the badge's kind's
 /// answer: a balance is one point cell keyed by what it holds, and
@@ -732,7 +732,7 @@ fn resolve_holding(
         // frozen at the component rather than at whoever runs it.
         GrantClaim::SelfAddr => {
             return Ok(StoredRule::claim(
-                Presented::of_address(instance)
+                Claim::of_address(instance)
                     .expect("an instance issuing a resource is a callable address"),
             ));
         }
@@ -783,11 +783,11 @@ fn resolve_holding(
 }
 
 /// The claim a configuration field names.
-fn configured(config: &[Value], slot: u32) -> Result<Presented, GrantsResolveError> {
+fn configured(config: &[Value], slot: u32) -> Result<Claim, GrantsResolveError> {
     let value = config
         .get(slot as usize)
         .ok_or(GrantsResolveError::NoSuchField(slot))?;
-    Presented::of(value).ok_or(GrantsResolveError::NotAClaim(slot))
+    Claim::of(value).ok_or(GrantsResolveError::NotAClaim(slot))
 }
 
 /// A badge the issuing instance also issues, at the address its own
@@ -1010,8 +1010,8 @@ mod tests {
         GrantedBehaviour, ResourceKind, ResourceRecord, always, genesis_publisher,
         holdings_collection, instance_data_key, never, resource_record_key,
     };
+    use crate::claim::Claim;
     use crate::hash::TestHasher;
-    use crate::presented::Presented;
     use crate::rule::{Holding, StoredRule};
 
     #[test]
@@ -1117,7 +1117,7 @@ mod tests {
     #[test]
     fn a_behaviour_reads_the_side_its_question_is_about() {
         let badge = ResourceAddr::new([0x77; 31]);
-        let claims = StoredRule::claim(Presented::of_subject(badge));
+        let claims = StoredRule::claim(Claim::of_subject(badge));
         let holds = StoredRule::held(badge, Holding::Balance);
         let both = StoredRule::CountOf {
             count: 2,

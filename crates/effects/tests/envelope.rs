@@ -5,10 +5,10 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Constraint, EdgeContent, EdgeRef,
-    EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl, MAX_SOCKETS,
-    MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput, PackageHash,
-    PrefixShardResolver, Presented, Records, ResourceKind, ShardResolver, Socket, Subintent,
+    AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, Constraint, EdgeContent,
+    EdgeRef, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl,
+    MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput,
+    PackageHash, PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket, Subintent,
     TestHasher, Value, admit, admit_tree, child_key, nullifier_key, route_tree,
 };
 use hyperscale_vm_fixtures::lottery;
@@ -507,7 +507,7 @@ fn a_socket_cannot_fill_a_value_parameter() {
 #[test]
 fn an_authority_socket_is_presented_not_passed() {
     let mut tree = composed_tree(100);
-    tree.root.sockets = vec![Socket::Authority(Presented::of_subject(BOB.address()))];
+    tree.root.sockets = vec![Socket::Authority(Claim::of_subject(BOB.address()))];
     tree.root_bindings = vec![Binding::Authority {
         intent: 1,
         producer: 0,

@@ -9,9 +9,8 @@
 //! the grant that mints it all read one registration.
 
 use hyperscale_vm_effects::{
-    Clause, Expr, GrantClaim, GrantedBehaviour, Holding, Presented, ResourceGrants, ResourceKind,
-    Rule, RuleBytes, RuleLeaf, StoredRule, TestHasher, Value, granting_issued_resource,
-    issued_resource,
+    Claim, Clause, Expr, GrantClaim, GrantedBehaviour, Holding, ResourceGrants, ResourceKind, Rule,
+    RuleBytes, RuleLeaf, StoredRule, TestHasher, Value, granting_issued_resource, issued_resource,
 };
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::{Address, Chain, PrincipalAddr, account, package, principal};
@@ -174,7 +173,7 @@ fn a_badge_named_without_an_instance_means_any_of_it_at_every_site() {
     };
     assert_eq!(
         asks(GrantedBehaviour::Recall),
-        StoredRule::claim(Presented::of_subject(badge)),
+        StoredRule::claim(Claim::of_subject(badge)),
     );
     assert_eq!(
         asks(GrantedBehaviour::Withdraw),
@@ -202,13 +201,13 @@ fn declared_rules(instance: impl Into<Address>) -> ResourceGrants {
     rules.set(
         GrantedBehaviour::Mint,
         RuleBytes::try_from(&StoredRule::claim(
-            Presented::of_address(instance).expect("an instance names a claim"),
+            Claim::of_address(instance).expect("an instance names a claim"),
         ))
         .expect("a rule within the caps encodes"),
     );
     rules.set(
         GrantedBehaviour::Recall,
-        RuleBytes::try_from(&StoredRule::claim(Presented::of_instance(badge, 0)))
+        RuleBytes::try_from(&StoredRule::claim(Claim::of_instance(badge, 0)))
             .expect("a rule within the caps encodes"),
     );
     rules

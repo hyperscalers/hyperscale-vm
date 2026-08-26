@@ -35,8 +35,8 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
-    Binding, ChainRecords, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, Hasher, InstanceMeta,
-    IntentDecl, MAX_SOCKETS, ManifestGraph, Presented, ResourceMeta, Socket, Subintent,
+    Binding, ChainRecords, Claim, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, Hasher,
+    InstanceMeta, IntentDecl, MAX_SOCKETS, ManifestGraph, ResourceMeta, Socket, Subintent,
 };
 use hyperscale_vm_types::{CallTarget, MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
@@ -226,7 +226,7 @@ impl<'a> IntentBuilder<'a> {
     ///
     /// Past a `u32` of sockets, far beyond the [`MAX_SOCKETS`]
     /// the declaration is held to when it is sealed.
-    pub fn declare_proof(&mut self, claim: Presented) -> Proof {
+    pub fn declare_proof(&mut self, claim: Claim) -> Proof {
         let position =
             u32::try_from(self.sockets.len()).expect("sockets are bounded by MAX_SOCKETS");
         // The claim's own subject, where a call can be made against it:

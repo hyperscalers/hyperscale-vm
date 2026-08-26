@@ -29,7 +29,7 @@ use crate::types::Value;
 /// meaning: two claims are the same claim exactly when they name the same
 /// subject and the same instance of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
-pub struct Presented {
+pub struct Claim {
     /// Who or what the claim is about.
     pub subject: Address,
     /// Which instance of it, where the subject is a non-fungible badge
@@ -37,7 +37,7 @@ pub struct Presented {
     pub instance: Option<u64>,
 }
 
-impl Presented {
+impl Claim {
     /// A claim about `subject` as a whole: an address acting as itself,
     /// or a badge held in any amount.
     #[must_use]
@@ -109,7 +109,7 @@ impl Presented {
 mod tests {
     use hyperscale_vm_types::{Address, AddressClass, CallTarget, ResourceAddr};
 
-    use super::Presented;
+    use super::Claim;
     use crate::types::{EdgeContent, Value};
 
     fn address(byte: u8, class: AddressClass) -> Address {
@@ -132,8 +132,8 @@ mod tests {
     #[test]
     fn the_claim_an_address_names_is_the_address_itself() {
         let badge = address(0xB0, AddressClass::Resource);
-        let named = Presented::of(&Value::Address(badge)).expect("a resource names a badge");
-        assert_eq!(named, Presented::of_subject(badge));
+        let named = Claim::of(&Value::Address(badge)).expect("a resource names a badge");
+        assert_eq!(named, Claim::of_subject(badge));
         assert_eq!(
             named.badge(),
             Some(ResourceAddr::try_from(badge).expect("a resource address"))
@@ -156,13 +156,13 @@ mod tests {
         assert_eq!(claimed.len(), AddressClass::ALL.len(), "a class unstated");
         for (class, expected) in claimed {
             let who = address(0x11, class);
-            let named = Presented::of(&Value::Address(who));
+            let named = Claim::of(&Value::Address(who));
             if expected == Names::Nothing {
                 assert_eq!(named, None, "{class}");
                 continue;
             }
             let named = named.expect("names a claim");
-            assert_eq!(named, Presented::of_subject(who));
+            assert_eq!(named, Claim::of_subject(who));
             assert_eq!(
                 named.badge(),
                 (expected == Names::Badge)
@@ -185,8 +185,8 @@ mod tests {
     fn a_resource_and_an_id_name_one_instance() {
         let badge = address(0xB0, AddressClass::Resource);
         assert_eq!(
-            Presented::of(&Value::Tuple(vec![Value::Address(badge), Value::U64(7)])),
-            Some(Presented::of_instance(
+            Claim::of(&Value::Tuple(vec![Value::Address(badge), Value::U64(7)])),
+            Some(Claim::of_instance(
                 ResourceAddr::try_from(badge).expect("a resource address"),
                 7,
             ))
@@ -195,7 +195,7 @@ mod tests {
         // A non-resource with an id names nothing: only a resource has
         // instances.
         assert_eq!(
-            Presented::of(&Value::Tuple(vec![
+            Claim::of(&Value::Tuple(vec![
                 Value::Address(address(0x11, AddressClass::Component)),
                 Value::U64(7),
             ])),
@@ -213,7 +213,7 @@ mod tests {
                 content: EdgeContent::Fungible,
             },
         ] {
-            assert_eq!(Presented::of(&value), None, "{value:?}");
+            assert_eq!(Claim::of(&value), None, "{value:?}");
         }
     }
 }

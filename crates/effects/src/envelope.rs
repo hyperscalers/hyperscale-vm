@@ -38,12 +38,12 @@ use crate::admission::{
     AdmissionError, Admitted, IntentView, MAX_SOCKETS, admit_intents, check_instance_values,
     check_value_depth,
 };
+use crate::claim::Claim;
 use crate::dsl::PresentedGrants;
 use crate::graph::{Constraint, EdgeRef, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::InstanceMeta;
 use crate::manifest::ManifestHash;
-use crate::presented::Presented;
 use crate::records::{ChainRecords, Composed};
 use crate::resource::ResourceMeta;
 use crate::route::{Routing, ShardResolver, route};
@@ -91,7 +91,7 @@ pub enum Socket {
     /// admission presents that claim alone, never whatever else the
     /// minting node happened to mint, so a composition cannot smuggle
     /// authority into an intent its signer never offered.
-    Authority(Presented),
+    Authority(Claim),
 }
 
 /// One intent's declared form: a graph over typed sockets.

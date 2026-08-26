@@ -39,13 +39,13 @@ use hyperscale_vm_types::{
 };
 
 use crate::admission::{AdmissionError, Admitted, Asks, Injected, Placed};
+use crate::claim::Claim;
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
 use crate::envelope::NULLIFIER_SLOT;
 use crate::graph::{GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::manifest::{Judged, JudgedLeaf};
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
-use crate::presented::Presented;
 use crate::records::ChainRecords;
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind, ResourceMeta};
 use crate::rule::{
@@ -124,7 +124,7 @@ pub fn explain_resource(record: &ResourceMeta, hasher: &dyn Hasher) -> String {
     // What the issuing frame speaks for, asked through the door
     // admission injects through — so what this says demands nothing is
     // exactly what nothing is demanded for.
-    let issuer = Presented::of_address(record.namespace);
+    let issuer = Claim::of_address(record.namespace);
     for behaviour in GrantedBehaviour::ALL {
         let Some(entry) = record.rules.get(behaviour) else {
             continue;
@@ -1389,12 +1389,12 @@ fn address_text(address: Address) -> String {
 /// and one on instance 7 are two different claims about one badge, and a
 /// rendering that drops it says the right badge was presented and
 /// mysteriously refused.
-fn claim_text(claim: &Presented) -> String {
+fn claim_text(claim: &Claim) -> String {
     format!("{}{}", address_text(claim.subject), instance_text(claim))
 }
 
 /// The instance half of a claim, where it names one.
-fn instance_text(claim: &Presented) -> String {
+fn instance_text(claim: &Claim) -> String {
     claim
         .instance
         .map_or_else(String::new, |id| format!(", instance {id}"))

@@ -631,9 +631,9 @@ mod tests {
         principal_address, resource_address, to_vec, u256_decimal,
     };
     use crate::auth::RuleBytes;
+    use crate::claim::Claim;
     use crate::hash::{Hash32, TestHasher};
     use crate::metadata::PackageHash;
-    use crate::presented::Presented;
     use crate::resource::{GrantedBehaviour, ResourceGrants, ResourceKind};
     use crate::rule::{StoredRule, always, never};
     use crate::vectors::{
@@ -882,7 +882,7 @@ mod tests {
             let mut rules = ResourceGrants::new();
             rules.set(
                 GrantedBehaviour::Recall,
-                RuleBytes::try_from(&StoredRule::claim(Presented::of_subject(who)))
+                RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(who)))
                     .expect("a rule encodes"),
             );
             rules

@@ -26,8 +26,8 @@
 mod buckets;
 #[cfg(test)]
 mod fixtures;
+mod grants;
 mod materialize;
-mod permit;
 mod ranges;
 mod receipt;
 
@@ -35,6 +35,7 @@ use std::collections::BTreeSet;
 
 use buckets::Buckets;
 pub use buckets::Held;
+pub use grants::{Op, grants};
 use hyperscale_vm_effects::{IssuanceGrant, ResourceKind, distinct_ids};
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
@@ -42,7 +43,6 @@ use hyperscale_vm_types::{
     SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded, SubstateKey, TxHash,
 };
 pub use materialize::{Capability, Interval, MaterializeError, Settlement};
-pub use permit::{Op, permits};
 use ranges::Ranges;
 pub use ranges::SCAN_SEEK_BYTES;
 pub use receipt::{DeltaMap, FinishError, Receipt, StateDelta};
@@ -73,7 +73,7 @@ pub enum SessionTrap {
     /// target holds.
     #[error(
         "the handle at site {site} element {element} holds {}, which does not grant {}",
-        permit::describe(held),
+        held.described(),
         attempted.describe()
     )]
     Ungranted {
@@ -512,7 +512,7 @@ impl KernelSession {
     /// resolve a rep into something to act on.
     fn acting(&self, site: u32, element: u32, attempted: Op) -> Result<Capability, SessionTrap> {
         let held = self.at(site, element)?;
-        if permits(&held, attempted) {
+        if grants(&held, attempted) {
             Ok(held)
         } else {
             Err(SessionTrap::Ungranted {
@@ -1161,7 +1161,7 @@ mod tests {
         declared, env, key, session_for, session_holding, session_over, session_under, tx,
     };
     use super::materialize::capability_for;
-    use super::{Capability, EnvInputs, Interval, KernelSession, Op, SessionTrap, TxHash, permits};
+    use super::{Capability, EnvInputs, Interval, KernelSession, Op, SessionTrap, TxHash, grants};
     use crate::ledger::AmountLedger;
     use crate::overlay::OverlayStore;
     use crate::store::{MemoryStore, StoreError};
@@ -1268,10 +1268,10 @@ mod tests {
         }
     }
 
-    /// The whole of what the kernel permits, asked through the entry
+    /// The whole of what the kernel grants, asked through the entry
     /// points a guest reaches rather than of the table alone: a row the
     /// table admits and the operation refuses anyway would pass a test
-    /// of `permits` by itself.
+    /// of `grants` by itself.
     #[test]
     fn every_capability_grants_exactly_what_the_table_says() {
         for (position, held) in every_capability().into_iter().enumerate() {
@@ -1286,7 +1286,7 @@ mod tests {
                 );
                 assert_eq!(
                     refused,
-                    !permits(&held, op),
+                    !grants(&held, op),
                     "{held:?} against {op:?}: refused_as_ungranted={refused}"
                 );
             }
@@ -1358,8 +1358,8 @@ mod tests {
                     Capability::Instances { .. } => (Op::TakeInstances, Op::FileInstances),
                     _ => (Op::Take, Op::Put),
                 };
-                assert_eq!(permits(&held, take), debits, "{held:?} debits");
-                assert_eq!(permits(&held, put), credits, "{held:?} credits");
+                assert_eq!(grants(&held, take), debits, "{held:?} debits");
+                assert_eq!(grants(&held, put), credits, "{held:?} credits");
             }
         }
     }

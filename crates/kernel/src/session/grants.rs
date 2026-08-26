@@ -1,18 +1,16 @@
 //! What a capability grants, decided in one place.
 //!
-//! Every operation the kernel exposes asks [`permits`] before it touches
+//! Every operation the kernel exposes asks [`grants`] before it touches
 //! the store, so the accept-set of a capability is one table read rather
 //! than a match arm restated at each call. An operation added later cannot
 //! forget to ask, because the capability it would act through is reached
 //! only through the check.
 //!
 //! The table is total over both axes, which is what makes it testable.
-//! An operation added to [`Op`] is an unhandled arm in [`permits`]; a
+//! An operation added to [`Op`] is an unhandled arm in [`grants`]; a
 //! form added to [`Capability`] is one in [`describe`] and in
 //! `Capability::form`, which is what puts it in front of the matrix
 //! rather than leaving it a pairing nobody asked.
-
-use hyperscale_vm_types::Moves;
 
 use super::materialize::Capability;
 
@@ -56,8 +54,8 @@ pub enum Op {
 impl Op {
     /// Every operation, which is what makes the table testable in full:
     /// a matrix over this and [`Capability`] is the whole of what the
-    /// kernel permits, and an operation added without a row in
-    /// [`permits`] does not compile.
+    /// kernel grants, and an operation added without a row in
+    /// [`grants`] does not compile.
     pub const ALL: [Self; 14] = [
         Self::Read,
         Self::Write,
@@ -103,7 +101,7 @@ impl Op {
 /// operation admits is the fact a reader needs, and stating it once is
 /// what lets a form widen an accept-set without visiting every call site.
 #[must_use]
-pub const fn permits(held: &Capability, op: Op) -> bool {
+pub const fn grants(held: &Capability, op: Op) -> bool {
     use Capability as C;
     match op {
         // Reading is what both byte modes answer: what the exclusive
@@ -151,37 +149,5 @@ pub const fn permits(held: &Capability, op: Op) -> bool {
             C::Instances { moves, .. } => moves.debits(),
             _ => false,
         },
-    }
-}
-
-/// How a refusal names the capability that was held.
-pub(super) const fn describe(held: &Capability) -> &'static str {
-    match held {
-        Capability::Read(_) => "a fresh read",
-        Capability::Write(_) => "an exclusive read-modify-write",
-        Capability::Amount {
-            moves: Moves::In, ..
-        } => "an exclusive hold on a cell of value that may only be credited",
-        Capability::Amount {
-            moves: Moves::Out, ..
-        } => "an exclusive hold on a cell of value that may only be debited",
-        Capability::Amount {
-            moves: Moves::Both, ..
-        } => "an exclusive hold on a cell of value",
-        Capability::AmountRead(_) => "a read of a cell of value",
-        Capability::Delta(_) => "a commutative movement",
-        Capability::Credit(_) => "a commutative credit",
-        Capability::Reserve { .. } => "a held reservation",
-        Capability::RangeRead(_) => "a read interval",
-        Capability::RangeWrite(_) => "a write interval",
-        Capability::Instances {
-            moves: Moves::In, ..
-        } => "an interval instances are filed into",
-        Capability::Instances {
-            moves: Moves::Out, ..
-        } => "an interval instances are taken from",
-        Capability::Instances {
-            moves: Moves::Both, ..
-        } => "an interval of instances",
     }
 }

@@ -18,10 +18,10 @@ use hyperscale_vm_types::{
     ResourceAddr, SubstateKey, WrongClass,
 };
 
+use crate::claim::Claim;
 use crate::hash::{Hash32, Hasher};
 use crate::instance::InstanceMeta;
 use crate::manifest::{JudgedLeaf, ManifestHash};
-use crate::presented::Presented;
 use crate::resource::{
     GrantedBehaviour, GrantsExpr, GrantsResolveError, ResourceGrants, ResourceKind, ResourceMeta,
 };
@@ -1180,7 +1180,7 @@ pub struct Declaration {
     /// The claims this declaration mints, evaluated, an instance mint
     /// widened to its resource. What admission hands the intent's later
     /// nodes as this node's evidence.
-    pub mints: Vec<Presented>,
+    pub mints: Vec<Claim>,
     /// Whether each top-level clause was declared at all, in clause order.
     ///
     /// True where the clause carries no guard, and where its guard held.
@@ -1575,7 +1575,7 @@ fn eval_clauses(
             Clause::Mints { claim, .. } => {
                 budget.charge()?;
                 let value = eval_expr(claim, inputs, hasher, bindings, 0, budget)?;
-                let minted = Presented::of(&value).ok_or_else(|| EvalError::TypeMismatch {
+                let minted = Claim::of(&value).ok_or_else(|| EvalError::TypeMismatch {
                     expected: "claim",
                     found: value.kind(),
                 })?;
@@ -1604,7 +1604,7 @@ fn eval_clauses(
                 // where possession was verified, which is what keeps the
                 // judge an equality walk.
                 if claim.instance.is_some() {
-                    out.mints.push(Presented::of_subject(claim.subject));
+                    out.mints.push(Claim::of_subject(claim.subject));
                 }
             }
             Clause::ForEach { list, body, .. } => {
@@ -1749,7 +1749,7 @@ fn eval_condition(
         }),
         RuleLeaf::Claim(expr) => {
             let value = eval_expr(expr, inputs, hasher, bindings, 0, budget)?;
-            Presented::of(&value)
+            Claim::of(&value)
                 .map(JudgedLeaf::Claim)
                 .ok_or_else(|| EvalError::TypeMismatch {
                     expected: "claim",
@@ -2755,8 +2755,8 @@ mod tests {
     /// kernel judges.
     #[test]
     fn a_requires_clause_evaluates_to_a_condition_and_no_access() {
+        use crate::claim::Claim;
         use crate::manifest::JudgedLeaf;
-        use crate::presented::Presented;
         use crate::rule::{Rule, RuleExpr, RuleLeaf};
 
         let context = inputs(&[Value::Bool(false)], &[]);
@@ -2809,7 +2809,7 @@ mod tests {
         );
         assert_eq!(declaration.clause_taken, vec![true, true, true, false]);
 
-        let identity = Presented::of_subject(context.self_addr);
+        let identity = Claim::of_subject(context.self_addr);
         assert_eq!(
             declaration.required().cloned().collect::<Vec<_>>(),
             vec![

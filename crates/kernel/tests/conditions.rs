@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use hyperscale_vm_effects::{
-    Condition, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
-    NodeCall, PackageHash, Presented, Rule, RuleBytes, SlotId, StoredRule, TestHasher, child_key,
+    Claim, Condition, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
+    NodeCall, PackageHash, Rule, RuleBytes, SlotId, StoredRule, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
@@ -34,8 +34,8 @@ const fn principal(byte: u8) -> Address {
     Address::new([byte; 31], AddressClass::Principal)
 }
 
-fn identity(byte: u8) -> Presented {
-    Presented::of_subject(principal(byte))
+fn identity(byte: u8) -> Claim {
+    Claim::of_subject(principal(byte))
 }
 
 fn cell_of(owner: Address) -> SubstateKey {
@@ -101,7 +101,7 @@ impl GuestBackend for Inert {
 
 /// The one lowered call these fixtures need: no arguments, no edges,
 /// judged on its evidence against what it requires.
-fn call(target: Address, evidence: Vec<Presented>, requires: Vec<Rule<JudgedLeaf>>) -> NodeCall {
+fn call(target: Address, evidence: Vec<Claim>, requires: Vec<Rule<JudgedLeaf>>) -> NodeCall {
     NodeCall {
         package: PackageHash(Hash32([0xAB; 32])),
         target,
@@ -189,7 +189,7 @@ fn a_required_claim_is_judged_with_the_calls_own_evidence() {
     let key = cell_of(target);
     let requires = vec![Rule::Require(JudgedLeaf::Claim(identity(9)))];
 
-    let judged = |evidence: Vec<Presented>| {
+    let judged = |evidence: Vec<Claim>| {
         let mut entry = BatchTx::new(tx(3), declaring(key, Vec::new()), env());
         entry.calls = vec![call(target, evidence, requires.clone())];
         run(&MemoryStore::new(), &[entry])
@@ -218,7 +218,7 @@ fn a_stored_leaf_judges_what_is_stored_and_nothing_else() {
     let key = cell_of(target);
     let requires = vec![Rule::Require(JudgedLeaf::Stored { cell: key })];
 
-    let judged = |store: &MemoryStore, evidence: Vec<Presented>| {
+    let judged = |store: &MemoryStore, evidence: Vec<Claim>| {
         let mut entry = BatchTx::new(tx(4), declaring(key, Vec::new()), env());
         entry.calls = vec![call(target, evidence, requires.clone())];
         run(store, &[entry])
@@ -260,7 +260,7 @@ fn an_absent_component_table_denies_whatever_is_presented() {
         vec![
             identity(1),
             identity(2),
-            Presented::of_subject(ResourceAddr::new([3; 31])),
+            Claim::of_subject(ResourceAddr::new([3; 31])),
         ],
         vec![Rule::Require(JudgedLeaf::Stored { cell: key })],
     )];
@@ -286,7 +286,7 @@ fn a_rule_mixes_claim_and_stored_leaves() {
             Rule::Require(JudgedLeaf::Stored { cell: key }),
         ],
     }];
-    let judged = |evidence: Vec<Presented>| {
+    let judged = |evidence: Vec<Claim>| {
         let mut entry = BatchTx::new(tx(6), declaring(key, Vec::new()), env());
         entry.calls = vec![call(target, evidence, requires.clone())];
         run(&MemoryStore::new(), &[entry])
@@ -383,7 +383,7 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
     let stored = RuleBytes::try_from(&StoredRule::claim(identity(2))).unwrap();
     securified.write(key, stored.in_cell());
 
-    let judged = |evidence: Vec<Presented>| {
+    let judged = |evidence: Vec<Claim>| {
         let store = Arc::new(Counting::over(securified.clone()));
         let mut entry = BatchTx::new(tx(7), declaring(key, Vec::new()), env());
         entry.calls = vec![call(target, evidence, vec![widest.clone()])];
@@ -446,7 +446,7 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
     let stored = RuleBytes::try_from(&StoredRule::claim(identity(2))).unwrap();
     securified.write(key, stored.in_cell());
 
-    let judged = |store: &MemoryStore, locality: &Locality, evidence: Vec<Presented>| {
+    let judged = |store: &MemoryStore, locality: &Locality, evidence: Vec<Claim>| {
         let mut entry = BatchTx::new(tx(8), declaring(key, conditions.clone()), env());
         entry.calls = vec![call(owner, evidence, requires.clone())];
         run_at(store, &[entry], locality)

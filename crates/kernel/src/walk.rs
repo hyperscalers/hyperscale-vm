@@ -401,7 +401,7 @@ fn gated(
 /// leaf reads the cell the declaration provisioned and judges the rule
 /// the named role selects there — [`AuthCell::admits`], the same
 /// verdict a stored-rule gate reaches — so a declared rule reaches
-/// stored rules exactly one level deep, which is what `Rule<Presented>`
+/// stored rules exactly one level deep, which is what `Rule<Claim>`
 /// guarantees by construction. Recursion is bounded by the rule caps
 /// the publish check held the tree to.
 ///

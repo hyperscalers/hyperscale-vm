@@ -85,11 +85,11 @@ mod tests {
     use hyperscale_vm_types::{Address, AddressClass};
 
     use super::RuleBytes;
-    use crate::presented::Presented;
+    use crate::claim::Claim;
     use crate::rule::StoredRule;
 
     fn one_rule() -> StoredRule {
-        StoredRule::claim(Presented::of_subject(Address::new(
+        StoredRule::claim(Claim::of_subject(Address::new(
             [7; 31],
             AddressClass::Component,
         )))

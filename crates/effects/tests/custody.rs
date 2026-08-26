@@ -21,8 +21,8 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
-    AdmissionError, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode,
-    Hash32, Holding, InstanceMeta, IntentDecl, JudgedLeaf, ManifestGraph, Presented, Records,
+    AdmissionError, Claim, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg,
+    GraphNode, Hash32, Holding, InstanceMeta, IntentDecl, JudgedLeaf, ManifestGraph, Records,
     ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef, StoredRule, TestHasher,
     Value, admit_tree, child_key,
 };
@@ -81,7 +81,7 @@ fn freezable_meta() -> ResourceMeta {
     let mut rules = ResourceGrants::new();
     rules.set(
         GrantedBehaviour::Halt,
-        sealed(&StoredRule::claim(Presented::of_subject(ISSUER))),
+        sealed(&StoredRule::claim(Claim::of_subject(ISSUER))),
     );
     ResourceMeta {
         namespace: ISSUER,
@@ -577,7 +577,7 @@ fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
             rules
         },
     };
-    let approver = Presented::of_subject(Address::new([0x4A; 31], AddressClass::Principal));
+    let approver = Claim::of_subject(Address::new([0x4A; 31], AddressClass::Principal));
     let holds = StoredRule::held(BADGE, Holding::Balance);
     let claims = StoredRule::claim(approver);
     let mixed = StoredRule::CountOf {
