@@ -375,6 +375,16 @@ pub struct TypedBuilder<'a> {
     /// The nodes already minting a claim, so a second call wanting one
     /// presents the same proof rather than composing a second node.
     minted: BTreeMap<(Address, Option<u64>), Proof>,
+    /// The claims whose proof is being composed further up the stack.
+    ///
+    /// A proof is minted by a call, and that call earns claims of its
+    /// own; where one of them is the claim being minted, presenting it
+    /// again would recurse without end. The memo above cannot break the
+    /// cycle — its entry is written only once the node exists, which is
+    /// after the recursion. A claim named here is left to the ancestor
+    /// already minting it, so a self-earning account metadata a hostile
+    /// chain serves refuses at admission rather than overflowing here.
+    presenting: BTreeSet<(Address, Option<u64>)>,
 }
 
 impl<'a> TypedBuilder<'a> {
@@ -387,6 +397,7 @@ impl<'a> TypedBuilder<'a> {
             hasher,
             signer,
             minted: BTreeMap::new(),
+            presenting: BTreeSet::new(),
         }
     }
 
@@ -666,27 +677,37 @@ impl<'a> TypedBuilder<'a> {
     /// signer's own address — so neither takes a proof of its own and
     /// the composition stays one node deep.
     fn present(&mut self, claim: Claim) -> Option<Proof> {
-        if let Some(proof) = self.minted.get(&(claim.subject, claim.instance)) {
+        let key = (claim.subject, claim.instance);
+        if let Some(proof) = self.minted.get(&key) {
             return Some(*proof);
+        }
+        // Already minting this claim's proof further up the stack; the
+        // ancestor call will file it, and recursing to compose a second
+        // would not terminate.
+        if !self.presenting.insert(key) {
+            return None;
         }
         let signer = self.signer;
         let minted = match (claim.subject.class(), claim.instance) {
             (AddressClass::Principal, None) if claim.subject == signer.address() => {
-                self.mint(signer.into(), AUTHORIZE_METHOD, (), &[])
+                self.mint(signer.into(), AUTHORIZE_METHOD, (), &[]).ok()
             }
-            (AddressClass::Resource | AddressClass::Restricted, None) => {
-                self.mint(signer.into(), PRESENT_BADGE_METHOD, (claim.subject,), &[])
-            }
-            (AddressClass::Resource | AddressClass::Restricted, Some(id)) => self.mint(
-                signer.into(),
-                PRESENT_INSTANCE_METHOD,
-                (claim.subject, id),
-                &[],
-            ),
-            _ => return None,
-        }
-        .ok()?;
-        self.minted.insert((claim.subject, claim.instance), minted);
+            (AddressClass::Resource | AddressClass::Restricted, None) => self
+                .mint(signer.into(), PRESENT_BADGE_METHOD, (claim.subject,), &[])
+                .ok(),
+            (AddressClass::Resource | AddressClass::Restricted, Some(id)) => self
+                .mint(
+                    signer.into(),
+                    PRESENT_INSTANCE_METHOD,
+                    (claim.subject, id),
+                    &[],
+                )
+                .ok(),
+            _ => None,
+        };
+        self.presenting.remove(&key);
+        let minted = minted?;
+        self.minted.insert(key, minted);
         Some(minted)
     }
 
