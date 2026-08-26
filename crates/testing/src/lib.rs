@@ -50,8 +50,8 @@ use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 pub use hyperscale_vm_effects::{AdmissionError, EvalError, ResourceKind};
 use hyperscale_vm_effects::{
     ChainRecords, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, PresentedGrants,
-    Records, TestHasher, Value, admit_presenting, child_key, declaration_hash, holdings_collection,
-    issued_record, issued_resource, route,
+    Records, TestHasher, Value, admit_presenting, child_key, declaration_hash, explain_refusal,
+    holdings_collection, issued_record, issued_resource, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
@@ -569,7 +569,18 @@ impl Chain {
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
-        Ok(Outcome::new(receipt, errors, written))
+        // An unmet condition names a leaf, and a leaf is a hash of the
+        // party and the badge that inverts to neither. Read back here,
+        // while the admitted form the derivation needs is still in hand
+        // — a test that fails on one of these otherwise reports the
+        // hash, which is the one thing nobody can act on.
+        let refusal = match &receipt.outcome {
+            KernelOutcome::ConditionUnmet { condition } => {
+                Some(explain_refusal(&admitted, condition))
+            }
+            _ => None,
+        };
+        Ok(Outcome::new(receipt, errors, refusal, written))
     }
 }
 

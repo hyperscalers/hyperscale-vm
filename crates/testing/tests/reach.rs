@@ -15,6 +15,8 @@
 //! carries — the halt fence among them, since the party being reached
 //! is by construction the party each of those rules would refuse.
 
+use std::fmt::Write as _;
+
 use hyperscale_vm_effects::TestHasher;
 use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_fixtures::security;
@@ -116,6 +118,27 @@ fn a_halt_stops_a_holder_who_was_moving_freely() {
         "a halted holder moves nothing, whatever they hold: {refused:?}",
     );
     assert_eq!(chain.balance(HOLDER, share), 90, "and the balance stands");
+
+    // And what a test reports when it expected this to complete is the
+    // requirement rather than the leaf. The receipt names a key — a
+    // hash of the holder and the badge, inverting to neither — so a
+    // reader handed that alone has no way back to which resource
+    // refused them or why.
+    let told = refused.refused_as();
+    assert!(told.contains("withdraw"), "the behaviour: {told}");
+    let hex = share
+        .address()
+        .to_bytes()
+        .iter()
+        .fold(String::new(), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        });
+    assert!(told.contains(&hex), "the resource: {told}");
+    assert!(
+        told.contains("not halted"),
+        "and the question it asked: {told}"
+    );
 }
 
 /// Every rule the share class carries, and the recall reaching past all

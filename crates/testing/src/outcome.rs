@@ -18,6 +18,9 @@ pub struct Outcome<T = ()> {
     receipt: Receipt,
     /// The declining node's package error table, where one declined.
     errors: Vec<String>,
+    /// The unmet condition, read back into the requirement that put it
+    /// there — where the transaction was refused by one.
+    refusal: Option<String>,
     /// Whatever writing the manifest handed back — nothing, usually, and
     /// the handle on an answer where a call produced one.
     ///
@@ -28,10 +31,16 @@ pub struct Outcome<T = ()> {
 }
 
 impl<T> Outcome<T> {
-    pub(crate) const fn new(receipt: Receipt, errors: Vec<String>, written: T) -> Self {
+    pub(crate) const fn new(
+        receipt: Receipt,
+        errors: Vec<String>,
+        refusal: Option<String>,
+        written: T,
+    ) -> Self {
         Self {
             receipt,
             errors,
+            refusal,
             written,
         }
     }
@@ -166,9 +175,24 @@ impl<T> Outcome<T> {
     pub fn expect_completed(&self) {
         assert!(
             self.completed(),
-            "the transaction did not complete: {:?}",
-            self.receipt.outcome
+            "the transaction did not complete: {}",
+            self.refused_as()
         );
+    }
+
+    /// Why the transaction did not complete, in the most legible terms
+    /// available.
+    ///
+    /// An unmet condition reads back as the requirement that put it
+    /// there — the resource, the behaviour, and the question — because
+    /// what the receipt carries is a leaf key, and a leaf key is a hash
+    /// of the party and the badge that inverts to neither. Every other
+    /// verdict is already self-describing and reads as itself.
+    #[must_use]
+    pub fn refused_as(&self) -> String {
+        self.refusal
+            .clone()
+            .unwrap_or_else(|| format!("{:?}", self.receipt.outcome))
     }
 }
 
