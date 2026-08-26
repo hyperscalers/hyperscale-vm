@@ -8,9 +8,9 @@
 //! crosses.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Claim, Constraint, EnvelopeTree, GrantedBehaviour, GraphArg, Hasher,
-    IntentDecl, PackageHash, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
-    StoredRule, TestHasher, admit_tree,
+    AdmissionError, Claim, Constraint, EnvelopeTree, GrantedBehaviour, GraphArg, Hash32, Hasher,
+    InstanceMeta, IntentDecl, MAX_VALUE_DEPTH, PackageHash, Records, ResourceGrants, ResourceKind,
+    ResourceMeta, RuleBytes, StoredRule, TestHasher, Value, admit_tree,
 };
 use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
 use hyperscale_vm_stdlib::account;
@@ -128,6 +128,33 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
             socket: 0
         })
     );
+}
+
+/// A presented record whose configuration nests past the vocabulary is
+/// refused at build. The natural order computes the tree's identity
+/// before any admission gate runs, and hashing takes the depth bound as
+/// given — so the builder is where a too-deep record must stop.
+#[test]
+fn a_presented_record_too_deep_to_encode_refuses_at_build() {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
+    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
+    let funds = account::withdraw(&mut root, alice_proof, RES_X, 5).unwrap();
+    account::deposit(&mut root, ALICE, funds).unwrap();
+    let mut nested = Value::U64(0);
+    for _ in 0..=MAX_VALUE_DEPTH {
+        nested = Value::List(vec![nested]);
+    }
+    env.instance(InstanceMeta {
+        package: pkg(),
+        config: vec![nested],
+        salt: Hash32([3; 32]),
+    });
+    env.seal(root).unwrap().none().unwrap();
+    let refused = env
+        .build()
+        .expect_err("a record the wire could not carry never becomes a tree");
+    assert_eq!(refused, EnvelopeError::InstanceValueTooDeep { instance: 0 });
 }
 
 #[test]

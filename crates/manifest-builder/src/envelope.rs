@@ -36,7 +36,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::{
     Binding, ChainRecords, Claim, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, Hasher,
-    InstanceMeta, IntentDecl, MAX_SOCKETS, ManifestGraph, ResourceMeta, Socket, Subintent,
+    InstanceMeta, IntentDecl, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ResourceMeta, Socket,
+    Subintent,
 };
 use hyperscale_vm_types::{CallTarget, MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
@@ -133,6 +134,14 @@ pub enum EnvelopeError {
     /// More subintents than an envelope may bind.
     #[error("envelope binds more than {MAX_SUBINTENTS} subintents")]
     TooManySubintents,
+    /// A presented instance record whose configuration nests past what
+    /// the vocabulary encodes — the bound admission holds it to, met at
+    /// build so the tree can be hashed before any gate sees it.
+    #[error("presented instance {instance}'s configuration nests deeper than {MAX_VALUE_DEPTH}")]
+    InstanceValueTooDeep {
+        /// The record's position among the presented instances.
+        instance: u32,
+    },
     /// An intent's own graph refused to build or type.
     #[error(transparent)]
     Intent(#[from] TypedError),
@@ -684,6 +693,20 @@ impl<'a> EnvelopeBuilder<'a> {
     pub fn build(self) -> Result<EnvelopeTree, EnvelopeError> {
         if self.signers.len() > MAX_SUBINTENTS {
             return Err(EnvelopeError::TooManySubintents);
+        }
+        // Graph literals meet this bound at the call that binds them;
+        // presented records are registered whole, so their configuration
+        // values meet it here.
+        for (index, meta) in self.presented.iter().enumerate() {
+            if meta
+                .config
+                .iter()
+                .any(|value| value.depth() > MAX_VALUE_DEPTH)
+            {
+                return Err(EnvelopeError::InstanceValueTooDeep {
+                    instance: u32::try_from(index).unwrap_or(u32::MAX),
+                });
+            }
         }
         let mut decls = Vec::with_capacity(self.intents.len());
         let mut wired = Vec::with_capacity(self.intents.len());
