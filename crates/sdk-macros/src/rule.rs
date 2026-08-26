@@ -166,3 +166,68 @@ pub fn calls(func: &syn::Expr, name: &str) -> bool {
     matches!(func, syn::Expr::Path(path)
         if path.path.segments.last().is_some_and(|last| last.ident == name))
 }
+
+/// Diagnose a bare name that is not a leaf, in the words both leaf
+/// grammars teach with.
+///
+/// A bare name once meant two things — a badge and a configuration field
+/// in one namespace — and each now has its own spelling, so the refusal
+/// says which this one is. `None` for a name that is neither, which the
+/// grammar's own refusal covers.
+pub fn diagnose_bare_name(
+    span: Span,
+    name: &str,
+    resource_names: impl IntoIterator<Item = impl AsRef<str>>,
+    config_fields: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<syn::Error> {
+    if resource_names
+        .into_iter()
+        .any(|badge| badge.as_ref() == name)
+    {
+        return Some(syn::Error::new(
+            span,
+            format!("a badge the package issues is named `issued({name})`"),
+        ));
+    }
+    if config_fields
+        .into_iter()
+        .any(|field| field.as_ref() == name)
+    {
+        return Some(syn::Error::new(
+            span,
+            format!("a configuration field is named `config.{name}`"),
+        ));
+    }
+    None
+}
+
+/// Resolve a `config.<field>` access to the field's slot, in both leaf
+/// grammars' one spelling.
+///
+/// `None` where the expression is not the `config.` shape at all — the
+/// grammar's own refusal covers it — and an error naming the field where
+/// the shape is right and the package declares no such field.
+pub fn config_slot(
+    access: &syn::ExprField,
+    config_fields: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<syn::Result<u32>> {
+    let (syn::Expr::Path(base), syn::Member::Named(field)) = (&*access.base, &access.member) else {
+        return None;
+    };
+    if !base.path.is_ident("config") {
+        return None;
+    }
+    let named = field.to_string();
+    let Some(slot) = config_fields
+        .into_iter()
+        .position(|field| field.as_ref() == named)
+    else {
+        return Some(Err(syn::Error::new(
+            access.span(),
+            format!("`{named}` is not a configuration field of this package"),
+        )));
+    };
+    Some(Ok(
+        u32::try_from(slot).expect("a configuration list is shorter than u32")
+    ))
+}

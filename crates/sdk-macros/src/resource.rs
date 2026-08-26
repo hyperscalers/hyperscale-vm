@@ -15,7 +15,7 @@ use syn::spanned::Spanned;
 
 use crate::kebab;
 use crate::role::Role;
-use crate::rule::{RuleAst, calls, parse_rule};
+use crate::rule::{RuleAst, calls, config_slot, diagnose_bare_name, parse_rule};
 use crate::state::distinct_band;
 use crate::term::emit_behaviour;
 
@@ -492,48 +492,28 @@ pub fn granted_claim(
         syn::Expr::Path(path) if path.path.is_ident("self") => {
             Ok((quote!(::hyperscale_vm_sdk::GrantClaim::SelfAddr), false))
         }
-        // A bare name is not a leaf, and each of the two things it used
-        // to be has its own spelling to point at.
+        // A bare name is not a leaf; the shared diagnosis says which
+        // spelling the author meant.
         syn::Expr::Path(path) => {
             let name = path
                 .path
                 .get_ident()
                 .map(ToString::to_string)
                 .ok_or_else(|| refuse(path.span()))?;
-            if resources.iter().any(|badge| *badge.ident == name) {
-                return Err(syn::Error::new(
-                    path.span(),
-                    format!("a badge the package issues is named `issued({name})`"),
-                ));
-            }
-            if config_fields.contains(&name) {
-                return Err(syn::Error::new(
-                    path.span(),
-                    format!("a configuration field is named `config.{name}`"),
-                ));
-            }
-            Err(refuse(path.span()))
+            Err(diagnose_bare_name(
+                path.span(),
+                &name,
+                resources.iter().map(|badge| badge.ident.to_string()),
+                config_fields.iter().map(String::as_str),
+            )
+            .unwrap_or_else(|| refuse(path.span())))
         }
         // A configuration field, whose address class says which claim.
         syn::Expr::Field(access) => {
-            let named = match (&*access.base, &access.member) {
-                (syn::Expr::Path(base), syn::Member::Named(field))
-                    if base.path.is_ident("config") =>
-                {
-                    field.to_string()
-                }
-                _ => return Err(refuse(access.span())),
+            let Some(slot) = config_slot(access, config_fields.iter().map(String::as_str)) else {
+                return Err(refuse(access.span()));
             };
-            let slot = config_fields
-                .iter()
-                .position(|field| *field == named)
-                .ok_or_else(|| {
-                    syn::Error::new(
-                        access.span(),
-                        format!("`{named}` is not a configuration field of this package"),
-                    )
-                })?;
-            let slot = u32::try_from(slot).expect("a configuration list is shorter than u32");
+            let slot = slot?;
             Ok((quote!(::hyperscale_vm_sdk::GrantClaim::Config(#slot)), true))
         }
         // A badge the issuing instance also issues.

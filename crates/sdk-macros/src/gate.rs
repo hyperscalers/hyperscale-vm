@@ -12,7 +12,7 @@ use syn::spanned::Spanned as _;
 use crate::Declared;
 use crate::lower::{self};
 use crate::resource::Resource;
-use crate::rule::{RuleAst, calls, parse_rule};
+use crate::rule::{RuleAst, calls, config_slot, diagnose_bare_name, parse_rule};
 use crate::state::holds_rule;
 use crate::term::emit_kind;
 
@@ -128,9 +128,10 @@ pub fn guarded_identity(
     };
     match identity {
         syn::Expr::Path(path) if path.path.is_ident("self") => Ok((quote!(__t.self_addr()), true)),
-        // A bare name is not a leaf. It was two things once — a badge and
-        // a configuration field in one namespace — and each now has its
-        // own spelling, so the refusal can say which one this is.
+        // A bare name is not a leaf; the shared diagnosis says which
+        // spelling the author meant. The one bare name this grammar
+        // alone must catch first is a parameter, because admitting it
+        // would gate on something the caller supplies.
         syn::Expr::Path(path) if path.path.get_ident().is_some() => {
             let name = path.path.get_ident().expect("checked").to_string();
             if params.iter().any(|(p, _)| *p == name) {
@@ -141,39 +142,23 @@ pub fn guarded_identity(
                      or `issued(<Resource>)` instead",
                 ));
             }
-            if resources.iter().any(|r| r.name == name) {
-                return Err(syn::Error::new(
-                    identity.span(),
-                    format!("a badge the package issues is named `issued({name})`"),
-                ));
-            }
-            if config_fields.iter().any(|(f, _)| *f == name) {
-                return Err(syn::Error::new(
-                    identity.span(),
-                    format!("a configuration field is named `config.{name}`"),
-                ));
-            }
-            Err(refuse())
+            Err(diagnose_bare_name(
+                identity.span(),
+                &name,
+                resources.iter().map(|r| r.name.as_str()),
+                config_fields.iter().map(|(f, _)| f.as_str()),
+            )
+            .unwrap_or_else(refuse))
         }
         // Creation-fixed, so the claim is the target's own: an object
         // whose address derives from no key admits somebody by naming
         // them where it was created.
         syn::Expr::Field(access) => {
-            let named = match (&*access.base, &access.member) {
-                (syn::Expr::Path(base), syn::Member::Named(field))
-                    if base.path.is_ident("config") =>
-                {
-                    field.to_string()
-                }
-                _ => return Err(refuse()),
+            let Some(slot) = config_slot(access, config_fields.iter().map(|(f, _)| f.as_str()))
+            else {
+                return Err(refuse());
             };
-            let Some(slot) = config_fields.iter().position(|(f, _)| *f == named) else {
-                return Err(syn::Error::new(
-                    identity.span(),
-                    format!("`{named}` is not a configuration field of this package"),
-                ));
-            };
-            let slot = u32::try_from(slot).expect("a configuration list is shorter than u32");
+            let slot = slot?;
             Ok((
                 quote!(__t.config::<::hyperscale_vm_sdk::Addr>(#slot)),
                 false,
