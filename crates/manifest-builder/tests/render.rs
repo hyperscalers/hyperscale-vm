@@ -4,11 +4,13 @@
 //! rather than regenerated: a diff here is a change to what a wallet shows
 //! somebody before they sign.
 
+use std::collections::BTreeSet;
+
 use hyperscale_vm_effects::{
-    Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
+    GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
 };
 use hyperscale_vm_fixtures::{amm, payouts};
-use hyperscale_vm_manifest_builder::{GraphBuilder, Names, SocketRef, TypedBuilder, render};
+use hyperscale_vm_manifest_builder::{GraphBuilder, Names, TypedBuilder, render};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr, TextError};
 
@@ -194,8 +196,15 @@ fn a_socket_renders_as_the_opening_it_is() {
     let mut b = GraphBuilder::new();
     let [funds] = b.call(ALICE, "withdraw", (XRD, 100u128));
     let _ = b.export(funds);
-    let [] = b.call(ALICE, "deposit", (SocketRef(0),));
-    let graph = b.build().unwrap();
+    let mut graph = b.build().unwrap();
+    // The socket reference arrives the way one reaches a renderer: in a
+    // declaration composed elsewhere, not from a token this graph minted.
+    graph.nodes.push(GraphNode {
+        target: ALICE.into(),
+        method: "deposit".into(),
+        args: vec![GraphArg::Socket(0)],
+        evidence: BTreeSet::new(),
+    });
 
     let text = render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap();
     // The exported edge has no consumer in this graph, so nothing names

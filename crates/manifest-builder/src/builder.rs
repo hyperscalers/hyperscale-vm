@@ -146,16 +146,18 @@ impl Bucket {
 /// The enclosing intent's declared socket, by position — the
 /// typed socket an envelope binds to another intent's exported edge.
 ///
-/// Not tied to a builder: the socket's declaration lives on the
-/// [`IntentDecl`], and whether the position exists and is consumed exactly
-/// once is admission's judgement over the whole envelope. Like a
-/// [`Bucket`] it is affine — one token binds one argument.
+/// Minted by [`IntentBuilder::declare`] alone and, like a [`Bucket`],
+/// affine: one token binds one argument, so a graph the builder emits
+/// consumes each socket at most once by construction. A declaration
+/// assembled elsewhere references sockets freely, which is why the count
+/// is still judged — at the seal, and by admission over the whole
+/// envelope.
 ///
-/// [`IntentDecl`]: hyperscale_vm_effects::IntentDecl
+/// [`IntentBuilder::declare`]: crate::envelope::IntentBuilder::declare
 #[derive(Debug)]
 pub struct SocketRef(
     /// The socket position within the enclosing intent's declaration.
-    pub u32,
+    pub(crate) u32,
 );
 
 /// Distinguishes concurrently live builders, so a [`Bucket`] minted by one

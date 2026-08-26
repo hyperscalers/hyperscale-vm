@@ -81,7 +81,7 @@ pub enum EnvelopeError {
         socket: u32,
     },
     /// A socket reference past what the intent declared — reachable only
-    /// from a [`SocketRef`] the tier did not mint.
+    /// from a declaration the tier did not build.
     #[error("intent {intent} references socket {socket}, which it does not declare")]
     UnknownSocket {
         /// The referencing intent.
@@ -236,13 +236,15 @@ impl Sockets {
 /// What one intent hands the composition to fill a socket with: an edge
 /// it exported, or a proof one of its nodes mints.
 ///
-/// Not a yield in both halves, which is why it is not named for one. An
-/// edge is yielded and fills exactly one socket, because value is
-/// linear. A proof is not yielded at all — the minting node stands where
-/// it stood — and fills as many sockets as ask for it, because
-/// presenting a claim twice says nothing presenting it once does not, so
-/// this answers by value rather than being consumed.
-#[derive(Clone, Copy, Debug)]
+/// Affine like the [`OpenSocket`] it answers: one offering fills one
+/// socket, so wiring the same handle into two has no spelling — which is
+/// what makes an exported edge's linearity hold through composition. The
+/// two halves still differ in what offering again means. An edge is
+/// yielded once and no second handle on it exists; a proof is not
+/// consumed by being offered — the minting node stands where it stood —
+/// so [`IntentBuilder::offer`] answers a fresh handle for every socket
+/// that asks.
+#[derive(Debug)]
 pub struct Offered {
     envelope: u64,
     intent: u32,

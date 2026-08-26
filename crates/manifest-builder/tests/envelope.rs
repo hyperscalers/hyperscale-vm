@@ -8,11 +8,11 @@
 //! crosses.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Claim, Constraint, EnvelopeTree, GrantedBehaviour, Hasher, IntentDecl,
-    PackageHash, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, StoredRule,
-    TestHasher, admit_tree,
+    AdmissionError, Claim, Constraint, EnvelopeTree, GrantedBehaviour, GraphArg, Hasher,
+    IntentDecl, PackageHash, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
+    StoredRule, TestHasher, admit_tree,
 };
-use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder, SocketRef};
+use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr, ResourceAddr};
 use proptest::prelude::{prop, proptest};
@@ -212,16 +212,17 @@ fn a_hole_the_graph_never_consumes_is_refused() {
 #[test]
 fn a_hole_two_arguments_consume_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
-    let taken = root.declare(RES_Y, []);
-    account::deposit(&mut root, ALICE, taken).unwrap();
-    // One yielded edge cannot be two deposits; the second reference is a
-    // `Socket` the tier did not mint.
-    account::deposit(&mut root, ALICE, SocketRef(0)).unwrap();
+    // One yielded edge cannot be two deposits. The builder's own tokens
+    // cannot spell the second consumption, so the reference arrives in a
+    // declaration assembled elsewhere.
+    let mut malformed = payment_request(100);
+    let again = malformed.graph.nodes[0].clone();
+    malformed.graph.nodes.push(again);
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     assert!(matches!(
-        env.seal(root),
+        env.present(BOB, malformed),
         Err(EnvelopeError::SocketReused {
-            intent: 0,
+            intent: 1,
             socket: 0
         })
     ));
@@ -230,12 +231,17 @@ fn a_hole_two_arguments_consume_is_refused() {
 #[test]
 fn a_parameter_the_intent_never_declared_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
-    account::deposit(&mut root, ALICE, SocketRef(3)).unwrap();
+    let mut malformed = payment_request(100);
+    for arg in &mut malformed.graph.nodes[0].args {
+        if let GraphArg::Socket(socket) = arg {
+            *socket = 3;
+        }
+    }
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     assert!(matches!(
-        env.seal(root),
+        env.present(BOB, malformed),
         Err(EnvelopeError::UnknownSocket {
-            intent: 0,
+            intent: 1,
             socket: 3
         })
     ));
