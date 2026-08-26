@@ -567,6 +567,13 @@ impl KernelSession {
             ));
         }
         let denominations = self.denominations();
+        // Movements are judged while every reservation still stands, its
+        // own included: a hold is keyed by cell, not by holder, so a
+        // declaration carrying both a delta and a reservation on one
+        // cell has its delta judged against a floor this same
+        // transaction is holding. Settling first would dissolve the
+        // floor for others too, mid-judgment — the ordering is
+        // load-bearing, and the self-floor is its consequence.
         let movements = match self.judge_movements(&denominations)? {
             Phase::Produced(movements) => movements,
             Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),

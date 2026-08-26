@@ -161,3 +161,78 @@ fn a_fully_taken_hold_settles_the_whole_of_it() {
     assert_eq!(left, 30, "both grants spent");
     assert_eq!(settled, Some(70), "the hold settles whole");
 }
+
+/// A transaction's own reservation floors its own delta.
+///
+/// Holds are keyed by cell, not by holder, and `finish` judges every
+/// movement while the reservations still stand — so a declaration
+/// carrying both a delta and a reservation on one cell has the delta
+/// judged against a floor the same transaction is holding. Pinned as
+/// the ordering's consequence: the cell holds 100, the untaken hold is
+/// 60, and a take of 50 aborts even though the cell alone would cover
+/// it.
+#[test]
+fn a_transactions_own_reservation_floors_its_own_delta() {
+    let source = cell(SOURCE);
+    let sink = cell(SINK);
+    let ordered = vec![
+        DeclaredAccess {
+            reach: None,
+            effect: Effect {
+                target: EffectTarget::Point(source),
+                mode: Mode::Reserve { amount: 60 },
+            },
+            holds: Some(UNIT),
+            clause: None,
+        },
+        DeclaredAccess {
+            reach: None,
+            effect: Effect {
+                target: EffectTarget::Point(source),
+                mode: Mode::Delta { moves: Moves::Both },
+            },
+            holds: Some(UNIT),
+            clause: None,
+        },
+        DeclaredAccess {
+            reach: None,
+            effect: Effect {
+                target: EffectTarget::Point(sink),
+                mode: Mode::Delta { moves: Moves::Both },
+            },
+            holds: Some(UNIT),
+            clause: None,
+        },
+    ];
+    let mut set = EffectSet::new();
+    for declared in &ordered {
+        set.insert(declared.effect).expect("the clauses fold");
+    }
+    let mut store = MemoryStore::new();
+    store.write(source, encode_amount(100).to_vec());
+    let mut session = KernelSession::materialize(
+        OverlayStore::new(Arc::new(store)),
+        &Declaration {
+            set,
+            ordered,
+            ..Declaration::default()
+        },
+        TxHash(Hash32([7; 32])),
+        EnvInputs::unsealed(0),
+        hash,
+    )
+    .expect("the cell covers the hold");
+    let funds = session.cell_take(1, 0, 50).expect("the take itself lands");
+    session
+        .cell_put(2, 0, funds)
+        .expect("into the sink it goes");
+    let (receipt, _) = session.finish(vec![], 0).expect("the oracle stands");
+    assert!(
+        matches!(
+            receipt.outcome,
+            Outcome::Infeasible { key, amount: 50 } if key == cell(SOURCE)
+        ),
+        "the delta is judged against the standing hold: {:?}",
+        receipt.outcome
+    );
+}
