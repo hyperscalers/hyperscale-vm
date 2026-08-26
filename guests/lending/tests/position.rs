@@ -144,7 +144,9 @@ fn only_the_oracle_may_post_a_price(chain: Chain) {
     assert!(
         matches!(
             refused,
-            Some(Refused::Admission(AdmissionError::EvidenceUnsatisfied { .. }))
+            Some(Refused::Admission(
+                AdmissionError::EvidenceUnsatisfied { .. }
+            ))
         ),
         "a price nobody may post is not a transaction: {refused:?}"
     );

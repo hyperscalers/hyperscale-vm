@@ -8,9 +8,7 @@ wit_bindgen::generate!({
     generate_all,
 });
 
-use hyperscale::kernel::state::{
-    Amount, site_count, site_entry, site_insert, site_remove,
-};
+use hyperscale::kernel::state::{Amount, site_count, site_entry, site_insert, site_remove};
 
 /// A `u128` as the kernel's world names it.
 #[allow(clippy::cast_possible_truncation)] // taking a half is the truncation
@@ -36,10 +34,7 @@ impl Guest for Registry {
 
     fn check(entry: &Site, expected: Vec<u8>) {
         assert!(site_count(entry, 0) == 1, "unbound name");
-        assert!(
-            site_entry(entry, 0, 0) == expected,
-            "mismatched binding"
-        );
+        assert!(site_entry(entry, 0, 0) == expected, "mismatched binding");
     }
 
     fn drain(tail: &Site) {

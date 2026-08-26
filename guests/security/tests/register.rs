@@ -9,8 +9,8 @@
 //! class, which is the property this file exists for.
 
 use hyperscale_vm_testing::{
-    Chain, Presence, PrincipalAddr, TestHasher, UnmetCondition, Verdict, account,
-    package, principal,
+    Chain, Presence, PrincipalAddr, TestHasher, UnmetCondition, Verdict, account, package,
+    principal,
 };
 use security_guest::security;
 

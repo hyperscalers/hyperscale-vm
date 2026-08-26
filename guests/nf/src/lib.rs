@@ -11,7 +11,7 @@ wit_bindgen::generate!({
 });
 
 use hyperscale::kernel::state::{
-    site_instance_put, site_instance_take, site_set, burn, mint_instances,
+    burn, mint_instances, site_instance_put, site_instance_take, site_set,
 };
 
 struct Nf;

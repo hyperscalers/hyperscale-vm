@@ -14,12 +14,7 @@ const OTHER: ResourceAddr = resource(0xA2);
 /// An empty vault, with Alice and Mallory each holding assets.
 fn vault(mut chain: Chain) -> (Chain, Shares) {
     chain.publish(package!(shares_guest::shares));
-    let vault = chain.instantiate::<Shares>(
-        ALICE,
-        Settings {
-            asset: ASSET,
-        },
-    );
+    let vault = chain.instantiate::<Shares>(ALICE, Settings { asset: ASSET });
     chain.credit(ALICE, ASSET, 10_000);
     chain.credit(MALLORY, ASSET, 10_000);
     (chain, vault)

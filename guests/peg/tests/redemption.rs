@@ -173,7 +173,9 @@ fn only_the_oracle_may_post_a_deviation(chain: Chain) {
     assert!(
         matches!(
             refused,
-            Err(Refused::Admission(AdmissionError::EvidenceUnsatisfied { .. }))
+            Err(Refused::Admission(
+                AdmissionError::EvidenceUnsatisfied { .. }
+            ))
         ),
         "a price nobody may post is not a transaction: {refused:?}"
     );
@@ -191,7 +193,11 @@ fn a_quote_is_what_a_redemption_pays(chain: Chain) {
     assert_eq!(outcome.answer(), Quantity::from_subunits(950));
 
     redeem(&mut chain, window, 1_000);
-    assert_eq!(chain.balance(HOLDER, RESERVE), 950, "and it was not a guess");
+    assert_eq!(
+        chain.balance(HOLDER, RESERVE),
+        950,
+        "and it was not a guess"
+    );
 }
 
 /// And the agreement holds where the answer is a refusal.

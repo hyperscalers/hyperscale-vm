@@ -151,7 +151,11 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
     transfer(&mut chain)
         .expect("the manifest still admits")
         .expect_completed();
-    assert_eq!(chain.balance(HOLDER, share), 80, "and the holder moves again");
+    assert_eq!(
+        chain.balance(HOLDER, share),
+        80,
+        "and the holder moves again"
+    );
 }
 
 /// Every rule the share class carries, and the recall reaching past all

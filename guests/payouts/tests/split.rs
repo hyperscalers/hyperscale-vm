@@ -180,5 +180,9 @@ fn a_lot_of_nothing_is_refused(chain: Chain) {
     });
 
     assert_eq!(outcome.declined_as(), Some("below-one-lot"));
-    assert_eq!(chain.balance(PAYER, ASSET), 10_000, "a decline moves nothing");
+    assert_eq!(
+        chain.balance(PAYER, ASSET),
+        10_000,
+        "a decline moves nothing"
+    );
 }

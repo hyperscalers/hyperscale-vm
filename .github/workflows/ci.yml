@@ -47,6 +47,28 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo +nightly doc --no-deps --workspace
+      # The guests are their own workspace for the same reason `fuzz/` is,
+      # and were reached by neither gate above: seventeen package crates
+      # whose formatting and lints nothing read. On their own pinned
+      # channel rather than the moving one, because that is the toolchain
+      # their artifacts are built with and a guest crate is not free to
+      # follow a different one. Clippy's default set, which is what a
+      # package author's own crate gets — the workspace's pedantic table
+      # is the protocol's judgment about protocol code.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-08
+          components: rustfmt, clippy
+      - name: Cargo Fmt (guests)
+        working-directory: guests
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-06-08
+        run: cargo fmt --all --check
+      - name: Cargo Clippy (guests)
+        working-directory: guests
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-06-08
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     name: Test Suite

@@ -144,5 +144,9 @@ fn redeeming_the_only_position_returns_the_whole_pair(chain: Chain) {
     assert_eq!(chain.balance(pool, Y), 0);
     assert_eq!(chain.balance(ALICE, X), 10_000);
     assert_eq!(chain.balance(ALICE, Y), 10_000);
-    assert_eq!(chain.balance(ALICE, share(&chain, pool)), 0, "the claim is burned");
+    assert_eq!(
+        chain.balance(ALICE, share(&chain, pool)),
+        0,
+        "the claim is burned"
+    );
 }

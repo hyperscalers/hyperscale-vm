@@ -14,11 +14,14 @@ const Y: ResourceAddr = resource(0xE2);
 /// hundred of the side she sells.
 fn pool(mut chain: Chain) -> (Chain, Amm) {
     chain.publish(package!(amm_guest::amm));
-    let pool = chain.instantiate::<Amm>(ALICE, Settings {
-        x: X.into(),
-        y: Y.into(),
-        fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
-    });
+    let pool = chain.instantiate::<Amm>(
+        ALICE,
+        Settings {
+            x: X,
+            y: Y,
+            fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
+        },
+    );
     chain.credit(ALICE, X, 600);
     chain.credit(pool, X, 1_000);
     chain.credit(pool, Y, 1_000);
@@ -78,11 +81,14 @@ fn a_floor_the_pool_cannot_reach_declines(chain: Chain) {
 #[hyperscale_vm_testing::test]
 fn a_reserve_that_once_overflowed_the_curve_now_trades(mut chain: Chain) {
     chain.publish(package!(amm_guest::amm));
-    let pool = chain.instantiate::<Amm>(ALICE, Settings {
-        x: X.into(),
-        y: Y.into(),
-        fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
-    });
+    let pool = chain.instantiate::<Amm>(
+        ALICE,
+        Settings {
+            x: X,
+            y: Y,
+            fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
+        },
+    );
     chain.credit(ALICE, X, 600);
     chain.credit(pool, X, 1_000);
     chain.credit(pool, Y, u128::MAX);

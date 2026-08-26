@@ -12,8 +12,8 @@ use custodian_guest::custodian;
 // and the bare `grammar` stays the crate `package!` names.
 use grammar::grammar as shapes;
 use hyperscale_vm_testing::{
-    Chain, Component, PrincipalAddr, ResourceAddr, TestHasher, account, package,
-    principal, resource,
+    Chain, Component, PrincipalAddr, ResourceAddr, TestHasher, account, package, principal,
+    resource,
 };
 
 /// Who issues the seats this custodian keeps.
@@ -29,7 +29,7 @@ fn shape_terms() -> shapes::client::Terms {
         fallback: 7,
         sides: vec![principal(0x51).into(), principal(0x52).into()],
         windows: vec![1, 2],
-        assets: vec![resource(0xE1).into(), resource(0xE2).into()],
+        assets: vec![resource(0xE1), resource(0xE2)],
         marks: Vec::new(),
     }
 }

@@ -153,7 +153,9 @@ fn only_the_oracle_may_mark(chain: Chain) {
     assert!(
         matches!(
             refused,
-            Some(Refused::Admission(AdmissionError::EvidenceUnsatisfied { .. }))
+            Some(Refused::Admission(
+                AdmissionError::EvidenceUnsatisfied { .. }
+            ))
         ),
         "a mark nobody may post is not a transaction: {refused:?}"
     );
@@ -219,7 +221,11 @@ fn a_position_of_no_size_is_refused(chain: Chain) {
     });
 
     assert_eq!(outcome.declined_as(), Some("empty-position"));
-    assert_eq!(chain.balance(TRADER, COLLATERAL), 10_000, "nothing is banked");
+    assert_eq!(
+        chain.balance(TRADER, COLLATERAL),
+        10_000,
+        "nothing is banked"
+    );
 }
 
 /// A market already holding a position refuses a second one before the
@@ -240,7 +246,10 @@ fn a_market_holding_a_position_takes_no_other(chain: Chain) {
         market.open(b, funds, 100u128)
     });
 
-    assert!(outcome.declined_as().is_none(), "an unmet presence is not a decline");
+    assert!(
+        outcome.declined_as().is_none(),
+        "an unmet presence is not a decline"
+    );
     assert!(!outcome.completed());
 }
 
@@ -289,4 +298,3 @@ fn the_two_directions_of_funding_round_apart(chain: Chain) {
         "the market keeps the subunit at both ends"
     );
 }
-
