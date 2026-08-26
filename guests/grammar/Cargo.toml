@@ -1,5 +1,5 @@
 [package]
-name = "grammar"
+name = "grammar-guest"
 version = "0.0.0"
 edition = "2024"
 publish = false

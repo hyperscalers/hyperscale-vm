@@ -8,9 +8,9 @@
 //! trip catches that, which is why the round trip is the case.
 
 use custodian_guest::custodian;
-// The crate and its module share a name, so the module takes an alias
-// and the bare `grammar` stays the crate `package!` names.
-use grammar::grammar as shapes;
+// The module takes an alias so the bare crate path stays what
+// `package!` names.
+use grammar_guest::grammar as shapes;
 use hyperscale_vm_testing::{
     Chain, Component, PrincipalAddr, ResourceAddr, TestHasher, account, package, principal,
     resource,
@@ -36,7 +36,7 @@ fn shape_terms() -> shapes::client::Terms {
 
 /// A custodian configured for the seats, and a holder with one.
 fn world(mut chain: Chain) -> (Chain, custodian::client::Custodian, ResourceAddr) {
-    chain.publish(package!(grammar::grammar at "../grammar"));
+    chain.publish(package!(grammar_guest::grammar at "../grammar"));
     chain.publish(package!(custodian_guest::custodian));
     let issuer = chain.instantiate::<shapes::client::Grammar>(ISSUER, shape_terms());
     let seat = issuer.issued_seat(&TestHasher);

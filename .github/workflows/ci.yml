@@ -28,6 +28,13 @@ jobs:
       # The crates themselves build on the channel rust-toolchain.toml
       # pins, which the test job takes.
       - uses: swatinem/rust-cache@v2
+        with:
+          # The guests and fuzz trees are their own workspaces; without
+          # naming them the cache warms only the root's target.
+          workspaces: |
+            .
+            guests
+            fuzz
       - name: Cargo Fmt
         run: cargo +nightly fmt --all --check
       - name: Cargo Clippy
@@ -88,6 +95,10 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rust-src
       - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            guests
       - uses: taiki-e/install-action@nextest
       - name: Cargo Nextest
         run: cargo nextest run --release

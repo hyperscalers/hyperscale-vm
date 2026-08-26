@@ -379,7 +379,7 @@ dependencies = [
 name = "custodian-guest"
 version = "0.0.0"
 dependencies = [
- "grammar",
+ "grammar-guest",
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
  "security-guest",
@@ -631,7 +631,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "grammar"
+name = "grammar-guest"
 version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",

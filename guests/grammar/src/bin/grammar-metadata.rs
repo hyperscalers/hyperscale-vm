@@ -2,4 +2,4 @@
 //! `cargo hyperscale build` runs this and attaches what it prints to the
 //! code beside it.
 
-hyperscale_vm_sdk::declaration_main!(grammar::grammar);
+hyperscale_vm_sdk::declaration_main!(grammar_guest::grammar);

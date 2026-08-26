@@ -18,5 +18,5 @@ hyperscale-vm-testing.workspace = true
 security-guest = { path = "../security" }
 # A movable non-fungible, which is what the instance half needs and no
 # resource of the custodian's own or the security package's is.
-grammar = { path = "../grammar" }
+grammar-guest = { path = "../grammar" }
 hyperscale-vm-sdk.workspace = true
