@@ -18,7 +18,9 @@ use hyperscale_vm_effects::vocabulary::NF_VAULT;
 use hyperscale_vm_effects::{TestHasher, package_slot};
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_testing::{Address, Chain, PrincipalAddr, account, package, principal};
+use hyperscale_vm_testing::{
+    Address, AdmissionError, Chain, EvalError, PrincipalAddr, Refused, account, package, principal,
+};
 
 /// Whom both fixtures' entries name.
 const WARDEN: PrincipalAddr = principal(0xB1);
@@ -127,12 +129,13 @@ fn a_recall_by_somebody_the_entry_does_not_name_is_refused() {
             let taken = issuer.seize(b, HOLDER.address(), slot, &[1])?;
             account::deposit_nf(b, STRANGER, taken)
         })
-        .err()
-        .expect("a reach nobody admitted");
-    let refusal = format!("{refused:?}");
+        .expect_err("a reach nobody admitted");
     assert!(
-        refusal.contains("MissingEvidence"),
-        "the resource's own entry is what admits a reach: {refusal}",
+        matches!(
+            refused,
+            Refused::Admission(AdmissionError::MissingEvidence { .. })
+        ),
+        "the resource's own entry is what admits a reach: {refused:?}",
     );
     assert!(chain.holds(HOLDER, deed, 1), "and the deed stands");
 }
@@ -154,10 +157,16 @@ fn a_slot_that_keeps_no_value_is_refused_where_the_argument_is_read() {
             let taken = issuer.seize(b, HOLDER.address(), slot, &[1])?;
             account::deposit_nf(b, WARDEN, taken)
         });
-        let refusal = format!("{:?}", refused.err().expect("a slot nothing reaches"));
+        let refused = refused.expect_err("a slot nothing reaches");
         assert!(
-            refusal.contains("UnreachableSlot"),
-            "slot {slot} keeps no value, and that is the refusal: {refusal}",
+            matches!(
+                refused,
+                Refused::Admission(AdmissionError::Eval {
+                    source: EvalError::UnreachableSlot { .. },
+                    ..
+                })
+            ),
+            "slot {slot} keeps no value, and that is the refusal: {refused:?}",
         );
     }
     assert!(chain.holds(HOLDER, deed, 1));

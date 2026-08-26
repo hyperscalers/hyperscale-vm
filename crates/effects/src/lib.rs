@@ -94,7 +94,7 @@ pub use publish::{
     SignatureError, check_abi, check_declarations, check_metadata, check_signature,
     founds_its_resource, seal_clauses, seals,
 };
-pub use records::{ChainRecords, Composed, Records};
+pub use records::{ChainRecords, Composed, Records, issued_record};
 pub use resource::{
     GrantedBehaviour, GrantsExpr, GrantsResolveError, MAX_RESOURCE_MATERIAL_PARTS,
     RECORD_WIRE_DEPTH, ReachedCell, ResourceGrants, ResourceKind, ResourceMeta, ResourceRecord,

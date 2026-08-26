@@ -174,7 +174,13 @@ impl ChainRecords for Records {
 /// `None` where the grant tree names something the instance's own
 /// configuration does not resolve — a resource that instance could never
 /// issue, and so one no address of this world's names.
-fn issued_record(
+/// One declared issuance's record, resolved against the instance issuing
+/// it.
+///
+/// `None` where the grant tree names something the instance's own
+/// configuration does not resolve.
+#[must_use]
+pub fn issued_record(
     hasher: &dyn Hasher,
     issuer: Address,
     meta: &InstanceMeta,

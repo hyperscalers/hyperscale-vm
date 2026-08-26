@@ -2,7 +2,8 @@
 
 use hyperscale_vm_sdk::state::{Fixed, Quantity, Sign, SignedFixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
+    AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, account, package, principal,
+    resource,
 };
 use peg_guest::peg::client::{Peg, Terms};
 use peg_guest::peg::{Reserve, Stable};
@@ -155,16 +156,27 @@ fn a_deviation_outside_the_band_is_refused(chain: Chain) {
 }
 
 /// Only the configured oracle may say what the stable is trading at.
+///
+/// Refused before the transaction exists: the gate is a rule over a
+/// configuration slot, so what satisfies it is a pure match over what the
+/// signed form presents, and no state is read to answer. A sender who is
+/// not the oracle pays nothing to find out.
 #[hyperscale_vm_testing::test]
 fn only_the_oracle_may_post_a_deviation(chain: Chain) {
     let (mut chain, window) = window(chain);
 
-    let outcome = chain.transact(HOLDER, |b| {
+    let refused = chain.try_transact(HOLDER, |b| {
         let signed_in = account::authorize(b, HOLDER)?;
         window.post_deviation(b, signed_in, deviation(ONE / 20, Sign::Positive))
     });
 
-    assert!(!outcome.completed(), "a price nobody may post does not land");
+    assert!(
+        matches!(
+            refused,
+            Err(Refused::Admission(AdmissionError::EvidenceUnsatisfied { .. }))
+        ),
+        "a price nobody may post is not a transaction: {refused:?}"
+    );
 }
 
 /// A quote is what a redemption would pay, asked without sending

@@ -20,7 +20,8 @@ use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::{
-    Chain, Component, PrincipalAddr, ResourceAddr, account, package, principal,
+    Chain, Component, Presence, PrincipalAddr, ResourceAddr, UnmetCondition, Verdict, account,
+    package, principal,
 };
 
 /// Who keeps the register, and whom the share's `freeze` entry names.
@@ -98,10 +99,21 @@ fn a_halt_stops_a_holder_who_was_moving_freely() {
         })
         .expect_completed();
 
-    let refused = transfer(&mut chain);
+    // Admitted and then refused: a halt is a standing fact about the
+    // holder, so it is read from committed state before any body runs
+    // rather than answered from the signed form.
+    let refused = transfer(&mut chain).expect("a halt is not a reason to refuse the manifest");
     assert!(
-        refused.is_err() || !refused.expect("a receipt").completed(),
-        "a halted holder moves nothing, whatever they hold",
+        matches!(
+            refused.refused(),
+            Some(Verdict::ConditionUnmet {
+                condition: UnmetCondition::Holds {
+                    required: Presence::Absent,
+                    ..
+                }
+            })
+        ),
+        "a halted holder moves nothing, whatever they hold: {refused:?}",
     );
     assert_eq!(chain.balance(HOLDER, share), 90, "and the balance stands");
 }

@@ -30,8 +30,12 @@ fn pool(mut chain: Chain) -> (Chain, Amm) {
 }
 
 /// The claim the pool issues, which is what a provider walks away with.
-fn share(pool: Amm) -> ResourceAddr {
-    Chain::issued(pool, ResourceKind::Fungible, amm_guest::amm::SHARE)
+///
+/// Asked of the chain rather than derived here: a share's address folds
+/// the rules the pool grants over it, and those are the declaration's to
+/// state.
+fn share(chain: &Chain, pool: Amm) -> ResourceAddr {
+    chain.issues(pool, ResourceKind::Fungible, amm_guest::amm::SHARE)
 }
 
 /// Fund both sides and keep the claim.
@@ -59,7 +63,7 @@ fn the_first_provider_mints_the_geometric_mean(chain: Chain) {
 
     assert_eq!(chain.balance(pool, X), 1_000);
     assert_eq!(chain.balance(pool, Y), 4_000);
-    assert_eq!(chain.balance(ALICE, share(pool)), 2_000);
+    assert_eq!(chain.balance(ALICE, share(&chain, pool)), 2_000);
 }
 
 /// A later provider is priced against the lesser of the two claims they
@@ -77,7 +81,7 @@ fn a_skewed_deposit_mints_against_the_lesser_side(chain: Chain) {
     add(&mut chain, pool, ALICE, 1_000, 4_000);
     add(&mut chain, pool, BOB, 100, 800);
 
-    assert_eq!(chain.balance(BOB, share(pool)), 200);
+    assert_eq!(chain.balance(BOB, share(&chain, pool)), 200);
     assert_eq!(chain.balance(pool, X), 1_100);
     assert_eq!(
         chain.balance(pool, Y),
@@ -85,7 +89,7 @@ fn a_skewed_deposit_mints_against_the_lesser_side(chain: Chain) {
         "the excess stays in the pool"
     );
     assert_eq!(
-        chain.balance(ALICE, share(pool)),
+        chain.balance(ALICE, share(&chain, pool)),
         2_000,
         "and dilutes nobody"
     );
@@ -125,10 +129,11 @@ fn redeeming_the_only_position_returns_the_whole_pair(chain: Chain) {
     let (mut chain, pool) = pool(chain);
     add(&mut chain, pool, ALICE, 1_000, 4_000);
 
+    let claim_on = share(&chain, pool);
     chain
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
-            let claim = account::withdraw(b, signed_in, share(pool), 2_000)?;
+            let claim = account::withdraw(b, signed_in, claim_on, 2_000)?;
             let [back_x, back_y] = pool.remove_liquidity(b, claim)?;
             account::deposit(b, ALICE, back_x)?;
             account::deposit(b, ALICE, back_y)
@@ -139,5 +144,5 @@ fn redeeming_the_only_position_returns_the_whole_pair(chain: Chain) {
     assert_eq!(chain.balance(pool, Y), 0);
     assert_eq!(chain.balance(ALICE, X), 10_000);
     assert_eq!(chain.balance(ALICE, Y), 10_000);
-    assert_eq!(chain.balance(ALICE, share(pool)), 0, "the claim is burned");
+    assert_eq!(chain.balance(ALICE, share(&chain, pool)), 0, "the claim is burned");
 }

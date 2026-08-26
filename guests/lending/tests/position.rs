@@ -2,7 +2,8 @@
 
 use hyperscale_vm_sdk::state::{Fixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
+    AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, account, package, principal,
+    resource,
 };
 use lending_guest::lending::client::{Lending, Terms};
 
@@ -123,22 +124,29 @@ fn a_draw_against_a_stale_index_is_refused(chain: Chain) {
 }
 
 /// Only the configured oracle may say what the sides are worth.
+///
+/// Refused before the transaction exists: the gate is a rule over a
+/// configuration slot, so what satisfies it is a pure match over what the
+/// signed form presents, and no state is read to answer. A keeper who is
+/// not the oracle pays nothing to find out — which is also why it is not
+/// a decline: a decline is a body's own verdict, and no body ran.
 #[hyperscale_vm_testing::test]
 fn only_the_oracle_may_post_a_price(chain: Chain) {
     let (mut chain, market) = market(chain);
 
-    let outcome = chain.transact(KEEPER, |b| {
-        let signed_in = account::authorize(b, KEEPER)?;
-        market.post_price(b, signed_in, rate(ONE), rate(ONE))
-    });
+    let refused = chain
+        .try_transact(KEEPER, |b| {
+            let signed_in = account::authorize(b, KEEPER)?;
+            market.post_price(b, signed_in, rate(ONE), rate(ONE))
+        })
+        .err();
 
     assert!(
-        outcome.declined_as().is_none(),
-        "an unmet rule is not a decline"
-    );
-    assert!(
-        !outcome.completed(),
-        "a price nobody may post does not land"
+        matches!(
+            refused,
+            Some(Refused::Admission(AdmissionError::EvidenceUnsatisfied { .. }))
+        ),
+        "a price nobody may post is not a transaction: {refused:?}"
     );
 }
 

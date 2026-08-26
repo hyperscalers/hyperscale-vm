@@ -22,7 +22,8 @@ use hyperscale_vm_effects::TestHasher;
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::{
-    Chain, Component, PrincipalAddr, ResourceAddr, account, package, principal,
+    AdmissionError, Chain, Component, PrincipalAddr, Refused, ResourceAddr, account, package,
+    principal,
 };
 
 /// Who the note's `withdraw` entry names.
@@ -131,12 +132,13 @@ fn a_note_stands_still_for_anybody_the_entry_does_not_name() {
             let funds = keeper.withdraw(b, 40u128)?;
             account::deposit(b, STRANGER, funds)
         })
-        .err()
-        .expect("a movement nobody approved");
-    let refusal = format!("{refused:?}");
+        .expect_err("a movement nobody approved");
     assert!(
-        refusal.contains("MissingEvidence"),
-        "the note's own entry is what admits a movement: {refusal}",
+        matches!(
+            refused,
+            Refused::Admission(AdmissionError::MissingEvidence { .. })
+        ),
+        "the note's own entry is what admits a movement: {refused:?}",
     );
     assert_eq!(chain.balance(keeper.address(), note), 100);
 }
@@ -166,8 +168,13 @@ fn the_question_follows_the_note_into_a_package_that_declares_nothing() {
             let back = keeper.swap(b, funds, 10u128)?;
             account::deposit(b, STRANGER, back)
         })
-        .err()
-        .expect("a movement nobody approved");
-    assert!(format!("{refused:?}").contains("MissingEvidence"));
+        .expect_err("a movement nobody approved");
+    assert!(
+        matches!(
+            refused,
+            Refused::Admission(AdmissionError::MissingEvidence { .. })
+        ),
+        "the note's own entry is what admits a movement: {refused:?}",
+    );
     assert_eq!(chain.balance(keeper.address(), note), 90);
 }

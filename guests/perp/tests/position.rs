@@ -2,7 +2,8 @@
 
 use hyperscale_vm_sdk::state::{Fixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
+    AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, account, package, principal,
+    resource,
 };
 use perp_guest::perp::client::{Perp, Terms};
 
@@ -129,16 +130,33 @@ fn funding_that_flips_sign_settles_the_net(chain: Chain) {
 }
 
 /// Only the oracle may mark the market.
+///
+/// Refused before the transaction exists: the gate is a rule over a
+/// configuration slot, so what satisfies it is a pure match over what the
+/// signed form presents, and no state is read to answer. A keeper who is
+/// not the oracle pays nothing to find out.
 #[hyperscale_vm_testing::test]
 fn only_the_oracle_may_mark(chain: Chain) {
     let (mut chain, market) = market(chain, true);
 
-    let outcome = chain.transact(KEEPER, |b| {
-        let signed_in = account::authorize(b, KEEPER)?;
-        market.post_mark(b, signed_in, rate::<perp_guest::perp::Quote, perp_guest::perp::Base>(ONE))
-    });
+    let refused = chain
+        .try_transact(KEEPER, |b| {
+            let signed_in = account::authorize(b, KEEPER)?;
+            market.post_mark(
+                b,
+                signed_in,
+                rate::<perp_guest::perp::Quote, perp_guest::perp::Base>(ONE),
+            )
+        })
+        .err();
 
-    assert!(!outcome.completed(), "a mark nobody may post does not land");
+    assert!(
+        matches!(
+            refused,
+            Some(Refused::Admission(AdmissionError::EvidenceUnsatisfied { .. }))
+        ),
+        "a mark nobody may post is not a transaction: {refused:?}"
+    );
 }
 
 /// A position whose equity falls under the maintenance requirement is

@@ -63,10 +63,10 @@ fn redeeming_every_share_returns_every_asset(chain: Chain) {
     let (mut chain, vault) = vault(chain);
     deposit(&mut chain, vault, ALICE, 1_000);
 
+    let shares = chain.issues(vault, ResourceKind::Fungible, shares_guest::shares::UNIT);
     chain
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
-            let shares = Chain::issued(vault, ResourceKind::Fungible, shares_guest::shares::UNIT);
             let units = account::withdraw(b, signed_in, shares, 1_000)?;
             let back = vault.redeem(b, units)?;
             account::deposit(b, ALICE, back)
@@ -113,10 +113,10 @@ fn there_is_no_path_that_grows_assets_without_minting_shares(chain: Chain) {
     // She can redeem it for substantially what she put in. The subunit
     // the pool keeps on the way in and on the way out is the whole of
     // what she loses.
+    let shares = chain.issues(vault, ResourceKind::Fungible, shares_guest::shares::UNIT);
     chain
         .transact(ALICE, |b| {
             let signed_in = account::authorize(b, ALICE)?;
-            let shares = Chain::issued(vault, ResourceKind::Fungible, shares_guest::shares::UNIT);
             let units = account::withdraw(b, signed_in, shares, 1_000)?;
             let back = vault.redeem(b, units)?;
             account::deposit(b, ALICE, back)

@@ -44,12 +44,14 @@
 
 use std::sync::Arc;
 
-pub use hyperscale_vm_effects::ResourceKind;
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
+/// The refusals a chain can hand back, so a test can name the one it
+/// meant rather than match on a rendering of it.
+pub use hyperscale_vm_effects::{AdmissionError, EvalError, ResourceKind};
 use hyperscale_vm_effects::{
-    AdmissionError, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver,
-    PresentedGrants, Records, TestHasher, Value, admit_presenting, child_key, declaration_hash,
-    holdings_collection, issued_resource, route,
+    ChainRecords, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, PresentedGrants,
+    Records, TestHasher, Value, admit_presenting, child_key, declaration_hash, holdings_collection,
+    issued_record, issued_resource, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
@@ -76,6 +78,7 @@ pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot};
 /// `#[test]` resolves.
 pub use hyperscale_vm_sdk_macros::lanes as test;
 pub use hyperscale_vm_stdlib::account;
+pub use hyperscale_vm_types::{Outcome as Verdict, Presence, UnmetCondition};
 pub use native::{Dispatch, Native};
 pub use outcome::Outcome;
 pub use package::Package;
@@ -366,6 +369,47 @@ impl Chain {
         mark: &[u8],
     ) -> ResourceAddr {
         issued_resource(&TestHasher, instance.into(), kind, mark)
+    }
+
+    /// The resource `instance` issues under `mark`, as the chain derives
+    /// it — the instance's own declaration resolved against its own
+    /// configuration.
+    ///
+    /// What [`Chain::issued`] cannot answer. A resource's address folds
+    /// the rules it grants, and what those rules name is a property of
+    /// the instance rather than of the mark: `withdraw = config.registrar`
+    /// is one address per registrar. So a test that spells the derivation
+    /// itself is a test that agrees with the package only while the
+    /// package grants nothing, and stops agreeing the moment it grants
+    /// something — silently, because both spellings are addresses.
+    ///
+    /// This asks the chain instead, through the declaration it published.
+    ///
+    /// # Panics
+    ///
+    /// If no method of the instance's package issues under that mark and
+    /// kind, or the grant tree names something its configuration does not
+    /// resolve — either way, a resource this instance never issues.
+    #[must_use]
+    pub fn issues(
+        &self,
+        instance: impl Into<ComponentAddr>,
+        kind: ResourceKind,
+        mark: &[u8],
+    ) -> ResourceAddr {
+        let instance = instance.into();
+        let meta = ChainRecords::instance(&self.records, CallTarget::Component(instance))
+            .expect("the chain holds the instance");
+        let package = ChainRecords::package(&self.records, meta.package)
+            .expect("the chain holds its package");
+        package
+            .methods
+            .values()
+            .flat_map(|signature| &signature.issues)
+            .find(|issuance| issuance.kind == kind && issuance.mark == mark)
+            .and_then(|issuance| issued_record(&TestHasher, instance.address(), &meta, issuance))
+            .map(|record| record.address(&TestHasher))
+            .expect("the package issues under that mark")
     }
 
     /// Put `amount` of `resource` in `owner`'s vault, as though it had

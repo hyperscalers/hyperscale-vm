@@ -10,6 +10,10 @@ use hyperscale_vm_types::{AbortReason, Answer, Outcome as KernelOutcome};
 /// A receipt is the whole record and a test usually wants one question
 /// answered, so the questions are here and the record is underneath for
 /// the ones that are not.
+///
+/// `Debug` because an assertion that fails wants to say what it got, and
+/// what a transaction did is the first thing a reader asks.
+#[derive(Debug)]
 pub struct Outcome<T = ()> {
     receipt: Receipt,
     /// The declining node's package error table, where one declined.
