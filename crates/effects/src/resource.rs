@@ -557,6 +557,21 @@ impl GrantsExpr {
             if let Some(refusal) = behaviour.refuses(&stored) {
                 return Err(refusal);
             }
+            // The caps hold the *resolved* rule, which is not the one
+            // the author wrote: a configuration leaf naming a badge with
+            // no kind resolves to two held leaves, so a set inside the
+            // budget as declared can be past it as sealed.
+            //
+            // Asked here rather than left to the encoder, because the
+            // encoder does not ask. HBOR's validation hook runs on
+            // decode, so `try_from` enforces the wire depth and the
+            // branch width and reads the leaf count nowhere — and a
+            // resource sealed past it derives an address whose rules
+            // nothing can decode, which is a resource nobody may ever
+            // move.
+            if !stored.within_caps(0) {
+                return Err(GrantsResolveError::PastTheCaps);
+            }
             let sealed =
                 RuleBytes::try_from(&stored).map_err(|_| GrantsResolveError::PastTheCaps)?;
             resolved.set(behaviour, sealed);

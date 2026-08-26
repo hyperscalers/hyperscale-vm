@@ -20,7 +20,8 @@ use crate::instance::MAX_CONFIG_FIELDS;
 use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
 use crate::resource::GrantsExpr;
 use crate::rule::{
-    GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf, always, never,
+    GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, RuleExpr, RuleLeaf, always,
+    never,
 };
 use crate::signature::{
     AbiParam, MAX_ISSUANCES_PER_SIGNATURE, MAX_MINTS_PER_SIGNATURE, MethodSignature,
@@ -564,11 +565,24 @@ fn check_grants_bounds(grants: &GrantsExpr) -> Result<(), SignatureBoundsError> 
         // both shapes a holding takes, because a configuration field
         // carries no kind — so the rule the address folds sits one level
         // below the rule the author wrote, and is held to the caps there.
-        let widens = !behaviour.asks_about_the_actor()
-            && rule
-                .leaves()
-                .any(|leaf| matches!(leaf, GrantClaim::Config(_)));
-        if !rule.within_caps(usize::from(widens)) {
+        let widening: usize = if behaviour.asks_about_the_actor() {
+            0
+        } else {
+            rule.leaves()
+                .filter(|leaf| matches!(leaf, GrantClaim::Config(_)))
+                .count()
+        };
+        if !rule.within_caps(usize::from(widening > 0)) {
+            return Err(SignatureBoundsError::RuleCaps);
+        }
+        // And the leaves it seals as, not only the ones it was written
+        // with: each widened leaf becomes two, so a set inside the
+        // budget as declared can be past it as sealed — which derives an
+        // address whose rules nothing can decode. Whether a given field
+        // actually widens is the instance's answer, so what is decidable
+        // here is the ceiling: refusing on it refuses a package that
+        // could only ever have resolved for some configurations.
+        if rule.leaves().count() + widening > MAX_RULE_LEAVES {
             return Err(SignatureBoundsError::RuleCaps);
         }
         rule.leaves().try_for_each(check_grant_leaf)
@@ -616,7 +630,8 @@ mod tests {
     use crate::metadata::{
         LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, SlotKind, SlotShape, reserved_shape,
     };
-    use crate::rule::{MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr};
+    use crate::resource::{GrantedBehaviour, GrantsExpr};
+    use crate::rule::{GrantRuleExpr, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr};
     use crate::signature::{AbiParam, MethodSignature};
     use crate::types::{MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId};
     use crate::vocabulary::VAULT;
@@ -1163,5 +1178,59 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    /// A granted rule is held to the leaves it *seals* as.
+    ///
+    /// A configuration leaf on a holder behaviour carries an address and
+    /// no kind, so what it seals as is a threshold over both shapes a
+    /// holding takes — two leaves where the author wrote one. A set
+    /// inside the budget as declared can therefore be past it as sealed,
+    /// and the address it would derive is one whose rules no decoder
+    /// admits: a resource nobody may ever move.
+    ///
+    /// Whether a given field widens is the instance's answer, so what is
+    /// decidable here is the ceiling. An actor question reads the claim
+    /// as it stands and widens nothing, which is what the second half
+    /// pins.
+    #[test]
+    fn a_granted_rule_is_held_to_the_leaves_it_seals_as() {
+        // Leaves in groups the branch cap admits, so what this varies is
+        // the leaf count and nothing else.
+        let leaves_of = |count: usize| {
+            let leaf = || GrantRuleExpr::Require(GrantClaim::Config(0));
+            let mut branches: Vec<GrantRuleExpr> = Vec::new();
+            let mut left = count;
+            while left > 0 {
+                let group = left.min(MAX_RULE_BRANCHES);
+                branches.push(GrantRuleExpr::CountOf {
+                    count: 1,
+                    rules: (0..group).map(|_| leaf()).collect(),
+                });
+                left -= group;
+            }
+            GrantRuleExpr::CountOf {
+                count: 1,
+                rules: branches,
+            }
+        };
+        let granting = |behaviour, count: usize| {
+            let mut grants = GrantsExpr::new();
+            grants.set(behaviour, leaves_of(count));
+            check_grants_bounds(&grants)
+        };
+
+        // A holder question doubles: half the budget is the ceiling.
+        let half = MAX_RULE_LEAVES / 2;
+        assert!(granting(GrantedBehaviour::Withdraw, half).is_ok());
+        assert!(
+            granting(GrantedBehaviour::Withdraw, half + 1).is_err(),
+            "a set that seals past the caps is refused where it was written"
+        );
+
+        // An actor question reads the claim it was given, so its whole
+        // budget is its own.
+        assert!(granting(GrantedBehaviour::Mint, MAX_RULE_LEAVES).is_ok());
+        assert!(granting(GrantedBehaviour::Mint, MAX_RULE_LEAVES + 1).is_err());
     }
 }
