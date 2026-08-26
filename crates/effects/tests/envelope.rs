@@ -181,6 +181,46 @@ fn a_tree_refusal_is_explained_at_the_interleaved_node() {
     assert!(!told.contains("deposit"), "{told}");
 }
 
+/// A socket filled from the other channel is refused as exactly that,
+/// in both directions.
+///
+/// The wrong half used to fall out of downstream destructures as
+/// whichever verdict happened to catch it — "shaped for authority" over
+/// a socket declared value, "not declared" over one that is — each
+/// sending the composer to the wrong fix. The kind check at the
+/// bindings is what gives the mismatch its one honest name.
+#[test]
+fn a_socket_filled_from_the_other_channel_names_the_mismatch() {
+    // A value socket filled with a proof.
+    let mut tree = composed_tree(100);
+    tree.root_bindings[0] = Binding::Authority {
+        intent: 1,
+        producer: 0,
+    };
+    assert_eq!(
+        admit_composed(&tree).expect_err("a proof does not fill a value socket"),
+        AdmissionError::SocketKindMismatch {
+            intent: 0,
+            socket: 0,
+            declared: "value",
+            offered: "a proof",
+        }
+    );
+
+    // An authority socket filled with an edge.
+    let mut tree = composed_tree(100);
+    tree.root.sockets[0] = Socket::Authority(Claim::of_subject(BOB));
+    assert_eq!(
+        admit_composed(&tree).expect_err("an edge does not fill an authority socket"),
+        AdmissionError::SocketKindMismatch {
+            intent: 0,
+            socket: 0,
+            declared: "authority",
+            offered: "an edge",
+        }
+    );
+}
+
 #[test]
 fn a_composed_tree_flattens_deterministically() {
     let tree = composed_tree(100);

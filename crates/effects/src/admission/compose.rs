@@ -279,6 +279,31 @@ fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
                     socket,
                 });
             }
+            // The binding's channel against the socket's declared one,
+            // judged here so every later destructure over the pair holds
+            // by construction — and so the refusal names the actual
+            // mismatch instead of whichever downstream check the wrong
+            // half falls out of.
+            let declared = &intent.sockets[position];
+            let agreed = matches!(
+                (declared, binding),
+                (Socket::Value { .. }, Binding::Value { .. })
+                    | (Socket::Authority(_), Binding::Authority { .. })
+            );
+            if !agreed {
+                return Err(AdmissionError::SocketKindMismatch {
+                    intent: intent_index,
+                    socket,
+                    declared: match declared {
+                        Socket::Value { .. } => "value",
+                        Socket::Authority(_) => "authority",
+                    },
+                    offered: match binding {
+                        Binding::Value { .. } => "an edge",
+                        Binding::Authority { .. } => "a proof",
+                    },
+                });
+            }
         }
         let mut uses = vec![0u32; intent.sockets.len()];
         for node in &intent.graph.nodes {

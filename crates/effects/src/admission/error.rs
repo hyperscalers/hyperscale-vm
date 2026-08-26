@@ -146,6 +146,24 @@ pub enum AdmissionError {
         /// Its position in the declaration.
         socket: u32,
     },
+    /// A socket filled from the other channel: a value socket with a
+    /// proof, or an authority socket with an edge.
+    ///
+    /// Judged where the bindings are checked, so the wrong half never
+    /// reaches the destructures downstream — which would each refuse it,
+    /// but as some other verdict whose sentence sends the composer to
+    /// the wrong fix.
+    #[error("intent {intent} socket {socket} is declared for {declared} and filled with {offered}")]
+    SocketKindMismatch {
+        /// The declaring intent.
+        intent: u32,
+        /// Its position in the declaration.
+        socket: u32,
+        /// The channel the socket declares.
+        declared: &'static str,
+        /// What the composition filled it with.
+        offered: &'static str,
+    },
     /// A value socket filled with an edge carrying some other resource
     /// than the shape it was declared with.
     #[error("intent {intent} socket {socket}: what fills it carries another resource")]
@@ -742,6 +760,7 @@ impl AdmissionError {
             Self::BindingArity { intent, .. }
             | Self::TooManySockets { intent, .. }
             | Self::UnknownBinding { intent, .. }
+            | Self::SocketKindMismatch { intent, .. }
             | Self::SocketResourceMismatch { intent, .. }
             | Self::UnconsumedSocket { intent, .. }
             | Self::SocketReused { intent, .. }
