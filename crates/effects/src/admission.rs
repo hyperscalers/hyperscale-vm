@@ -100,44 +100,35 @@ pub enum AdmissionError {
         /// The resource whose record is missing.
         resource: ResourceAddr,
     },
-    /// A frame issuing a resource whose resolved grants withhold the
-    /// direction it takes.
+    /// A frame exercising an authority nothing admits: the resource
+    /// grants no entry for the behaviour, or grants one whose record
+    /// this transaction did not present.
     ///
-    /// Refused at publish where the author wrote the pair, so reaching
-    /// this is metadata that never met that door. Judged here anyway
-    /// because absence is the whole spelling of nobody-may: an entry that
-    /// said it outright is refused at the seal.
-    #[error("node {node}: {resource:?} grants no {behaviour:?} entry, so nobody may")]
-    IssuanceUnadmitted {
-        /// The offending node.
-        node: u32,
-        /// The resource the frame issues.
-        resource: ResourceAddr,
-        /// The direction its body takes.
-        behaviour: GrantedBehaviour,
-    },
-    /// A frame destroying an edge whose resource admits no destruction:
-    /// no record presented, or a record granting no `Burn` entry.
+    /// One verdict for issuing, destroying and reaching, because it is
+    /// one sentence in all three — **absence withholds**. Where the
+    /// entry comes from differs and the verdict does not: an issuance
+    /// rule is read off the declaration that derives the address, and a
+    /// destruction's or a reach's off the record a caller presented, so
+    /// withholding the record and granting nothing say the same thing.
+    /// Both are the safe direction for an authority; what a missing
+    /// record would open is a movement, and that is
+    /// [`RecordWithheld`](Self::RecordWithheld)'s to refuse.
     ///
-    /// One verdict for both, because they say the same thing — nothing
-    /// this transaction can show admits destroying that resource.
-    #[error("node {node}: nothing presented admits destroying {resource:?}")]
-    DestructionUnadmitted {
-        /// The offending node.
-        node: u32,
-        /// The resource the edge carries.
-        resource: ResourceAddr,
-    },
-    /// A reach into a foreign prefix that nothing presented admits: no
-    /// record for the reached resource, or a record granting no entry for
-    /// the behaviour.
-    #[error("node {node}: nothing presented admits reaching {resource:?} under {behaviour:?}")]
-    ReachUnadmitted {
+    /// An issuance also meets this at publish, where the author wrote
+    /// the pair — so reaching it here is metadata that never met that
+    /// door. Judged again because absence is the whole spelling of
+    /// nobody-may: an entry that said it outright is refused at the
+    /// seal.
+    #[error(
+        "node {node}: nothing admits {behaviour:?} of {resource:?} — no such entry, or no \
+         record presented to resolve one"
+    )]
+    Unadmitted {
         /// The offending node.
         node: u32,
         /// The resource whose entry would have admitted it.
         resource: ResourceAddr,
-        /// The behaviour reached under.
+        /// The authority exercised.
         behaviour: GrantedBehaviour,
     },
     /// A parameter declared destroyed that carries no value edge.
@@ -148,22 +139,21 @@ pub enum AdmissionError {
         /// The offending parameter.
         param: u32,
     },
-    /// An issuance rule whose bytes are not an authority rule.
-    #[error("node {node}: {resource:?} has a {behaviour:?} rule that does not decode")]
-    IssuanceRuleMalformed {
+    /// An entry whose bytes are not the rule its behaviour admits.
+    ///
+    /// One verdict for every entry, because the bytes fail the same way
+    /// wherever they came from and the message could say nothing else.
+    ///
+    /// Reachable rather than defensive, and the record is why. A
+    /// resource's own declaration meets the seal, which refuses an
+    /// actor question's rule that reads a holding — but a presented
+    /// record is a caller's, and a self-consistent one carrying such a
+    /// rule resolves at the address it derives. It fails closed here.
+    #[error("node {node}: {resource:?} has a {behaviour:?} entry that does not decode")]
+    EntryMalformed {
         /// The offending node.
         node: u32,
-        /// The resource the frame issues.
-        resource: ResourceAddr,
-        /// Which entry it was.
-        behaviour: GrantedBehaviour,
-    },
-    /// A movement rule whose bytes are not a movement rule.
-    #[error("node {node}: {resource:?} has a {behaviour:?} rule that does not decode")]
-    MovementRuleMalformed {
-        /// The offending node.
-        node: u32,
-        /// The resource whose entry failed to decode.
+        /// The resource whose entry it is.
         resource: ResourceAddr,
         /// Which entry it was.
         behaviour: GrantedBehaviour,
@@ -2057,24 +2047,22 @@ fn inject_issuance_rules(
         }
         // A resource is not an acting identity, so a target that issues
         // one is callable and names a claim.
-        let own = Presented::of_address(target).ok_or(AdmissionError::IssuanceUnadmitted {
+        let own = Presented::of_address(target).ok_or(AdmissionError::Unadmitted {
             node: node_index,
             resource,
             behaviour: GrantedBehaviour::Mint,
         })?;
         for behaviour in issuance.direction.behaviours() {
-            let malformed = || AdmissionError::IssuanceRuleMalformed {
+            let malformed = || AdmissionError::EntryMalformed {
                 node: node_index,
                 resource,
                 behaviour: *behaviour,
             };
-            let sealed = rules
-                .get(*behaviour)
-                .ok_or(AdmissionError::IssuanceUnadmitted {
-                    node: node_index,
-                    resource,
-                    behaviour: *behaviour,
-                })?;
+            let sealed = rules.get(*behaviour).ok_or(AdmissionError::Unadmitted {
+                node: node_index,
+                resource,
+                behaviour: *behaviour,
+            })?;
             let Some(rule) = behaviour
                 .demanded(sealed, Some(own))
                 .map_err(|_| malformed())?
@@ -2126,11 +2114,12 @@ fn inject_destruction_rules(
                 param: *param,
             });
         };
-        let refused = || AdmissionError::DestructionUnadmitted {
+        let refused = || AdmissionError::Unadmitted {
             node: node_index,
             resource: *resource,
+            behaviour: GrantedBehaviour::Burn,
         };
-        let malformed = || AdmissionError::IssuanceRuleMalformed {
+        let malformed = || AdmissionError::EntryMalformed {
             node: node_index,
             resource: *resource,
             behaviour: GrantedBehaviour::Burn,
@@ -2197,7 +2186,7 @@ fn inject_reach_rules(
         resource,
     } in wanted
     {
-        let malformed = || AdmissionError::IssuanceRuleMalformed {
+        let malformed = || AdmissionError::EntryMalformed {
             node: node_index,
             resource,
             behaviour,
@@ -2205,7 +2194,7 @@ fn inject_reach_rules(
         let sealed = grants
             .rules(resource)
             .and_then(|rules| rules.get(behaviour))
-            .ok_or(AdmissionError::ReachUnadmitted {
+            .ok_or(AdmissionError::Unadmitted {
                 node: node_index,
                 resource,
                 behaviour,
@@ -2339,13 +2328,14 @@ fn inject_movement_rules(
         // the party whose cell moves, and the executing frame's identity
         // says nothing about them. Asked through the same door anyway,
         // so which entries a frame speaks for itself on is one answer.
-        let Some(rule) = behaviour.demanded(sealed, None).map_err(|_| {
-            AdmissionError::MovementRuleMalformed {
-                node: node_index,
-                resource,
-                behaviour,
-            }
-        })?
+        let Some(rule) =
+            behaviour
+                .demanded(sealed, None)
+                .map_err(|_| AdmissionError::EntryMalformed {
+                    node: node_index,
+                    resource,
+                    behaviour,
+                })?
         else {
             continue;
         };

@@ -1402,7 +1402,7 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
             PresentedGrants::none(),
             &TestHasher
         ),
-        Err(AdmissionError::ReachUnadmitted {
+        Err(AdmissionError::Unadmitted {
             node: 1,
             resource: seized,
             behaviour: GrantedBehaviour::Recall,
