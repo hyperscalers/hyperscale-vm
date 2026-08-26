@@ -198,6 +198,18 @@ pub fn compile(dir: &Path) -> Result<Vec<u8>, BuildError> {
 /// [`BuildError`] if the host build fails, the binary does not run, or
 /// what it printed is not canonical metadata.
 pub fn declaration(dir: &Path) -> Result<PackageMetadata, BuildError> {
+    // Answered before the build, because cargo's own answer to a missing
+    // bin target is that no such target exists, which says nothing about
+    // what a package crate owes.
+    let bin = dir.join("src").join("bin").join("metadata.rs");
+    if !bin.exists() {
+        return Err(BuildError::new(format!(
+            "{} has no declaration binary — a package's declaration is derived by running \
+             it, so the crate ships one. Its whole content is \
+             `hyperscale_vm_sdk::declaration_main!(<crate>::<module>);`",
+            dir.display()
+        )));
+    }
     let run = cargo(dir, &["run", "--release", "--quiet", "--bin", "metadata"])?;
     if !run.status.success() {
         return Err(BuildError::new(format!(

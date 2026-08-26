@@ -2,4 +2,4 @@
 //! `cargo hyperscale build` runs this and attaches what it prints to the
 //! code beside it.
 
-hyperscale_vm_sdk::declaration_main!(account_guest::account);
+hyperscale_vm_sdk::declaration_main!(custodian_guest::custodian);

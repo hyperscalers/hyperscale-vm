@@ -44,6 +44,39 @@ fn guests() -> PathBuf {
         .join("guests")
 }
 
+/// Every package crate in `guests/` that authors a `#[blueprint]`.
+fn blueprint_crates() -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(guests())
+        .expect("the guests directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|dir| dir.join("Cargo.toml").exists())
+        .filter(|dir| {
+            std::fs::read_to_string(dir.join("src").join("lib.rs"))
+                .is_ok_and(|source| source.contains("#[blueprint"))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// Every package crate derives its own declaration through the command
+/// an author would use.
+///
+/// The derivation snapshots are taken host-side through a `#[path]`
+/// include, which reaches a module whether or not the crate holding it
+/// can be built as a package at all. So a crate shipping no declaration
+/// binary has its declaration swept in full and is still unbuildable by
+/// the one command an author has — which is how three of them shipped.
+#[test]
+fn every_package_crate_derives_its_declaration_through_the_command() {
+    let crates = blueprint_crates();
+    assert!(crates.len() > 10, "the corpus is the sweep's whole subject");
+    for dir in crates {
+        declaration(&dir).unwrap_or_else(|error| panic!("{}: {error}", dir.display()));
+    }
+}
+
 /// Every derived package builds to a component the gate admits against
 /// the declaration the same module produced.
 ///

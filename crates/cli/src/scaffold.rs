@@ -125,16 +125,7 @@ fn declaration_bin(krate: &str, module: &str) -> String {
          //! bytes. `cargo hyperscale build` runs this and attaches what it\n\
          //! prints to the code beside it.\n\
          \n\
-         use std::io::Write as _;\n\
-         \n\
-         fn main() {{\n\
-         \x20   let metadata = {krate}::{module}::blueprint().metadata();\n\
-         \x20   let bytes = hyperscale_vm_sdk::encode_metadata(&metadata)\n\
-         \x20       .expect(\"a traced declaration encodes\");\n\
-         \x20   std::io::stdout()\n\
-         \x20       .write_all(&bytes)\n\
-         \x20       .expect(\"write the declaration\");\n\
-         }}\n"
+         hyperscale_vm_sdk::declaration_main!({krate}::{module});\n"
     )
 }
 

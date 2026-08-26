@@ -2,12 +2,4 @@
 //! `cargo hyperscale build` runs this and attaches what it prints to the
 //! code beside it.
 
-use std::io::Write as _;
-
-fn main() {
-    let metadata = amm_guest::amm::blueprint().metadata();
-    let bytes = hyperscale_vm_sdk::encode_metadata(&metadata).expect("a traced declaration encodes");
-    std::io::stdout()
-        .write_all(&bytes)
-        .expect("write the declaration");
-}
+hyperscale_vm_sdk::declaration_main!(amm_guest::amm);
