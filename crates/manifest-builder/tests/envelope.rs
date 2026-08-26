@@ -100,7 +100,7 @@ fn a_presented_declaration_is_carried_verbatim() {
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
     let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     let paid = root.export(funds);
-    let wants = env.present(BOB, request).unwrap().one().unwrap();
+    let wants = env.adopt(BOB, request).unwrap().one().unwrap();
     env.seal(root).unwrap().none().unwrap();
     env.bind(wants, paid).unwrap();
     let tree = env.build().unwrap();
@@ -116,7 +116,7 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     // The composer took the request and then routed nothing to it.
-    let _wants = env.present(BOB, payment_request(100)).unwrap();
+    let _wants = env.adopt(BOB, payment_request(100)).unwrap();
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
     let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
     account::deposit(&mut root, ALICE, funds).unwrap();
@@ -145,7 +145,7 @@ fn a_presented_record_too_deep_to_encode_refuses_at_build() {
     for _ in 0..=MAX_VALUE_DEPTH {
         nested = Value::List(vec![nested]);
     }
-    env.instance(InstanceMeta {
+    env.register_instance(InstanceMeta {
         package: pkg(),
         config: vec![nested],
         salt: Hash32([3; 32]),
@@ -161,7 +161,7 @@ fn a_presented_record_too_deep_to_encode_refuses_at_build() {
 fn sockets_unpacked_at_the_wrong_arity_are_refused() {
     let chain = world();
     let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
-    let wants = env.present(BOB, payment_request(100)).unwrap();
+    let wants = env.adopt(BOB, payment_request(100)).unwrap();
     // The composer expected an intent declaring nothing; the count is the
     // declaration's answer, not theirs.
     assert_eq!(
@@ -180,11 +180,7 @@ fn a_proof_offered_to_a_value_socket_is_refused() {
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
     let offered = root.offer(alice_proof);
-    let wants = env
-        .present(BOB, payment_request(100))
-        .unwrap()
-        .one()
-        .unwrap();
+    let wants = env.adopt(BOB, payment_request(100)).unwrap().one().unwrap();
     // The socket asks for funds; authority is not funds, however the
     // composer wired it.
     let refused = env
@@ -219,7 +215,7 @@ fn a_presented_declaration_that_discharges_nothing_is_refused() {
         .push(payment_request(50).sockets.remove(0));
     let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     assert!(matches!(
-        env.present(BOB, malformed),
+        env.adopt(BOB, malformed),
         Err(EnvelopeError::UnconsumedSocket {
             intent: 1,
             socket: 1
@@ -257,7 +253,7 @@ fn a_hole_two_arguments_consume_is_refused() {
     malformed.graph.nodes.push(again);
     let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     assert!(matches!(
-        env.present(BOB, malformed),
+        env.adopt(BOB, malformed),
         Err(EnvelopeError::SocketReused {
             intent: 1,
             socket: 0
@@ -276,7 +272,7 @@ fn a_parameter_the_intent_never_declared_is_refused() {
     }
     let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     assert!(matches!(
-        env.present(BOB, malformed),
+        env.adopt(BOB, malformed),
         Err(EnvelopeError::UnknownSocket {
             intent: 1,
             socket: 3
@@ -480,10 +476,10 @@ fn approved(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK);
     let desk = account::authorize(&mut root, DESK)?;
     let offered = root.offer(desk);
-    let wants = env.present(BOB, request)?.one()?;
+    let wants = env.adopt(BOB, request)?.one()?;
     env.seal(root)?.none()?;
     env.bind(wants, offered)?;
-    env.resource(note_meta());
+    env.register_resource(note_meta());
     env.build()
 }
 
@@ -561,7 +557,7 @@ fn an_edge_offered_to_an_authority_socket_is_refused() {
     let desk = account::authorize(&mut root, DESK).unwrap();
     let funds = account::withdraw(&mut root, desk, RES_X, 5).unwrap();
     let paid = root.export(funds);
-    let wants = env.present(BOB, request).unwrap().one().unwrap();
+    let wants = env.adopt(BOB, request).unwrap().one().unwrap();
     let refused = env
         .bind(wants, paid)
         .expect_err("an edge does not fill an authority socket");

@@ -304,7 +304,7 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     let wants = env.seal(request).unwrap().one().unwrap();
     env.seal(sub).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();
-    env.resource(either_note_meta());
+    env.register_resource(either_note_meta());
     let tree = env.build().unwrap();
 
     let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
@@ -426,7 +426,7 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
         .unwrap();
     account::deposit(&mut root, BOB, funds).unwrap();
     env.seal(root).unwrap().none().unwrap();
-    env.resource(ticket_meta());
+    env.register_resource(ticket_meta());
     let tree = env.build().unwrap();
 
     let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
@@ -466,10 +466,10 @@ fn a_conjunction_reports_what_each_branch_asks() {
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK);
     let desk = account::authorize(&mut root, DESK).unwrap();
     let offered = root.offer(desk);
-    let wants = env.present(BOB, request).unwrap().one().unwrap();
+    let wants = env.adopt(BOB, request).unwrap().one().unwrap();
     env.seal(root).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();
-    env.resource(note_meta());
+    env.register_resource(note_meta());
     let tree = env.build().unwrap();
 
     let report = preflight_tree(&tree, DESK, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();

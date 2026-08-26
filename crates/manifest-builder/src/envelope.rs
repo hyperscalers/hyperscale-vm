@@ -19,7 +19,7 @@
 //!
 //! An intent enters an envelope one of two ways, and both hand back open
 //! sockets the same way. [`EnvelopeBuilder::seal`] takes one the composer wrote.
-//! [`EnvelopeBuilder::present`] takes one somebody else signed — built
+//! [`EnvelopeBuilder::adopt`] takes one somebody else signed — built
 //! through [`IntentBuilder::declaration`] before any envelope existed, and
 //! stored exactly as handed over, because the signature already covering
 //! it would not survive a rebuild.
@@ -172,7 +172,7 @@ pub struct OpenSocket {
 }
 
 /// The open sockets an intent enters an envelope with, in declaration
-/// order — what [`EnvelopeBuilder::seal`] and [`EnvelopeBuilder::present`]
+/// order — what [`EnvelopeBuilder::seal`] and [`EnvelopeBuilder::adopt`]
 /// answer.
 ///
 /// The declared count is the intent's, so the composer unpacks by
@@ -269,8 +269,8 @@ impl<'a> IntentBuilder<'a> {
     /// An intent written to be signed on its own and handed to a composer
     /// afterwards — a declaration that exists before any envelope does.
     ///
-    /// Its sockets are filled by whoever presents it, so nothing here mints
-    /// an [`OpenSocket`]: those come from [`EnvelopeBuilder::present`], on
+    /// Its sockets are filled by whoever adopts it, so nothing here mints
+    /// an [`OpenSocket`]: those come from [`EnvelopeBuilder::adopt`], on
     /// the composing side, where the intent this declaration will be is
     /// known.
     #[must_use]
@@ -294,7 +294,7 @@ impl<'a> IntentBuilder<'a> {
     /// consume it exactly once. The composition's obligation to fill the
     /// socket is discharged against an [`OpenSocket`], which arrives when
     /// the intent enters an envelope rather than here, so that an intent
-    /// written and one presented hand back open sockets the same way.
+    /// written and one adopted hand back open sockets the same way.
     ///
     /// # Panics
     ///
@@ -435,7 +435,7 @@ pub struct EnvelopeBuilder<'a> {
     bindings: BTreeMap<(u32, u32), Binding>,
     /// The creation-fixed records the tree carries for targets beyond
     /// the genesis registry.
-    presented: Vec<InstanceMeta>,
+    instances: Vec<InstanceMeta>,
     /// The resource records this envelope presents — the preimage of
     /// each granting address a gate reads through — in the order the
     /// composer added them.
@@ -459,7 +459,7 @@ impl<'a> EnvelopeBuilder<'a> {
             signers: Vec::new(),
             intents: vec![None],
             bindings: BTreeMap::new(),
-            presented: Vec::new(),
+            instances: Vec::new(),
             grants: Vec::new(),
         };
         let root = IntentBuilder {
@@ -478,14 +478,15 @@ impl<'a> EnvelopeBuilder<'a> {
     /// so a presenting build composes that registry with the same
     /// records first — this records them in the tree, where admission
     /// will compose identically.
-    pub fn instance(&mut self, meta: InstanceMeta) {
-        self.presented.push(meta);
+    pub fn register_instance(&mut self, meta: InstanceMeta) {
+        self.instances.push(meta);
     }
 
     /// Present a resource's granted-rule record, registered at the
     /// address its own content derives — what a granted gate in this
-    /// envelope resolves against, on the terms `instance` states.
-    pub fn resource(&mut self, meta: ResourceMeta) {
+    /// envelope resolves against, on the terms
+    /// [`register_instance`](Self::register_instance) states.
+    pub fn register_resource(&mut self, meta: ResourceMeta) {
         self.grants.push(meta);
     }
 
@@ -531,7 +532,7 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// Past a `u32` of intents, far beyond [`MAX_SUBINTENTS`], which
     /// [`build`](Self::build) enforces as an error.
-    pub fn present(
+    pub fn adopt(
         &mut self,
         signer: PrincipalAddr,
         decl: IntentDecl,
@@ -706,7 +707,7 @@ impl<'a> EnvelopeBuilder<'a> {
         // Graph literals meet this bound at the call that binds them;
         // presented records are registered whole, so their configuration
         // values meet it here.
-        for (index, meta) in self.presented.iter().enumerate() {
+        for (index, meta) in self.instances.iter().enumerate() {
             if meta
                 .config
                 .iter()
@@ -754,7 +755,7 @@ impl<'a> EnvelopeBuilder<'a> {
             root,
             root_bindings,
             subintents,
-            instances: self.presented,
+            instances: self.instances,
             resources: self.grants,
         })
     }

@@ -198,7 +198,7 @@ pub struct Required {
 /// identity, the second arm reachable only while the first has nothing
 /// to read. What a holder is owed is that this asks the target's stored
 /// rule, not that it took two branches to say so.
-fn governing(rule: &Rule<JudgedLeaf>) -> Option<SubstateKey> {
+fn required_rule(rule: &Rule<JudgedLeaf>) -> Option<SubstateKey> {
     let Rule::CountOf { count: 1, rules } = rule else {
         return None;
     };
@@ -261,7 +261,7 @@ fn claimed(claim: &Claim, evidence: &[Claim]) -> Authority {
 /// question rather than the spelling. The recursion is bounded by the
 /// caps every rule is decoded and evaluated under.
 fn authority_of(rule: &Rule<JudgedLeaf>, evidence: &[Claim]) -> Authority {
-    if governing(rule).is_some() {
+    if required_rule(rule).is_some() {
         return Authority::StoredRule;
     }
     match rule {

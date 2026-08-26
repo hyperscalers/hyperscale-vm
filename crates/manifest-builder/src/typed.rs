@@ -398,7 +398,7 @@ impl<'a> TypedBuilder<'a> {
     /// [`TypedError::UnknownInstance`] or [`TypedError::UnknownPackage`]
     /// when the target does not resolve, and [`TypedError::NoSeal`] for
     /// a package that declares none.
-    pub fn seal(
+    pub fn seal_of(
         &self,
         target: impl Into<CallTarget>,
     ) -> Result<(String, MethodSignature), TypedError> {

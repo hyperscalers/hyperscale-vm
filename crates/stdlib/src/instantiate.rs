@@ -45,7 +45,7 @@ pub fn instantiate(
 ) -> Result<(), TypedError> {
     // Which method seals is the declaration's answer, not a name this
     // crate knows.
-    let (seal, signature) = root.seal(address)?;
+    let (seal, signature) = root.seal_of(address)?;
     // Read off the declaration rather than asked of the caller: a method
     // that admits anyone reads no proof, and one that issues nothing
     // yields no edge.

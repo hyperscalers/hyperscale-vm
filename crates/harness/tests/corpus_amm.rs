@@ -487,7 +487,7 @@ fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeErr
     let registrar = account::authorize(&mut root, REGISTRAR)?;
     let offered = root.offer(registrar);
     let wants = env
-        .present(ALICE, request)?
+        .adopt(ALICE, request)?
         .one()
         .expect("the request declares one socket");
     env.seal(root)?.none()?;
