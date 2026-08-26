@@ -29,6 +29,42 @@
 //!
 //! [`hyperscale_vm_stdlib`]: https://docs.rs/hyperscale-vm-stdlib
 
+/// A package derived from its guest crate, and the four items every
+/// fixture module reaches it through.
+///
+/// The guest source is included in place rather than copied here,
+/// because a second copy is the drift the derivation exists to remove.
+/// What a fixture module adds beside this is its own: the codes its
+/// methods decline with, the marks it issues, the records its instances
+/// carry. What it does not add is any of this, which was thirteen copies
+/// that had already drifted three ways — three modules re-exported
+/// `blueprint` and ten did not, two omitted `invoke`, and one traced its
+/// metadata through a path instead of the re-export beside it.
+///
+/// The source path is spelled out because `#[path]` takes a literal.
+macro_rules! guest {
+    ($module:ident, $source:literal) => {
+        #[path = $source]
+        mod package;
+
+        /// The package's traced declaration.
+        pub use package::$module::blueprint;
+        /// The call surface a client reaches its methods through.
+        pub use package::$module::client::*;
+        /// The package's own bodies, dispatched natively.
+        ///
+        /// The same module the declaration is traced from, so a lane
+        /// running this is running the code the artifact was built from.
+        pub use package::$module::invoke;
+
+        /// The package's declaration, traced from its own module.
+        #[must_use]
+        pub fn metadata() -> ::hyperscale_vm_effects::PackageMetadata {
+            blueprint().metadata()
+        }
+    };
+}
+
 pub mod amm;
 pub mod book;
 pub mod capped;
@@ -140,6 +176,10 @@ packages! {
     amm => (AMM_COMPONENT, amm_artifact, amm_package_hash, "amm.component.wasm");
     // The order book: makers rest asks on a tick ladder, takers walk it.
     book => (BOOK_COMPONENT, book_artifact, book_package_hash, "book.component.wasm");
+    // Capped supply, deflationary supply, and delegated minting — the
+    // three shapes that need issuance to be a rule rather than a fact
+    // about the issuer's address.
+    capped;
     // The component that holds value and declares no rule about it.
     // Declared and never seeded: what it is for is what admission makes
     // of its declaration, which needs no network to establish.
@@ -168,10 +208,6 @@ packages! {
     perp => (PERP_COMPONENT, perp_artifact, perp_package_hash, "perp.component.wasm");
     // The registry, hand-authored alongside its declaration.
     registry;
-    // Capped supply, deflationary supply, and delegated minting — the
-    // three shapes that need issuance to be a rule rather than a fact
-    // about the issuer's address.
-    capped;
     // The share class whose holders are a register, and the register
     // entry itself. The declaring end of the movement seam, where the
     // custodian is the declaring-nothing end.

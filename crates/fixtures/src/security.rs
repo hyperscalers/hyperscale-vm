@@ -7,18 +7,4 @@
 //! standing register entry, and the entry itself, soulbound so it cannot
 //! be handed on.
 
-use hyperscale_vm_effects::PackageMetadata;
-
-#[path = "../../../guests/security/src/lib.rs"]
-mod package;
-
-pub use package::security::blueprint;
-pub use package::security::client::*;
-/// The package's own bodies, dispatched natively.
-pub use package::security::invoke;
-
-/// The package's declaration, traced from its own module.
-#[must_use]
-pub fn metadata() -> PackageMetadata {
-    blueprint().metadata()
-}
+guest!(security, "../../../guests/security/src/lib.rs");

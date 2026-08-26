@@ -15,26 +15,11 @@
 //! completes. A fixture reaches both; a guest crate's own tests reach
 //! neither.
 
-use hyperscale_vm_effects::PackageMetadata;
-
-// The package, read from the crate the artifact is built from rather
-// than copied into this one: a second copy is the drift the derivation
-// exists to remove.
-#[path = "../../../guests/flashloan/src/lib.rs"]
-mod package;
+guest!(flashloan, "../../../guests/flashloan/src/lib.rs");
 
 /// The material separating the obligation from anything else the pool
 /// might issue — the package's own, re-exported rather than restated.
 pub use package::flashloan::DEBT;
-pub use package::flashloan::client::*;
-/// The package's own bodies, dispatched natively.
-pub use package::flashloan::invoke;
 
 /// What `repay` declines with when less came back than was owed.
 pub const SHORT: u32 = 0;
-
-/// The package's declaration, traced from its own module.
-#[must_use]
-pub fn metadata() -> PackageMetadata {
-    package::flashloan::blueprint().metadata()
-}

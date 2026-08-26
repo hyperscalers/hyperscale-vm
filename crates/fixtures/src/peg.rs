@@ -12,26 +12,10 @@
 //! by the vocabulary rather than by hand — which makes it the package
 //! that says whether the type carries its weight.
 
-use hyperscale_vm_effects::PackageMetadata;
-
-// The package, read from the crate the artifact is built from rather
-// than copied into this one: a second copy is the drift the derivation
-// exists to remove.
-#[path = "../../../guests/peg/src/lib.rs"]
-mod package;
-
-pub use package::peg::client::*;
-/// The package's own bodies, dispatched natively.
-pub use package::peg::invoke;
+guest!(peg, "../../../guests/peg/src/lib.rs");
 
 /// What a redemption declines with when the market has moved past the
 /// band the window quotes in.
 pub const OUTSIDE_BAND: u32 = 0;
 /// What it declines with when the redemption is worth no reserve at all.
 pub const NOTHING_REDEEMED: u32 = 1;
-
-/// The package's declaration, traced from its own module.
-#[must_use]
-pub fn metadata() -> PackageMetadata {
-    package::peg::blueprint().metadata()
-}

@@ -26,16 +26,9 @@
 //! and every settled winner was drawn over every ticket at a cost that
 //! rose with the round.
 
-use hyperscale_vm_effects::PackageMetadata;
-
-// The package, read from the crate the artifact is built from rather
-// than copied into this one: a second copy is the drift the derivation
-// exists to remove.
-#[path = "../../../guests/lottery/src/lib.rs"]
-mod package;
+guest!(lottery, "../../../guests/lottery/src/lib.rs");
 
 pub use package::lottery::Outcome;
-pub use package::lottery::client::*;
 
 /// The entrant cap the corpus settles at: the round a single page covers.
 pub const ROUND_CAP: u32 = 64;
@@ -43,9 +36,3 @@ pub const ROUND_CAP: u32 = 64;
 /// The code `settle` declines with when its page did not cover the
 /// round — tickets past the cap exist, unwalked and unconsidered.
 pub const ROUND_TRUNCATED: u32 = 0;
-
-/// The package's declaration, traced from its own module.
-#[must_use]
-pub fn metadata() -> PackageMetadata {
-    package::lottery::blueprint().metadata()
-}

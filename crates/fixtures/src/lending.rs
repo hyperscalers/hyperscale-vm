@@ -12,20 +12,7 @@
 //! two engines could disagree about by a subunit without either looking
 //! wrong.
 
-use hyperscale_vm_effects::PackageMetadata;
-
-// The package, read from the crate the artifact is built from rather
-// than copied into this one: a second copy is the drift the derivation
-// exists to remove.
-#[path = "../../../guests/lending/src/lib.rs"]
-mod package;
-
-pub use package::lending::client::*;
-/// The package's own bodies, dispatched natively.
-///
-/// The same module the declaration is traced from, so a lane running
-/// this is running the code the artifact was built from.
-pub use package::lending::invoke;
+guest!(lending, "../../../guests/lending/src/lib.rs");
 
 /// What an entry point declines with when no price has been posted.
 pub const PRICE_UNSET: u32 = 0;
@@ -40,9 +27,3 @@ pub const OVER_LTV: u32 = 2;
 pub const STILL_COVERED: u32 = 3;
 /// What it declines with against a position that owes nothing.
 pub const NOTHING_OWED: u32 = 4;
-
-/// The package's declaration, traced from its own module.
-#[must_use]
-pub fn metadata() -> PackageMetadata {
-    package::lending::blueprint().metadata()
-}

@@ -11,17 +11,7 @@
 //! and it is signed by hand — a magnitude, an integer flag beside it, and
 //! a normalizing addition the guest wrote itself.
 
-use hyperscale_vm_effects::PackageMetadata;
-
-// The package, read from the crate the artifact is built from rather
-// than copied into this one: a second copy is the drift the derivation
-// exists to remove.
-#[path = "../../../guests/perp/src/lib.rs"]
-mod package;
-
-pub use package::perp::client::*;
-/// The package's own bodies, dispatched natively.
-pub use package::perp::invoke;
+guest!(perp, "../../../guests/perp/src/lib.rs");
 
 /// What an entry point declines with when no mark has been posted.
 pub const MARK_UNSET: u32 = 0;
@@ -33,9 +23,3 @@ pub const NOT_OPEN: u32 = 2;
 pub const BELOW_MAINTENANCE: u32 = 3;
 /// What a liquidation declines with against a covered position.
 pub const STILL_COVERED: u32 = 4;
-
-/// The package's declaration, traced from its own module.
-#[must_use]
-pub fn metadata() -> PackageMetadata {
-    package::perp::blueprint().metadata()
-}

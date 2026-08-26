@@ -7,13 +7,7 @@
 //! shapes whose halves could differ are here, where a fixture runs on
 //! both lanes and the lanes are held to each other.
 
-use hyperscale_vm_effects::PackageMetadata;
-
-// The package, read from the crate the artifact is built from rather
-// than copied into this one: a second copy is the drift the derivation
-// exists to remove.
-#[path = "../../../guests/grammar/src/lib.rs"]
-mod package;
+guest!(grammar, "../../../guests/grammar/src/lib.rs");
 
 /// The material separating the seat from anything else the package
 /// might issue — the package's own, re-exported rather than restated.
@@ -21,15 +15,3 @@ pub use package::grammar::SEAT;
 /// The record a seat's instance carries, so a lane can hold the cell to
 /// the encoding the mark declares rather than to bytes copied here.
 pub use package::grammar::Seat;
-pub use package::grammar::client::*;
-/// The package's own bodies, dispatched natively.
-///
-/// The same module the declaration is traced from, so a lane running
-/// this is running the code the artifact was built from.
-pub use package::grammar::invoke;
-
-/// The package's declaration, traced from its own module.
-#[must_use]
-pub fn metadata() -> PackageMetadata {
-    package::grammar::blueprint().metadata()
-}

@@ -7,18 +7,4 @@
 //! application, because there is nothing here for an author to have done
 //! differently.
 
-use hyperscale_vm_effects::PackageMetadata;
-
-#[path = "../../../guests/custodian/src/lib.rs"]
-mod package;
-
-pub use package::custodian::blueprint;
-pub use package::custodian::client::*;
-/// The package's own bodies, dispatched natively.
-pub use package::custodian::invoke;
-
-/// The package's declaration, traced from its own module.
-#[must_use]
-pub fn metadata() -> PackageMetadata {
-    blueprint().metadata()
-}
+guest!(custodian, "../../../guests/custodian/src/lib.rs");
