@@ -51,11 +51,17 @@ impl EffectSet {
     /// Add one effect, folding what two clauses on one target mean
     /// together: reserve amounts sum, and presence requirements meet.
     ///
+    /// Answers whether the set moved. A caller keeping an ordered view
+    /// beside the set needs that and cannot get it from the error: the
+    /// only refusal here is an overflowing reserve total, so a repeated
+    /// read is `Ok` exactly as a novel one is, and asking `is_ok()` is
+    /// asking a question this cannot answer.
+    ///
     /// # Errors
     ///
     /// [`EffectConflict`] where the fold has no answer: a reserve total
     /// past `u128`.
-    pub fn insert(&mut self, effect: Effect) -> Result<(), EffectConflict> {
+    pub fn insert(&mut self, effect: Effect) -> Result<bool, EffectConflict> {
         let modes = self.by_target.entry(effect.target).or_default();
         if let Mode::Reserve { amount } = effect.mode {
             let existing = modes.iter().find_map(|mode| match mode {
@@ -68,11 +74,12 @@ impl EffectSet {
                     .ok_or(EffectConflict::ReserveOverflow)?;
                 modes.remove(&Mode::Reserve { amount: prior });
                 modes.insert(Mode::Reserve { amount: total });
-                return Ok(());
+                // The set changed even though it holds no new effect:
+                // what the reserver may take rose by this one's amount.
+                return Ok(true);
             }
         }
-        modes.insert(effect.mode);
-        Ok(())
+        Ok(modes.insert(effect.mode))
     }
 
     /// Every effect in the set, in canonical (target, mode) order.

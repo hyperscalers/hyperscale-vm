@@ -28,8 +28,8 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, PrincipalAddr,
-    ResourceAddr, SubstateKey,
+    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, Presence,
+    PrincipalAddr, ResourceAddr, SubstateKey,
 };
 
 /// The badge the governed resource's withdraw entry names.
@@ -613,4 +613,51 @@ fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
             behaviour: GrantedBehaviour::Deposit,
         }),
     );
+}
+
+/// And the read that answers it is declared once, however many
+/// directions the access moves in.
+///
+/// A commutative movement earns a withdraw entry and a deposit entry, so
+/// the injection runs twice over one holder and one resource — and the
+/// flag they both read is one leaf. A second ordered entry for it would
+/// be a second capability the kernel materializes and a second line in
+/// what the sender is billed for, for a question already asked.
+#[test]
+fn one_flag_is_read_once_however_many_directions_the_access_moves_in() {
+    let (chain, custodian) = custody_world_over(freezable());
+    let mut env = round_trip(custodian);
+    env.resources = vec![freezable_meta()];
+    let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
+        .expect("the custodian moves its own value on the resource's terms");
+    // One frame's own view: two nodes each fence their own movement, and
+    // two frames reading one flag is two reads that are each once.
+    let ordered = &admitted.admitted.frames()[0].ordered;
+
+    // The custodian's own vault takes the value both ways, which is what
+    // earns both entries.
+    let both_ways = ordered.iter().any(|access| {
+        access.holds == Some(freezable())
+            && access.effect.target.owner() == custodian.address()
+            && access.effect.mode.moves() == Some(Moves::Both)
+    });
+    assert!(both_ways, "the fixture moves value in both directions");
+
+    let flag = EffectTarget::Point(child_key(
+        &TestHasher,
+        custodian,
+        HALT,
+        &[Value::Address(freezable().address()).canonical_bytes()],
+    ));
+    let reads = ordered
+        .iter()
+        .filter(|access| {
+            access.effect
+                == Effect {
+                    target: flag,
+                    mode: Mode::Read,
+                }
+        })
+        .count();
+    assert_eq!(reads, 1, "one flag, one read of it");
 }

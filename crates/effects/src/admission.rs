@@ -1395,12 +1395,13 @@ impl Lower<'_> {
             target: leaf,
             mode: Mode::Read,
         };
-        frame.set.insert(effect)?;
-        frame.ordered.push(DeclaredAccess {
-            effect,
-            holds: None,
-            reach: None,
-        });
+        if frame.set.insert(effect)? {
+            frame.ordered.push(DeclaredAccess {
+                effect,
+                holds: None,
+                reach: None,
+            });
+        }
         Ok(Some(Rule::Require(JudgedLeaf::Presence {
             target: leaf,
             expect: Presence::Present,
@@ -2478,9 +2479,11 @@ fn declare_read(frame: &mut Declaration, target: EffectTarget) {
         target,
         mode: Mode::Read,
     };
-    // A repeated insert is the same effect: the declaration already
-    // carries it, and the condition beside it asks the same question.
-    if frame.set.insert(effect).is_ok() {
+    // A repeated read is the same effect: the declaration already
+    // carries it, and the condition beside it asks the same question. The
+    // set answers whether it moved, which is the question — a read can
+    // only fail to be novel, never to be inserted.
+    if frame.set.insert(effect).is_ok_and(|novel| novel) {
         frame.ordered.push(DeclaredAccess {
             effect,
             holds: None,
