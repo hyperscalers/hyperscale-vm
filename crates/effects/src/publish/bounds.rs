@@ -22,7 +22,9 @@ use crate::resource::GrantsExpr;
 use crate::rule::{
     GrantClaim, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr, RuleLeaf, always, never,
 };
-use crate::signature::{AbiParam, MAX_ISSUANCES_PER_SIGNATURE, MethodSignature};
+use crate::signature::{
+    AbiParam, MAX_ISSUANCES_PER_SIGNATURE, MAX_MINTS_PER_SIGNATURE, MethodSignature,
+};
 use crate::types::{MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId, value_within_width};
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
 
@@ -145,6 +147,9 @@ pub enum SignatureBoundsError {
     /// More issuances than one signature may carry.
     #[error("a method issues more than {MAX_ISSUANCES_PER_SIGNATURE} resources")]
     TooManyIssuances,
+    /// More minting clauses than one signature may carry.
+    #[error("a method mints more than {MAX_MINTS_PER_SIGNATURE} claims")]
+    TooManyMints,
     /// A granted rule naming a badge whose own rules name a badge.
     #[error("a granted rule names a badge whose own rules name a badge")]
     BadgeChainTooDeep,
@@ -388,13 +393,15 @@ pub(super) fn check_signature_bounds(
         check_grants_bounds(&issuance.grants)?;
     }
     let mut declared = 0usize;
-    check_clause_bounds(&signature.effects, 0, &mut declared)
+    let mut minted = 0usize;
+    check_clause_bounds(&signature.effects, 0, &mut declared, &mut minted)
 }
 
 fn check_clause_bounds(
     clauses: &[Clause],
     depth: usize,
     declared: &mut usize,
+    minted: &mut usize,
 ) -> Result<(), SignatureBoundsError> {
     if depth > MAX_CLAUSE_DEPTH {
         return Err(SignatureBoundsError::ClauseDepth);
@@ -426,7 +433,7 @@ fn check_clause_bounds(
                     check_expr_bounds(cond, 0)?;
                 }
                 check_expr_bounds(list, 0)?;
-                check_clause_bounds(body, depth + 1, declared)?;
+                check_clause_bounds(body, depth + 1, declared, minted)?;
             }
             Clause::Requires { guard, rule } => {
                 if let Some(cond) = guard {
@@ -445,6 +452,14 @@ fn check_clause_bounds(
                 *declared += 1;
                 if *declared > MAX_EFFECTS_PER_SIGNATURE {
                     return Err(SignatureBoundsError::TooManyEffects);
+                }
+                // Minting carries its own ceiling as well as the shared
+                // one: what a mint costs is not the clause but the copy
+                // every later node presenting it makes, so the shared
+                // budget is the wrong size to bound it by.
+                *minted += 1;
+                if *minted > MAX_MINTS_PER_SIGNATURE {
+                    return Err(SignatureBoundsError::TooManyMints);
                 }
                 check_expr_bounds(claim, 0)?;
             }
@@ -1023,6 +1038,29 @@ mod tests {
         assert_bounded(
             &with(MAX_EFFECTS_PER_SIGNATURE),
             &with(MAX_EFFECTS_PER_SIGNATURE + 1),
+        );
+    }
+
+    /// A gate mints one claim, or two where an instance widens to its
+    /// resource, so the cap is headroom — and it is a cap of its own
+    /// because the shared effect budget is four thousand, which is the
+    /// wrong size for a set every later node presenting this one copies.
+    #[test]
+    fn a_signature_minting_more_than_a_gate_needs_is_refused() {
+        let mints = Clause::Mints {
+            guard: None,
+            claim: Expr::SelfAddr,
+        };
+        let with = |count: usize| {
+            one_method(MethodSignature {
+                totality: Totality::Fallible,
+                effects: vec![mints.clone(); count],
+                ..MethodSignature::default()
+            })
+        };
+        assert_bounded(
+            &with(MAX_MINTS_PER_SIGNATURE),
+            &with(MAX_MINTS_PER_SIGNATURE + 1),
         );
     }
 

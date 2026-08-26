@@ -1359,7 +1359,15 @@ pub struct EvalBudget {
 impl EvalBudget {
     /// Charge `units` against the envelope, refusing past the tree-wide
     /// bound. Deterministic, so every node reaches the same verdict.
-    fn spend(&self, units: usize) -> Result<(), EvalError> {
+    ///
+    /// Reachable from admission as well as from evaluation: not every
+    /// per-node cost an envelope pays is an expression, and the ones
+    /// that are not are charged here rather than left uncounted.
+    ///
+    /// # Errors
+    ///
+    /// [`EvalError::EnvelopeTooMuchWork`] past the tree-wide bound.
+    pub(crate) fn spend(&self, units: usize) -> Result<(), EvalError> {
         self.spent.set(self.spent.get().saturating_add(units));
         if self.spent.get() > MAX_ENVELOPE_EVALUATION_WORK {
             return Err(EvalError::EnvelopeTooMuchWork);

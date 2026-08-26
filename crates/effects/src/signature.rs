@@ -264,6 +264,17 @@ impl Totality {
 /// derivation at admission, which is what this bounds.
 pub const MAX_ISSUANCES_PER_SIGNATURE: usize = 16;
 
+/// The bound on how many claims one method's gate may mint.
+///
+/// A gate mints the one claim its target names, or two where an instance
+/// widens to its resource, so this is headroom rather than a limit an
+/// author meets. It is a cap and not a comment because the minted set is
+/// what every later node presenting this one's proof copies: a signature
+/// free to mint thousands would let one evidence edge carry thousands,
+/// and a graph of them would cost the ingress that admits it far more
+/// than the sender pays to be refused.
+pub const MAX_MINTS_PER_SIGNATURE: usize = 8;
+
 /// Which directions a declared issuance takes.
 ///
 /// Two entries cannot be independent over one undirected grant: a

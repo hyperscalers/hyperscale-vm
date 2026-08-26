@@ -1143,6 +1143,37 @@ struct Lower<'a> {
     table_len: u32,
 }
 
+/// Every authority condition an evaluated frame carries that a proof
+/// presented at this node could satisfy — an authored gate, or a
+/// requirement admission injected onto the frame.
+///
+/// A condition materialization answers is not one evidence reaches: it
+/// reads committed state rather than what the caller handed over.
+fn judged_here(frame: &Declaration) -> Vec<&Rule<JudgedLeaf>> {
+    frame
+        .required()
+        .filter(|rule| rule.judged() != Judged::AtMaterialization)
+        .collect()
+}
+
+/// Whether this node presents evidence where its call requires some.
+///
+/// A property of what the call requires and nothing else: a guarded or
+/// authorizing call presents something, a public one presents nothing.
+/// Whether what it presents *satisfies* the target's rule is the
+/// target's own business, answered where the target's state is.
+fn check_evidence_presence(
+    required: &[&Rule<JudgedLeaf>],
+    node: &GraphNode,
+    node_index: u32,
+) -> Result<(), AdmissionError> {
+    match (required.is_empty(), node.evidence.is_empty()) {
+        (false, true) => Err(AdmissionError::MissingEvidence { node: node_index }),
+        (true, false) => Err(AdmissionError::UnexpectedEvidence { node: node_index }),
+        _ => Ok(()),
+    }
+}
+
 impl Lower<'_> {
     fn lower_node(
         &mut self,
@@ -1631,25 +1662,8 @@ impl Lower<'_> {
         node_index: u32,
     ) -> Result<Vec<Presented>, AdmissionError> {
         let intent = &self.intents[intent_index];
-        // Every authority condition the evaluated frame carries, which is
-        // what a proof presented here could satisfy — an authored gate,
-        // or a requirement admission injected onto the frame.
-        let required: Vec<&Rule<JudgedLeaf>> = frame
-            .required()
-            .filter(|rule| rule.judged() != Judged::AtMaterialization)
-            .collect();
-        // Evidence presence is a property of what this call requires: a
-        // guarded or authorizing call presents something, a public one
-        // presents nothing. Whether what it presents satisfies the
-        // target's rule is the target's own business, answered where the
-        // target's state is.
-        if !required.is_empty() {
-            if node.evidence.is_empty() {
-                return Err(AdmissionError::MissingEvidence { node: node_index });
-            }
-        } else if !node.evidence.is_empty() {
-            return Err(AdmissionError::UnexpectedEvidence { node: node_index });
-        }
+        let required = judged_here(frame);
+        check_evidence_presence(&required, node, node_index)?;
         let mut evidence = Vec::with_capacity(node.evidence.len());
         for reference in &node.evidence {
             match reference {
@@ -1693,6 +1707,19 @@ impl Lower<'_> {
                         .ok_or(AdmissionError::UnmintingProof {
                             node: node_index,
                             producer: *producer,
+                        })?;
+                    // Charged, because the copy is the cost. A claim is
+                    // evaluated once by the node that mints it and then
+                    // carried by every later node presenting that node's
+                    // proof, so the work an envelope does here is the
+                    // product of two caps rather than either of them —
+                    // and it is work done at ingress, before a signature
+                    // is checked and before anyone has paid for it.
+                    self.budget
+                        .spend(claims.len())
+                        .map_err(|source| AdmissionError::Eval {
+                            node: node_index,
+                            source,
                         })?;
                     evidence.extend_from_slice(claims);
                 }
