@@ -659,6 +659,137 @@ pub enum AdmissionError {
     },
 }
 
+/// Where in a composition a refusal points.
+///
+/// A node index alone is not a place: it is flattened unless the refusal
+/// is one of the few stated in an intent's own numbering, and a reader
+/// holding the number cannot tell which. This says both, so one renderer
+/// can place every refusal without knowing any of them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Placed {
+    /// The intent, where the refusal is stated in one intent's own
+    /// numbering. `None` means the node below is the flattened one.
+    pub intent: Option<u32>,
+    /// The node the refusal is about.
+    pub node: Option<u32>,
+    /// The argument position, where the refusal is about one argument.
+    pub param: Option<u32>,
+    /// The effect clause, in a preorder walk of the method's effects.
+    pub clause: Option<u32>,
+}
+
+impl AdmissionError {
+    /// Where this refusal points.
+    ///
+    /// Total over the enum, which is what makes a renderer over it total:
+    /// a variant added without a place here does not compile, so no
+    /// refusal can arrive somewhere a reader cannot be sent.
+    #[must_use]
+    pub const fn at(&self) -> Placed {
+        match self {
+            // Flattened, and about the node as a whole.
+            Self::MovementForbidden { node, .. }
+            | Self::RecordWithheld { node, .. }
+            | Self::Unadmitted { node, .. }
+            | Self::EntryMalformed { node, .. }
+            | Self::PresentedForCall { node, .. }
+            | Self::MissingEvidence { node, .. }
+            | Self::MovementUnanswerable { node, .. }
+            | Self::EvidenceUnsatisfied { node, .. }
+            | Self::UnexpectedEvidence { node, .. }
+            | Self::AuthorityType { node, .. }
+            | Self::MintType { node, .. }
+            | Self::RuleCellType { node, .. }
+            | Self::UnsignedEvidence { node, .. }
+            | Self::SignatureForGuarded { node, .. }
+            | Self::ArityMismatch { node, .. }
+            | Self::OutputType { node, .. }
+            | Self::Eval { node, .. } => Placed {
+                intent: None,
+                node: Some(*node),
+                param: None,
+                clause: None,
+            },
+            // Flattened, and about one of its arguments.
+            Self::DestroysNoEdge { node, param, .. }
+            | Self::ParamKind { node, param, .. }
+            | Self::EdgeForValueParam { node, param, .. }
+            | Self::LiteralForBucketParam { node, param, .. }
+            | Self::ResourceKindMismatch { node, param, .. }
+            | Self::UnsatisfiableConstraint { node, param, .. }
+            | Self::ResourceMismatch { node, param, .. }
+            | Self::WrongDenomination { node, param, .. }
+            | Self::DenominationType { node, param, .. }
+            | Self::UnbindableAbiParam { node, param, .. }
+            | Self::SocketForValueParam { node, param, .. }
+            | Self::ValueTooDeep { node, param, .. } => Placed {
+                intent: None,
+                node: Some(*node),
+                param: Some(*param),
+                clause: None,
+            },
+            // Flattened, and about one of its declared clauses.
+            Self::ForeignDeclaration { node, clause, .. }
+            | Self::ReachesItself { node, clause, .. } => Placed {
+                intent: None,
+                node: Some(*node),
+                param: None,
+                clause: Some(*clause),
+            },
+            // The producing node, flattened: what the edge resolved to
+            // rather than what the composer wrote.
+            Self::NoSuchOutput { producer, .. }
+            | Self::DoubleConsumption { producer, .. }
+            | Self::UnconsumedOutput { producer, .. } => Placed {
+                intent: None,
+                node: Some(*producer),
+                param: None,
+                clause: None,
+            },
+            // Stated in the intent's own numbering, because the other
+            // index in the sentence has no flattened form.
+            Self::ForwardProof { intent, node, .. }
+            | Self::UnmintingProof { intent, node, .. }
+            | Self::ForwardEdge { intent, node, .. }
+            | Self::UnknownSocket { intent, node, .. }
+            | Self::SocketClaimMismatch { intent, node, .. } => Placed {
+                intent: Some(*intent),
+                node: Some(*node),
+                param: None,
+                clause: None,
+            },
+            // About the intent rather than any one of its nodes.
+            Self::BindingArity { intent, .. }
+            | Self::TooManySockets { intent, .. }
+            | Self::UnknownBinding { intent, .. }
+            | Self::SocketResourceMismatch { intent, .. }
+            | Self::UnreachedSocket { intent, .. }
+            | Self::SocketReused { intent, .. }
+            | Self::UnmintedSocket { intent, .. } => Placed {
+                intent: Some(*intent),
+                node: None,
+                param: None,
+                clause: None,
+            },
+            // A budget, a shape, or a whole composition: nowhere to send
+            // a reader that the sentence does not already say.
+            Self::TooManyNodes { .. }
+            | Self::TooManySubintents { .. }
+            | Self::DuplicateSubintent { .. }
+            | Self::CyclicSockets { .. }
+            | Self::Resolve(..)
+            | Self::TableOverflow { .. }
+            | Self::Conflict(..)
+            | Self::InstanceValueTooDeep { .. } => Placed {
+                intent: None,
+                node: None,
+                param: None,
+                clause: None,
+            },
+        }
+    }
+}
+
 /// Reject presented instance records whose configuration values nest
 /// past [`MAX_VALUE_DEPTH`] — the same bound graph literals clear,
 /// judged here so composing the per-envelope registry never meets a

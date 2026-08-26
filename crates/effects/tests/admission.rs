@@ -15,7 +15,7 @@ use hyperscale_vm_effects::{
     ManifestGraph, MethodSignature, ModeExpr, PackageMetadata, ParamType, Presented,
     PresentedGrants, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes,
     RuleExpr, RuleLeaf, SlotRef, StoredRule, TargetExpr, TestHasher, Totality, Value, admit,
-    admit_presenting, child_key, fresh_id, holdings_entry, route,
+    admit_presenting, child_key, explain_admission, fresh_id, holdings_entry, route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, ResourceAddr,
@@ -584,6 +584,45 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     assert_eq!(
         admit(&unsigned, ALICE, &chain, &TestHasher),
         Err(AdmissionError::MissingEvidence { node: 0 })
+    );
+}
+
+/// A refusal reads back into the composition that earned it.
+///
+/// The sentence carries indices, and an index is not a place: node 1 is a
+/// number until somebody says which call it is, and argument 1 is a
+/// number until somebody says what was written there. Both are in the
+/// graph the composer handed over, so the renderer that holds it says so.
+///
+/// Every refusal answers where it points — `AdmissionError::at` is total
+/// over the enum — so a variant added later is placed by this renderer
+/// without it learning anything about the variant.
+#[test]
+fn a_refusal_reads_back_into_the_graph_that_earned_it() {
+    let chain = world();
+    let mut wrong_kind = valid_graph();
+    wrong_kind.nodes[1].args[1] = GraphArg::Literal(Value::U64(100));
+    let refusal = admit(&wrong_kind, ALICE, &chain, &TestHasher)
+        .expect_err("a u64 does not fill a u128 parameter");
+
+    let told = explain_admission(&[&wrong_kind], &chain, &refusal);
+    // The sentence it already had.
+    assert!(told.contains("expected u128"), "{told}");
+    // The call the index names, and the method — neither in the verdict.
+    assert!(
+        told.contains(&wrong_kind.nodes[1].method),
+        "the method: {told}"
+    );
+    // And the argument as the composer wrote it.
+    assert!(told.contains("argument 1"), "{told}");
+    assert!(told.contains("100"), "the literal they wrote: {told}");
+
+    // A refusal about the whole composition has nowhere to send a reader
+    // that its own sentence does not, and adds nothing.
+    let whole = AdmissionError::CyclicSockets;
+    assert_eq!(
+        explain_admission(&[&wrong_kind], &chain, &whole),
+        whole.to_string()
     );
 }
 

@@ -44,7 +44,7 @@ pub mod vectors;
 pub mod vocabulary;
 
 pub use admission::{
-    AdmissionError, Admitted, Asks, Injected, MAX_SOCKETS, admit, admit_presenting,
+    AdmissionError, Admitted, Asks, Injected, MAX_SOCKETS, Placed, admit, admit_presenting,
 };
 pub use artifact::{
     ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, declaration_hash,
@@ -63,7 +63,8 @@ pub use envelope::{
     Subintent, SubintentHash, SubintentRecord, admit_tree, encode_tree, nullifier_key, route_tree,
 };
 pub use explain::{
-    explain, explain_method, explain_refusal, explain_requirements, explain_resource,
+    explain, explain_admission, explain_method, explain_refusal, explain_requirements,
+    explain_resource,
 };
 pub use footprint::{
     DEPTH_UNITS, EXCLUSIVITY_FLOOR, SCAN_SEEK_ENTRIES, TARGET_UNITS, WIDTH_UNITS, effect_units,

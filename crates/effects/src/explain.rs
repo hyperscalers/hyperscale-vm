@@ -37,13 +37,15 @@ use hyperscale_vm_types::{
     Address, AddressClass, EffectTarget, Moves, Presence, SubstateKey, UnmetCondition,
 };
 
-use crate::admission::{Admitted, Asks, Injected};
+use crate::admission::{AdmissionError, Admitted, Asks, Injected, Placed};
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
 use crate::envelope::NULLIFIER_SLOT;
+use crate::graph::{GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::manifest::{Judged, JudgedLeaf};
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
 use crate::presented::Presented;
+use crate::records::ChainRecords;
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind, ResourceMeta};
 use crate::rule::{
     GrantClaim, GrantRuleExpr, Holding, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule, always,
@@ -392,6 +394,106 @@ fn unsatisfied_claims(admitted: &Admitted, node: u32) -> String {
          asked for: {}",
         asked.join(", ")
     )
+}
+
+/// A refusal at admission, with the place it points to spelled out.
+///
+/// The sentence a composer gets carries indices — node 7, argument 2,
+/// clause 4 — and an index means nothing without the thing it indexes.
+/// `intents` is the composition as written, one graph per intent and one
+/// graph for a bare one, so a node index resolves to the call the author
+/// wrote and an argument index to the argument they put there. The
+/// clause resolves through the callee's own declaration, which is the
+/// only place a clause number is a line.
+///
+/// Whatever cannot be resolved is left out rather than guessed at. A
+/// refusal about the whole composition renders as its own sentence,
+/// which is already the whole answer.
+#[must_use]
+pub fn explain_admission(
+    intents: &[&ManifestGraph],
+    records: &dyn ChainRecords,
+    refusal: &AdmissionError,
+) -> String {
+    let mut out = refusal.to_string();
+    let at = refusal.at();
+    let Some(node) = placed_node(intents, at) else {
+        return out;
+    };
+    let _ = write!(
+        out,
+        "\n  {} {}",
+        address_text(node.target.into()),
+        node.method
+    );
+    if let Some(arg) = at.param.and_then(|param| node.args.get(param as usize)) {
+        let _ = write!(
+            out,
+            "\n  argument {}: {}",
+            at.param.unwrap_or_default(),
+            arg_text(arg)
+        );
+    }
+    if let Some(clause) = at.clause
+        && let Some(listing) = declared_clause(records, node, clause)
+    {
+        let _ = write!(out, "\n  clause {clause}: {}", listing.trim_end());
+    }
+    out
+}
+
+/// The node a refusal points at.
+///
+/// An intent-local index is that intent's; a flattened one walks the
+/// intents in the order the manifest concatenates them, which is the
+/// order `intents` is given in.
+fn placed_node<'a>(intents: &[&'a ManifestGraph], at: Placed) -> Option<&'a GraphNode> {
+    let node = usize::try_from(at.node?).ok()?;
+    if let Some(intent) = at.intent {
+        return intents.get(usize::try_from(intent).ok()?)?.nodes.get(node);
+    }
+    // A flattened index counts through the intents in the order the
+    // manifest concatenates them, which is the order they are given in.
+    let mut seen = 0;
+    for graph in intents {
+        if let Some(found) = node.checked_sub(seen).and_then(|at| graph.nodes.get(at)) {
+            return Some(found);
+        }
+        seen += graph.nodes.len();
+    }
+    None
+}
+
+/// One argument as the composer wrote it.
+fn arg_text(arg: &GraphArg) -> String {
+    match arg {
+        GraphArg::Literal(value) => format!("the literal {value:?}"),
+        GraphArg::Edge { edge, .. } => format!(
+            "output {} of node {} of its own intent",
+            edge.output, edge.producer
+        ),
+        GraphArg::Socket(reference) => format!("socket {reference} of its own intent"),
+    }
+}
+
+/// One clause of the callee's declaration, rendered as `explain_method`
+/// numbers it.
+fn declared_clause(records: &dyn ChainRecords, node: &GraphNode, clause: u32) -> Option<String> {
+    let instance = records.instance(node.target)?;
+    let metadata = records.package(instance.package)?;
+    let signature = metadata.methods.get(&node.method)?;
+    let mut index = 0;
+    let mut out = String::new();
+    for declared in &signature.effects {
+        let mut listing = String::new();
+        let from = index;
+        Names(&metadata).clause(declared, &mut index, 0, &mut listing);
+        if (from..index).contains(&clause) {
+            out = listing;
+            break;
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// What a condition required of a leaf.
