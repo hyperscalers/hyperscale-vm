@@ -64,6 +64,16 @@ pub mod custodian {
             self.vault(self.config().other).take(amount)
         }
 
+        /// Value in and value out of one vault, through one handle: the
+        /// till a changemaker keeps. The one access that moves in both
+        /// directions, so its declaration answers for both and earns
+        /// each direction's entry at once.
+        pub fn churn(&mut self, incoming: Bucket, amount: Quantity) -> Bucket {
+            let mut till = self.vault(self.config().asset);
+            till.put(incoming);
+            till.take(amount)
+        }
+
         /// Instances in, on the same terms: an interval admits a read
         /// and a write and says nothing about which way value went.
         ///

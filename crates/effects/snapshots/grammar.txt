@@ -18,7 +18,7 @@ types
 accrue(u128) — infallible
   declares
       0  for each of config.assets
-        1  write self.vault[element] holding element
+        1  debit-only self.vault[element] holding element
         2  credit self.fees[element] holding element
   exports  handle for clause 0 site 0, handle for clause 0 site 1, arg0
 

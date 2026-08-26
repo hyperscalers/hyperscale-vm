@@ -104,8 +104,8 @@ fn swap_profile_and_provision_shape_are_exact() {
         *pool_set,
         set(&[
             point(config_leaf(pool()), Mode::Read),
-            point(vault(pool(), RES_X), Mode::Write { moves: Moves::Both }),
-            point(vault(pool(), RES_Y), Mode::Write { moves: Moves::Both }),
+            point(vault(pool(), RES_X), Mode::Write { moves: Moves::In }),
+            point(vault(pool(), RES_Y), Mode::Write { moves: Moves::Out }),
         ])
     );
     // The pool-shard provision carries the two balance cells and the

@@ -36,7 +36,8 @@ pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     // capability over the whole span, so a body that moves value through
     // one holds it exclusively rather than queuing against it. What it
     // can still say is which way value goes — a body that only receives
-    // declares an inbound write, and is judged on that alone.
+    // declares an inbound write, one that only takes an outbound one,
+    // and either is judged on that alone.
     if matches!(
         site.target,
         Target::Entry { .. }
@@ -45,15 +46,36 @@ pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
             | Target::Sweep { .. }
     ) {
         let bytes = has(Op::Set).is_some();
-        let inbound = has(Op::Credit).is_some();
-        let both_ways = has(Op::Move).is_some();
-        return match (bytes || both_ways, inbound, has(Op::Get).is_some()) {
-            (true, _, _) => Some((nothing, quote!(.write()))),
-            (false, true, _) => Some((nothing, quote!(.inbound()))),
-            (false, false, true) => Some((nothing, quote!(.read()))),
-            (false, false, false) => None,
+        let credits = has(Op::Credit).is_some();
+        let debits = has(Op::Debit).is_some();
+        let both_ways = has(Op::Move).is_some() || (credits && debits);
+        return if bytes || both_ways {
+            Some((nothing, quote!(.write())))
+        } else if credits {
+            Some((nothing, quote!(.inbound())))
+        } else if debits {
+            Some((nothing, quote!(.outbound())))
+        } else if has(Op::Get).is_some() {
+            Some((nothing, quote!(.read())))
+        } else {
+            None
         };
     }
+
+    // Which way value moves under a site, where its value operations
+    // settle one: what narrows an exclusive hold or a presence-fenced
+    // write to the movement the body actually makes.
+    let credits = has(Op::Credit).is_some();
+    let debits = has(Op::Debit).is_some();
+    let one_way = match (
+        has(Op::Move).is_some() || (credits && debits),
+        credits,
+        debits,
+    ) {
+        (false, true, false) => Some(quote!(.inbound())),
+        (false, false, true) => Some(quote!(.outbound())),
+        _ => None,
+    };
 
     // A presence requirement is the exclusive mode carrying what it
     // requires of the leaf, so it answers before the unqualified write
@@ -61,10 +83,16 @@ pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     // — the lowering refuses every pair, in either order — so this
     // states a precedence rather than resolving a conflict.
     if has(Op::Create).is_some() {
-        return Some((nothing, quote!(.create())));
+        return Some((
+            nothing,
+            one_way.map_or_else(|| quote!(.create()), |word| quote!(.absent() #word)),
+        ));
     }
     if has(Op::Existing).is_some() {
-        return Some((nothing, quote!(.existing())));
+        return Some((
+            nothing,
+            one_way.map_or_else(|| quote!(.existing()), |word| quote!(.present() #word)),
+        ));
     }
     if has(Op::Vacant).is_some() {
         return Some((nothing, quote!(.vacant())));
@@ -72,10 +100,11 @@ pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
 
     // The same order the resource derivation reads: an assignment or a
     // read makes the mode exclusive, and a movement without either
-    // commutes.
-    let moves = has(Op::Move).is_some() || has(Op::Credit).is_some();
+    // commutes — each carrying the directions its value operations
+    // kept, so the site is judged on the movement the body makes.
+    let moves = has(Op::Move).is_some() || credits || debits;
     if has(Op::Set).is_some() || (moves && has(Op::Get).is_some()) {
-        Some((nothing, quote!(.write())))
+        Some((nothing, one_way.unwrap_or_else(|| quote!(.write()))))
     } else if has(Op::Get).is_some() {
         Some((nothing, quote!(.read())))
     } else if let Some(amount) = param(Op::Reserve) {
@@ -84,13 +113,12 @@ pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
             quote!(let __param = #amount.cast::<::hyperscale_vm_sdk::U128>();),
             quote!(.reserve(&__param)),
         ))
-    } else if has(Op::Move).is_some() {
+    } else if moves && one_way.is_none() {
         Some((nothing, quote!(.delta())))
-    } else if has(Op::Credit).is_some() {
-        // Only the crediting half, so the declaration says so and is
-        // judged on that alone. A body that also takes reached the arm
-        // above, where the direction is no longer something to state.
+    } else if credits {
         Some((nothing, quote!(.credit())))
+    } else if debits {
+        Some((nothing, quote!(.debit())))
     } else {
         // A handle opened and never used declares nothing. Correct rather
         // than lenient: the body did not touch the substate.

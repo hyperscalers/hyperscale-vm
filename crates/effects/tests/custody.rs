@@ -621,30 +621,45 @@ fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
 /// And the read that answers it is declared once, however many
 /// directions the access moves in.
 ///
-/// A commutative movement earns a withdraw entry and a deposit entry, so
-/// the injection runs twice over one holder and one resource — and the
-/// flag they both read is one leaf. A second ordered entry for it would
-/// be a second capability the kernel materializes and a second line in
-/// what the sender is billed for, for a question already asked.
+/// The custodian's till moves value both ways through one handle, so
+/// its one access earns a withdraw entry and a deposit entry and the
+/// injection runs twice over one holder and one resource — and the flag
+/// they both read is one leaf. A second ordered entry for it would be a
+/// second capability the kernel materializes and a second line in what
+/// the sender is billed for, for a question already asked.
 #[test]
 fn one_flag_is_read_once_however_many_directions_the_access_moves_in() {
     let (chain, custodian) = custody_world_over(freezable());
     let mut env = round_trip(custodian);
+    // The withdrawn value goes back through the till, whose one access
+    // moves in both directions, and what the till pays out is deposited.
+    env.root.graph.nodes[1].method = "churn".into();
+    env.root.graph.nodes[1]
+        .args
+        .push(GraphArg::Literal(Value::U128(15)));
+    env.root.graph.nodes.push(GraphNode {
+        target: custodian.into(),
+        method: "deposit".into(),
+        args: vec![GraphArg::Edge {
+            edge: EdgeRef {
+                producer: 1,
+                output: 0,
+            },
+            constraints: Vec::new(),
+        }],
+        evidence: BTreeSet::default(),
+    });
     env.resources = vec![freezable_meta()];
     let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
         .expect("the custodian moves its own value on the resource's terms");
-    // One frame's own view: two nodes each fence their own movement, and
-    // two frames reading one flag is two reads that are each once.
-    let ordered = &admitted.admitted.frames()[0].ordered;
+    let ordered = &admitted.admitted.frames()[1].ordered;
 
-    // The custodian's own vault takes the value both ways, which is what
-    // earns both entries.
     let both_ways = ordered.iter().any(|access| {
         access.holds == Some(freezable())
             && access.effect.target.owner() == custodian.address()
             && access.effect.mode.moves() == Some(Moves::Both)
     });
-    assert!(both_ways, "the fixture moves value in both directions");
+    assert!(both_ways, "the till moves value in both directions");
 
     let flag = EffectTarget::Point(child_key(
         &TestHasher,

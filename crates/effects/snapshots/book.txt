@@ -11,7 +11,7 @@ fill-asks(u64, u64, bucket) — infallible
   takes    arg2 carrying config.quote
   declares
       0  write self.asks over pack(arg0, 0)..=pack(arg1, u64::MAX), at most 64 entries
-      1  delta self.vault[config.base] holding config.base
+      1  debit self.vault[config.base] holding config.base
       2  credit self.vault[config.quote] holding config.quote
   yields   edge 0 = config.base
   yields   edge 1 = resource-of(arg2)

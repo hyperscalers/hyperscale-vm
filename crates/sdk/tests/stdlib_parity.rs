@@ -240,10 +240,10 @@ fn amm() -> Blueprint {
 
                 t.point(&pool.child(VAULT, &[x.clone().cast()]))
                     .holding(&x)
-                    .write();
+                    .inbound();
                 t.point(&pool.child(VAULT, &[y.clone().cast()]))
                     .holding(&y)
-                    .write();
+                    .inbound();
                 t.point(&pool.child(amm_package::SUPPLY, &[])).write();
 
                 t.denomination(0, &x);
@@ -262,10 +262,10 @@ fn amm() -> Blueprint {
 
             t.point(&pool.child(VAULT, &[x.clone().cast()]))
                 .holding(&x)
-                .write();
+                .outbound();
             t.point(&pool.child(VAULT, &[y.clone().cast()]))
                 .holding(&y)
-                .write();
+                .outbound();
             t.point(&pool.child(amm_package::SUPPLY, &[])).write();
 
             t.denomination(0, &share);
@@ -291,10 +291,10 @@ fn amm() -> Blueprint {
 
                 t.point(&pool.child(VAULT, &[sold.clone().cast()]))
                     .holding(&sold)
-                    .write();
+                    .inbound();
                 t.point(&pool.child(VAULT, &[bought.clone().cast()]))
                     .holding(&bought)
-                    .write();
+                    .outbound();
 
                 // The payment is credited to the side the pool sells, so
                 // a resource in neither side is one the pair refuses.
@@ -380,9 +380,9 @@ fn book() -> Blueprint {
                 let quote: Sym<Addr> = t.config(1);
                 t.point(&venue.child(VAULT, &[base.clone().cast()]))
                     .holding(&base)
-                    .delta();
-                // The payment goes in; the base comes out of the vault
-                // above, which is why that one stays both ways.
+                    .debit();
+                // The payment goes in; the base only comes out of the
+                // vault above, and each is judged on its own direction.
                 t.point(&venue.child(VAULT, &[quote.clone().cast()]))
                     .holding(&quote)
                     .credit();

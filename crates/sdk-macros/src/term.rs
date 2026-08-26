@@ -474,18 +474,21 @@ pub enum Slot {
 pub enum Op {
     /// `get()` — a fresh coherent read.
     Get,
-    /// `put()` / `take()` — value moving into or out of an amount cell.
-    ///
-    /// One operation for both modes, because both move value and neither
-    /// spelling says which: what decides is whether the body also reads
-    /// the balance.
+    /// `declared()` — a movement stated without being made, saying
+    /// nothing about which way. The conservative operation: a site
+    /// carrying it answers for both directions.
     Move,
-    /// `put()` — value moving *into* an amount cell, and not out.
+    /// `put()` / `declared_credit()` / `file()` — value moving *into*
+    /// a cell, and not out.
     ///
     /// Its own operation because the direction is what a narrower mode
     /// needs: a body that only credits declares a credit, which a
     /// resource governing withdrawals asks nothing of.
     Credit,
+    /// `take()` / `declared_debit()` — value moving *out* of a cell,
+    /// and not in: [`Credit`](Self::Credit)'s mirror, on the same
+    /// terms.
+    Debit,
     /// `reserve(amount)` — a conditional decrement.
     Reserve,
     /// `set()` / `insert()` / `remove()` — an exclusive read-modify-write.
@@ -528,6 +531,7 @@ impl Op {
         "declared_credit",
         "file",
         "take",
+        "declared_debit",
         "declared",
         "reserve",
         "set",
@@ -550,12 +554,13 @@ impl Op {
             "get" | "count" | "covered" | "entry" | "order" | "balance" | "pick" | "picked" => {
                 Some(Self::Get)
             }
-            // The three that only pay in. A take is the other
-            // direction, and a bare `declared` states a movement without
-            // making one and says nothing about which way, so both stay
-            // the conservative pair.
+            // The words that pay in, the words that take out, and the
+            // bare `declared`, which states a movement without making
+            // one and says nothing about which way — the one spelling
+            // that stays conservative.
             "put" | "declared_credit" | "file" => Some(Self::Credit),
-            "take" | "declared" => Some(Self::Move),
+            "take" | "declared_debit" => Some(Self::Debit),
+            "declared" => Some(Self::Move),
             "reserve" => Some(Self::Reserve),
             "set" | "insert" | "remove" => Some(Self::Set),
             "create" | "seal" => Some(Self::Create),

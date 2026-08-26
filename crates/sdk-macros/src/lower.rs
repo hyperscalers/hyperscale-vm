@@ -1241,7 +1241,14 @@ impl<'a> Lowerer<'a> {
         let exclusive = |op: &Op| {
             matches!(
                 op,
-                Op::Get | Op::Set | Op::Move | Op::Credit | Op::Create | Op::Existing | Op::Vacant
+                Op::Get
+                    | Op::Set
+                    | Op::Move
+                    | Op::Credit
+                    | Op::Debit
+                    | Op::Create
+                    | Op::Existing
+                    | Op::Vacant
             )
         };
         let compatible = match op {
@@ -1250,9 +1257,14 @@ impl<'a> Lowerer<'a> {
             // presence requirement rides that same mode, so it sits
             // beside any of them — the one pair that does not is a
             // requirement against its own opposite, refused below.
-            Op::Get | Op::Set | Op::Move | Op::Credit | Op::Create | Op::Existing | Op::Vacant => {
-                entry.ops.iter().all(|(prior, _)| exclusive(prior))
-            }
+            Op::Get
+            | Op::Set
+            | Op::Move
+            | Op::Credit
+            | Op::Debit
+            | Op::Create
+            | Op::Existing
+            | Op::Vacant => entry.ops.iter().all(|(prior, _)| exclusive(prior)),
             // A reservation folds with nothing, itself included, so it
             // is the only op a handle may carry and it may carry it once.
             Op::Reserve => entry.ops.is_empty(),
@@ -2261,7 +2273,7 @@ impl<'a> Lowerer<'a> {
             )
         };
         let site = self.open_reaching(target, Some(element), None, Some(GrantedBehaviour::Recall));
-        let op = if instances { Op::Move } else { Op::Reserve };
+        let op = if instances { Op::Debit } else { Op::Reserve };
         self.record(site, op, Some(quantity.clone()), call.span());
         let handle = self.handle(site, call.span());
         let code = if instances {
@@ -4167,7 +4179,7 @@ impl<'a> Lowerer<'a> {
                 // instances that actually left, which the ids it named
                 // are: the removal and the edge are one operation, so the
                 // set cannot be one the body chose.
-                if op == Op::Move
+                if op == Op::Debit
                     && call.method == "take"
                     && let Some(resource) = resource
                 {

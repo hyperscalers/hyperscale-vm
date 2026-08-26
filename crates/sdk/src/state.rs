@@ -1595,6 +1595,15 @@ impl Slot<Vault> {
     #[inline(always)]
     pub const fn declared_credit(&mut self) {}
 
+    /// Declare a debit on this cell without making one.
+    ///
+    /// [`declared_credit`](Self::declared_credit)'s mirror, for a cell
+    /// the body only ever takes from on the paths that reach it: the
+    /// declaration carries the direction as well as the reach, so a
+    /// deposit requirement is never asked of it.
+    #[inline(always)]
+    pub const fn declared_debit(&mut self) {}
+
     /// Take the reservation this method declared, as the value it grants.
     ///
     /// Feasibility was judged and the hold taken before this body ran, so

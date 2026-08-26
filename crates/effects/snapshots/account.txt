@@ -135,6 +135,6 @@ withdraw(resource-address, u128) — infallible
 withdraw-nf(resource-address, ids) — infallible
   declares
       0  requires claim self
-      1  write self.nf-vault[arg0] over 0..=u128::MAX, at most len(arg1) entries holding arg0
+      1  take self.nf-vault[arg0] over 0..=u128::MAX, at most len(arg1) entries holding arg0
   yields   edge 0 = edge(arg0 × arg1)
   exports  handle for clause 1, arg1

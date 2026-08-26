@@ -173,13 +173,16 @@ fn swap_writes_both_reserves_and_reads_the_config() {
             shard_of(pool()),
             effect_set(&[
                 fence_read(pool()),
+                // The sold side only receives and the bought side only
+                // pays out, each under its own balance read, so each
+                // exclusive hold carries the one direction it kept.
                 Effect {
                     target: EffectTarget::Point(vault(pool(), RES_X)),
-                    mode: write(),
+                    mode: Mode::Write { moves: Moves::In },
                 },
                 Effect {
                     target: EffectTarget::Point(vault(pool(), RES_Y)),
-                    mode: write(),
+                    mode: Mode::Write { moves: Moves::Out },
                 },
             ]),
         ),
@@ -359,11 +362,12 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     },
                     mode: write(),
                 },
-                // The base leaves the book's own vault, so that side has
-                // to answer both ways; the payment only arrives.
+                // The base only leaves the book's own vault and the
+                // payment only arrives, so each side is judged on the
+                // one movement it makes.
                 Effect {
                     target: EffectTarget::Point(vault(book(), BASE)),
-                    mode: Mode::Delta { moves: Moves::Both },
+                    mode: Mode::Delta { moves: Moves::Out },
                 },
                 Effect {
                     target: EffectTarget::Point(vault(book(), QUOTE)),

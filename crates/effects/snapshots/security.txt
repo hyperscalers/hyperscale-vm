@@ -37,7 +37,7 @@ issue-bearer(u128) — infallible
 
 recall-registrations(address, u64, ids) — infallible
   declares
-      0  write arg0.arg1[self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar] over 0..=u128::MAX, at most len(arg2) entries holding self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar, reaching under recall
+      0  take arg0.arg1[self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar] over 0..=u128::MAX, at most len(arg2) entries holding self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar, reaching under recall
   yields   edge 0 = edge(self-issued(non-fungible["registered"]), granting mint to the issuer and withdraw to nobody and recall to config.registrar × arg2)
   exports  handle for clause 0, arg2
 

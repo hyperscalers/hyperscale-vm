@@ -1114,6 +1114,13 @@ impl<Shape> Access<'_, Shape> {
         self.declare(ModeExpr::Delta { moves: Moves::In });
     }
 
+    /// A commutative decrement and no increment — what a method that
+    /// only sends says about itself, on the terms
+    /// [`credit`](Self::credit) states for the other direction.
+    pub fn debit(self) {
+        self.declare(ModeExpr::Delta { moves: Moves::Out });
+    }
+
     /// A conditional decrement, judged feasible against the declared
     /// amount.
     pub fn reserve(self, amount: &Sym<U128>) {
@@ -1170,6 +1177,23 @@ impl Access<'_, Leaf> {
     /// The same write, feasible only where the leaf is there.
     pub fn existing(self) {
         self.require(Presence::Present);
+    }
+
+    /// The requirement [`create`](Self::create) carries, as a modifier:
+    /// the word that follows says the exclusive mode's direction, so a
+    /// creation a body only credits is judged on the credit alone.
+    #[must_use]
+    pub fn absent(mut self) -> Self {
+        self.presence(Presence::Absent);
+        self
+    }
+
+    /// The requirement [`existing`](Self::existing) carries, as a
+    /// modifier, on the terms [`absent`](Self::absent) states.
+    #[must_use]
+    pub fn present(mut self) -> Self {
+        self.presence(Presence::Present);
+        self
     }
 
     /// A fresh read, feasible only where the leaf is absent — and

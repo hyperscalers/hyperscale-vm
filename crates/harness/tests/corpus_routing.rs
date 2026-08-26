@@ -85,6 +85,14 @@ use common::world::*;
 /// nothing about which shard provisions which leaf moved. Propose alone
 /// holds no commutative movement, so it alone stood still.
 ///
+/// Swap and fill moved once more when the lowering learned to keep the
+/// direction a body's own operations settle: a reserve vault that only
+/// receives or only pays declares `In` or `Out` where it declared
+/// `Both`. The narrowing is what each site is judged on; the targets,
+/// the shards and the provisioned leaves are the ones already pinned.
+/// Transfer's withdrawal is a reservation, whose direction was always
+/// its own, so it stood still beside propose.
+///
 /// The swap and fill pins carry the instantiation fence: admission reads
 /// the configuration leaf of every component a node targets, so the
 /// owning shard is a participant and provisions the leaf. Transfer and
@@ -124,9 +132,9 @@ fn the_catalogue_routes_to_pinned_vectors() {
 
 const PIN_TRANSFER: &str = "6b32f7df8bc95c9b266ffebcb5c1f49a148bbbd3abbd9ede6cf6235a66d031d9";
 
-const PIN_SWAP: &str = "a2422e399d602c7a0217861afa4c6fce5b9f3adeb73b59bbbd28643292905a43";
+const PIN_SWAP: &str = "d74881d122afdf4d44a99a664d7e007e18114bebf2f5bdb63fef2a91a96a5ee2";
 
-const PIN_FILL: &str = "d7fddfb88689b6da382aba2418caab7cb2d6b6edb3085589c48ff648241ae637";
+const PIN_FILL: &str = "d6fe985c26ad25b3c32fff45d46a4e8ecf7c296d47772eb60f1de9766e1b1c2d";
 
 const PIN_PROPOSE: &str = "16c63168c519e58260cefdae4fb754af9526df69209fcf52f0411f2e75fa2715";
 

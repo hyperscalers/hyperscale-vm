@@ -25,7 +25,7 @@ charge-longs(u256) — infallible
 
 close() — infallible
   declares
-      0  write self.vault[config.collateral] holding config.collateral
+      0  debit-only self.vault[config.collateral] holding config.collateral
       1  requires self.position is present
       2  write self.position
       3  read self.mark
@@ -48,7 +48,7 @@ instantiate() — infallible
 
 liquidate() — fallible
   declares
-      0  write self.vault[config.collateral] holding config.collateral
+      0  debit-only self.vault[config.collateral] holding config.collateral
       1  requires self.position is present
       2  write self.position
       3  read self.mark

@@ -3,6 +3,13 @@ config
       1  other
       2  instances
 
+churn(bucket, u128) — infallible
+  takes    arg0 carrying config.asset
+  declares
+      0  delta self.vault[config.asset] holding config.asset
+  yields   edge 0 = config.asset
+  exports  handle for clause 0, edge arg0, arg1
+
 deposit(bucket) — infallible
   takes    arg0 carrying config.asset
   declares
@@ -22,7 +29,7 @@ instantiate() — infallible
 
 release(ids) — infallible
   declares
-      0  write self.nf-vault[config.instances] over 0..=u128::MAX, at most len(arg0) entries holding config.instances
+      0  take self.nf-vault[config.instances] over 0..=u128::MAX, at most len(arg0) entries holding config.instances
   yields   edge 0 = edge(config.instances × arg0)
   exports  handle for clause 0, arg0
 
@@ -30,12 +37,12 @@ swap(bucket, u128) — infallible
   takes    arg0 carrying config.asset
   declares
       0  credit self.vault[config.asset] holding config.asset
-      1  delta self.vault[config.other] holding config.other
+      1  debit self.vault[config.other] holding config.other
   yields   edge 0 = config.other
   exports  handle for clause 0, handle for clause 1, edge arg0, arg1
 
 withdraw(u128) — infallible
   declares
-      0  delta self.vault[config.asset] holding config.asset
+      0  debit self.vault[config.asset] holding config.asset
   yields   edge 0 = config.asset
   exports  handle for clause 0, arg0
