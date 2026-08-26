@@ -77,8 +77,7 @@ use hyperscale_vm_effects::{
 /// One list because a package is one thing. What a corpus sweep wants —
 /// every declaration — and what an embedder wants — every committed blob
 /// — are two readings of it rather than two lists to keep agreeing, and
-/// the second list is the one that quietly falls behind: the commit that
-/// added the seventh package left three of six registrations unmade.
+/// the second list is the one that quietly falls behind.
 ///
 /// A module named without a blob is one nothing seeds. It is still
 /// declared, still swept, and still snapshotted; it simply has no
@@ -276,8 +275,7 @@ mod tests {
     /// The other direction is free — a name without a file fails to
     /// compile, because the bytes are included at build time. This is the
     /// direction that can go quiet: a committed blob nothing names is a
-    /// blob no digest test proves and no consumer can reach, which is
-    /// exactly how six of nine came to be ungated.
+    /// blob no digest test proves and no consumer can reach.
     #[test]
     fn every_committed_blob_is_a_package_this_crate_ships() {
         let named: BTreeSet<_> = SHIPPED

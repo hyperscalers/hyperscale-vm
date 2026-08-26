@@ -43,18 +43,6 @@ use crate::vocabulary::{HALT, VAULT};
 /// `Claim(SelfAddr)` gate standing beside it, which is the shape an
 /// account's own spending gates take.
 ///
-/// The one door every actor question goes through. What separates
-/// issuance, destruction and reach is where the entry is found — a
-/// declaration derives one, a presented record carries the other two —
-/// and from there they are one question asked three times: does the
-/// entry decode, does the frame's own claim already satisfy it, and what
-/// is left for the caller to answer.
-///
-/// Asking it in one place is what keeps the answer one answer. A
-/// composer predicts this to know what to present, so a site that
-/// subtracted where another did not would emit a graph admission
-/// refuses — and there is no way to notice that from either site alone.
-///
 /// # Errors
 ///
 /// [`AdmissionError::Unadmitted`] where no entry admits the behaviour,

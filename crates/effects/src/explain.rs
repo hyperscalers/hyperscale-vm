@@ -1,17 +1,17 @@
 //! A package's declaration, rendered for someone to read.
 //!
 //! Everything a method declares is already in its signature, and none of
-//! it is legible: a slot is a number, a role is a number, a claim is a
-//! tree of boxed variants, and the one form that prints all of it is
-//! `Debug`. So the half of the language an author writes is visible and
-//! the half the macro derives is not.
+//! it is legible: a slot is a number, a claim is a tree of boxed
+//! variants, and the one form that prints all of it is `Debug`. So the
+//! half of the language an author writes is visible and the half the
+//! macro derives is not.
 //!
 //! This renders the derived half in the vocabulary the authored half is
 //! written in. The names come from the metadata's own tables — the state
 //! table turns a slot into `vault` or `entries`, the configuration table
-//! turns `config 0` into `config.x`, the role table turns `16` into
-//! `admin` — so nothing here is a second statement of what a package
-//! declares, and a package that renames a field renames it here.
+//! turns `config 0` into `config.x` — so nothing here is a second
+//! statement of what a package declares, and a package that renames a
+//! field renames it here.
 //!
 //! # What the rendering is held to
 //!
@@ -19,9 +19,9 @@
 //! every struct variant is destructured field by field with no `..`.
 //! That is what makes the rendering lossless by construction: a clause,
 //! an expression or a target that grows a field does not quietly stop
-//! being rendered — it fails to compile. The two open matches are over
-//! slot and role *numbers*, which are integers rather than a closed set,
-//! and both fall through to the number itself.
+//! being rendered — it fails to compile. The one open match is over
+//! slot *numbers*, which are integers rather than a closed set, and it
+//! falls through to the number itself.
 //!
 //! Clauses are numbered by the preorder a clause index names, which is
 //! the walk [`check_declarations`] judges them in and the numbering a
@@ -1300,8 +1300,6 @@ impl Names<'_> {
             )
     }
 
-    /// A role, by the reserved name or the package's own.
-    /// A slot, by the protocol's name for it or the package's own.
     /// A slot the declaration wrote down, by the name it goes under —
     /// or, where an argument names it, that argument, since a reach is
     /// told which slot it is reaching and the reader is told the same

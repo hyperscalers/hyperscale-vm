@@ -625,10 +625,9 @@ impl<'a> TypedBuilder<'a> {
     ///
     /// The entries come from the resources a call names rather than from
     /// its declaration, so nothing about the method being called says a
-    /// proof is wanted — which is why every composition wrote one by
-    /// hand until now. Predicted from exactly what admission injects
+    /// proof is wanted. Predicted from exactly what admission injects
     /// from, and decided there: a prediction that comes up short refuses
-    /// at admission, as it did before there was one.
+    /// at admission.
     ///
     /// What it can mint is what the protocol's own account offers: the
     /// signer's own identity, and a badge the signer holds. A claim on

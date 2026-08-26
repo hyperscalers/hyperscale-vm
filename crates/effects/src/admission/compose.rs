@@ -58,15 +58,6 @@ pub fn check_value_depth(graph: &ManifestGraph) -> Result<(), AdmissionError> {
     Ok(())
 }
 
-/// Check an edge's constraints against its static resource type and fold
-/// them for execution.
-///
-/// Repeated bounds fold to their conjunction — the greatest lower bound
-/// and the least upper bound — because every constraint in the list
-/// binds, not the last of each kind. Admission can only judge the bounds
-/// against each other: the amount does not exist until the producer runs,
-/// so the conjunction rides the lowered edge and the manifest walk
-/// enforces it against what the producer actually returned.
 /// Bind one produced edge to an edge parameter: the output lookup, the
 /// consumption bookkeeping, the kind check, and the constraint bounds —
 /// shared by a direct edge and one filling a socket, so neither path can
@@ -83,6 +74,8 @@ pub(super) fn bind_edge(
 ) -> Result<(Value, NodeInput), AdmissionError> {
     let flat = usize::try_from(source).map_err(|_| AdmissionError::TooManyNodes)?;
     let slot = usize::try_from(output).map_err(|_| AdmissionError::TooManyNodes)?;
+    // `flat` indexes unchecked: it comes off the interleave's own
+    // numbering, which never names a node it has not emitted.
     let (resource, content) =
         outputs[flat]
             .get(slot)
@@ -128,6 +121,15 @@ pub(super) fn bind_edge(
     ))
 }
 
+/// Check an edge's constraints against its static resource type and fold
+/// them for execution.
+///
+/// Repeated bounds fold to their conjunction — the greatest lower bound
+/// and the least upper bound — because every constraint in the list
+/// binds, not the last of each kind. Admission can only judge the bounds
+/// against each other: the amount does not exist until the producer runs,
+/// so the conjunction rides the lowered edge and the manifest walk
+/// enforces it against what the producer actually returned.
 fn check_constraints(
     constraints: &[Constraint],
     resource: ResourceAddr,

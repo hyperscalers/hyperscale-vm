@@ -3,12 +3,11 @@ cargo-features = ["trim-paths"]
 
 # The guests are one workspace of their own, deliberately outside the
 # host's: they compile to wasm32-unknown-unknown and are built by the
-# harness rather than by a workspace build. One root rather than
-# seventeen, because everything that made each of them a root — the
-# profile, the target rustflags, the lockfile — was identical in all
-# seventeen and is a property of "a guest" rather than of any one of
-# them. Seventeen copies is seventeen chances to be missing one, which is
-# how a guest shipped with no build configuration at all.
+# harness rather than by a workspace build. One root rather than one per
+# guest, because everything that would make each of them a root — the
+# profile, the target rustflags, the lockfile — is a property of "a
+# guest" rather than of any one of them, and a copy per guest is a
+# chance per guest to be missing one.
 [workspace]
 resolver = "3"
 members = [

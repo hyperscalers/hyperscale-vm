@@ -191,11 +191,7 @@ pub(crate) fn output_resources(
 ///
 /// **What an entry demands is [`GrantedBehaviour::demanded`]'s answer,
 /// not this function's** — the same door admission injects through, so a
-/// composer cannot come to a different view of which entries fire. The
-/// two used to decide it separately, and the drift was silent both ways:
-/// present nothing for an entry that fires and the call is refused for
-/// missing evidence, present something for one that does not and it is
-/// refused for offering it.
+/// composer cannot come to a different view of which entries fire.
 ///
 /// **Founding is not minting** is the one subtraction that stays here,
 /// because it is a property of the declaration rather than of the entry:

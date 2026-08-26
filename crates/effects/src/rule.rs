@@ -8,9 +8,7 @@
 //!
 //! One tree serves both sides of the vocabulary, differing in its leaf
 //! alone: [`StoredRule`] holds the claims themselves and [`RuleExpr`]
-//! the expressions a signature evaluates into them. A compile-time gate
-//! once had `contains` and nothing else while a stored one had the whole
-//! algebra, and nothing justified the split.
+//! the expressions a signature evaluates into them.
 //!
 //! The caps bound a rule before anything evaluates it. Depth, branch
 //! width, and a count past the branches it is over are refused at decode
@@ -179,8 +177,7 @@ pub enum SealedLeaf {
 
 impl Leaf for SealedLeaf {
     /// A holding is a standing fact in the store about the moving party;
-    /// a claim stays a claim. Neither can be answered from a session, so
-    /// an entry can never be judged in the leg for reaching a rule —
+    /// a claim stays a claim. No sealed leaf answers from the session —
     /// settled at the seal, before any holder has been named and before
     /// any transaction exists, because each sealed leaf maps one-to-one
     /// onto the evaluated leaf answering from the same place.
@@ -247,12 +244,8 @@ pub enum RuleLeaf {
     /// A claim the declaration names, evaluated over the method's own
     /// inputs into the claim a caller must present.
     Claim(Expr),
-    /// The rule stored at this cell, judged where the cell lives.
-    ///
-    /// The one leaf that reaches mutable authority, and the type is what
-    /// bounds the reach: a stored rule is [`StoredRule`], which holds no
-    /// `Stored` leaf, so a declared rule reads a stored one exactly one
-    /// level deep and no chain of cell reads is expressible.
+    /// The rule stored at this cell, judged where the cell lives — the
+    /// one leaf that reaches mutable authority.
     Stored {
         /// The cell expression the rule lives at. Declared as an access
         /// by the same signature, which is what provisions it to every

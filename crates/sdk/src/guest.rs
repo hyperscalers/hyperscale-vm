@@ -366,6 +366,10 @@ pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
 
 /// The value of this interval's entry at `order`, or nothing if the
 /// interval holds none.
+///
+/// An absent entry and an entry holding empty bytes are deliberately
+/// one answer: an entry's presence is carried by its value, so a body
+/// that must tell them apart stores a non-empty encoding.
 #[must_use]
 #[inline(always)]
 pub fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {

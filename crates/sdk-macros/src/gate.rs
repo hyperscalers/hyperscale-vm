@@ -199,8 +199,8 @@ pub fn guarded_identity(
     }
 }
 
-/// The `#[requires(<rule>)]` grammar: the stored-rule form `auth[role]`,
-/// or a rule over claims the declaration names.
+/// The `#[requires(<rule>)]` grammar: the stored-rule form
+/// `governs(<field>)`, or a rule over claims the declaration names.
 pub fn parse_requires(
     attr: &syn::Attribute,
     declared: &Declared<'_>,

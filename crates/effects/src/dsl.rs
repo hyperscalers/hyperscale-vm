@@ -1611,17 +1611,13 @@ fn eval_clauses(
                     expected: "claim",
                     found: value.kind(),
                 })?;
-                // The one identity a declaration may mint is the
-                // target's own, spelled as itself: any other expression
-                // that evaluates to an identity would be forgeable —
-                // satisfying one's own stored rule is no feat — so the
-                // refusal is structural rather than the publish check's
-                // alone.
                 // A claim about something that is not a badge is a claim
                 // about somebody acting as themselves, and the only such
-                // claim a declaration may mint is its own target's: any
-                // other expression evaluating to a callable address would
-                // be forgeable.
+                // claim a declaration may mint is its own target's,
+                // spelled as itself: any other expression evaluating to
+                // a callable address would be forgeable — satisfying
+                // one's own stored rule is no feat — so the refusal is
+                // structural rather than the publish check's alone.
                 if minted.badge().is_none() && !matches!(claim, Expr::SelfAddr) {
                     return Err(EvalError::TypeMismatch {
                         expected: "badge",

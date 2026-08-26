@@ -76,8 +76,8 @@ impl<T, C: Arity> Unpacked<T, C> {
     ///
     /// # Errors
     ///
-    /// The bundle's arity refusal, when the declaration answers a handle
-    /// that would then dangle.
+    /// The bundle's arity refusal, when the bundle holds any handles at
+    /// all — each would then dangle.
     pub fn none(self) -> Result<(), C::Error> {
         let [] = self.into_array()?;
         Ok(())

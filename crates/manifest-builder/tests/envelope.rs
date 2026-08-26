@@ -329,10 +329,10 @@ fn a_handle_from_another_envelope_is_refused() {
     let _ = mine.bind(wants, elsewhere);
 }
 
-/// An intent filling its own socket used to build fine and die at
-/// admission as `CyclicSockets`, in flattened-tree coordinates. The
-/// wiring refuses it against the intent the author wrote — with the
-/// handles handed back, like every other wiring refusal.
+/// An intent filling its own socket is a cycle admission names in
+/// flattened-tree coordinates. The wiring refuses it against the intent
+/// the author wrote — with the handles handed back, like every other
+/// wiring refusal.
 #[test]
 fn an_intent_filling_its_own_socket_is_refused_at_the_wiring() {
     let chain = world();
@@ -355,10 +355,10 @@ fn an_intent_filling_its_own_socket_is_refused_at_the_wiring() {
     );
 }
 
-/// A proof's node index means nothing in another intent's graph, and
-/// offering one across intents used to compile — surfacing at admission
-/// as a claim mismatch in flattened-tree coordinates. The handle
-/// remembers its builder, so the mistake stops at the compose site.
+/// A proof's node index means nothing in another intent's graph. The
+/// handle remembers its builder, so the mistake stops at the compose
+/// site rather than reaching admission as a claim mismatch in
+/// flattened-tree coordinates.
 #[test]
 #[should_panic(expected = "the builder that minted it")]
 fn a_proof_minted_by_another_intent_cannot_be_offered() {

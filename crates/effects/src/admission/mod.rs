@@ -373,6 +373,9 @@ impl Admission<'_> {
         intent_index: usize,
         local_index: usize,
     ) -> Result<(), AdmissionError> {
+        // Both index unchecked: the pair comes off the interleave's own
+        // emission order, which never names an intent or a node it was
+        // not built over.
         let intent = &self.intents[intent_index];
         let node = &intent.graph.nodes[local_index];
         let node_index =
