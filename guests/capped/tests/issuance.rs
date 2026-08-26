@@ -7,8 +7,8 @@
 
 use capped_guest::capped;
 use hyperscale_vm_testing::{
-    Address, AddressClass, Chain, PrincipalAddr, ResourceAddr, TestHasher, account, package,
-    principal,
+    Address, AddressClass, AdmissionError, Chain, GrantedBehaviour, PrincipalAddr, Refused,
+    ResourceAddr, TestHasher, account, package, principal,
 };
 
 const FOUNDER: PrincipalAddr = principal(0x91);
@@ -132,8 +132,14 @@ fn a_resource_granting_no_burn_is_indestructible(chain: Chain) {
         account::burn(b, FOUNDER, funds)
     });
     assert!(
-        refused.is_err(),
-        "nothing presented admits destroying a resource that grants no burn",
+        matches!(
+            refused,
+            Err(Refused::Admission(AdmissionError::Unadmitted {
+                behaviour: GrantedBehaviour::Burn,
+                ..
+            }))
+        ),
+        "no entry admits destroying a resource that grants no burn: {refused:?}",
     );
     assert_eq!(chain.balance(FOUNDER, fixed), 1_000_000);
 }
@@ -175,8 +181,11 @@ fn the_issuers_own_founder_cannot_spend_the_mint_it_delegated(chain: Chain) {
         account::deposit(b, FOUNDER, minted)
     });
     assert!(
-        refused.is_err(),
-        "the founder answers for nothing the seat's entry names",
+        matches!(
+            refused,
+            Err(Refused::Admission(AdmissionError::MissingEvidence { .. }))
+        ),
+        "the founder answers for nothing the seat's entry names: {refused:?}",
     );
     assert_eq!(chain.balance(FOUNDER, seat), 0);
 }
@@ -198,8 +207,11 @@ fn a_holder_destroys_nothing_whose_burn_names_its_issuer(chain: Chain) {
         account::burn(b, FOUNDER, funds)
     });
     assert!(
-        refused.is_err(),
-        "a burn the issuer keeps is not the holder's to make",
+        matches!(
+            refused,
+            Err(Refused::Admission(AdmissionError::MissingEvidence { .. }))
+        ),
+        "a burn the issuer keeps is not the holder's to make: {refused:?}",
     );
     assert_eq!(chain.balance(FOUNDER, retired), 500);
 }

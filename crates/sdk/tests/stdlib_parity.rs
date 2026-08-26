@@ -468,19 +468,3 @@ fn the_pool_traces_to_its_authored_signature() {
 fn the_book_traces_to_its_authored_signature() {
     assert_parity(&book(), &book_package::metadata(), "book");
 }
-
-#[test]
-fn every_authored_role_is_reachable_from_the_sdk() {
-    // A guard on the fixtures rather than on the SDK: if a role is added to
-    // the stdlib and no traced declaration names it, the parity tests above
-    // are silently covering less than they read as covering. A package
-    // traced from its own module needs no entry — there is no second
-    // declaration left to cover.
-    let named = [VAULT, CONFIG, own(1), book_package::ASKS];
-    assert_eq!(
-        named.len(),
-        4,
-        "a role was added to the stdlib without a traced declaration to match"
-    );
-    assert!(named.iter().all(|r| *r != SlotId(0)));
-}

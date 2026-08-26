@@ -45,7 +45,7 @@ fn world() -> Records {
 /// between them.
 fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, BOB);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, composer);
 
     let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
     let composer_proof = account::authorize(&mut root, composer).expect("sign-in types");
@@ -64,12 +64,12 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
         .seal(root)
         .expect("the root discharges its declaration")
         .one()
-        .expect("the root declares one parameter");
+        .expect("the root declares one socket");
     let wants_x = env
         .seal(sub)
         .expect("the subintent discharges its declaration")
         .one()
-        .expect("the subintent declares one parameter");
+        .expect("the subintent declares one socket");
     env.bind(wants_y, paid_y).expect("the socket takes an edge");
     env.bind(wants_x, paid_x).expect("the socket takes an edge");
     env.build().expect("every socket is bound")

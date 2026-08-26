@@ -12,9 +12,9 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, GrantedBehaviour, Hasher, Holding, PackageHash, PrefixShardResolver, Records,
-    ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, Totality,
-    admit_tree, holdings_collection, never, route_tree,
+    AdmissionError, EnvelopeTree, GrantedBehaviour, Hasher, Holding, PackageHash,
+    PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
+    StoredRule, TestHasher, Totality, admit_tree, holdings_collection, never, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
@@ -196,9 +196,11 @@ fn an_unpresented_record_refuses_at_admission() -> Result<()> {
     env.seal(root).context("the root grants")?.none()?;
     let tree = env.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
+    let refusal = admit_tree(&tree, HOLDER, identity, &chain, &TestHasher)
+        .expect_err("an unpresented record leaves the entries unresolvable");
     assert!(
-        admit_tree(&tree, HOLDER, identity, &chain, &TestHasher).is_err(),
-        "an unpresented record leaves the entries unresolvable",
+        matches!(refusal, AdmissionError::RecordWithheld { .. }),
+        "withheld is the verdict, not whatever else refused first: {refusal:?}",
     );
     Ok(())
 }
@@ -230,9 +232,11 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     env.seal(root).context("the root grants")?.none()?;
     let tree = env.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
+    let refusal = admit_tree(&tree, HOLDER, identity, &chain, &TestHasher)
+        .expect_err("a forged record registers a different resource");
     assert!(
-        admit_tree(&tree, HOLDER, identity, &chain, &TestHasher).is_err(),
-        "a forged record registers a different resource",
+        matches!(refusal, AdmissionError::RecordWithheld { .. }),
+        "the holder's resource stays withheld, whatever else was presented: {refusal:?}",
     );
     Ok(())
 }

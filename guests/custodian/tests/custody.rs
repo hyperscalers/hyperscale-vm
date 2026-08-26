@@ -12,8 +12,8 @@ use custodian_guest::custodian;
 // `package!` names.
 use grammar_guest::grammar as shapes;
 use hyperscale_vm_testing::{
-    Chain, Component, PrincipalAddr, ResourceAddr, TestHasher, account, package, principal,
-    resource,
+    AbortReason, Chain, Component, PrincipalAddr, ResourceAddr, TestHasher, account, package,
+    principal, resource,
 };
 
 /// Who issues the seats this custodian keeps.
@@ -125,8 +125,14 @@ fn a_custodian_files_nothing_it_was_not_configured_for(chain: Chain) {
         let entry = account::withdraw_nf(b, holder, seat, &[7])?;
         elsewhere.file(b, entry)
     });
-    assert!(
-        filed.is_err() || !filed.expect("a receipt").completed(),
+    // The graph admits — a declaration keyed by the edge's own resource
+    // is sound — and the kernel is the door that refuses: the entry
+    // arrives at a cell denominated in the configured seat, holding the
+    // other issuer's.
+    let outcome = filed.expect("the graph admits; the refusal is the kernel's");
+    assert_eq!(
+        outcome.aborted(),
+        Some(AbortReason::WrongResource),
         "a seat this custodian does not custody has nowhere here to go"
     );
     assert!(chain.holds(HOLDER, seat, 7), "and stays where it was");

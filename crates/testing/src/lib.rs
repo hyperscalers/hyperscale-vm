@@ -55,7 +55,7 @@ use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 /// test derives the addresses its instance issues, and the hasher it
 /// derives them under is one this crate already fixes.
 pub use hyperscale_vm_effects::{
-    AdmissionError, EvalError, ResourceKind, TestHasher, package_slot,
+    AdmissionError, EvalError, GrantedBehaviour, ResourceKind, TestHasher, package_slot,
 };
 use hyperscale_vm_effects::{
     ChainRecords, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, PresentedGrants,
@@ -87,7 +87,7 @@ pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot};
 /// `#[test]` resolves.
 pub use hyperscale_vm_sdk_macros::lanes as test;
 pub use hyperscale_vm_stdlib::account;
-pub use hyperscale_vm_types::{Outcome as Verdict, Presence, UnmetCondition};
+pub use hyperscale_vm_types::{AbortReason, Outcome as Verdict, Presence, UnmetCondition};
 pub use native::{Dispatch, Native};
 pub use outcome::Outcome;
 pub use package::{Code, Package, code_at};
