@@ -65,7 +65,7 @@
 //! **Which functions those are is read from the component's own wiring,
 //! never from their names.** A `cabi_` prefix is something an author
 //! chooses, so excluding by prefix would let a package export its
-//! panicking helper under that name and have the scan look away — a socket
+//! panicking helper under that name and have the scan look away — a hole
 //! anyone reading this file could walk through. What a `canon lift`
 //! designates is a role rather than a name: the runtime calls that
 //! function to allocate for every value crossing the boundary. A package
@@ -290,7 +290,7 @@ pub fn check_reachable(module: &[u8], entry: u32) -> Result<(), TotalityError> {
 /// whatever names it likes, so a package that exports a harmless
 /// function under the name of the method it lifts elsewhere would have
 /// the scan read the decoy and grant the mark to the body beside it —
-/// the same socket the ABI support set refuses to open, and it has to be
+/// the same hole the ABI support set refuses to open, and it has to be
 /// shut on the same terms.
 ///
 /// # Errors
@@ -1225,7 +1225,7 @@ mod tests {
     /// A core module names its exports whatever it likes, and only the
     /// component's wiring says which of them an exported method runs. A
     /// scan that matched on the name would read the decoy here and grant
-    /// the mark to the body beside it — which is the socket the ABI support
+    /// the mark to the body beside it — which is the hole the ABI support
     /// set refuses to open, shut on the same terms.
     #[test]
     fn a_core_export_that_merely_shares_the_methods_name_is_not_its_body() {

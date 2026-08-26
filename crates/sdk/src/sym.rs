@@ -32,11 +32,11 @@ pub trait Kind {
     /// The kind's name, for trace-time diagnostics.
     const NAME: &'static str;
 
-    /// The socket kind this maps to, where one exists.
+    /// The declared parameter kind this maps to, where one exists.
     ///
     /// [`Key`] and [`Seq`] are derived rather than bound — no manifest
     /// argument can carry them — and [`Opaque`] declines to claim. The
-    /// tracer checks this against the method's socket list, so
+    /// tracer checks this against the method's parameter list, so
     /// a signature whose `params` and whose effect expressions disagree is
     /// a build failure rather than a call that always fails to route.
     const PARAM: Option<ParamType> = None;

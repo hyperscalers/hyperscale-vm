@@ -146,7 +146,7 @@ impl Bucket {
 /// The enclosing intent's declared socket, by position — the
 /// typed socket an envelope binds to another intent's exported edge.
 ///
-/// Not tied to a builder: the parameter's declaration lives on the
+/// Not tied to a builder: the socket's declaration lives on the
 /// [`IntentDecl`], and whether the position exists and is consumed exactly
 /// once is admission's judgement over the whole envelope. Like a
 /// [`Bucket`] it is affine — one token binds one argument.
@@ -154,7 +154,7 @@ impl Bucket {
 /// [`IntentDecl`]: hyperscale_vm_effects::IntentDecl
 #[derive(Debug)]
 pub struct SocketRef(
-    /// The parameter position within the enclosing intent's declaration.
+    /// The socket position within the enclosing intent's declaration.
     pub u32,
 );
 

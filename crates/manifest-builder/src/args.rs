@@ -52,7 +52,7 @@ impl Arg for Address {
 }
 
 /// An address argument binds whatever class it carries: a method's
-/// socket kind is `address`, and which class belongs at a
+/// declared parameter kind is `address`, and which class belongs at a
 /// given position is the package's business, not the argument list's. So a
 /// typed address binds like an untyped one rather than needing to forget
 /// its class first — a class newtype and a position over several of them
@@ -167,7 +167,7 @@ impl BucketArg for SocketRef {}
 /// An argument that fills a declared address parameter.
 ///
 /// Every class, and every position over several of them, because a
-/// socket kind is `address` and which class belongs at a
+/// declared parameter kind is `address` and which class belongs at a
 /// position is the package's business. A wrapper over such a position
 /// therefore widens to this rather than to one class: narrowing to
 /// resources would make an address parameter that means a holder

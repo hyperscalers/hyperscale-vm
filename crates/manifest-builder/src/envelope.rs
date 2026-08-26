@@ -203,7 +203,7 @@ impl<'a> IntentBuilder<'a> {
         constraints: impl IntoIterator<Item = Constraint>,
     ) -> SocketRef {
         let position =
-            u32::try_from(self.sockets.len()).expect("parameters are bounded by MAX_SOCKETS");
+            u32::try_from(self.sockets.len()).expect("sockets are bounded by MAX_SOCKETS");
         self.sockets.push(Socket::Value {
             resource: resource.into(),
             constraints: constraints.into_iter().collect(),
@@ -224,11 +224,11 @@ impl<'a> IntentBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// Past a `u32` of parameters, far beyond the [`MAX_SOCKETS`]
+    /// Past a `u32` of sockets, far beyond the [`MAX_SOCKETS`]
     /// the declaration is held to when it is sealed.
     pub fn declare_proof(&mut self, claim: Presented) -> Proof {
         let position =
-            u32::try_from(self.sockets.len()).expect("parameters are bounded by MAX_SOCKETS");
+            u32::try_from(self.sockets.len()).expect("sockets are bounded by MAX_SOCKETS");
         // The claim's own subject, where a call can be made against it:
         // an identity is callable and a badge is not, which is the same
         // reading the address class gives everywhere.
@@ -246,7 +246,7 @@ impl<'a> IntentBuilder<'a> {
         self.finish(0)
     }
 
-    /// Build the graph and check that every parameter this intent declared
+    /// Build the graph and check that every socket this intent declared
     /// is consumed by exactly one of its own node arguments.
     fn finish(self, intent: u32) -> Result<IntentDecl, EnvelopeError> {
         if self.sockets.len() > MAX_SOCKETS {

@@ -4,7 +4,7 @@
 //! The gate is total over slots on purpose. A package holds value at
 //! whatever slot of its own it likes, so a reach that could only name
 //! the vocabulary's vault would stop at the first deposit into any
-//! application — which is the socket the whole design exists to close.
+//! application — which is the hole the whole design exists to close.
 //! What keeps a caller-chosen slot safe is that a value cell is keyed
 //! by what it holds, so naming a slot cannot name a cell holding
 //! something else, and that a slot naming no value is refused where the

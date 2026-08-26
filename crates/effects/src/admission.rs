@@ -49,8 +49,8 @@ use crate::vocabulary::{CONFIG, HALT, VAULT};
 
 /// The bound on sockets one intent may declare. A wire bound.
 ///
-/// An intent binds one edge per parameter, so this bounds the binding
-/// vector too — which is what makes every parameter position expressible
+/// An intent binds one edge per socket, so this bounds the binding
+/// vector too — which is what makes every socket position expressible
 /// as a `u32` index by construction rather than by hope.
 pub const MAX_SOCKETS: usize = 32;
 
@@ -171,7 +171,7 @@ pub enum AdmissionError {
         index: u32,
     },
     /// An intent whose bindings do not match its sockets.
-    #[error("intent {intent} declares {expected} parameters, binds {found}")]
+    #[error("intent {intent} declares {expected} sockets, binds {found}")]
     BindingArity {
         /// The intent: `0` is the root, `i + 1` is subintent `i`.
         intent: u32,

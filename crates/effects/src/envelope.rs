@@ -209,7 +209,7 @@ pub struct Subintent {
 pub struct EnvelopeTree {
     /// The composer's own intent.
     pub root: IntentDecl,
-    /// The composition's binding for each root parameter.
+    /// The composition's binding for each root socket.
     #[hbor(max = MAX_SOCKETS)]
     pub root_bindings: Vec<Binding>,
     /// The bound subintents, in envelope order.

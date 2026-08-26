@@ -67,7 +67,7 @@ pub enum TypedError {
         /// The method requested.
         method: String,
     },
-    /// An argument count differing from the sockets.
+    /// An argument count differing from the declared parameters.
     #[error("`{method}` takes {expected} arguments, {found} passed")]
     ArityMismatch {
         /// The method called.
@@ -433,7 +433,7 @@ impl<'a> TypedBuilder<'a> {
     /// signature the target's package declares.
     ///
     /// The arguments are bound before anything is appended and judged
-    /// against the sockets, so a refusal here leaves the
+    /// against the declared parameters, so a refusal here leaves the
     /// builder exactly as it was — the handles it was passed are spent,
     /// as consuming them by value already said, but no node claims them.
     ///
@@ -844,7 +844,7 @@ impl<'a> TypedBuilder<'a> {
 /// nothing at construction determines it.
 ///
 /// This is admission's own per-argument check, run against the same
-/// sockets, one graph earlier.
+/// declared parameters, one graph earlier.
 fn type_args(
     method: &str,
     args: &[GraphArg],

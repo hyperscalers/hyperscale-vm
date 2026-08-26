@@ -53,7 +53,7 @@ pub struct Requirement(RuleExpr);
 /// Handed to the declaration closure; every symbolic input comes from it,
 /// and every emitted clause lands in it.
 pub struct Trace {
-    /// The method's socket kinds, checked against every
+    /// The method's declared parameter kinds, checked against every
     /// [`Trace::arg`].
     params: Vec<ParamType>,
     /// Clause scopes, innermost last; `scopes[0]` is the method body.
@@ -228,14 +228,14 @@ impl Trace {
     ///
     /// # Panics
     ///
-    /// If `index` is past the sockets, or if `K` names a
+    /// If `index` is past the declared parameters, or if `K` names a
     /// different kind than the parameter list does.
     #[must_use]
     pub fn arg<K: Kind>(&self, index: u32) -> Sym<K> {
         let declared = *self
             .params
             .get(index as usize)
-            .unwrap_or_else(|| panic!("argument {index} is past the socket list"));
+            .unwrap_or_else(|| panic!("argument {index} is past the declared parameter list"));
         if let Some(claimed) = K::PARAM {
             // The symbolic vocabulary has one address kind, so a claim of
             // `Addr` is compatible with every declared narrowing of it.
@@ -618,7 +618,7 @@ impl Trace {
         self.handles.push(AbiParam::Handle { clause, site: 0 });
     }
 
-    /// Bind the `index`-th socket's edge, which must be one.
+    /// Bind the `index`-th parameter's edge, which must be one.
     ///
     /// Either edge kind binds the same way — what separates them is the
     /// cell they cross as, and that is the callee's declaration rather
@@ -626,13 +626,13 @@ impl Trace {
     ///
     /// # Panics
     ///
-    /// If `index` is past the sockets or names a kind that is
+    /// If `index` is past the declared parameters or names a kind that is
     /// not an edge — the one value a signature cannot derive.
     pub fn bind_bucket(&mut self, index: u32) {
         let declared = *self
             .params
             .get(index as usize)
-            .unwrap_or_else(|| panic!("argument {index} is past the socket list"));
+            .unwrap_or_else(|| panic!("argument {index} is past the declared parameter list"));
         assert!(
             declared.is_edge(),
             "argument {index} is declared {} and carries no value",
@@ -901,7 +901,7 @@ impl Trace {
     ///
     /// # Panics
     ///
-    /// If `index` is past the sockets, names a kind that
+    /// If `index` is past the declared parameters, names a kind that
     /// carries no value, or already carries a different resource — a
     /// parameter credited to two cells that cannot both be right is a
     /// declaration with no satisfying call.
@@ -909,7 +909,7 @@ impl Trace {
         let declared = *self
             .params
             .get(index as usize)
-            .unwrap_or_else(|| panic!("argument {index} is past the socket list"));
+            .unwrap_or_else(|| panic!("argument {index} is past the declared parameter list"));
         assert!(
             declared.is_edge(),
             "argument {index} is declared {} and carries no value to denominate",
