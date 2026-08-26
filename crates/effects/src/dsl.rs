@@ -1089,6 +1089,42 @@ pub struct Reach {
     pub resource: ResourceAddr,
 }
 
+/// An evaluated condition, and the frame that states it.
+///
+/// The rule alone says what must hold and cannot say who asked, and a
+/// key is a hash that inverts to nothing — so a reader handed a refused
+/// condition can see that some leaf was wrong and never whose question
+/// it was. That is the provenance an injected requirement already
+/// carries at the frame, and this is what keeps it once several frames'
+/// conditions are one list.
+///
+/// Without it the only way back is a search for a condition naming the
+/// same leaf, which lands on whichever node happens to come first — so
+/// a refusal can name a call that did not fail, and a rule a package
+/// wrote can be read as the protocol's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Condition {
+    /// What must hold.
+    pub rule: Rule<JudgedLeaf>,
+    /// The manifest node whose frame states it.
+    ///
+    /// A frame's own evaluation is one node's and does not know its
+    /// number, so it says nothing here; the lowering stamps it where
+    /// the frame joins the union declaration, which is the only place
+    /// several nodes' conditions meet and the only place the number
+    /// answers anything.
+    pub node: Option<u32>,
+}
+
+impl Condition {
+    /// The condition a frame's own evaluation reaches, before it is
+    /// placed.
+    #[must_use]
+    pub const fn declared(rule: Rule<JudgedLeaf>) -> Self {
+        Self { rule, node: None }
+    }
+}
+
 /// A signature evaluation's two views of the same declaration.
 ///
 /// They are not interchangeable, and which one a consumer wants is
@@ -1140,7 +1176,7 @@ pub struct Declaration {
     /// Contributing nothing to [`Declaration::set`] or
     /// [`Declaration::ordered`] — a condition is a judgment, not an
     /// access — and judged where each kind's state lives.
-    pub conditions: Vec<Rule<JudgedLeaf>>,
+    pub conditions: Vec<Condition>,
     /// The claims this declaration mints, evaluated, an instance mint
     /// widened to its resource. What admission hands the intent's later
     /// nodes as this node's evidence.
@@ -1184,6 +1220,16 @@ pub struct Declaration {
 }
 
 impl Declaration {
+    /// What the conditions require, for a reader judging them rather
+    /// than attributing them.
+    ///
+    /// The rules alone are what a judge needs; who asked is what a
+    /// refusal needs, and the two readers are different enough that
+    /// asking for one should not mean walking past the other.
+    pub fn required(&self) -> impl Iterator<Item = &Rule<JudgedLeaf>> {
+        self.conditions.iter().map(|condition| &condition.rule)
+    }
+
     /// Both views from a set alone, taking canonical order as the clause
     /// order.
     ///
@@ -1515,7 +1561,7 @@ fn eval_clauses(
             Clause::Requires { rule, .. } => {
                 budget.charge()?;
                 if let Some(judged) = eval_condition(rule, inputs, hasher, bindings, budget)? {
-                    out.conditions.push(judged);
+                    out.conditions.push(Condition::declared(judged));
                 }
             }
             Clause::Mints { claim, .. } => {
@@ -2731,7 +2777,7 @@ mod tests {
 
         let identity = Presented::of_subject(context.self_addr);
         assert_eq!(
-            declaration.conditions,
+            declaration.required().cloned().collect::<Vec<_>>(),
             vec![
                 Rule::Require(JudgedLeaf::Presence {
                     target: EffectTarget::Point(key),

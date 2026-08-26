@@ -219,11 +219,8 @@ fn a_component_answers_for_its_own_vault() {
 
     let cell = credential(custodian);
     assert!(
-        admitted
-            .admitted
-            .declaration()
-            .conditions
-            .contains(&Rule::Require(JudgedLeaf::Presence {
+        admitted.admitted.declaration().required().any(|rule| *rule
+            == Rule::Require(JudgedLeaf::Presence {
                 target: EffectTarget::Point(cell),
                 expect: Presence::Present,
             })),
@@ -282,11 +279,8 @@ fn a_halt_binds_the_component_holding_the_value() {
         &[Value::Address(freezable().address()).canonical_bytes()],
     ));
     assert!(
-        admitted
-            .admitted
-            .declaration()
-            .conditions
-            .contains(&Rule::Require(JudgedLeaf::Presence {
+        admitted.admitted.declaration().required().any(|rule| *rule
+            == Rule::Require(JudgedLeaf::Presence {
                 target: halted,
                 expect: Presence::Absent,
             })),
@@ -336,8 +330,7 @@ fn a_halt_covers_every_slot_the_holder_keeps_the_resource_in() {
 
     // And one leaf answers for all of them.
     let asked: BTreeSet<EffectTarget> = declaration
-        .conditions
-        .iter()
+        .required()
         .flat_map(Rule::leaves)
         .filter_map(|leaf| match leaf {
             JudgedLeaf::Presence { target, .. } => Some(*target),
@@ -460,7 +453,8 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
         };
         let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
             .expect("the receiving method admits");
-        (target, admitted.admitted.declaration().conditions.clone())
+        let asked = admitted.admitted.declaration().required().cloned();
+        (target, asked.collect::<Vec<_>>())
     };
 
     // Both declarations carry the instantiation fence, which is nobody's

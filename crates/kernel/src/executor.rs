@@ -622,8 +622,16 @@ impl From<MaterializeError> for Outcome {
             MaterializeError::MixedContents(_) => Self::UserError {
                 reason: AbortReason::MixedContents,
             },
-            MaterializeError::ConditionUnmet { target, required } => Self::ConditionUnmet {
-                condition: UnmetCondition::Holds { target, required },
+            MaterializeError::ConditionUnmet {
+                target,
+                required,
+                node,
+            } => Self::ConditionUnmet {
+                condition: UnmetCondition::Holds {
+                    target,
+                    required,
+                    node,
+                },
             },
         }
     }

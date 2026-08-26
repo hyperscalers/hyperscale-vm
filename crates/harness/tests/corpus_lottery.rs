@@ -214,6 +214,7 @@ fn a_settled_round_refuses_a_second_settlement() {
                     &[],
                 )),
                 required: Presence::Absent,
+                node: Some(0),
             },
         })],
         "a round that has a winner cannot be settled again"

@@ -468,11 +468,12 @@ fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
         &register_store(false),
         &[(&graph, TxHash(Hash32([0x41; 32])))],
     );
-    // Named target and all: the venue's own interval for the register
-    // badge, asked to hold anything at all. Nothing about the refusal
-    // mentions the pool's code, because the pool's code says nothing
-    // about it — and the interval spans the id space, which is what a
-    // non-fungible register costs every movement of the class.
+    // Named node and target and all: the swap call, and the venue's own
+    // interval for the register badge, asked to hold anything at all.
+    // Nothing about the refusal mentions the pool's code, because the
+    // pool's code says nothing about it — and the interval spans the id
+    // space, which is what a non-fungible register costs every movement
+    // of the class.
     assert_eq!(
         results[0],
         TxResult::Refused(Outcome::ConditionUnmet {
@@ -485,6 +486,7 @@ fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
                     cap: 1,
                 },
                 required: Presence::Present,
+                node: Some(2),
             },
         }),
         "a venue off the register moves none of the class",

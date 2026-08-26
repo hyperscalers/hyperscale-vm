@@ -219,9 +219,8 @@ fn an_authored_rule_governs_a_holder_the_package_never_named() {
 
     let held = credential(ALICE, registered);
     assert!(
-        declaration
-            .conditions
-            .contains(&Rule::Require(JudgedLeaf::Presence {
+        declaration.required().any(|rule| *rule
+            == Rule::Require(JudgedLeaf::Presence {
                 target: held,
                 expect: Presence::Present,
             })),
@@ -241,8 +240,8 @@ fn an_authored_rule_governs_a_holder_the_package_never_named() {
     // an interval is priced by the span it declares, and this one spans
     // the id space. Every transfer of the share class pays it.
     assert!(
-        declaration.conditions.iter().any(|condition| matches!(
-            condition,
+        declaration.required().any(|rule| matches!(
+            rule,
             Rule::Require(JudgedLeaf::Presence {
                 target: EffectTarget::Range { lo: 0, hi, cap: 1, .. },
                 ..
@@ -271,7 +270,12 @@ fn each_side_of_a_transfer_answers_for_its_own_register_entry() {
     env.resources = vec![record(issuer, b"share")];
     let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
         .expect("the transfer admits");
-    let conditions = &admitted.admitted.declaration().conditions;
+    let conditions: Vec<_> = admitted
+        .admitted
+        .declaration()
+        .required()
+        .cloned()
+        .collect();
 
     for holder in [Address::from(ALICE), Address::from(BOB)] {
         assert!(
@@ -296,9 +300,8 @@ fn the_unrestricted_class_is_asked_nothing() {
         !admitted
             .admitted
             .declaration()
-            .conditions
-            .iter()
-            .any(|condition| matches!(condition, Rule::Require(JudgedLeaf::Presence { .. }))),
+            .required()
+            .any(|rule| matches!(rule, Rule::Require(JudgedLeaf::Presence { .. }))),
         "a resource binding no movement provisions nothing and asks nothing",
     );
 }

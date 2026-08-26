@@ -22,7 +22,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::driver::vault;
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_stdlib::account;
-use hyperscale_vm_types::{Address, Outcome, TxHash, encode_amount};
+use hyperscale_vm_types::{Address, Outcome, TxHash, UnmetCondition, encode_amount};
 
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
@@ -167,6 +167,64 @@ fn a_refusal_names_the_resource_and_the_behaviour_behind_it() {
     // And that nobody declared it, which is what separates this from a
     // gate the package's own author wrote and a reader can go and find.
     assert!(text.contains("Nothing declared this"), "{text}");
+}
+
+/// The attribution is the asking node's, not the first node whose
+/// requirements happen to name the leaf.
+///
+/// A key is a hash of the party and what they hold, so two frames
+/// moving one holder's holding of one resource ask about the identical
+/// leaf — and a folded declaration carries every node's conditions in
+/// one list. A reader that searched it would answer with whichever came
+/// first: a refusal naming a call that did not fail, and, where the
+/// leaf a package's own rule names is one some other node is asked
+/// about, a rule its author wrote read back as the protocol's.
+///
+/// So the same leaf and the same presence, attributed to a node that
+/// injected nothing, has to read as nobody's entry rather than as the
+/// swap's.
+#[test]
+fn a_refusal_is_read_against_the_node_that_asked_and_no_other() {
+    let world = world();
+    let graph = trade();
+    let (results, _) = run_both(
+        &world,
+        &store(false),
+        &[(&graph, TxHash(Hash32([0x7A; 32])))],
+    );
+    let TxResult::Refused(Outcome::ConditionUnmet { condition }) = &results[0] else {
+        panic!("the venue is off the register: {:?}", results[0]);
+    };
+    let UnmetCondition::Holds {
+        target, required, ..
+    } = condition
+    else {
+        panic!("a presence condition: {condition:?}");
+    };
+    let admitted = admit_here(&graph, ALICE, &world).expect("admits");
+
+    // Node 0 is the sign-in, which moves nothing and is asked for
+    // nothing. The leaf is the swap's, and saying so is what the node
+    // is for.
+    let elsewhere = explain_refusal(
+        &admitted,
+        &UnmetCondition::Holds {
+            target: *target,
+            required: *required,
+            node: Some(0),
+        },
+    );
+    assert!(elsewhere.contains("node 0"), "{elsewhere}");
+    assert!(
+        elsewhere.contains("the package's own condition"),
+        "{elsewhere}"
+    );
+    assert!(!elsewhere.contains("withdraw of"), "{elsewhere}");
+
+    // And the node that did ask reads the entry back whole.
+    let asked = explain_refusal(&admitted, condition);
+    assert!(asked.contains("node 2"), "{asked}");
+    assert!(asked.contains("Nothing declared this"), "{asked}");
 }
 
 /// The control: a transaction that succeeds was bound by exactly the

@@ -265,49 +265,68 @@ pub fn explain_requirements(admitted: &Admitted) -> String {
 /// party and the badge that inverts to neither, so the verdict alone
 /// says some leaf was missing and can never say whose or of what.
 ///
-/// This is the derivation that reads it back. Every requirement the
-/// protocol put on the transaction was built from something, that
-/// something is beside it, and matching the key against them recovers
-/// the entry — so a refusal names the resource, the behaviour, and the
-/// question, none of which the receipt carries.
+/// This is the derivation that reads it back. The verdict names the
+/// node whose frame asked, so the requirements to match the key against
+/// are that node's alone — every one of them built from something, with
+/// that something beside it. So a refusal names the resource, the
+/// behaviour, and the question, none of which the receipt carries.
 ///
-/// A condition matching nothing injected is the **package's own**, and
-/// saying so is half the answer on its own: it separates a rule the
-/// author wrote and a reader can find in [`explain`] from one no
-/// declaration mentions.
+/// **The node is what makes the answer exact rather than likely.** Two
+/// frames moving one holder's holding of one resource read the same
+/// leaf, so a search across every node would answer with whichever came
+/// first — and a rule a package wrote on a leaf some other node happens
+/// to be asked about would be read as the protocol's, which is the one
+/// misattribution this whole derivation exists to avoid.
+///
+/// A condition matching nothing that node injected is the **package's
+/// own**, and saying so is half the answer on its own: it separates a
+/// rule the author wrote and a reader can find in [`explain`] from one
+/// no declaration mentions.
 #[must_use]
 pub fn explain_refusal(admitted: &Admitted, unmet: &UnmetCondition) -> String {
     match unmet {
-        UnmetCondition::Holds { target, required } => {
-            let found = admitted
-                .injected()
+        UnmetCondition::Holds {
+            target,
+            required,
+            node,
+        } => {
+            // The asking node's own requirements and nobody else's. A
+            // condition the verdict cannot place is one no injection
+            // could have matched anyway, so the fallback below is the
+            // same answer either way.
+            let at = node.and_then(|node| usize::try_from(node).ok());
+            let injected = at
+                .and_then(|at| admitted.injected().get(at))
+                .map(Vec::as_slice)
+                .unwrap_or_default()
                 .iter()
-                .enumerate()
-                .find_map(|(at, node)| {
-                    node.iter()
-                        .find(|injected| {
-                            injected.rule.leaves().any(|leaf| {
-                                matches!(leaf, JudgedLeaf::Presence { target: named, .. }
-                                if named == target)
-                            })
-                        })
-                        .map(|injected| (at, injected))
+                .find(|injected| {
+                    injected.rule.leaves().any(|leaf| {
+                        matches!(leaf, JudgedLeaf::Presence { target: named, expect }
+                        if named == target && expect == required)
+                    })
                 });
-            let Some((at, injected)) = found else {
+            let Some(injected) = injected else {
                 return format!(
-                    "the package's own condition on {}: it must be {}, and it is not — a rule \
+                    "{}the package's own condition on {}: it must be {}, and it is not — a rule \
                      its author wrote, so its declaration says what it is for",
+                    at.map_or_else(String::new, |at| format!("node {at}: ")),
                     target_text(target),
                     presence_text(*required)
                 );
             };
-            let node = admitted.manifest().nodes.get(at);
+            let at = at.unwrap_or_default();
+            let called = admitted.manifest().nodes.get(at);
             format!(
                 "{}: {} of {} asks that {} — and it does not hold. Nothing declared this: it \
                  is the resource's own entry, put on the call because the call moves it.",
-                node.map_or_else(
+                called.map_or_else(
                     || format!("node {at}"),
-                    |node| format!("node {at}, {} {}", address_text(node.target), node.method)
+                    |called| format!(
+                        "node {at}, {} {}",
+                        address_text(called.target),
+                        called.method
+                    )
                 ),
                 behaviour_name(injected.behaviour),
                 address_text(injected.resource.address()),

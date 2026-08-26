@@ -126,6 +126,8 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(auth(ALICE)),
                 required: Presence::Absent,
+                // The securify, not the sign-in that precedes it.
+                node: Some(1),
             },
         })],
         "a one-way door is a declared precondition, not a guest panic — and \
@@ -815,6 +817,9 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(auth(ALICE)),
                 required: Presence::Absent,
+                // The securify, not the sign-in that precedes it: the
+                // door is the second node's own.
+                node: Some(1),
             },
         })],
         "securify is a one-way door and the cell is on the far side of it"
@@ -1013,6 +1018,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
                     order: u128::from(id),
                 },
                 required: Presence::Present,
+                node: Some(0),
             },
         })
     );
@@ -1059,6 +1065,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
                     order: u128::from(id),
                 },
                 required: Presence::Present,
+                node: Some(0),
             },
         })
     );
@@ -1293,6 +1300,7 @@ fn a_fungible_badge_is_custody_while_the_vault_is_funded() {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(vault(BOB, RES_X)),
                 required: Presence::Present,
+                node: Some(0),
             },
         })
     );
@@ -1345,6 +1353,7 @@ fn a_drained_badge_vault_closes_the_custody_it_opened() {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(vault(ALICE, RES_X)),
                 required: Presence::Present,
+                node: Some(0),
             },
         })
     );

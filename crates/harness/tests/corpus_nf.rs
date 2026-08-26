@@ -216,6 +216,7 @@ fn a_mint_onto_an_instance_already_there_is_refused() {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(data),
                 required: Presence::Absent,
+                node: Some(0),
             },
         })],
         "an instance already there is a refusal, never an overwrite"

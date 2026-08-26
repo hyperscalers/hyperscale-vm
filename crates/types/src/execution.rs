@@ -492,11 +492,13 @@ pub enum Outcome {
 /// judged.
 ///
 /// A presence condition is judged where the state lives, against the
-/// folded declaration, so it names its target; an authority condition is
-/// judged at the calling node with that call's evidence, so it names the
-/// node. The rule itself is not carried: the declaration is
-/// content-addressed with the package, so the verdict points and the
-/// metadata says what was asked.
+/// folded declaration; an authority condition is judged at the calling
+/// node with that call's evidence. Both name the node that asked, and
+/// the presence one names its target as well, since the folded
+/// declaration carries several nodes' conditions in one list and a
+/// target is what tells them apart. The rule itself is not carried: the
+/// declaration is content-addressed with the package, so the verdict
+/// points and the metadata says what was asked.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum UnmetCondition {
     /// The state the condition names does not hold what it requires: the
@@ -507,6 +509,12 @@ pub enum UnmetCondition {
         /// What the condition required of it. Never [`Presence::Either`],
         /// which requires nothing and so cannot go unmet.
         required: Presence,
+        /// The node whose frame asked, where the declaration says.
+        ///
+        /// Optional because a folded declaration is not the only kind:
+        /// one assembled without a manifest behind it — every one a
+        /// test builds by hand — has no node to name.
+        node: Option<u32>,
     },
     /// The presented claims do not satisfy a rule the calling node's
     /// declaration requires.
@@ -686,6 +694,7 @@ mod tests {
                     local: LocalKey([3; 16]),
                 }),
                 required: Presence::Absent,
+                node: Some(1),
             },
         });
     }

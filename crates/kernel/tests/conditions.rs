@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, NodeCall,
-    PackageHash, Presented, Rule, RuleBytes, SlotId, StoredRule, TestHasher, child_key,
+    Condition, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
+    NodeCall, PackageHash, Presented, Rule, RuleBytes, SlotId, StoredRule, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
@@ -46,6 +46,7 @@ fn cell_of(owner: Address) -> SubstateKey {
 /// the folded set holding the backing access every condition's target
 /// has, as the publish check guarantees.
 fn declaring(key: SubstateKey, conditions: Vec<Rule<JudgedLeaf>>) -> Declaration {
+    let conditions = conditions.into_iter().map(Condition::declared).collect();
     let mut set = EffectSet::new();
     set.insert(Effect {
         target: EffectTarget::Point(key),
@@ -150,6 +151,7 @@ fn a_presence_condition_is_judged_against_the_committed_leaf() {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(key),
                 required: Presence::Present,
+                node: None,
             },
         }
     );
@@ -175,6 +177,7 @@ fn a_presence_condition_is_judged_against_the_committed_leaf() {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(key),
                 required: Presence::Absent,
+                node: None,
             },
         }
     );
@@ -465,6 +468,7 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
                 condition: UnmetCondition::Holds {
                     target: EffectTarget::Point(key),
                     required: Presence::Present,
+                    node: None,
                 },
             }
         );

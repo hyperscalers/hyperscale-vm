@@ -52,9 +52,9 @@ pub use artifact::{
 };
 pub use auth::RuleBytes;
 pub use dsl::{
-    Clause, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, Expr, MAX_CLAUSE_DEPTH,
-    MAX_EFFECTS_PER_SIGNATURE, MAX_ENVELOPE_EVALUATION_WORK, MAX_EVALUATION_WORK, MAX_EXPR_DEPTH,
-    MAX_FOREACH_ELEMENTS, ModeExpr, PresentedGrants, Reach, SlotRef, TargetExpr,
+    Clause, Condition, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, Expr,
+    MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE, MAX_ENVELOPE_EVALUATION_WORK, MAX_EVALUATION_WORK,
+    MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, ModeExpr, PresentedGrants, Reach, SlotRef, TargetExpr,
     evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local, keying_resource,
     self_child, supports,
 };

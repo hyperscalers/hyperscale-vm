@@ -24,8 +24,8 @@ use hyperscale_vm_types::{
 };
 
 use crate::dsl::{
-    Clause, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, PresentedGrants, Reach,
-    evaluate_declaration, evaluate_expr, supports,
+    Clause, Condition, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs,
+    PresentedGrants, Reach, evaluate_declaration, evaluate_expr, supports,
 };
 use crate::envelope::{Binding, Socket};
 use crate::graph::{Constraint, EvidenceRef, GraphArg, GraphNode, ManifestGraph};
@@ -1219,9 +1219,12 @@ impl Lower<'_> {
         // the presence a write requires; one whose leaves reach the
         // call's evidence rides the node's call.
         let mut requires = Vec::new();
-        self.split_conditions(&frame, &mut requires);
-        if let Some(condition) = fence {
-            self.declaration.conditions.push(condition);
+        self.split_conditions(&frame, node_index, &mut requires);
+        if let Some(rule) = fence {
+            self.declaration.conditions.push(Condition {
+                rule,
+                node: Some(node_index),
+            });
         }
         self.calls.push(lower_call(
             node_index,
@@ -1506,8 +1509,10 @@ impl Lower<'_> {
         issues.extend(destroyed);
         injected.extend(destruction);
         for requirement in &injected {
-            if !frame.conditions.contains(&requirement.rule) {
-                frame.conditions.push(requirement.rule.clone());
+            if !frame.required().any(|rule| *rule == requirement.rule) {
+                frame
+                    .conditions
+                    .push(Condition::declared(requirement.rule.clone()));
             }
         }
         Ok((issues, injected))
@@ -1519,12 +1524,24 @@ impl Lower<'_> {
     /// declaration and is judged at materialization, beside the presence
     /// a write requires; every other rides the node's call, where the
     /// evidence is. Nothing declares which.
-    fn split_conditions(&mut self, frame: &Declaration, requires: &mut Vec<Rule<JudgedLeaf>>) {
-        for rule in &frame.conditions {
-            if rule.judged() == Judged::AtMaterialization {
-                self.declaration.conditions.push(rule.clone());
+    fn split_conditions(
+        &mut self,
+        frame: &Declaration,
+        node_index: u32,
+        requires: &mut Vec<Rule<JudgedLeaf>>,
+    ) {
+        for condition in &frame.conditions {
+            if condition.rule.judged() == Judged::AtMaterialization {
+                // Stamped here rather than at the frame, because this is
+                // where the number starts meaning something: a frame's
+                // own conditions are one node's, and the union's are
+                // every node's in one list.
+                self.declaration.conditions.push(Condition {
+                    rule: condition.rule.clone(),
+                    node: Some(node_index),
+                });
             } else {
-                requires.push(rule.clone());
+                requires.push(condition.rule.clone());
             }
         }
     }
@@ -1627,8 +1644,7 @@ impl Lower<'_> {
         // what a proof presented here could satisfy — an authored gate,
         // or a requirement admission injected onto the frame.
         let required: Vec<&Rule<JudgedLeaf>> = frame
-            .conditions
-            .iter()
+            .required()
             .filter(|rule| rule.judged() != Judged::AtMaterialization)
             .collect();
         // Evidence presence is a property of what this call requires: a

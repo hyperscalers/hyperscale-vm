@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{Declaration, JudgedLeaf, Rule};
+use hyperscale_vm_effects::{Condition, Declaration, JudgedLeaf, Rule};
 use hyperscale_vm_types::{
     Address, CollectionId, Effect, EffectTarget, Mode, Moves, Presence, ResourceAddr, SubstateKey,
     TxHash,
@@ -304,6 +304,10 @@ pub enum MaterializeError {
         target: EffectTarget,
         /// What it required. Never `Either`, which is refused at publish.
         required: Presence,
+        /// The manifest node whose frame asked, where the declaration
+        /// says. Absent for a declaration assembled without one, which
+        /// is every declaration a test builds by hand.
+        node: Option<u32>,
     },
     /// A declared reservation the committed balance cannot cover.
     #[error("reservation of {amount} on {key:?} is infeasible")]
@@ -511,16 +515,19 @@ impl KernelSession {
 /// hold what the condition requires.
 fn judge_conditions(
     store: &mut OverlayStore,
-    conditions: &[Rule<JudgedLeaf>],
+    conditions: &[Condition],
 ) -> Result<(), MaterializeError> {
-    for rule in conditions {
-        if met(store, rule)? {
+    for condition in conditions {
+        if met(store, &condition.rule)? {
             continue;
         }
         // What a receipt names is the first leaf the rule holds that was
         // not met: for the one-leaf rule injection builds that is exact,
-        // and for a threshold it is one of the reasons.
-        for leaf in rule.leaves() {
+        // and for a threshold it is one of the reasons. Beside it, the
+        // frame that asked — the rule is a leaf and a presence and says
+        // nothing about who wanted either, so a reader without the node
+        // has to guess which call it belonged to.
+        for leaf in condition.rule.leaves() {
             let JudgedLeaf::Presence { target, expect } = leaf else {
                 continue;
             };
@@ -529,6 +536,7 @@ fn judge_conditions(
                 return Err(MaterializeError::ConditionUnmet {
                     target: *target,
                     required: *expect,
+                    node: condition.node,
                 });
             }
         }
@@ -733,7 +741,9 @@ pub(super) fn capability_for(
 mod tests {
     use std::sync::Arc;
 
-    use hyperscale_vm_effects::{Declaration, DeclaredAccess, JudgedLeaf, Rule, SlotRef};
+    use hyperscale_vm_effects::{
+        Condition, Declaration, DeclaredAccess, JudgedLeaf, Rule, SlotRef,
+    };
     use hyperscale_vm_types::{
         Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Moves, Presence,
         ResourceAddr, encode_amount,
@@ -759,7 +769,10 @@ mod tests {
         let ordered = ord(&set);
         let conditions = match requires {
             Presence::Either => Vec::new(),
-            expect => vec![Rule::Require(JudgedLeaf::Presence { target, expect })],
+            expect => vec![Condition::declared(Rule::Require(JudgedLeaf::Presence {
+                target,
+                expect,
+            }))],
         };
         KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
@@ -836,6 +849,7 @@ mod tests {
                 Err(MaterializeError::ConditionUnmet {
                     target,
                     required: Presence::Absent,
+                    node: None,
                 }),
                 "{target:?}"
             );
@@ -851,6 +865,7 @@ mod tests {
                 Err(MaterializeError::ConditionUnmet {
                     target,
                     required: Presence::Present,
+                    node: None,
                 }),
                 "{target:?}"
             );
@@ -896,6 +911,7 @@ mod tests {
             Err(MaterializeError::ConditionUnmet {
                 target: interval,
                 required: Presence::Present,
+                node: None,
             }),
             "an entry past the interval is not in it"
         );

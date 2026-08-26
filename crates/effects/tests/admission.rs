@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, RES_X, payouts, pkg, resolver, shard_of, vault, world};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    AbiParam, AdmissionError, Clause, Constraint, EdgeRef, EvalError, EvidenceRef, Expr,
+    AbiParam, AdmissionError, Clause, Condition, Constraint, EdgeRef, EvalError, EvidenceRef, Expr,
     GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta, JudgedLeaf, MAX_VALUE_DEPTH,
     ManifestGraph, MethodSignature, ModeExpr, PackageMetadata, ParamType, Presented,
     PresentedGrants, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes,
@@ -458,10 +458,8 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
         "the holder's rule rides the call"
     );
     assert!(
-        admitted
-            .declaration()
-            .conditions
-            .contains(&Rule::Require(JudgedLeaf::Presence {
+        admitted.declaration().required().any(|rule| *rule
+            == Rule::Require(JudgedLeaf::Presence {
                 target: EffectTarget::Point(child_key(
                     &TestHasher,
                     custodian,
@@ -1081,18 +1079,26 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
 
     let key = child_key(&TestHasher, target, AUTH, &[]);
     // The signature's own condition, then the instantiation fence
-    // admission puts on every component call.
+    // admission puts on every component call — each carrying the node
+    // whose frame states it, which is what the union list would
+    // otherwise have lost.
     assert_eq!(
         admitted.declaration().conditions,
         vec![
-            Rule::Require(JudgedLeaf::Presence {
-                target: EffectTarget::Point(key),
-                expect: Presence::Present,
-            }),
-            Rule::Require(JudgedLeaf::Presence {
-                target: EffectTarget::Point(child_key(&TestHasher, target, CONFIG, &[])),
-                expect: Presence::Present,
-            }),
+            Condition {
+                rule: Rule::Require(JudgedLeaf::Presence {
+                    target: EffectTarget::Point(key),
+                    expect: Presence::Present,
+                }),
+                node: Some(0),
+            },
+            Condition {
+                rule: Rule::Require(JudgedLeaf::Presence {
+                    target: EffectTarget::Point(child_key(&TestHasher, target, CONFIG, &[])),
+                    expect: Presence::Present,
+                }),
+                node: Some(0),
+            },
         ]
     );
     assert_eq!(
