@@ -30,6 +30,7 @@
 //!
 //! [`check_declarations`]: crate::publish::check_declarations
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
@@ -422,6 +423,43 @@ fn unsatisfied_claims(admitted: &Admitted, node: u32) -> String {
          asked for: {}",
         asked.join(", ")
     )
+}
+
+/// Every configuration field a resource's declared grants read.
+///
+/// What an author has to supply before a declaration can be sealed into
+/// the record a holder reads. A grant naming no field seals against
+/// nothing and is exact as written; one naming a field is a question only
+/// an instance answers, and this says which question.
+#[must_use]
+pub fn grants_read_config(grants: &GrantsExpr) -> BTreeSet<u32> {
+    fn walk(rule: &GrantRuleExpr, into: &mut BTreeSet<u32>) {
+        match rule {
+            GrantRuleExpr::Require(claim) => match claim {
+                GrantClaim::Config(slot) => {
+                    into.insert(*slot);
+                }
+                // A badge's own rules are folded into its address, so a
+                // field they read is a field this set reads.
+                GrantClaim::SelfBadge { rules, .. } | GrantClaim::SelfInstance { rules, .. } => {
+                    for (_, nested) in rules.iter() {
+                        walk(nested, into);
+                    }
+                }
+                GrantClaim::SelfAddr => {}
+            },
+            GrantRuleExpr::CountOf { rules, .. } => {
+                for branch in rules {
+                    walk(branch, into);
+                }
+            }
+        }
+    }
+    let mut read = BTreeSet::new();
+    for (_, rule) in grants.iter() {
+        walk(rule, &mut read);
+    }
+    read
 }
 
 /// A refusal at admission, with the place it points to spelled out.

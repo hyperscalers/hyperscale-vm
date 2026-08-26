@@ -6,6 +6,7 @@ license.workspace = true
 description = "The wire vocabulary both workspaces speak: addresses, the signed envelope, the execution record"
 
 [dependencies]
+blake3.workspace = true
 hyperscale-hbor.workspace = true
 thiserror.workspace = true
 

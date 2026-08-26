@@ -21,10 +21,16 @@
 //! reason they already do: a pinned nightly and one codegen unit are
 //! per-workspace settings a host build must not inherit.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use hyperscale_vm_effects::PackageMetadata;
+// The address vocabulary a caller writes on the command line, re-exported
+// beside the renderer that reads one.
+pub use hyperscale_vm_effects::{Address, AddressClass, PackageMetadata};
+use hyperscale_vm_effects::{
+    ProtocolHasher, ResourceMeta, Value, explain_resource, grants_read_config,
+};
 // The rendering `explain` prints, re-exported so the command reaches one
 // dependency for the whole pipeline it drives.
 pub use hyperscale_vm_effects::{explain, explain_method};
@@ -235,6 +241,88 @@ pub fn explain_gate_refusal(refusal: &GateError, metadata: &PackageMetadata) -> 
         .map_or_else(String::new, |listing| format!("\n\n{listing}"));
     format!("{refusal}{listing}")
 }
+
+/// What every resource this package issues says to a holder.
+///
+/// The one question a declaration cannot answer on its own. A package
+/// says `withdraw = config.registrar` and cannot say what that field will
+/// name; a *record* has the instance's answer folded in, so every entry
+/// reads as one of two questions and whoever is deciding whether to
+/// accept the resource can act on it.
+///
+/// `config` supplies that answer, by field name. A declaration whose
+/// grants read no field needs none and is exact as written; one that does
+/// is refused rather than sealed against a stand-in, because a wrong
+/// address in this rendering is worse than no rendering.
+///
+/// `namespace` is the issuing instance where the caller has one. Without
+/// it the rules are still exact — every leaf naming the issuer reads as
+/// the issuer, which is a comparison against whatever namespace is used —
+/// and the addresses printed are the stand-in's, which the caller is told.
+///
+/// # Errors
+///
+/// [`BuildError`] naming the configuration fields a grant reads and the
+/// caller did not supply.
+pub fn explain_issued(
+    metadata: &PackageMetadata,
+    namespace: Option<Address>,
+    config: &BTreeMap<String, Address>,
+) -> Result<String, BuildError> {
+    let issuer = namespace.unwrap_or(STAND_IN);
+    let values: Vec<Value> = metadata
+        .config
+        .iter()
+        .map(|field| Value::Address(config.get(field).copied().unwrap_or(STAND_IN)))
+        .collect();
+
+    let mut out = String::new();
+    if namespace.is_none() {
+        out.push_str(
+            "the issuing instance is a stand-in, so the addresses below are too — pass \
+             `--instance <address>` for a component that exists\n\n",
+        );
+    }
+    for issuance in metadata.methods.values().flat_map(|method| &method.issues) {
+        let unanswered: Vec<String> = grants_read_config(&issuance.grants)
+            .into_iter()
+            .filter_map(|slot| metadata.config.get(slot as usize))
+            .filter(|field| !config.contains_key(*field))
+            .map(|field| format!("--config {field}=<address>"))
+            .collect();
+        if !unanswered.is_empty() {
+            return Err(BuildError::new(format!(
+                "the rules of `{}` read configuration this cannot know: pass {}",
+                String::from_utf8_lossy(&issuance.mark),
+                unanswered.join(" ")
+            )));
+        }
+        let rules = issuance
+            .grants
+            .resolve(&ProtocolHasher, issuer, &values)
+            .map_err(|error| {
+                BuildError::new(format!("the declared grants do not seal: {error}"))
+            })?;
+        let record = ResourceMeta {
+            namespace: issuer,
+            kind: issuance.kind,
+            material: vec![Value::Bytes(issuance.mark.clone()).canonical_bytes()],
+            rules,
+        };
+        out.push_str(&explain_resource(&record, &ProtocolHasher));
+        out.push('\n');
+    }
+    if out.trim().is_empty() {
+        out.push_str("this package issues no resource\n");
+    }
+    Ok(out)
+}
+
+/// The instance a rendering stands on when the caller names none.
+///
+/// Its class is what makes it read as an instance at all; the body is
+/// arbitrary, and every rendering that uses it says so.
+const STAND_IN: Address = Address::new([0x11; 31], AddressClass::Component);
 
 /// Where [`build`] writes a package's artifact.
 #[must_use]

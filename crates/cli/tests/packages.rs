@@ -9,12 +9,14 @@
 //! totality biconditional stop judging hand-authoring here and start
 //! judging our own emission, so a disagreement is the generator's bug.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use hyperscale_vm_cli::{
-    GateError, Provenance, artifact, declaration, explain, explain_gate_refusal, explain_method,
-    scaffold,
+    Address, AddressClass, GateError, Provenance, artifact, declaration, explain,
+    explain_gate_refusal, explain_issued, explain_method, scaffold,
 };
+use hyperscale_vm_fixtures::security;
 use hyperscale_vm_gate::extract_metadata;
 
 /// The packages authored as one module apiece: the corpus's own, and one
@@ -164,6 +166,69 @@ fn a_package_explains_itself_in_the_names_its_author_wrote() {
     assert!(
         whole.contains("round-truncated"),
         "the error table:\n{whole}"
+    );
+}
+
+/// Who the register names, as an author would write it on the line.
+const fn principal_text() -> Address {
+    Address::new([0xC1; 31], AddressClass::Principal)
+}
+
+/// What a package's resources say to a holder, at the addresses a network
+/// would derive.
+///
+/// The rendering is a holder's, so a wrong address in it is worse than no
+/// rendering — which is why this goes through the protocol hash rather
+/// than a test one, and why a rule reading configuration the command
+/// cannot know is refused by name instead of sealed against a stand-in.
+#[test]
+fn a_package_says_what_its_resources_say_to_a_holder() {
+    // The share class, whose every rule reads `config.registrar` — the
+    // shape this command exists for, and the one a declaration cannot
+    // answer alone. Read from the fixture rather than built, because it
+    // carries no metadata binary of its own yet.
+    let metadata = security::metadata();
+    let registrar = principal_text();
+
+    // Every rule of this issuer reads `config.registrar`, so asking
+    // without it is refused, and the refusal names the flag.
+    let refused = explain_issued(&metadata, None, &BTreeMap::new())
+        .expect_err("the share class reads configuration");
+    assert!(
+        refused.to_string().contains("--config registrar=<address>"),
+        "{refused}"
+    );
+
+    let config = BTreeMap::from([("registrar".to_owned(), registrar)]);
+    let told = explain_issued(&metadata, None, &config).expect("the rules seal");
+    // The stand-in is declared rather than left for the reader to find.
+    assert!(told.contains("stand-in"), "{told}");
+    // And the holder-facing reading is there: the register entry that
+    // cannot leave the holder it was issued to.
+    assert!(told.contains("withdraw"), "{told}");
+    // The protocol hash and no other. A resource's address is the hash of
+    // its record, so this rendering on a different hasher would name a
+    // resource no network has — which is the one thing a holder cannot
+    // be handed.
+    assert!(
+        told.contains(
+            "restricted:3ad1723eaaf3149c012bfffd1d2d3c166268e91ab3a579acb4785461884a5006"
+        ),
+        "the address blake3 derives:\n{told}"
+    );
+    assert!(
+        told.contains("nobody, ever"),
+        "the soulbound entry:\n{told}"
+    );
+
+    // The addresses are the ones a network derives, not a test hash's:
+    // the same record, hashed the same way, is the same address.
+    let instance = Address::new([0x33; 31], AddressClass::Component);
+    let named = explain_issued(&metadata, Some(instance), &config).expect("the rules seal");
+    assert!(!named.contains("stand-in"), "a named instance stands alone");
+    assert_ne!(
+        named, told,
+        "a different issuer derives different addresses"
     );
 }
 

@@ -12,12 +12,13 @@
 //! thing they cannot see — and the same host build the other commands run
 //! is what produces it, so there is nothing to reimplement.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use hyperscale_vm_cli::{
-    BuildError, Provenance, artifact, artifact_path, build, declaration, explain, explain_method,
-    scaffold,
+    Address, BuildError, Provenance, artifact, artifact_path, build, declaration, explain,
+    explain_issued, explain_method, scaffold,
 };
 
 const USAGE: &str = "\
@@ -31,7 +32,10 @@ cargo hyperscale — build a package crate into an artifact the chain admits
 `dir` defaults to the current directory. Pass `--protocol` to build under
 the gate genesis seeds a package through, which is the only one that
 admits a claim to totality. Pass `--method <name>` to `explain` to print
-one method rather than the whole package.
+one method rather than the whole package, or `--resources` to print what
+every resource it issues says to a holder — with `--config <field>=<addr>`
+for each configuration field those rules read, and `--instance <addr>` for
+the component they were sealed into.
 ";
 
 fn main() -> ExitCode {
@@ -65,6 +69,22 @@ struct Invocation {
     positional: Vec<String>,
     protocol: bool,
     method: Option<String>,
+    resources: bool,
+    /// The configuration a resource's rules seal against, by field name.
+    config: BTreeMap<String, Address>,
+    instance: Option<Address>,
+}
+
+/// One address as an author writes it: the human-readable form, whose
+/// leading word the decoder checks against the tag byte.
+///
+/// The network half is the text's own and is not checked here — a
+/// package's declaration is the same on every network, and what this
+/// reads is which address, not which chain.
+fn read_address(text: &str) -> Result<Address, BuildError> {
+    Address::from_text(text)
+        .map(|(address, _)| address)
+        .map_err(|error| BuildError(format!("{text}: {error}")))
 }
 
 impl Invocation {
@@ -75,11 +95,32 @@ impl Invocation {
             positional: Vec::new(),
             protocol: false,
             method: None,
+            resources: false,
+            config: BTreeMap::new(),
+            instance: None,
         };
         let mut rest = args.iter().skip(1);
         while let Some(arg) = rest.next() {
             match arg.as_str() {
                 "--protocol" => invocation.protocol = true,
+                "--resources" => invocation.resources = true,
+                "--config" => {
+                    let pair = rest
+                        .next()
+                        .ok_or_else(|| BuildError("`--config` takes `<field>=<address>`".into()))?;
+                    let (field, address) = pair.split_once('=').ok_or_else(|| {
+                        BuildError(format!("{pair}: `--config` takes `<field>=<address>`"))
+                    })?;
+                    invocation
+                        .config
+                        .insert(field.to_owned(), read_address(address)?);
+                }
+                "--instance" => {
+                    let text = rest
+                        .next()
+                        .ok_or_else(|| BuildError("`--instance` takes an address".into()))?;
+                    invocation.instance = Some(read_address(text)?);
+                }
                 "--method" => {
                     invocation.method = Some(
                         rest.next()
@@ -148,11 +189,17 @@ fn run(args: &[String]) -> Result<String, BuildError> {
         }
         Some("explain") => {
             let metadata = declaration(&invocation.target())?;
-            let rendered = match &invocation.method {
-                Some(name) => explain_method(&metadata, name).ok_or_else(|| {
+            let rendered = match (&invocation.method, invocation.resources) {
+                (Some(_), true) => {
+                    return Err(BuildError(
+                        "`--method` and `--resources` ask different questions; pass one".into(),
+                    ));
+                }
+                (Some(name), false) => explain_method(&metadata, name).ok_or_else(|| {
                     BuildError(format!("{name}: the package declares no such method"))
                 })?,
-                None => explain(&metadata),
+                (None, true) => explain_issued(&metadata, invocation.instance, &invocation.config)?,
+                (None, false) => explain(&metadata),
             };
             Ok(rendered.trim_end().to_owned())
         }

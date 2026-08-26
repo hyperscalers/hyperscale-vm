@@ -49,6 +49,7 @@ proptest = "1.11.0"
 quote = "1.0.47"
 serde_json = "1.0.151"
 syn = { version = "3.0.3", features = ["full", "extra-traits", "visit"] }
+blake3 = "1.8.6"
 thiserror = "2.0.19"
 trybuild = "1.0.120"
 # The wasm-tools family tracks the blessed engine's own wasmparser rather

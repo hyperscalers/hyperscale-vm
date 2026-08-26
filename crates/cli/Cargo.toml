@@ -19,6 +19,7 @@ thiserror.workspace = true
 wit-component.workspace = true
 
 [dev-dependencies]
+hyperscale-vm-fixtures.workspace = true
 hyperscale-vm-gate.workspace = true
 
 [lints]
