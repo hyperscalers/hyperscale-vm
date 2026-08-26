@@ -259,6 +259,105 @@ fn note_meta() -> ResourceMeta {
     }
 }
 
+/// A note whose withdraw entry either the desk or Bob may approve.
+fn either_note_meta() -> ResourceMeta {
+    let mut rules = ResourceGrants::new();
+    rules.set(
+        GrantedBehaviour::Withdraw,
+        RuleBytes::try_from(&StoredRule::CountOf {
+            count: 1,
+            rules: vec![
+                StoredRule::claim(Claim::of_subject(DESK)),
+                StoredRule::claim(Claim::of_subject(BOB)),
+            ],
+        })
+        .expect("a rule within the caps encodes"),
+    );
+    ResourceMeta {
+        namespace: MINTER,
+        kind: ResourceKind::Fungible,
+        material: vec![b"either".to_vec()],
+        rules,
+    }
+}
+
+/// A disjunctive threshold reports every branch and commits to none:
+/// which branch a holder satisfies is theirs to choose, so neither
+/// branch signer is one the transaction certainly needs.
+#[test]
+fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
+    let chain = world();
+    let note = either_note_meta().address(&TestHasher);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
+    let approval = root.declare_proof(Claim::of_subject(DESK));
+    let alice = account::authorize(&mut root, ALICE).unwrap();
+    let funds = root
+        .call_presenting(&[alice, approval], ALICE, "withdraw", (note, 5u128))
+        .unwrap()
+        .one()
+        .unwrap();
+    account::deposit(&mut root, ALICE, funds).unwrap();
+    let request = root;
+    let mut sub = env.subintent(DESK);
+    let desk = account::authorize(&mut sub, DESK).unwrap();
+    let offered = sub.offer(desk);
+    let wants = env.seal(request).unwrap().one().unwrap();
+    env.seal(sub).unwrap().none().unwrap();
+    env.bind(wants, offered).unwrap();
+    env.resource(either_note_meta());
+    let tree = env.build().unwrap();
+
+    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let withdrawing = report
+        .authority
+        .iter()
+        .find(|required| required.method == "withdraw")
+        .expect("the note is withdrawn");
+    assert_eq!(
+        withdrawing.authority,
+        Authority::Threshold {
+            count: 2,
+            branches: vec![
+                Authority::Signature(ALICE),
+                Authority::Threshold {
+                    count: 1,
+                    branches: vec![Authority::Signature(DESK), Authority::Signature(BOB)],
+                },
+            ],
+        }
+    );
+    // The choice of branch is the holder's, so neither branch signer is
+    // certain — only the holder's own gate is.
+    assert!(report.signers().contains(&ALICE));
+    assert!(!report.signers().contains(&BOB));
+    assert_eq!(report.unsatisfiable().count(), 0);
+}
+
+/// The satisfiability arithmetic over the one unsatisfiable leaf.
+///
+/// A shape that reaches the report with an unsatisfiable branch is one
+/// admission's own refusals mostly stand in front of — a guarded call
+/// presenting nothing refuses before any report exists — so the
+/// arithmetic is pinned on the type: a threshold is satisfiable exactly
+/// where enough of its branches are, and `unsatisfiable()` is its
+/// complement.
+#[test]
+fn a_threshold_is_satisfiable_where_enough_branches_are() {
+    assert!(!Authority::TargetHasNoKey.satisfiable());
+    assert!(Authority::MintedInTransaction.satisfiable());
+    let one_of = |branches| Authority::Threshold { count: 1, branches };
+    assert!(one_of(vec![Authority::TargetHasNoKey, Authority::Signature(ALICE)]).satisfiable());
+    assert!(!one_of(vec![Authority::TargetHasNoKey]).satisfiable());
+    let both = Authority::Threshold {
+        count: 2,
+        branches: vec![Authority::Signature(ALICE), Authority::TargetHasNoKey],
+    };
+    assert!(
+        !both.satisfiable(),
+        "a conjunction with a dead branch is dead"
+    );
+}
+
 /// The venue whose approval the ticket's entry names: a component, so
 /// nothing signs for it — its own method mints the proof instead.
 fn venue_metadata() -> PackageMetadata {

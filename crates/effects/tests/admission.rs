@@ -8,7 +8,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, RES_X, payouts, pkg, resolver, shard_of, vault, world};
-use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
+use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, HALT, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, AdmissionError, Claim, Clause, Condition, Constraint, EdgeRef, EvalError,
     EvidenceRef, Expr, GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta, JudgedLeaf,
@@ -1130,6 +1130,86 @@ fn an_unbindable_abi_param_is_explained_as_a_binding() {
     // be quoted as if it were the refused thing.
     assert!(!told.contains("argument 0"), "{told}");
     assert!(!told.contains("42"), "{told}");
+}
+
+/// A halt fences the interval-shaped movement too.
+///
+/// The fungible side is pinned at the custody seam; this is the
+/// non-fungible one: `withdraw-nf` of a halted class is an interval
+/// movement, and the injected read is the same absent-flag leaf under
+/// the mover, keyed by holder and resource exactly as a balance
+/// movement's is.
+#[test]
+fn a_halted_non_fungible_class_fences_the_interval_movement() {
+    let mut rules = ResourceGrants::new();
+    rules.set(
+        GrantedBehaviour::Halt,
+        RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(BOB))).expect("a rule encodes"),
+    );
+    let record = ResourceMeta {
+        namespace: BOB.address(),
+        kind: ResourceKind::NonFungible,
+        material: vec![b"seat".to_vec()],
+        rules,
+    };
+    let seat = record.address(&TestHasher);
+    let presented = PresentedGrants::from_presented(&TestHasher, std::slice::from_ref(&record));
+    let chain = setup();
+
+    let graph = ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE.into(),
+                method: "authorize".into(),
+                args: vec![],
+                evidence: [EvidenceRef::IntentSignature].into(),
+            },
+            GraphNode {
+                target: ALICE.into(),
+                method: "withdraw-nf".into(),
+                args: vec![
+                    GraphArg::Literal(Value::Address(seat.address())),
+                    GraphArg::Literal(Value::List(vec![Value::U64(7)])),
+                ],
+                evidence: [EvidenceRef::Node(0)].into(),
+            },
+            GraphNode {
+                target: BOB.into(),
+                method: "deposit-nf".into(),
+                args: vec![GraphArg::Edge {
+                    edge: EdgeRef {
+                        producer: 1,
+                        output: 0,
+                    },
+                    constraints: vec![],
+                }],
+                evidence: BTreeSet::new(),
+            },
+        ],
+    };
+    let admitted =
+        admit_presenting(&graph, ALICE, &chain, &presented, &TestHasher).expect("admits");
+    let halted = EffectTarget::Point(child_key(
+        &TestHasher,
+        ALICE,
+        HALT,
+        &[Value::Address(seat.address()).canonical_bytes()],
+    ));
+    assert!(
+        admitted.declaration().required().any(|rule| *rule
+            == Rule::Require(JudgedLeaf::Presence {
+                target: halted,
+                expect: Presence::Absent,
+            })),
+        "the interval movement requires the mover's flag absent",
+    );
+    assert!(
+        admitted.declaration().set.contains(&Effect {
+            target: halted,
+            mode: Mode::Read,
+        }),
+        "and the leaf is provisioned by the same declaration",
+    );
 }
 
 /// Two destroyed parameters of one resource carry the burn requirement
