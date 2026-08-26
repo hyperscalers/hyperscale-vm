@@ -548,11 +548,17 @@ mod tests {
         use hyperscale_vm_types::{Address, AddressClass};
 
         let of = |class: AddressClass| Value::Address(Address::new([7; 31], class));
+        // Every class, so a parameter's answer is stated for each rather
+        // than left to whichever ones a case happened to list. The one
+        // that matters is `Restricted`: it is a resource, so a parameter
+        // that admits resources admits it, and a sweep omitting it never
+        // exercises the widening it exists to protect.
         let classes = [
             AddressClass::Principal,
             AddressClass::Component,
             AddressClass::Package,
             AddressClass::Resource,
+            AddressClass::Restricted,
             AddressClass::Native,
         ];
         let admitted: &[(ParamType, &[AddressClass])] = &[
@@ -564,7 +570,10 @@ mod tests {
             (ParamType::Principal, &[AddressClass::Principal]),
             (ParamType::Component, &[AddressClass::Component]),
             (ParamType::Package, &[AddressClass::Package]),
-            (ParamType::Resource, &[AddressClass::Resource]),
+            (
+                ParamType::Resource,
+                &[AddressClass::Resource, AddressClass::Restricted],
+            ),
         ];
         for (param, admits) in admitted {
             assert!(param.is_address());

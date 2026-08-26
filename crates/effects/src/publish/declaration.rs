@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_types::{AddressClass, Moves, Presence};
+use hyperscale_vm_types::{AddressClass, Moves, Presence, ResourceAddr};
 
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr, slot_of, supports};
 use crate::resource::{GrantedBehaviour, ReachedCell, holdings_entry};
@@ -375,10 +375,9 @@ fn judge_reach(
     let Some((slot, material)) = slot_of(target) else {
         return Err(DeclarationError::UnkeyedReach { clause });
     };
-    let keyed_by_a_resource = material.first().is_some_and(|first| {
-        decided_class(first)
-            .is_none_or(|found| matches!(found, AddressClass::Resource | AddressClass::Restricted))
-    });
+    let keyed_by_a_resource = material
+        .first()
+        .is_some_and(|first| decided_class(first).is_none_or(names_a_resource));
     if !keyed_by_a_resource {
         return Err(DeclarationError::UnkeyedReach { clause });
     }
@@ -657,6 +656,21 @@ const fn decided_class(expr: &Expr) -> Option<AddressClass> {
     }
 }
 
+/// Whether a class names a resource.
+///
+/// A resource has two classes, and both are resources everywhere one is
+/// named — one vault shape, one edge type, one badge vocabulary. What the
+/// second buys is that a reader holding only the address knows whether it
+/// needs the rules before it may proceed, which is a fact about reading
+/// an address rather than about being one.
+///
+/// Read off [`ResourceAddr::ADMITS`] rather than written out, because
+/// every other site that asks this question narrows through the type and
+/// would not agree with a list kept beside it.
+fn names_a_resource(class: AddressClass) -> bool {
+    ResourceAddr::ADMITS.contains(&class)
+}
+
 /// Refuse an output projection decided to carry a class that names no
 /// resource.
 ///
@@ -671,7 +685,7 @@ fn judge_outputs(outputs: &[Expr]) -> Result<(), DeclarationError> {
             expr => expr,
         };
         if let Some(found) = decided_class(resource)
-            && found != AddressClass::Resource
+            && !names_a_resource(found)
         {
             return Err(DeclarationError::OutputNotAResource {
                 output: u32::try_from(slot).unwrap_or(u32::MAX),
@@ -770,7 +784,7 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     // routing, where it is evaluated.
     if let Some(expr) = denomination
         && let Some(found) = decided_class(expr)
-        && found != AddressClass::Resource
+        && !names_a_resource(found)
     {
         return Err(DeclarationError::NotAResource { clause, found });
     }
@@ -949,7 +963,7 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
         // written down is that refusal decidable where the author is.
         if let Some(expr) = denomination
             && let Some(found) = decided_class(expr)
-            && found != AddressClass::Resource
+            && !names_a_resource(found)
         {
             return Err(DeclarationError::ParamNotAResource { param, found });
         }
@@ -2545,6 +2559,53 @@ mod tests {
                 clause: 0,
                 found: AddressClass::Component
             })
+        );
+    }
+
+    /// A resource has two classes, and both publish.
+    ///
+    /// A package pinned to one particular restricted resource — a venue
+    /// over a security, a wrapper around a freezable asset — writes its
+    /// address as a literal, which is decidable here. Routing narrows
+    /// through `ResourceAddr` and admits either class, so refusing one
+    /// of them here would refuse a package the chain would have run.
+    #[test]
+    fn a_decided_restricted_resource_is_a_resource_at_every_position() {
+        let restricted = || {
+            Expr::Literal(Value::Address(Address::new(
+                [9; 31],
+                AddressClass::Restricted,
+            )))
+        };
+        assert_eq!(
+            check_declarations(&one_clause(
+                own_point(package_slot(0), vec![restricted()]),
+                ModeExpr::Delta,
+                Some(restricted())
+            )),
+            Ok(()),
+            "a clause denominated in a restricted resource"
+        );
+
+        assert_eq!(
+            check_declarations(&MethodSignature {
+                totality: Totality::Fallible,
+                params: vec![ParamType::Bucket],
+                denominations: vec![Some(restricted())],
+                ..MethodSignature::default()
+            }),
+            Ok(()),
+            "a bucket parameter of a restricted resource"
+        );
+
+        assert_eq!(
+            check_declarations(&MethodSignature {
+                totality: Totality::Fallible,
+                outputs: vec![restricted()],
+                ..MethodSignature::default()
+            }),
+            Ok(()),
+            "an edge projecting a restricted resource"
         );
     }
 
