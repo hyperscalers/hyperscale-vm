@@ -65,22 +65,6 @@ macro_rules! guest {
     };
 }
 
-pub mod amm;
-pub mod book;
-pub mod capped;
-pub mod custodian;
-pub mod flashloan;
-pub mod grammar;
-pub mod lending;
-pub mod lottery;
-pub mod nf;
-pub mod payouts;
-pub mod peg;
-pub mod perp;
-pub mod registry;
-pub mod security;
-pub mod shares;
-
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
@@ -103,6 +87,10 @@ macro_rules! packages {
     ($(
         $module:ident $(=> ($component:ident, $artifact:ident, $hash:ident, $blob:literal))?;
     )*) => {
+        // The modules themselves, so a package exists exactly by having
+        // an entry here: a `pub mod` outside the list has nowhere to
+        // hide from the sweeps that read it.
+        $(pub mod $module;)*
         $(
             $(
                 /// The committed component bytes: the guest as its
