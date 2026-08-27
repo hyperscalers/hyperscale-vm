@@ -46,13 +46,13 @@ use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr, preorder_len};
 use crate::envelope::{EnvelopeTree, NULLIFIER_SLOT};
 use crate::graph::{GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
-use crate::manifest::{Judged, JudgedLeaf};
+use crate::manifest::JudgedLeaf;
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
 use crate::records::ChainRecords;
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind, ResourceMeta};
 use crate::rule::{
-    GrantRuleExpr, GrantSubject, Holding, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule, always,
-    never,
+    GrantRuleExpr, GrantSubject, Holding, Judged, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule,
+    always, never,
 };
 use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, Totality};
 use crate::types::{EdgeContent, Value, u256_decimal};

@@ -84,7 +84,7 @@ pub use hyperscale_vm_types::{
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};
-pub use manifest::{Bounds, Judged, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
+pub use manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     DeclaredPackages, LeafForm, MAX_SHAPE_DEPTH, MetadataCache, PACKAGE_SLOT, PackageHash,
     PackageMetadata, PublishRefusal, SlotKind, SlotShape, package_hash, package_key,
@@ -104,7 +104,7 @@ pub use resource::{
 };
 pub use route::{FrameDeclaration, PrefixShardResolver, Routing, ShardResolver, route};
 pub use rule::{
-    Answers, GrantRuleExpr, GrantSubject, Holding, Leaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
+    GrantRuleExpr, GrantSubject, Holding, Judged, Leaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
     MAX_RULE_LEAVES, MAX_RULE_WIRE_DEPTH, NOBODY_BYTES, Rule, RuleExpr, RuleLeaf, SealedLeaf,
     StoredRule, always, never, well_formed,
 };

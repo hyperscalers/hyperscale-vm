@@ -11,7 +11,7 @@ use hyperscale_vm_types::{Address, EffectTarget, Presence, ResourceAddr, Substat
 
 use crate::claim::Claim;
 use crate::hash::Hash32;
-use crate::rule::{Answers, Leaf, Rule};
+use crate::rule::{Judged, Leaf};
 use crate::types::{EdgeContent, Value};
 
 /// A consumer's signed amount bounds on an edge, folded to their
@@ -126,90 +126,11 @@ impl Leaf for JudgedLeaf {
     /// A presence's answer is in the store; a claim's is in what the
     /// call presented; a stored rule's is readable only where the
     /// evidence and the session meet.
-    fn answered_from(&self) -> Answers {
+    fn judged(&self) -> Judged {
         match self {
-            Self::Claim(_) => Answers::Evidence,
-            Self::Stored { .. } => Answers::Session,
-            Self::Presence { .. } => Answers::State,
-        }
-    }
-}
-
-/// Where a rule is judged: the earliest stage that can answer every leaf
-/// it holds.
-///
-/// Three stages know three things, and the leaves say which is enough.
-/// Nothing declares a placement, and no reviewer has to check that a
-/// declaration stated one honestly.
-///
-/// The order matters for one property beyond cost. **Admission and
-/// materialization both land before any leg commits**, so a verdict
-/// reached there aborts the whole transaction and no caller has
-/// committed on the strength of it. A verdict reached in the walk lands
-/// inside the declaring node's own leg, which a caller may already have
-/// committed without waiting for — which is what a
-/// [`Total`](crate::signature::Totality::Total) frame may not carry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Judged {
-    /// From the node's own presented evidence, which is signed content
-    /// and needs no state at all.
-    AtAdmission,
-    /// From committed state, by the shard holding the leaf, before any
-    /// leg runs.
-    AtMaterialization,
-    /// In the walk of the declaring node's own leg — the only stage
-    /// holding the evidence and the session together, and so the only
-    /// one a stored rule can be read in.
-    InTheLeg,
-}
-
-impl Judged {
-    /// Whether the verdict lands before any leg commits.
-    ///
-    /// What separates a feasibility fact from a verdict a caller could
-    /// already have committed past.
-    #[must_use]
-    pub const fn before_any_leg(self) -> bool {
-        !matches!(self, Self::InTheLeg)
-    }
-}
-
-impl<L: Leaf> Rule<L> {
-    /// Where this rule is judged, read off its leaves: the earliest
-    /// stage that can answer every one of them.
-    ///
-    /// A rule reaching a session-answered leaf needs the leg; one mixing
-    /// evidence with state needs both, and no single earlier stage holds
-    /// them. Everything else is answerable at one stage alone.
-    ///
-    /// One fold for every instantiation, which is what pins the reading
-    /// a record's holder is owed to the reading a transaction gets: a
-    /// sealed rule's placement *is* its evaluated twin's, because both
-    /// are this walk over leaves answering from the same place. An entry
-    /// asking a standing fact about the moving party is answered before
-    /// any body runs and turns nobody away mid-transaction; one asking
-    /// whether this transaction was approved is answered before it is a
-    /// transaction at all; one asking both is the only shape that lands
-    /// inside a leg.
-    ///
-    /// A rule with no leaves is the algebra's own constant — satisfied
-    /// by anyone or by no one — and admission decides those as cheaply
-    /// as anything else does.
-    #[must_use]
-    pub fn judged(&self) -> Judged {
-        let mut state = false;
-        let mut evidence = false;
-        for leaf in self.leaves() {
-            match leaf.answered_from() {
-                Answers::Session => return Judged::InTheLeg,
-                Answers::State => state = true,
-                Answers::Evidence => evidence = true,
-            }
-        }
-        match (state, evidence) {
-            (true, true) => Judged::InTheLeg,
-            (true, false) => Judged::AtMaterialization,
-            (false, _) => Judged::AtAdmission,
+            Self::Claim(_) => Judged::AtAdmission,
+            Self::Stored { .. } => Judged::InTheLeg,
+            Self::Presence { .. } => Judged::AtMaterialization,
         }
     }
 }
@@ -236,8 +157,9 @@ mod tests {
         Address, AddressClass, EffectTarget, LocalKey, Presence, SubstateKey,
     };
 
-    use super::{Judged, JudgedLeaf, Rule};
+    use super::JudgedLeaf;
     use crate::claim::Claim;
+    use crate::rule::{Judged, Rule};
 
     fn cell() -> SubstateKey {
         SubstateKey {

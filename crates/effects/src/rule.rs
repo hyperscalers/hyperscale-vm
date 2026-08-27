@@ -115,22 +115,53 @@ pub enum Rule<L> {
     },
 }
 
-/// Which stage's knowledge answers one leaf: the evidence a caller
-/// presents, the committed state, or the session a leg runs in.
+/// The stage that answers: for a leaf, the earliest stage whose
+/// knowledge holds its answer; for a rule, the earliest stage that can
+/// answer every leaf it holds.
 ///
-/// Three stages know three things, and a leaf says which is enough —
-/// which is the whole input to where a rule is judged. Nothing declares
-/// a placement, and no reviewer has to check that a declaration stated
-/// one honestly.
+/// One ladder for both questions, because a rule's placement is read off
+/// its leaves — nothing declares one, and no reviewer has to check that
+/// a declaration stated one honestly.
+///
+/// Three stages know three things: admission holds what a caller
+/// presents, which is signed content and needs no state; materialization
+/// holds committed state, before any body runs; the leg's session is the
+/// only stage holding evidence and state together. So the fold over a
+/// rule is a join rather than a max — a rule mixing an admission-answered
+/// leaf with a materialization-answered one lands in the leg, though each
+/// leaf alone is answered earlier, because no single earlier stage holds
+/// both.
+///
+/// The order matters for one property beyond cost. **Admission and
+/// materialization both land before any leg commits**, so a verdict
+/// reached there aborts the whole transaction and no caller has
+/// committed on the strength of it. A verdict reached in the walk lands
+/// inside the declaring node's own leg, which a caller may already have
+/// committed without waiting for — which is what a
+/// [`Total`](crate::signature::Totality::Total) frame may not carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Answers {
-    /// From what the caller presents: signed content, needing no state.
-    Evidence,
-    /// From committed state, before any body runs.
-    State,
-    /// From the session of the declaring node's own leg — the only stage
-    /// holding evidence and state together.
-    Session,
+pub enum Judged {
+    /// From presented evidence, which is signed content and needs no
+    /// state at all.
+    AtAdmission,
+    /// From committed state, by the shard holding the leaf, before any
+    /// leg runs.
+    AtMaterialization,
+    /// In the walk of the declaring node's own leg — the only stage
+    /// holding the evidence and the session together, and so the only
+    /// one a stored rule can be read in.
+    InTheLeg,
+}
+
+impl Judged {
+    /// Whether the verdict lands before any leg commits.
+    ///
+    /// What separates a feasibility fact from a verdict a caller could
+    /// already have committed past.
+    #[must_use]
+    pub const fn before_any_leg(self) -> bool {
+        !matches!(self, Self::InTheLeg)
+    }
 }
 
 /// A rule's leaf, at whichever point of its life the rule is: authored,
@@ -142,15 +173,15 @@ pub enum Answers {
 /// predicts what its evaluated twin will say because both answer here,
 /// per leaf, rather than in parallel folds kept agreeing by hand.
 pub trait Leaf {
-    /// Where this leaf's answer is.
-    fn answered_from(&self) -> Answers;
+    /// The stage that answers this leaf.
+    fn judged(&self) -> Judged;
 
     /// Whether this leaf's answer is in the store rather than in what a
     /// caller presents — what separates a feasibility fact from a gate:
     /// a rule of these alone turns no caller away, so it is not part of
     /// who may call a method.
     fn reads_state_only(&self) -> bool {
-        matches!(self.answered_from(), Answers::State)
+        matches!(self.judged(), Judged::AtMaterialization)
     }
 }
 
@@ -177,14 +208,14 @@ pub enum SealedLeaf {
 
 impl Leaf for SealedLeaf {
     /// A holding is a standing fact in the store about the moving party;
-    /// a claim stays a claim. No sealed leaf answers from the session —
+    /// a claim stays a claim. No sealed leaf is judged in the leg —
     /// settled at the seal, before any holder has been named and before
     /// any transaction exists, because each sealed leaf maps one-to-one
-    /// onto the evaluated leaf answering from the same place.
-    fn answered_from(&self) -> Answers {
+    /// onto the evaluated leaf answered at the same stage.
+    fn judged(&self) -> Judged {
         match self {
-            Self::Claim(_) => Answers::Evidence,
-            Self::Held { .. } => Answers::State,
+            Self::Claim(_) => Judged::AtAdmission,
+            Self::Held { .. } => Judged::AtMaterialization,
         }
     }
 }
@@ -272,15 +303,15 @@ pub enum RuleLeaf {
 
 impl Leaf for RuleLeaf {
     /// The authored twin of [`JudgedLeaf`]'s answer: each leaf resolves
-    /// into the evaluated leaf answering from the same place, so what a
+    /// into the evaluated leaf answered at the same stage, so what a
     /// declaration says about placement is what its evaluation does.
     ///
     /// [`JudgedLeaf`]: crate::manifest::JudgedLeaf
-    fn answered_from(&self) -> Answers {
+    fn judged(&self) -> Judged {
         match self {
-            Self::Claim(_) => Answers::Evidence,
-            Self::Stored { .. } => Answers::Session,
-            Self::Presence { .. } => Answers::State,
+            Self::Claim(_) => Judged::AtAdmission,
+            Self::Stored { .. } => Judged::InTheLeg,
+            Self::Presence { .. } => Judged::AtMaterialization,
         }
     }
 }
@@ -373,6 +404,44 @@ pub enum GrantSubject {
 }
 
 impl<L: Leaf> Rule<L> {
+    /// Where this rule is judged, read off its leaves: the earliest
+    /// stage that can answer every one of them.
+    ///
+    /// A rule reaching a leg-judged leaf needs the leg; one mixing
+    /// evidence with state needs both, and no single earlier stage holds
+    /// them. Everything else is answerable at one stage alone.
+    ///
+    /// One fold for every instantiation, which is what pins the reading
+    /// a record's holder is owed to the reading a transaction gets: a
+    /// sealed rule's placement *is* its evaluated twin's, because both
+    /// are this walk over leaves answered at the same stage. An entry
+    /// asking a standing fact about the moving party is answered before
+    /// any body runs and turns nobody away mid-transaction; one asking
+    /// whether this transaction was approved is answered before it is a
+    /// transaction at all; one asking both is the only shape that lands
+    /// inside a leg.
+    ///
+    /// A rule with no leaves is the algebra's own constant — satisfied
+    /// by anyone or by no one — and admission decides those as cheaply
+    /// as anything else does.
+    #[must_use]
+    pub fn judged(&self) -> Judged {
+        let mut state = false;
+        let mut evidence = false;
+        for leaf in self.leaves() {
+            match leaf.judged() {
+                Judged::InTheLeg => return Judged::InTheLeg,
+                Judged::AtMaterialization => state = true,
+                Judged::AtAdmission => evidence = true,
+            }
+        }
+        match (state, evidence) {
+            (true, true) => Judged::InTheLeg,
+            (true, false) => Judged::AtMaterialization,
+            (false, _) => Judged::AtAdmission,
+        }
+    }
+
     /// Whether every leaf reads the store alone, which is what keeps a
     /// feasibility fact out of the question of who may call a method.
     #[must_use]
