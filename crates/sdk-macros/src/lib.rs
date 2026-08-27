@@ -224,11 +224,76 @@ pub fn lanes(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 fn author(attr: TokenStream, item: TokenStream, role: Role) -> TokenStream {
     let module = syn::parse_macro_input!(item as syn::ItemMod);
+    let recovered = module.clone();
     let attr = TokenStream2::from(attr);
     match serves(&attr).and_then(|serves| expand(module, serves, role)) {
         Ok(tokens) => tokens.into(),
-        Err(error) => error.to_compile_error().into(),
+        Err(error) => refused(recovered, role, &error).into(),
     }
+}
+
+/// What a refused module still emits: its items, stripped, with the
+/// accessors and marks their bodies reach — beside the errors.
+///
+/// Emitting only the errors would erase every type in the module from
+/// the editor's view on the first mistake, turning one refusal into a
+/// cascade of `cannot find type` across the crate while the author fixes
+/// the line the error names. Everything here is best-effort: whatever
+/// the parse gets far enough to derive is emitted, and a module too
+/// broken for a piece goes without it.
+fn refused(mut module: syn::ItemMod, role: Role, error: &syn::Error) -> TokenStream2 {
+    let errors = error.to_compile_error();
+    let module_name = module.ident.clone();
+    let Some((_, items)) = &mut module.content else {
+        return errors;
+    };
+    let mut extras: Vec<syn::Item> = Vec::new();
+    // On a state-name refusal, the accessors go on the struct the author
+    // actually marked — an impl on the module's derived name would name a
+    // type that does not exist, and every body would error on it.
+    let state_name = state_struct(items, &module_name).unwrap_or_else(|_| {
+        items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(item)
+                    if item.attrs.iter().any(|a| a.path().is_ident("state")) =>
+                {
+                    Some(item.ident.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                syn::Ident::new(&pascal(&module_name.to_string()), Span::call_site())
+            })
+    });
+    // By the attribute alone, not through `parse_state`: the state parse
+    // may be the very thing that refused, and the accessors need only
+    // the two names.
+    let config_name = items.iter().find_map(|item| match item {
+        syn::Item::Struct(item) if item.attrs.iter().any(|a| a.path().is_ident("config")) => {
+            Some(item.ident.clone())
+        }
+        _ => None,
+    });
+    extras.push(syn::Item::Verbatim(authoring_accessors(
+        &state_name,
+        config_name.as_ref(),
+        role,
+    )));
+    let config_fields = config_slots(items, config_name.as_ref());
+    let names: Vec<String> = config_fields.iter().map(|(name, _)| name.clone()).collect();
+    if let Ok(resources) = resources(items, &names) {
+        extras.extend(resource_marks(&resources, role));
+    }
+    if let Ok(events) = event_names(items) {
+        extras.extend(event_emitters(&events, role));
+    }
+    let (records, _) = encode_declared(items);
+    module_allows(&mut module.attrs, role);
+    strip_macro_attrs(items, &state_name, role);
+    items.extend(records);
+    items.extend(extras);
+    quote!(#module #errors)
 }
 
 /// Which addresses the package answers, as its attribute says.
@@ -1243,6 +1308,19 @@ fn strip_macro_attrs(items: &mut [syn::Item], state_name: &syn::Ident, role: Rol
                     }
                 }
             }
+            // The kinds no reader scans. A marker on one is refused, so
+            // a successful expansion never strips here — the refused
+            // module does, so the marker rustc cannot resolve is not
+            // re-reported behind the refusal that already named it.
+            syn::Item::Fn(syn::ItemFn { attrs, .. })
+            | syn::Item::Const(syn::ItemConst { attrs, .. })
+            | syn::Item::Static(syn::ItemStatic { attrs, .. })
+            | syn::Item::Use(syn::ItemUse { attrs, .. })
+            | syn::Item::Mod(syn::ItemMod { attrs, .. })
+            | syn::Item::Type(syn::ItemType { attrs, .. })
+            | syn::Item::Trait(syn::ItemTrait { attrs, .. })
+            | syn::Item::Union(syn::ItemUnion { attrs, .. })
+            | syn::Item::Macro(syn::ItemMacro { attrs, .. }) => strip(attrs),
             _ => {}
         }
     }

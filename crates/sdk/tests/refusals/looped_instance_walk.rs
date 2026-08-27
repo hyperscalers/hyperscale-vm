@@ -21,11 +21,13 @@ mod contract {
 
     impl Contract {
         pub fn survey(&mut self, seats: NfBucket) -> NfBucket {
+            let mut last = 0;
             for &row in &self.config().rows {
                 for held in Seat::each(&seats) {
-                    self.noted.set(held.holder);
+                    last = held.holder + row;
                 }
             }
+            self.noted.set(last);
             seats
         }
     }

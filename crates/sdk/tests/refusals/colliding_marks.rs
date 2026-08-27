@@ -8,6 +8,7 @@ mod contract {
     struct OwnerBadge;
 
     #[resource]
+    #[allow(non_camel_case_types)] // the collision under kebab is the case
     struct Owner_badge;
 
     #[state]

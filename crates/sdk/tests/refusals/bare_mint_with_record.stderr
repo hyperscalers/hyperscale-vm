@@ -3,3 +3,21 @@ error: `OwnerBadge` declares no fields, so its instance holds the presence byte 
    |
 15 |             OwnerBadge::mint(0, OwnerBadge)
    |                                 ^^^^^^^^^^
+
+error[E0061]: this function takes 1 argument but 2 arguments were supplied
+  --> tests/refusals/bare_mint_with_record.rs:15:13
+   |
+15 |             OwnerBadge::mint(0, OwnerBadge)
+   |             ^^^^^^^^^^^^^^^^    ---------- unexpected argument #2 of type `OwnerBadge`
+   |
+note: associated function defined here
+  --> tests/refusals/bare_mint_with_record.rs:3:1
+   |
+ 3 | #[blueprint]
+   | ^^^^^^^^^^^^
+   = note: this error originates in the attribute macro `blueprint` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: remove the extra argument
+   |
+15 -             OwnerBadge::mint(0, OwnerBadge)
+15 +             OwnerBadge::mint(0)
+   |

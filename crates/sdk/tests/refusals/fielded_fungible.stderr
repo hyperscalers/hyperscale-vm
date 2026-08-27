@@ -6,3 +6,16 @@ error: a fungible resource has no instances, so these fields describe nothing â€
  9 | |         issued_at: u64,
 10 | |     }
    | |_____^
+
+error[E0599]: no associated function or constant named `mint` found for struct `Coupon` in the current scope
+  --> tests/refusals/fielded_fungible.rs:17:21
+   |
+ 3 | #[blueprint]
+   | ------------ associated function or constant `mint` not found for this struct
+...
+17 |             Coupon::mint(amount)
+   |                     ^^^^ associated function or constant not found in `Coupon`
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following trait defines an item `mint`, perhaps you need to implement it:
+           candidate #1: `hyperscale_vm_embed::host::KernelHost`

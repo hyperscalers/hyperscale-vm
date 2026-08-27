@@ -1,5 +1,5 @@
 error: a `for-each` inside another expands to a width the outer element decides, and a handle parameter covers one site of one loop — so the clauses this declares are ones no export could reach
-  --> tests/refusals/nested_loop.rs:21:17
+  --> tests/refusals/nested_loop.rs:22:17
    |
-21 |                 for &column in &self.config().columns {
+22 |                 for &column in &self.config().columns {
    |                 ^^^

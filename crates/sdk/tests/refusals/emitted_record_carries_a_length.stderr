@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `Vec<u8>: HborInfallible` is not satisfied
-  --> tests/refusals/emitted_record_carries_a_length.rs:11:15
+  --> tests/refusals/emitted_record_carries_a_length.rs:15:15
    |
-11 |         note: Vec<u8>,
+15 |         note: Vec<u8>,
    |               ^^^^^^^ the trait `HborInfallible` is not implemented for `Vec<u8>`
    |
    = help: the following other types implement trait `HborInfallible`:

@@ -3,3 +3,21 @@ error: `OwnerBadge` declares no fields, so its instance holds the presence byte 
    |
 17 |             if let Some(badge) = OwnerBadge::at(id) {
    |                                  ^^^^^^^^^^
+
+error[E0599]: no associated function or constant named `at` found for struct `OwnerBadge` in the current scope
+  --> tests/refusals/bare_instance_read.rs:17:46
+   |
+ 8 |     struct OwnerBadge;
+   |     ----------------- associated function or constant `at` not found for this struct
+...
+17 |             if let Some(badge) = OwnerBadge::at(id) {
+   |                                              ^^ associated function or constant not found in `OwnerBadge`
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following trait defines an item `at`, perhaps you need to implement it:
+           candidate #1: `hyperscale_vm_sdk::client::Component`
+help: there is an associated function `halt` with a similar name
+   |
+17 -             if let Some(badge) = OwnerBadge::at(id) {
+17 +             if let Some(badge) = OwnerBadge::halt(id) {
+   |

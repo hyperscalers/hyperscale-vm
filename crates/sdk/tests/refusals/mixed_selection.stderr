@@ -3,3 +3,16 @@ error: the arms of this selection cross the call boundary as different shapes, s
    |
 24 |             let key = if pick == settings.left {
    |                       ^^
+
+error[E0308]: `if` and `else` have incompatible types
+  --> tests/refusals/mixed_selection.rs:27:17
+   |
+24 |               let key = if pick == settings.left {
+   |  _______________________-
+25 | |                 settings.left
+   | |                 ------------- expected because of this
+26 | |             } else {
+27 | |                 7
+   | |                 ^ expected `Address`, found integer
+28 | |             };
+   | |_____________- `if` and `else` have incompatible types

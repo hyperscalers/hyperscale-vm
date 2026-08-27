@@ -1,7 +1,7 @@
 error[E0308]: mismatched types
-  --> tests/refusals/minted_wrong_kind.rs:17:13
+  --> tests/refusals/minted_wrong_kind.rs:21:13
    |
-16 |         pub fn forge(&mut self) -> Bucket {
+20 |         pub fn forge(&mut self) -> Bucket {
    |                                    ------ expected `hyperscale_vm_sdk::state::Bucket` because of return type
-17 |             OwnerBadge::mint(1)
+21 |             OwnerBadge::mint(1)
    |             ^^^^^^^^^^^^^^^^^^^ expected `Bucket`, found `NfBucket`

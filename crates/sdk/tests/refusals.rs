@@ -45,10 +45,11 @@ fn the_tracer_offers_a_presence_only_where_a_leaf_is_named() {
 /// named one could name an epoch already rolled, whose seed is public,
 /// and open onto a word it had computed before deciding to seal. Two
 /// things stand in front of that and the compiler answers with the
-/// first: `Seal` carries nothing an author can reach, so there is no
-/// seal a body can make; and it is not a `Record`, so every generic
-/// write a cell offers — `create`, `set` — wants a bound it does not
-/// satisfy. `seal` is what is left, and it takes no epoch.
+/// first: `Seal` is not a `Record`, so every generic write a cell
+/// offers — `create`, `set` — wants a bound it does not satisfy (said
+/// once per accessor tier, cell and slot); and it carries nothing an
+/// author can reach, so there is no seal a body can make. `seal` is
+/// what is left, and it takes no epoch.
 #[test]
 fn the_vocabulary_refuses_a_seal_a_body_wrote_itself() {
     let refuse = TestCases::new();

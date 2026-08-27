@@ -1,7 +1,7 @@
 error[E0277]: the trait bound `u128: AddressArg` is not satisfied
-  --> tests/refusals/client_proof_omitted.rs:30:38
+  --> tests/refusals/client_proof_omitted.rs:34:38
    |
-30 |     pool.withdraw(builder, resource, 100_u128)
+34 |     pool.withdraw(builder, resource, 100_u128)
    |          --------                    ^^^^^^^^ the trait `AddressArg` is not implemented for `u128`
    |          |
    |          required by a bound introduced by this call
@@ -24,9 +24,9 @@ note: required by a bound in `contract::client::Contract::withdraw`
    = note: this error originates in the attribute macro `blueprint` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0061]: this method takes 4 arguments but 3 arguments were supplied
-  --> tests/refusals/client_proof_omitted.rs:30:10
+  --> tests/refusals/client_proof_omitted.rs:34:10
    |
-30 |     pool.withdraw(builder, resource, 100_u128)
+34 |     pool.withdraw(builder, resource, 100_u128)
    |          ^^^^^^^^-----------------------------
    |                  |         |
    |                  |         expected `Proof`, found `Address`
@@ -42,6 +42,6 @@ note: method defined here
    |                ^^^^^^^^
 help: provide the argument
    |
-30 -     pool.withdraw(builder, resource, 100_u128)
-30 +     pool.withdraw(builder, /* hyperscale_vm_sdk::client::Proof */, 100_u128, /* u128 */)
+34 -     pool.withdraw(builder, resource, 100_u128)
+34 +     pool.withdraw(builder, /* hyperscale_vm_sdk::client::Proof */, 100_u128, /* u128 */)
    |

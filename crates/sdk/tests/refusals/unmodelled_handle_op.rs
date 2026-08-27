@@ -9,7 +9,8 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
-    use hyperscale_vm_sdk::{Address, Quantity};
+    use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::state::Quantity;
 
     #[state]
     struct Contract {}

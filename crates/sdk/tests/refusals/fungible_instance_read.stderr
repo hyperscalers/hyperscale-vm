@@ -3,3 +3,21 @@ error: `Coupon` is fungible, and value carries no record of its own — a balanc
    |
 17 |             if let Some(coupon) = Coupon::at(id) {
    |                                   ^^^^^^
+
+error[E0599]: no associated function or constant named `at` found for struct `Coupon` in the current scope
+  --> tests/refusals/fungible_instance_read.rs:17:43
+   |
+ 8 |     struct Coupon;
+   |     ------------- associated function or constant `at` not found for this struct
+...
+17 |             if let Some(coupon) = Coupon::at(id) {
+   |                                           ^^ associated function or constant not found in `Coupon`
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following trait defines an item `at`, perhaps you need to implement it:
+           candidate #1: `hyperscale_vm_sdk::client::Component`
+help: there is an associated function `halt` with a similar name
+   |
+17 -             if let Some(coupon) = Coupon::at(id) {
+17 +             if let Some(coupon) = Coupon::halt(id) {
+   |

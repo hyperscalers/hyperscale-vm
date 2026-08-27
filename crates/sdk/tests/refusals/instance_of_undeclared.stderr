@@ -3,3 +3,25 @@ error: `at` is called on a declared `#[resource]` struct — `Name::at(..)`. The
    |
 15 |             if Address::at(id).is_some() {
    |                ^^^^^^^
+
+error[E0599]: no associated function or constant named `at` found for struct `hyperscale_vm_sdk::Address` in the current scope
+  --> tests/refusals/instance_of_undeclared.rs:15:25
+   |
+15 |             if Address::at(id).is_some() {
+   |                         ^^ associated function or constant not found in `hyperscale_vm_sdk::Address`
+   |
+note: if you're trying to build a new `hyperscale_vm_sdk::Address` consider using one of the following associated functions:
+      hyperscale_vm_sdk::Address::new
+      hyperscale_vm_sdk::Address::from_bytes
+  --> $WORKSPACE/crates/types/src/address.rs
+   |
+   |     pub const fn new(body: [u8; 31], class: AddressClass) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+   |     pub const fn from_bytes(bytes: [u8; 32]) -> Result<Self, InvalidAddress> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: there is a method `gt` with a similar name
+   |
+15 -             if Address::at(id).is_some() {
+15 +             if Address::gt(id).is_some() {
+   |

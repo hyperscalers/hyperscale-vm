@@ -3,3 +3,16 @@ error: `mint` is called on a declared `#[resource]` struct — `Name::mint(..)`.
    |
 16 |             Coupon::mint(amount)
    |             ^^^^^^
+
+error[E0599]: no associated function or constant named `mint` found for struct `Coupon` in the current scope
+  --> tests/refusals/unmarked_mint.rs:16:21
+   |
+ 7 |     struct Coupon;
+   |     ------------- associated function or constant `mint` not found for this struct
+...
+16 |             Coupon::mint(amount)
+   |                     ^^^^ associated function or constant not found in `Coupon`
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following trait defines an item `mint`, perhaps you need to implement it:
+           candidate #1: `hyperscale_vm_embed::host::KernelHost`

@@ -10,7 +10,7 @@ mod contract {
 
     impl Contract {
         pub fn tally(&self) -> Quantity {
-            Quantity::from(0u128)
+            Quantity::from_subunits(0)
         }
 
         // A rename landing on a sibling's published name: one export per
@@ -18,7 +18,7 @@ mod contract {
         // generated `blueprint()`.
         #[name("tally")]
         pub fn recount(&self) -> Quantity {
-            Quantity::from(1u128)
+            Quantity::from_subunits(1)
         }
     }
 }

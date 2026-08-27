@@ -1,3 +1,7 @@
+//! An event's payload encodes into a stack buffer, so every field is
+//! fixed-width. The refusal is the codec's own — a `Vec<u8>` field
+//! fails the infallible-encoding bound on the record's own line, before
+//! the macro has an opinion.
 use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]

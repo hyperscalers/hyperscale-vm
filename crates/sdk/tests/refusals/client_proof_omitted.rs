@@ -22,6 +22,10 @@ mod contract {
 }
 
 // `withdraw` is guarded, so its wrapper takes the proof that acts.
+// Omitting it shifts every later argument one slot left, and the
+// compiler's first complaint lands on the shifted amount — the bound it
+// names beneath is the wrapper's, whose signature carries the `Proof`
+// the call is missing.
 fn call(
     builder: &mut TypedBuilder<'_>,
     pool: contract::client::Contract,

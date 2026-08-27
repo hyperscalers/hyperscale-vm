@@ -18,6 +18,7 @@ mod contract {
     impl Contract {
         pub fn fill(&mut self) {
             for &row in &self.config().rows {
+                let _held = row;
                 for &column in &self.config().columns {
                     self.noted.at(column).set(1);
                 }
