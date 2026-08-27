@@ -91,6 +91,18 @@ pub enum TypedError {
         /// The bound value's kind.
         found: &'static str,
     },
+    /// Bytes at the wrong width for an exact-width parameter.
+    #[error("`{method}` argument {param}: expected [u8; {expected}], found {found} bytes")]
+    ParamWidth {
+        /// The method called.
+        method: String,
+        /// The parameter position.
+        param: u32,
+        /// The declared width.
+        expected: u32,
+        /// The bound value's length.
+        found: usize,
+    },
     /// A literal where the method declares a bucket.
     #[error("`{method}` argument {param}: a bucket parameter needs an edge")]
     LiteralForBucketParam {

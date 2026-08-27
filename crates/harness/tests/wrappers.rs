@@ -340,7 +340,7 @@ fn the_staking_wrappers_match_their_signatures() {
         let operator =
             account::present_instance(b, ALICE, pool.issued_owner_badge(&TestHasher), 0)?;
         b.presenting(operator, |b| {
-            pool.register_validator(b, 7, vec![0xAA; 48], vec![0xBB; 96])?;
+            pool.register_validator(b, 7, [0xAA; 48], [0xBB; 96])?;
             pool.deactivate_validator(b, 8)?;
             pool.unjail(b, 8)?;
             pool.cast_param_vote(b, 9_000, 30, 12)?;

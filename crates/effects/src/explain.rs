@@ -54,7 +54,7 @@ use crate::rule::{
     GrantRuleExpr, GrantSubject, Holding, Judged, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule,
     always, never,
 };
-use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, Totality};
+use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, ParamType, Totality};
 use crate::types::{EdgeContent, Value, u256_decimal};
 use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 
@@ -823,7 +823,15 @@ impl Names<'_> {
             effects,
             abi,
         } = signature;
-        let kinds: Vec<&str> = params.iter().map(|param| param.name()).collect();
+        let kinds: Vec<String> = params
+            .iter()
+            .map(|param| match param {
+                // The width is the signature's own statement; the
+                // generic label would drop the one fact it fixes.
+                ParamType::BytesExact(width) => format!("[u8; {width}]"),
+                _ => param.name().to_owned(),
+            })
+            .collect();
         let _ = write!(out, "{name}({}) — {}", kinds.join(", "), returns(*totality));
         if *answers {
             out.push_str(", answers");

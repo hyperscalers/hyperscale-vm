@@ -390,13 +390,28 @@ pub(crate) fn is_address(ty: &syn::Type) -> bool {
 
 /// The parameter kind a Rust type binds as in a manifest.
 fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
+    // `[u8; N]` — bytes whose width is the signature's: admission holds
+    // an argument to it, so the body reads the array as spelled. The
+    // width is spliced as written, so a named constant resolves where
+    // the generated signature compiles.
+    if let syn::Type::Array(array) = ty {
+        if matches!(&*array.elem, syn::Type::Path(p) if p.path.is_ident("u8")) {
+            let width = &array.len;
+            return Ok(quote!(::hyperscale_vm_sdk::ParamType::BytesExact(#width as u32)));
+        }
+        return Err(syn::Error::new(
+            ty.span(),
+            "the one array parameter is `[u8; N]` — bytes whose width the signature \
+             fixes and admission refuses a mismatch of",
+        ));
+    }
     let syn::Type::Path(path) = ty else {
         return Err(syn::Error::new(
             ty.span(),
-            "a contract parameter is a plain named type — a reference, tuple, or array is \
-             not one a manifest can bind. The kinds are `Bucket`, `NfBucket`, `Ids`, \
-             `Quantity`, `OrderKey`, `Fixed`, `SignedFixed`, `u128`, `u64`, `Address`, and \
-             bytes",
+            "a contract parameter is a plain named type or `[u8; N]` — a reference or \
+             tuple is not one a manifest can bind. The kinds are `Bucket`, `NfBucket`, \
+             `Ids`, `Quantity`, `OrderKey`, `Fixed`, `SignedFixed`, `u128`, `u64`, \
+             `Address`, and bytes",
         ));
     };
     // An address type declares its classes in the kind, so a wrong-class
@@ -431,8 +446,8 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
             return Err(syn::Error::new(
                 ty.span(),
                 "a contract parameter must be one of `Bucket`, `NfBucket`, `Ids`, \
-                 `Quantity`, `OrderKey`, `Fixed`, `SignedFixed`, `u128`, `u64`, `Address`, or \
-                 bytes — these are the kinds a manifest can bind",
+                 `Quantity`, `OrderKey`, `Fixed`, `SignedFixed`, `u128`, `u64`, `Address`, \
+                 bytes, or `[u8; N]` — these are the kinds a manifest can bind",
             ));
         }
     };

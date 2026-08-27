@@ -567,6 +567,37 @@ impl LeafShape for Vec<u8> {
     }
 }
 
+impl<const N: usize> LeafShape for [u8; N] {
+    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(TypeShape::ByteArray(
+            u32::try_from(N).expect("a cell is far shorter than u32"),
+        ))
+    }
+}
+
+/// Exact-width bytes: the width is the type's, so a parameter spelled
+/// `[u8; N]` is held to it at admission and a body reads the array with
+/// no failure arm.
+///
+/// # Panics
+///
+/// On a cell of any other width. An unwritten leaf reads as the zero
+/// array; bytes at another width were never written through this impl,
+/// and are a defect in state on the same terms a malformed address is.
+impl<const N: usize> Cellular for [u8; N] {
+    fn from_cell(cell: &[u8]) -> Self {
+        if cell.is_empty() {
+            return [0; N];
+        }
+        cell.try_into()
+            .expect("an exact-width cell holds its width")
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.to_vec()
+    }
+}
+
 impl Cellular for Vec<u8> {
     fn from_cell(cell: &[u8]) -> Self {
         cell.to_vec()

@@ -380,6 +380,18 @@ pub enum AdmissionError {
         /// The bound value's kind.
         found: &'static str,
     },
+    /// Bytes at the wrong width for an exact-width parameter.
+    #[error("node {node} argument {param}: expected [u8; {expected}], found {found} bytes")]
+    ParamWidth {
+        /// The offending node.
+        node: u32,
+        /// The parameter position.
+        param: u32,
+        /// The declared width.
+        expected: u32,
+        /// The bound value's length.
+        found: usize,
+    },
     /// An edge bound to a parameter that is not a bucket.
     #[error("node {node} argument {param}: an edge cannot bind a value parameter")]
     EdgeForValueParam {
@@ -689,6 +701,7 @@ impl AdmissionError {
             // Flattened, and about one of its arguments.
             Self::DestroysNoEdge { node, param, .. }
             | Self::ParamKind { node, param, .. }
+            | Self::ParamWidth { node, param, .. }
             | Self::EdgeForValueParam { node, param, .. }
             | Self::LiteralForBucketParam { node, param, .. }
             | Self::ResourceKindMismatch { node, param, .. }

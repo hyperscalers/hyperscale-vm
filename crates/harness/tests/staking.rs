@@ -238,7 +238,7 @@ fn register_graph(validator: u64) -> ManifestGraph {
     graph(|b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         b.presenting(operator, |b| {
-            pool().register_validator(b, validator, PUBKEY.to_vec(), POSSESSION_PROOF.to_vec())
+            pool().register_validator(b, validator, PUBKEY, POSSESSION_PROOF)
         })
     })
 }

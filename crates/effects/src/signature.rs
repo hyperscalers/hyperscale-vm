@@ -40,6 +40,10 @@ pub enum ParamType {
     U256,
     /// Opaque bytes.
     Bytes,
+    /// Opaque bytes at an exact width: `[u8; N]` in the signature, and
+    /// an argument at any other length refused at admission — which is
+    /// what lets the body read the array with no failure arm.
+    BytesExact(u32),
     /// A global object's address, of any class.
     Address,
     /// An address a method may be invoked on: a principal or a component.
@@ -104,6 +108,7 @@ impl ParamType {
             Self::U128 => "u128",
             Self::U256 => "u256",
             Self::Bytes => "bytes",
+            Self::BytesExact(_) => "exact-width bytes",
             Self::Address => "address",
             Self::CallTarget => "call-target",
             Self::Principal => "principal-address",
@@ -143,6 +148,7 @@ impl ParamType {
             | (Self::U256, Value::U256(_))
             | (Self::Bytes, Value::Bytes(_))
             | (Self::Address, Value::Address(_)) => true,
+            (Self::BytesExact(width), Value::Bytes(bytes)) => bytes.len() == width as usize,
             (Self::CallTarget, Value::Address(address)) => CallTarget::try_from(*address).is_ok(),
             (Self::Principal, Value::Address(address)) => PrincipalAddr::try_from(*address).is_ok(),
             (Self::Component, Value::Address(address)) => ComponentAddr::try_from(*address).is_ok(),

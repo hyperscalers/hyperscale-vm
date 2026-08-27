@@ -57,12 +57,12 @@ instantiate() — infallible
   yields   edge 0 = edge(self-issued(non-fungible["owner-badge"]) × [0])
   exports  handle for clause 2, handle for clause 4, handle for clause 6, handle for clause 8, self.record
 
-register-validator(u64, bytes, bytes) — infallible
+register-validator(u64, [u8; 48], [u8; 96]) — infallible
   declares
       0  requires claim self-issued(non-fungible["owner-badge"])
       1  requires self.validators[arg0] is absent
       2  write self.validators[arg0]
-  exports  handle for clause 2, arg1, arg2, arg0
+  exports  handle for clause 2, arg1, arg0, arg2
 
 stake(bucket) — infallible
   takes    arg0 carrying config.staked_resource

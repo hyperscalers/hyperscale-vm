@@ -176,18 +176,9 @@ pub mod staking {
         pub fn register_validator(
             &mut self,
             validator_id: u64,
-            pubkey: Vec<u8>,
-            possession_proof: Vec<u8>,
+            pubkey: [u8; PUBKEY_BYTES],
+            possession_proof: [u8; POSSESSION_PROOF_BYTES],
         ) {
-            // The payload opens with the validator it concerns, which is
-            // also the first thing this method is about. The widths are
-            // the event's own, so what checks them is the conversion into
-            // it rather than an assert beside it.
-            let pubkey: [u8; PUBKEY_BYTES] =
-                pubkey.try_into().expect("pubkey is not a consensus key");
-            let possession_proof: [u8; POSSESSION_PROOF_BYTES] = possession_proof
-                .try_into()
-                .expect("possession proof is not a consensus signature");
             // Registering twice is refused by the shard holding the leaf,
             // against committed state, before this runs.
             self.validators

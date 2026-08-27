@@ -629,11 +629,23 @@ impl Admission<'_> {
                         });
                     }
                     if !param.admits(value) {
-                        return Err(AdmissionError::ParamKind {
-                            node: node_index,
-                            param: param_index,
-                            expected: param.name(),
-                            found: value.kind(),
+                        // The one same-kind refusal is width, and it
+                        // names the width the signature fixed.
+                        return Err(match (param, value) {
+                            (ParamType::BytesExact(expected), Value::Bytes(bytes)) => {
+                                AdmissionError::ParamWidth {
+                                    node: node_index,
+                                    param: param_index,
+                                    expected: *expected,
+                                    found: bytes.len(),
+                                }
+                            }
+                            _ => AdmissionError::ParamKind {
+                                node: node_index,
+                                param: param_index,
+                                expected: param.name(),
+                                found: value.kind(),
+                            },
                         });
                     }
                     bound.push(value.clone());

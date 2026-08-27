@@ -61,11 +61,23 @@ fn type_args(
                     });
                 }
                 if !param.admits(value) {
-                    return Err(TypedError::ParamKind {
-                        method: method(),
-                        param: index,
-                        expected: param.name(),
-                        found: value.kind(),
+                    // The one same-kind refusal is width, and it names
+                    // the width the signature fixed.
+                    return Err(match (param, value) {
+                        (ParamType::BytesExact(expected), Value::Bytes(bytes)) => {
+                            TypedError::ParamWidth {
+                                method: method(),
+                                param: index,
+                                expected: *expected,
+                                found: bytes.len(),
+                            }
+                        }
+                        _ => TypedError::ParamKind {
+                            method: method(),
+                            param: index,
+                            expected: param.name(),
+                            found: value.kind(),
+                        },
                     });
                 }
                 Some(value.clone())

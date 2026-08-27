@@ -99,6 +99,13 @@ impl<const N: usize> Arg for &[u8; N] {
     }
 }
 
+impl<const N: usize> sealed::Sealed for [u8; N] {}
+impl<const N: usize> Arg for [u8; N] {
+    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+        GraphArg::Literal(Value::Bytes(self.to_vec()))
+    }
+}
+
 impl sealed::Sealed for Value {}
 impl Arg for Value {
     fn bind(self, _builder: &GraphBuilder) -> GraphArg {

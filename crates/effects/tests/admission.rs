@@ -1940,3 +1940,65 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
         }),
     );
 }
+
+/// A package whose one method fixes its byte parameter's width.
+///
+/// Authored here for the same reason the sorter is: what it pins is the
+/// admission judgment, and a signature is all that takes.
+fn keeper_metadata() -> PackageMetadata {
+    let mut package = PackageMetadata::default();
+    package.methods.insert(
+        "file".into(),
+        MethodSignature {
+            totality: Totality::Infallible,
+            params: vec![ParamType::BytesExact(4)],
+            abi: vec![AbiParam::Derived(Expr::Arg(0))],
+            denominations: vec![None],
+            ..MethodSignature::default()
+        },
+    );
+    package
+}
+
+fn keeper_meta() -> InstanceMeta {
+    InstanceMeta {
+        package: pkg("keeper"),
+        config: vec![],
+        salt: Hash32([11; 32]),
+    }
+}
+
+/// An exact-width parameter admits its width and nothing else, and the
+/// refusal names the width the signature fixed.
+#[test]
+fn bytes_at_the_wrong_width_are_refused_naming_the_width() {
+    let mut chain = setup();
+    chain
+        .packages
+        .publish_unchecked(pkg("keeper"), keeper_metadata());
+    chain.instances.create(&TestHasher, keeper_meta());
+    let filed = |bytes: Vec<u8>| ManifestGraph {
+        nodes: vec![
+            valid_graph().nodes[0].clone(),
+            GraphNode {
+                target: keeper_meta().address(&TestHasher).into(),
+                method: "file".into(),
+                args: vec![GraphArg::Literal(Value::Bytes(bytes))],
+                evidence: BTreeSet::new(),
+            },
+        ],
+    };
+    assert_eq!(
+        admit(&filed(vec![7; 4]), ALICE, &chain, &TestHasher).map(|_| ()),
+        Ok(())
+    );
+    assert_eq!(
+        admit(&filed(vec![7; 3]), ALICE, &chain, &TestHasher).map(|_| ()),
+        Err(AdmissionError::ParamWidth {
+            node: 1,
+            param: 0,
+            expected: 4,
+            found: 3,
+        })
+    );
+}
