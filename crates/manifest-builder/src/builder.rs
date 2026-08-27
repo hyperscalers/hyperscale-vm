@@ -432,6 +432,13 @@ impl GraphBuilder {
         }
     }
 
+    /// Every appended node's method name, in node order — what lets a
+    /// tier that reads metadata restate a structural refusal in the
+    /// author's coordinates.
+    pub(crate) fn method_names(&self) -> Vec<String> {
+        self.nodes.iter().map(|node| node.method.clone()).collect()
+    }
+
     /// How many nodes have been appended — the index the next call takes,
     /// which is what admission will number it by. A bare author presenting
     /// a proof reads the producer's index off this, since a call with no

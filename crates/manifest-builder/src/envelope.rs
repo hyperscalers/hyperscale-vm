@@ -395,10 +395,11 @@ impl<'a> IntentBuilder<'a> {
     /// Consume an output as this intent's yield edge, for the composition
     /// to fill some intent's socket with.
     ///
-    /// # Panics
+    /// A bucket carrying constraints or one minted elsewhere poisons
+    /// the graph, on [`GraphBuilder::export`]'s terms, and the seal
+    /// hands the mistake back.
     ///
-    /// On a bucket carrying constraints — a yield's constraints are the
-    /// declaring socket's — or one minted elsewhere.
+    /// [`GraphBuilder::export`]: crate::GraphBuilder::export
     pub fn export(&mut self, bucket: Bucket) -> Offered {
         let edge = self.graph.export(bucket);
         Offered {

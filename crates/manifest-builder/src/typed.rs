@@ -127,6 +127,19 @@ pub enum TypedError {
         /// The parameter position.
         param: u32,
     },
+    /// An output no argument consumed and no yield exported, named
+    /// against the method that produced it. The untyped tier's
+    /// [`BuildError::DanglingOutput`] keeps indices — it reads no
+    /// metadata and has nothing else.
+    #[error(
+        "output {output} of `{method}` reaches no consumer — route it, or name a rest sink with `rest_to`"
+    )]
+    DanglingOutput {
+        /// The producing method's published name.
+        method: String,
+        /// The output slot, in declaration order.
+        output: u32,
+    },
     /// A proof presented by a builder that did not prove it — a node
     /// index means nothing in another intent's graph, and cross-intent
     /// authority travels through a socket, never a foreign handle.
@@ -1107,6 +1120,20 @@ impl<'a> TypedBuilder<'a> {
     ///
     /// [`TypedError::Build`] wrapping the structural refusal.
     pub fn build(self) -> Result<ManifestGraph, TypedError> {
-        Ok(self.graph.build()?)
+        // Captured before the graph is consumed, so the one structural
+        // refusal made in method-and-output terms can speak them.
+        let methods = self.graph.method_names();
+        match self.graph.build() {
+            Err(BuildError::DanglingOutput { producer, output }) => {
+                Err(TypedError::DanglingOutput {
+                    method: usize::try_from(producer)
+                        .ok()
+                        .and_then(|node| methods.get(node).cloned())
+                        .unwrap_or_default(),
+                    output,
+                })
+            }
+            outcome => Ok(outcome?),
+        }
     }
 }

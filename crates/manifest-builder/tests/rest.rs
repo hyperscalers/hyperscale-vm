@@ -10,7 +10,7 @@ use hyperscale_vm_effects::{
     admit,
 };
 use hyperscale_vm_fixtures::payouts;
-use hyperscale_vm_manifest_builder::{BuildError, GraphBuilder, TypedBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{GraphBuilder, TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{CallTarget, ComponentAddr, PrincipalAddr, ResourceAddr};
 
@@ -63,12 +63,18 @@ fn without_a_policy_a_rest_edge_is_still_a_refusal() {
         .in_lots(&mut b, funds, 30u128)
         .unwrap();
     account::deposit(&mut b, BOB, taken).unwrap();
+    let refused = b.build().expect_err("a dangling remainder");
     assert_eq!(
-        b.build(),
-        Err(TypedError::Build(BuildError::DanglingOutput {
-            producer: 2,
+        refused,
+        TypedError::DanglingOutput {
+            method: "in-lots".into(),
             output: 1
-        }))
+        }
+    );
+    // The refusal speaks the author's coordinates, and points at the fix.
+    assert_eq!(
+        refused.to_string(),
+        "output 1 of `in-lots` reaches no consumer — route it, or name a rest sink with `rest_to`"
     );
 }
 
