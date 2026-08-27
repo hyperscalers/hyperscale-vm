@@ -1,5 +1,5 @@
 error: a threshold branches wider than the vocabulary admits
-  --> tests/refusals/wide_threshold.rs:39:20
+  --> tests/refusals/wide_threshold.rs:38:20
    |
-39 |         #[requires(n_of(
+38 |         #[requires(n_of(
    |                    ^^^^

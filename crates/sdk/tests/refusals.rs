@@ -367,6 +367,18 @@ fn the_macro_refuses_a_marker_nothing_reads() {
     refuse.compile_fail("tests/refusals/marker_on_free_fn.rs");
 }
 
+/// The tuple caps are stated bounds, not cliffs: sixteen binds — the
+/// widest argument and configuration tuples the client tier implements
+/// — and seventeen is refused at the signature naming the cap, instead
+/// of the generated wrapper failing to compile with no message.
+#[test]
+fn the_macro_bounds_the_tuple_arities() {
+    let cases = TestCases::new();
+    cases.pass("tests/refusals/sixteen_params.rs");
+    cases.compile_fail("tests/refusals/seventeen_params.rs");
+    cases.compile_fail("tests/refusals/seventeen_config_fields.rs");
+}
+
 /// A private method is an inlining site: its body substitutes where it
 /// is called, under the caller's own declaration walk. The bounds are
 /// what substitution needs — no cycle, no early `return`, plain-name

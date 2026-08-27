@@ -1,0 +1,5 @@
+error: a configuration struct declares at most 16 fields — the widest tuple a creation binds
+ --> tests/refusals/seventeen_config_fields.rs:9:12
+  |
+9 |     struct Terms {
+  |            ^^^^^

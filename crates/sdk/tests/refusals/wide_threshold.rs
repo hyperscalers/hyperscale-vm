@@ -23,7 +23,6 @@ mod contract {
         k14: Address,
         k15: Address,
         k16: Address,
-        k17: Address,
     }
 
     #[state]
@@ -54,7 +53,7 @@ mod contract {
             config.k14,
             config.k15,
             config.k16,
-            config.k17
+            self
         ))]
         pub fn set_fee(&mut self, fee: Quantity) {
             self.fee.set(fee);

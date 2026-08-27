@@ -504,6 +504,28 @@ const OWN: &[&str] = &[
 /// its own.
 const GATES: &[&str] = &["requires", "proves"];
 
+/// The widest tuple the client tier binds: the most parameters a
+/// published method takes, and the most fields a configuration struct
+/// declares. A stated bound rather than a cliff — past it the generated
+/// wrapper would fail to compile with nothing naming the cap.
+const MAX_PARAMS: usize = 16;
+
+/// Refuse a configuration struct wider than the tuple a creation binds.
+fn check_config_width(config: Option<&syn::Ident>, fields: usize) -> syn::Result<()> {
+    if fields > MAX_PARAMS
+        && let Some(config) = config
+    {
+        return Err(syn::Error::new(
+            config.span(),
+            format!(
+                "a configuration struct declares at most {MAX_PARAMS} fields — the widest \
+                 tuple a creation binds"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn strip(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !OWN.iter().any(|own| attr.path().is_ident(own)));
 }
@@ -1011,6 +1033,15 @@ fn lower_method(
         idents.push(ident.ident.clone());
         params.push((ident.ident.to_string(), (*arg.ty).clone()));
         kinds.push(param_type(&arg.ty)?);
+    }
+    if params.len() > MAX_PARAMS {
+        return Err(syn::Error::new(
+            method.sig.inputs.span(),
+            format!(
+                "a published method takes at most {MAX_PARAMS} parameters — the widest \
+                 argument tuple the client tier binds"
+            ),
+        ));
     }
 
     let gate = parse_gate(method, declared, &params)?;
@@ -1619,6 +1650,7 @@ fn expand(
     check_marker_kinds(items, &state_name, config_name.as_ref())?;
     check_vocabulary_shadows(items)?;
     let config_fields = config_slots(items, config_name.as_ref());
+    check_config_width(config_name.as_ref(), config_fields.len())?;
     let events = event_names(items)?;
     let errors = error_names(items)?;
     let declines: BTreeSet<String> = error_enums(items)
