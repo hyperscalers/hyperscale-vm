@@ -217,11 +217,7 @@ pub mod lending {
         /// rounding that flatters the borrower is one the market pays
         /// for.
         pub fn draw(&mut self, want: Quantity, now: u64) -> Result<Bucket, Error> {
-            // The terms are read out rather than held, because the record
-            // borrows the component and the body writes to it.
-            let collateral_resource = self.config().collateral;
-            let debt_resource = self.config().debt;
-            let ltv = self.config().ltv;
+            let terms = self.config();
             if stale(self.accrued_at.get(), now) {
                 return Err(Error::IndexStale);
             }
@@ -238,15 +234,15 @@ pub mod lending {
             let drawn = want.convert(per_debt, Rounding::Up);
             let owed = (self.shares.get() + drawn).convert(index, Rounding::Up);
 
-            let posted = self.vault(collateral_resource).balance();
+            let posted = self.vault(terms.collateral).balance();
             let backing = posted.convert(collateral_price.rate(), Rounding::Down);
             let exposure = owed.convert(debt_price.rate(), Rounding::Up);
-            if exposure > backing.scale(ltv.ratio(), Rounding::Down) {
+            if exposure > backing.scale(terms.ltv.ratio(), Rounding::Down) {
                 return Err(Error::OverLtv);
             }
 
             self.shares.set(self.shares.get() + drawn);
-            Ok(self.vault(debt_resource).take(want))
+            Ok(self.vault(terms.debt).take(want))
         }
 
         /// Hand debt back and retire the shares it stood for.
@@ -279,8 +275,7 @@ pub mod lending {
         /// a market is in trouble when this number rises, which is the
         /// direction that fits inside it.
         pub fn liquidate(&mut self, now: u64) -> Result<Bucket, Error> {
-            let collateral_resource = self.config().collateral;
-            let threshold = self.config().liquidation_threshold;
+            let terms = self.config();
             if stale(self.accrued_at.get(), now) {
                 return Err(Error::IndexStale);
             }
@@ -296,7 +291,7 @@ pub mod lending {
                 return Err(Error::NothingOwed);
             }
 
-            let mut posted = self.vault(collateral_resource);
+            let mut posted = self.vault(terms.collateral);
             let backing = posted
                 .balance()
                 .convert(collateral_price.rate(), Rounding::Down);
@@ -305,7 +300,7 @@ pub mod lending {
             // something against nothing posted is the most exceeded a
             // threshold ever gets, and materializing the ratio first
             // would have had to refuse it for want of a denominator.
-            if !exposure.exceeds(backing, threshold.ratio()) {
+            if !exposure.exceeds(backing, terms.liquidation_threshold.ratio()) {
                 return Err(Error::StillCovered);
             }
 

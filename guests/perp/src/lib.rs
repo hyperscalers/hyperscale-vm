@@ -157,8 +157,7 @@ pub mod perp {
         /// here: the record's leaf must be absent for this to run, which
         /// is a fact the declaration states and no body has to check.
         pub fn open(&mut self, funds: Bucket, size: Quantity) -> Result<(), Error> {
-            let collateral = self.config().collateral;
-            let maintenance = self.config().maintenance_margin;
+            let terms = self.config();
             let posted = funds.quantity();
             let mark = self.mark.get();
 
@@ -172,13 +171,13 @@ pub mod perp {
             // has to clear the same bar it will later be liquidated
             // against.
             let notional = size.convert(mark.rate(), Rounding::Up);
-            if posted < notional.scale(maintenance.ratio(), Rounding::Up) {
+            if posted < notional.scale(terms.maintenance_margin.ratio(), Rounding::Up) {
                 return Err(Error::BelowMaintenance);
             }
 
             let entry_charged = self.funding_charged.get();
             let entry_credited = self.funding_credited.get();
-            self.vault(collateral).put(funds);
+            self.vault(terms.collateral).put(funds);
             self.position.create(Position {
                 size,
                 margin: posted,
@@ -191,9 +190,8 @@ pub mod perp {
 
         /// Close the position and take what it is worth.
         pub fn close(&mut self) -> Bucket {
-            let collateral = self.config().collateral;
-            let long = self.config().long;
-            let mut vault = self.vault(collateral);
+            let terms = self.config();
+            let mut vault = self.vault(terms.collateral);
             let held = vault.balance();
             let position = self.position.existing();
 
@@ -202,7 +200,7 @@ pub mod perp {
                 self.mark.get(),
                 self.funding_charged.get(),
                 self.funding_credited.get(),
-                long,
+                terms.long,
             );
 
             self.position.retire();
@@ -213,11 +211,8 @@ pub mod perp {
 
         /// Seize a position that no longer covers its requirement.
         pub fn liquidate(&mut self) -> Result<Bucket, Error> {
-            let collateral = self.config().collateral;
-            let maintenance = self.config().maintenance_margin;
-            let bonus = self.config().liquidation_bonus;
-            let long = self.config().long;
-            let mut vault = self.vault(collateral);
+            let terms = self.config();
+            let mut vault = self.vault(terms.collateral);
             let held = vault.balance();
             let position = self.position.existing();
 
@@ -227,10 +222,10 @@ pub mod perp {
                 mark,
                 self.funding_charged.get(),
                 self.funding_credited.get(),
-                long,
+                terms.long,
             );
             let notional = position.size.convert(mark.rate(), Rounding::Down);
-            if worth >= notional.scale(maintenance.ratio(), Rounding::Down) {
+            if worth >= notional.scale(terms.maintenance_margin.ratio(), Rounding::Down) {
                 return Err(Error::StillCovered);
             }
 
@@ -238,7 +233,7 @@ pub mod perp {
             // The liquidator's cut, and what stays with the market: a
             // division of what was seized rather than two numbers that
             // have to agree.
-            let (cut, _kept) = worth.min(held).divide(bonus.ratio());
+            let (cut, _kept) = worth.min(held).divide(terms.liquidation_bonus.ratio());
             Ok(vault.take(cut))
         }
     }

@@ -1710,8 +1710,9 @@ impl<'a> Lowerer<'a> {
     /// record a body passes on and the field it reads are one evaluation,
     /// and the sealed leaf is never decoded.
     ///
-    /// A borrow, because that is what the accessor answers with: the
-    /// record is the instance's and a body consults it.
+    /// Owned, because that is what the accessor answers with: the
+    /// configuration is creation-fixed and a handful of words, so a body
+    /// holds the terms without borrowing the component.
     fn config_record(&mut self, span: Span) -> TokenStream {
         let declared = self.declared;
         let Some(name) = declared.config_record else {
@@ -1730,7 +1731,7 @@ impl<'a> Lowerer<'a> {
                 quote!(#field: #value)
             })
             .collect();
-        quote!(&#name { #(#fields),* })
+        quote!(#name { #(#fields),* })
     }
 
     /// One binary judgment, rebuilt over its operands' guest values.

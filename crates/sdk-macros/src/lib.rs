@@ -1406,7 +1406,7 @@ fn authoring_accessors(
     let configured = config.map(|config| {
         quote!(
             /// The instance's creation-fixed configuration.
-            fn config(&self) -> &::hyperscale_vm_sdk::state::Config<#config> {
+            fn config(&self) -> #config {
                 ::core::unimplemented!("a contract body runs on the guest")
             }
         )

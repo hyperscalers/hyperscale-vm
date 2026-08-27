@@ -227,7 +227,7 @@ pub mod amm {
     /// Over the record whole rather than over its fields, which is what
     /// a helper is for — and what crosses is the fields the kernel
     /// evaluated, assembled under the name the package gave them.
-    fn is_side(settings: &Settings, resource: ResourceAddr) -> bool {
+    fn is_side(settings: Settings, resource: ResourceAddr) -> bool {
         resource == settings.x || resource == settings.y
     }
 }
