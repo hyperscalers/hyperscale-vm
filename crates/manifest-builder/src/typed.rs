@@ -23,6 +23,7 @@
 //! refused transaction and can never admit one the protocol would refuse.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::iter;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -877,12 +878,15 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            // A method reading only a rule takes the intent's signature;
-            // a guarded one presents what the walk above proved of its
-            // gate, and was refused there if that was nothing.
-            (true, []) if signature.reads_a_rule() => {
-                BTreeSet::from([EvidenceRef::IntentSignature])
-            }
+            // A method reading a rule takes the intent's signature, and
+            // what its movements earned rides beside it — the stored
+            // rule answers the sign-in, never the claim a moved
+            // resource demands. A guarded method presents what the walk
+            // above proved of its gate, and was refused there if that
+            // was nothing.
+            (true, []) if signature.reads_a_rule() => iter::once(EvidenceRef::IntentSignature)
+                .chain(earned.iter().map(|proof| proof.reference()))
+                .collect(),
             (true, []) => gated
                 .iter()
                 .chain(earned.iter())
