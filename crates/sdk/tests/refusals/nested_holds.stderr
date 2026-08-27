@@ -1,4 +1,4 @@
-error: a `#[requires]` rule names claims only; possession is spelled `#[proves(badge)]`
+error: a `#[requires]` rule names claims only; possession is spelled `#[proves(badge)]`, and what a vault holds is the state field's own `#[holds(..)]`
   --> tests/refusals/nested_holds.rs:21:42
    |
 21 |         #[requires(n_of(2, config.owner, holds(badge)))]

@@ -488,6 +488,7 @@ fn method_name(method: &syn::ImplItemFn) -> syn::Result<String> {
 const OWN: &[&str] = &[
     "slot",
     "denomination",
+    "holds",
     "state",
     "config",
     "name",
@@ -640,7 +641,7 @@ fn check_vocabulary_shadows(items: &[syn::Item]) -> syn::Result<()> {
 /// The markers whose reader scans structs, and the two field pins.
 const ON_A_STRUCT: &[&str] = &["state", "config", "event", "record", "resource"];
 const ON_A_METHOD: &[&str] = &["proves", "total", "name"];
-const ON_A_STATE_FIELD: &[&str] = &["slot", "denomination"];
+const ON_A_STATE_FIELD: &[&str] = &["slot", "holds", "denomination"];
 
 fn marker_kinds_on_struct(
     item: &syn::ItemStruct,
@@ -723,6 +724,7 @@ fn marker_kinds_on_enum(item: &syn::ItemEnum) -> syn::Result<()> {
             "total",
             "name",
             "slot",
+            "holds",
             "denomination",
         ],
     ) {

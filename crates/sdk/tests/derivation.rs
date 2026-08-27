@@ -1439,3 +1439,66 @@ fn a_helper_splices_as_the_inline_spelling() {
         "the spliced body declares its write"
     );
 }
+
+/// A named vault field is the denominated cell: the ops land on the
+/// field, and the resource its `#[holds(..)]` states is the leaf's own
+/// key — the same addressing a keyed family reaches through its key.
+#[blueprint]
+mod treasury {
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Bucket, Quantity, Vault};
+
+    #[config]
+    struct Terms {
+        asset: ResourceAddr,
+    }
+
+    #[state]
+    struct Treasury {
+        #[holds(config.asset)]
+        till: Vault,
+    }
+
+    impl Treasury {
+        /// Bank what arrives.
+        pub fn bank(&mut self, funds: Bucket) {
+            self.till.put(funds);
+        }
+
+        /// Draw against the till.
+        pub fn draw(&mut self, amount: Quantity) -> Bucket {
+            self.till.take(amount)
+        }
+    }
+}
+
+#[test]
+fn a_named_vault_declares_the_resource_it_holds() {
+    use hyperscale_vm_effects::{Expr, TargetExpr};
+
+    let metadata = treasury::blueprint().metadata();
+    for (method, moves) in [("bank", Moves::In), ("draw", Moves::Out)] {
+        let effects = &metadata.methods[method].effects;
+        let [
+            Clause::Effect {
+                mode: ModeExpr::Delta { moves: seen },
+                denomination: Some(resource),
+                target,
+                ..
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("{method} moves value through the till");
+        };
+        assert_eq!(*seen, moves, "{method}");
+        assert_eq!(**resource, Expr::Config(0), "the field's own `holds`");
+        assert!(
+            matches!(target, TargetExpr::Point(_)),
+            "a named vault is one leaf: {target:?}"
+        );
+        assert!(
+            format!("{target:?}").contains("Config(0)"),
+            "the resource is the leaf's key material: {target:?}"
+        );
+    }
+}

@@ -12,7 +12,7 @@ mod contract {
 
     #[state]
     struct Contract {
-        #[denomination(config.asset)]
+        #[holds(config.asset)]
         vaults: Keyed<Vault>,
     }
 

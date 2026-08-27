@@ -1,5 +1,5 @@
 error: this cell holds `config.y` and the value going into it is `config.x`. A credit does not convert what it moves — take from the cell holding what you have, or mint the resource this one is denominated in
-  --> tests/refusals/rebalanced_across.rs:25:37
+  --> tests/refusals/rebalanced_across.rs:25:29
    |
-25 |             self.bought.vault().put(taken);
-   |                                     ^^^^^
+25 |             self.bought.put(taken);
+   |                             ^^^^^

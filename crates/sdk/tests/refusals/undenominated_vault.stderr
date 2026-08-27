@@ -1,5 +1,5 @@
-error: a single vault holds one resource and nothing names which: add `#[denomination(config.<field>)]`, or `#[denomination(issued(<Resource>))]` for a declared resource the instance issues
+error: a vault holds one resource and nothing names which: add `#[holds(config.<field>)]`, or `#[holds(issued(<Resource>))]` for a declared resource the instance issues
  --> tests/refusals/undenominated_vault.rs:9:9
   |
-9 |         pot: Cell<Vault>,
+9 |         pot: Vault,
   |         ^^^

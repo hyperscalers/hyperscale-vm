@@ -3,7 +3,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Cell, Config, Vault};
+    use hyperscale_vm_sdk::state::{Config, Vault};
 
     #[config]
     struct Sides {
@@ -16,11 +16,11 @@ mod contract {
         #[slot(16)]
         settings: Config<Sides>,
         #[slot(17)]
-        #[denomination(config.x)]
-        sold: Cell<Vault>,
+        #[holds(config.x)]
+        sold: Vault,
         #[slot(17)]
-        #[denomination(config.y)]
-        bought: Cell<Vault>,
+        #[holds(config.y)]
+        bought: Vault,
     }
 
     impl Contract {

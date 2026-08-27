@@ -1142,20 +1142,6 @@ impl<T: Record> Cell<Option<T>> {
     }
 }
 
-impl Cell<Vault> {
-    /// The handle on this vault.
-    ///
-    /// A vault is reached through a handle rather than accessed in place,
-    /// because what a body does to one is move value — and a movement is
-    /// an operation on an open access, the same as every other. The
-    /// resource is the field's own declaration and no argument names it.
-    #[must_use]
-    #[allow(clippy::unused_self)] // the authoring stub reaches nothing
-    pub fn vault(&self) -> Slot<Vault> {
-        unimplemented!("{OFF_HOST}")
-    }
-}
-
 /// A family of leaves under one slot, keyed by an address.
 ///
 /// The canonical case is a vault family keyed by resource: `self.vaults.at(
@@ -1518,10 +1504,55 @@ impl Slot<Option<Seal>> {
 ///
 /// Which resource it holds is its declaration's answer, and the
 /// declaration states it one of two ways: a `Keyed<Vault>` is denominated
-/// by its own key, and a `Cell<Vault>` by the `#[denomination(..)]` its
-/// field carries. There is no third way and no undenominated vault.
+/// by its own key, and a named `Vault` field by the `#[holds(..)]` it
+/// carries. There is no third way and no undenominated vault.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Vault;
+
+/// The named vault's own ops, as the authoring half type-checks them.
+///
+/// The same surface [`Slot<Vault>`] executes: these are off-host stubs
+/// on the field's own type, so a body writes `self.x.take(..)` and the
+/// lowering opens the slot the field declares.
+#[allow(clippy::unused_self, clippy::needless_pass_by_value)] // authoring stubs, run nowhere
+impl Vault {
+    /// What the vault holds.
+    #[must_use]
+    pub fn balance(&self) -> Quantity {
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// Move value into the vault, consuming the bucket.
+    pub fn put(&mut self, funds: Bucket) {
+        let _ = &funds;
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// Move value out of the vault, as the bucket it becomes.
+    #[must_use]
+    pub fn take(&mut self, quantity: Quantity) -> Bucket {
+        let _ = quantity;
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// Declare a movement on this vault without making one, on
+    /// [`Slot::declared`]'s terms.
+    pub const fn declared(&mut self) {}
+
+    /// Declare a credit on this vault without making one.
+    pub const fn declared_credit(&mut self) {}
+
+    /// Declare a debit on this vault without making one.
+    pub const fn declared_debit(&mut self) {}
+
+    /// Take the reservation this method declared, as the value it
+    /// grants, on [`Slot::reserve`]'s terms.
+    #[must_use]
+    pub fn reserve(&mut self, quantity: Quantity) -> Bucket {
+        let _ = quantity;
+        unimplemented!("{OFF_HOST}")
+    }
+}
 
 /// The element of a holder's non-fungible instances, reached by
 /// `holdings(resource)`.

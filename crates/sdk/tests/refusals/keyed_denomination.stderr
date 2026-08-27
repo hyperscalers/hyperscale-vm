@@ -1,5 +1,5 @@
-error: a keyed vault family is denominated by the key a body names it at, so it cannot also declare one
+error: a keyed vault family holds whatever the key a body names it at says, so it cannot also declare one
   --> tests/refusals/keyed_denomination.rs:15:9
    |
-15 |         #[denomination(config.asset)]
+15 |         #[holds(config.asset)]
    |         ^

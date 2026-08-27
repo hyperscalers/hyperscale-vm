@@ -107,7 +107,8 @@ pub fn guarded_identity(
         return Err(syn::Error::new(
             identity.span(),
             "a `#[requires]` rule names claims only; possession is spelled \
-             `#[proves(badge)]`",
+             `#[proves(badge)]`, and what a vault holds is the state field's own \
+             `#[holds(..)]`",
         ));
     }
     let refuse = || {

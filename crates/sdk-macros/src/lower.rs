@@ -3032,6 +3032,277 @@ impl<'a> Lowerer<'a> {
         Eval::plain(quote!(#func(#(#args),*)))
     }
 
+    /// An operation through an open handle: the declaration records
+    /// the op, and every judgment about what moves rides here — so a
+    /// named field's direct ops and a handle held in a local answer to
+    /// one walk.
+    #[allow(clippy::too_many_lines)] // single dispatch over the op vocabulary
+    fn on_handle(
+        &mut self,
+        site: usize,
+        receiver: Eval,
+        method: &str,
+        args: &[Val],
+        evals: Vec<Eval>,
+        call: &syn::ExprMethodCall,
+    ) -> Eval {
+        let Some(op) = Op::from_method(method) else {
+            // A handle reaches the kernel, so every method on one
+            // is an operation the declaration has to name. Passing
+            // an unmodelled one through would emit a body that
+            // acts through a capability the declaration never
+            // bought — the one shape the walk exists to make
+            // impossible.
+            let vocabulary = Op::VOCABULARY.join(", ");
+            self.error(
+                    call.method.span(),
+                    &format!(
+                        "`{method}` names no operation a declaration can carry, so what it reaches the kernel for is not what this method declares. One of: {vocabulary}"
+                    ),
+                );
+            return Eval::absent(call.span(), "an operation the vocabulary does not hold");
+        };
+        let param = match args.first() {
+            Some(Val::Term(term)) => Some(term.clone()),
+            _ => None,
+        };
+        if op == Op::Reserve && param.is_none() {
+            self.error(
+                call.span(),
+                "the amount a `reserve` judges and the window a `pinned` read \
+                     declares are part of the declaration, so both must be \
+                     derivable from the arguments",
+            );
+        }
+        self.record(site, op, param, call.span());
+
+        // A capless interval's cap is the count of what the
+        // moves through it walk: the ids each take names, the
+        // instances each filed edge carries, summed where a
+        // body moves more than once. Deriving it here is what
+        // makes the declaration correct by construction — a
+        // body cannot under-declare the walk its own moves
+        // perform. Anything else through such a handle has no
+        // count to derive a cap from, so it names its page with
+        // `range` instead.
+        if matches!(
+            self.out.sites.get(site).map(|s| &s.target),
+            Some(Target::Range { cap: None, .. })
+        ) {
+            let counted = if call.method == "take" {
+                // A take whose ids are underivable is reported
+                // once, where the produced edge is judged below.
+                match args.first() {
+                    Some(Val::Term(ids)) => Some(Term::Len(Box::new(ids.clone()))),
+                    _ => None,
+                }
+            } else if call.method == "file" {
+                if let Some(Val::Term(edge) | Val::Produced(edge)) = args.first() {
+                    Some(Term::Len(Box::new(Term::IdsOf(Box::new(edge.clone())))))
+                } else {
+                    self.error(
+                        call.args.span(),
+                        "the instances this edge carries are what the interval's \
+                             cap derives from, so the edge must be derivable from the \
+                             method's arguments — routing evaluates the declaration \
+                             before execution and never reads state",
+                    );
+                    None
+                }
+            } else {
+                self.error(
+                    call.span(),
+                    "a capless interval derives its cap from the moves through \
+                         it, and this access moves nothing. An access that walks a \
+                         chosen page states its size with `all(cap)` or names it \
+                         with `range`",
+                );
+                None
+            };
+            if let Some(counted) = counted {
+                let moved = &mut self.out.sites[site].moved;
+                *moved = Some(match moved.take() {
+                    None => counted,
+                    Some(walked) => Term::Add(Box::new(walked), Box::new(counted)),
+                });
+            }
+        }
+
+        // A declared movement the body does not make binds no
+        // handle: the clause is what the kernel provisions and
+        // what a caller routes on, and there is nothing for the
+        // guest to call.
+        if call.method == "declared"
+            || call.method == "declared_credit"
+            || call.method == "exclusive"
+        {
+            // The unit it evaluates to, not nothing: a declared
+            // access can stand in expression position, and a
+            // match arm needs something there. Neither binds a
+            // handle — the clause is what the kernel provisions
+            // and what a caller routes on, and there is nothing
+            // for the guest to call.
+            return Eval::plain(quote!(()));
+        }
+        let resource = self
+            .out
+            .sites
+            .get(site)
+            .and_then(|s| s.denomination.clone());
+        let instances = matches!(
+            self.out.sites.get(site).map(|s| &s.target),
+            Some(Target::Range { .. })
+        );
+        // The grant needs no amount at the boundary: the kernel
+        // judged and held it against this method's own
+        // declaration before the body ran, so the amount is the
+        // declaration's and reaches the guest through nothing.
+        if op == Op::Reserve
+            && let Some(resource) = resource.clone()
+        {
+            let capability = self.handle(site, call.span());
+            return Eval {
+                val: Val::Produced(resource),
+                code: Code::Rust(quote!(::hyperscale_vm_sdk::state::take_reservation(#capability))),
+            };
+        }
+        // What the credited edge carries, read before the arguments
+        // are rewritten: a credit is where an edge meets a cell,
+        // and the cell's key is what the edge has to be.
+        let credited = evals.first().and_then(Self::edge_resource);
+        let receiver_code = self.value(receiver.code);
+        let rewritten: Vec<_> = evals
+            .into_iter()
+            .map(|eval| self.value(eval.code))
+            .collect();
+
+        // A credit fixes what the edge carries: the vault's key
+        // names one resource, and value going into it is that
+        // resource or the balance stops being one. Where the edge
+        // traces back to a parameter, that is where a caller
+        // supplies it and so where the constraint is stated; a
+        // vault keyed by the arriving edge's own resource names
+        // whatever arrives, which fixes nothing and is what a
+        // wallet is.
+        //
+        // An edge the lowering cannot see the resource of is
+        // refused rather than passed over: a signature that
+        // constrains nothing reads as a method taking any
+        // resource, so a credit nobody can type would publish as
+        // a promise the body never made.
+        if op == Op::Credit
+            && call.method == "put"
+            && let Some(keyed) = resource.clone()
+        {
+            match &credited {
+                // The cell is keyed by what arrived, so it names
+                // whatever comes and fixes nothing.
+                Some(term) if *term == keyed => {}
+                // An edge a caller supplies, credited to a cell
+                // keyed by something else: that key is what the
+                // caller has to send.
+                Some(Term::ResourceOf(inner)) if matches!(**inner, Term::Arg(_)) => {
+                    if let Term::Arg(param) = **inner {
+                        self.denominate(param, keyed, call.span());
+                    }
+                }
+                // An edge the body produced — issued, or debited
+                // from another vault — carries a resource nothing
+                // about this call can change, and it is not the
+                // one this cell holds. No caller is involved, so
+                // there is no constraint to state: the body is
+                // simply wrong.
+                Some(held) => {
+                    let (held, keyed) = (self.describe(held), self.describe(&keyed));
+                    self.error(
+                        call.args.span(),
+                        &format!(
+                            "this cell holds {keyed} and the value going into it is \
+                                 {held}. A credit does not convert what it moves — take \
+                                 from the cell holding what you have, or mint the \
+                                 resource this one is denominated in"
+                        ),
+                    );
+                }
+                None => self.error(
+                    call.args.span(),
+                    "this cell is keyed by one resource and the lowering cannot see \
+                         what is going into it. Credit an edge the method was handed, \
+                         one taken from a declared cell, or one it issued",
+                ),
+            }
+        }
+
+        // A debit yields the value it moved, carrying the vault's
+        // own resource — which the site's key material already
+        // names, so the produced edge needs no separate
+        // declaration. Out of a collection it yields the
+        // instances that actually left, which the ids it named
+        // are: the removal and the edge are one operation, so the
+        // set cannot be one the body chose.
+        if op == Op::Debit
+            && call.method == "take"
+            && let Some(resource) = resource
+        {
+            let produced = if instances {
+                let Some(Val::Term(ids)) = args.first() else {
+                    self.error(
+                        call.args.span(),
+                        "the instances a take names are the edge it produces, so \
+                             they must be derivable from the method's arguments",
+                    );
+                    return Eval::absent(call.args.span(), "an underivable instance set");
+                };
+                Term::NfBucket {
+                    resource: Box::new(resource),
+                    ids: Box::new(ids.clone()),
+                }
+            } else {
+                resource
+            };
+            return Eval {
+                val: Val::Produced(produced),
+                code: Code::Rust(quote!(#receiver_code.take(#(#rewritten),*))),
+            };
+        }
+        // The record cell's create writes the canonical record.
+        // The kind is the mark's — the site's key carries it — so
+        // the body states only what the address cannot: a
+        // fungible record's display quantization.
+        if call.method == "create"
+            && let Some(Term::SelfResource(kind, _)) = self.record_cell(site)
+        {
+            let record = match kind {
+                ResourceKind::Fungible => {
+                    let Some(display_digits) = rewritten.first() else {
+                        self.error(
+                            call.span(),
+                            "a fungible record states its display quantization: \
+                                 `create(<display_digits>)`",
+                        );
+                        return Eval::absent(call.span(), "a record with no display width");
+                    };
+                    quote!(::hyperscale_vm_sdk::state::ResourceRecord::Fungible {
+                        display_digits: #display_digits,
+                    })
+                }
+                ResourceKind::NonFungible => {
+                    if !rewritten.is_empty() {
+                        self.error(
+                            call.span(),
+                            "a non-fungible record has nothing to state — the kind \
+                                 is the mark's and instances are whole by construction",
+                        );
+                    }
+                    quote!(::hyperscale_vm_sdk::state::ResourceRecord::NonFungible)
+                }
+            };
+            return Eval::plain(quote!(#receiver_code.create(#record)));
+        }
+        let name = &call.method;
+        Eval::plain(quote!(#receiver_code.#name(#(#rewritten),*)))
+    }
+
     #[allow(clippy::too_many_lines)] // one arm per receiver the vocabulary admits
     fn method_call(&mut self, call: &syn::ExprMethodCall) -> Eval {
         // `self.<accessor>(…)` names one of the protocol's own cells,
@@ -3163,265 +3434,7 @@ impl<'a> Lowerer<'a> {
             }
 
             // ---- operating through an open handle -----------------------
-            Val::Handle(site) => {
-                let Some(op) = Op::from_method(&method) else {
-                    // A handle reaches the kernel, so every method on one
-                    // is an operation the declaration has to name. Passing
-                    // an unmodelled one through would emit a body that
-                    // acts through a capability the declaration never
-                    // bought — the one shape the walk exists to make
-                    // impossible.
-                    let vocabulary = Op::VOCABULARY.join(", ");
-                    self.error(
-                        call.method.span(),
-                        &format!(
-                            "`{method}` names no operation a declaration can carry, so what it reaches the kernel for is not what this method declares. One of: {vocabulary}"
-                        ),
-                    );
-                    return Eval::absent(call.span(), "an operation the vocabulary does not hold");
-                };
-                let param = match args.first() {
-                    Some(Val::Term(term)) => Some(term.clone()),
-                    _ => None,
-                };
-                if op == Op::Reserve && param.is_none() {
-                    self.error(
-                        call.span(),
-                        "the amount a `reserve` judges and the window a `pinned` read \
-                         declares are part of the declaration, so both must be \
-                         derivable from the arguments",
-                    );
-                }
-                self.record(site, op, param, call.span());
-
-                // A capless interval's cap is the count of what the
-                // moves through it walk: the ids each take names, the
-                // instances each filed edge carries, summed where a
-                // body moves more than once. Deriving it here is what
-                // makes the declaration correct by construction — a
-                // body cannot under-declare the walk its own moves
-                // perform. Anything else through such a handle has no
-                // count to derive a cap from, so it names its page with
-                // `range` instead.
-                if matches!(
-                    self.out.sites.get(site).map(|s| &s.target),
-                    Some(Target::Range { cap: None, .. })
-                ) {
-                    let counted = if call.method == "take" {
-                        // A take whose ids are underivable is reported
-                        // once, where the produced edge is judged below.
-                        match args.first() {
-                            Some(Val::Term(ids)) => Some(Term::Len(Box::new(ids.clone()))),
-                            _ => None,
-                        }
-                    } else if call.method == "file" {
-                        if let Some(Val::Term(edge) | Val::Produced(edge)) = args.first() {
-                            Some(Term::Len(Box::new(Term::IdsOf(Box::new(edge.clone())))))
-                        } else {
-                            self.error(
-                                call.args.span(),
-                                "the instances this edge carries are what the interval's \
-                                 cap derives from, so the edge must be derivable from the \
-                                 method's arguments — routing evaluates the declaration \
-                                 before execution and never reads state",
-                            );
-                            None
-                        }
-                    } else {
-                        self.error(
-                            call.span(),
-                            "a capless interval derives its cap from the moves through \
-                             it, and this access moves nothing. An access that walks a \
-                             chosen page states its size with `all(cap)` or names it \
-                             with `range`",
-                        );
-                        None
-                    };
-                    if let Some(counted) = counted {
-                        let moved = &mut self.out.sites[site].moved;
-                        *moved = Some(match moved.take() {
-                            None => counted,
-                            Some(walked) => Term::Add(Box::new(walked), Box::new(counted)),
-                        });
-                    }
-                }
-
-                // A declared movement the body does not make binds no
-                // handle: the clause is what the kernel provisions and
-                // what a caller routes on, and there is nothing for the
-                // guest to call.
-                if call.method == "declared"
-                    || call.method == "declared_credit"
-                    || call.method == "exclusive"
-                {
-                    // The unit it evaluates to, not nothing: a declared
-                    // access can stand in expression position, and a
-                    // match arm needs something there. Neither binds a
-                    // handle — the clause is what the kernel provisions
-                    // and what a caller routes on, and there is nothing
-                    // for the guest to call.
-                    return Eval::plain(quote!(()));
-                }
-                let resource = self
-                    .out
-                    .sites
-                    .get(site)
-                    .and_then(|s| s.denomination.clone());
-                let instances = matches!(
-                    self.out.sites.get(site).map(|s| &s.target),
-                    Some(Target::Range { .. })
-                );
-                // The grant needs no amount at the boundary: the kernel
-                // judged and held it against this method's own
-                // declaration before the body ran, so the amount is the
-                // declaration's and reaches the guest through nothing.
-                if op == Op::Reserve
-                    && let Some(resource) = resource.clone()
-                {
-                    let capability = self.handle(site, call.span());
-                    return Eval {
-                        val: Val::Produced(resource),
-                        code: Code::Rust(
-                            quote!(::hyperscale_vm_sdk::state::take_reservation(#capability)),
-                        ),
-                    };
-                }
-                // What the credited edge carries, read before the arguments
-                // are rewritten: a credit is where an edge meets a cell,
-                // and the cell's key is what the edge has to be.
-                let credited = evals.first().and_then(Self::edge_resource);
-                let receiver_code = self.value(receiver.code);
-                let rewritten: Vec<_> = evals
-                    .into_iter()
-                    .map(|eval| self.value(eval.code))
-                    .collect();
-
-                // A credit fixes what the edge carries: the vault's key
-                // names one resource, and value going into it is that
-                // resource or the balance stops being one. Where the edge
-                // traces back to a parameter, that is where a caller
-                // supplies it and so where the constraint is stated; a
-                // vault keyed by the arriving edge's own resource names
-                // whatever arrives, which fixes nothing and is what a
-                // wallet is.
-                //
-                // An edge the lowering cannot see the resource of is
-                // refused rather than passed over: a signature that
-                // constrains nothing reads as a method taking any
-                // resource, so a credit nobody can type would publish as
-                // a promise the body never made.
-                if op == Op::Credit
-                    && call.method == "put"
-                    && let Some(keyed) = resource.clone()
-                {
-                    match &credited {
-                        // The cell is keyed by what arrived, so it names
-                        // whatever comes and fixes nothing.
-                        Some(term) if *term == keyed => {}
-                        // An edge a caller supplies, credited to a cell
-                        // keyed by something else: that key is what the
-                        // caller has to send.
-                        Some(Term::ResourceOf(inner)) if matches!(**inner, Term::Arg(_)) => {
-                            if let Term::Arg(param) = **inner {
-                                self.denominate(param, keyed, call.span());
-                            }
-                        }
-                        // An edge the body produced — issued, or debited
-                        // from another vault — carries a resource nothing
-                        // about this call can change, and it is not the
-                        // one this cell holds. No caller is involved, so
-                        // there is no constraint to state: the body is
-                        // simply wrong.
-                        Some(held) => {
-                            let (held, keyed) = (self.describe(held), self.describe(&keyed));
-                            self.error(
-                                call.args.span(),
-                                &format!(
-                                    "this cell holds {keyed} and the value going into it is \
-                                     {held}. A credit does not convert what it moves — take \
-                                     from the cell holding what you have, or mint the \
-                                     resource this one is denominated in"
-                                ),
-                            );
-                        }
-                        None => self.error(
-                            call.args.span(),
-                            "this cell is keyed by one resource and the lowering cannot see \
-                             what is going into it. Credit an edge the method was handed, \
-                             one taken from a declared cell, or one it issued",
-                        ),
-                    }
-                }
-
-                // A debit yields the value it moved, carrying the vault's
-                // own resource — which the site's key material already
-                // names, so the produced edge needs no separate
-                // declaration. Out of a collection it yields the
-                // instances that actually left, which the ids it named
-                // are: the removal and the edge are one operation, so the
-                // set cannot be one the body chose.
-                if op == Op::Debit
-                    && call.method == "take"
-                    && let Some(resource) = resource
-                {
-                    let produced = if instances {
-                        let Some(Val::Term(ids)) = args.first() else {
-                            self.error(
-                                call.args.span(),
-                                "the instances a take names are the edge it produces, so \
-                                 they must be derivable from the method's arguments",
-                            );
-                            return Eval::absent(call.args.span(), "an underivable instance set");
-                        };
-                        Term::NfBucket {
-                            resource: Box::new(resource),
-                            ids: Box::new(ids.clone()),
-                        }
-                    } else {
-                        resource
-                    };
-                    return Eval {
-                        val: Val::Produced(produced),
-                        code: Code::Rust(quote!(#receiver_code.take(#(#rewritten),*))),
-                    };
-                }
-                // The record cell's create writes the canonical record.
-                // The kind is the mark's — the site's key carries it — so
-                // the body states only what the address cannot: a
-                // fungible record's display quantization.
-                if call.method == "create"
-                    && let Some(Term::SelfResource(kind, _)) = self.record_cell(site)
-                {
-                    let record = match kind {
-                        ResourceKind::Fungible => {
-                            let Some(display_digits) = rewritten.first() else {
-                                self.error(
-                                    call.span(),
-                                    "a fungible record states its display quantization: \
-                                     `create(<display_digits>)`",
-                                );
-                                return Eval::absent(call.span(), "a record with no display width");
-                            };
-                            quote!(::hyperscale_vm_sdk::state::ResourceRecord::Fungible {
-                                display_digits: #display_digits,
-                            })
-                        }
-                        ResourceKind::NonFungible => {
-                            if !rewritten.is_empty() {
-                                self.error(
-                                    call.span(),
-                                    "a non-fungible record has nothing to state — the kind \
-                                     is the mark's and instances are whole by construction",
-                                );
-                            }
-                            quote!(::hyperscale_vm_sdk::state::ResourceRecord::NonFungible)
-                        }
-                    };
-                    return Eval::plain(quote!(#receiver_code.create(#record)));
-                }
-                let name = &call.method;
-                Eval::plain(quote!(#receiver_code.#name(#(#rewritten),*)))
-            }
+            Val::Handle(site) => self.on_handle(site, receiver, &method, &args, evals, call),
 
             // ---- projections over values --------------------------------
             // A produced edge's resource is the declaration's answer, so
@@ -3844,29 +3857,6 @@ impl<'a> Lowerer<'a> {
                 }
             }
 
-            // A single leaf: the operation lands directly on it.
-            // A vault is opened, not accessed in place: what a body does
-            // through the handle is what fixes the mode, and the resource
-            // rides the site rather than any argument.
-            //
-            // The declared resource is the leaf's key material, which is
-            // what makes the two vault forms one addressing scheme: a
-            // keyed family's leaf is at the resource a body named it at,
-            // and a single vault's is at the resource its field declared.
-            // A leaf's key names what the leaf holds, either way.
-            (FieldKind::Cell, "vault") => {
-                let site = self.open(
-                    Target::Point {
-                        owner: None,
-                        slot: SlotRef::Fixed(slot),
-                        material: declared.clone().into_iter().collect(),
-                    },
-                    field.element.clone(),
-                    declared,
-                );
-                Self::slot(site, call.span())
-            }
-
             (FieldKind::Cell, _) => {
                 // A role table is read whole where it is judged, and an
                 // absent one denies. A `get` would read the absence as an
@@ -3884,29 +3874,27 @@ impl<'a> Lowerer<'a> {
                     );
                     return Eval::absent(call.span(), "a table read without its presence");
                 }
-                if let Some(op) = Op::from_method(method) {
+                if Op::from_method(method).is_some() {
+                    // A declared vault's resource is the leaf's key
+                    // material, which is what makes the two vault forms
+                    // one addressing scheme: a keyed family's leaf is at
+                    // the resource a body named it at, and a named
+                    // vault's at the resource its field holds. A leaf's
+                    // key names what the leaf holds, either way. The op
+                    // itself rides the one handle walk, so a named
+                    // vault's direct ops answer to every judgment a
+                    // handle in a local does.
                     let site = self.open(
                         Target::Point {
                             owner: None,
                             slot: SlotRef::Fixed(slot),
-                            material: vec![],
+                            material: declared.clone().into_iter().collect(),
                         },
                         field.element.clone(),
                         declared,
                     );
-                    let param = match vals.first() {
-                        Some(Val::Term(term)) => Some(term.clone()),
-                        _ => None,
-                    };
-                    self.record(site, op, param, call.span());
-                    let slot = Self::slot(site, call.span());
-                    let receiver = self.value(slot.code);
-                    let rewritten: Vec<_> = args
-                        .iter()
-                        .map(|eval| self.value(eval.code.clone()))
-                        .collect();
-                    let name = &call.method;
-                    return Eval::plain(quote!(#receiver.#name(#(#rewritten),*)));
+                    let receiver = Self::slot(site, call.span());
+                    return self.on_handle(site, receiver, method, &vals, args.to_vec(), call);
                 }
                 Eval::absent(call.span(), "an accessor the vocabulary does not name")
             }

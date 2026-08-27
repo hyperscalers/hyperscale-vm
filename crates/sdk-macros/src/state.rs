@@ -62,6 +62,47 @@ pub fn element_of(ty: &syn::Type) -> Option<syn::Type> {
     })
 }
 
+/// Hold a field's vault spelling to the one form each shape has.
+///
+/// The one spelling for a package's own vault is the bare field form,
+/// so the balance sheet reads off the struct. A vault holds one
+/// resource and has to say which: a keyed family is denominated by
+/// whatever key a body names it at, so an attribute there would be a
+/// second answer to a question the key already settles; a named vault
+/// has no key, so `#[holds(..)]` is the only place it can be said.
+fn check_vault_form(
+    field: &syn::Field,
+    kind: FieldKind,
+    outer: &str,
+    holds: bool,
+) -> syn::Result<()> {
+    let wrapped = matches!(&element_of(&field.ty), Some(ty) if is_named(ty, "Vault"));
+    if outer == "Cell" && wrapped {
+        return Err(syn::Error::new(
+            field.ty.span(),
+            "a vault is a field form of its own: spell it `Vault` under `#[holds(..)]`",
+        ));
+    }
+    match (kind, outer == "Vault" || wrapped, holds) {
+        (FieldKind::Cell, true, false) => Err(syn::Error::new(
+            field.span(),
+            "a vault holds one resource and nothing names which: add \
+             `#[holds(config.<field>)]`, or `#[holds(issued(<Resource>))]` for a \
+             declared resource the instance issues",
+        )),
+        (FieldKind::Keyed, true, true) => Err(syn::Error::new(
+            field.span(),
+            "a keyed vault family holds whatever the key a body names it at says, so \
+             it cannot also declare one",
+        )),
+        (_, false, true) => Err(syn::Error::new(
+            field.span(),
+            "only a vault holds value — `#[holds(..)]` says nothing about this field",
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// The state field's slot and shape, read off its declaration.
 pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
     let name = field
@@ -77,8 +118,14 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
             let literal: syn::LitInt = attr.parse_args()?;
             pinned = Some(literal.base10_parse::<u16>()?);
         }
-        if attr.path().is_ident("denomination") {
+        if attr.path().is_ident("holds") {
             denomination = Some(attr.parse_args::<syn::Expr>()?);
+        }
+        if attr.path().is_ident("denomination") {
+            return Err(syn::Error::new(
+                attr.span(),
+                "what a vault holds is stated as `#[holds(..)]` — same grammar, the authoring name",
+            ));
         }
     }
     // A slot an author does not pin is the next of the package's own, in
@@ -106,16 +153,19 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
         .unwrap_or_default();
     let kind = match outer.as_str() {
         "Config" => FieldKind::Config,
-        "Cell" => FieldKind::Cell,
+        // A bare `Vault` is a field form of its own — the balance sheet
+        // names it, the ops land on the field — and it is one leaf, so
+        // the cell kind carries it.
+        "Cell" | "Vault" => FieldKind::Cell,
         "Keyed" => FieldKind::Keyed,
         "Ordered" => FieldKind::Ordered,
         "Unordered" => FieldKind::Unordered,
         _ => {
             return Err(syn::Error::new(
                 field.ty.span(),
-                "a state field must be `Config<_>`, `Cell<_>`, `Keyed<_>`, `Ordered<_>`, or \
-                 `Unordered<_>` — state is reachable only through these, which is what makes \
-                 the access mode derivable from the body",
+                "a state field must be `Vault`, `Config<_>`, `Cell<_>`, `Keyed<_>`, \
+                 `Ordered<_>`, or `Unordered<_>` — state is reachable only through these, \
+                 which is what makes the access mode derivable from the body",
             ));
         }
     };
@@ -129,45 +179,23 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
              instances are reached by `holdings(resource)`, not declared as a field",
         ));
     }
-    // A vault holds one resource and has to say which. A keyed family is
-    // denominated by whatever key a body names it at, so an attribute
-    // there would be a second answer to a question the key already
-    // settles; a single leaf has no key, so the attribute is the only
-    // place it can be said.
-    let vault = matches!(&element_of(&field.ty), Some(ty) if is_named(ty, "Vault"));
-    match (kind, vault, denomination.is_some()) {
-        (FieldKind::Cell, true, false) => {
-            return Err(syn::Error::new(
-                field.span(),
-                "a single vault holds one resource and nothing names which: add \
-                 `#[denomination(config.<field>)]`, or `#[denomination(issued(<Resource>))]` \
-                 for a declared resource the instance issues",
-            ));
-        }
-        (FieldKind::Keyed, true, true) => {
-            return Err(syn::Error::new(
-                field.span(),
-                "a keyed vault family is denominated by the key a body names it at, so it \
-                 cannot also declare one",
-            ));
-        }
-        (_, false, true) => {
-            return Err(syn::Error::new(
-                field.span(),
-                "only a vault is denominated — this field holds no value",
-            ));
-        }
-        _ => {}
-    }
+    check_vault_form(field, kind, &outer, denomination.is_some())?;
     if let Err(refusal) = protocol_band(slot) {
         return Err(syn::Error::new(field.span(), refusal));
     }
+    // A bare `Vault` field is its own element: the generic forms carry
+    // theirs as a type argument, and the vault has nothing else to say.
+    let element = if outer == "Vault" {
+        Some(field.ty.clone())
+    } else {
+        element_of(&field.ty)
+    };
     Ok((
         name,
         Field {
             slot,
             kind,
-            element: element_of(&field.ty),
+            element,
             denomination,
         },
     ))
