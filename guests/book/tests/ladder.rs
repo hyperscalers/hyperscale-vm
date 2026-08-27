@@ -1,7 +1,7 @@
 //! The ladder's own tests, against the real kernel.
 
 use book_guest::book::client::{Book, Pair};
-use book_guest::book::{Error, Quote, Tick};
+use book_guest::book::{Error, QuoteUnit, Tick};
 use hyperscale_vm_sdk::state::{Fixed, Wide};
 use hyperscale_vm_testing::{
     Chain, PrincipalAddr, ResourceAddr, Worlds, account, package, principal, resource,
@@ -25,7 +25,7 @@ fn ladder(chain: &mut Chain) -> Book {
             Pair {
                 base: BASE_ASSET,
                 quote: QUOTE_ASSET,
-                tick: Fixed::<Quote, Tick>::from_scaled(Wide::from_u128(ONE)),
+                tick: Fixed::<QuoteUnit, Tick>::from_scaled(Wide::from_u128(ONE)),
             },
         );
         chain.credit(MAKER, BASE_ASSET, 1_000);
@@ -119,7 +119,7 @@ fn a_walk_outside_the_asks_price_takes_none_of_it(chain: &mut Chain) {
     assert_eq!(chain.balance(TAKER, BASE_ASSET), 0);
     assert_eq!(chain.balance(TAKER, QUOTE_ASSET), 1_000, "nothing spent");
     assert_eq!(
-        chain.balance(ladder, BASE_ASSET),
+        chain.balance_of(ladder, book_guest::book::client::Base),
         10,
         "and the ask is untouched"
     );

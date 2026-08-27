@@ -172,6 +172,15 @@ fn the_lowering_refuses_a_mistyped_proof_parameter() {
     refuse.compile_fail("tests/refusals/mistyped_badge_id.rs");
 }
 
+/// Presentation is the principals blueprint's: a badge held by a
+/// component is an asset, not a credential, so an instance package's
+/// custodial gate is refused at the attribute.
+#[test]
+fn the_lowering_refuses_a_badge_gate_on_an_instance_package() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/badge_gate_on_instance.rs");
+}
+
 /// A refusal crosses the boundary as a bare code, so a fielded
 /// `#[error]` variant is refused on the variant's own line — not left
 /// to a cast error spanned at `#[blueprint]`.

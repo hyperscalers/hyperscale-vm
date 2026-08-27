@@ -519,6 +519,7 @@ mod tests {
                     name: "held".into(),
                     kind: SlotKind::Keyed,
                     element,
+                    denomination: None,
                 },
             ))
             .collect(),
@@ -547,6 +548,7 @@ mod tests {
                     name: "held".into(),
                     kind: SlotKind::Cell,
                     element: LeafForm::Value(TypeShape::U64),
+                    denomination: None,
                 },
             ))
             .collect(),

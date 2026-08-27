@@ -41,7 +41,10 @@ fn deposit(chain: &mut Chain, vault: Shares, who: PrincipalAddr, amount: u128) {
 fn the_first_deposit_mints_at_par(chain: &mut Chain) {
     let vault = vault(chain);
     deposit(chain, vault, ALICE, 1_000);
-    assert_eq!(chain.balance(vault, ASSET), 1_000);
+    assert_eq!(
+        chain.balance_of(vault, shares_guest::shares::client::Pool),
+        1_000
+    );
 }
 
 /// A second depositor into an unchanged pool gets the same rate, and the
@@ -51,7 +54,10 @@ fn a_later_deposit_prices_against_the_pool(chain: &mut Chain) {
     let vault = vault(chain);
     deposit(chain, vault, ALICE, 1_000);
     deposit(chain, vault, MALLORY, 500);
-    assert_eq!(chain.balance(vault, ASSET), 1_500);
+    assert_eq!(
+        chain.balance_of(vault, shares_guest::shares::client::Pool),
+        1_500
+    );
 }
 
 /// Round-tripping the whole position returns the whole stake: with one
@@ -70,7 +76,10 @@ fn redeeming_every_share_returns_every_asset(chain: &mut Chain) {
         })
         .expect_completed();
 
-    assert_eq!(chain.balance(vault, ASSET), 0);
+    assert_eq!(
+        chain.balance_of(vault, shares_guest::shares::client::Pool),
+        0
+    );
     assert_eq!(chain.balance(ALICE, ASSET), 10_000);
 }
 
@@ -162,5 +171,9 @@ fn a_deposit_of_a_foreign_resource_is_refused(chain: &mut Chain) {
         ),
         "a vault takes the resource it prices and no other: {refused:?}"
     );
-    assert_eq!(chain.balance(vault, ASSET), 1_000, "and nothing moved");
+    assert_eq!(
+        chain.balance_of(vault, shares_guest::shares::client::Pool),
+        1_000,
+        "and nothing moved"
+    );
 }

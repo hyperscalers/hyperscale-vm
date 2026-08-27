@@ -1,4 +1,10 @@
-error: this edge is credited to a cell holding `config.base` and to one holding `config.quote`, and no edge carries both. Key one of them by the edge's own resource, or take the second cell's value from a separate parameter
+error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
+  --> tests/refusals/two_denominations.rs:22:13
+   |
+22 |             self.vault(settings.base).put(half);
+   |             ^^^^
+
+error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
   --> tests/refusals/two_denominations.rs:23:13
    |
 23 |             self.vault(settings.quote).put(rest);

@@ -178,6 +178,22 @@ pub fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> Substat
     )
 }
 
+/// A package's own declared vault leaf: the field's slot under the
+/// owner, keyed by the resource it holds.
+#[must_use]
+pub fn declared_vault(
+    owner: impl Into<Address>,
+    slot: u16,
+    resource: impl Into<Address>,
+) -> SubstateKey {
+    child_key(
+        &TestHasher,
+        owner,
+        SlotId(slot),
+        &[Value::Address(resource.into()).canonical_bytes()],
+    )
+}
+
 /// The account's own quarantine vault for a resource — its second
 /// declared slot, and a package's cell rather than the protocol's.
 #[must_use]

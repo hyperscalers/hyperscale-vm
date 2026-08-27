@@ -91,6 +91,9 @@ pub mod grammar {
         /// to land that is not where it came from: one leaf keyed by the
         /// resource it holds, which is the one type a vault's key has.
         fees: Keyed<Vault>,
+        /// The open family the movement grammar runs through: one vault
+        /// per resource a body names.
+        till: Keyed<Vault>,
     }
 
     impl Grammar {
@@ -111,7 +114,7 @@ pub mod grammar {
         /// tail position — the other two ways a unit body ends.
         pub fn sweep(&mut self, holder: ResourceAddr) {
             let mut held = self.entries.all(64);
-            let vault = self.vault(holder);
+            let vault = self.till.at(holder);
             let mut index = 0;
             let mut total = vault.balance();
             while index < held.count() {
@@ -160,7 +163,7 @@ pub mod grammar {
         /// A produced edge out of a conditional body, so the value path
         /// is exercised beside the statement ones.
         pub fn take(&mut self, resource: ResourceAddr, amount: Quantity) -> Bucket {
-            self.vault(resource).reserve(amount)
+            self.till.at(resource).reserve(amount)
         }
 
         /// An edge and an answer out of one body.
@@ -172,7 +175,7 @@ pub mod grammar {
         /// that as a pair, and a shape only the lowering admits is one
         /// the wrapper can get wrong unseen.
         pub fn take_noting(&mut self, resource: ResourceAddr, amount: Quantity) -> (Bucket, u64) {
-            (self.vault(resource).reserve(amount), self.noted.get())
+            (self.till.at(resource).reserve(amount), self.noted.get())
         }
 
         /// A fielded mint beside the read of what it filed: one cell,
@@ -306,7 +309,7 @@ pub mod grammar {
         /// denomination is the edge's, so the body names no resource and
         /// the leaf is the one the payment was in.
         pub fn fund(&mut self, funds: Bucket) {
-            self.vault(funds.resource()).put(funds);
+            self.till.at(funds.resource()).put(funds);
         }
 
         /// What every configured asset's vault holds, summed into the
@@ -319,7 +322,7 @@ pub mod grammar {
         pub fn surveyed(&mut self) {
             let mut total = Quantity::ZERO;
             for &asset in &self.config().assets {
-                total += self.vault(asset).balance();
+                total += self.till.at(asset).balance();
             }
             self.noted
                 .set(u64::try_from(total.subunits()).unwrap_or(u64::MAX));
@@ -336,7 +339,7 @@ pub mod grammar {
         /// both.
         pub fn accrue(&mut self, fee: Quantity) {
             for &asset in &self.config().assets {
-                let mut held = self.vault(asset);
+                let mut held = self.till.at(asset);
                 // The read is what makes the site exclusive rather than
                 // commutative: a body that took without looking would be
                 // declaring a delta, which is the leaf beside it.
@@ -356,7 +359,7 @@ pub mod grammar {
         /// under [`Grammar::accrue`].
         pub fn escrow(&mut self, hold: Quantity) {
             for &asset in &self.config().assets {
-                let granted = self.vault(asset).reserve(hold);
+                let granted = self.till.at(asset).reserve(hold);
                 self.fees.at(asset).put(granted);
             }
         }

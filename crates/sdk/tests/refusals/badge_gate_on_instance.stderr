@@ -1,0 +1,5 @@
+error: presenting a badge is the account's: a badge held by a component is an asset, not a credential, so an instance package gates with `#[proves(self)]` or `#[requires(..)]`
+  --> tests/refusals/badge_gate_on_instance.rs:13:9
+   |
+13 |         #[proves(badge)]
+   |         ^^^^^^^^^^^^^^^^

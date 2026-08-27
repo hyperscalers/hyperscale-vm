@@ -8,8 +8,9 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 
 use common::{
-    ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, auth, book, config_leaf, effect_set,
-    pkg, pool, quarantine, refused, resolver, shard_of, vault, wide_account_metadata, world,
+    ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, auth, book, config_leaf, declared_vault,
+    effect_set, pkg, pool, quarantine, refused, resolver, shard_of, vault, wide_account_metadata,
+    world,
 };
 use hyperscale_vm_effects::{
     AdmissionError, Composed, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
@@ -177,11 +178,11 @@ fn swap_writes_both_reserves_and_reads_the_config() {
                 // pays out, each under its own balance read, so each
                 // exclusive hold carries the one direction it kept.
                 Effect {
-                    target: EffectTarget::Point(vault(pool(), RES_X)),
+                    target: EffectTarget::Point(declared_vault(pool(), 16, RES_X)),
                     mode: Mode::Write { moves: Moves::In },
                 },
                 Effect {
-                    target: EffectTarget::Point(vault(pool(), RES_Y)),
+                    target: EffectTarget::Point(declared_vault(pool(), 16, RES_Y)),
                     mode: Mode::Write { moves: Moves::Out },
                 },
             ]),
@@ -247,7 +248,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
             mode: write(),
         },
         Effect {
-            target: EffectTarget::Point(vault(book(), BASE)),
+            target: EffectTarget::Point(declared_vault(book(), 16, BASE)),
             mode: Mode::Delta { moves: Moves::In },
         },
     ]);
@@ -366,11 +367,11 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 // payment only arrives, so each side is judged on the
                 // one movement it makes.
                 Effect {
-                    target: EffectTarget::Point(vault(book(), BASE)),
+                    target: EffectTarget::Point(declared_vault(book(), 16, BASE)),
                     mode: Mode::Delta { moves: Moves::Out },
                 },
                 Effect {
-                    target: EffectTarget::Point(vault(book(), QUOTE)),
+                    target: EffectTarget::Point(declared_vault(book(), 17, QUOTE)),
                     mode: Mode::Delta { moves: Moves::In },
                 },
             ]),

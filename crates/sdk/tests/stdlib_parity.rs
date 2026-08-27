@@ -19,6 +19,7 @@
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, RESOURCE, VAULT};
 use hyperscale_vm_effects::{PACKAGE_SLOT_BASE, PackageMetadata, ParamType, SlotId};
 use hyperscale_vm_fixtures::{amm as amm_package, book as book_package};
+use hyperscale_vm_sdk::client::VaultField;
 use hyperscale_vm_sdk::sym::{
     Addr, Bucket, Sym, U64, U128, eq, lit_u64, pack, select, self_record,
 };
@@ -202,6 +203,11 @@ fn account() -> Blueprint {
 /// The mark the pool issues its liquidity claims under.
 const SHARE: &[u8] = b"share";
 
+/// The book's two declared vaults, at the slots their typed markers
+/// carry.
+const BOOK_BASE: SlotId = SlotId(<book_package::Base as VaultField>::SLOT);
+const BOOK_QUOTE: SlotId = SlotId(<book_package::Quote as VaultField>::SLOT);
+
 /// What a mark its issuer may mint and burn grants, which is what the
 /// derived side registers for every mark a body issues.
 ///
@@ -238,10 +244,10 @@ fn amm() -> Blueprint {
                 let y: Sym<Addr> = t.config(1);
                 let pool = t.self_addr();
 
-                t.point(&pool.child(VAULT, &[x.clone().cast()]))
+                t.point(&pool.child(amm_package::RESERVES, &[x.clone().cast()]))
                     .holding(&x)
                     .inbound();
-                t.point(&pool.child(VAULT, &[y.clone().cast()]))
+                t.point(&pool.child(amm_package::RESERVES, &[y.clone().cast()]))
                     .holding(&y)
                     .inbound();
                 t.point(&pool.child(amm_package::SUPPLY, &[])).write();
@@ -260,10 +266,10 @@ fn amm() -> Blueprint {
             let pool = t.self_addr();
             let share = t.self_resource(ResourceKind::Fungible, SHARE);
 
-            t.point(&pool.child(VAULT, &[x.clone().cast()]))
+            t.point(&pool.child(amm_package::RESERVES, &[x.clone().cast()]))
                 .holding(&x)
                 .outbound();
-            t.point(&pool.child(VAULT, &[y.clone().cast()]))
+            t.point(&pool.child(amm_package::RESERVES, &[y.clone().cast()]))
                 .holding(&y)
                 .outbound();
             t.point(&pool.child(amm_package::SUPPLY, &[])).write();
@@ -289,10 +295,10 @@ fn amm() -> Blueprint {
                 let sold: Sym<Addr> = select(&sells_x, &x, &y).cast();
                 let bought: Sym<Addr> = select(&sells_x, &y, &x).cast();
 
-                t.point(&pool.child(VAULT, &[sold.clone().cast()]))
+                t.point(&pool.child(amm_package::RESERVES, &[sold.clone().cast()]))
                     .holding(&sold)
                     .inbound();
-                t.point(&pool.child(VAULT, &[bought.clone().cast()]))
+                t.point(&pool.child(amm_package::RESERVES, &[bought.clone().cast()]))
                     .holding(&bought)
                     .outbound();
 
@@ -346,7 +352,7 @@ fn book() -> Blueprint {
                 // configured pair rather than by whatever arrived — which
                 // is what fixes the parameter to that side.
                 let base: Sym<Addr> = t.config(0);
-                let escrow = venue.child(VAULT, &[base.clone().cast()]);
+                let escrow = venue.child(BOOK_BASE, &[base.clone().cast()]);
                 // Placing an ask only escrows: the maker's funds go in and
                 // nothing comes back out until somebody fills it.
                 t.point(&escrow).holding(&base).credit();
@@ -378,12 +384,12 @@ fn book() -> Blueprint {
                 .write();
 
                 let quote: Sym<Addr> = t.config(1);
-                t.point(&venue.child(VAULT, &[base.clone().cast()]))
+                t.point(&venue.child(BOOK_BASE, &[base.clone().cast()]))
                     .holding(&base)
                     .debit();
                 // The payment goes in; the base only comes out of the
                 // vault above, and each is judged on its own direction.
-                t.point(&venue.child(VAULT, &[quote.clone().cast()]))
+                t.point(&venue.child(BOOK_QUOTE, &[quote.clone().cast()]))
                     .holding(&quote)
                     .credit();
                 t.denomination(2, &quote);

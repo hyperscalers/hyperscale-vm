@@ -17,7 +17,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod amm {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity, Rounding, UnitFixed};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, Rounding, UnitFixed, Vault};
 
     /// A claim on the pool, issued against what a provider put in.
     ///
@@ -57,11 +57,15 @@ pub mod amm {
         NothingMinted,
     }
 
-    /// The pair itself sits in the protocol's own vault cells, which
-    /// every owner has. What the pool keeps of its own is the count of
-    /// claims outstanding against them.
+    /// The pool's whole balance sheet: the pair's reserves, and the
+    /// count of claims outstanding against them.
     #[state]
     struct Amm {
+        /// The reserves, one vault per configured side. A family rather
+        /// than two named fields because a swap's sides are selected by
+        /// the edge that arrives, and a keyed vault is denominated by
+        /// the key that names it.
+        reserves: Keyed<Vault>,
         /// Shares in circulation, which is what a provider's stake is
         /// priced against.
         ///
@@ -93,8 +97,8 @@ pub mod amm {
             let sells_x = paid == settings.x;
             let sold_side = if sells_x { settings.x } else { settings.y };
             let bought_side = if sells_x { settings.y } else { settings.x };
-            let mut sold = self.vault(sold_side);
-            let mut bought = self.vault(bought_side);
+            let mut sold = self.reserves.at(sold_side);
+            let mut bought = self.reserves.at(bought_side);
 
             let x = sold.balance();
             let y = bought.balance();
@@ -141,8 +145,8 @@ pub mod amm {
         /// provider including the depositor.
         pub fn add_liquidity(&mut self, x_side: Bucket, y_side: Bucket) -> Result<Bucket, Error> {
             let settings = self.config();
-            let mut vault_x = self.vault(settings.x);
-            let mut vault_y = self.vault(settings.y);
+            let mut vault_x = self.reserves.at(settings.x);
+            let mut vault_y = self.reserves.at(settings.y);
 
             // Both reserves are read before either deposit lands: what
             // a claim is priced against is the pool the provider is
@@ -186,8 +190,8 @@ pub mod amm {
         /// what a share is worth never falls because somebody left.
         pub fn remove_liquidity(&mut self, shares: Bucket) -> Result<(Bucket, Bucket), Error> {
             let settings = self.config();
-            let mut vault_x = self.vault(settings.x);
-            let mut vault_y = self.vault(settings.y);
+            let mut vault_x = self.reserves.at(settings.x);
+            let mut vault_y = self.reserves.at(settings.y);
 
             let x = vault_x.balance();
             let y = vault_y.balance();

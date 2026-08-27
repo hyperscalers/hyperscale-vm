@@ -43,7 +43,9 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod lottery {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Drawn, Seal, Unordered, Word, pack};
+    use hyperscale_vm_sdk::state::{
+        Bucket, Cell, Drawn, Keyed, Seal, Unordered, Vault, Word, pack,
+    };
 
     /// Somebody took a ticket.
     #[event]
@@ -91,6 +93,8 @@ pub mod lottery {
 
     #[state]
     struct Lottery {
+        /// The pot: one vault per resource entries arrived in.
+        pot: Keyed<Vault>,
         /// One entry per entrant, at the entrant's hashed order, so a
         /// second entry from one address lands on its own ticket.
         tickets: Unordered<Address>,
@@ -111,7 +115,7 @@ pub mod lottery {
             // hash and a hash names no winner: the draw has to be able to
             // say who it picked, not merely which slot.
             self.tickets.at(who).set(who);
-            self.vault(funds.resource()).put(funds);
+            self.pot.at(funds.resource()).put(funds);
             Entered { who }.emit();
         }
 

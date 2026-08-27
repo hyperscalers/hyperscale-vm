@@ -338,10 +338,14 @@ fn config_values(config: &syn::Ident, fields: &[(String, syn::Type)]) -> TokenSt
 /// agreeing with it until it does not — which is the drift the whole
 /// derivation exists to remove, and the reason the slot is emitted rather
 /// than documented.
-fn slots(fields: &BTreeMap<String, u16>) -> Vec<TokenStream2> {
+fn slots(fields: &BTreeMap<String, u16>, vaults: &[(String, u16, u32)]) -> Vec<TokenStream2> {
     let slot_id = sdk("SlotId");
     fields
         .iter()
+        // A declared vault's typed marker carries its slot, so the raw
+        // constant would be a second name for the same number — and the
+        // marker's unit value would collide with it.
+        .filter(|(name, _)| !vaults.iter().any(|(vault, ..)| vault == *name))
         .map(|(name, slot)| {
             let konst = format_ident!("{}", name.to_uppercase());
             let doc = format!("The slot `{name}` sits under.");
@@ -436,6 +440,9 @@ pub struct Surface<'a> {
     pub methods: &'a [&'a Method],
     /// The resources the package issues.
     pub resources: &'a [Resource],
+    /// The declared vaults holding configured resources: field name,
+    /// slot, and the configuration slot naming the resource.
+    pub vaults: &'a [(String, u16, u32)],
 }
 
 /// One marker type per issued resource: the mark as a type, tied to the
@@ -472,6 +479,30 @@ fn marks(resources: &[Resource], handle: &syn::Ident) -> Vec<TokenStream2> {
         .collect()
 }
 
+/// One marker type per declared vault holding a configured resource,
+/// so a chain funds and reads a component's balance sheet by the field:
+/// `chain.fund(pool, client::X, 1_000)`.
+fn vault_fields(vaults: &[(String, u16, u32)], handle: &syn::Ident) -> Vec<TokenStream2> {
+    vaults
+        .iter()
+        .map(|(name, slot, config)| {
+            let ident = format_ident!("{}", crate::pascal(name));
+            let doc = format!("The `{name}` vault, named as a type.");
+            quote!(
+                #[doc = #doc]
+                #[derive(Clone, Copy, Debug)]
+                pub struct #ident;
+
+                impl ::hyperscale_vm_sdk::client::VaultField for #ident {
+                    type Of = #handle;
+                    const SLOT: u16 = #slot;
+                    const HOLDS: u32 = #config;
+                }
+            )
+        })
+        .collect()
+}
+
 /// The package's calling surface.
 pub fn module(surface: &Surface<'_>) -> TokenStream2 {
     let &Surface {
@@ -482,10 +513,12 @@ pub fn module(surface: &Surface<'_>) -> TokenStream2 {
         serves,
         methods,
         resources,
+        vaults,
     } = surface;
-    let slots = slots(fields);
+    let slots = slots(fields, vaults);
     let issued = issued(resources, config);
     let marks = marks(resources, handle);
+    let vault_fields = vault_fields(vaults, handle);
     // The seal is composed rather than called: what a bring-up carries
     // beside it — the sign-in a gated package asks for, the account the
     // supply is filed in — is read off the declaration by the stdlib's
@@ -591,6 +624,8 @@ pub fn module(surface: &Surface<'_>) -> TokenStream2 {
             }
 
             #(#marks)*
+
+            #(#vault_fields)*
         ),
     };
 

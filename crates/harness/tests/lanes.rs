@@ -77,9 +77,19 @@ fn pool(mut chain: Chain) -> (Chain, amm::Amm) {
         },
     );
     chain.credit(ALICE, X, 600);
-    chain.credit(pool, X, 1_000);
-    chain.credit(pool, Y, 1_000);
+    chain.fund_at(pool, amm::RESERVES, X, 1_000);
+    chain.fund_at(pool, amm::RESERVES, Y, 1_000);
     (chain, pool)
+}
+
+/// Crediting a component's protocol slot is not spellable: a
+/// component's reserves are its own declared vaults, and the refusal
+/// names the form that reaches them.
+#[test]
+#[should_panic(expected = "a component's reserves are its own declared vaults")]
+fn a_component_is_funded_by_field_never_credited() {
+    let (mut chain, pool) = pool(Chain::native());
+    chain.credit(pool, X, 1);
 }
 
 /// One swap, and what each lane made of it.
@@ -92,8 +102,8 @@ fn swap(chain: Chain, floor: u128) -> (Receipt, [u128; 4]) {
     });
     let receipt = outcome.receipt().clone();
     let balances = [
-        chain.balance(pool, X),
-        chain.balance(pool, Y),
+        chain.balance_at(pool, amm::RESERVES, X),
+        chain.balance_at(pool, amm::RESERVES, Y),
         chain.balance(ALICE, X),
         chain.balance(ALICE, Y),
     ];
@@ -245,7 +255,7 @@ fn a_method_hands_back_an_edge_and_an_answer_in_both_lanes() {
     let run = |mut chain: Chain| {
         chain.publish(grammar());
         let shapes = chain.instantiate::<grammar::Grammar>(ALICE, terms());
-        chain.credit(shapes, X, 100);
+        chain.fund_at(shapes, grammar::TILL, X, 100);
         // Something in the noted cell for the answer to be, which the
         // fold writes as one more than what it was handed.
         chain
@@ -621,8 +631,8 @@ fn two_sites_of_different_modes_walk_one_loop_in_both_lanes() {
             .transact(ALICE, |b| shapes.accrue(b, 50))
             .expect_completed();
         (
-            chain.balance(shapes, X),
-            chain.balance(shapes, Y),
+            chain.balance_at(shapes, grammar::TILL, X),
+            chain.balance_at(shapes, grammar::TILL, Y),
             accrued(&chain, shapes, X),
             accrued(&chain, shapes, Y),
         )
@@ -659,8 +669,8 @@ fn a_run_of_reservations_grants_per_element_in_both_lanes() {
             .transact(ALICE, |b| shapes.escrow(b, 100))
             .expect_completed();
         let taken = (
-            chain.balance(shapes, X),
-            chain.balance(shapes, Y),
+            chain.balance_at(shapes, grammar::TILL, X),
+            chain.balance_at(shapes, grammar::TILL, Y),
             accrued(&chain, shapes, X),
             accrued(&chain, shapes, Y),
         );
@@ -676,7 +686,11 @@ fn a_run_of_reservations_grants_per_element_in_both_lanes() {
             .receipt()
             .outcome
             .clone();
-        (taken, infeasible, chain.balance(shapes, X))
+        (
+            taken,
+            infeasible,
+            chain.balance_at(shapes, grammar::TILL, X),
+        )
     };
 
     let native = run(Chain::native());
@@ -1279,7 +1293,11 @@ fn chains_opened_from_one_snapshot_do_not_observe_each_other(chain: &mut Chain) 
     let mut first = snapshot.chain();
     let second = snapshot.chain();
     assert_eq!(first.balance(ALICE, X), 600, "the snapshot carried Alice");
-    assert_eq!(first.balance(pool, X), 1_000, "and the pool");
+    assert_eq!(
+        first.balance_at(pool, amm::RESERVES, X),
+        1_000,
+        "and the pool"
+    );
     first.credit(ALICE, X, 1_000);
     first
         .transact(ALICE, |b| {
@@ -1290,8 +1308,8 @@ fn chains_opened_from_one_snapshot_do_not_observe_each_other(chain: &mut Chain) 
         .expect_completed();
 
     assert_eq!(first.balance(ALICE, X), 500);
-    assert_eq!(first.balance(pool, X), 1_500);
+    assert_eq!(first.balance_at(pool, amm::RESERVES, X), 1_500);
     assert_eq!(second.balance(ALICE, X), 600, "a sibling observed nothing");
-    assert_eq!(second.balance(pool, X), 1_000);
+    assert_eq!(second.balance_at(pool, amm::RESERVES, X), 1_000);
     assert_eq!(chain.balance(ALICE, X), 600, "the source observed nothing");
 }

@@ -1,8 +1,9 @@
 state
-     16  mark — one leaf, holding [u8; 32]
-     17  funding_charged — one leaf, holding [u8; 32]
-     18  funding_credited — one leaf, holding [u8; 32]
-     19  position — one leaf, holding position
+     16  bank — one leaf, holding u128, denominated in config.collateral
+     17  mark — one leaf, holding [u8; 32]
+     18  funding_charged — one leaf, holding [u8; 32]
+     19  funding_credited — one leaf, holding [u8; 32]
+     20  position — one leaf, holding position
 config
       0  collateral
       1  oracle
@@ -25,7 +26,7 @@ charge-longs(u256) — infallible
 
 close() — infallible
   declares
-      0  debit-only self.vault[config.collateral] holding config.collateral
+      0  debit-only self.bank[config.collateral] holding config.collateral
       1  requires self.position is present
       2  write self.position
       3  read self.mark
@@ -48,7 +49,7 @@ instantiate() — infallible
 
 liquidate() — fallible
   declares
-      0  debit-only self.vault[config.collateral] holding config.collateral
+      0  debit-only self.bank[config.collateral] holding config.collateral
       1  requires self.position is present
       2  write self.position
       3  read self.mark
@@ -63,7 +64,7 @@ open(bucket, u128) — fallible
       0  read self.mark
       1  read self.funding_charged
       2  read self.funding_credited
-      3  credit self.vault[config.collateral] holding config.collateral
+      3  credit self.bank[config.collateral] holding config.collateral
       4  requires self.position is absent
       5  write self.position
   exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 5, edge arg0, arg1, config.maintenance_margin

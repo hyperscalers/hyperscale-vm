@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
-use hyperscale_vm_effects::{Hasher, PackageHash, TestHasher, Value, child_key};
+use hyperscale_vm_effects::{Hasher, PackageHash, SlotId, TestHasher, Value, child_key};
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, ExecutionMode, GuestBackend, GuestCall, InvokeResult, KernelSession,
     Locality, ManifestWalk, MemoryStore, Receipt, decode_amount, execute_batch,
@@ -209,6 +209,21 @@ pub fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> Substat
         &TestHasher,
         owner,
         VAULT,
+        &[Value::Address(resource.into()).canonical_bytes()],
+    )
+}
+
+/// A package's own declared vault leaf: the field's slot under the
+/// owner, keyed by the resource it holds.
+pub fn declared_vault(
+    owner: impl Into<Address>,
+    slot: impl Into<SlotId>,
+    resource: impl Into<Address>,
+) -> SubstateKey {
+    child_key(
+        &TestHasher,
+        owner,
+        slot.into(),
         &[Value::Address(resource.into()).canonical_bytes()],
     )
 }

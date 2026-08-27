@@ -280,6 +280,7 @@ fn refused(mut module: syn::ItemMod, role: Role, error: &syn::Error) -> TokenStr
         &state_name,
         config_name.as_ref(),
         role,
+        None,
     )));
     let config_fields = config_slots(items, config_name.as_ref());
     let names: Vec<String> = config_fields.iter().map(|(name, _)| name.clone()).collect();
@@ -1047,6 +1048,22 @@ fn lower_method(
     }
 
     let gate = parse_gate(method, declared, &params)?;
+    // Presentation is the principals blueprint's: a badge in an account
+    // is a credential, and a badge handed to a component is an asset —
+    // authority must not travel with custody. A component acts as
+    // itself through `#[proves(self)]`, or names identities with
+    // `#[requires(..)]`.
+    if matches!(gate, Gate::Custodial { .. })
+        && matches!(serves, client::Serves::Instances)
+        && let Some((attr, _)) = own_attr(&method.attrs, &["proves"])
+    {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "presenting a badge is the account's: a badge held by a component is an \
+             asset, not a credential, so an instance package gates with \
+             `#[proves(self)]` or `#[requires(..)]`",
+        ));
+    }
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let returns = !matches!(method.sig.output, syn::ReturnType::Default);
     let claims_total = total_attr(method).is_some();
@@ -1454,11 +1471,29 @@ fn authoring_accessors(
     state: &syn::Ident,
     config: Option<&syn::Ident>,
     role: Role,
+    serves: Option<client::Serves>,
 ) -> TokenStream2 {
     let configured = config.map(|config| {
         quote!(
             /// The instance's creation-fixed configuration.
             fn config(&self) -> #config {
+                ::core::unimplemented!("a contract body runs on the guest")
+            }
+        )
+    });
+    // The protocol balance is the principals': an instance package's
+    // reserves are declared fields of its own state, so the anonymous
+    // accessors exist only where the funds are the protocol cells by
+    // identity. A refused module keeps them, so the analyzer holds
+    // whatever the author wrote alive while they fix it.
+    let protocol_balances = matches!(serves, None | Some(client::Serves::Principals)).then(|| {
+        quote!(
+            /// The holder's fungible balance in `resource`.
+            fn vault<K: ::hyperscale_vm_sdk::state::KeyShape>(
+                &self,
+                resource: K,
+            ) -> ::hyperscale_vm_sdk::state::Slot<::hyperscale_vm_sdk::state::Vault> {
+                let _ = resource;
                 ::core::unimplemented!("a contract body runs on the guest")
             }
         )
@@ -1470,14 +1505,7 @@ fn authoring_accessors(
         impl #state {
             #configured
 
-            /// The holder's fungible balance in `resource`.
-            fn vault<K: ::hyperscale_vm_sdk::state::KeyShape>(
-                &self,
-                resource: K,
-            ) -> ::hyperscale_vm_sdk::state::Slot<::hyperscale_vm_sdk::state::Vault> {
-                let _ = resource;
-                ::core::unimplemented!("a contract body runs on the guest")
-            }
+            #protocol_balances
 
             /// The holder's instances of `resource`.
             fn holdings<K: ::hyperscale_vm_sdk::state::KeyShape>(
@@ -1487,7 +1515,6 @@ fn authoring_accessors(
                 let _ = resource;
                 ::core::unimplemented!("a contract body runs on the guest")
             }
-
             /// The rule governing this address, absent until the holder
             /// securifies.
             fn auth(&self) -> ::hyperscale_vm_sdk::state::Cell<
@@ -1631,6 +1658,47 @@ fn executing(world: &str, methods: &[Lowered], role: Role) -> (TokenStream2, Tok
     (component, host::dispatch(&arms, role))
 }
 
+/// The denominated vault fields, as the client module's markers carry
+/// them: field name, slot, and the configuration index the denomination
+/// names.
+///
+/// A vault field's client marker is its pascal-cased name, emitted into
+/// a module that glob-imports the author's items — a module type
+/// wearing that name would be silently shadowed there, so the collision
+/// is refused where the field is named.
+fn vault_markers(
+    items: &[syn::Item],
+    fields: &BTreeMap<String, Field>,
+    config_fields: &[(String, syn::Type)],
+) -> syn::Result<Vec<(String, u16, u32)>> {
+    let vaults: Vec<(String, u16, u32)> = fields
+        .iter()
+        .filter_map(|(name, field)| {
+            let index = state::config_index(field.denomination.as_ref()?, config_fields)?;
+            Some((name.clone(), field.slot, index))
+        })
+        .collect();
+    for (name, ..) in &vaults {
+        let marker = pascal(name);
+        if let Some(item) = items.iter().find(|item| match item {
+            syn::Item::Struct(it) => it.ident == marker,
+            syn::Item::Enum(it) => it.ident == marker,
+            syn::Item::Type(it) => it.ident == marker,
+            _ => false,
+        }) {
+            return Err(syn::Error::new(
+                item.span(),
+                format!(
+                    "the `{name}` vault's client marker is `{marker}`, and this item \
+                     would be shadowed by it in the generated client — rename the \
+                     field or the type"
+                ),
+            ));
+        }
+    }
+    Ok(vaults)
+}
+
 fn expand(
     mut module: syn::ItemMod,
     serves: client::Serves,
@@ -1666,7 +1734,7 @@ fn expand(
             .map(|(name, _)| name.clone())
             .collect::<Vec<_>>(),
     )?;
-    let accessors = accessors(config_name.as_ref());
+    let accessors = accessors(config_name.as_ref(), serves);
     let declared = Declared {
         fields: &fields,
         accessors: &accessors,
@@ -1682,6 +1750,7 @@ fn expand(
         .map(|(name, field)| (name.clone(), field.slot))
         .collect();
     let reading = role.reading();
+    let vaults = vault_markers(items, &fields, &config_fields)?;
     let client = client::module(&client::Surface {
         handle: &state_name,
         config: config_name.as_ref(),
@@ -1690,12 +1759,13 @@ fn expand(
         serves,
         methods: &calls,
         resources: &declared_resources,
+        vaults: &vaults,
     });
 
     let declarations = methods.iter().map(|m| &m.declaration);
     let event_table = events.iter().map(|(ident, _)| quote!(.event::<#ident>()));
     let error_table = errors.iter().map(|name| quote!(.error(#name)));
-    let state_table = state_table(&fields);
+    let state_table = state_table(&fields, &config_fields);
     let config_table = config_fields.iter().map(|(name, _)| quote!(.config(#name)));
 
     let (component, dispatch) = executing(&world, &methods, role);
@@ -1741,6 +1811,7 @@ fn expand(
         &state_name,
         config_name.as_ref(),
         role,
+        Some(serves),
     )));
     items.push(syn::Item::Verbatim(declines_impls));
     items.push(syn::Item::Verbatim(component));

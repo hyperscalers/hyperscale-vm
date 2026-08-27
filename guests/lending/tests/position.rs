@@ -40,7 +40,7 @@ fn market(chain: &mut Chain) -> Lending {
             },
         );
         chain.credit(BORROWER, COLLATERAL, 10_000);
-        chain.credit(market, DEBT, 10_000);
+        chain.fund(market, lending_guest::lending::client::Reserves, 10_000);
         market
     })
 }
@@ -80,9 +80,15 @@ fn a_position_borrows_against_its_collateral(chain: &mut Chain) {
     price(chain, market, 2 * ONE, ONE);
     open(chain, market, 1_000, 500, 0);
 
-    assert_eq!(chain.balance(market, COLLATERAL), 1_000);
+    assert_eq!(
+        chain.balance_of(market, lending_guest::lending::client::Posted),
+        1_000
+    );
     assert_eq!(chain.balance(BORROWER, DEBT), 500);
-    assert_eq!(chain.balance(market, DEBT), 9_500);
+    assert_eq!(
+        chain.balance_of(market, lending_guest::lending::client::Reserves),
+        9_500
+    );
 }
 
 /// A draw past what the collateral allows is refused.
@@ -162,7 +168,10 @@ fn a_covered_position_cannot_be_liquidated(chain: &mut Chain) {
     });
 
     outcome.expect_declined(Error::StillCovered);
-    assert_eq!(chain.balance(market, COLLATERAL), 1_000);
+    assert_eq!(
+        chain.balance_of(market, lending_guest::lending::client::Posted),
+        1_000
+    );
 }
 
 /// A fall in what the collateral is worth is what makes a position
@@ -188,7 +197,10 @@ fn a_price_fall_makes_a_position_liquidatable(chain: &mut Chain) {
         .expect_completed();
 
     assert_eq!(chain.balance(KEEPER, COLLATERAL), 1_000);
-    assert_eq!(chain.balance(market, COLLATERAL), 0);
+    assert_eq!(
+        chain.balance_of(market, lending_guest::lending::client::Posted),
+        0
+    );
 }
 
 /// The index carries the whole span in one exponentiation.
@@ -309,5 +321,8 @@ fn a_position_whose_backing_rounds_away_is_liquidatable(chain: &mut Chain) {
         .expect_completed();
 
     assert_eq!(chain.balance(KEEPER, COLLATERAL), 1_000);
-    assert_eq!(chain.balance(market, COLLATERAL), 0);
+    assert_eq!(
+        chain.balance_of(market, lending_guest::lending::client::Posted),
+        0
+    );
 }

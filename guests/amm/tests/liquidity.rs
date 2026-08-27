@@ -64,8 +64,14 @@ fn the_first_provider_mints_the_geometric_mean(chain: &mut Chain) {
     let pool = pool(chain);
     add(chain, pool, ALICE, 1_000, 4_000);
 
-    assert_eq!(chain.balance(pool, X), 1_000);
-    assert_eq!(chain.balance(pool, Y), 4_000);
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, X),
+        1_000
+    );
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, Y),
+        4_000
+    );
     assert_eq!(chain.balance(ALICE, share(chain, pool)), 2_000);
 }
 
@@ -85,9 +91,12 @@ fn a_skewed_deposit_mints_against_the_lesser_side(chain: &mut Chain) {
     add(chain, pool, BOB, 100, 800);
 
     assert_eq!(chain.balance(BOB, share(chain, pool)), 200);
-    assert_eq!(chain.balance(pool, X), 1_100);
     assert_eq!(
-        chain.balance(pool, Y),
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, X),
+        1_100
+    );
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, Y),
         4_800,
         "the excess stays in the pool"
     );
@@ -119,7 +128,10 @@ fn funding_one_side_alone_is_refused(chain: &mut Chain) {
 
     outcome.expect_declined(Error::NothingMinted);
     assert_eq!(chain.balance(BOB, Y), 10_000, "a decline moves nothing");
-    assert_eq!(chain.balance(pool, Y), 4_000);
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, Y),
+        4_000
+    );
 }
 
 /// Redeeming the only position returns the whole pair.
@@ -141,8 +153,14 @@ fn redeeming_the_only_position_returns_the_whole_pair(chain: &mut Chain) {
         })
         .expect_completed();
 
-    assert_eq!(chain.balance(pool, X), 0);
-    assert_eq!(chain.balance(pool, Y), 0);
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, X),
+        0
+    );
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, Y),
+        0
+    );
     assert_eq!(chain.balance(ALICE, X), 10_000);
     assert_eq!(chain.balance(ALICE, Y), 10_000);
     assert_eq!(

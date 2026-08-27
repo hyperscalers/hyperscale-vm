@@ -32,7 +32,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod staking {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, Vault};
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     /// The identity the pool's operator surface admits: a badge this
@@ -135,6 +135,10 @@ pub mod staking {
 
     #[state]
     struct Staking {
+        /// What delegators staked, and what an exit is paid from.
+        #[slot(16)]
+        #[holds(config.staked_resource)]
+        pool: Vault,
         /// One leaf per validator the pool operates, so two operator
         /// actions on two validators commute.
         #[slot(17)]
@@ -152,7 +156,7 @@ pub mod staking {
             // the handle carries, so neither end reformats a number it
             // was handed.
             let staked = funds.quantity();
-            self.vault(self.config().staked_resource).put(funds);
+            self.pool.put(funds);
             Staked { amount: staked }.emit();
             StakeUnit::mint(staked)
         }

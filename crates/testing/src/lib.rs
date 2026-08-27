@@ -55,7 +55,7 @@ use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 /// test derives the addresses its instance issues, and the hasher it
 /// derives them under is one this crate already fixes.
 pub use hyperscale_vm_effects::{
-    AdmissionError, EvalError, GrantedBehaviour, ResourceKind, TestHasher, address_text,
+    AdmissionError, EvalError, GrantedBehaviour, ResourceKind, SlotId, TestHasher, address_text,
     package_slot,
 };
 use hyperscale_vm_effects::{
@@ -80,7 +80,7 @@ mod wasm;
 
 pub use conclusion::Conclusion;
 use conclusion::explain_decline;
-pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot, Mark};
+pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot, Mark, VaultField};
 /// Run one test on every engine lane this crate was built with.
 ///
 /// The body takes the [`Chain`] it runs on and says nothing about what
@@ -455,8 +455,114 @@ impl Chain {
         resource: impl Into<Address>,
         amount: u128,
     ) {
+        let owner = owner.into();
+        assert!(
+            owner.class() != AddressClass::Component,
+            "a component's reserves are its own declared vaults — name the field: \
+             `chain.fund(pool, client::<Field>, ..)`"
+        );
         let key = vault(owner, resource);
         self.store.write(key, encode_amount(amount).to_vec());
+    }
+
+    /// Put `amount` in `instance`'s declared vault, as though it had
+    /// always been there: `chain.fund(pool, amm::client::X, 1_000)`.
+    ///
+    /// The component-side twin of [`credit`](Self::credit): a component's
+    /// reserves are the vaults its state declares, each holding the
+    /// resource its configuration names, and the field's marker is how a
+    /// test names one.
+    ///
+    /// # Panics
+    ///
+    /// If the chain does not hold the instance, or its configuration
+    /// slot does not name an address — either way a test naming a world
+    /// it never built.
+    pub fn fund<V: VaultField>(&mut self, instance: V::Of, field: V, amount: u128) {
+        let key = self.vault_of(instance, field);
+        self.store.write(key, encode_amount(amount).to_vec());
+    }
+
+    /// What `instance`'s declared vault holds.
+    ///
+    /// # Panics
+    ///
+    /// On the terms [`fund`](Self::fund) states, and if the cell is
+    /// there and is not an amount.
+    #[must_use]
+    pub fn balance_of<V: VaultField>(&self, instance: V::Of, field: V) -> u128 {
+        let key = self.vault_of(instance, field);
+        self.store.cell(key).map_or(0, |cell| {
+            decode_amount(&cell).expect("a vault cell is an amount")
+        })
+    }
+
+    /// Put `amount` in one leaf of `instance`'s keyed vault family:
+    /// `chain.fund_at(pool, amm::client::RESERVES, X, 1_000)`.
+    ///
+    /// The family's slot constant rides the client module; the leaf is
+    /// keyed by the resource it holds, exactly as the field's own
+    /// `.at(..)` reaches it.
+    pub fn fund_at(
+        &mut self,
+        instance: impl Into<ComponentAddr>,
+        family: SlotId,
+        resource: impl Into<Address>,
+        amount: u128,
+    ) {
+        let key = child_key(
+            &TestHasher,
+            instance.into(),
+            family,
+            &[Value::Address(resource.into()).canonical_bytes()],
+        );
+        self.store.write(key, encode_amount(amount).to_vec());
+    }
+
+    /// What one leaf of `instance`'s keyed vault family holds.
+    ///
+    /// # Panics
+    ///
+    /// If the cell is there and is not an amount.
+    #[must_use]
+    pub fn balance_at(
+        &self,
+        instance: impl Into<ComponentAddr>,
+        family: SlotId,
+        resource: impl Into<Address>,
+    ) -> u128 {
+        let key = child_key(
+            &TestHasher,
+            instance.into(),
+            family,
+            &[Value::Address(resource.into()).canonical_bytes()],
+        );
+        self.store.cell(key).map_or(0, |cell| {
+            decode_amount(&cell).expect("a vault cell is an amount")
+        })
+    }
+
+    /// The substate key of `instance`'s declared vault: the field's
+    /// slot under the instance, keyed by the resource its configuration
+    /// names.
+    fn vault_of<V: VaultField>(&self, instance: V::Of, field: V) -> SubstateKey {
+        let _ = field;
+        let address = instance.address();
+        let meta = ChainRecords::instance(&self.records, CallTarget::Component(address))
+            .expect("the chain holds the instance");
+        let resource = match meta.config.get(V::HOLDS as usize) {
+            Some(Value::Address(resource)) => *resource,
+            other => panic!(
+                "configuration slot {} is not an address: {other:?}",
+                V::HOLDS
+            ),
+        };
+        child_key(
+            &TestHasher,
+            address,
+            SlotId(V::SLOT),
+            &[Value::Address(resource).canonical_bytes()],
+        )
     }
 
     /// One committed cell's bytes, or nothing where no cell is.

@@ -36,7 +36,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod flashloan {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Quantity};
+    use hyperscale_vm_sdk::state::{Bucket, Quantity, Vault};
 
     /// The obligation a borrower carries for the length of one
     /// transaction: one subunit per subunit lent.
@@ -58,6 +58,13 @@ pub mod flashloan {
         Short,
     }
 
+    #[state]
+    struct Flashloan {
+        /// What the pool lends, and what a repayment returns to.
+        #[holds(config.asset)]
+        till: Vault,
+    }
+
     impl Flashloan {
         /// Lend `amount`, and mint the obligation to give it back.
         ///
@@ -66,7 +73,7 @@ pub mod flashloan {
         /// the loan's route through the transaction entirely theirs: it
         /// can be swapped, split, lent on, and arrive back from anywhere.
         pub fn draw(&mut self, amount: Quantity) -> (Bucket, Bucket) {
-            let funds = self.vault(self.config().asset).take(amount);
+            let funds = self.till.take(amount);
             (funds, Debt::mint(amount))
         }
 
@@ -83,7 +90,7 @@ pub mod flashloan {
             if returned.try_sub(owed).is_none() {
                 return Err(Error::Short);
             }
-            self.vault(self.config().asset).put(funds);
+            self.till.put(funds);
             Debt::burn(debt);
             Ok(())
         }

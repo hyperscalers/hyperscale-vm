@@ -45,7 +45,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod peg {
     use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Fixed, Quantity, Rounding, Sign, SignedFixed, UnitFixed,
+        Bucket, Cell, Fixed, Quantity, Rounding, Sign, SignedFixed, UnitFixed, Vault,
     };
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
@@ -84,6 +84,12 @@ pub mod peg {
 
     #[state]
     struct Peg {
+        /// The stable the window retires.
+        #[holds(config.stable)]
+        retired: Vault,
+        /// The backing redemptions pay from.
+        #[holds(config.reserve)]
+        backing: Vault,
         /// How far one stable subunit sits from one reserve subunit.
         ///
         /// Signed, set, and the only thing this market knows: positive
@@ -110,8 +116,8 @@ pub mod peg {
         pub fn redeem(&mut self, funds: Bucket) -> Result<Bucket, Error> {
             let terms = self.config();
             let payout = quoted(funds.quantity(), self.deviation.get(), terms.band)?;
-            self.vault(terms.stable).put(funds);
-            Ok(self.vault(terms.reserve).take(payout))
+            self.retired.put(funds);
+            Ok(self.backing.take(payout))
         }
 
         /// What `amount` of stable would fetch, without sending any.

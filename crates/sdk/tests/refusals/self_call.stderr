@@ -1,11 +1,5 @@
-error: a contract method cannot call a published method of the component — each method declares only its own body's accesses. Factor the shared code into a private method, which inlines where it is called, or lift the shared value to a parameter
-  --> tests/refusals/self_call.rs:18:13
+error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
+  --> tests/refusals/self_call.rs:14:13
    |
-18 |             self.credit(a);
-   |             ^^^^
-
-error: a contract method cannot call a published method of the component — each method declares only its own body's accesses. Factor the shared code into a private method, which inlines where it is called, or lift the shared value to a parameter
-  --> tests/refusals/self_call.rs:19:13
-   |
-19 |             self.credit(a);
+14 |             self.vault(a).declared_credit();
    |             ^^^^

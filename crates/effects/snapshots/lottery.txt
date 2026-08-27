@@ -1,7 +1,8 @@
 state
-     16  tickets — an unordered collection, holding address
-     17  round — one leaf, holding u64
-     18  outcome — one leaf, holding outcome
+     16  pot — a leaf per key, holding u128
+     17  tickets — an unordered collection, holding address
+     18  round — one leaf, holding u64
+     19  outcome — one leaf, holding outcome
 events
       0  entered
       1  closed
@@ -29,7 +30,7 @@ enter(address, bucket) — infallible
       0  requires self.round is absent
       1  read self.round
       2  write self.tickets at order-key(self.tickets[arg0])
-      3  credit self.vault[resource-of(arg1)] holding resource-of(arg1)
+      3  credit self.pot[resource-of(arg1)] holding resource-of(arg1)
   exports  handle for clause 1, handle for clause 2, handle for clause 3, order-key(self.tickets[arg0]), arg0, edge arg1
 
 instantiate() — infallible

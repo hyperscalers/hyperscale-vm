@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{Hash32, TestHasher, Value, child_key, collection_id, order_key};
 use hyperscale_vm_fixtures::lottery;
-use hyperscale_vm_harness::driver::{amount_of, test_hash, vault};
+use hyperscale_vm_harness::driver::{amount_of, declared_vault, test_hash, vault};
 use hyperscale_vm_kernel::{DOMAIN_SEALED_DRAW, MemoryStore, Substates};
 use hyperscale_vm_sdk::hbor::from_slice;
 use hyperscale_vm_sdk::state::Word;
@@ -147,7 +147,10 @@ fn the_round_settles_on_the_entrant_its_sealed_draw_picks() {
         );
     }
     assert!(u32::try_from(entries.len()).unwrap() <= lottery::ROUND_CAP);
-    assert_eq!(amount_of(&store, vault(lottery_addr(), RES_X)), 140);
+    assert_eq!(
+        amount_of(&store, declared_vault(lottery_addr(), lottery::POT, RES_X)),
+        140
+    );
 
     // Ascending order is the index space the draw reduces into, so who
     // sits at which index is the hash order and nothing else.

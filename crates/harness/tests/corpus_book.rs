@@ -3,15 +3,23 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_effects::{AdmissionError, Hash32, ManifestGraph, TestHasher, admit, fresh_id};
+use hyperscale_vm_effects::{
+    AdmissionError, Hash32, ManifestGraph, SlotId, TestHasher, admit, fresh_id,
+};
 use hyperscale_vm_fixtures::book;
-use hyperscale_vm_harness::driver::{amount_of, vault};
+use hyperscale_vm_harness::driver::{amount_of, declared_vault, vault};
+use hyperscale_vm_sdk::client::VaultField;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{Address, EffectTarget, EntryKey, TxHash, encode_amount};
 
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
 use common::world::*;
+
+/// The book's two declared vaults, at the slots their typed markers
+/// carry.
+const BOOK_BASE: SlotId = SlotId(<book::Base as VaultField>::SLOT);
+const BOOK_QUOTE: SlotId = SlotId(<book::Quote as VaultField>::SLOT);
 
 fn place_graph() -> ManifestGraph {
     graph(|b| {
@@ -109,7 +117,10 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
         (5u128 << 64) | 7,
         encode_amount(10).to_vec(),
     );
-    store.write(vault(book(), BASE), encode_amount(10).to_vec());
+    store.write(
+        declared_vault(book(), BOOK_BASE, BASE),
+        encode_amount(10).to_vec(),
+    );
 
     let place = place_graph();
     let fill = fill_graph();
@@ -155,7 +166,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
         fill_receipt
             .delta
             .movements
-            .get(&vault(book(), BASE))
+            .get(&declared_vault(book(), BOOK_BASE, BASE))
             .unwrap()
             .debit,
         33
@@ -164,7 +175,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
         fill_receipt
             .delta
             .movements
-            .get(&vault(book(), QUOTE))
+            .get(&declared_vault(book(), BOOK_QUOTE, QUOTE))
             .unwrap()
             .credit,
         99
@@ -173,7 +184,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
         fill_receipt
             .delta
             .movements
-            .get(&vault(book(), QUOTE))
+            .get(&declared_vault(book(), BOOK_QUOTE, QUOTE))
             .unwrap()
             .debit,
         0
@@ -181,8 +192,14 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
 
     assert_eq!(amount_of(&final_store, vault(TAKER, BASE)), 33);
     assert_eq!(amount_of(&final_store, vault(TAKER, QUOTE)), 51);
-    assert_eq!(amount_of(&final_store, vault(book(), BASE)), 27);
-    assert_eq!(amount_of(&final_store, vault(book(), QUOTE)), 99);
+    assert_eq!(
+        amount_of(&final_store, declared_vault(book(), BOOK_BASE, BASE)),
+        27
+    );
+    assert_eq!(
+        amount_of(&final_store, declared_vault(book(), BOOK_QUOTE, QUOTE)),
+        99
+    );
     assert_eq!(amount_of(&final_store, vault(MAKER, BASE)), 10);
     let entries: BTreeMap<_, _> = final_store
         .collection_entries()
@@ -219,7 +236,10 @@ fn a_finer_tick_prices_between_two_integers_on_both_runtimes() {
         (3u128 << 64) | 1,
         encode_amount(100).to_vec(),
     );
-    store.write(vault(fine_book(), BASE), encode_amount(100).to_vec());
+    store.write(
+        declared_vault(fine_book(), BOOK_BASE, BASE),
+        encode_amount(100).to_vec(),
+    );
 
     let fill = graph(|b| {
         let taker = account::authorize(b, TAKER)?;

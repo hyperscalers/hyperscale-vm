@@ -38,7 +38,7 @@ fn window(chain: &mut Chain) -> Peg {
             },
         );
         chain.credit(HOLDER, STABLE, 10_000);
-        chain.credit(window, RESERVE, 10_000);
+        chain.fund(window, peg_guest::peg::client::Backing, 10_000);
         window
     })
 }
@@ -71,8 +71,14 @@ fn an_unpriced_window_redeems_at_parity(chain: &mut Chain) {
     redeem(chain, window, 1_000);
 
     assert_eq!(chain.balance(HOLDER, RESERVE), 1_000);
-    assert_eq!(chain.balance(window, STABLE), 1_000);
-    assert_eq!(chain.balance(window, RESERVE), 9_000);
+    assert_eq!(
+        chain.balance_of(window, peg_guest::peg::client::Retired),
+        1_000
+    );
+    assert_eq!(
+        chain.balance_of(window, peg_guest::peg::client::Backing),
+        9_000
+    );
 }
 
 /// Above parity the redeemer takes more than they handed in.

@@ -14,6 +14,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::spanned::Spanned as _;
 
+use crate::client::Serves;
 use crate::lower::{Field, FieldKind};
 use crate::{is_named, kebab, pascal};
 
@@ -241,7 +242,7 @@ pub fn protocol_band(slot: u16) -> Result<(), String> {
 /// else. They are accessors instead, and the shape each takes here is the
 /// field shape it replaces, so a body reaching one lands on the clause
 /// the field lowered to.
-pub fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
+pub fn accessors(config: Option<&syn::Ident>, serves: Serves) -> BTreeMap<String, Field> {
     let vault = || Field {
         slot: VAULT.0,
         kind: FieldKind::Keyed,
@@ -249,7 +250,6 @@ pub fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
         denomination: None,
     };
     let mut cells = BTreeMap::from([
-        ("vault".to_owned(), vault()),
         (
             "holdings".to_owned(),
             Field {
@@ -275,6 +275,13 @@ pub fn accessors(config: Option<&syn::Ident>) -> BTreeMap<String, Field> {
             },
         ),
     ]);
+    // The protocol balance is the principals': an instance package's
+    // reserves are declared fields of its own state struct, so the
+    // anonymous accessor exists only where the funds are the protocol
+    // cells by identity.
+    if matches!(serves, Serves::Principals) {
+        cells.insert("vault".to_owned(), vault());
+    }
     // A package with no configuration struct has no configuration to
     // read, and `config()` is a name it never gets rather than one that
     // answers nothing.
@@ -300,7 +307,7 @@ pub fn parse_state(
     // Named before the state is read, so the refusal below can name every
     // accessor a field would shadow — including `config`, which exists
     // exactly when the package declares a configuration struct.
-    let reserved = accessors(None);
+    let reserved = accessors(None, Serves::Principals);
     let mut fields = BTreeMap::new();
     let mut config_name: Option<syn::Ident> = None;
     for item in items {
@@ -450,7 +457,10 @@ pub fn state_struct(items: &mut Vec<syn::Item>, module: &syn::Ident) -> syn::Res
 ///
 /// A configuration is a leaf per field under its own slot rather than
 /// one this table's key reaches, so it contributes none.
-pub fn state_table(fields: &BTreeMap<String, Field>) -> Vec<TokenStream2> {
+pub fn state_table(
+    fields: &BTreeMap<String, Field>,
+    config_fields: &[(String, syn::Type)],
+) -> Vec<TokenStream2> {
     fields
         .iter()
         .filter_map(|(name, field)| {
@@ -463,6 +473,18 @@ pub fn state_table(fields: &BTreeMap<String, Field>) -> Vec<TokenStream2> {
             };
             let element = field.element.as_ref()?;
             let slot = field.slot;
+            // A vault holding a configured resource carries it into the
+            // table, so the balance sheet a consumer reads resolves
+            // against the instance's configuration. An issued resource's
+            // address derives from the instance, which the table cannot
+            // say — its field declares like any other slot.
+            if let Some(index) = field
+                .denomination
+                .as_ref()
+                .and_then(|expr| config_index(expr, config_fields))
+            {
+                return Some(quote!(.holds_config::<#element>(#slot, #name, #index)));
+            }
             Some(quote!(.slot::<#element>(
                 #slot,
                 #name,
@@ -470,6 +492,22 @@ pub fn state_table(fields: &BTreeMap<String, Field>) -> Vec<TokenStream2> {
             )))
         })
         .collect()
+}
+
+/// The configuration slot a `#[holds(config.<field>)]` names, where it
+/// names one.
+pub fn config_index(expr: &syn::Expr, config_fields: &[(String, syn::Type)]) -> Option<u32> {
+    let syn::Expr::Field(access) = expr else {
+        return None;
+    };
+    let syn::Member::Named(name) = &access.member else {
+        return None;
+    };
+    let name = name.to_string();
+    config_fields
+        .iter()
+        .position(|(field, _)| *field == name)
+        .and_then(|index| u32::try_from(index).ok())
 }
 
 /// Whether a state field holds the package's own role table: the same

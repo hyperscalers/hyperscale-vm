@@ -1,3 +1,6 @@
+state
+     16  till — one leaf, holding u128, denominated in config.asset
+     17  other_till — one leaf, holding u128, denominated in config.other
 config
       0  asset
       1  other
@@ -6,14 +9,14 @@ config
 churn(bucket, u128) — infallible
   takes    arg0 carrying config.asset
   declares
-      0  delta self.vault[config.asset] holding config.asset
+      0  delta self.till[config.asset] holding config.asset
   yields   edge 0 = config.asset
   exports  handle for clause 0, edge arg0, arg1
 
 deposit(bucket) — infallible
   takes    arg0 carrying config.asset
   declares
-      0  credit self.vault[config.asset] holding config.asset
+      0  credit self.till[config.asset] holding config.asset
   exports  handle for clause 0, edge arg0
 
 file(nf-bucket) — infallible
@@ -36,13 +39,13 @@ release(ids) — infallible
 swap(bucket, u128) — infallible
   takes    arg0 carrying config.asset
   declares
-      0  credit self.vault[config.asset] holding config.asset
-      1  debit self.vault[config.other] holding config.other
+      0  credit self.till[config.asset] holding config.asset
+      1  debit self.other_till[config.other] holding config.other
   yields   edge 0 = config.other
   exports  handle for clause 0, handle for clause 1, edge arg0, arg1
 
 withdraw(u128) — infallible
   declares
-      0  debit self.vault[config.asset] holding config.asset
+      0  debit self.till[config.asset] holding config.asset
   yields   edge 0 = config.asset
   exports  handle for clause 0, arg0

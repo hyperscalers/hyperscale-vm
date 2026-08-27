@@ -2,13 +2,14 @@
 //! math, output floors, and the share vault's rounding.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Claim, EnvelopeTree, Hash32, IntentDecl, ManifestGraph, TestHasher, Value,
-    child_key, holdings_collection,
+    AdmissionError, Claim, EnvelopeTree, Hash32, IntentDecl, ManifestGraph, SlotId, TestHasher,
+    Value, child_key, holdings_collection,
 };
 use hyperscale_vm_fixtures::{amm, shares};
-use hyperscale_vm_harness::driver::{amount_of, vault};
+use hyperscale_vm_harness::driver::{amount_of, declared_vault, vault};
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
+use hyperscale_vm_sdk::client::VaultField;
 use hyperscale_vm_sdk::{Declines, DeclinesAs};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
@@ -19,6 +20,14 @@ use hyperscale_vm_types::{
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
 use common::world::*;
+
+/// The share vault's one declared pool, at its marker's slot.
+const SHARES_POOL: SlotId = SlotId(<shares::Pool as VaultField>::SLOT);
+
+/// One of an amm venue's declared reserves.
+fn reserve(pool: amm::Amm, resource: impl Into<Address>) -> SubstateKey {
+    declared_vault(pool, amm::RESERVES, resource)
+}
 
 /// The same trade the other way round, paid in the side the pool sold
 /// last time.
@@ -88,8 +97,8 @@ fn a_swap_paid_in_either_side_of_the_pair_admits() {
 fn swap_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(600).to_vec());
-    store.write(vault(pool(), RES_X), encode_amount(1_000).to_vec());
-    store.write(vault(pool(), RES_Y), encode_amount(1_000).to_vec());
+    store.write(reserve(pool(), RES_X), encode_amount(1_000).to_vec());
+    store.write(reserve(pool(), RES_Y), encode_amount(1_000).to_vec());
     store
 }
 
@@ -103,8 +112,8 @@ fn swap_profile_and_provision_shape_are_exact() {
         *pool_set,
         set(&[
             point(config_leaf(pool()), Mode::Read),
-            point(vault(pool(), RES_X), Mode::Write { moves: Moves::In }),
-            point(vault(pool(), RES_Y), Mode::Write { moves: Moves::Out }),
+            point(reserve(pool(), RES_X), Mode::Write { moves: Moves::In }),
+            point(reserve(pool(), RES_Y), Mode::Write { moves: Moves::Out }),
         ])
     );
     // The pool-shard provision carries the two balance cells and the
@@ -115,8 +124,8 @@ fn swap_profile_and_provision_shape_are_exact() {
         pool_set.provision_targets(),
         [
             EffectTarget::Point(config_leaf(pool())),
-            EffectTarget::Point(vault(pool(), RES_X)),
-            EffectTarget::Point(vault(pool(), RES_Y)),
+            EffectTarget::Point(reserve(pool(), RES_X)),
+            EffectTarget::Point(reserve(pool(), RES_Y)),
         ]
         .into_iter()
         .collect()
@@ -158,7 +167,7 @@ fn swap_executes_with_real_pool_math_on_both_runtimes() {
         receipt
             .delta
             .movements
-            .get(&vault(pool(), RES_X))
+            .get(&reserve(pool(), RES_X))
             .map(|moved| (moved.credit, moved.debit)),
         Some((500, 0))
     );
@@ -166,7 +175,7 @@ fn swap_executes_with_real_pool_math_on_both_runtimes() {
         receipt
             .delta
             .movements
-            .get(&vault(pool(), RES_Y))
+            .get(&reserve(pool(), RES_Y))
             .map(|moved| (moved.credit, moved.debit)),
         Some((0, 332))
     );
@@ -217,7 +226,7 @@ fn the_pool_trades_both_directions_off_one_instance() {
         receipt
             .delta
             .movements
-            .get(&vault(pool(), RES_Y))
+            .get(&reserve(pool(), RES_Y))
             .map(|moved| (moved.credit, moved.debit)),
         Some((500, 0))
     );
@@ -225,7 +234,7 @@ fn the_pool_trades_both_directions_off_one_instance() {
         receipt
             .delta
             .movements
-            .get(&vault(pool(), RES_X))
+            .get(&reserve(pool(), RES_X))
             .map(|moved| (moved.credit, moved.debit)),
         Some((0, 332))
     );
@@ -258,7 +267,7 @@ fn a_violated_output_floor_declines_identically() {
         slippage.declined_as(),
         "the code is an index into the table the package published",
     );
-    assert_eq!(amount_of(&final_store, vault(pool(), RES_X)), 1_000);
+    assert_eq!(amount_of(&final_store, reserve(pool(), RES_X)), 1_000);
     assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 600);
 }
 
@@ -271,7 +280,10 @@ fn a_violated_output_floor_declines_identically() {
 fn shares_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(1_000).to_vec());
-    store.write(vault(shares_vault(), RES_X), encode_amount(1_000).to_vec());
+    store.write(
+        declared_vault(shares_vault(), SHARES_POOL, RES_X),
+        encode_amount(1_000).to_vec(),
+    );
     store.write(supply_leaf(shares_vault()), encode_amount(777).to_vec());
     store
 }
@@ -338,7 +350,10 @@ fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() {
     );
 
     assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 999);
-    assert_eq!(amount_of(&end, vault(shares_vault(), RES_X)), 1_001);
+    assert_eq!(
+        amount_of(&end, declared_vault(shares_vault(), SHARES_POOL, RES_X)),
+        1_001
+    );
     assert_eq!(amount_of(&end, vault(ALICE, shares_unit())), 0);
 }
 
@@ -400,8 +415,8 @@ fn a_registered_venue_trades_the_restricted_class_on_both_runtimes() {
     // who may move it and never how much moves.
     assert_eq!(amount_of(&end, vault(ALICE, share())), 332);
     assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 100);
-    assert_eq!(amount_of(&end, vault(register_pool(), share())), 668);
-    assert_eq!(amount_of(&end, vault(register_pool(), RES_X)), 1_500);
+    assert_eq!(amount_of(&end, reserve(register_pool(), share())), 668);
+    assert_eq!(amount_of(&end, reserve(register_pool(), RES_X)), 1_500);
 }
 
 /// The same trade into a venue nobody admitted, refused where the pool's
@@ -447,7 +462,7 @@ fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
     );
     // And nothing moved: the verdict lands before any body runs.
     assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 600);
-    assert_eq!(amount_of(&end, vault(register_pool(), share())), 1_000);
+    assert_eq!(amount_of(&end, reserve(register_pool(), share())), 1_000);
 }
 
 /// The buyer's own intent: a trade of the approval-mode class, with a
@@ -497,9 +512,12 @@ fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeErr
 fn approval_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(600).to_vec());
-    store.write(vault(approval_pool(), RES_X), encode_amount(1_000).to_vec());
     store.write(
-        vault(approval_pool(), approved()),
+        reserve(approval_pool(), RES_X),
+        encode_amount(1_000).to_vec(),
+    );
+    store.write(
+        reserve(approval_pool(), approved()),
         encode_amount(1_000).to_vec(),
     );
     store
@@ -540,7 +558,7 @@ fn an_approved_trade_settles_through_a_venue_holding_no_credential() {
     // The same curve as the register-mode pool, over the same reserves.
     assert_eq!(amount_of(&end, vault(ALICE, approved())), 332);
     assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 100);
-    assert_eq!(amount_of(&end, vault(approval_pool(), approved())), 668);
+    assert_eq!(amount_of(&end, reserve(approval_pool(), approved())), 668);
 }
 
 /// The same trade with nobody's approval in it, refused at admission.

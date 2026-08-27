@@ -28,8 +28,8 @@ use hyperscale_vm_types::Moves;
 /// spelling the author reaches for, the declaration is the same superset.
 #[blueprint]
 mod shapes {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Keyed, Quantity};
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Keyed, Quantity, Vault};
 
     #[record]
     struct Note {
@@ -38,6 +38,7 @@ mod shapes {
 
     #[state]
     struct Shapes {
+        vaults: Keyed<Vault>,
         notes: Keyed<Option<Note>>,
     }
 
@@ -48,8 +49,8 @@ mod shapes {
         /// set per element — which is a different declaration and the
         /// point of reading the loop off what it ranges over.
         #[allow(clippy::needless_pass_by_value)] // a contract consumes its arguments
-        pub fn looped(&mut self, a: Address, ids: Vec<u8>) {
-            let mut vault = self.vault(a);
+        pub fn looped(&mut self, a: ResourceAddr, ids: Vec<u8>) {
+            let mut vault = self.vaults.at(a);
             // `ids` itself is a term, and ranging over it would be a
             // `for-each`; the length is not, so this is a plain loop.
             for _id in ids.len()..1 {
@@ -58,45 +59,45 @@ mod shapes {
         }
 
         #[allow(clippy::needless_pass_by_value)] // a contract consumes its arguments
-        pub fn once(&mut self, a: Address, _ids: Vec<u8>) {
-            let mut vault = self.vault(a);
+        pub fn once(&mut self, a: ResourceAddr, _ids: Vec<u8>) {
+            let mut vault = self.vaults.at(a);
             vault.declared();
         }
 
-        pub fn branched(&mut self, flag: u64, a: Address, other: Address) {
+        pub fn branched(&mut self, flag: u64, a: ResourceAddr, other: ResourceAddr) {
             match flag {
-                0 => self.vault(a).declared(),
-                _ => self.vault(other).declared(),
+                0 => self.vaults.at(a).declared(),
+                _ => self.vaults.at(other).declared(),
             }
         }
 
-        pub fn straight(&mut self, _flag: u64, a: Address, other: Address) {
-            self.vault(a).declared();
-            self.vault(other).declared();
+        pub fn straight(&mut self, _flag: u64, a: ResourceAddr, other: ResourceAddr) {
+            self.vaults.at(a).declared();
+            self.vaults.at(other).declared();
         }
 
-        pub fn asserted(&mut self, a: Address) {
-            assert_eq!(self.vault(a).balance(), Quantity::ZERO);
+        pub fn asserted(&mut self, a: ResourceAddr) {
+            assert_eq!(self.vaults.at(a).balance(), Quantity::ZERO);
         }
 
         #[allow(clippy::equatable_if_let)] // the spelling under test is the if-let itself
-        pub fn scrutinised(&mut self, a: Address) {
-            if let Quantity::ZERO = self.vault(a).balance() {}
+        pub fn scrutinised(&mut self, a: ResourceAddr) {
+            if let Quantity::ZERO = self.vaults.at(a).balance() {}
         }
 
-        pub fn read(&mut self, a: Address) {
-            let _ = self.vault(a).balance();
+        pub fn read(&mut self, a: ResourceAddr) {
+            let _ = self.vaults.at(a).balance();
         }
 
-        pub fn guarded(&mut self, flag: u64, a: Address) {
+        pub fn guarded(&mut self, flag: u64, a: ResourceAddr) {
             let 0 = flag else {
-                self.vault(a).declared();
+                self.vaults.at(a).declared();
                 return;
             };
         }
 
-        pub fn plain(&mut self, _flag: u64, a: Address) {
-            self.vault(a).declared();
+        pub fn plain(&mut self, _flag: u64, a: ResourceAddr) {
+            self.vaults.at(a).declared();
         }
 
         /// A rewrite is a set through the door that requires presence.
@@ -234,25 +235,26 @@ fn an_unordered_collection_declares_hashed_entries_and_capped_sweeps() {
 /// method reading none of them does.
 #[blueprint]
 mod environment {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Cell, clock_ms, hash};
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Cell, Keyed, Vault, clock_ms, hash};
 
     #[state]
     struct Environment {
+        vaults: Keyed<Vault>,
         seen: Cell<u64>,
     }
 
     impl Environment {
-        pub fn stamp(&mut self, holder: Address) {
+        pub fn stamp(&mut self, holder: ResourceAddr) {
             let digest = hash(&clock_ms().to_le_bytes());
             let drawn = u128::from(digest[0]);
             let _ = drawn;
-            self.vault(holder).declared();
+            self.vaults.at(holder).declared();
             self.seen.set(clock_ms());
         }
 
-        pub fn plain(&mut self, holder: Address) {
-            self.vault(holder).declared();
+        pub fn plain(&mut self, holder: ResourceAddr) {
+            self.vaults.at(holder).declared();
             self.seen.set(0);
         }
     }
@@ -281,7 +283,7 @@ fn reading_the_environment_declares_nothing() {
 /// the other.
 #[blueprint]
 mod issuer {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Keyed, Quantity, Rounding, Vault};
 
     #[resource(non_fungible)]
     struct OwnerBadge;
@@ -291,6 +293,7 @@ mod issuer {
 
     #[state]
     struct Issuer {
+        vaults: Keyed<Vault>,
         staked: Cell<Quantity>,
         /// A stored rate, to pin the mode a value-shaped cell that is not
         /// value folds to.
@@ -310,7 +313,7 @@ mod issuer {
         pub fn stake(&mut self, funds: Bucket) -> Bucket {
             let staked = funds.quantity();
             self.staked.set(staked);
-            self.vault(funds.resource()).put(funds);
+            self.vaults.at(funds.resource()).put(funds);
             Unit::mint(staked)
         }
 
@@ -384,17 +387,18 @@ fn an_instance_issues_resources_its_own_address_derives() {
 /// under a mark that trades precision for trap freedom.
 #[blueprint]
 mod switch {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Quantity};
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, Vault};
 
     #[config]
     struct Settings {
-        left: Address,
-        right: Address,
+        left: ResourceAddr,
+        right: ResourceAddr,
     }
 
     #[state]
     struct Switch {
+        vaults: Keyed<Vault>,
         left: Cell<Quantity>,
         right: Cell<Quantity>,
     }
@@ -404,9 +408,9 @@ mod switch {
         pub fn credit(&mut self, funds: Bucket, to_left: u64) {
             let settings = self.config();
             if to_left == 1 {
-                self.vault(settings.left).put(funds);
+                self.vaults.at(settings.left).put(funds);
             } else {
-                self.vault(settings.right).put(funds);
+                self.vaults.at(settings.right).put(funds);
             }
         }
 
@@ -416,9 +420,9 @@ mod switch {
         pub fn credit_one_way(&mut self, funds: Bucket, to_left: u64) {
             let settings = self.config();
             if to_left == 1 {
-                self.vault(settings.left).put(funds);
+                self.vaults.at(settings.left).put(funds);
             } else {
-                self.vault(funds.resource()).put(funds);
+                self.vaults.at(funds.resource()).put(funds);
             }
         }
 
@@ -798,22 +802,24 @@ fn a_declared_gate_carries_the_whole_threshold_algebra() {
 /// the one the body names at the cell, and the one it names at the merge.
 #[blueprint]
 mod counter {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::Bucket;
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Bucket, Keyed, Vault};
 
     #[config]
     struct Settings {
-        asset: Address,
+        asset: ResourceAddr,
     }
 
     #[state]
-    struct Counter {}
+    struct Counter {
+        vaults: Keyed<Vault>,
+    }
 
     impl Counter {
         /// Bank both edges, merged.
         pub fn bank(&mut self, mut first: Bucket, second: Bucket) {
             first.put(second);
-            self.vault(self.config().asset).put(first);
+            self.vaults.at(self.config().asset).put(first);
         }
     }
 }
@@ -844,19 +850,20 @@ fn a_merge_denominates_both_of_the_edges_it_joins() {
 /// miss does not refuse, and a compound key spelled as a product.
 #[blueprint]
 mod selection {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Table, Unordered};
+    use hyperscale_vm_sdk::state::{Keyed, Table, Unordered, Vault};
+    use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     #[config]
     struct Pair {
-        left: Address,
-        right: Address,
-        routes: Table<Address, Address>,
-        fallback: Address,
+        left: ResourceAddr,
+        right: ResourceAddr,
+        routes: Table<Address, ResourceAddr>,
+        fallback: ResourceAddr,
     }
 
     #[state]
     struct Selection {
+        vaults: Keyed<Vault>,
         seen: Unordered<u128>,
     }
 
@@ -869,7 +876,7 @@ mod selection {
             } else {
                 settings.right
             };
-            self.vault(side).declared();
+            self.vaults.at(side).declared();
         }
 
         /// The superset the same choice declares when the arms are
@@ -877,9 +884,9 @@ mod selection {
         pub fn both(&mut self, pick: Address) {
             let settings = self.config();
             if pick == settings.left {
-                self.vault(settings.left).declared();
+                self.vaults.at(settings.left).declared();
             } else {
-                self.vault(settings.right).declared();
+                self.vaults.at(settings.right).declared();
             }
         }
 
@@ -893,7 +900,7 @@ mod selection {
             } else {
                 settings.fallback
             };
-            self.vault(target).declared();
+            self.vaults.at(target).declared();
         }
 
         /// A collection entry at a key that takes two values to name.
@@ -912,7 +919,7 @@ mod selection {
             } else {
                 settings.right
             };
-            self.vault(side).declared();
+            self.vaults.at(side).declared();
         }
     }
 }
@@ -923,10 +930,15 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
         EvalBudget, EvalInputs, Expr, Hash32, InstanceMeta, ManifestHash, PackageHash,
         PresentedGrants, SlotId, TargetExpr, TestHasher, Value, child_key, evaluate_effects,
     };
-    use hyperscale_vm_sdk::VAULT;
     use hyperscale_vm_types::{Address, AddressClass, EffectTarget};
 
     let metadata = selection::blueprint().metadata();
+    let vaults_slot = *metadata
+        .state
+        .iter()
+        .find(|(_, shape)| shape.name == "vaults")
+        .map(|(slot, _)| slot)
+        .expect("the declared family");
     let effects = |name: &str| metadata.methods[name].effects.clone();
     let address = |byte: u8| Address::new([byte; 31], AddressClass::Resource);
     let (left, right) = (address(0x11), address(0x22));
@@ -970,7 +982,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
                 let key = EffectTarget::Point(child_key(
                     &TestHasher,
                     self_addr,
-                    VAULT,
+                    vaults_slot,
                     &[Value::Address(*side).canonical_bytes()],
                 ));
                 set.iter().any(|effect| effect.target == key)
@@ -997,7 +1009,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
     let fallback = EffectTarget::Point(child_key(
         &TestHasher,
         self_addr,
-        VAULT,
+        vaults_slot,
         &[Value::Address(left).canonical_bytes()],
     ));
     assert!(
@@ -1023,7 +1035,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
         order,
         &Expr::OrderKey {
             owner: Box::new(Expr::SelfAddr),
-            slot: SlotId(16),
+            slot: SlotId(17),
             material: vec![Expr::Tuple(vec![Expr::Arg(0), Expr::Arg(1)])],
         }
     );
@@ -1123,7 +1135,7 @@ fn a_valueless_narrowing_is_a_key_not_a_denomination() {
 #[blueprint]
 mod noted {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Quantity};
+    use hyperscale_vm_sdk::state::{Bucket, Keyed, Quantity, Vault};
 
     /// Funds moved, and what they were.
     #[event]
@@ -1133,13 +1145,15 @@ mod noted {
     }
 
     #[state]
-    struct Noted {}
+    struct Noted {
+        vaults: Keyed<Vault>,
+    }
 
     impl Noted {
         /// Bank the edge and say what it carried.
         pub fn note(&mut self, funds: Bucket, resource: ResourceAddr) {
             let amount = funds.quantity();
-            self.vault(resource).put(funds);
+            self.vaults.at(resource).put(funds);
             Moved { resource, amount }.emit();
         }
     }
@@ -1211,10 +1225,11 @@ fn every_address_type_declares_its_own_kind() {
 #[blueprint]
 mod shelf {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Ids, NfBucket, Ordered, pack};
+    use hyperscale_vm_sdk::state::{Ids, Keyed, NfBucket, Ordered, Vault, pack};
 
     #[state]
     struct Shelf {
+        vaults: Keyed<Vault>,
         ledger: Ordered<u64>,
     }
 
@@ -1358,12 +1373,12 @@ fn two_moves_through_one_interval_derive_the_summed_cap() {
 /// module's for no other reason.
 #[blueprint]
 mod stateless {
-    use hyperscale_vm_sdk::state::Bucket;
+    use hyperscale_vm_sdk::state::NfBucket;
 
     impl Stateless {
-        /// Credit the vault the arriving edge belongs in.
-        pub fn deposit(&mut self, funds: Bucket) {
-            self.vault(funds.resource()).put(funds);
+        /// File the instances into the holdings their edge belongs in.
+        pub fn deposit(&mut self, funds: NfBucket) {
+            self.holdings(funds.resource()).whole().file(funds);
         }
     }
 }
@@ -1379,14 +1394,18 @@ fn a_module_with_no_state_struct_declares_what_its_body_reaches() {
     let effects = &metadata.methods["deposit"].effects;
     let [
         Clause::Effect {
-            mode: ModeExpr::Delta { moves: Moves::In },
             denomination: Some(resource),
+            mode,
             ..
         },
     ] = effects.as_slice()
     else {
-        panic!("deposit credits the vault its edge belongs in");
+        panic!("deposit files into the holdings its edge belongs in");
     };
+    assert!(
+        matches!(mode, ModeExpr::Write { moves: Moves::In }),
+        "a file writes its entries, credit-only: {mode:?}"
+    );
     assert_eq!(**resource, Expr::ResourceOf(Box::new(Expr::Arg(0))));
 }
 

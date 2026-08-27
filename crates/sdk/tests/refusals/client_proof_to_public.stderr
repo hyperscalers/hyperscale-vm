@@ -1,41 +1,5 @@
-error[E0277]: the trait bound `hyperscale_vm_sdk::client::Proof: BucketArg` is not satisfied
-  --> tests/refusals/client_proof_to_public.rs:33:27
+error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
+  --> tests/refusals/client_proof_to_public.rs:14:13
    |
-33 |     pool.deposit(builder, proof, funds)
-   |          -------          ^^^^^ the trait `BucketArg` is not implemented for `hyperscale_vm_sdk::client::Proof`
-   |          |
-   |          required by a bound introduced by this call
-   |
-help: the following other types implement trait `BucketArg`
-  --> $WORKSPACE/crates/manifest-builder/src/args.rs
-   |
-   | impl BucketArg for Bucket {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^ `hyperscale_vm_sdk::client::Bucket`
-   | impl BucketArg for SocketRef {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `hyperscale_vm_manifest_builder::builder::SocketRef`
-note: required by a bound in `contract::client::Contract::deposit`
-  --> tests/refusals/client_proof_to_public.rs:4:1
-   |
- 4 | #[blueprint]
-   | ^^^^^^^^^^^^ required by this bound in `Contract::deposit`
-...
-13 |         pub fn deposit(&mut self, funds: Bucket) {
-   |                ------- required by a bound in this associated function
-   = note: this error originates in the attribute macro `blueprint` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0061]: this method takes 2 arguments but 3 arguments were supplied
-  --> tests/refusals/client_proof_to_public.rs:33:10
-   |
-33 |     pool.deposit(builder, proof, funds)
-   |          ^^^^^^^                 ----- unexpected argument #3 of type `hyperscale_vm_sdk::client::Bucket`
-   |
-note: method defined here
-  --> tests/refusals/client_proof_to_public.rs:13:16
-   |
-13 |         pub fn deposit(&mut self, funds: Bucket) {
-   |                ^^^^^^^
-help: remove the extra argument
-   |
-33 -     pool.deposit(builder, proof, funds)
-33 +     pool.deposit(builder, proof)
-   |
+14 |             self.vault(funds.resource()).put(funds);
+   |             ^^^^

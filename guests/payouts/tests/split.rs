@@ -52,7 +52,11 @@ fn a_payment_that_divides_pays_every_share(chain: &mut Chain) {
     assert_eq!(chain.balance(PROTOCOL, ASSET), 25);
     assert_eq!(chain.balance(TREASURY, ASSET), 25);
     assert_eq!(chain.balance(REFERRER, ASSET), 50);
-    assert_eq!(chain.balance(splitter, ASSET), 0, "nothing was left over");
+    assert_eq!(
+        chain.balance_of(splitter, payouts_guest::payouts::client::Kept),
+        0,
+        "nothing was left over"
+    );
 }
 
 /// A payment the table cannot divide pays every share of the whole and
@@ -79,7 +83,11 @@ fn a_payment_that_does_not_divide_keeps_the_dust(chain: &mut Chain) {
     assert_eq!(chain.balance(PROTOCOL, ASSET), 25);
     assert_eq!(chain.balance(TREASURY, ASSET), 25);
     assert_eq!(chain.balance(REFERRER, ASSET), 50);
-    assert_eq!(chain.balance(splitter, ASSET), 1, "the dust stays put");
+    assert_eq!(
+        chain.balance_of(splitter, payouts_guest::payouts::client::Kept),
+        1,
+        "the dust stays put"
+    );
 }
 
 /// A schedule that has to add up settles when it does.
@@ -122,7 +130,10 @@ fn a_schedule_that_must_add_up_refuses_the_dust(chain: &mut Chain) {
         "a decline moves nothing"
     );
     assert_eq!(chain.balance(PROTOCOL, ASSET), 0);
-    assert_eq!(chain.balance(splitter, ASSET), 0);
+    assert_eq!(
+        chain.balance_of(splitter, payouts_guest::payouts::client::Kept),
+        0
+    );
 }
 
 /// A payment is rounded down to whole lots and the change goes back.

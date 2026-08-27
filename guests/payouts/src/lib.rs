@@ -26,7 +26,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod payouts {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Quantity, Ratio, Rounding, UnitFixed};
+    use hyperscale_vm_sdk::state::{Bucket, Quantity, Ratio, Rounding, UnitFixed, Vault};
 
     /// Who takes what, fixed when the splitter is created.
     ///
@@ -59,6 +59,13 @@ pub mod payouts {
         BelowOneLot,
     }
 
+    #[state]
+    struct Payouts {
+        /// Where the dust lands, joining the next payment.
+        #[holds(config.asset)]
+        kept: Vault,
+    }
+
     impl Payouts {
         /// Divide a payment three ways and keep what will not divide.
         ///
@@ -69,7 +76,6 @@ pub mod payouts {
         #[allow(clippy::tuple_array_conversions)] // the lowering follows these names to the edges
         pub fn disburse(&mut self, pot: Bucket) -> (Bucket, Bucket, Bucket) {
             let terms = self.config();
-            let mut kept = self.vault(terms.asset);
 
             // One division against the whole table rather than three
             // takes in sequence: a second share of what a first share
@@ -80,7 +86,7 @@ pub mod payouts {
                 terms.treasury.ratio(),
                 terms.referrer.ratio(),
             ]);
-            kept.put(dust);
+            self.kept.put(dust);
             (protocol, treasury, referrer)
         }
 
@@ -92,7 +98,6 @@ pub mod payouts {
         #[allow(clippy::tuple_array_conversions)] // the lowering follows these names to the edges
         pub fn settle(&mut self, pot: Bucket) -> Result<(Bucket, Bucket, Bucket), Error> {
             let terms = self.config();
-            let mut kept = self.vault(terms.asset);
 
             let ([protocol, treasury, referrer], dust) = pot.split_n(&[
                 terms.protocol.ratio(),
@@ -107,7 +112,7 @@ pub mod payouts {
             if !dust.quantity().is_zero() {
                 return Err(Error::ShareUnclaimed);
             }
-            kept.put(dust);
+            self.kept.put(dust);
             Ok((protocol, treasury, referrer))
         }
 

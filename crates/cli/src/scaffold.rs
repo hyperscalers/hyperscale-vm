@@ -95,24 +95,26 @@ fn library(module: &str) -> String {
          \n\
          #[blueprint]\n\
          pub mod {module} {{\n\
-         \x20   use hyperscale_vm_sdk::Address;\n\
-         \x20   use hyperscale_vm_sdk::state::{{Bucket, Quantity}};\n\
+         \x20   use hyperscale_vm_sdk::ResourceAddr;\n\
+         \x20   use hyperscale_vm_sdk::state::{{Bucket, Keyed, Quantity, Vault}};\n\
          \n\
-         \x20   /// What this package stores of its own. The protocol's\n\
-         \x20   /// cells — balances, the delivery fallback, the stored\n\
-         \x20   /// authority — every owner has already.\n\
+         \x20   /// The package's own balance sheet: every vault it holds\n\
+         \x20   /// is a field here.\n\
          \x20   #[state]\n\
-         \x20   struct {state} {{}}\n\
+         \x20   struct {state} {{\n\
+         \x20       /// One vault per resource this instance is paid in.\n\
+         \x20       till: Keyed<Vault>,\n\
+         \x20   }}\n\
          \n\
          \x20   impl {state} {{\n\
          \x20       /// Credit the vault the arriving edge belongs in.\n\
          \x20       pub fn deposit(&mut self, funds: Bucket) {{\n\
-         \x20           self.vault(funds.resource()).put(funds);\n\
+         \x20           self.till.at(funds.resource()).put(funds);\n\
          \x20       }}\n\
          \n\
          \x20       /// Reserve `amount` of `resource` from this instance.\n\
-         \x20       pub fn withdraw(&mut self, resource: Address, amount: Quantity) -> Bucket {{\n\
-         \x20           self.vault(resource).reserve(amount)\n\
+         \x20       pub fn withdraw(&mut self, resource: ResourceAddr, amount: Quantity) -> Bucket {{\n\
+         \x20           self.till.at(resource).reserve(amount)\n\
          \x20       }}\n\
          \x20   }}\n\
          }}\n"
@@ -150,9 +152,16 @@ fn first_test(module: &str) -> String {
          \x20           instance.deposit(b, funds)\n\
          \x20       }})\n\
          \x20       .expect_completed();\n\
-         \n\
-         \x20   assert_eq!(chain.balance(instance, xrd), 40);\n\
          \x20   assert_eq!(chain.balance(alice, xrd), 60);\n\
+         \n\
+         \x20   // And back out, so the till answers for what it took.\n\
+         \x20   chain\n\
+         \x20       .transact(alice, |b| {{\n\
+         \x20           let back = instance.withdraw(b, xrd, 40u128)?;\n\
+         \x20           account::deposit(b, alice, back)\n\
+         \x20       }})\n\
+         \x20       .expect_completed();\n\
+         \x20   assert_eq!(chain.balance(alice, xrd), 100);\n\
          }}\n"
     )
 }

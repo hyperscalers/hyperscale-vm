@@ -30,13 +30,13 @@ use hyperscale_vm_sdk::blueprint;
 pub mod book {
     use hyperscale_vm_sdk::ResourceAddr;
     use hyperscale_vm_sdk::state::{
-        Bucket, Fixed, OrderKey, Ordered, Quantity, Rate, Rounding, fresh_id,
+        Bucket, Fixed, OrderKey, Ordered, Quantity, Rate, Rounding, Vault, fresh_id,
     };
 
-    /// What the book sells.
-    pub struct Base;
-    /// What it is paid in.
-    pub struct Quote;
+    /// One unit of what the book sells.
+    pub struct BaseUnit;
+    /// One subunit of what it is paid in.
+    pub struct QuoteUnit;
     /// The step a price moves in. A dimension because the configured size
     /// and an ask's count are rates *through* it, and what cancels when
     /// they compose is the reason either is right.
@@ -51,7 +51,7 @@ pub mod book {
         ///
         /// Fixed at creation because a book that could restep itself
         /// would reprice every ask standing in it.
-        tick: Fixed<Quote, Tick>,
+        tick: Fixed<QuoteUnit, Tick>,
     }
 
     /// What placing an ask declines with.
@@ -62,6 +62,12 @@ pub mod book {
 
     #[state]
     struct Book {
+        /// The escrowed base the standing asks sell.
+        #[holds(config.base)]
+        base: Vault,
+        /// What the makers are paid in.
+        #[holds(config.quote)]
+        quote: Vault,
         /// The standing ladder: a quantity of base per entry, which is a
         /// number the book records rather than value it holds.
         asks: Ordered<Quantity>,
@@ -80,7 +86,7 @@ pub mod book {
             self.asks
                 .at(OrderKey::at(ticks, fresh_id()))
                 .set(funds.quantity());
-            self.vault(self.config().base).put(funds);
+            self.base.put(funds);
             Ok(())
         }
 
@@ -106,7 +112,7 @@ pub mod book {
                 // so there is no denominator to refuse — which is what a
                 // standing ask is: a count, per one.
                 let ticks_per_base =
-                    Rate::<Tick, Base>::per_unit(u128::from(asks.order(0).primary()));
+                    Rate::<Tick, BaseUnit>::per_unit(u128::from(asks.order(0).primary()));
                 // Quote per tick through tick per base is quote per base,
                 // and the tick cancels because the types cancel it.
                 let per_unit = tick.rate().compose(ticks_per_base);
@@ -136,9 +142,9 @@ pub mod book {
             // the change comes off the payment before the rest of it goes
             // in — so what the vault keeps is what was spent, and neither
             // half is a number this body wrote down.
-            let sold = self.vault(self.config().base).take(bought);
+            let sold = self.base.take(bought);
             let change = payment.take(budget);
-            self.vault(self.config().quote).put(payment);
+            self.quote.put(payment);
             (sold, change)
         }
     }

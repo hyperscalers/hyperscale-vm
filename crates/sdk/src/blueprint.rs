@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use hyperscale_hbor::{HborShape, ShapeRegistry, TypeShape};
 use hyperscale_vm_effects::{
-    MAX_EFFECTS_PER_SIGNATURE, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
+    Expr, MAX_EFFECTS_PER_SIGNATURE, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
     SlotShape,
 };
 
@@ -204,6 +204,33 @@ impl Builder {
             name: name.to_owned(),
             kind,
             element: T::leaf_form(&mut self.blueprint.types),
+            denomination: None,
+        };
+        let taken = self.blueprint.state.insert(SlotId(slot), declared);
+        assert!(taken.is_none(), "slot {slot} is already declared");
+        self
+    }
+
+    /// Declare the vault `name` sits at, holding the resource its
+    /// configuration slot names.
+    ///
+    /// The balance-sheet twin of [`slot`](Self::slot): one leaf, and
+    /// the `#[holds(config.<field>)]` resource carried so a consumer
+    /// resolves it against the instance's own configuration. A vault
+    /// holding a resource the package issues declares through
+    /// [`slot`](Self::slot) — its address derives from the instance and
+    /// nothing about it is a configured value.
+    ///
+    /// # Panics
+    ///
+    /// If two fields claim one slot.
+    #[must_use]
+    pub fn holds_config<T: LeafShape>(mut self, slot: u16, name: &str, config: u32) -> Self {
+        let declared = SlotShape {
+            name: name.to_owned(),
+            kind: SlotKind::Cell,
+            element: T::leaf_form(&mut self.blueprint.types),
+            denomination: Some(Expr::Config(config)),
         };
         let taken = self.blueprint.state.insert(SlotId(slot), declared);
         assert!(taken.is_none(), "slot {slot} is already declared");

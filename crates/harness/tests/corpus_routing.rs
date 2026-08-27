@@ -93,6 +93,11 @@ use common::world::*;
 /// Transfer's withdrawal is a reservation, whose direction was always
 /// its own, so it stood still beside propose.
 ///
+/// Swap and fill moved again when the pool and book declared their
+/// vaults: each reserve leaf sits at its field's package slot rather
+/// than the protocol vault slot, so the keys under the same shards
+/// moved with the declarations.
+///
 /// The swap and fill pins carry the instantiation fence: admission reads
 /// the configuration leaf of every component a node targets, so the
 /// owning shard is a participant and provisions the leaf. Transfer and
@@ -132,9 +137,9 @@ fn the_catalogue_routes_to_pinned_vectors() {
 
 const PIN_TRANSFER: &str = "0f5dbeeea871f0ac21249fa9ac32f7dd14f12e19a7fd7b8b024b4028d13602a4";
 
-const PIN_SWAP: &str = "684220db1906164ebe44b0560521a55d10031b47bb13f518e5185b5fbdf3d1e5";
+const PIN_SWAP: &str = "9613d88b14125268732c4b4d64bf547b1d7f645732a8cad9cba07abe6b7fb594";
 
-const PIN_FILL: &str = "6c2a0c9f00982d4981167b96e6716e90fae87abba54b5a91dbeb4d0dcda0ad56";
+const PIN_FILL: &str = "677935ac742b38107603306a861852e5d6464676a116f4a270dc1770d7ca6944";
 
 const PIN_PROPOSE: &str = "9034ede521aeb9c053f724d9f95ae126d4e933abe168399ecbb021ae20edcd43";
 

@@ -1,5 +1,5 @@
-error: a total method admits every caller, and a gate turns some away before the body runs: drop the mark, or drop the gate
-  --> tests/refusals/total_gated.rs:14:9
+error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
+  --> tests/refusals/total_gated.rs:17:13
    |
-14 |         #[total]
-   |         ^^^^^^^^
+17 |             self.vault(funds.resource()).put(funds);
+   |             ^^^^

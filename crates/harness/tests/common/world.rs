@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     holdings_collection, package_slot, route, route_tree,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
-use hyperscale_vm_harness::driver::{Lanes, run_lanes, test_hash, vault};
+use hyperscale_vm_harness::driver::{Lanes, declared_vault, run_lanes, test_hash, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, EnvInputs, GuestBackend, GuestRunner, KernelSession, ManifestWalk,
@@ -495,9 +495,12 @@ pub fn register(store: &mut MemoryStore, holder: impl Into<Address>, id: u64) {
 pub fn register_store(venue_admitted: bool) -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(600).to_vec());
-    store.write(vault(register_pool(), RES_X), encode_amount(1_000).to_vec());
     store.write(
-        vault(register_pool(), share()),
+        declared_vault(register_pool(), amm::RESERVES, RES_X),
+        encode_amount(1_000).to_vec(),
+    );
+    store.write(
+        declared_vault(register_pool(), amm::RESERVES, share()),
         encode_amount(1_000).to_vec(),
     );
     register(&mut store, ALICE, 1);

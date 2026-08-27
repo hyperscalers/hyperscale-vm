@@ -22,7 +22,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod custodian {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Ids, NfBucket, Quantity};
+    use hyperscale_vm_sdk::state::{Bucket, Ids, NfBucket, Quantity, Vault};
 
     /// Which resources this custodian keeps, fixed at creation.
     #[config]
@@ -36,18 +36,28 @@ pub mod custodian {
         instances: ResourceAddr,
     }
 
+    #[state]
+    struct Custodian {
+        /// The custodied asset.
+        #[holds(config.asset)]
+        till: Vault,
+        /// The other side a swap pays out of.
+        #[holds(config.other)]
+        other_till: Vault,
+    }
+
     impl Custodian {
         /// Take value in and hold it. No gate, no rule, nothing declared
         /// about who may.
         pub fn deposit(&mut self, funds: Bucket) {
-            self.vault(self.config().asset).put(funds);
+            self.till.put(funds);
         }
 
         /// Hand value back out to whoever asked. This is the method a
         /// holder-side fence cannot reach: it declares no halt leaf and
         /// there is no way to make it declare one.
         pub fn withdraw(&mut self, amount: Quantity) -> Bucket {
-            self.vault(self.config().asset).take(amount)
+            self.till.take(amount)
         }
 
         /// An exchange across its own two vaults: one credited, one
@@ -60,8 +70,8 @@ pub mod custodian {
         /// that looked at the caller would find a stranger and bind
         /// nothing.
         pub fn swap(&mut self, incoming: Bucket, amount: Quantity) -> Bucket {
-            self.vault(self.config().asset).put(incoming);
-            self.vault(self.config().other).take(amount)
+            self.till.put(incoming);
+            self.other_till.take(amount)
         }
 
         /// Value in and value out of one vault, through one handle: the
@@ -69,9 +79,8 @@ pub mod custodian {
         /// directions, so its declaration answers for both and earns
         /// each direction's entry at once.
         pub fn churn(&mut self, incoming: Bucket, amount: Quantity) -> Bucket {
-            let mut till = self.vault(self.config().asset);
-            till.put(incoming);
-            till.take(amount)
+            self.till.put(incoming);
+            self.till.take(amount)
         }
 
         /// Instances in, on the same terms: an interval admits a read

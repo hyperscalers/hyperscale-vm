@@ -38,8 +38,8 @@ const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
 #[blueprint]
 mod till {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Quantity};
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Bucket, Keyed, Quantity, Vault};
 
     /// What a withdrawal declines with when the till is short.
     #[error]
@@ -56,17 +56,23 @@ mod till {
     }
 
     #[state]
-    struct Till {}
+    struct Till {
+        vaults: Keyed<Vault>,
+    }
 
     impl Till {
         /// Credit the vault the arriving edge belongs in.
-        pub fn deposit(&mut self, funds: Bucket, resource: Address) {
-            self.vault(resource).put(funds);
+        pub fn deposit(&mut self, funds: Bucket, resource: ResourceAddr) {
+            self.vaults.at(resource).put(funds);
         }
 
         /// Hand back `amount`, declining a till that cannot cover it.
-        pub fn withdraw(&mut self, resource: Address, amount: Quantity) -> Result<Bucket, Error> {
-            let mut vault = self.vault(resource);
+        pub fn withdraw(
+            &mut self,
+            resource: ResourceAddr,
+            amount: Quantity,
+        ) -> Result<Bucket, Error> {
+            let mut vault = self.vaults.at(resource);
             if vault.balance() < amount {
                 return Err(Error::Short);
             }
@@ -74,23 +80,23 @@ mod till {
         }
 
         /// Read the vault and do nothing with the figure but check it.
-        pub fn weigh(&mut self, resource: Address) {
-            assert!(self.vault(resource).balance() >= Quantity::ZERO);
+        pub fn weigh(&mut self, resource: ResourceAddr) {
+            assert!(self.vaults.at(resource).balance() >= Quantity::ZERO);
         }
 
         /// Decline, through the second error enum, a till holding
         /// anything at all.
-        pub fn audit(&mut self, resource: Address) -> Result<(), Care> {
-            if self.vault(resource).balance() > Quantity::ZERO {
+        pub fn audit(&mut self, resource: ResourceAddr) -> Result<(), Care> {
+            if self.vaults.at(resource).balance() > Quantity::ZERO {
                 return Err(Care::Overweight);
             }
             Ok(())
         }
 
         /// Read the vault and insist on something it will not be.
-        pub fn insist(&mut self, resource: Address) {
+        pub fn insist(&mut self, resource: ResourceAddr) {
             assert_eq!(
-                self.vault(resource).balance(),
+                self.vaults.at(resource).balance(),
                 Quantity::from_subunits(u128::MAX),
                 "the till is not full"
             );

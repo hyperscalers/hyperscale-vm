@@ -1,3 +1,5 @@
+state
+     16  till — one leaf, holding u128, denominated in config.asset
 config
       0  asset
 errors
@@ -6,7 +8,7 @@ errors
 draw(u128) — infallible
   mints    "debt" fungible, granting mint to the issuer and burn to the issuer and deposit to nobody
   declares
-      0  debit self.vault[config.asset] holding config.asset
+      0  debit self.till[config.asset] holding config.asset
   yields   edge 0 = config.asset
   yields   edge 1 = self-issued(fungible["debt"]), granting mint to the issuer and burn to the issuer and deposit to nobody
   exports  handle for clause 0, arg0
@@ -24,5 +26,5 @@ repay(bucket, bucket) — fallible
   takes    arg1 carrying self-issued(fungible["debt"]), granting mint to the issuer and burn to the issuer and deposit to nobody
   burns    "debt" fungible, granting mint to the issuer and burn to the issuer and deposit to nobody
   declares
-      0  credit self.vault[config.asset] holding config.asset
+      0  credit self.till[config.asset] holding config.asset
   exports  handle for clause 0, edge arg0, edge arg1

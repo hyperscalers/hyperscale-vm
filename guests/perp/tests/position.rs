@@ -38,7 +38,7 @@ fn market(chain: &mut Chain, long: bool) -> Perp {
             },
         );
         chain.credit(TRADER, COLLATERAL, 10_000);
-        chain.credit(market, COLLATERAL, 10_000);
+        chain.fund(market, perp_guest::perp::client::Bank, 10_000);
         market
     })
 }

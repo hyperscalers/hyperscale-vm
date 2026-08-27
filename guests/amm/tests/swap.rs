@@ -27,7 +27,7 @@ fn seeded(chain: &mut Chain) -> Amm {
             },
         );
         chain.credit(ALICE, X, 600);
-        chain.credit(pool, X, 1_000);
+        chain.fund_at(pool, amm_guest::amm::client::RESERVES, X, 1_000);
         pool
     })
 }
@@ -35,7 +35,7 @@ fn seeded(chain: &mut Chain) -> Amm {
 /// The seeded pool holding a thousand of each side.
 fn pool(chain: &mut Chain) -> Amm {
     let pool = seeded(chain);
-    chain.credit(pool, Y, 1_000);
+    chain.fund_at(pool, amm_guest::amm::client::RESERVES, Y, 1_000);
     pool
 }
 
@@ -55,8 +55,14 @@ fn a_swap_pays_the_curve_less_the_fee(chain: &mut Chain) {
         })
         .expect_completed();
 
-    assert_eq!(chain.balance(pool, X), 1_500);
-    assert_eq!(chain.balance(pool, Y), 668);
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, X),
+        1_500
+    );
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, Y),
+        668
+    );
     assert_eq!(chain.balance(ALICE, X), 100);
     assert_eq!(chain.balance(ALICE, Y), 332);
 }
@@ -76,7 +82,10 @@ fn a_floor_the_pool_cannot_reach_declines(chain: &mut Chain) {
 
     outcome.expect_declined(Error::SlippageExceeded);
     assert_eq!(chain.balance(ALICE, X), 600, "a decline moves nothing");
-    assert_eq!(chain.balance(pool, X), 1_000);
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, X),
+        1_000
+    );
 }
 
 /// A reserve that used to overflow the curve now pays out of it.
@@ -90,7 +99,7 @@ fn a_floor_the_pool_cannot_reach_declines(chain: &mut Chain) {
 #[hyperscale_vm_testing::test]
 fn a_reserve_that_once_overflowed_the_curve_now_trades(chain: &mut Chain) {
     let pool = seeded(chain);
-    chain.credit(pool, Y, u128::MAX);
+    chain.fund_at(pool, amm_guest::amm::client::RESERVES, Y, u128::MAX);
 
     chain
         .transact(ALICE, |b| {
@@ -104,6 +113,12 @@ fn a_reserve_that_once_overflowed_the_curve_now_trades(chain: &mut Chain) {
     // is a number the old expression could not reach at all.
     const OUT: u128 = 113_124_578_589_203_841_658_718_661_215_634_558_948;
     assert_eq!(chain.balance(ALICE, Y), OUT);
-    assert_eq!(chain.balance(pool, Y), u128::MAX - OUT);
-    assert_eq!(chain.balance(pool, X), 1_500);
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, Y),
+        u128::MAX - OUT
+    );
+    assert_eq!(
+        chain.balance_at(pool, amm_guest::amm::client::RESERVES, X),
+        1_500
+    );
 }

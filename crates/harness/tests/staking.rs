@@ -23,9 +23,12 @@ use hyperscale_vm_effects::{
     PackageHash, PrefixShardResolver, Records, ResourceRecord, TestHasher, Value, admit_tree,
     child_key, holdings_collection, instance_data_key, resource_record_key, route_tree,
 };
-use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
+use hyperscale_vm_harness::driver::{
+    Lanes, amount_of, cells, declared_vault, run_lanes, seed_vault, vault,
+};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
 use hyperscale_vm_manifest_builder::{Names, TypedBuilder, TypedError, render};
+use hyperscale_vm_sdk::client::VaultField;
 use hyperscale_vm_sdk::hbor::{ShapeValue, from_slice, to_vec};
 use hyperscale_vm_sdk::{SlotId, SlotKind};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, instantiate, staking};
@@ -147,6 +150,9 @@ fn pool_meta() -> InstanceMeta {
 fn pool() -> staking::Staking {
     staking::Staking::at(pool_meta().address(&TestHasher))
 }
+
+/// The pool's declared vault, at its marker's slot.
+const POOL_VAULT: SlotId = SlotId(<staking::Pool as VaultField>::SLOT);
 
 /// Build against this world's metadata, so every call is typed by the
 /// signature it names and every edge carries the resource that signature
@@ -325,7 +331,7 @@ fn a_delegation_to_an_unsealed_pool_is_refused_where_the_leaf_lives() -> Result<
         outcome.receipts[&entry.tx].outcome,
     );
     assert_eq!(amount_of(&end, vault(ALICE, XRD)), 150);
-    assert_eq!(amount_of(&end, vault(pool(), XRD)), 0);
+    assert_eq!(amount_of(&end, declared_vault(pool(), POOL_VAULT, XRD)), 0);
     assert_eq!(amount_of(&end, vault(ALICE, unit())), 0);
     Ok(())
 }
@@ -341,7 +347,10 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
 
     // The delegation left the delegator and reached the pool.
     assert_eq!(amount_of(&end, vault(ALICE, XRD)), 50);
-    assert_eq!(amount_of(&end, vault(pool(), XRD)), 100);
+    assert_eq!(
+        amount_of(&end, declared_vault(pool(), POOL_VAULT, XRD)),
+        100
+    );
     // The position came back as an ordinary balance, at par.
     assert_eq!(amount_of(&end, vault(ALICE, unit())), 100);
 
@@ -373,7 +382,7 @@ fn returned_units_are_destroyed_and_the_pool_says_what_it_owes() -> Result<()> {
     // Nothing came back either: the release leg is a later method, so the
     // delegator holds no claim on the pool's vault yet.
     assert_eq!(amount_of(&end, vault(ALICE, XRD)), 0);
-    assert_eq!(amount_of(&end, vault(pool(), XRD)), 0);
+    assert_eq!(amount_of(&end, declared_vault(pool(), POOL_VAULT, XRD)), 0);
 
     let unstaked = receipt
         .events

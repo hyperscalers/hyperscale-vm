@@ -14,6 +14,7 @@ use hyperscale_vm_types::{
 };
 
 use crate::KERNEL_SLOT_BASE;
+use crate::dsl::Expr;
 use crate::hash::{Hash32, Hasher};
 use crate::publish::{
     CheckedMetadata, CheckedSignature, MetadataError, SignatureError, check_signature, seals,
@@ -150,6 +151,11 @@ pub struct SlotShape {
     pub kind: SlotKind,
     /// What one leaf holds.
     pub element: LeafForm,
+    /// The resource a declared vault holds, where the field's
+    /// `#[holds(..)]` states one — the same expression the field's
+    /// effects carry, so a consumer resolves the balance sheet against
+    /// the instance's configuration.
+    pub denomination: Option<Expr>,
 }
 
 /// How a crate lists the packages it declares: each by the name its

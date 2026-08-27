@@ -45,7 +45,9 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod lending {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rate, Rounding, UnitFixed};
+    use hyperscale_vm_sdk::state::{
+        Bucket, Cell, Fixed, Quantity, Rate, Rounding, UnitFixed, Vault,
+    };
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     // The dimensions. None of these is a value — they name what a rate
@@ -120,6 +122,13 @@ pub mod lending {
 
     #[state]
     struct Lending {
+        /// The collateral the position posted.
+        #[holds(config.collateral)]
+        posted: Vault,
+        /// The debt the market lends from, and what a repayment
+        /// returns to.
+        #[holds(config.debt)]
+        reserves: Vault,
         /// Debt subunits per share: what turns what a position holds
         /// into what it owes.
         index: Cell<Fixed<Debt, Share>>,
@@ -204,9 +213,8 @@ pub mod lending {
         /// Answering with the new total is what makes the read mean
         /// something to a caller as well as to the mode.
         pub fn deposit(&mut self, funds: Bucket) -> Quantity {
-            let mut posted = self.vault(self.config().collateral);
-            let held = posted.balance() + funds.quantity();
-            posted.put(funds);
+            let held = self.posted.balance() + funds.quantity();
+            self.posted.put(funds);
             held
         }
 
@@ -245,7 +253,7 @@ pub mod lending {
             let drawn = want.convert(per_debt, Rounding::Up);
             let owed = (self.shares.get() + drawn).convert(index, Rounding::Up);
 
-            let posted = self.vault(terms.collateral).balance();
+            let posted = self.posted.balance();
             let backing = posted.convert(collateral_price.rate(), Rounding::Down);
             let exposure = owed.convert(debt_price.rate(), Rounding::Up);
             if exposure > backing.scale(terms.ltv.ratio(), Rounding::Down) {
@@ -253,15 +261,14 @@ pub mod lending {
             }
 
             self.shares.set(self.shares.get() + drawn);
-            Ok(self.vault(terms.debt).take(want))
+            Ok(self.reserves.take(want))
         }
 
         /// Hand debt back and retire the shares it stood for.
         pub fn repay(&mut self, funds: Bucket, now: u64) -> Result<(), Error> {
-            let mut owed_vault = self.vault(self.config().debt);
             let paid = funds.quantity();
             self.carried(now)?;
-            owed_vault.put(funds);
+            self.reserves.put(funds);
 
             let (_, per_debt) = index(self.index.get());
             // Down on retirement, so a payment never retires more debt
@@ -298,8 +305,8 @@ pub mod lending {
                 return Err(Error::NothingOwed);
             }
 
-            let mut posted = self.vault(terms.collateral);
-            let backing = posted
+            let backing = self
+                .posted
                 .balance()
                 .convert(collateral_price.rate(), Rounding::Down);
             let exposure = owed.convert(debt_price.rate(), Rounding::Up);
@@ -312,8 +319,8 @@ pub mod lending {
             }
 
             self.shares.set(Quantity::ZERO);
-            let seized = posted.balance();
-            Ok(posted.take(seized))
+            let seized = self.posted.balance();
+            Ok(self.posted.take(seized))
         }
 
         /// The index as a plain number, for a reader that wants to show

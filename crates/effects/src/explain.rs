@@ -788,10 +788,15 @@ impl Names<'_> {
                     name,
                     kind,
                     element,
+                    denomination,
                 } = shape;
+                let holding = denomination
+                    .as_ref()
+                    .map(|resource| format!(", denominated in {}", self.expr(resource, SELECT)))
+                    .unwrap_or_default();
                 let _ = writeln!(
                     out,
-                    "  {:>5}  {name} — {}, {}",
+                    "  {:>5}  {name} — {}, {}{holding}",
                     slot.0,
                     slot_kind(*kind),
                     leaf_form(element)
@@ -1693,6 +1698,7 @@ mod tests {
                 name: "entries".to_owned(),
                 kind: SlotKind::Ordered,
                 element: LeafForm::Value(TypeShape::U128),
+                denomination: None,
             },
         );
         metadata.methods.insert(method.to_owned(), signature);

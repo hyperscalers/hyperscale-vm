@@ -30,8 +30,8 @@ fn pool(chain: &mut Chain) -> amm::Amm {
         },
     );
     chain.credit(ALICE, X, 600);
-    chain.credit(pool, X, 1_000);
-    chain.credit(pool, Y, 1_000);
+    chain.fund_at(pool, amm::RESERVES, X, 1_000);
+    chain.fund_at(pool, amm::RESERVES, Y, 1_000);
     pool
 }
 

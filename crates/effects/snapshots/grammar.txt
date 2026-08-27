@@ -5,6 +5,7 @@ state
      19  flagged — one leaf, holding [u8; 1]
      20  owed — a leaf per key, holding u64
      21  fees — a leaf per key, holding u128
+     22  till — a leaf per key, holding u128
 config
       0  tiers
       1  fallback
@@ -18,7 +19,7 @@ types
 accrue(u128) — infallible
   declares
       0  for each of config.assets
-        1  debit-only self.vault[element] holding element
+        1  debit-only self.till[element] holding element
         2  credit self.fees[element] holding element
   exports  handle for clause 1, handle for clause 2, arg0
 
@@ -35,7 +36,7 @@ charge-or(u64) — infallible
 escrow(u128) — infallible
   declares
       0  for each of config.assets
-        1  reserve arg0 self.vault[element] holding element
+        1  reserve arg0 self.till[element] holding element
         2  credit self.fees[element] holding element
   exports  handle for clause 1, handle for clause 2
 
@@ -46,7 +47,7 @@ file(ids) — infallible
 
 fund(bucket) — infallible
   declares
-      0  credit self.vault[resource-of(arg0)] holding resource-of(arg0)
+      0  credit self.till[resource-of(arg0)] holding resource-of(arg0)
   exports  handle for clause 0, edge arg0
 
 instantiate() — infallible
@@ -162,25 +163,25 @@ survey(nf-bucket) — infallible
 surveyed() — infallible
   declares
       0  for each of config.assets
-        1  read self.vault[element] holding element
+        1  read self.till[element] holding element
       2  write self.noted
   exports  handle for clause 1, handle for clause 2
 
 sweep(resource-address) — infallible
   declares
       0  write self.entries over pack(0, 0)..=pack(u64::MAX, u64::MAX), at most 64 entries
-      1  read self.vault[arg0] holding arg0
+      1  read self.till[arg0] holding arg0
   exports  handle for clause 0, handle for clause 1
 
 take(resource-address, u128) — infallible
   declares
-      0  reserve arg1 self.vault[arg0] holding arg0
+      0  reserve arg1 self.till[arg0] holding arg0
   yields   edge 0 = arg0
   exports  handle for clause 0
 
 take-noting(resource-address, u128) — infallible, answers
   declares
-      0  reserve arg1 self.vault[arg0] holding arg0
+      0  reserve arg1 self.till[arg0] holding arg0
       1  read self.noted
   yields   edge 0 = arg0
   exports  handle for clause 0, handle for clause 1

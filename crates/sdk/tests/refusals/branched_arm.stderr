@@ -1,5 +1,5 @@
-error: this key is not derivable from the method's arguments or the component's configuration. Routing evaluates a declaration before execution and never reads state, so a key computed from a substate value cannot be declared — pass it as a parameter instead
-  --> tests/refusals/branched_arm.rs:19:24
+error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
+  --> tests/refusals/branched_arm.rs:19:13
    |
 19 |             self.vault(side).declared();
-   |                        ^^^^
+   |             ^^^^

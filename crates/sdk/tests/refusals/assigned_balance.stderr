@@ -1,4 +1,4 @@
-error: a vault's balance is not written — value moves, and `put`, `take`, or `reserve` are what change it
+error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
   --> tests/refusals/assigned_balance.rs:19:13
    |
 19 |             self.vault(holder).set(Quantity::from_subunits(1_000));

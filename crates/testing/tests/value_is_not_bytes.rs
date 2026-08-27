@@ -500,7 +500,7 @@ fn a_badge_a_package_never_held_opens_nothing() {
             Value::Address(TREASURE.address()),
         ],
     );
-    chain.credit(vault, TREASURE, 500_000);
+    chain.fund_at(vault, VAULT, TREASURE, 500_000);
 
     // Seating the two cells a custody gate reads is where it stops: the
     // stored rule is the package's own, and the balance beside it is not.

@@ -49,7 +49,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod perp {
-    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding, UnitFixed};
+    use hyperscale_vm_sdk::state::{Bucket, Cell, Fixed, Quantity, Rounding, UnitFixed, Vault};
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
     /// What the perpetual tracks.
@@ -116,6 +116,10 @@ pub mod perp {
 
     #[state]
     struct Perp {
+        /// The collateral the market holds: the margin posted, and what
+        /// the other side of the trade pays out of.
+        #[holds(config.collateral)]
+        bank: Vault,
         /// What one base unit is worth, as the oracle last said.
         mark: Cell<Fixed<Quote, Base>>,
         /// Everything charged to longs since the market opened.
@@ -177,7 +181,7 @@ pub mod perp {
 
             let entry_charged = self.funding_charged.get();
             let entry_credited = self.funding_credited.get();
-            self.vault(terms.collateral).put(funds);
+            self.bank.put(funds);
             self.position.create(Position {
                 size,
                 margin: posted,
@@ -191,8 +195,7 @@ pub mod perp {
         /// Close the position and take what it is worth.
         pub fn close(&mut self) -> Bucket {
             let terms = self.config();
-            let mut vault = self.vault(terms.collateral);
-            let held = vault.balance();
+            let held = self.bank.balance();
             let position = self.position.existing();
 
             let worth = equity(
@@ -206,14 +209,13 @@ pub mod perp {
             self.position.retire();
             // Bounded by what the vault holds: this market is the other
             // side of the trade and cannot pay out more than it has.
-            vault.take(worth.min(held))
+            self.bank.take(worth.min(held))
         }
 
         /// Seize a position that no longer covers its requirement.
         pub fn liquidate(&mut self) -> Result<Bucket, Error> {
             let terms = self.config();
-            let mut vault = self.vault(terms.collateral);
-            let held = vault.balance();
+            let held = self.bank.balance();
             let position = self.position.existing();
 
             let mark = self.mark.get();
@@ -234,7 +236,7 @@ pub mod perp {
             // division of what was seized rather than two numbers that
             // have to agree.
             let (cut, _kept) = worth.min(held).divide(terms.liquidation_bonus.ratio());
-            Ok(vault.take(cut))
+            Ok(self.bank.take(cut))
         }
     }
 

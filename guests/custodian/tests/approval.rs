@@ -23,8 +23,8 @@
 
 use custodian_guest::custodian;
 use hyperscale_vm_testing::{
-    AdmissionError, Chain, Component, PrincipalAddr, Refused, ResourceAddr, Worlds, account,
-    package, principal,
+    AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, Worlds, account, package,
+    principal,
 };
 use security_guest::security;
 
@@ -66,6 +66,9 @@ fn world(chain: &mut Chain) -> (custodian::client::Custodian, ResourceAddr) {
                 keeper.deposit(b, minted)
             })
             .expect_completed();
+        // The side a swap pays out of, seeded directly: no method of the
+        // custodian's fills it.
+        chain.fund(keeper, custodian::client::OtherTill, 50);
         (keeper, note)
     })
 }
@@ -89,7 +92,7 @@ fn a_note_moves_in_a_transaction_the_desk_signed(chain: &mut Chain) {
         .expect_completed();
 
     assert_eq!(chain.balance(OFFICER, note), 40);
-    assert_eq!(chain.balance(keeper.address(), note), 60);
+    assert_eq!(chain.balance_of(keeper, custodian::client::Till), 60);
 }
 
 /// A component's own vault answers for itself, so the desk's signature
@@ -125,5 +128,6 @@ fn the_question_follows_the_note_into_a_package_that_declares_nothing(chain: &mu
         ),
         "the note's own entry is what admits a movement: {refused:?}",
     );
-    assert_eq!(chain.balance(keeper.address(), note), 90);
+    assert_eq!(chain.balance_of(keeper, custodian::client::Till), 100);
+    assert_eq!(chain.balance_of(keeper, custodian::client::OtherTill), 40);
 }

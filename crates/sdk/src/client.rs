@@ -136,6 +136,23 @@ pub trait Mark: Copy {
     const KIND: ResourceKind;
 }
 
+/// A declared vault of a package, named as a type.
+///
+/// The client module carries one marker per `#[holds(config.<field>)]`
+/// vault, tied to the package's handle — so a chain funds and reads a
+/// component's balance sheet by the field, resolving the resource from
+/// the instance's own configuration. A vault holding a resource the
+/// package issues carries no marker: what it holds is minted, never
+/// seeded.
+pub trait VaultField: Copy {
+    /// The handle of the package whose state declares the field.
+    type Of: Component;
+    /// The field's slot.
+    const SLOT: u16;
+    /// The configuration slot naming the resource the vault holds.
+    const HOLDS: u32;
+}
+
 /// An instance's creation-fixed configuration, as the thing creating it
 /// writes one.
 ///

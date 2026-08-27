@@ -3320,6 +3320,16 @@ impl<'a> Lowerer<'a> {
             if self.declared.accessors.contains_key(&name) {
                 return self.accessor(&name, call);
             }
+            if name == "vault" {
+                self.error(
+                    call.span(),
+                    "a package's own reserves are declared: a `Vault` field under \
+                     `#[holds(..)]`, or `Keyed<Vault>` for an open family — \
+                     `self.vault()` reads the protocol balance, which is the principals \
+                     blueprint's",
+                );
+                return Eval::absent(call.span(), "the principals' accessor");
+            }
             self.error(
                 call.span(),
                 "a contract method cannot call a published method of the component — \
@@ -4184,7 +4194,7 @@ mod tests {
         let block: syn::Block = syn::parse_str(body).expect("the fixture parses as a block");
         let fields = fields();
         let config = syn::Ident::new("Terms", proc_macro2::Span::call_site());
-        let accessors = accessors(Some(&config));
+        let accessors = accessors(Some(&config), crate::client::Serves::Principals);
         let config_fields = [
             ("sides".to_owned(), syn::parse_quote!(::std::vec::Vec<u64>)),
             ("others".to_owned(), syn::parse_quote!(::std::vec::Vec<u64>)),

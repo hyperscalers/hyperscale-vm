@@ -1,9 +1,11 @@
 state
-     16  index — one leaf, holding [u8; 32]
-     17  collateral_price — one leaf, holding [u8; 32]
-     18  debt_price — one leaf, holding [u8; 32]
-     19  shares — one leaf, holding u128
-     20  accrued_at — one leaf, holding accrued
+     16  posted — one leaf, holding u128, denominated in config.collateral
+     17  reserves — one leaf, holding u128, denominated in config.debt
+     18  index — one leaf, holding [u8; 32]
+     19  collateral_price — one leaf, holding [u8; 32]
+     20  debt_price — one leaf, holding [u8; 32]
+     21  shares — one leaf, holding u128
+     22  accrued_at — one leaf, holding accrued
 config
       0  collateral
       1  debt
@@ -29,7 +31,7 @@ accrue(u64) — infallible
 deposit(bucket) — infallible, answers
   takes    arg0 carrying config.collateral
   declares
-      0  credit-only self.vault[config.collateral] holding config.collateral
+      0  credit-only self.posted[config.collateral] holding config.collateral
   exports  handle for clause 0, edge arg0
 
 draw(u128, u64) — fallible
@@ -39,8 +41,8 @@ draw(u128, u64) — fallible
       2  read self.debt_price
       3  read self.index
       4  write self.shares
-      5  read self.vault[config.collateral] holding config.collateral
-      6  debit self.vault[config.debt] holding config.debt
+      5  read self.posted[config.collateral] holding config.collateral
+      6  debit self.reserves[config.debt] holding config.debt
   yields   edge 0 = config.debt
   exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, handle for clause 6, arg1, arg0, config.ltv
 
@@ -62,7 +64,7 @@ liquidate(u64) — fallible
       2  read self.debt_price
       3  read self.index
       4  write self.shares
-      5  debit-only self.vault[config.collateral] holding config.collateral
+      5  debit-only self.posted[config.collateral] holding config.collateral
   yields   edge 0 = config.collateral
   exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, arg0, config.liquidation_threshold
 
@@ -76,8 +78,8 @@ post-price(u256, u256) — infallible
 repay(bucket, u64) — fallible
   takes    arg0 carrying config.debt
   declares
-      0  credit self.vault[config.debt] holding config.debt
-      1  read self.accrued_at
+      0  read self.accrued_at
+      1  credit self.reserves[config.debt] holding config.debt
       2  read self.index
       3  write self.shares
   exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, edge arg0, arg1
