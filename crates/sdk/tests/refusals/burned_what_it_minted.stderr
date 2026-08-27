@@ -1,4 +1,4 @@
-error: one access requires the leaf to be absent and to be there — no committed state satisfies both, so the call could never be feasible. Declare the one the body actually needs
+error: this mints an instance and burns it in one body — the mint requires its cell absent and the burn requires it there, and no committed state satisfies both. Mint in one call, and burn what an edge carries in another
   --> tests/refusals/burned_what_it_minted.rs:20:13
    |
 20 |             Seat::burn(Seat::mint(1, Seat { holder }));

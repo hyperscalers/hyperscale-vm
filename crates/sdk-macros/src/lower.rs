@@ -1237,6 +1237,29 @@ impl<'a> Lowerer<'a> {
     /// lattice, so recording one is refused where it happens rather than
     /// silently resolved by priority at emission.
     fn record(&mut self, site: usize, op: Op, param: Option<Term>, span: Span) {
+        // A vault's balance is not writable: value moves, and the seam
+        // judges movements. The type system refuses this too, but on the
+        // trait bound's terms — this is the sentence.
+        if matches!(op, Op::Set)
+            && matches!(
+                self.out.sites.get(site),
+                Some(entry) if matches!(&entry.element, Some(ty) if is_named(ty, "Vault"))
+            )
+        {
+            self.error(
+                span,
+                "a vault's balance is not written — value moves, and `put`, `take`, or \
+                 `reserve` are what change it",
+            );
+            return;
+        }
+        // Whether this site is an issued instance's own cell, which is
+        // what turns an opposite-presence pair into a mint beside a burn.
+        let issued_instance = matches!(
+            self.out.sites.get(site).map(|entry| &entry.target),
+            Some(Target::Point { material, .. })
+                if matches!(material.first(), Some(Term::SelfResource(ResourceKind::NonFungible, _)))
+        );
         let Some(entry) = self.out.sites.get_mut(site) else {
             return;
         };
@@ -1277,7 +1300,16 @@ impl<'a> Lowerer<'a> {
         // a way around it.
         let refusal = |a: Op, b: Op| match (a, b) {
             // Opposite presences over one leaf: no committed state
-            // satisfies both, so the clause could never be feasible.
+            // satisfies both, so the clause could never be feasible. On
+            // an issued instance's own cell the pair has a name — the
+            // mint requires the cell absent and the burn requires it
+            // there — and the sentence says so.
+            (Op::Create, Op::Existing) | (Op::Existing, Op::Create) if issued_instance => Some(
+                "this mints an instance and burns it in one body — the mint requires \
+                 its cell absent and the burn requires it there, and no committed \
+                 state satisfies both. Mint in one call, and burn what an edge \
+                 carries in another",
+            ),
             (Op::Create, Op::Existing) | (Op::Existing, Op::Create) => Some(
                 "one access requires the leaf to be absent and to be there — no \
                  committed state satisfies both, so the call could never be \

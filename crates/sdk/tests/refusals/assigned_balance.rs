@@ -1,8 +1,8 @@
 //! A vault's balance is not writable: value moves, and a movement is
-//! the only thing that changes it. The refusal is the type's own — a
-//! vault leaf satisfies no generic-write bound, so `set` has nothing to
-//! bind against and the compiler answers before the macro has an
-//! opinion.
+//! the only thing that changes it. The macro says so in a sentence, and
+//! the type system says it again on its own terms — a vault leaf
+//! satisfies no generic-write bound, so `set` has nothing to bind
+//! against either way.
 use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]

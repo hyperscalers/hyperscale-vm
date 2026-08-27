@@ -1,3 +1,9 @@
+error: a vault's balance is not written — value moves, and `put`, `take`, or `reserve` are what change it
+  --> tests/refusals/assigned_balance.rs:19:13
+   |
+19 |             self.vault(holder).set(Quantity::from_subunits(1_000));
+   |             ^^^^
+
 error[E0599]: the method `set` exists for struct `Slot<Vault>`, but its trait bounds were not satisfied
   --> tests/refusals/assigned_balance.rs:19:32
    |
