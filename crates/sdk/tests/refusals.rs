@@ -179,6 +179,25 @@ fn the_lowering_refuses_a_fielded_error_variant() {
     refuse.compile_fail("tests/refusals/fielded_error.rs");
 }
 
+/// A variant's code is its place in the error table, which spans the
+/// module's `#[error]` enums in declaration order. A discriminant names
+/// a different figure than the one the decline crosses as, so it is
+/// refused where it was written.
+#[test]
+fn the_lowering_refuses_a_discriminated_error_variant() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/discriminated_error.rs");
+}
+
+/// A decline arm names one of the package's `#[error]` enums — any
+/// other type holds no place in the error table, and the cast would
+/// otherwise surface as an opaque trait error inside generated code.
+#[test]
+fn the_lowering_refuses_a_decline_arm_outside_the_error_table() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/undeclared_decline.rs");
+}
+
 /// A gate on a private method guards nothing: only `pub` methods lower,
 /// and the attribute would be silently stripped with the export the
 /// author thought they were guarding.

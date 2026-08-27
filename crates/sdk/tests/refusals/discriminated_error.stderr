@@ -1,0 +1,5 @@
+error: `TooSmall` names its own code, and a variant's code is its place in the error table — drop the discriminant
+  --> tests/refusals/discriminated_error.rs:13:9
+   |
+13 |         TooSmall = 7,
+   |         ^^^^^^^^

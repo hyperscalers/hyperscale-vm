@@ -197,7 +197,9 @@ pub fn method(
                     match __declined() {
                         ::core::result::Result::Ok(__value) => ::core::result::Result::Ok(__value),
                         ::core::result::Result::Err(__code) => {
-                            ::core::result::Result::Err(__code as u32)
+                            ::core::result::Result::Err(::hyperscale_vm_sdk::Declines::code(
+                                &__code,
+                            ))
                         }
                     }
                 }

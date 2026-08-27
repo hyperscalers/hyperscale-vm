@@ -4025,7 +4025,7 @@ fn free_call_mark(call: &syn::ExprCall) -> Option<syn::Ident> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::{Field, FieldKind, Lowered, Lowerer};
     use crate::{Declared, accessors};
@@ -4064,6 +4064,7 @@ mod tests {
             config_record: Some(&config),
             config_fields: &config_fields,
             resources: &[],
+            declines: &BTreeSet::new(),
         };
         Lowerer::new(&declared, &[], false, false)
             .run(&block)

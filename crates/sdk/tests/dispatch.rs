@@ -47,6 +47,14 @@ mod till {
         Short,
     }
 
+    /// A second table's worth of refusals: its variants file after
+    /// `Error`'s in the one error table, so a decline through it crosses
+    /// as a code no discriminant names.
+    #[error]
+    enum Care {
+        Overweight,
+    }
+
     #[state]
     struct Till {}
 
@@ -68,6 +76,15 @@ mod till {
         /// Read the vault and do nothing with the figure but check it.
         pub fn weigh(&mut self, resource: Address) {
             assert!(self.vault(resource).balance() >= Quantity::ZERO);
+        }
+
+        /// Decline, through the second error enum, a till holding
+        /// anything at all.
+        pub fn audit(&mut self, resource: Address) -> Result<(), Care> {
+            if self.vault(resource).balance() > Quantity::ZERO {
+                return Err(Care::Overweight);
+            }
+            Ok(())
         }
 
         /// Read the vault and insist on something it will not be.
@@ -285,6 +302,19 @@ fn the_error_arm_declines_rather_than_trapping() {
     let (_, invoked) = till::invoke("withdraw", session, &[cell(), GuestArg::Bytes(&wide(30))]);
 
     assert_eq!(invoked, Invoked::Declined(0), "the package's own code");
+}
+
+#[test]
+fn a_declines_code_is_its_place_in_the_one_error_table() {
+    let session = session(Mode::Read, 10);
+
+    let (_, invoked) = till::invoke("audit", session, &[cell()]);
+
+    assert_eq!(
+        invoked,
+        Invoked::Declined(1),
+        "the table spans both enums, so the second enum's first variant files after the first's"
+    );
 }
 
 #[test]

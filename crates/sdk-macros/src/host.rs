@@ -133,7 +133,9 @@ pub fn arm(
             match __declined() {
                 ::core::result::Result::Ok(__produced) => __produced,
                 ::core::result::Result::Err(__code) => {
-                    ::hyperscale_vm_sdk::host::Invoked::Declined(__code as u32)
+                    ::hyperscale_vm_sdk::host::Invoked::Declined(
+                        ::hyperscale_vm_sdk::Declines::code(&__code),
+                    )
                 }
             }
         })

@@ -165,7 +165,7 @@ mod syntax;
 mod term;
 mod wit;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::ResourceKind;
 use proc_macro::TokenStream;
@@ -460,18 +460,20 @@ fn event_names(items: &[syn::Item]) -> syn::Result<Vec<(syn::Ident, String)>> {
     Ok(declared.into_iter().cloned().zip(names).collect())
 }
 
+/// The module's `#[error]` enums, in declaration order.
+fn error_enums(items: &[syn::Item]) -> impl Iterator<Item = &syn::ItemEnum> + Clone {
+    items.iter().filter_map(|item| match item {
+        syn::Item::Enum(item) if item.attrs.iter().any(|a| a.path().is_ident("error")) => {
+            Some(item)
+        }
+        _ => None,
+    })
+}
+
 /// The package's error names, in the order a declined invocation's code
 /// refers to.
 fn error_names(items: &[syn::Item]) -> syn::Result<Vec<String>> {
-    let variants = items
-        .iter()
-        .filter_map(|item| match item {
-            syn::Item::Enum(item) if item.attrs.iter().any(|a| a.path().is_ident("error")) => {
-                Some(&item.variants)
-            }
-            _ => None,
-        })
-        .flatten();
+    let variants = error_enums(items).flat_map(|item| &item.variants);
     // A refusal crosses the boundary as its code; the variant's name is
     // everything the table carries. Fields would silently vanish there,
     // and the generated cast would blame the `#[blueprint]` line — so a
@@ -487,8 +489,69 @@ fn error_names(items: &[syn::Item]) -> syn::Result<Vec<String>> {
                 ),
             ));
         }
+        if variant.discriminant.is_some() {
+            return Err(syn::Error::new(
+                variant.ident.span(),
+                format!(
+                    "`{}` names its own code, and a variant's code is its place in the \
+                     error table — drop the discriminant",
+                    variant.ident
+                ),
+            ));
+        }
     }
     distinct_band("errors", variants.map(|variant| &variant.ident))
+}
+
+/// One `Declines` impl per `#[error]` enum.
+///
+/// A variant's code is its place in the package's one error table, which
+/// spans the module's error enums in declaration order — a figure only
+/// the whole module knows, so it is written here rather than read off
+/// the enum's own discriminants.
+fn decline_impls(items: &[syn::Item]) -> TokenStream2 {
+    let mut code = 0u32;
+    let mut impls = TokenStream2::new();
+    for item in error_enums(items) {
+        let name = &item.ident;
+        let arms = item.variants.iter().map(|variant| {
+            let ident = &variant.ident;
+            let arm = quote!(Self::#ident => #code);
+            code += 1;
+            arm
+        });
+        impls.extend(quote!(
+            #[automatically_derived]
+            impl ::hyperscale_vm_sdk::Declines for #name {
+                fn code(&self) -> u32 {
+                    match *self { #(#arms,)* }
+                }
+            }
+        ));
+    }
+    impls
+}
+
+/// Hold a method's decline arm to the enums the error table is built
+/// from.
+///
+/// The generated halves ask the arm for its table code, so an arm that
+/// is no `#[error]` enum of this package would surface as an opaque
+/// trait error inside generated code — refused here instead, at the type
+/// the author wrote.
+fn check_decline_arm(arm: &syn::Type, declines: &BTreeSet<String>) -> syn::Result<()> {
+    let named = match arm {
+        syn::Type::Path(path) => path.path.segments.last().map(|last| last.ident.to_string()),
+        _ => None,
+    };
+    if named.is_some_and(|name| declines.contains(&name)) {
+        return Ok(());
+    }
+    Err(syn::Error::new_spanned(
+        arm,
+        "a refusal crosses the boundary as a code from the error table, and this arm is \
+         not one of the package's `#[error]` enums — decline with one of those",
+    ))
 }
 
 /// The `#[total]` attribute, where a method claims the mark the publish
@@ -622,6 +685,9 @@ fn lower_method(
     check_gate_shape(&gate, &lowered, method)?;
 
     let declining = declined_with(method);
+    if let Some(arm) = &declining {
+        check_decline_arm(arm, declared.declines)?;
+    }
     let claim = total_attr(method);
     // What the mark promises is that a caller committing against this
     // method has nothing to hear back. Three things could break that, and
@@ -1033,6 +1099,8 @@ struct Declared<'a> {
     config_fields: &'a [(String, syn::Type)],
     /// The `#[resource]` structs: name, mark, kind.
     resources: &'a [Resource],
+    /// The `#[error]` enums' names: what a decline arm may name.
+    declines: &'a BTreeSet<String>,
 }
 
 /// The lints that describe the off-host stubs rather than the contract.
@@ -1130,6 +1198,10 @@ fn expand(
     let config_fields = config_slots(items, config_name.as_ref());
     let events = event_names(items)?;
     let errors = error_names(items)?;
+    let declines: BTreeSet<String> = error_enums(items)
+        .map(|item| item.ident.to_string())
+        .collect();
+    let declines_impls = decline_impls(items);
     let declared_resources = resources(
         items,
         &config_fields
@@ -1144,6 +1216,7 @@ fn expand(
         config_record: config_name.as_ref(),
         config_fields: &config_fields,
         resources: &declared_resources,
+        declines: &declines,
     };
     let methods = lower_methods(items, &state_name, &declared, serves)?;
     let calls: Vec<_> = methods.iter().map(|m| &m.client).collect();
@@ -1211,6 +1284,7 @@ fn expand(
         config_name.as_ref(),
         role,
     )));
+    items.push(syn::Item::Verbatim(declines_impls));
     items.push(syn::Item::Verbatim(component));
     items.push(syn::Item::Verbatim(dispatch));
     items.push(syn::Item::Verbatim(quote!(#reading #client)));

@@ -197,6 +197,16 @@ pub fn nobody() -> RuleBytes {
     RuleBytes(NOBODY_BYTES.to_vec())
 }
 
+/// The code a declined invocation crosses the boundary as.
+///
+/// Implemented by `#[blueprint]` for every `#[error]` enum: a variant's
+/// code is its place in the package's one error table, which spans the
+/// module's error enums in declaration order.
+pub trait Declines {
+    /// This refusal's place in the package's error table.
+    fn code(&self) -> u32;
+}
+
 pub use hyperscale_vm_effects::{
     GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issued, LeafForm, ParamType,
     ResourceKind, RuleBytes, SlotId, SlotKind, encode_metadata,

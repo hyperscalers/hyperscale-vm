@@ -1,0 +1,5 @@
+error: a refusal crosses the boundary as a code from the error table, and this arm is not one of the package's `#[error]` enums — decline with one of those
+  --> tests/refusals/undeclared_decline.rs:16:43
+   |
+16 |         pub fn check(&self) -> Result<(), Refusal> {
+   |                                           ^^^^^^^
