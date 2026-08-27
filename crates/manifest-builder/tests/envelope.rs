@@ -8,9 +8,10 @@
 //! crosses.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Claim, Constraint, EnvelopeTree, GrantedBehaviour, GraphArg, Hash32, Hasher,
-    InstanceMeta, IntentDecl, MAX_VALUE_DEPTH, PackageHash, Records, ResourceGrants, ResourceKind,
-    ResourceMeta, RuleBytes, StoredRule, TestHasher, Value, admit_tree,
+    AdmissionError, Claim, Constraint, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg,
+    Hash32, Hasher, InstanceMeta, IntentDecl, MAX_VALUE_DEPTH, PackageHash, Records,
+    ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, Socket, StoredRule, TestHasher, Value,
+    admit_tree,
 };
 use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
 use hyperscale_vm_stdlib::account;
@@ -124,6 +125,41 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
     assert_eq!(
         env.build(),
         Err(EnvelopeError::UnfilledSocket {
+            intent: 1,
+            socket: 0
+        })
+    );
+}
+
+/// A socket consumed from the wrong channel is refused at `adopt` — the
+/// same verdict admission reaches, still in the declaring intent's own
+/// coordinates. The tier's own tokens cannot spell either shape, so the
+/// declarations are bent by hand.
+#[test]
+fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
+    let chain = world();
+
+    // A value socket, presented as evidence by the consuming node.
+    let mut request = payment_request(100);
+    request.graph.nodes[0]
+        .evidence
+        .insert(EvidenceRef::Socket(0));
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
+    assert_eq!(
+        env.adopt(BOB, request).map(|_| ()),
+        Err(EnvelopeError::SocketChannelMismatch {
+            intent: 1,
+            socket: 0
+        })
+    );
+
+    // An authority socket, filled into an argument position.
+    let mut request = payment_request(100);
+    request.sockets[0] = Socket::Authority(Claim::of_subject(ALICE));
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
+    assert_eq!(
+        env.adopt(BOB, request).map(|_| ()),
+        Err(EnvelopeError::SocketChannelMismatch {
             intent: 1,
             socket: 0
         })

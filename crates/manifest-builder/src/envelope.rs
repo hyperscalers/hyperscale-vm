@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 
 use hyperscale_vm_effects::{
-    Binding, ChainRecords, Claim, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, Hasher,
+    Binding, ChainRecords, Claim, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, GraphArg, Hasher,
     InstanceMeta, IntentDecl, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ResourceMeta, Socket,
     Subintent,
 };
@@ -89,6 +89,17 @@ pub enum EnvelopeError {
         /// The referencing intent.
         intent: u32,
         /// The socket it named.
+        socket: u32,
+    },
+    /// A socket consumed from the channel its kind does not speak: a
+    /// value socket reached as evidence, or an authority socket as an
+    /// argument. Reachable only from a declaration the tier did not
+    /// build.
+    #[error("intent {intent} socket {socket} is consumed from the other channel")]
+    SocketChannelMismatch {
+        /// The declaring intent.
+        intent: u32,
+        /// Its position in the declaration.
         socket: u32,
     },
     /// A socket the composition never filled.
@@ -763,7 +774,9 @@ impl<'a> EnvelopeBuilder<'a> {
 
 /// Check that each of an intent's sockets is consumed by
 /// exactly one of its own node arguments — admission's own count, run
-/// against the intent that declared them.
+/// against the intent that declared them — and consumed from the
+/// channel its kind speaks: a value socket as an argument, an authority
+/// socket as evidence.
 fn check_sockets(
     graph: &ManifestGraph,
     declared: &[Socket],
@@ -771,15 +784,32 @@ fn check_sockets(
 ) -> Result<(), EnvelopeError> {
     let mut uses = vec![0u32; declared.len()];
     for node in &graph.nodes {
-        for position in node.sockets() {
+        let args = node.args.iter().filter_map(|arg| match arg {
+            GraphArg::Socket(socket) => Some((*socket, true)),
+            GraphArg::Literal(_) | GraphArg::Edge { .. } => None,
+        });
+        let presented = node
+            .evidence
+            .iter()
+            .filter_map(|reference| match reference {
+                EvidenceRef::Socket(socket) => Some((*socket, false)),
+                EvidenceRef::IntentSignature | EvidenceRef::Node(_) => None,
+            });
+        for (position, as_argument) in args.chain(presented) {
             let slot = usize::try_from(position)
                 .ok()
-                .and_then(|position| uses.get_mut(position))
+                .filter(|slot| *slot < declared.len())
                 .ok_or(EnvelopeError::UnknownSocket {
                     intent,
                     socket: position,
                 })?;
-            *slot += 1;
+            if matches!(declared[slot], Socket::Value { .. }) != as_argument {
+                return Err(EnvelopeError::SocketChannelMismatch {
+                    intent,
+                    socket: position,
+                });
+            }
+            uses[slot] += 1;
         }
     }
     for (position, count) in uses.iter().enumerate() {
