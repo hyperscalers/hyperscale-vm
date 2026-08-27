@@ -1355,17 +1355,19 @@ fn authoring_accessors(
             #configured
 
             /// The holder's fungible balance in `resource`.
-            fn vault<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Slot<
-                ::hyperscale_vm_sdk::state::Vault,
-            > {
+            fn vault<K: ::hyperscale_vm_sdk::state::KeyShape>(
+                &self,
+                resource: K,
+            ) -> ::hyperscale_vm_sdk::state::Slot<::hyperscale_vm_sdk::state::Vault> {
                 let _ = resource;
                 ::core::unimplemented!("a contract body runs on the guest")
             }
 
             /// The holder's instances of `resource`.
-            fn holdings<K>(&self, resource: K) -> ::hyperscale_vm_sdk::state::Ordered<
-                ::hyperscale_vm_sdk::state::NfVault,
-            > {
+            fn holdings<K: ::hyperscale_vm_sdk::state::KeyShape>(
+                &self,
+                resource: K,
+            ) -> ::hyperscale_vm_sdk::state::Ordered<::hyperscale_vm_sdk::state::NfVault> {
                 let _ = resource;
                 ::core::unimplemented!("a contract body runs on the guest")
             }

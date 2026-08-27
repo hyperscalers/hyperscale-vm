@@ -367,3 +367,15 @@ fn the_macro_refuses_a_marker_nothing_reads() {
     refuse.compile_fail("tests/refusals/requires_on_enum.rs");
     refuse.compile_fail("tests/refusals/marker_on_free_fn.rs");
 }
+
+/// A key position takes the vocabulary.
+///
+/// Whether a key is derivable is the walk's verdict, delivered at
+/// expansion; whether its type could ever hash is the trait's, so a
+/// string or a type of the author's own errs while it is typed — in
+/// the editor, before the macro speaks.
+#[test]
+fn the_vocabulary_closes_the_key_positions() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/string_key.rs");
+}

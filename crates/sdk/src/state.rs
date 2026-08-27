@@ -65,7 +65,10 @@ pub use hyperscale_vm_effects::ResourceRecord;
 /// opaque, decoded only where the rule is judged.
 pub use hyperscale_vm_effects::RuleBytes;
 use hyperscale_vm_effects::{LeafForm, RECORD_WIRE_DEPTH};
-use hyperscale_vm_types::{Address, Drawn as WireDrawn, ResourceAddr};
+use hyperscale_vm_types::{
+    Address, CallTarget, ComponentAddr, Drawn as WireDrawn, PackageAddr, PrincipalAddr,
+    ResourceAddr,
+};
 
 #[cfg(not(component))]
 use crate::host;
@@ -1131,6 +1134,45 @@ impl Cell<Vault> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Keyed<T>(core::marker::PhantomData<fn() -> T>);
 
+/// The types a key can be spelled as.
+///
+/// A bound for the editor rather than the judge: whether a particular
+/// key is *derivable* is the walk's verdict, delivered at expansion.
+/// This trait only closes the key positions to the types a declaration
+/// can hash at all, so a spelling nothing could ever hash — a string, a
+/// signed integer, a reference, a type of the author's own — reads as
+/// an error while it is typed rather than after.
+pub trait KeyShape: sealed::KeyShape {}
+
+mod sealed {
+    pub trait KeyShape {}
+}
+
+macro_rules! key_shapes {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl sealed::KeyShape for $ty {}
+            impl KeyShape for $ty {}
+        )*
+    };
+}
+
+key_shapes!(
+    bool,
+    u64,
+    u128,
+    Vec<u8>,
+    Quantity,
+    OrderKey,
+    Word,
+    Address,
+    CallTarget,
+    ComponentAddr,
+    PackageAddr,
+    PrincipalAddr,
+    ResourceAddr,
+);
+
 impl<T: Cellular> Keyed<T> {
     /// The leaf at `key`.
     ///
@@ -1140,7 +1182,7 @@ impl<T: Cellular> Keyed<T> {
     /// from the call's own inputs.
     #[must_use]
     #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
-    pub fn at<K>(&self, key: K) -> Slot<T> {
+    pub fn at<K: KeyShape>(&self, key: K) -> Slot<T> {
         let _ = key;
         unimplemented!("{OFF_HOST}")
     }
@@ -1644,7 +1686,7 @@ impl<T> Ordered<T> {
     /// one. A holder's instances per resource are the canonical case.
     #[must_use]
     #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
-    pub fn of<K>(&self, key: K) -> Self {
+    pub fn of<K: KeyShape>(&self, key: K) -> Self {
         let _ = key;
         unimplemented!("{OFF_HOST}")
     }
