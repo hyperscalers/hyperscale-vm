@@ -30,7 +30,7 @@ use hyperscale_vm_sdk::blueprint;
 pub mod book {
     use hyperscale_vm_sdk::ResourceAddr;
     use hyperscale_vm_sdk::state::{
-        Bucket, Fixed, Ordered, Quantity, Rate, Rounding, fresh_id, pack,
+        Bucket, Fixed, OrderKey, Ordered, Quantity, Rate, Rounding, fresh_id,
     };
 
     /// What the book sells.
@@ -77,7 +77,9 @@ pub mod book {
             // The tick count over a fresh sequence id: unique without
             // reading the book, which is what lets the entry key be
             // declared.
-            self.asks.at(pack(ticks, fresh_id())).set(funds.quantity());
+            self.asks
+                .at(OrderKey::at(ticks, fresh_id()))
+                .set(funds.quantity());
             self.vault(self.config().base).put(funds);
             Ok(())
         }
@@ -92,7 +94,9 @@ pub mod book {
             let tick = self.config().tick;
             // The whole tiebreaker span at each end, so the interval covers
             // every sequence at the boundary counts.
-            let mut asks = self.asks.range(pack(from, 0), pack(to, u64::MAX), 64);
+            let mut asks = self
+                .asks
+                .range(OrderKey::at(from, 0), OrderKey::at(to, u64::MAX), 64);
             let mut budget = payment.quantity();
             let mut bought = Quantity::ZERO;
 

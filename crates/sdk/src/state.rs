@@ -86,21 +86,21 @@ pub use crate::num::{
 /// No `MIN` or `MAX`: a bound in a range is read by the *declaration*,
 /// which resolves the terms a body spells and not an associated
 /// constant, so a pair of them would work off-guest and be refused in the
-/// one position an order key is for. [`pack`] says the same thing in the
-/// spelling both halves read.
+/// one position an order key is for. [`OrderKey::at`] says the same
+/// thing in the spelling both halves read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct OrderKey(u128);
 
 impl OrderKey {
-    /// The key `hi` over `lo`: a primary dimension in the high half and a
-    /// tiebreaker in the low.
+    /// The key at `primary` over `seq`: the deciding dimension in the
+    /// high half and a tiebreaker in the low.
     ///
     /// Ordering is the packed integer's, so the primary dimension decides
     /// and the tiebreaker only separates ties — which is what makes a
     /// price-time ladder a walk from one end rather than a sort.
     #[must_use]
-    pub const fn packed(hi: u64, lo: u64) -> Self {
-        Self(((hi as u128) << 64) | (lo as u128))
+    pub const fn at(primary: u64, seq: u64) -> Self {
+        Self(((primary as u128) << 64) | (seq as u128))
     }
 
     /// The primary dimension this key was packed over: its high half.
@@ -1706,9 +1706,23 @@ impl<T> Ordered<T> {
     /// lowering derives the cap from the moves themselves — summed,
     /// where a body moves more than once — and the declaration cannot
     /// under-state the walk. An interval that reads or rewrites walks a
-    /// page somebody chose — it names that page with [`Self::range`].
+    /// page somebody chose — it states that page's size with
+    /// [`Self::all`] or names it with [`Self::range`].
     #[must_use]
-    pub fn all(&self) -> Interval<T> {
+    pub fn whole(&self) -> Interval<T> {
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// The whole order-key space, at a stated cap.
+    ///
+    /// Nothing is excluded, so the interval says only what the cap
+    /// says: `cap` bounds the entries execution may touch, is derivable
+    /// like a range's — a literal, an argument, or a configured value —
+    /// and is priced as the walk it buys. The same interval spelled with
+    /// [`Self::range`] takes two sentinels to say no more.
+    #[must_use]
+    pub fn all(&self, cap: u64) -> Interval<T> {
+        let _ = cap;
         unimplemented!("{OFF_HOST}")
     }
 
@@ -2290,11 +2304,11 @@ pub fn burn_nf_granted(funds: NfBucket) {
 
 /// A 128-bit order key packed from a primary dimension over a tiebreaker.
 ///
-/// The free spelling of [`OrderKey::packed`], kept because a body reads
-/// better naming what it packs than naming the type it packs into.
+/// The free spelling of [`OrderKey::at`], kept for the kernel seam and
+/// for the spelled long form of a range.
 #[must_use]
 pub const fn pack(hi: u64, lo: u64) -> OrderKey {
-    OrderKey::packed(hi, lo)
+    OrderKey::at(hi, lo)
 }
 
 /// A deterministic fresh id, unique within this call.

@@ -1075,7 +1075,7 @@ fn every_comparison_reaches_the_two_the_vocabulary_has() {
 #[blueprint]
 mod roster {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{OrderKey, Ordered, pack};
+    use hyperscale_vm_sdk::state::{OrderKey, Ordered};
 
     #[state]
     struct Roster {
@@ -1091,10 +1091,7 @@ mod roster {
 
         /// Every seat filed for `validator`, up to the cap.
         pub fn page(&mut self, validator: Address) {
-            let entries = self
-                .seats
-                .of(validator)
-                .range(pack(0, 0), pack(u64::MAX, u64::MAX), 8);
+            let entries = self.seats.of(validator).all(8);
             let _ = entries.count();
         }
     }
@@ -1224,15 +1221,13 @@ mod shelf {
     impl Shelf {
         /// Take the named instances out of the caller's holdings.
         pub fn pull(&mut self, resource: Address, ids: Ids) -> NfBucket {
-            self.holdings(resource).all().take(ids)
+            self.holdings(resource).whole().take(ids)
         }
 
         /// A page whose size is spelled rather than derived: the count
-        /// of the ids, as an explicit cap on a chosen interval.
+        /// of the ids, as an explicit cap.
         pub fn window(&mut self, ids: Ids) {
-            let entries = self
-                .ledger
-                .range(pack(0, 0), pack(u64::MAX, u64::MAX), ids.count());
+            let entries = self.ledger.all(ids.count());
             let _ = entries.count();
         }
 
@@ -1250,7 +1245,7 @@ mod shelf {
         /// Two moves through one capless interval: the derived cap is
         /// the sum of what each walks.
         pub fn restock(&mut self, out: Ids, back: NfBucket) -> NfBucket {
-            let mut holdings = self.holdings(back.resource()).all();
+            let mut holdings = self.holdings(back.resource()).whole();
             holdings.file(back);
             holdings.take(out)
         }
@@ -1401,7 +1396,7 @@ fn a_module_with_no_state_struct_declares_what_its_body_reaches() {
 /// key.
 #[blueprint]
 mod ledger {
-    use hyperscale_vm_sdk::state::{OrderKey, Ordered, Quantity, pack};
+    use hyperscale_vm_sdk::state::{OrderKey, Ordered, Quantity};
 
     #[state]
     struct Ledger {
@@ -1411,7 +1406,7 @@ mod ledger {
     impl Ledger {
         /// The key spelled where it is used.
         pub fn spelled(&mut self, party: u64, amount: Quantity) {
-            self.owed.at(pack(party, 1)).set(amount);
+            self.owed.at(OrderKey::at(party, 1)).set(amount);
         }
 
         /// The same key, computed in a helper.
@@ -1422,7 +1417,7 @@ mod ledger {
         /// A helper yields its tail, so the key is the parameter's term
         /// wherever the call stands.
         fn slot_of(&self, party: u64) -> OrderKey {
-            pack(party, 1)
+            OrderKey::at(party, 1)
         }
     }
 }

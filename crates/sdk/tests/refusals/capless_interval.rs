@@ -14,7 +14,7 @@ mod shelf {
         // through it, and a read moves nothing: it walks a page somebody
         // chose, so the page is named with `range` or nothing bounds it.
         pub fn peek(&mut self) {
-            let entries = self.entries.all();
+            let entries = self.entries.whole();
             let _ = entries.count();
         }
     }

@@ -212,7 +212,7 @@ pub mod account {
         /// move, so a deposit declares exactly the walk it performs and
         /// pays for nothing wider.
         pub fn deposit_nf(&mut self, instances: NfBucket) {
-            self.holdings(instances.resource()).all().file(instances);
+            self.holdings(instances.resource()).whole().file(instances);
         }
 
         /// Take the named instances out of the holdings interval,
@@ -222,7 +222,7 @@ pub mod account {
         /// terms.
         #[requires(self)]
         pub fn withdraw_nf(&mut self, resource: ResourceAddr, ids: Ids) -> NfBucket {
-            self.holdings(resource).all().take(ids)
+            self.holdings(resource).whole().take(ids)
         }
 
         /// Nothing but its own gate, like `authorize`: the kernel judges

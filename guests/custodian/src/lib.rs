@@ -84,12 +84,14 @@ pub mod custodian {
         /// went into it could never come out. An edge of any other
         /// resource traps at the write instead.
         pub fn file(&mut self, instances: NfBucket) {
-            self.holdings(self.config().instances).all().file(instances);
+            self.holdings(self.config().instances)
+                .whole()
+                .file(instances);
         }
 
         /// And instances back out, from the one collection `file` fills.
         pub fn release(&mut self, ids: Ids) -> NfBucket {
-            self.holdings(self.config().instances).all().take(ids)
+            self.holdings(self.config().instances).whole().take(ids)
         }
     }
 }

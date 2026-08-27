@@ -2911,8 +2911,10 @@ impl<'a> Lowerer<'a> {
             };
             return self.lower_record_create(&issued, call);
         }
-        // `Resource::at(id)` — the record one instance carries.
-        if name == "at" {
+        // `Resource::at(id)` — the record one instance carries. The one
+        // other `at` a body qualifies is `OrderKey::at`, which is the
+        // packed key below rather than a resource's.
+        if name == "at" && !order_key_at(&call.func) {
             let Some(issued) = self.issuing_mark(call, "at") else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
@@ -3009,7 +3011,10 @@ impl<'a> Lowerer<'a> {
         }
         let evals: Vec<Eval> = call.args.iter().map(|a| self.expr(a)).collect();
         let vals: Vec<Val> = evals.iter().map(|e| e.val.clone()).collect();
-        if let ("pack", [Val::Term(hi), Val::Term(lo)]) = (name.as_str(), vals.as_slice()) {
+        // `OrderKey::at(primary, seq)` and the kernel seam's `pack` are
+        // one term: the key packed from its two halves.
+        let packs = name == "pack" || order_key_at(&call.func);
+        if packs && let [Val::Term(hi), Val::Term(lo)] = vals.as_slice() {
             let term = Term::Pack {
                 hi: Box::new(hi.clone()),
                 lo: Box::new(lo.clone()),
@@ -3227,7 +3232,8 @@ impl<'a> Lowerer<'a> {
                             call.span(),
                             "a capless interval derives its cap from the moves through \
                              it, and this access moves nothing. An access that walks a \
-                             chosen page names it with `range`",
+                             chosen page states its size with `all(cap)` or names it \
+                             with `range`",
                         );
                         None
                     };
@@ -3779,7 +3785,7 @@ impl<'a> Lowerer<'a> {
             // The whole of a collection's order-key space, with no cap
             // of its own: the cap is the count of the one move performed
             // through the handle, derived where that move lands.
-            (FieldKind::Ordered, "all") => {
+            (FieldKind::Ordered, "whole") => {
                 if vals.is_empty() {
                     let site = self.open(
                         Target::Range {
@@ -3797,11 +3803,44 @@ impl<'a> Lowerer<'a> {
                 } else {
                     self.error(
                         call.args.span(),
-                        "`all` takes no cap — the interval's cap is the count of the one \
+                        "`whole` takes no cap — the interval's cap is the count of the one \
                      move performed through it. An interval that walks a chosen page \
-                     names it with `range`",
+                     states its size with `all(cap)` or names it with `range`",
                     );
                     Eval::absent(call.args.span(), "an interval with a spurious cap")
+                }
+            }
+
+            // The whole order-key space at a stated cap: the same terms
+            // as the range spelled with two sentinel keys, so the two
+            // spellings are one declaration.
+            (FieldKind::Ordered, "all") => {
+                if let [Val::Term(cap)] = vals.as_slice() {
+                    let corner = |half: u64| Term::Pack {
+                        hi: Box::new(Term::LitU64(half)),
+                        lo: Box::new(Term::LitU64(half)),
+                    };
+                    let site = self.open(
+                        Target::Range {
+                            slot: SlotRef::Fixed(slot),
+                            owner: None,
+                            material: material.to_vec(),
+                            lo: corner(0),
+                            hi: corner(u64::MAX),
+                            cap: Some(cap.clone()),
+                        },
+                        field.element.clone(),
+                        declared,
+                    );
+                    Self::interval(site, call.span())
+                } else {
+                    self.error(
+                        call.args.span(),
+                        "`all` states its entry cap, derivable from the method's arguments \
+                     or the component's configuration — routing evaluates the declaration \
+                     before execution and never reads state",
+                    );
+                    Eval::absent(call.args.span(), "an underivable interval cap")
                 }
             }
 
@@ -4097,6 +4136,14 @@ fn free_call_name(call: &syn::ExprCall) -> Option<String> {
         return None;
     };
     path.path.segments.last().map(|s| s.ident.to_string())
+}
+
+/// Whether a call's function is the qualified `OrderKey::at`.
+fn order_key_at(func: &syn::Expr) -> bool {
+    matches!(func, syn::Expr::Path(path)
+        if path.path.segments.len() == 2
+            && path.path.segments[0].ident == "OrderKey"
+            && path.path.segments[1].ident == "at")
 }
 
 /// What an operation says when the mark it was called on names no

@@ -1,0 +1,5 @@
+error: `all` states its entry cap, derivable from the method's arguments or the component's configuration — routing evaluates the declaration before execution and never reads state
+  --> tests/refusals/underivable_all_cap.rs:16:44
+   |
+16 |             let entries = self.entries.all(cap.count_ones().into());
+   |                                            ^^^

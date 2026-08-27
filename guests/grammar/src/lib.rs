@@ -18,7 +18,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod grammar {
     use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Ids, Keyed, NfBucket, Ordered, Quantity, Table, Vault, pack,
+        Bucket, Cell, Ids, Keyed, NfBucket, OrderKey, Ordered, Quantity, Table, Vault, pack,
     };
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
@@ -99,6 +99,8 @@ pub mod grammar {
         /// over is not a term, and it is not a returned value because the
         /// method yields nothing however the tail is spelled.
         pub fn file(&mut self, ids: Ids) {
+            // The whole space spelled as a range: what `all(64)` says in
+            // one word, kept in the long form here.
             let mut held = self.entries.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
             for id in ids.named().iter().copied() {
                 held.insert(pack(0, id), Quantity::from_subunits(1));
@@ -108,7 +110,7 @@ pub mod grammar {
         /// A `while` walking an interval by index, and a conditional in
         /// tail position — the other two ways a unit body ends.
         pub fn sweep(&mut self, holder: ResourceAddr) {
-            let mut held = self.entries.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
+            let mut held = self.entries.all(64);
             let vault = self.vault(holder);
             let mut index = 0;
             let mut total = vault.balance();
@@ -133,12 +135,12 @@ pub mod grammar {
         pub fn settle(&mut self, seed: u64) {
             if seed == 1 {
                 self.entries
-                    .range(pack(0, 0), pack(u64::MAX, u64::MAX), 64)
-                    .insert(pack(0, 1), Quantity::from_subunits(1));
+                    .all(64)
+                    .insert(OrderKey::at(0, 1), Quantity::from_subunits(1));
             }
             self.entries
-                .range(pack(0, 0), pack(u64::MAX, u64::MAX), 64)
-                .insert(pack(0, 2), Quantity::from_subunits(2));
+                .all(64)
+                .insert(OrderKey::at(0, 2), Quantity::from_subunits(2));
         }
 
         /// A branch whose arm alone declares its clause, so the export
@@ -150,8 +152,8 @@ pub mod grammar {
         pub fn stash(&mut self, seed: u64) {
             if seed == 1 {
                 self.entries
-                    .range(pack(0, 0), pack(u64::MAX, u64::MAX), 64)
-                    .insert(pack(0, 3), Quantity::from_subunits(3));
+                    .all(64)
+                    .insert(OrderKey::at(0, 3), Quantity::from_subunits(3));
             }
         }
 
@@ -367,8 +369,8 @@ pub mod grammar {
         pub fn jot(&mut self, window: u64, at: u64) {
             self.entries
                 .of(window)
-                .range(pack(0, 0), pack(u64::MAX, u64::MAX), 8)
-                .insert(pack(0, at), Quantity::from_subunits(1));
+                .all(8)
+                .insert(OrderKey::at(0, at), Quantity::from_subunits(1));
         }
 
         /// What every configured window's log holds, and a line into the
@@ -383,27 +385,19 @@ pub mod grammar {
         pub fn windowed(&mut self, note: u64) {
             let mut total = 0;
             for &window in &self.config().windows {
-                let held = self
-                    .entries
-                    .of(window)
-                    .range(pack(0, 0), pack(u64::MAX, u64::MAX), 8);
+                let held = self.entries.of(window).all(8);
                 total += u64::from(held.count());
                 self.ledger
                     .of(window)
-                    .range(pack(0, 0), pack(u64::MAX, u64::MAX), 8)
-                    .insert(pack(0, note), note);
+                    .all(8)
+                    .insert(OrderKey::at(0, note), note);
             }
             self.noted.set(total);
         }
 
         /// How many lines the ledger holds for one named window.
         pub fn ledgered(&mut self, window: u64) -> u64 {
-            u64::from(
-                self.ledger
-                    .of(window)
-                    .range(pack(0, 0), pack(u64::MAX, u64::MAX), 8)
-                    .count(),
-            )
+            u64::from(self.ledger.of(window).all(8).count())
         }
 
         /// A configured sequence read as the value it is, rather than
@@ -421,7 +415,7 @@ pub mod grammar {
         /// File the instances an edge carries into this instance's own
         /// holdings.
         pub fn stow(&mut self, instances: NfBucket) {
-            self.holdings(instances.resource()).all().file(instances);
+            self.holdings(instances.resource()).whole().file(instances);
         }
 
         /// Every configured mark's instances, taken out of custody and
@@ -434,8 +428,8 @@ pub mod grammar {
         /// declaration derives is the walk those moves perform.
         pub fn restow(&mut self, ids: Ids) {
             for &mark in &self.config().marks {
-                let held = self.holdings(mark).all().take(ids.clone());
-                self.holdings(mark).all().file(held);
+                let held = self.holdings(mark).whole().take(ids.clone());
+                self.holdings(mark).whole().file(held);
             }
         }
 

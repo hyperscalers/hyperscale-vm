@@ -1,4 +1,4 @@
-error: a capless interval derives its cap from the moves through it, and this access moves nothing. An access that walks a chosen page names it with `range`
+error: a capless interval derives its cap from the moves through it, and this access moves nothing. An access that walks a chosen page states its size with `all(cap)` or names it with `range`
   --> tests/refusals/capless_interval.rs:18:21
    |
 18 |             let _ = entries.count();

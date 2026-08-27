@@ -17,7 +17,7 @@ mod roster {
 
     impl Roster {
         pub fn grab(&mut self, ids: Ids) -> NfBucket {
-            self.seen.of(7u64).all().take(ids)
+            self.seen.of(7u64).whole().take(ids)
         }
     }
 }
