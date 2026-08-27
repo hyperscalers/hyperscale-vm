@@ -276,10 +276,10 @@ pub const MAX_ISSUANCES_PER_SIGNATURE: usize = 16;
 /// than the sender pays to be refused.
 ///
 /// Held in two places, because the two counts differ: publish counts the
-/// `Proves` clauses a signature writes, and evaluation counts the claims
-/// they yield — one clause in a `for-each` yields as many as the list a
-/// caller supplies, and only the evaluated count is the set a presenting
-/// node copies.
+/// `Proves` clauses a signature writes — an instance-spelled one as the
+/// two it widens to — and evaluation counts the claims they yield. One
+/// clause in a `for-each` yields as many as the list a caller supplies,
+/// and only the evaluated count is the set a presenting node copies.
 pub const MAX_PROVEN_PER_SIGNATURE: usize = 8;
 
 /// Which directions a declared issuance takes.

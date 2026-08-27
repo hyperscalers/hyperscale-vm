@@ -233,8 +233,19 @@ fn check_clause_bounds(
                 // Proving carries its own ceiling as well as the shared
                 // one: what a mint costs is not the clause but the copy
                 // every later node presenting it makes, so the shared
-                // budget is the wrong size to bound it by.
-                *proven += 1;
+                // budget is the wrong size to bound it by. A
+                // tuple-shaped claim is an instance's, which widens to
+                // its resource where it is proven — two claims from one
+                // clause, and a method sure to mint past the cap is
+                // refused here rather than published uncallable. Any
+                // other shape's yield is the caller's answer, so the
+                // evaluated set is held to the same cap where the
+                // multiplication happens.
+                *proven += if matches!(claim, Expr::Tuple(_)) {
+                    2
+                } else {
+                    1
+                };
                 if *proven > MAX_PROVEN_PER_SIGNATURE {
                     return Err(at(SignatureBoundsError::TooManyProves));
                 }
@@ -631,6 +642,29 @@ mod tests {
         assert_bounded(
             &with(MAX_PROVEN_PER_SIGNATURE),
             &with(MAX_PROVEN_PER_SIGNATURE + 1),
+        );
+    }
+
+    /// An instance claim widens to its resource where it is proven, so
+    /// an instance-spelled `Proves` clause mints two — and a method
+    /// sure to mint past the cap is refused at publish rather than
+    /// published uncallable.
+    #[test]
+    fn an_instance_proving_clause_counts_the_claim_it_widens_to() {
+        let proves = Clause::Proves {
+            guard: None,
+            claim: Expr::Tuple(vec![Expr::Arg(0), Expr::Arg(1)]),
+        };
+        let with = |count: usize| {
+            one_method(MethodSignature {
+                totality: Totality::Fallible,
+                effects: vec![proves.clone(); count],
+                ..MethodSignature::default()
+            })
+        };
+        assert_bounded(
+            &with(MAX_PROVEN_PER_SIGNATURE / 2),
+            &with(MAX_PROVEN_PER_SIGNATURE / 2 + 1),
         );
     }
 
