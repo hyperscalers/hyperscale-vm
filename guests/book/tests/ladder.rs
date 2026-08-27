@@ -4,7 +4,7 @@ use book_guest::book::client::{Book, Pair};
 use book_guest::book::{Error, Quote, Tick};
 use hyperscale_vm_sdk::state::{Fixed, Wide};
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
+    Chain, PrincipalAddr, ResourceAddr, Worlds, account, package, principal, resource,
 };
 
 const MAKER: PrincipalAddr = principal(1);
@@ -16,19 +16,22 @@ const QUOTE_ASSET: ResourceAddr = resource(0x62);
 const ONE: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;
 
 /// A book quoting in whole quote subunits, with both sides funded.
-fn ladder(mut chain: Chain) -> (Chain, Book) {
-    chain.publish(package!(book_guest::book));
-    let ladder = chain.instantiate::<Book>(
-        MAKER,
-        Pair {
-            base: BASE_ASSET,
-            quote: QUOTE_ASSET,
-            tick: Fixed::<Quote, Tick>::from_scaled(Wide::from_u128(ONE)),
-        },
-    );
-    chain.credit(MAKER, BASE_ASSET, 1_000);
-    chain.credit(TAKER, QUOTE_ASSET, 1_000);
-    (chain, ladder)
+fn ladder(chain: &mut Chain) -> Book {
+    static WORLDS: Worlds<Book> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(book_guest::book));
+        let ladder = chain.instantiate::<Book>(
+            MAKER,
+            Pair {
+                base: BASE_ASSET,
+                quote: QUOTE_ASSET,
+                tick: Fixed::<Quote, Tick>::from_scaled(Wide::from_u128(ONE)),
+            },
+        );
+        chain.credit(MAKER, BASE_ASSET, 1_000);
+        chain.credit(TAKER, QUOTE_ASSET, 1_000);
+        ladder
+    })
 }
 
 fn place(chain: &mut Chain, ladder: Book, ticks: u64, size: u128) {
@@ -57,8 +60,8 @@ fn fill(chain: &mut Chain, ladder: Book, from: u64, to: u64, budget: u128) {
 /// same check: a zero-priced ask refused where it would be taken would be
 /// left standing and unfillable, blocking every ask behind it forever.
 #[hyperscale_vm_testing::test]
-fn an_unpriced_ask_is_refused_where_it_would_be_placed(chain: Chain) {
-    let (mut chain, ladder) = ladder(chain);
+fn an_unpriced_ask_is_refused_where_it_would_be_placed(chain: &mut Chain) {
+    let ladder = ladder(chain);
 
     let outcome = chain.transact(MAKER, |b| {
         let offered = account::withdraw(b, MAKER, BASE_ASSET, 100)?;
@@ -72,14 +75,14 @@ fn an_unpriced_ask_is_refused_where_it_would_be_placed(chain: Chain) {
 /// A taker walks the ladder cheapest first, whatever order the asks were
 /// rested in.
 #[hyperscale_vm_testing::test]
-fn a_taker_walks_the_ladder_from_the_best_price(chain: Chain) {
-    let (mut chain, ladder) = ladder(chain);
-    place(&mut chain, ladder, 5, 10);
-    place(&mut chain, ladder, 2, 10);
+fn a_taker_walks_the_ladder_from_the_best_price(chain: &mut Chain) {
+    let ladder = ladder(chain);
+    place(chain, ladder, 5, 10);
+    place(chain, ladder, 2, 10);
 
     // Ten base at two ticks is twenty quote; the budget covers that and
     // ten more, which takes two of the ask at five.
-    fill(&mut chain, ladder, 1, 9, 30);
+    fill(chain, ladder, 1, 9, 30);
 
     assert_eq!(chain.balance(TAKER, BASE_ASSET), 12, "the cheap ask first");
     assert_eq!(chain.balance(TAKER, QUOTE_ASSET), 970, "and it paid thirty");
@@ -88,11 +91,11 @@ fn a_taker_walks_the_ladder_from_the_best_price(chain: Chain) {
 /// What the budget does not cover stays standing, and what it does not
 /// spend comes back.
 #[hyperscale_vm_testing::test]
-fn a_partial_fill_leaves_the_rest_of_the_ask_standing(chain: Chain) {
-    let (mut chain, ladder) = ladder(chain);
-    place(&mut chain, ladder, 3, 100);
+fn a_partial_fill_leaves_the_rest_of_the_ask_standing(chain: &mut Chain) {
+    let ladder = ladder(chain);
+    place(chain, ladder, 3, 100);
 
-    fill(&mut chain, ladder, 1, 9, 31);
+    fill(chain, ladder, 1, 9, 31);
 
     // Ten base at three ticks is thirty; the odd subunit buys nothing and
     // walks away with the taker.
@@ -101,17 +104,17 @@ fn a_partial_fill_leaves_the_rest_of_the_ask_standing(chain: Chain) {
 
     // And the rest of the ask is still there to be taken.
     chain.credit(TAKER, QUOTE_ASSET, 1_000);
-    fill(&mut chain, ladder, 1, 9, 270);
+    fill(chain, ladder, 1, 9, 270);
     assert_eq!(chain.balance(TAKER, BASE_ASSET), 100, "the whole ask");
 }
 
 /// An interval that misses the ask fills nothing and spends nothing.
 #[hyperscale_vm_testing::test]
-fn a_walk_outside_the_asks_price_takes_none_of_it(chain: Chain) {
-    let (mut chain, ladder) = ladder(chain);
-    place(&mut chain, ladder, 7, 10);
+fn a_walk_outside_the_asks_price_takes_none_of_it(chain: &mut Chain) {
+    let ladder = ladder(chain);
+    place(chain, ladder, 7, 10);
 
-    fill(&mut chain, ladder, 1, 5, 100);
+    fill(chain, ladder, 1, 5, 100);
 
     assert_eq!(chain.balance(TAKER, BASE_ASSET), 0);
     assert_eq!(chain.balance(TAKER, QUOTE_ASSET), 1_000, "nothing spent");

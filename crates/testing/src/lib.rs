@@ -685,17 +685,20 @@ impl<H: Clone> Worlds<H> {
 
     /// The chain's world: built by `build` the first time this lane
     /// arrives, opened from the snapshot every time after.
-    pub fn open(&self, chain: Chain, build: impl FnOnce(&mut Chain) -> H) -> (Chain, H) {
+    ///
+    /// `chain` leaves holding the built world, whatever it held before.
+    pub fn open(&self, chain: &mut Chain, build: impl FnOnce(&mut Chain) -> H) -> H {
         let cell = match &chain.engine {
             Engine::Native(_) => &self.native,
             Engine::Blessed(_) => &self.wasm,
         };
-        let (snapshot, handles) = cell.get_or_init(move || {
-            let mut chain = chain;
-            let handles = build(&mut chain);
-            (chain.snapshot(), handles)
+        let (snapshot, handles) = cell.get_or_init(|| {
+            let mut world = chain.snapshot().chain();
+            let handles = build(&mut world);
+            (world.snapshot(), handles)
         });
-        (snapshot.chain(), handles.clone())
+        *chain = snapshot.chain();
+        handles.clone()
     }
 }
 

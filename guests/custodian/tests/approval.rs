@@ -23,8 +23,8 @@
 
 use custodian_guest::custodian;
 use hyperscale_vm_testing::{
-    AdmissionError, Chain, Component, PrincipalAddr, Refused, ResourceAddr, TestHasher, account,
-    package, principal,
+    AdmissionError, Chain, Component, PrincipalAddr, Refused, ResourceAddr, TestHasher, Worlds,
+    account, package, principal,
 };
 use security_guest::security;
 
@@ -42,29 +42,32 @@ const fn terms() -> security::client::Terms {
 }
 
 /// A world where a custodian holds notes and cooperates with nothing.
-fn world(mut chain: Chain) -> (Chain, custodian::client::Custodian, ResourceAddr) {
-    chain.publish(package!(security_guest::security at "../security"));
-    chain.publish(package!(custodian_guest::custodian));
-    let issuer = chain.instantiate::<security::client::Security>(ISSUER, terms());
-    let note = issuer.issued_approved(&TestHasher, terms());
-    let keeper = chain.instantiate::<custodian::client::Custodian>(
-        ISSUER,
-        custodian::client::Terms {
-            asset: note,
-            other: note,
-            instances: note,
-        },
-    );
-    // Issued by the package that issues them and paid straight into the
-    // custodian, which is a movement the registrar signs like any other
-    // — the class asks about the transaction and this one is theirs.
-    chain
-        .transact(OFFICER, |b| {
-            let minted = issuer.issue_approved(b, 100u128)?;
-            keeper.deposit(b, minted)
-        })
-        .expect_completed();
-    (chain, keeper, note)
+fn world(chain: &mut Chain) -> (custodian::client::Custodian, ResourceAddr) {
+    static WORLDS: Worlds<(custodian::client::Custodian, ResourceAddr)> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(security_guest::security at "../security"));
+        chain.publish(package!(custodian_guest::custodian));
+        let issuer = chain.instantiate::<security::client::Security>(ISSUER, terms());
+        let note = issuer.issued_approved(&TestHasher, terms());
+        let keeper = chain.instantiate::<custodian::client::Custodian>(
+            ISSUER,
+            custodian::client::Terms {
+                asset: note,
+                other: note,
+                instances: note,
+            },
+        );
+        // Issued by the package that issues them and paid straight into the
+        // custodian, which is a movement the registrar signs like any other
+        // — the class asks about the transaction and this one is theirs.
+        chain
+            .transact(OFFICER, |b| {
+                let minted = issuer.issue_approved(b, 100u128)?;
+                keeper.deposit(b, minted)
+            })
+            .expect_completed();
+        (keeper, note)
+    })
 }
 
 /// The desk's signature is what moves the note, out of a vault whose
@@ -75,8 +78,8 @@ fn world(mut chain: Chain) -> (Chain, custodian::client::Custodian, ResourceAddr
 /// off the record it found and mints the claim it names, because the
 /// party signing is the party the entry names.
 #[hyperscale_vm_testing::test]
-fn a_note_moves_in_a_transaction_the_desk_signed(chain: Chain) {
-    let (mut chain, keeper, note) = world(chain);
+fn a_note_moves_in_a_transaction_the_desk_signed(chain: &mut Chain) {
+    let (keeper, note) = world(chain);
 
     chain
         .transact(OFFICER, |b| {
@@ -96,8 +99,8 @@ fn a_note_moves_in_a_transaction_the_desk_signed(chain: Chain) {
 /// no account in the transaction at all — the case a design that looked
 /// at the caller would find a stranger at and bind nothing.
 #[hyperscale_vm_testing::test]
-fn the_question_follows_the_note_into_a_package_that_declares_nothing(chain: Chain) {
-    let (mut chain, keeper, note) = world(chain);
+fn the_question_follows_the_note_into_a_package_that_declares_nothing(chain: &mut Chain) {
+    let (keeper, note) = world(chain);
 
     chain
         .transact(OFFICER, |b| {

@@ -44,10 +44,10 @@ fn pay(chain: &mut Chain, amount: u128) {
 /// confiscation: the value is still the holder's, still spendable, and
 /// what it takes to spend it is the gate a withdrawal already carries.
 #[hyperscale_vm_testing::test]
-fn a_quarantined_deposit_is_the_holder_s_to_spend(mut chain: Chain) {
+fn a_quarantined_deposit_is_the_holder_s_to_spend(chain: &mut Chain) {
     chain.credit(SENDER, ASSET, 100);
-    refuse(&mut chain);
-    pay(&mut chain, 100);
+    refuse(chain);
+    pay(chain, 100);
     assert_eq!(chain.balance(HOLDER, ASSET), 0, "the vault took none of it");
     assert_eq!(chain.balance(SENDER, ASSET), 0, "and the sender paid");
 
@@ -69,15 +69,15 @@ fn a_quarantined_deposit_is_the_holder_s_to_spend(mut chain: Chain) {
 /// did — and the only thing that moves the older half is a sweep the
 /// holder composes.
 #[hyperscale_vm_testing::test]
-fn accepting_redirects_the_next_deposit_and_moves_no_earlier_one(mut chain: Chain) {
+fn accepting_redirects_the_next_deposit_and_moves_no_earlier_one(chain: &mut Chain) {
     chain.credit(SENDER, ASSET, 100);
-    refuse(&mut chain);
-    pay(&mut chain, 60);
+    refuse(chain);
+    pay(chain, 60);
 
     chain
         .transact(HOLDER, |b| account::accept(b, HOLDER, ASSET))
         .expect_completed();
-    pay(&mut chain, 40);
+    pay(chain, 40);
     assert_eq!(
         chain.balance(HOLDER, ASSET),
         40,

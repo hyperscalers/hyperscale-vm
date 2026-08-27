@@ -17,7 +17,7 @@
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::vocabulary::NF_VAULT;
 use hyperscale_vm_testing::{
-    Address, AdmissionError, Chain, EvalError, PrincipalAddr, Refused, TestHasher, account,
+    Address, AdmissionError, Chain, EvalError, PrincipalAddr, Refused, TestHasher, Worlds, account,
     package, package_slot, principal,
 };
 use security_guest::security;
@@ -80,28 +80,30 @@ const fn deed_terms() -> bailiff::Terms {
 }
 
 /// A world where the holder keeps three deeds.
-fn deeds() -> (Chain, bailiff::client::Bailiff, Address) {
-    let mut chain = Chain::native();
-    chain.publish(package!(bailiff));
-    let issuer = chain.instantiate::<bailiff::client::Bailiff>(WARDEN, deed_terms());
-    let deed = issuer.issued_deed(&TestHasher, deed_terms());
-    for id in [1u64, 2, 3] {
-        chain
-            .transact(WARDEN, |b| {
-                let minted = issuer.issue(b, id)?;
-                account::deposit_nf(b, HOLDER, minted)
-            })
-            .expect_completed();
-    }
-    (chain, issuer, deed.into())
+fn deeds(chain: &mut Chain) -> (bailiff::client::Bailiff, Address) {
+    static WORLDS: Worlds<(bailiff::client::Bailiff, Address)> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(bailiff));
+        let issuer = chain.instantiate::<bailiff::client::Bailiff>(WARDEN, deed_terms());
+        let deed = issuer.issued_deed(&TestHasher, deed_terms());
+        for id in [1u64, 2, 3] {
+            chain
+                .transact(WARDEN, |b| {
+                    let minted = issuer.issue(b, id)?;
+                    account::deposit_nf(b, HOLDER, minted)
+                })
+                .expect_completed();
+        }
+        (issuer, deed.into())
+    })
 }
 
 /// Instances leave a holder's interval the same way a balance leaves
 /// their vault: named by the issuer, admitted by the resource's own
 /// entry, and with the holder neither consulted nor able to decline.
-#[test]
-fn a_recall_takes_the_instances_it_names_out_of_a_holders_interval() {
-    let (mut chain, issuer, deed) = deeds();
+#[hyperscale_vm_testing::test(native)]
+fn a_recall_takes_the_instances_it_names_out_of_a_holders_interval(chain: &mut Chain) {
+    let (issuer, deed) = deeds(chain);
     let slot = u64::from(NF_VAULT.0);
 
     chain
@@ -123,9 +125,9 @@ fn a_recall_takes_the_instances_it_names_out_of_a_holders_interval() {
 /// reads the entry off the record it found, cannot mint the claim it
 /// names — the deed's warden is somebody else — and composes no proof,
 /// so the call reaches admission asking for authority it never showed.
-#[test]
-fn a_recall_by_somebody_the_entry_does_not_name_is_refused() {
-    let (mut chain, issuer, deed) = deeds();
+#[hyperscale_vm_testing::test(native)]
+fn a_recall_by_somebody_the_entry_does_not_name_is_refused(chain: &mut Chain) {
+    let (issuer, deed) = deeds(chain);
     let slot = u64::from(NF_VAULT.0);
 
     let refused = chain
@@ -152,9 +154,9 @@ fn a_recall_by_somebody_the_entry_does_not_name_is_refused() {
 /// value is kept at. A record, a configuration leaf, a governing rule
 /// and a halt flag hold facts, and a recall entry says nothing about
 /// any of them.
-#[test]
-fn a_slot_that_keeps_no_value_is_refused_where_the_argument_is_read() {
-    let (mut chain, issuer, deed) = deeds();
+#[hyperscale_vm_testing::test(native)]
+fn a_slot_that_keeps_no_value_is_refused_where_the_argument_is_read(chain: &mut Chain) {
+    let (issuer, deed) = deeds(chain);
 
     for slot in [0u64, 2, 3, 4, 6, 7, 0xFFFE] {
         let refused = chain.try_transact(WARDEN, |b| {
@@ -191,7 +193,7 @@ const fn share_terms() -> security::client::Terms {
 /// protocol derives no key for, and the issuer finds it because the
 /// caller says which slot rather than because anybody enumerated one.
 #[hyperscale_vm_testing::test]
-fn a_recall_finds_value_at_the_slot_the_holder_keeps_it_in(mut chain: Chain) {
+fn a_recall_finds_value_at_the_slot_the_holder_keeps_it_in(chain: &mut Chain) {
     chain.publish(package!(security_guest::security));
     let issuer = chain.instantiate::<security::client::Security>(WARDEN, share_terms());
     let share = issuer.issued_share(&TestHasher, share_terms());

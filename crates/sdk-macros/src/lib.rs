@@ -215,9 +215,9 @@ pub fn blueprint_publisher(attr: TokenStream, item: TokenStream) -> TokenStream 
 /// Never; a body the lanes cannot run is a `compile_error!` on its own
 /// span.
 #[proc_macro_attribute]
-pub fn lanes(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn lanes(attr: TokenStream, item: TokenStream) -> TokenStream {
     let body = syn::parse_macro_input!(item as syn::ItemFn);
-    match lanes::expand(body) {
+    match lanes::lanes(&attr.into()).and_then(|lanes| lanes::expand(&lanes, body)) {
         Ok(tokens) => tokens.into(),
         Err(error) => error.to_compile_error().into(),
     }

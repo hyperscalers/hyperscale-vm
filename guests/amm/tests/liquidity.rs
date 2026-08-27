@@ -4,7 +4,7 @@ use amm_guest::amm::Error;
 use amm_guest::amm::client::{Amm, Settings};
 use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, ResourceAddr, ResourceKind, account, package, principal, resource,
+    Chain, PrincipalAddr, ResourceAddr, ResourceKind, Worlds, account, package, principal, resource,
 };
 
 const ALICE: PrincipalAddr = principal(1);
@@ -13,21 +13,24 @@ const X: ResourceAddr = resource(0xE1);
 const Y: ResourceAddr = resource(0xE2);
 
 /// An unfunded pool, with both providers holding both sides.
-fn pool(mut chain: Chain) -> (Chain, Amm) {
-    chain.publish(package!(amm_guest::amm));
-    let pool = chain.instantiate::<Amm>(
-        ALICE,
-        Settings {
-            x: X,
-            y: Y,
-            fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
-        },
-    );
-    for who in [ALICE, BOB] {
-        chain.credit(who, X, 10_000);
-        chain.credit(who, Y, 10_000);
-    }
-    (chain, pool)
+fn pool(chain: &mut Chain) -> Amm {
+    static WORLDS: Worlds<Amm> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(amm_guest::amm));
+        let pool = chain.instantiate::<Amm>(
+            ALICE,
+            Settings {
+                x: X,
+                y: Y,
+                fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
+            },
+        );
+        for who in [ALICE, BOB] {
+            chain.credit(who, X, 10_000);
+            chain.credit(who, Y, 10_000);
+        }
+        pool
+    })
 }
 
 /// The claim the pool issues, which is what a provider walks away with.
@@ -57,13 +60,13 @@ fn add(chain: &mut Chain, pool: Amm, who: PrincipalAddr, dx: u128, dy: u128) {
 /// 2000, computed here rather than read off the body — and it is the one
 /// mint that does not divide by a reserve that is not there yet.
 #[hyperscale_vm_testing::test]
-fn the_first_provider_mints_the_geometric_mean(chain: Chain) {
-    let (mut chain, pool) = pool(chain);
-    add(&mut chain, pool, ALICE, 1_000, 4_000);
+fn the_first_provider_mints_the_geometric_mean(chain: &mut Chain) {
+    let pool = pool(chain);
+    add(chain, pool, ALICE, 1_000, 4_000);
 
     assert_eq!(chain.balance(pool, X), 1_000);
     assert_eq!(chain.balance(pool, Y), 4_000);
-    assert_eq!(chain.balance(ALICE, share(&chain, pool)), 2_000);
+    assert_eq!(chain.balance(ALICE, share(chain, pool)), 2_000);
 }
 
 /// A later provider is priced against the lesser of the two claims they
@@ -76,12 +79,12 @@ fn the_first_provider_mints_the_geometric_mean(chain: Chain) {
 /// provider including him holds a claim on it. Paying him for the excess
 /// would be paying him out of everyone else's stake.
 #[hyperscale_vm_testing::test]
-fn a_skewed_deposit_mints_against_the_lesser_side(chain: Chain) {
-    let (mut chain, pool) = pool(chain);
-    add(&mut chain, pool, ALICE, 1_000, 4_000);
-    add(&mut chain, pool, BOB, 100, 800);
+fn a_skewed_deposit_mints_against_the_lesser_side(chain: &mut Chain) {
+    let pool = pool(chain);
+    add(chain, pool, ALICE, 1_000, 4_000);
+    add(chain, pool, BOB, 100, 800);
 
-    assert_eq!(chain.balance(BOB, share(&chain, pool)), 200);
+    assert_eq!(chain.balance(BOB, share(chain, pool)), 200);
     assert_eq!(chain.balance(pool, X), 1_100);
     assert_eq!(
         chain.balance(pool, Y),
@@ -89,7 +92,7 @@ fn a_skewed_deposit_mints_against_the_lesser_side(chain: Chain) {
         "the excess stays in the pool"
     );
     assert_eq!(
-        chain.balance(ALICE, share(&chain, pool)),
+        chain.balance(ALICE, share(chain, pool)),
         2_000,
         "and dilutes nobody"
     );
@@ -103,9 +106,9 @@ fn a_skewed_deposit_mints_against_the_lesser_side(chain: Chain) {
 /// they never offered. The decline discards the whole transaction, so
 /// the funds stay where they were.
 #[hyperscale_vm_testing::test]
-fn funding_one_side_alone_is_refused(chain: Chain) {
-    let (mut chain, pool) = pool(chain);
-    add(&mut chain, pool, ALICE, 1_000, 4_000);
+fn funding_one_side_alone_is_refused(chain: &mut Chain) {
+    let pool = pool(chain);
+    add(chain, pool, ALICE, 1_000, 4_000);
 
     let outcome = chain.transact(BOB, |b| {
         let x_side = account::withdraw(b, BOB, X, 0)?;
@@ -124,11 +127,11 @@ fn funding_one_side_alone_is_refused(chain: Chain) {
 /// One provider, no trades, so there is nothing for the rounding to keep
 /// and the pool empties exactly.
 #[hyperscale_vm_testing::test]
-fn redeeming_the_only_position_returns_the_whole_pair(chain: Chain) {
-    let (mut chain, pool) = pool(chain);
-    add(&mut chain, pool, ALICE, 1_000, 4_000);
+fn redeeming_the_only_position_returns_the_whole_pair(chain: &mut Chain) {
+    let pool = pool(chain);
+    add(chain, pool, ALICE, 1_000, 4_000);
 
-    let claim_on = share(&chain, pool);
+    let claim_on = share(chain, pool);
     chain
         .transact(ALICE, |b| {
             let claim = account::withdraw(b, ALICE, claim_on, 2_000)?;
@@ -143,7 +146,7 @@ fn redeeming_the_only_position_returns_the_whole_pair(chain: Chain) {
     assert_eq!(chain.balance(ALICE, X), 10_000);
     assert_eq!(chain.balance(ALICE, Y), 10_000);
     assert_eq!(
-        chain.balance(ALICE, share(&chain, pool)),
+        chain.balance(ALICE, share(chain, pool)),
         0,
         "the claim is burned"
     );

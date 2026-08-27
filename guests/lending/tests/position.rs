@@ -2,7 +2,8 @@
 
 use hyperscale_vm_sdk::state::{Fixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, Refused, ResourceAddr, TypedError, account, package, principal, resource,
+    Chain, PrincipalAddr, Refused, ResourceAddr, TypedError, Worlds, account, package, principal,
+    resource,
 };
 use lending_guest::lending::Error;
 use lending_guest::lending::client::{Lending, Terms};
@@ -23,22 +24,25 @@ fn growth() -> Fixed<lending_guest::lending::Share, lending_guest::lending::Shar
 
 /// A market at half loan-to-value, liquidating past four fifths, funded
 /// with debt to lend and a borrower holding collateral.
-fn market(mut chain: Chain) -> (Chain, Lending) {
-    chain.publish(package!(lending_guest::lending));
-    let market = chain.instantiate::<Lending>(
-        BORROWER,
-        Terms {
-            collateral: COLLATERAL,
-            debt: DEBT,
-            oracle: ORACLE.into(),
-            ltv: UnitFixed::percent(50).expect("a half is under one"),
-            liquidation_threshold: UnitFixed::percent(80).expect("four fifths is under one"),
-            growth_per_period: growth(),
-        },
-    );
-    chain.credit(BORROWER, COLLATERAL, 10_000);
-    chain.credit(market, DEBT, 10_000);
-    (chain, market)
+fn market(chain: &mut Chain) -> Lending {
+    static WORLDS: Worlds<Lending> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(lending_guest::lending));
+        let market = chain.instantiate::<Lending>(
+            BORROWER,
+            Terms {
+                collateral: COLLATERAL,
+                debt: DEBT,
+                oracle: ORACLE.into(),
+                ltv: UnitFixed::percent(50).expect("a half is under one"),
+                liquidation_threshold: UnitFixed::percent(80).expect("four fifths is under one"),
+                growth_per_period: growth(),
+            },
+        );
+        chain.credit(BORROWER, COLLATERAL, 10_000);
+        chain.credit(market, DEBT, 10_000);
+        market
+    })
 }
 
 /// A rate at `scaled`, which is what the slot the price lands in holds.
@@ -71,10 +75,10 @@ fn open(chain: &mut Chain, market: Lending, posted: u128, drawn: u128, now: u64)
 
 /// A position posts collateral and draws debt against it.
 #[hyperscale_vm_testing::test]
-fn a_position_borrows_against_its_collateral(chain: Chain) {
-    let (mut chain, market) = market(chain);
-    price(&mut chain, market, 2 * ONE, ONE);
-    open(&mut chain, market, 1_000, 500, 0);
+fn a_position_borrows_against_its_collateral(chain: &mut Chain) {
+    let market = market(chain);
+    price(chain, market, 2 * ONE, ONE);
+    open(chain, market, 1_000, 500, 0);
 
     assert_eq!(chain.balance(market, COLLATERAL), 1_000);
     assert_eq!(chain.balance(BORROWER, DEBT), 500);
@@ -86,9 +90,9 @@ fn a_position_borrows_against_its_collateral(chain: Chain) {
 /// A thousand of collateral at two is two thousand of backing, and half
 /// of that is a thousand of debt at one. Eleven hundred is over.
 #[hyperscale_vm_testing::test]
-fn a_draw_past_the_ratio_is_refused(chain: Chain) {
-    let (mut chain, market) = market(chain);
-    price(&mut chain, market, 2 * ONE, ONE);
+fn a_draw_past_the_ratio_is_refused(chain: &mut Chain) {
+    let market = market(chain);
+    price(chain, market, 2 * ONE, ONE);
 
     let outcome = chain.transact(BORROWER, |b| {
         let funds = account::withdraw(b, BORROWER, COLLATERAL, 1_000)?;
@@ -105,9 +109,9 @@ fn a_draw_past_the_ratio_is_refused(chain: Chain) {
 /// A draw against an index nobody carried is refused rather than priced
 /// off a stale number.
 #[hyperscale_vm_testing::test]
-fn a_draw_against_a_stale_index_is_refused(chain: Chain) {
-    let (mut chain, market) = market(chain);
-    price(&mut chain, market, 2 * ONE, ONE);
+fn a_draw_against_a_stale_index_is_refused(chain: &mut Chain) {
+    let market = market(chain);
+    price(chain, market, 2 * ONE, ONE);
 
     let outcome = chain.transact(BORROWER, |b| {
         let funds = account::withdraw(b, BORROWER, COLLATERAL, 1_000)?;
@@ -127,8 +131,8 @@ fn a_draw_against_a_stale_index_is_refused(chain: Chain) {
 /// the compose site, before anything is signed. Not a decline either
 /// way: a decline is a body's own verdict, and no body ran.
 #[hyperscale_vm_testing::test]
-fn only_the_oracle_may_post_a_price(chain: Chain) {
-    let (mut chain, market) = market(chain);
+fn only_the_oracle_may_post_a_price(chain: &mut Chain) {
+    let market = market(chain);
 
     let refused = chain
         .try_transact(KEEPER, |b| market.post_price(b, rate(ONE), rate(ONE)))
@@ -146,10 +150,10 @@ fn only_the_oracle_may_post_a_price(chain: Chain) {
 /// A covered position is not liquidatable, however much a keeper wants
 /// it to be.
 #[hyperscale_vm_testing::test]
-fn a_covered_position_cannot_be_liquidated(chain: Chain) {
-    let (mut chain, market) = market(chain);
-    price(&mut chain, market, 2 * ONE, ONE);
-    open(&mut chain, market, 1_000, 500, 0);
+fn a_covered_position_cannot_be_liquidated(chain: &mut Chain) {
+    let market = market(chain);
+    price(chain, market, 2 * ONE, ONE);
+    open(chain, market, 1_000, 500, 0);
 
     let outcome = chain.transact(KEEPER, |b| {
         market.accrue(b, 0u64)?;
@@ -169,11 +173,11 @@ fn a_covered_position_cannot_be_liquidated(chain: Chain) {
 /// a half it owes it all — past the four fifths the market liquidates
 /// at.
 #[hyperscale_vm_testing::test]
-fn a_price_fall_makes_a_position_liquidatable(chain: Chain) {
-    let (mut chain, market) = market(chain);
-    price(&mut chain, market, 2 * ONE, ONE);
-    open(&mut chain, market, 1_000, 500, 0);
-    price(&mut chain, market, ONE / 2, ONE);
+fn a_price_fall_makes_a_position_liquidatable(chain: &mut Chain) {
+    let market = market(chain);
+    price(chain, market, 2 * ONE, ONE);
+    open(chain, market, 1_000, 500, 0);
+    price(chain, market, ONE / 2, ONE);
 
     chain
         .transact(KEEPER, |b| {
@@ -198,8 +202,8 @@ fn a_price_fall_makes_a_position_liquidatable(chain: Chain) {
 /// compound across. Every borrowing path composes an accrual anyway, so
 /// the anchor costs a caller nothing it was not already writing.
 #[hyperscale_vm_testing::test]
-fn the_index_compounds_over_the_span_it_carries(chain: Chain) {
-    let (mut chain, market) = market(chain);
+fn the_index_compounds_over_the_span_it_carries(chain: &mut Chain) {
+    let market = market(chain);
 
     let outcome = chain.transact(BORROWER, |b| {
         market.accrue(b, 0u64)?;
@@ -227,8 +231,8 @@ fn the_index_compounds_over_the_span_it_carries(chain: Chain) {
 /// index is a function of how it was reached and not only of the span it
 /// covers, which is a property to pin rather than to discover.
 #[hyperscale_vm_testing::test]
-fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: Chain) {
-    let (mut chain, stepwise) = market(chain);
+fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: &mut Chain) {
+    let stepwise = market(chain);
 
     let outcome = chain.transact(BORROWER, |b| {
         stepwise.accrue(b, 0u64)?;
@@ -240,7 +244,8 @@ fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: Chain) {
     outcome.expect_completed();
     let stepped = outcome.answer().expect("an index this size fits");
 
-    let (mut chain, oneshot) = market(chain);
+    // Reopening the world resets it: the same market, nothing accrued.
+    let oneshot = market(chain);
     let outcome = chain.transact(BORROWER, |b| {
         oneshot.accrue(b, 0u64)?;
         oneshot.accrue(b, 100u64)?;
@@ -265,8 +270,8 @@ fn carrying_the_index_step_by_step_is_not_carrying_it_once(chain: Chain) {
 /// would have had to spend a period to say so, and period zero is one this
 /// market's borrowers use.
 #[hyperscale_vm_testing::test]
-fn a_market_nobody_accrued_anchors_rather_than_compounding(chain: Chain) {
-    let (mut chain, market) = market(chain);
+fn a_market_nobody_accrued_anchors_rather_than_compounding(chain: &mut Chain) {
+    let market = market(chain);
 
     let outcome = chain.transact(BORROWER, |b| {
         market.accrue(b, 1_750_000_000_000u64)?;
@@ -289,11 +294,11 @@ fn a_market_nobody_accrued_anchors_rather_than_compounding(chain: Chain) {
 /// thousand of collateral at a two-thousandth is worth half a subunit,
 /// which floors to nothing while still being a price somebody posted.
 #[hyperscale_vm_testing::test]
-fn a_position_whose_backing_rounds_away_is_liquidatable(chain: Chain) {
-    let (mut chain, market) = market(chain);
-    price(&mut chain, market, 2 * ONE, ONE);
-    open(&mut chain, market, 1_000, 500, 0);
-    price(&mut chain, market, ONE / 2_000, ONE);
+fn a_position_whose_backing_rounds_away_is_liquidatable(chain: &mut Chain) {
+    let market = market(chain);
+    price(chain, market, 2 * ONE, ONE);
+    open(chain, market, 1_000, 500, 0);
+    price(chain, market, ONE / 2_000, ONE);
 
     chain
         .transact(KEEPER, |b| {

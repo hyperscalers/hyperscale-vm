@@ -1,8 +1,8 @@
 //! The share vault's own tests, against the real kernel.
 
 use hyperscale_vm_testing::{
-    AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, ResourceKind, account, package,
-    principal, resource,
+    AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, ResourceKind, Worlds, account,
+    package, principal, resource,
 };
 use shares_guest::shares::client::{Settings, Shares};
 
@@ -13,12 +13,15 @@ const ASSET: ResourceAddr = resource(0xA1);
 const OTHER: ResourceAddr = resource(0xA2);
 
 /// An empty vault, with Alice and Mallory each holding assets.
-fn vault(mut chain: Chain) -> (Chain, Shares) {
-    chain.publish(package!(shares_guest::shares));
-    let vault = chain.instantiate::<Shares>(ALICE, Settings { asset: ASSET });
-    chain.credit(ALICE, ASSET, 10_000);
-    chain.credit(MALLORY, ASSET, 10_000);
-    (chain, vault)
+fn vault(chain: &mut Chain) -> Shares {
+    static WORLDS: Worlds<Shares> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(shares_guest::shares));
+        let vault = chain.instantiate::<Shares>(ALICE, Settings { asset: ASSET });
+        chain.credit(ALICE, ASSET, 10_000);
+        chain.credit(MALLORY, ASSET, 10_000);
+        vault
+    })
 }
 
 /// Deposit `amount` for `who`, keeping the shares in their account.
@@ -35,28 +38,28 @@ fn deposit(chain: &mut Chain, vault: Shares, who: PrincipalAddr, amount: u128) {
 /// The first depositor prices a share at par, because nothing else can be
 /// priced against an empty pool.
 #[hyperscale_vm_testing::test]
-fn the_first_deposit_mints_at_par(chain: Chain) {
-    let (mut chain, vault) = vault(chain);
-    deposit(&mut chain, vault, ALICE, 1_000);
+fn the_first_deposit_mints_at_par(chain: &mut Chain) {
+    let vault = vault(chain);
+    deposit(chain, vault, ALICE, 1_000);
     assert_eq!(chain.balance(vault, ASSET), 1_000);
 }
 
 /// A second depositor into an unchanged pool gets the same rate, and the
 /// pool holds both stakes.
 #[hyperscale_vm_testing::test]
-fn a_later_deposit_prices_against_the_pool(chain: Chain) {
-    let (mut chain, vault) = vault(chain);
-    deposit(&mut chain, vault, ALICE, 1_000);
-    deposit(&mut chain, vault, MALLORY, 500);
+fn a_later_deposit_prices_against_the_pool(chain: &mut Chain) {
+    let vault = vault(chain);
+    deposit(chain, vault, ALICE, 1_000);
+    deposit(chain, vault, MALLORY, 500);
     assert_eq!(chain.balance(vault, ASSET), 1_500);
 }
 
 /// Round-tripping the whole position returns the whole stake: with one
 /// holder and no growth, redeeming every share is redeeming everything.
 #[hyperscale_vm_testing::test]
-fn redeeming_every_share_returns_every_asset(chain: Chain) {
-    let (mut chain, vault) = vault(chain);
-    deposit(&mut chain, vault, ALICE, 1_000);
+fn redeeming_every_share_returns_every_asset(chain: &mut Chain) {
+    let vault = vault(chain);
+    deposit(chain, vault, ALICE, 1_000);
 
     let shares = chain.issues(vault, ResourceKind::Fungible, shares_guest::shares::UNIT);
     chain
@@ -90,19 +93,19 @@ fn redeeming_every_share_returns_every_asset(chain: Chain) {
 /// [`a_deposit_of_a_foreign_resource_is_refused`] is where that is
 /// stated.
 #[hyperscale_vm_testing::test]
-fn there_is_no_path_that_grows_assets_without_minting_shares(chain: Chain) {
-    let (mut chain, vault) = vault(chain);
+fn there_is_no_path_that_grows_assets_without_minting_shares(chain: &mut Chain) {
+    let vault = vault(chain);
 
     // Mallory takes the first position, as small as one gets.
-    deposit(&mut chain, vault, MALLORY, 1);
+    deposit(chain, vault, MALLORY, 1);
 
     // And tries to inflate the share price. The only way in is `deposit`,
     // which mints against it.
-    deposit(&mut chain, vault, MALLORY, 9_000);
+    deposit(chain, vault, MALLORY, 9_000);
 
     // Alice deposits after the "donation" and mints a real position
     // rather than rounding to nothing.
-    deposit(&mut chain, vault, ALICE, 1_000);
+    deposit(chain, vault, ALICE, 1_000);
 
     // She can redeem it for substantially what she put in. The subunit
     // the pool keeps on the way in and on the way out is the whole of
@@ -137,9 +140,9 @@ fn there_is_no_path_that_grows_assets_without_minting_shares(chain: Chain) {
 /// computed against while minting against nothing, which is the donation
 /// the method set was supposed to have ruled out.
 #[hyperscale_vm_testing::test]
-fn a_deposit_of_a_foreign_resource_is_refused(chain: Chain) {
-    let (mut chain, vault) = vault(chain);
-    deposit(&mut chain, vault, ALICE, 1_000);
+fn a_deposit_of_a_foreign_resource_is_refused(chain: &mut Chain) {
+    let vault = vault(chain);
+    deposit(chain, vault, ALICE, 1_000);
     chain.credit(MALLORY, OTHER, 5_000);
 
     let refused = chain.try_transact(MALLORY, |b| {

@@ -21,7 +21,7 @@ const ONE: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;
 ///
 /// A world per side: the side is creation-fixed, so a long market and a
 /// short one are two instances rather than one reconfigured.
-fn market(chain: Chain, long: bool) -> (Chain, Perp) {
+fn market(chain: &mut Chain, long: bool) -> Perp {
     static LONGS: Worlds<Perp> = Worlds::new();
     static SHORTS: Worlds<Perp> = Worlds::new();
     let worlds = if long { &LONGS } else { &SHORTS };
@@ -74,11 +74,11 @@ fn close(chain: &mut Chain, market: Perp) {
 
 /// A long that closes where it opened gets its margin back.
 #[hyperscale_vm_testing::test]
-fn a_position_closed_at_its_entry_returns_the_margin(chain: Chain) {
-    let (mut chain, market) = market(chain, true);
-    mark(&mut chain, market, 2 * ONE);
-    open(&mut chain, market, 1_000, 100);
-    close(&mut chain, market);
+fn a_position_closed_at_its_entry_returns_the_margin(chain: &mut Chain) {
+    let market = market(chain, true);
+    mark(chain, market, 2 * ONE);
+    open(chain, market, 1_000, 100);
+    close(chain, market);
 
     assert_eq!(chain.balance(TRADER, COLLATERAL), 10_000);
 }
@@ -86,12 +86,12 @@ fn a_position_closed_at_its_entry_returns_the_margin(chain: Chain) {
 /// A long profits when the mark rises: a hundred base from two to three
 /// is a hundred of quote.
 #[hyperscale_vm_testing::test]
-fn a_long_gains_what_the_mark_rose(chain: Chain) {
-    let (mut chain, market) = market(chain, true);
-    mark(&mut chain, market, 2 * ONE);
-    open(&mut chain, market, 1_000, 100);
-    mark(&mut chain, market, 3 * ONE);
-    close(&mut chain, market);
+fn a_long_gains_what_the_mark_rose(chain: &mut Chain) {
+    let market = market(chain, true);
+    mark(chain, market, 2 * ONE);
+    open(chain, market, 1_000, 100);
+    mark(chain, market, 3 * ONE);
+    close(chain, market);
 
     assert_eq!(chain.balance(TRADER, COLLATERAL), 10_100);
 }
@@ -99,12 +99,12 @@ fn a_long_gains_what_the_mark_rose(chain: Chain) {
 /// And the same move is the short's loss, which is the same sentence the
 /// other way round.
 #[hyperscale_vm_testing::test]
-fn a_short_loses_what_the_mark_rose(chain: Chain) {
-    let (mut chain, market) = market(chain, false);
-    mark(&mut chain, market, 2 * ONE);
-    open(&mut chain, market, 1_000, 100);
-    mark(&mut chain, market, 3 * ONE);
-    close(&mut chain, market);
+fn a_short_loses_what_the_mark_rose(chain: &mut Chain) {
+    let market = market(chain, false);
+    mark(chain, market, 2 * ONE);
+    open(chain, market, 1_000, 100);
+    mark(chain, market, 3 * ONE);
+    close(chain, market);
 
     assert_eq!(chain.balance(TRADER, COLLATERAL), 9_900);
 }
@@ -116,10 +116,10 @@ fn a_short_loses_what_the_mark_rose(chain: Chain) {
 /// figure ends at two tenths the other way, so a long that paid at first
 /// is net paid twenty of quote on a hundred base.
 #[hyperscale_vm_testing::test]
-fn funding_that_flips_sign_settles_the_net(chain: Chain) {
-    let (mut chain, market) = market(chain, true);
-    mark(&mut chain, market, 2 * ONE);
-    open(&mut chain, market, 1_000, 100);
+fn funding_that_flips_sign_settles_the_net(chain: &mut Chain) {
+    let market = market(chain, true);
+    mark(chain, market, 2 * ONE);
+    open(chain, market, 1_000, 100);
 
     chain
         .transact(ORACLE, |b| {
@@ -127,7 +127,7 @@ fn funding_that_flips_sign_settles_the_net(chain: Chain) {
             market.credit_longs(b, rate(3 * ONE / 10))
         })
         .expect_completed();
-    close(&mut chain, market);
+    close(chain, market);
 
     assert_eq!(chain.balance(TRADER, COLLATERAL), 10_020);
 }
@@ -139,8 +139,8 @@ fn funding_that_flips_sign_settles_the_net(chain: Chain) {
 /// admission judges — so a keeper who is not the oracle is refused at
 /// the compose site, before anything is signed.
 #[hyperscale_vm_testing::test]
-fn only_the_oracle_may_mark(chain: Chain) {
-    let (mut chain, market) = market(chain, true);
+fn only_the_oracle_may_mark(chain: &mut Chain) {
+    let market = market(chain, true);
 
     let refused = chain
         .try_transact(KEEPER, |b| {
@@ -167,11 +167,11 @@ fn only_the_oracle_may_mark(chain: Chain) {
 /// eleven tenths the long has lost ninety, leaving ten against a
 /// maintenance requirement of eleven.
 #[hyperscale_vm_testing::test]
-fn a_position_under_maintenance_is_liquidated(chain: Chain) {
-    let (mut chain, market) = market(chain, true);
-    mark(&mut chain, market, 2 * ONE);
-    open(&mut chain, market, 100, 100);
-    mark(&mut chain, market, 11 * ONE / 10);
+fn a_position_under_maintenance_is_liquidated(chain: &mut Chain) {
+    let market = market(chain, true);
+    mark(chain, market, 2 * ONE);
+    open(chain, market, 100, 100);
+    mark(chain, market, 11 * ONE / 10);
 
     chain
         .transact(KEEPER, |b| {
@@ -189,10 +189,10 @@ fn a_position_under_maintenance_is_liquidated(chain: Chain) {
 
 /// A covered position is not seizable.
 #[hyperscale_vm_testing::test]
-fn a_covered_position_is_not_liquidated(chain: Chain) {
-    let (mut chain, market) = market(chain, true);
-    mark(&mut chain, market, 2 * ONE);
-    open(&mut chain, market, 1_000, 100);
+fn a_covered_position_is_not_liquidated(chain: &mut Chain) {
+    let market = market(chain, true);
+    mark(chain, market, 2 * ONE);
+    open(chain, market, 1_000, 100);
 
     let outcome = chain.transact(KEEPER, |b| {
         let seized = market.liquidate(b)?;
@@ -209,9 +209,9 @@ fn a_covered_position_is_not_liquidated(chain: Chain) {
 /// a size of zero opened nothing, banked the margin, and left `close`
 /// declining against a market that held it.
 #[hyperscale_vm_testing::test]
-fn a_position_of_no_size_is_refused(chain: Chain) {
-    let (mut chain, market) = market(chain, true);
-    mark(&mut chain, market, 2 * ONE);
+fn a_position_of_no_size_is_refused(chain: &mut Chain) {
+    let market = market(chain, true);
+    mark(chain, market, 2 * ONE);
 
     let outcome = chain.transact(TRADER, |b| {
         let funds = account::withdraw(b, TRADER, COLLATERAL, 1_000)?;
@@ -233,10 +233,10 @@ fn a_position_of_no_size_is_refused(chain: Chain) {
 /// declaration's refusal rather than a check the body performs — which is
 /// why it reads as a refusal and not as a decline.
 #[hyperscale_vm_testing::test]
-fn a_market_holding_a_position_takes_no_other(chain: Chain) {
-    let (mut chain, market) = market(chain, true);
-    mark(&mut chain, market, 2 * ONE);
-    open(&mut chain, market, 1_000, 100);
+fn a_market_holding_a_position_takes_no_other(chain: &mut Chain) {
+    let market = market(chain, true);
+    mark(chain, market, 2 * ONE);
+    open(chain, market, 1_000, 100);
 
     let outcome = chain.transact(TRADER, |b| {
         let funds = account::withdraw(b, TRADER, COLLATERAL, 1_000)?;
@@ -255,13 +255,13 @@ fn a_market_holding_a_position_takes_no_other(chain: Chain) {
 /// What `retire` buys: presence can say a thing stopped being true, so
 /// the same market opens again rather than being a one-way door.
 #[hyperscale_vm_testing::test]
-fn a_closed_market_opens_again(chain: Chain) {
-    let (mut chain, market) = market(chain, true);
-    mark(&mut chain, market, 2 * ONE);
-    open(&mut chain, market, 1_000, 100);
-    close(&mut chain, market);
-    open(&mut chain, market, 1_000, 100);
-    close(&mut chain, market);
+fn a_closed_market_opens_again(chain: &mut Chain) {
+    let market = market(chain, true);
+    mark(chain, market, 2 * ONE);
+    open(chain, market, 1_000, 100);
+    close(chain, market);
+    open(chain, market, 1_000, 100);
+    close(chain, market);
 
     assert_eq!(chain.balance(TRADER, COLLATERAL), 10_000);
 }
@@ -273,11 +273,11 @@ fn a_closed_market_opens_again(chain: Chain) {
 /// hundred base: the position owes 34 and is owed 33, so it settles a
 /// subunit down on a wash. Netting first would have made both zero.
 #[hyperscale_vm_testing::test]
-fn the_two_directions_of_funding_round_apart(chain: Chain) {
+fn the_two_directions_of_funding_round_apart(chain: &mut Chain) {
     let a_third = ONE / 3;
-    let (mut chain, market) = market(chain, true);
-    mark(&mut chain, market, 2 * ONE);
-    open(&mut chain, market, 1_000, 100);
+    let market = market(chain, true);
+    mark(chain, market, 2 * ONE);
+    open(chain, market, 1_000, 100);
 
     chain
         .transact(ORACLE, |b| {
@@ -285,7 +285,7 @@ fn the_two_directions_of_funding_round_apart(chain: Chain) {
             market.credit_longs(b, rate(a_third))
         })
         .expect_completed();
-    close(&mut chain, market);
+    close(chain, market);
 
     assert_eq!(
         chain.balance(TRADER, COLLATERAL),

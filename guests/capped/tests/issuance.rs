@@ -8,7 +8,7 @@
 use capped_guest::capped;
 use hyperscale_vm_testing::{
     Address, AddressClass, AdmissionError, Chain, GrantedBehaviour, PrincipalAddr, Refused,
-    ResourceAddr, TestHasher, account, package, principal,
+    ResourceAddr, TestHasher, Worlds, account, package, principal,
 };
 
 const FOUNDER: PrincipalAddr = principal(0x91);
@@ -22,10 +22,12 @@ const fn terms() -> capped::client::Terms {
     }
 }
 
-fn world(mut chain: Chain) -> (Chain, capped::client::Capped) {
-    chain.publish(package!(capped_guest::capped));
-    let instance = chain.instantiate::<capped::client::Capped>(FOUNDER, terms());
-    (chain, instance)
+fn world(chain: &mut Chain) -> capped::client::Capped {
+    static WORLDS: Worlds<capped::client::Capped> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(capped_guest::capped));
+        chain.instantiate::<capped::client::Capped>(FOUNDER, terms())
+    })
 }
 
 /// A component founds every resource its declaration states a supply
@@ -35,8 +37,8 @@ fn world(mut chain: Chain) -> (Chain, capped::client::Capped) {
 /// reach: the founder walks away holding both, and neither has an entry
 /// admitting a later mint.
 #[hyperscale_vm_testing::test]
-fn a_bring_up_founds_every_supply_its_package_states(chain: Chain) {
-    let (chain, instance) = world(chain);
+fn a_bring_up_founds_every_supply_its_package_states(chain: &mut Chain) {
+    let instance = world(chain);
     let fixed = instance.issued_founded(&TestHasher);
     let retired = instance.issued_retired(&TestHasher);
 
@@ -56,8 +58,8 @@ fn a_bring_up_founds_every_supply_its_package_states(chain: Chain) {
 /// authority entry withholds a capability rather than stopping a
 /// movement anyone could otherwise make.
 #[hyperscale_vm_testing::test]
-fn a_founded_supply_grants_no_mint_and_restricts_no_movement(chain: Chain) {
-    let (_, instance) = world(chain);
+fn a_founded_supply_grants_no_mint_and_restricts_no_movement(chain: &mut Chain) {
+    let instance = world(chain);
     let class = |resource: ResourceAddr| Address::from(resource).class();
 
     for resource in [
@@ -77,8 +79,8 @@ fn a_founded_supply_grants_no_mint_and_restricts_no_movement(chain: Chain) {
 /// Burning without minting: the two entries are independent, so a
 /// supply can be destroyed by an authority that could never create it.
 #[hyperscale_vm_testing::test]
-fn a_deflationary_supply_only_ever_falls(chain: Chain) {
-    let (mut chain, instance) = world(chain);
+fn a_deflationary_supply_only_ever_falls(chain: &mut Chain) {
+    let instance = world(chain);
     let retired = instance.issued_retired(&TestHasher);
 
     chain
@@ -99,8 +101,8 @@ fn a_deflationary_supply_only_ever_falls(chain: Chain) {
 /// the transaction presents — so the account, which declares nothing
 /// about any resource, is bound by whatever the issuer wrote.
 #[hyperscale_vm_testing::test]
-fn a_holder_destroys_what_the_resource_lets_them(chain: Chain) {
-    let (mut chain, instance) = world(chain);
+fn a_holder_destroys_what_the_resource_lets_them(chain: &mut Chain) {
+    let instance = world(chain);
     let circulating = instance.issued_circulating(&TestHasher);
 
     chain
@@ -120,8 +122,8 @@ fn a_holder_destroys_what_the_resource_lets_them(chain: Chain) {
 /// declares the destruction and the resource declines it, which is the
 /// same shape as a movement seam refusal read from the authority side.
 #[hyperscale_vm_testing::test]
-fn a_resource_granting_no_burn_is_indestructible(chain: Chain) {
-    let (mut chain, instance) = world(chain);
+fn a_resource_granting_no_burn_is_indestructible(chain: &mut Chain) {
+    let instance = world(chain);
     let fixed = instance.issued_founded(&TestHasher);
 
     let refused = chain.try_transact(FOUNDER, |b| {
@@ -150,8 +152,8 @@ fn a_resource_granting_no_burn_is_indestructible(chain: Chain) {
 /// apply here, and the requirement reaches the call. The package's code
 /// is the same code either way; what changed is who the entry names.
 #[hyperscale_vm_testing::test]
-fn a_seat_is_minted_by_whoever_the_entry_names(chain: Chain) {
-    let (mut chain, instance) = world(chain);
+fn a_seat_is_minted_by_whoever_the_entry_names(chain: &mut Chain) {
+    let instance = world(chain);
     let seat = instance.issued_seat(&TestHasher, terms());
 
     chain
@@ -169,8 +171,8 @@ fn a_seat_is_minted_by_whoever_the_entry_names(chain: Chain) {
 /// what they do not hold is the seat's minting entry, which is a fact
 /// about the resource rather than about the package that issues it.
 #[hyperscale_vm_testing::test]
-fn the_issuers_own_founder_cannot_spend_the_mint_it_delegated(chain: Chain) {
-    let (mut chain, instance) = world(chain);
+fn the_issuers_own_founder_cannot_spend_the_mint_it_delegated(chain: &mut Chain) {
+    let instance = world(chain);
     let seat = instance.issued_seat(&TestHasher, terms());
 
     let refused = chain.try_transact(FOUNDER, |b| {
@@ -194,8 +196,8 @@ fn the_issuers_own_founder_cannot_spend_the_mint_it_delegated(chain: Chain) {
 /// whole difference. `Circulating` names anyone and `Retired` names the
 /// issuing instance, which no account can answer for.
 #[hyperscale_vm_testing::test]
-fn a_holder_destroys_nothing_whose_burn_names_its_issuer(chain: Chain) {
-    let (mut chain, instance) = world(chain);
+fn a_holder_destroys_nothing_whose_burn_names_its_issuer(chain: &mut Chain) {
+    let instance = world(chain);
     let retired = instance.issued_retired(&TestHasher);
 
     let refused = chain.try_transact(FOUNDER, |b| {

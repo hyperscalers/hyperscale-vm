@@ -18,8 +18,8 @@
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_testing::{
-    Chain, Outcome, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition, account,
-    address_text, package, principal,
+    Chain, Outcome, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition, Worlds,
+    account, address_text, package, principal,
 };
 use security_guest::security;
 
@@ -38,26 +38,29 @@ const fn terms() -> security::client::Terms {
 
 /// A world where both parties are on the register and the holder has
 /// shares.
-fn world(mut chain: Chain) -> (Chain, security::client::Security, ResourceAddr) {
-    chain.publish(package!(security_guest::security));
-    let issuer = chain.instantiate::<security::client::Security>(REGISTRAR, terms());
-    let share = issuer.issued_share(&TestHasher, terms());
+fn world(chain: &mut Chain) -> (security::client::Security, ResourceAddr) {
+    static WORLDS: Worlds<(security::client::Security, ResourceAddr)> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(security_guest::security));
+        let issuer = chain.instantiate::<security::client::Security>(REGISTRAR, terms());
+        let share = issuer.issued_share(&TestHasher, terms());
 
-    for (id, who) in [(1u64, HOLDER), (2, OTHER)] {
+        for (id, who) in [(1u64, HOLDER), (2, OTHER)] {
+            chain
+                .transact(REGISTRAR, |b| {
+                    let entry = issuer.register(b, id)?;
+                    account::deposit_nf(b, who, entry)
+                })
+                .expect_completed();
+        }
         chain
             .transact(REGISTRAR, |b| {
-                let entry = issuer.register(b, id)?;
-                account::deposit_nf(b, who, entry)
+                let shares = issuer.issue(b, 100u128)?;
+                account::deposit(b, HOLDER, shares)
             })
             .expect_completed();
-    }
-    chain
-        .transact(REGISTRAR, |b| {
-            let shares = issuer.issue(b, 100u128)?;
-            account::deposit(b, HOLDER, shares)
-        })
-        .expect_completed();
-    (chain, issuer, share)
+        (issuer, share)
+    })
 }
 
 /// A registered holder moves the share class freely, and stops the
@@ -67,8 +70,8 @@ fn world(mut chain: Chain) -> (Chain, security::client::Security, ResourceAddr) 
 /// holder never called, and read by a declaration the holder's account
 /// never wrote. Neither party cooperated; both are bound.
 #[hyperscale_vm_testing::test]
-fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
-    let (mut chain, issuer, share) = world(chain);
+fn a_halt_stops_a_holder_who_was_moving_freely(chain: &mut Chain) {
+    let (issuer, share) = world(chain);
 
     let transfer = |chain: &mut Chain| {
         chain.try_transact(HOLDER, |b| {
@@ -77,7 +80,7 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
         })
     };
 
-    transfer(&mut chain)
+    transfer(&mut *chain)
         .expect("a registered holder moves it")
         .expect_completed();
     assert_eq!(chain.balance(HOLDER, share), 90);
@@ -97,7 +100,7 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
     // Admitted and then refused: a halt is a standing fact about the
     // holder, so it is read from committed state before any body runs
     // rather than answered from the signed form.
-    let refused = transfer(&mut chain).expect("a halt is not a reason to refuse the manifest");
+    let refused = transfer(&mut *chain).expect("a halt is not a reason to refuse the manifest");
     assert!(
         matches!(
             refused.refused(),
@@ -137,7 +140,7 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
             b.presenting(registrar, |b| issuer.unhalt(b, HOLDER.address()))
         })
         .expect_completed();
-    transfer(&mut chain)
+    transfer(&mut *chain)
         .expect("the manifest still admits")
         .expect_completed();
     assert_eq!(
@@ -163,8 +166,8 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
 /// of those requirements would fire against the party being reached,
 /// who by construction fails it.
 #[hyperscale_vm_testing::test]
-fn a_recall_reaches_past_every_rule_the_resource_carries(chain: Chain) {
-    let (mut chain, issuer, share) = world(chain);
+fn a_recall_reaches_past_every_rule_the_resource_carries(chain: &mut Chain) {
+    let (issuer, share) = world(chain);
     let entry = issuer.issued_registered(&TestHasher, terms());
     // Two slots, because a holder keeps the two in different cells: the
     // share class is a balance and the register entry is an interval, so
@@ -268,10 +271,9 @@ mod sovereign {
 /// could never exercise. The subtraction is the same one an issuance and
 /// a destruction get, and it reproduces the derivation gate: being the
 /// executing instance is one way a rule admits you.
-#[test]
-fn an_issuer_whose_entry_names_itself_reaches_presenting_nothing() {
+#[hyperscale_vm_testing::test(native)]
+fn an_issuer_whose_entry_names_itself_reaches_presenting_nothing(chain: &mut Chain) {
     let holder = principal(0xA7);
-    let mut chain = Chain::native();
     chain.publish(package!(sovereign));
     let issuer = chain.instantiate::<sovereign::client::Sovereign>(REGISTRAR, ());
     let note = issuer.issued_note(&TestHasher);

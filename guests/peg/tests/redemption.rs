@@ -2,7 +2,8 @@
 
 use hyperscale_vm_sdk::state::{Fixed, Quantity, Sign, SignedFixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, Refused, ResourceAddr, TypedError, account, package, principal, resource,
+    Chain, PrincipalAddr, Refused, ResourceAddr, TypedError, Worlds, account, package, principal,
+    resource,
 };
 use peg_guest::peg::client::{Peg, Terms};
 use peg_guest::peg::{Error, Reserve, Stable};
@@ -23,20 +24,23 @@ fn deviation(scaled: u128, way: Sign) -> SignedFixed<Reserve, Stable> {
 }
 
 /// A window quoting within a tenth of parity, funded to pay out.
-fn window(mut chain: Chain) -> (Chain, Peg) {
-    chain.publish(package!(peg_guest::peg));
-    let window = chain.instantiate::<Peg>(
-        HOLDER,
-        Terms {
-            stable: STABLE,
-            reserve: RESERVE,
-            oracle: ORACLE.into(),
-            band: UnitFixed::percent(10).expect("a tenth is under one"),
-        },
-    );
-    chain.credit(HOLDER, STABLE, 10_000);
-    chain.credit(window, RESERVE, 10_000);
-    (chain, window)
+fn window(chain: &mut Chain) -> Peg {
+    static WORLDS: Worlds<Peg> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(peg_guest::peg));
+        let window = chain.instantiate::<Peg>(
+            HOLDER,
+            Terms {
+                stable: STABLE,
+                reserve: RESERVE,
+                oracle: ORACLE.into(),
+                band: UnitFixed::percent(10).expect("a tenth is under one"),
+            },
+        );
+        chain.credit(HOLDER, STABLE, 10_000);
+        chain.credit(window, RESERVE, 10_000);
+        window
+    })
 }
 
 fn post(chain: &mut Chain, window: Peg, scaled: u128, way: Sign) {
@@ -62,9 +66,9 @@ fn redeem(chain: &mut Chain, window: Peg, amount: u128) {
 /// and zero is the price this market starts at rather than a state its
 /// bodies have to special-case.
 #[hyperscale_vm_testing::test]
-fn an_unpriced_window_redeems_at_parity(chain: Chain) {
-    let (mut chain, window) = window(chain);
-    redeem(&mut chain, window, 1_000);
+fn an_unpriced_window_redeems_at_parity(chain: &mut Chain) {
+    let window = window(chain);
+    redeem(chain, window, 1_000);
 
     assert_eq!(chain.balance(HOLDER, RESERVE), 1_000);
     assert_eq!(chain.balance(window, STABLE), 1_000);
@@ -75,10 +79,10 @@ fn an_unpriced_window_redeems_at_parity(chain: Chain) {
 ///
 /// Five percent over on a thousand is fifty of reserve on top.
 #[hyperscale_vm_testing::test]
-fn a_stable_above_parity_redeems_for_more(chain: Chain) {
-    let (mut chain, window) = window(chain);
-    post(&mut chain, window, ONE / 20, Sign::Positive);
-    redeem(&mut chain, window, 1_000);
+fn a_stable_above_parity_redeems_for_more(chain: &mut Chain) {
+    let window = window(chain);
+    post(chain, window, ONE / 20, Sign::Positive);
+    redeem(chain, window, 1_000);
 
     assert_eq!(chain.balance(HOLDER, RESERVE), 1_050);
 }
@@ -86,10 +90,10 @@ fn a_stable_above_parity_redeems_for_more(chain: Chain) {
 /// And below parity, for less — which is the same sentence with the sign
 /// turned round, and the whole reason one cell holds both.
 #[hyperscale_vm_testing::test]
-fn a_stable_below_parity_redeems_for_less(chain: Chain) {
-    let (mut chain, window) = window(chain);
-    post(&mut chain, window, ONE / 20, Sign::Negative);
-    redeem(&mut chain, window, 1_000);
+fn a_stable_below_parity_redeems_for_less(chain: &mut Chain) {
+    let window = window(chain);
+    post(chain, window, ONE / 20, Sign::Negative);
+    redeem(chain, window, 1_000);
 
     assert_eq!(chain.balance(HOLDER, RESERVE), 950);
 }
@@ -103,20 +107,20 @@ fn a_stable_below_parity_redeems_for_less(chain: Chain) {
 /// the redeemer" means at each end, and it is not one rounding said
 /// twice.
 #[hyperscale_vm_testing::test]
-fn the_window_keeps_the_subunit_at_either_end(chain: Chain) {
+fn the_window_keeps_the_subunit_at_either_end(chain: &mut Chain) {
     let third_of_a_percent = ONE / 300;
-    let (mut chain, window) = window(chain);
+    let window = window(chain);
     let taken = |chain: &Chain, before: u128| chain.balance(HOLDER, RESERVE) - before;
 
-    post(&mut chain, window, third_of_a_percent, Sign::Positive);
+    post(chain, window, third_of_a_percent, Sign::Positive);
     let before = chain.balance(HOLDER, RESERVE);
-    redeem(&mut chain, window, 1_000);
-    assert_eq!(taken(&chain, before), 1_003, "the gain is floored");
+    redeem(chain, window, 1_000);
+    assert_eq!(taken(chain, before), 1_003, "the gain is floored");
 
-    post(&mut chain, window, third_of_a_percent, Sign::Negative);
+    post(chain, window, third_of_a_percent, Sign::Negative);
     let before = chain.balance(HOLDER, RESERVE);
-    redeem(&mut chain, window, 1_000);
-    assert_eq!(taken(&chain, before), 996, "and the loss is not");
+    redeem(chain, window, 1_000);
+    assert_eq!(taken(chain, before), 996, "and the loss is not");
 }
 
 /// A market that has moved past the band is one the window declines to
@@ -126,8 +130,8 @@ fn the_window_keeps_the_subunit_at_either_end(chain: Chain) {
 /// rather than accumulated: the second post is the whole of what the
 /// market knows by the time the second redemption reads it.
 #[hyperscale_vm_testing::test]
-fn a_deviation_outside_the_band_is_refused(chain: Chain) {
-    let (mut chain, window) = window(chain);
+fn a_deviation_outside_the_band_is_refused(chain: &mut Chain) {
+    let window = window(chain);
     let try_redeem = |chain: &mut Chain| {
         chain.transact(HOLDER, |b| {
             let funds = account::withdraw(b, HOLDER, STABLE, 1_000)?;
@@ -136,11 +140,11 @@ fn a_deviation_outside_the_band_is_refused(chain: Chain) {
         })
     };
 
-    post(&mut chain, window, ONE / 5, Sign::Positive);
-    try_redeem(&mut chain).expect_declined(Error::OutsideBand);
+    post(chain, window, ONE / 5, Sign::Positive);
+    try_redeem(&mut *chain).expect_declined(Error::OutsideBand);
 
-    post(&mut chain, window, ONE / 5, Sign::Negative);
-    try_redeem(&mut chain).expect_declined(Error::OutsideBand);
+    post(chain, window, ONE / 5, Sign::Negative);
+    try_redeem(&mut *chain).expect_declined(Error::OutsideBand);
 
     assert_eq!(
         chain.balance(HOLDER, STABLE),
@@ -156,8 +160,8 @@ fn a_deviation_outside_the_band_is_refused(chain: Chain) {
 /// admission judges — so a sender who is not the oracle is refused at
 /// the compose site, before anything is signed.
 #[hyperscale_vm_testing::test]
-fn only_the_oracle_may_post_a_deviation(chain: Chain) {
-    let (mut chain, window) = window(chain);
+fn only_the_oracle_may_post_a_deviation(chain: &mut Chain) {
+    let window = window(chain);
 
     let refused = chain.try_transact(HOLDER, |b| {
         window.post_deviation(b, deviation(ONE / 20, Sign::Positive))
@@ -175,15 +179,15 @@ fn only_the_oracle_may_post_a_deviation(chain: Chain) {
 /// A quote is what a redemption would pay, asked without sending
 /// anything — and the two agree because one calculation answers both.
 #[hyperscale_vm_testing::test]
-fn a_quote_is_what_a_redemption_pays(chain: Chain) {
-    let (mut chain, window) = window(chain);
-    post(&mut chain, window, ONE / 20, Sign::Negative);
+fn a_quote_is_what_a_redemption_pays(chain: &mut Chain) {
+    let window = window(chain);
+    post(chain, window, ONE / 20, Sign::Negative);
 
     let outcome = chain.transact(HOLDER, |b| window.quote(b, 1_000u128));
     outcome.expect_completed();
     assert_eq!(outcome.answer(), Quantity::from_subunits(950));
 
-    redeem(&mut chain, window, 1_000);
+    redeem(chain, window, 1_000);
     assert_eq!(
         chain.balance(HOLDER, RESERVE),
         950,
@@ -198,9 +202,9 @@ fn a_quote_is_what_a_redemption_pays(chain: Chain) {
 /// redeemer asks before signing precisely so the signing is not the
 /// surprise.
 #[hyperscale_vm_testing::test]
-fn a_quote_outside_the_band_declines_as_a_redemption_would(chain: Chain) {
-    let (mut chain, window) = window(chain);
-    post(&mut chain, window, ONE / 5, Sign::Positive);
+fn a_quote_outside_the_band_declines_as_a_redemption_would(chain: &mut Chain) {
+    let window = window(chain);
+    post(chain, window, ONE / 5, Sign::Positive);
 
     let quoted = chain.transact(HOLDER, |b| window.quote(b, 1_000u128));
     quoted.expect_declined(Error::OutsideBand);
@@ -220,8 +224,8 @@ fn a_quote_outside_the_band_declines_as_a_redemption_would(chain: Chain) {
 /// the price: within the band there is no deviation that makes a real
 /// amount fetch nothing.
 #[hyperscale_vm_testing::test]
-fn a_redemption_worth_no_reserve_is_refused(chain: Chain) {
-    let (mut chain, window) = window(chain);
+fn a_redemption_worth_no_reserve_is_refused(chain: &mut Chain) {
+    let window = window(chain);
 
     let quoted = chain.transact(HOLDER, |b| window.quote(b, 0u128));
     quoted.expect_declined(Error::NothingRedeemed);

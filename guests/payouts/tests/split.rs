@@ -2,7 +2,7 @@
 
 use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
+    Chain, PrincipalAddr, ResourceAddr, Worlds, account, package, principal, resource,
 };
 use payouts_guest::payouts::Error;
 use payouts_guest::payouts::client::{Payouts, Terms};
@@ -15,26 +15,29 @@ const ASSET: ResourceAddr = resource(0xA1);
 
 /// A splitter at a quarter, a quarter and a half — a table that claims
 /// the whole, so what is left over is only ever the truncated subunit.
-fn splitter(mut chain: Chain) -> (Chain, Payouts) {
-    chain.publish(package!(payouts_guest::payouts));
-    let splitter = chain.instantiate::<Payouts>(
-        PAYER,
-        Terms {
-            asset: ASSET,
-            protocol: UnitFixed::percent(25).expect("a quarter is under one"),
-            treasury: UnitFixed::percent(25).expect("a quarter is under one"),
-            referrer: UnitFixed::percent(50).expect("a half is under one"),
-        },
-    );
-    chain.credit(PAYER, ASSET, 10_000);
-    (chain, splitter)
+fn splitter(chain: &mut Chain) -> Payouts {
+    static WORLDS: Worlds<Payouts> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(payouts_guest::payouts));
+        let splitter = chain.instantiate::<Payouts>(
+            PAYER,
+            Terms {
+                asset: ASSET,
+                protocol: UnitFixed::percent(25).expect("a quarter is under one"),
+                treasury: UnitFixed::percent(25).expect("a quarter is under one"),
+                referrer: UnitFixed::percent(50).expect("a half is under one"),
+            },
+        );
+        chain.credit(PAYER, ASSET, 10_000);
+        splitter
+    })
 }
 
 /// A payment the table divides exactly pays every share and leaves
 /// nothing behind.
 #[hyperscale_vm_testing::test]
-fn a_payment_that_divides_pays_every_share(chain: Chain) {
-    let (mut chain, splitter) = splitter(chain);
+fn a_payment_that_divides_pays_every_share(chain: &mut Chain) {
+    let splitter = splitter(chain);
 
     chain
         .transact(PAYER, |b| {
@@ -60,8 +63,8 @@ fn a_payment_that_divides_pays_every_share(chain: Chain) {
 /// share before it left, so the subunit that will not divide is one
 /// subunit and not three.
 #[hyperscale_vm_testing::test]
-fn a_payment_that_does_not_divide_keeps_the_dust(chain: Chain) {
-    let (mut chain, splitter) = splitter(chain);
+fn a_payment_that_does_not_divide_keeps_the_dust(chain: &mut Chain) {
+    let splitter = splitter(chain);
 
     chain
         .transact(PAYER, |b| {
@@ -81,8 +84,8 @@ fn a_payment_that_does_not_divide_keeps_the_dust(chain: Chain) {
 
 /// A schedule that has to add up settles when it does.
 #[hyperscale_vm_testing::test]
-fn a_schedule_that_adds_up_settles(chain: Chain) {
-    let (mut chain, splitter) = splitter(chain);
+fn a_schedule_that_adds_up_settles(chain: &mut Chain) {
+    let splitter = splitter(chain);
 
     chain
         .transact(PAYER, |b| {
@@ -101,8 +104,8 @@ fn a_schedule_that_adds_up_settles(chain: Chain) {
 /// And refuses when it does not, rather than paying out parts that do
 /// not sum to what arrived.
 #[hyperscale_vm_testing::test]
-fn a_schedule_that_must_add_up_refuses_the_dust(chain: Chain) {
-    let (mut chain, splitter) = splitter(chain);
+fn a_schedule_that_must_add_up_refuses_the_dust(chain: &mut Chain) {
+    let splitter = splitter(chain);
 
     let outcome = chain.transact(PAYER, |b| {
         let pot = account::withdraw(b, PAYER, ASSET, 101)?;
@@ -124,8 +127,8 @@ fn a_schedule_that_must_add_up_refuses_the_dust(chain: Chain) {
 
 /// A payment is rounded down to whole lots and the change goes back.
 #[hyperscale_vm_testing::test]
-fn a_payment_is_rounded_down_to_whole_lots(chain: Chain) {
-    let (mut chain, splitter) = splitter(chain);
+fn a_payment_is_rounded_down_to_whole_lots(chain: &mut Chain) {
+    let splitter = splitter(chain);
 
     chain
         .transact(PAYER, |b| {
@@ -143,8 +146,8 @@ fn a_payment_is_rounded_down_to_whole_lots(chain: Chain) {
 /// A payment short of a single lot is refused rather than rounded to
 /// nothing.
 #[hyperscale_vm_testing::test]
-fn a_payment_short_of_one_lot_is_refused(chain: Chain) {
-    let (mut chain, splitter) = splitter(chain);
+fn a_payment_short_of_one_lot_is_refused(chain: &mut Chain) {
+    let splitter = splitter(chain);
 
     let outcome = chain.transact(PAYER, |b| {
         let pot = account::withdraw(b, PAYER, ASSET, 50)?;
@@ -163,8 +166,8 @@ fn a_payment_short_of_one_lot_is_refused(chain: Chain) {
 /// would be paid in full by the method whose whole job is to round — and
 /// `divides` already answers no to a zero step. The two agree.
 #[hyperscale_vm_testing::test]
-fn a_lot_of_nothing_is_refused(chain: Chain) {
-    let (mut chain, splitter) = splitter(chain);
+fn a_lot_of_nothing_is_refused(chain: &mut Chain) {
+    let splitter = splitter(chain);
 
     let outcome = chain.transact(PAYER, |b| {
         let pot = account::withdraw(b, PAYER, ASSET, 950)?;

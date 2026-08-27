@@ -14,7 +14,7 @@ const Y: ResourceAddr = resource(0xE2);
 /// A pool at 30 bps holding a thousand of X, and Alice with six hundred
 /// of the side she sells — everything but the Y reserve, which is the
 /// one credit the variants disagree on.
-fn seeded(chain: Chain) -> (Chain, Amm) {
+fn seeded(chain: &mut Chain) -> Amm {
     static WORLDS: Worlds<Amm> = Worlds::new();
     WORLDS.open(chain, |chain| {
         chain.publish(package!(amm_guest::amm));
@@ -33,10 +33,10 @@ fn seeded(chain: Chain) -> (Chain, Amm) {
 }
 
 /// The seeded pool holding a thousand of each side.
-fn pool(chain: Chain) -> (Chain, Amm) {
-    let (mut chain, pool) = seeded(chain);
+fn pool(chain: &mut Chain) -> Amm {
+    let pool = seeded(chain);
     chain.credit(pool, Y, 1_000);
-    (chain, pool)
+    pool
 }
 
 /// A trade moves along the constant-product curve, net of the fee.
@@ -44,8 +44,8 @@ fn pool(chain: Chain) -> (Chain, Amm) {
 /// The arithmetic is computed here rather than read off the body: 30 bps
 /// on 500 leaves 498 effective, and 1000 * 498 / 1498 is 332.
 #[hyperscale_vm_testing::test]
-fn a_swap_pays_the_curve_less_the_fee(chain: Chain) {
-    let (mut chain, pool) = pool(chain);
+fn a_swap_pays_the_curve_less_the_fee(chain: &mut Chain) {
+    let pool = pool(chain);
 
     chain
         .transact(ALICE, |b| {
@@ -65,8 +65,8 @@ fn a_swap_pays_the_curve_less_the_fee(chain: Chain) {
 /// lost a race rather than committing a defect, so the pool says so with
 /// its own error and nothing moves.
 #[hyperscale_vm_testing::test]
-fn a_floor_the_pool_cannot_reach_declines(chain: Chain) {
-    let (mut chain, pool) = pool(chain);
+fn a_floor_the_pool_cannot_reach_declines(chain: &mut Chain) {
+    let pool = pool(chain);
 
     let outcome = chain.transact(ALICE, |b| {
         let funds = account::withdraw(b, ALICE, X, 500)?;
@@ -88,8 +88,8 @@ fn a_floor_the_pool_cannot_reach_declines(chain: Chain) {
 /// bounded below one and the product is held whole inside a single
 /// division. The reserve here is the largest one there is.
 #[hyperscale_vm_testing::test]
-fn a_reserve_that_once_overflowed_the_curve_now_trades(chain: Chain) {
-    let (mut chain, pool) = seeded(chain);
+fn a_reserve_that_once_overflowed_the_curve_now_trades(chain: &mut Chain) {
+    let pool = seeded(chain);
     chain.credit(pool, Y, u128::MAX);
 
     chain

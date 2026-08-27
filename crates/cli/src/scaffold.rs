@@ -146,7 +146,7 @@ fn first_test(module: &str) -> String {
          // bodies at the speed of a function call, and the artifact a\n\
          // network would run. Neither is wrong to run; running only one is.\n\
          #[hyperscale_vm_testing::test]\n\
-         fn a_deposit_lands_in_the_vault(mut chain: Chain) {{\n\
+         fn a_deposit_lands_in_the_vault(chain: &mut Chain) {{\n\
          \x20   let alice = principal(1);\n\
          \x20   let xrd = resource(0xE1);\n\
          \n\

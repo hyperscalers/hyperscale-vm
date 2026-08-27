@@ -17,13 +17,44 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::spanned::Spanned as _;
 
+/// Which lanes a test runs on.
+#[derive(Debug)]
+pub enum Lanes {
+    /// Every engine the crate was built with — the default.
+    Both,
+    /// The bodies alone, stated: what a test of an inline or fixture
+    /// module says, so a lane never drops silently.
+    Native,
+}
+
+/// Read the attribute's lane selection.
+///
+/// # Errors
+///
+/// For anything but nothing or `native` — the wasm lane alone would
+/// hold the artifact against no reading of what the author meant.
+pub fn lanes(attr: &TokenStream2) -> syn::Result<Lanes> {
+    if attr.is_empty() {
+        return Ok(Lanes::Both);
+    }
+    let selected: syn::Ident = syn::parse2(attr.clone())?;
+    if selected == "native" {
+        return Ok(Lanes::Native);
+    }
+    Err(syn::Error::new(
+        selected.span(),
+        "the one explicit lane is `native` — both lanes are the default, and the wasm \
+         lane alone would hold the artifact against no reading of what the author meant",
+    ))
+}
+
 /// Expand one test into a body and a lane per engine.
 ///
 /// # Errors
 ///
 /// For a body that takes anything but the chain it runs on, and for one
 /// that is `async` — there is no lane that awaits.
-pub fn expand(mut item: syn::ItemFn) -> syn::Result<TokenStream2> {
+pub fn expand(lanes: &Lanes, mut item: syn::ItemFn) -> syn::Result<TokenStream2> {
     if let Some(token) = item.sig.asyncness {
         return Err(syn::Error::new(
             token.span(),
@@ -47,28 +78,36 @@ pub fn expand(mut item: syn::ItemFn) -> syn::Result<TokenStream2> {
     // take over.
     item.sig.ident = body.clone();
 
+    let wasm = match lanes {
+        Lanes::Both => quote! {
+            #[test]
+            fn #blessed() #output {
+                let mut chain = ::hyperscale_vm_testing::Chain::wasm();
+                #body(&mut chain)
+            }
+        },
+        Lanes::Native => quote!(),
+    };
     Ok(quote! {
         #item
 
         #[test]
         fn #native() #output {
-            #body(::hyperscale_vm_testing::Chain::native())
+            let mut chain = ::hyperscale_vm_testing::Chain::native();
+            #body(&mut chain)
         }
 
-        #[test]
-        fn #blessed() #output {
-            #body(::hyperscale_vm_testing::Chain::wasm())
-        }
+        #wasm
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::expand;
+    use super::{Lanes, expand, lanes};
 
     /// What the expansion says about a body it cannot run on a lane.
     fn refusal(body: syn::ItemFn) -> String {
-        expand(body)
+        expand(&Lanes::Both, body)
             .expect_err("a body no lane can run")
             .to_string()
     }
@@ -95,9 +134,12 @@ mod tests {
 
     #[test]
     fn a_lane_is_named_for_the_engine_under_it() {
-        let expanded = expand(syn::parse_quote! { fn a_swap_pays(chain: Chain) {} })
-            .expect("a body one lane can run")
-            .to_string();
+        let expanded = expand(
+            &Lanes::Both,
+            syn::parse_quote! { fn a_swap_pays(chain: &mut Chain) {} },
+        )
+        .expect("a body one lane can run")
+        .to_string();
         // The body keeps the text and loses only the name; each lane is a
         // test of its own, so a divergence names the engine.
         assert!(expanded.contains("a_swap_pays_body"), "{expanded}");
@@ -105,5 +147,28 @@ mod tests {
         assert!(expanded.contains("a_swap_pays_wasm"), "{expanded}");
         assert!(expanded.contains("Chain :: native"), "{expanded}");
         assert!(expanded.contains("Chain :: wasm"), "{expanded}");
+    }
+
+    #[test]
+    fn the_explicit_native_form_emits_one_lane() {
+        let selected = lanes(&quote::quote!(native)).expect("the one explicit lane");
+        let expanded = expand(
+            &selected,
+            syn::parse_quote! { fn deeds_recall(chain: &mut Chain) {} },
+        )
+        .expect("a body the native lane runs")
+        .to_string();
+        assert!(expanded.contains("deeds_recall_native"), "{expanded}");
+        assert!(!expanded.contains("deeds_recall_wasm"), "{expanded}");
+    }
+
+    #[test]
+    fn a_lane_selection_that_is_not_native_is_refused() {
+        assert!(
+            lanes(&quote::quote!(wasm))
+                .expect_err("the wasm lane cannot stand alone")
+                .to_string()
+                .contains("`native`"),
+        );
     }
 }

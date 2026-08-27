@@ -1243,7 +1243,7 @@ fn the_instance_an_edge_carries_reads_the_same_in_both_lanes() {
 /// once and held to each of them separately, so a failure names the
 /// engine that failed rather than the pair.
 #[hyperscale_vm_testing::test]
-fn a_seeded_balance_is_there_to_read(mut chain: Chain) {
+fn a_seeded_balance_is_there_to_read(chain: &mut Chain) {
     assert_eq!(
         chain.balance(ALICE, X),
         0,
@@ -1271,8 +1271,9 @@ fn a_lane_is_emitted_for_every_engine() {
 /// through one — a raw credit or a whole transaction — is visible
 /// through a sibling or through the chain the snapshot froze.
 #[hyperscale_vm_testing::test]
-fn chains_opened_from_one_snapshot_do_not_observe_each_other(chain: Chain) {
-    let (chain, pool) = pool(chain);
+fn chains_opened_from_one_snapshot_do_not_observe_each_other(chain: &mut Chain) {
+    let (seeded, pool) = pool(chain.snapshot().chain());
+    *chain = seeded;
     let snapshot = chain.snapshot();
 
     let mut first = snapshot.chain();

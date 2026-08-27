@@ -9,7 +9,7 @@
 //! class, which is the property this file exists for.
 
 use hyperscale_vm_testing::{
-    Chain, Outcome, Presence, PrincipalAddr, TestHasher, UnmetCondition, account, package,
+    Chain, Outcome, Presence, PrincipalAddr, TestHasher, UnmetCondition, Worlds, account, package,
     principal,
 };
 use security_guest::security;
@@ -28,22 +28,25 @@ const fn terms() -> security::client::Terms {
 }
 
 /// One registered holder, holding shares of both classes.
-fn world(mut chain: Chain) -> (Chain, security::client::Security) {
-    chain.publish(package!(security_guest::security));
-    let issuer = chain.instantiate::<security::client::Security>(REGISTRAR, terms());
-    chain
-        .transact(REGISTRAR, |b| {
-            let entry = issuer.register(b, 1)?;
-            account::deposit_nf(b, HOLDER, entry)
-        })
-        .expect_completed();
-    chain
-        .transact(REGISTRAR, |b| {
-            let shares = issuer.issue(b, 100u128)?;
-            account::deposit(b, HOLDER, shares)
-        })
-        .expect_completed();
-    (chain, issuer)
+fn world(chain: &mut Chain) -> security::client::Security {
+    static WORLDS: Worlds<security::client::Security> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(security_guest::security));
+        let issuer = chain.instantiate::<security::client::Security>(REGISTRAR, terms());
+        chain
+            .transact(REGISTRAR, |b| {
+                let entry = issuer.register(b, 1)?;
+                account::deposit_nf(b, HOLDER, entry)
+            })
+            .expect_completed();
+        chain
+            .transact(REGISTRAR, |b| {
+                let shares = issuer.issue(b, 100u128)?;
+                account::deposit(b, HOLDER, shares)
+            })
+            .expect_completed();
+        issuer
+    })
 }
 
 /// A party the register does not name receives nothing.
@@ -60,8 +63,8 @@ fn world(mut chain: Chain) -> (Chain, security::client::Security) {
 /// and a claim on a transaction is evidence, answered before anything
 /// routes.
 #[hyperscale_vm_testing::test]
-fn a_share_reaches_nobody_the_register_does_not_name(chain: Chain) {
-    let (mut chain, issuer) = world(chain);
+fn a_share_reaches_nobody_the_register_does_not_name(chain: &mut Chain) {
+    let issuer = world(chain);
     let share = issuer.issued_share(&TestHasher, terms());
 
     let refused = chain

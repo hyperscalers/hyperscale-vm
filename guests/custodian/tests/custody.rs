@@ -35,9 +35,9 @@ fn shape_terms() -> shapes::client::Terms {
 }
 
 /// A custodian configured for the seats, and a holder with one.
-fn world(chain: Chain) -> (Chain, custodian::client::Custodian, ResourceAddr) {
+fn world(chain: &mut Chain) -> (custodian::client::Custodian, ResourceAddr) {
     static WORLDS: Worlds<(custodian::client::Custodian, ResourceAddr)> = Worlds::new();
-    let (chain, (keeper, seat)) = WORLDS.open(chain, |chain| {
+    WORLDS.open(chain, |chain| {
         chain.publish(package!(grammar_guest::grammar at "../grammar"));
         chain.publish(package!(custodian_guest::custodian));
         let issuer = chain.instantiate::<shapes::client::Grammar>(ISSUER, shape_terms());
@@ -57,8 +57,7 @@ fn world(chain: Chain) -> (Chain, custodian::client::Custodian, ResourceAddr) {
             })
             .expect_completed();
         (keeper, seat)
-    });
-    (chain, keeper, seat)
+    })
 }
 
 /// What is filed comes back out.
@@ -69,8 +68,8 @@ fn world(chain: Chain) -> (Chain, custodian::client::Custodian, ResourceAddr) {
 /// computes. `file` computing it from the edge and `release` from the
 /// configuration is two collections, and the second is empty.
 #[hyperscale_vm_testing::test]
-fn instances_filed_with_a_custodian_come_back_out(chain: Chain) {
-    let (mut chain, keeper, seat) = world(chain);
+fn instances_filed_with_a_custodian_come_back_out(chain: &mut Chain) {
+    let (keeper, seat) = world(chain);
     assert!(chain.holds(HOLDER, seat, 7));
 
     chain
@@ -106,8 +105,8 @@ fn instances_filed_with_a_custodian_come_back_out(chain: Chain) {
 /// have somewhere — a collection of its own, which `release` never
 /// opens and nothing else ever reaches.
 #[hyperscale_vm_testing::test]
-fn a_custodian_files_nothing_it_was_not_configured_for(chain: Chain) {
-    let (mut chain, _, seat) = world(chain);
+fn a_custodian_files_nothing_it_was_not_configured_for(chain: &mut Chain) {
+    let (_, seat) = world(chain);
     let other = chain.instantiate::<shapes::client::Grammar>(HOLDER, shape_terms());
     let elsewhere = chain.instantiate::<custodian::client::Custodian>(
         ISSUER,
