@@ -1,5 +1,6 @@
 //! Funding the pool and leaving it, against the real kernel.
 
+use amm_guest::amm::Error;
 use amm_guest::amm::client::{Amm, Settings};
 use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
@@ -115,7 +116,7 @@ fn funding_one_side_alone_is_refused(chain: Chain) {
         account::deposit(b, BOB, claim)
     });
 
-    assert_eq!(outcome.declined_as(), Some("nothing-minted"));
+    outcome.expect_declined(Error::NothingMinted);
     assert_eq!(chain.balance(BOB, Y), 10_000, "a decline moves nothing");
     assert_eq!(chain.balance(pool, Y), 4_000);
 }

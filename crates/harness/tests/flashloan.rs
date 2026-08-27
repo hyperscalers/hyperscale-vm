@@ -26,6 +26,7 @@ use hyperscale_vm_fixtures::{FLASHLOAN_COMPONENT, flashloan};
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
+use hyperscale_vm_sdk::Declines;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{AddressClass, ComponentAddr, Outcome, PrincipalAddr, ResourceAddr};
 use wasmtime::Result;
@@ -293,7 +294,7 @@ fn a_repayment_that_falls_short_declines_on_the_method_s_own_arm() -> Result<()>
             outcome.receipts[&entry.tx].outcome,
         );
     };
-    assert_eq!(code, flashloan::SHORT);
+    assert_eq!(code, flashloan::Error::Short.code());
 
     // A decline is an abort, so nothing the graph did stands: the loan
     // is back where it started and the obligation was never burned.

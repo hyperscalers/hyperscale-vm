@@ -2,6 +2,7 @@
 
 use hyperscale_vm_effects::address_text;
 use hyperscale_vm_kernel::Receipt;
+use hyperscale_vm_sdk::DeclinesAs;
 use hyperscale_vm_sdk::client::Answered;
 use hyperscale_vm_sdk::hbor::{HborDecode, from_slice};
 use hyperscale_vm_types::{AbortReason, Address, Answer, Outcome as KernelOutcome};
@@ -181,6 +182,30 @@ impl<T> Outcome<T> {
             "the transaction did not complete: {}",
             self.refused_as()
         );
+    }
+
+    /// Panics with the outcome unless the transaction declined with
+    /// exactly this refusal.
+    ///
+    /// Named by the variant the author wrote, so a renamed error breaks
+    /// the assertion at compile time rather than leaving a string that
+    /// stopped agreeing with the table.
+    ///
+    /// # Panics
+    ///
+    /// If the transaction did anything but decline with `expected` —
+    /// with what it did instead.
+    pub fn expect_declined(&self, expected: impl DeclinesAs) {
+        let expected = expected.declined_as();
+        if self.declined_as() == Some(expected) {
+            return;
+        }
+        let got = if self.completed() {
+            "the transaction completed".to_owned()
+        } else {
+            self.refused_as()
+        };
+        panic!("expected a decline of `{expected}`, got: {got}");
     }
 
     /// Why the transaction did not complete, in the most legible terms

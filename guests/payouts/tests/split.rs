@@ -4,6 +4,7 @@ use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
     Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
 };
+use payouts_guest::payouts::Error;
 use payouts_guest::payouts::client::{Payouts, Terms};
 
 const PAYER: PrincipalAddr = principal(1);
@@ -115,7 +116,7 @@ fn a_schedule_that_must_add_up_refuses_the_dust(chain: Chain) {
         account::deposit(b, REFERRER, referrer)
     });
 
-    assert_eq!(outcome.declined_as(), Some("share-unclaimed"));
+    outcome.expect_declined(Error::ShareUnclaimed);
     assert_eq!(
         chain.balance(PAYER, ASSET),
         10_000,
@@ -158,7 +159,7 @@ fn a_payment_short_of_one_lot_is_refused(chain: Chain) {
         account::deposit(b, PAYER, change)
     });
 
-    assert_eq!(outcome.declined_as(), Some("below-one-lot"));
+    outcome.expect_declined(Error::BelowOneLot);
     assert_eq!(chain.balance(PAYER, ASSET), 10_000);
 }
 
@@ -179,7 +180,7 @@ fn a_lot_of_nothing_is_refused(chain: Chain) {
         account::deposit(b, PAYER, change)
     });
 
-    assert_eq!(outcome.declined_as(), Some("below-one-lot"));
+    outcome.expect_declined(Error::BelowOneLot);
     assert_eq!(
         chain.balance(PAYER, ASSET),
         10_000,

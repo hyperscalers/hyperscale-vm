@@ -547,17 +547,35 @@ fn decline_impls(items: &[syn::Item]) -> TokenStream2 {
     let mut impls = TokenStream2::new();
     for item in error_enums(items) {
         let name = &item.ident;
-        let arms = item.variants.iter().map(|variant| {
+        let arms: Vec<TokenStream2> = item
+            .variants
+            .iter()
+            .map(|variant| {
+                let ident = &variant.ident;
+                let arm = quote!(Self::#ident => #code);
+                code += 1;
+                arm
+            })
+            .collect();
+        let names = item.variants.iter().map(|variant| {
             let ident = &variant.ident;
-            let arm = quote!(Self::#ident => #code);
-            code += 1;
-            arm
+            let published = kebab(&ident.to_string());
+            quote!(Self::#ident => #published)
         });
         impls.extend(quote!(
             #[automatically_derived]
             impl ::hyperscale_vm_sdk::Declines for #name {
                 fn code(&self) -> u32 {
                     match *self { #(#arms,)* }
+                }
+            }
+            // Off the artifact: a name is for whoever reads a receipt,
+            // and the component crosses the boundary with the code alone.
+            #[automatically_derived]
+            #[cfg(not(target_arch = "wasm32"))]
+            impl ::hyperscale_vm_sdk::DeclinesAs for #name {
+                fn declined_as(self) -> &'static str {
+                    match self { #(#names,)* }
                 }
             }
         ));
@@ -1142,6 +1160,24 @@ fn publish_config(items: &mut [syn::Item], config: &syn::Ident) {
     }
 }
 
+/// Open the `#[error]` enums to whoever asserts on a decline.
+///
+/// The visibility is the macro's rather than the author's, on the
+/// configuration's terms: a refusal is by definition what a caller is
+/// handed, so a private table is unreadable rather than deliberately
+/// closed — and the documentation obligation that would come with `pub`
+/// stays the macro's too.
+fn publish_errors(items: &mut [syn::Item]) {
+    for item in items {
+        if let syn::Item::Enum(item) = item
+            && item.attrs.iter().any(|a| a.path().is_ident("error"))
+        {
+            item.vis = syn::parse_quote!(pub);
+            item.attrs.push(syn::parse_quote!(#[allow(missing_docs)]));
+        }
+    }
+}
+
 /// Everything a package declares by name, gathered once and read by the
 /// gate parser and the lowering alike.
 struct Declared<'a> {
@@ -1306,6 +1342,7 @@ fn expand(
     let stored_table = stored_types
         .iter()
         .map(|ident| quote!(.declares::<#ident>()));
+    publish_errors(items);
     strip_macro_attrs(items, &state_name, role);
     items.extend(records);
     // A configuration is by definition what a creator supplies, so a

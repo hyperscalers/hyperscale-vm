@@ -1,7 +1,7 @@
 //! The ladder's own tests, against the real kernel.
 
 use book_guest::book::client::{Book, Pair};
-use book_guest::book::{Quote, Tick};
+use book_guest::book::{Error, Quote, Tick};
 use hyperscale_vm_sdk::state::{Fixed, Wide};
 use hyperscale_vm_testing::{
     Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
@@ -68,7 +68,7 @@ fn an_unpriced_ask_is_refused_where_it_would_be_placed(chain: Chain) {
         ladder.place_ask(b, 0, offered)
     });
 
-    assert_eq!(outcome.declined_as(), Some("unpriced-ask"));
+    outcome.expect_declined(Error::UnpricedAsk);
     assert_eq!(chain.balance(MAKER, BASE_ASSET), 1_000, "and nothing moved");
 }
 

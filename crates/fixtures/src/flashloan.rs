@@ -21,5 +21,5 @@ guest!(flashloan, "../../../guests/flashloan/src/lib.rs");
 /// might issue — the package's own, re-exported rather than restated.
 pub use package::flashloan::DEBT;
 
-/// What `repay` declines with when less came back than was owed.
-pub const SHORT: u32 = 0;
+/// The refusal table, as the variants its author wrote.
+pub use package::flashloan::Error;

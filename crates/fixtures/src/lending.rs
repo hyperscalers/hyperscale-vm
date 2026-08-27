@@ -14,16 +14,5 @@
 
 guest!(lending, "../../../guests/lending/src/lib.rs");
 
-/// What an entry point declines with when no price has been posted.
-pub const PRICE_UNSET: u32 = 0;
-/// What it declines with when the index has not been carried to the
-/// period the call names.
-pub const INDEX_STALE: u32 = 1;
-/// What a draw declines with when it would owe more than the collateral
-/// allows.
-pub const OVER_LTV: u32 = 2;
-/// What a liquidation declines with against a position that still covers
-/// what it owes.
-pub const STILL_COVERED: u32 = 3;
-/// What it declines with against a position that owes nothing.
-pub const NOTHING_OWED: u32 = 4;
+/// The refusal table, as the variants its author wrote.
+pub use package::lending::Error;

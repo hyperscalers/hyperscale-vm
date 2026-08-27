@@ -5,6 +5,7 @@ use hyperscale_vm_testing::{
     AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, account, package, principal,
     resource,
 };
+use perp_guest::perp::Error;
 use perp_guest::perp::client::{Perp, Terms};
 
 const TRADER: PrincipalAddr = principal(1);
@@ -200,7 +201,7 @@ fn a_covered_position_is_not_liquidated(chain: Chain) {
         account::deposit(b, KEEPER, seized)
     });
 
-    assert_eq!(outcome.declined_as(), Some("still-covered"));
+    outcome.expect_declined(Error::StillCovered);
 }
 
 /// A position of no size is not a position, and the margin beside it does
@@ -220,7 +221,7 @@ fn a_position_of_no_size_is_refused(chain: Chain) {
         market.open(b, funds, 0u128)
     });
 
-    assert_eq!(outcome.declined_as(), Some("empty-position"));
+    outcome.expect_declined(Error::EmptyPosition);
     assert_eq!(
         chain.balance(TRADER, COLLATERAL),
         10_000,

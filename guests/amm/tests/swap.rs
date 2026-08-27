@@ -1,5 +1,6 @@
 //! The pool's own test: a swap, against the real kernel.
 
+use amm_guest::amm::Error;
 use amm_guest::amm::client::{Amm, Settings};
 use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
@@ -65,7 +66,7 @@ fn a_floor_the_pool_cannot_reach_declines(chain: Chain) {
         account::deposit(b, ALICE, bought)
     });
 
-    assert_eq!(outcome.declined_as(), Some("slippage-exceeded"));
+    outcome.expect_declined(Error::SlippageExceeded);
     assert_eq!(chain.balance(ALICE, X), 600, "a decline moves nothing");
     assert_eq!(chain.balance(pool, X), 1_000);
 }

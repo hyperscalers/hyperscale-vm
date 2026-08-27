@@ -9,6 +9,7 @@ use hyperscale_vm_fixtures::{amm, shares};
 use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
+use hyperscale_vm_sdk::{Declines, DeclinesAs};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     Address, EffectTarget, Mode, Moves, Outcome, Presence, SubstateKey, TxHash, UnmetCondition,
@@ -252,10 +253,11 @@ fn a_violated_output_floor_declines_identically() {
         &swap_store(),
         &[(&graph, TxHash(Hash32([0x03; 32])))],
     );
-    assert_eq!(results[0], TxResult::Declined(amm::SLIPPAGE_EXCEEDED));
+    let slippage = amm::Error::SlippageExceeded;
+    assert_eq!(results[0], TxResult::Declined(slippage.code()));
     assert_eq!(
-        amm::metadata().errors[amm::SLIPPAGE_EXCEEDED as usize],
-        "slippage-exceeded",
+        amm::metadata().errors[slippage.code() as usize],
+        slippage.declined_as(),
         "the code is an index into the table the package published",
     );
     assert_eq!(amount_of(&final_store, vault(pool(), RES_X)), 1_000);

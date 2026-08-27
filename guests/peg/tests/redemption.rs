@@ -6,7 +6,7 @@ use hyperscale_vm_testing::{
     resource,
 };
 use peg_guest::peg::client::{Peg, Terms};
-use peg_guest::peg::{Reserve, Stable};
+use peg_guest::peg::{Error, Reserve, Stable};
 
 const HOLDER: PrincipalAddr = principal(1);
 const ORACLE: PrincipalAddr = principal(2);
@@ -143,10 +143,10 @@ fn a_deviation_outside_the_band_is_refused(chain: Chain) {
     };
 
     post(&mut chain, window, ONE / 5, Sign::Positive);
-    assert_eq!(try_redeem(&mut chain).declined_as(), Some("outside-band"));
+    try_redeem(&mut chain).expect_declined(Error::OutsideBand);
 
     post(&mut chain, window, ONE / 5, Sign::Negative);
-    assert_eq!(try_redeem(&mut chain).declined_as(), Some("outside-band"));
+    try_redeem(&mut chain).expect_declined(Error::OutsideBand);
 
     assert_eq!(
         chain.balance(HOLDER, STABLE),
@@ -212,7 +212,7 @@ fn a_quote_outside_the_band_declines_as_a_redemption_would(chain: Chain) {
     post(&mut chain, window, ONE / 5, Sign::Positive);
 
     let quoted = chain.transact(HOLDER, |b| window.quote(b, 1_000u128));
-    assert_eq!(quoted.declined_as(), Some("outside-band"));
+    quoted.expect_declined(Error::OutsideBand);
 
     let redeemed = chain.transact(HOLDER, |b| {
         let signed_in = account::authorize(b, HOLDER)?;
@@ -234,5 +234,5 @@ fn a_redemption_worth_no_reserve_is_refused(chain: Chain) {
     let (mut chain, window) = window(chain);
 
     let quoted = chain.transact(HOLDER, |b| window.quote(b, 0u128));
-    assert_eq!(quoted.declined_as(), Some("nothing-redeemed"));
+    quoted.expect_declined(Error::NothingRedeemed);
 }

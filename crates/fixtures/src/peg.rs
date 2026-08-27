@@ -14,8 +14,5 @@
 
 guest!(peg, "../../../guests/peg/src/lib.rs");
 
-/// What a redemption declines with when the market has moved past the
-/// band the window quotes in.
-pub const OUTSIDE_BAND: u32 = 0;
-/// What it declines with when the redemption is worth no reserve at all.
-pub const NOTHING_REDEEMED: u32 = 1;
+/// The refusal table, as the variants its author wrote.
+pub use package::peg::Error;

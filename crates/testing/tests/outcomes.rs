@@ -53,10 +53,20 @@ fn a_decline_reads_as_the_method_and_the_named_error() {
     let outcome = declined(&mut chain, pool);
 
     assert_eq!(outcome.declined_as(), Some("slippage-exceeded"));
+    outcome.expect_declined(amm::Error::SlippageExceeded);
     let sentence = outcome.refused_as();
     assert!(sentence.contains("`swap`"), "{sentence}");
     assert!(sentence.contains("slippage-exceeded"), "{sentence}");
     assert!(!sentence.contains("Declined {"), "{sentence}");
+}
+
+/// A decline of the wrong variant panics naming both sides.
+#[test]
+#[should_panic(expected = "expected a decline of `empty-pool`")]
+fn expect_declined_names_what_happened_instead() {
+    let mut chain = Chain::native();
+    let pool = pool(&mut chain);
+    declined(&mut chain, pool).expect_declined(amm::Error::EmptyPool);
 }
 
 /// The same sentence is what `expect_completed` panics with.

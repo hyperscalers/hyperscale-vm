@@ -5,6 +5,7 @@ use hyperscale_vm_testing::{
     AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, account, package, principal,
     resource,
 };
+use lending_guest::lending::Error;
 use lending_guest::lending::client::{Lending, Terms};
 
 const BORROWER: PrincipalAddr = principal(1);
@@ -101,7 +102,7 @@ fn a_draw_past_the_ratio_is_refused(chain: Chain) {
         account::deposit(b, BORROWER, drawn)
     });
 
-    assert_eq!(outcome.declined_as(), Some("over-ltv"));
+    outcome.expect_declined(Error::OverLtv);
     assert_eq!(chain.balance(BORROWER, COLLATERAL), 10_000);
 }
 
@@ -120,7 +121,7 @@ fn a_draw_against_a_stale_index_is_refused(chain: Chain) {
         account::deposit(b, BORROWER, drawn)
     });
 
-    assert_eq!(outcome.declined_as(), Some("index-stale"));
+    outcome.expect_declined(Error::IndexStale);
 }
 
 /// Only the configured oracle may say what the sides are worth.
@@ -166,7 +167,7 @@ fn a_covered_position_cannot_be_liquidated(chain: Chain) {
         account::deposit(b, KEEPER, seized)
     });
 
-    assert_eq!(outcome.declined_as(), Some("still-covered"));
+    outcome.expect_declined(Error::StillCovered);
     assert_eq!(chain.balance(market, COLLATERAL), 1_000);
 }
 

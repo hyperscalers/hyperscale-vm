@@ -7,5 +7,5 @@
 
 guest!(amm, "../../../guests/amm/src/lib.rs");
 
-/// The code `swap` declines with when the output misses its floor.
-pub const SLIPPAGE_EXCEEDED: u32 = 0;
+/// The refusal table, as the variants its author wrote.
+pub use package::amm::Error;

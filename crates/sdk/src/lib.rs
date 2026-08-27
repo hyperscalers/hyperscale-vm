@@ -207,6 +207,20 @@ pub trait Declines {
     fn code(&self) -> u32;
 }
 
+/// The name a refusal publishes: what the error table carries beside
+/// the code, and what a test names a decline by.
+///
+/// Implemented by `#[blueprint]` for every `#[error]` enum, off the
+/// artifact — a name is for whoever reads a receipt, and the component
+/// crosses the boundary with the code alone.
+pub trait DeclinesAs: Sized {
+    /// The kebab-case name the error table holds for this variant.
+    ///
+    /// Consuming, because every caller writes a bare variant and a
+    /// borrow would put a reference where nothing needs the value back.
+    fn declined_as(self) -> &'static str;
+}
+
 pub use hyperscale_vm_effects::{
     GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issued, LeafForm, ParamType,
     ResourceKind, RuleBytes, SlotId, SlotKind, encode_metadata,
