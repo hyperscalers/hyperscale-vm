@@ -3,8 +3,8 @@
 //! them.
 
 use hyperscale_vm_effects::{
-    Constraint, EdgeRef, GraphArg, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash,
-    Records, TestHasher, Value, admit,
+    Constraint, EdgeRef, EvidenceRef, GraphArg, Hash32, Hasher, InstanceMeta, ManifestGraph,
+    PackageHash, Records, TestHasher, Value, admit,
 };
 use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -352,4 +352,111 @@ fn outputs_unpack_only_into_the_arity_the_method_declares() {
             ..
         })
     ));
+}
+
+/// The pool's owner badge, through the package's own derivation.
+fn owner_badge() -> ResourceAddr {
+    staking::Staking::at(pool()).issued_owner_badge(&TestHasher)
+}
+
+/// A scope's evidence reaches a gate no per-call spelling names.
+///
+/// The badge is presented once, for the span; the gated call inside it
+/// is written bare and still carries the scope's proof — beside whatever
+/// the builder proved for itself, because ambient evidence only adds.
+#[test]
+fn a_scope_presents_where_a_gate_wants_claims() {
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher, OPERATOR);
+    let presented = b
+        .call_proving(OPERATOR, "present-badge", (owner_badge(),))
+        .unwrap();
+    b.presenting(presented, |b| {
+        b.call(pool(), "deactivate-validator", (8u64,))?.none()
+    })
+    .unwrap();
+    let graph = b.build().unwrap();
+
+    let gated = graph.nodes.last().expect("the gated call is a node");
+    assert_eq!(gated.method, "deactivate-validator");
+    assert!(
+        gated.evidence.contains(&EvidenceRef::Node(0)),
+        "the scope's proof rides the gated call: {:?}",
+        gated.evidence
+    );
+}
+
+/// A call wanting no evidence composes identically inside a scope.
+#[test]
+fn a_scope_is_invisible_to_a_call_wanting_nothing() {
+    let chain = world();
+    let bare = TypedBuilder::compose(&chain, &TestHasher, ALICE, |b| {
+        let alice = b.call_proving(ALICE, "authorize", ())?;
+        let funds = b
+            .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))?
+            .one()?;
+        b.call(BOB, "deposit", (funds,))?.none()
+    })
+    .unwrap();
+    let scoped = TypedBuilder::compose(&chain, &TestHasher, ALICE, |b| {
+        let alice = b.call_proving(ALICE, "authorize", ())?;
+        b.presenting(alice, |b| {
+            let funds = b
+                .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))?
+                .one()?;
+            b.call(BOB, "deposit", (funds,))?.none()
+        })
+    })
+    .unwrap();
+    assert_eq!(bare, scoped, "the scope changed a call that wanted nothing");
+}
+
+/// Nested scopes union: a call inside both draws from both.
+#[test]
+fn nested_scopes_present_together() {
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher, OPERATOR);
+    let signed_in = b.call_proving(OPERATOR, "authorize", ()).unwrap();
+    let presented = b
+        .call_proving(OPERATOR, "present-badge", (owner_badge(),))
+        .unwrap();
+    b.presenting(signed_in, |b| {
+        b.presenting(presented, |b| {
+            b.call(pool(), "deactivate-validator", (8u64,))?.none()
+        })
+    })
+    .unwrap();
+    let graph = b.build().unwrap();
+
+    let gated = graph.nodes.last().expect("the gated call is a node");
+    assert!(
+        gated.evidence.contains(&EvidenceRef::Node(0))
+            && gated.evidence.contains(&EvidenceRef::Node(1)),
+        "both scopes' proofs ride the gated call: {:?}",
+        gated.evidence
+    );
+}
+
+/// Evidence a call names explicitly overrules the ambient reading.
+#[test]
+fn explicit_evidence_stands_alone_inside_a_scope() {
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher, OPERATOR);
+    let signed_in = b.call_proving(OPERATOR, "authorize", ()).unwrap();
+    let presented = b
+        .call_proving(OPERATOR, "present-badge", (owner_badge(),))
+        .unwrap();
+    b.presenting(signed_in, |b| {
+        b.call_presenting(presented, pool(), "deactivate-validator", (8u64,))?
+            .none()
+    })
+    .unwrap();
+    let graph = b.build().unwrap();
+
+    let gated = graph.nodes.last().expect("the gated call is a node");
+    assert_eq!(
+        gated.evidence,
+        std::iter::once(EvidenceRef::Node(1)).collect(),
+        "the per-call spelling is the whole of the evidence"
+    );
 }

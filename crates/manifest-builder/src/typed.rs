@@ -424,7 +424,15 @@ pub struct TypedBuilder<'a> {
     /// so this holds exactly the frames between the outermost `present`
     /// and the one running: its length is the depth, which is what
     /// [`MAX_PRESENT_DEPTH`] bounds.
-    presenting: BTreeSet<(Address, Option<u64>)>,
+    composing: BTreeSet<(Address, Option<u64>)>,
+    /// The evidence each enclosing [`presenting`](Self::presenting)
+    /// scope holds, innermost last.
+    ///
+    /// Ambient rather than per-call: a composer who holds a badge says so
+    /// once, for a span of calls, and each call inside the span draws it
+    /// where its own requirements could want evidence. Presenting a proof
+    /// a call does not need says nothing, so the scope only ever adds.
+    scopes: Vec<Vec<Proof>>,
 }
 
 /// How deep the composer will chain proofs it proves for itself.
@@ -448,8 +456,53 @@ impl<'a> TypedBuilder<'a> {
             hasher,
             signer,
             proven: BTreeMap::new(),
-            presenting: BTreeSet::new(),
+            composing: BTreeSet::new(),
+            scopes: Vec::new(),
         }
+    }
+
+    /// Run `write` with `evidence` ambient: every call inside the span
+    /// draws it where its own requirements could want evidence — a
+    /// declared gate, an entry a movement earns, or a behaviour whose
+    /// requirement the resource injects — and a call wanting nothing
+    /// attaches nothing.
+    ///
+    /// The scope only ever adds. The builder still proves what it can
+    /// from the signer's own account, exactly as it would outside the
+    /// scope, so wrapping a span in one never composes a call worse —
+    /// what changes is that a requirement only this evidence answers
+    /// stops needing a per-call spelling. Scopes nest, and a call inside
+    /// both draws from both: presented evidence is a set, and presenting
+    /// a proof a gate does not need says nothing.
+    ///
+    /// Evidence a call names explicitly —
+    /// [`call_presenting`](Self::call_presenting) and its proving twin —
+    /// is the composer overruling the ambient reading for that call: the
+    /// scope stands aside entirely, exactly as it does for the builder's
+    /// own composition.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `write` itself refuses; the scope adds no refusals.
+    ///
+    /// # Panics
+    ///
+    /// On a proof made by a different builder, on [`Bucket`]'s terms.
+    ///
+    /// [`Bucket`]: crate::Bucket
+    pub fn presenting<R>(
+        &mut self,
+        evidence: impl Evidence,
+        write: impl FnOnce(&mut Self) -> Result<R, TypedError>,
+    ) -> Result<R, TypedError> {
+        let proofs = evidence.proofs();
+        for proof in &proofs {
+            proof.check(self.graph.id());
+        }
+        self.scopes.push(proofs);
+        let written = write(self);
+        self.scopes.pop();
+        written
     }
 
     /// The principal this intent will be signed as.
@@ -718,13 +771,13 @@ impl<'a> TypedBuilder<'a> {
         // Past the depth a chain of gated badges is composed to; the
         // records naming each next claim are the chain view's, so
         // nothing here bounds the walk except this.
-        if self.presenting.len() >= MAX_PRESENT_DEPTH {
+        if self.composing.len() >= MAX_PRESENT_DEPTH {
             return None;
         }
         // Already proving this claim's proof further up the stack; the
         // ancestor call will file it, and recursing to compose a second
         // would not terminate.
-        if !self.presenting.insert(key) {
+        if !self.composing.insert(key) {
             return None;
         }
         let signer = self.signer;
@@ -745,7 +798,7 @@ impl<'a> TypedBuilder<'a> {
                 .ok(),
             _ => None,
         };
-        self.presenting.remove(&key);
+        self.composing.remove(&key);
         let proven = proven?;
         self.proven.insert(key, proven);
         Some(proven)
@@ -810,13 +863,29 @@ impl<'a> TypedBuilder<'a> {
         // composed is one they meant, and a second beside it would be
         // the builder overruling them.
         let wanted = self.earned(signature, target, meta, &args, &values, &known);
+        // The evidence the enclosing `presenting` scopes hold, where this
+        // call could want any: a declared gate, an entry a movement
+        // earns, or a behaviour whose requirement the resource injects.
+        // Ambient evidence only adds — the builder still proves what it
+        // can, and a call wanting nothing attaches nothing, so a scope
+        // never makes a call compose differently than it would outside
+        // one unless the call wanted evidence.
+        let scoped: Vec<Proof> = if proofs.is_empty()
+            && (signature.requires_evidence()
+                || !wanted.is_empty()
+                || signature.may_earn_authority())
+        {
+            self.scopes.iter().flatten().copied().collect()
+        } else {
+            Vec::new()
+        };
         // A signature signs in, so it reaches only a gate that reads a
         // rule; a claim a declaration names takes a proof — and what the
         // gate names that the signer's own account can prove is proven
         // ahead of the call, exactly as injected requirements are. Only
-        // a gate whose every claim is beyond the composer's reach
-        // refuses, and proving nothing appends nothing, so the refusal
-        // leaves the graph as it was.
+        // a gate whose every claim is beyond both the composer's reach
+        // and the enclosing scopes' refuses, and proving nothing appends
+        // nothing, so the refusal leaves the graph as it was.
         let gated: Vec<Proof> =
             if signature.requires_evidence() && proofs.is_empty() && !signature.reads_a_rule() {
                 let proven: Vec<Proof> = self
@@ -824,7 +893,7 @@ impl<'a> TypedBuilder<'a> {
                     .iter()
                     .filter_map(|claim| self.present(*claim))
                     .collect();
-                if proven.is_empty() {
+                if proven.is_empty() && scoped.is_empty() {
                     return Err(TypedError::SignatureForGuarded {
                         method: method.to_owned(),
                     });
@@ -894,6 +963,14 @@ impl<'a> TypedBuilder<'a> {
                 .collect(),
             (true, presented) => presented.iter().map(|proof| proof.reference()).collect(),
         };
+        // What the enclosing scopes hold rides beside whatever the call
+        // resolved for itself: presented evidence is a set, so a proof
+        // the builder also proved dedups, and one nothing needs says
+        // nothing.
+        let evidence: BTreeSet<EvidenceRef> = evidence
+            .into_iter()
+            .chain(scoped.iter().map(|proof| proof.reference()))
+            .collect();
         let outputs = resources.len();
         let producer = self
             .graph
