@@ -567,13 +567,15 @@ impl KernelSession {
             ));
         }
         let denominations = self.denominations();
-        // Movements are judged while every reservation still stands, its
-        // own included: a hold is keyed by cell, not by holder, so a
-        // declaration carrying both a delta and a reservation on one
-        // cell has its delta judged against a floor this same
-        // transaction is holding. Settling first would dissolve the
-        // floor for others too, mid-judgment — the ordering is
-        // load-bearing, and the self-floor is its consequence.
+        // Movements are judged while every reservation still stands, the
+        // transaction's own included. Reserved value is spent through
+        // the settle path, never through a delta, so a declaration
+        // carrying both on one cell moves unreserved value through the
+        // delta and reserved value only as the take: judging the delta
+        // above the transaction's own hold is what keeps the two debits
+        // of one cell from spending the same value. Settling first would
+        // also dissolve the floor for others mid-judgment — the ordering
+        // is load-bearing, and the self-floor is intended.
         let movements = match self.judge_movements(&denominations)? {
             Phase::Produced(movements) => movements,
             Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),

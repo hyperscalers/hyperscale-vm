@@ -164,13 +164,13 @@ fn a_fully_taken_hold_settles_the_whole_of_it() {
 
 /// A transaction's own reservation floors its own delta.
 ///
-/// Holds are keyed by cell, not by holder, and `finish` judges every
-/// movement while the reservations still stand — so a declaration
-/// carrying both a delta and a reservation on one cell has the delta
-/// judged against a floor the same transaction is holding. Pinned as
-/// the ordering's consequence: the cell holds 100, the untaken hold is
-/// 60, and a take of 50 aborts even though the cell alone would cover
-/// it.
+/// Intended, not incidental: reserved value is spent through the settle
+/// path, never through a delta, so a declaration carrying both on one
+/// cell moves unreserved value through the delta and reserved value
+/// only as the take. Judging the delta above the transaction's own hold
+/// is what keeps the two debits of one cell from spending the same
+/// value — the cell holds 100, the untaken hold is 60, and a movement
+/// of 50 aborts even though the cell alone would cover it.
 #[test]
 fn a_transactions_own_reservation_floors_its_own_delta() {
     let source = cell(SOURCE);
