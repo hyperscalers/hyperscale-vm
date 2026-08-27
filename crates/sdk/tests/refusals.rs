@@ -347,3 +347,22 @@ fn the_generated_client_refuses_a_call_it_cannot_shape() {
     refuse.compile_fail("tests/refusals/client_foreign_handle.rs");
     refuse.compile_fail("tests/refusals/client_threshold_one_proof.rs");
 }
+
+/// A marker nothing reads is refused where it sits.
+///
+/// The readers are kind- and place-filtered and the strip is not, so a
+/// misplaced attribute — a slot pin on a config field, a gate on the
+/// state struct, a mark on a private method or a helper's — would
+/// otherwise vanish without declaring anything. Each refusal names the
+/// placement that is read.
+#[test]
+fn the_macro_refuses_a_marker_nothing_reads() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/slot_on_config_field.rs");
+    refuse.compile_fail("tests/refusals/requires_on_state_struct.rs");
+    refuse.compile_fail("tests/refusals/total_on_private_method.rs");
+    refuse.compile_fail("tests/refusals/name_in_foreign_impl.rs");
+    refuse.compile_fail("tests/refusals/proves_on_struct.rs");
+    refuse.compile_fail("tests/refusals/requires_on_enum.rs");
+    refuse.compile_fail("tests/refusals/marker_on_free_fn.rs");
+}

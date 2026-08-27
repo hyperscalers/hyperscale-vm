@@ -1,0 +1,5 @@
+error: nothing reads `#[total]` on this item — see the `#[blueprint]` docs for where each attribute is read
+ --> tests/refusals/marker_on_free_fn.rs:7:5
+  |
+7 |     #[total]
+  |     ^^^^^^^^

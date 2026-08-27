@@ -421,34 +421,193 @@ fn strip(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !OWN.iter().any(|own| attr.path().is_ident(own)));
 }
 
-/// Hold each item marker to the item kind its scan reads.
+/// The first of the macro's own attributes among `names`, with its name.
+fn own_attr<'a>(
+    attrs: &'a [syn::Attribute],
+    names: &[&'static str],
+) -> Option<(&'a syn::Attribute, &'static str)> {
+    attrs.iter().find_map(|attr| {
+        names
+            .iter()
+            .find(|name| attr.path().is_ident(name))
+            .map(|name| (attr, *name))
+    })
+}
+
+/// Hold each of the macro's own attributes to the placement its reader
+/// scans.
 ///
-/// The scans are kind-filtered and `strip` is not, so a marker on the
-/// wrong kind — `#[config]` on an enum, `#[error]` on a struct — would
-/// otherwise vanish without declaring anything.
-fn check_marker_kinds(items: &[syn::Item]) -> syn::Result<()> {
-    const ON_A_STRUCT: &[&str] = &["state", "config", "event", "record", "resource"];
+/// The readers are kind- and place-filtered and `strip` is not, so a
+/// misplaced attribute — `#[error]` on a struct, `#[slot]` on a config
+/// field, `#[total]` on a helper function — would otherwise vanish
+/// without declaring anything. Every refusal names where the attribute
+/// is read.
+fn check_marker_kinds(
+    items: &[syn::Item],
+    state_name: &syn::Ident,
+    config_name: Option<&syn::Ident>,
+) -> syn::Result<()> {
     for item in items {
         match item {
-            syn::Item::Struct(item) => {
-                if let Some(attr) = item.attrs.iter().find(|a| a.path().is_ident("error")) {
+            syn::Item::Struct(item) => marker_kinds_on_struct(item, state_name, config_name)?,
+            syn::Item::Enum(item) => marker_kinds_on_enum(item)?,
+            syn::Item::Impl(block) => marker_kinds_on_impl(block)?,
+            // The item kinds no reader scans at all: a marker on one is
+            // a marker the strip would eat whole.
+            syn::Item::Fn(syn::ItemFn { attrs, .. })
+            | syn::Item::Const(syn::ItemConst { attrs, .. })
+            | syn::Item::Static(syn::ItemStatic { attrs, .. })
+            | syn::Item::Use(syn::ItemUse { attrs, .. })
+            | syn::Item::Mod(syn::ItemMod { attrs, .. })
+            | syn::Item::Type(syn::ItemType { attrs, .. })
+            | syn::Item::Trait(syn::ItemTrait { attrs, .. })
+            | syn::Item::Union(syn::ItemUnion { attrs, .. })
+            | syn::Item::Macro(syn::ItemMacro { attrs, .. }) => {
+                if let Some((attr, name)) = own_attr(attrs, OWN) {
                     return Err(syn::Error::new_spanned(
                         attr,
-                        "`#[error]` marks an enum — the table it declares is the variants",
+                        format!(
+                            "nothing reads `#[{name}]` on this item — see the `#[blueprint]` \
+                             docs for where each attribute is read"
+                        ),
                     ));
                 }
             }
-            syn::Item::Enum(item) => {
-                for marker in ON_A_STRUCT {
-                    if let Some(attr) = item.attrs.iter().find(|a| a.path().is_ident(marker)) {
-                        return Err(syn::Error::new_spanned(
-                            attr,
-                            format!("`#[{marker}]` marks a struct — an enum declares nothing here"),
-                        ));
-                    }
-                }
-            }
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// The markers whose reader scans structs, and the two field pins.
+const ON_A_STRUCT: &[&str] = &["state", "config", "event", "record", "resource"];
+const ON_A_METHOD: &[&str] = &["proves", "total", "name"];
+const ON_A_STATE_FIELD: &[&str] = &["slot", "denomination"];
+
+fn marker_kinds_on_struct(
+    item: &syn::ItemStruct,
+    state_name: &syn::Ident,
+    config_name: Option<&syn::Ident>,
+) -> syn::Result<()> {
+    if let Some((attr, _)) = own_attr(&item.attrs, &["error"]) {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "`#[error]` marks an enum — the table it declares is the variants",
+        ));
+    }
+    if let Some((attr, name)) = own_attr(&item.attrs, ON_A_METHOD) {
+        return Err(syn::Error::new_spanned(
+            attr,
+            format!(
+                "`#[{name}]` marks a method of `{state_name}`'s impl — a struct declares \
+                 nothing with it"
+            ),
+        ));
+    }
+    if let Some((attr, name)) = own_attr(&item.attrs, ON_A_STATE_FIELD) {
+        return Err(syn::Error::new_spanned(
+            attr,
+            format!("`#[{name}]` sits on a `#[state]` field, not on the struct"),
+        ));
+    }
+    if config_name != Some(&item.ident)
+        && let Some((attr, _)) = own_attr(&item.attrs, &["requires"])
+    {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "`#[requires]` on a struct gates instantiation, and that gate is the \
+             configuration's — it is read on the `#[config]` struct alone",
+        ));
+    }
+    let allowed: &[&str] = if item.ident == *state_name {
+        ON_A_STATE_FIELD
+    } else {
+        &[]
+    };
+    let misplaced: Vec<&'static str> = OWN
+        .iter()
+        .filter(|name| !allowed.contains(name))
+        .copied()
+        .collect();
+    for field in &item.fields {
+        if let Some((attr, name)) = own_attr(&field.attrs, &misplaced) {
+            let read = if ON_A_STATE_FIELD.contains(&name) {
+                format!(
+                    " — it is read on the `#[state]` struct's fields, and `{}` is not it",
+                    item.ident
+                )
+            } else {
+                String::new()
+            };
+            return Err(syn::Error::new_spanned(
+                attr,
+                format!("nothing reads `#[{name}]` on this field{read}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn marker_kinds_on_enum(item: &syn::ItemEnum) -> syn::Result<()> {
+    for &marker in ON_A_STRUCT {
+        if let Some((attr, _)) = own_attr(&item.attrs, &[marker]) {
+            return Err(syn::Error::new_spanned(
+                attr,
+                format!("`#[{marker}]` marks a struct — an enum declares nothing here"),
+            ));
+        }
+    }
+    if let Some((attr, name)) = own_attr(
+        &item.attrs,
+        &[
+            "requires",
+            "proves",
+            "total",
+            "name",
+            "slot",
+            "denomination",
+        ],
+    ) {
+        return Err(syn::Error::new_spanned(
+            attr,
+            format!("nothing reads `#[{name}]` on an enum"),
+        ));
+    }
+    for variant in &item.variants {
+        if let Some((attr, name)) = own_attr(&variant.attrs, OWN) {
+            return Err(syn::Error::new_spanned(
+                attr,
+                format!("nothing reads `#[{name}]` on a variant"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn marker_kinds_on_impl(block: &syn::ItemImpl) -> syn::Result<()> {
+    if let Some((attr, name)) = own_attr(&block.attrs, OWN) {
+        return Err(syn::Error::new_spanned(
+            attr,
+            format!(
+                "nothing reads `#[{name}]` on an impl block — the method attributes sit \
+                 on the methods themselves"
+            ),
+        ));
+    }
+    let misplaced: Vec<&'static str> = OWN
+        .iter()
+        .filter(|name| !ON_A_METHOD.contains(name) && **name != "requires")
+        .copied()
+        .collect();
+    for item in &block.items {
+        let syn::ImplItem::Fn(method) = item else {
+            continue;
+        };
+        if let Some((attr, name)) = own_attr(&method.attrs, &misplaced) {
+            return Err(syn::Error::new_spanned(
+                attr,
+                format!("nothing reads `#[{name}]` on a method"),
+            ));
         }
     }
     Ok(())
@@ -818,6 +977,32 @@ fn lower_method(
     })
 }
 
+/// Refuse a gate or a published-method mark on methods that publish
+/// nothing, with `because` saying why these do not.
+fn refuse_unpublished_marks<'a>(
+    items: impl Iterator<Item = &'a syn::ImplItem>,
+    because: &str,
+) -> syn::Result<()> {
+    for item in items {
+        let syn::ImplItem::Fn(method) = item else {
+            continue;
+        };
+        if let Some((attr, _)) = own_attr(&method.attrs, GATES) {
+            return Err(syn::Error::new_spanned(
+                attr,
+                format!("a gate guards a published method, and {because}, or drop the attribute"),
+            ));
+        }
+        if let Some((attr, _)) = own_attr(&method.attrs, &["total", "name"]) {
+            return Err(syn::Error::new_spanned(
+                attr,
+                format!("this describes a published method, and {because}, or drop the attribute"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Every public method of the state struct's inherent impls, lowered.
 fn lower_methods(
     items: &[syn::Item],
@@ -833,28 +1018,15 @@ fn lower_methods(
         };
         if !matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name)) {
             // Another type's impl publishes nothing, and `strip` removes
-            // the macro's attributes from every fn — so a gate here
-            // would vanish without a word, exactly like one on a private
-            // method.
-            for item in &block.items {
-                let syn::ImplItem::Fn(method) = item else {
-                    continue;
-                };
-                if let Some(gate) = method
-                    .attrs
-                    .iter()
-                    .find(|attr| attr.path().is_ident("requires") || attr.path().is_ident("proves"))
-                {
-                    return Err(syn::Error::new_spanned(
-                        gate,
-                        format!(
-                            "a gate guards a published method, and only `{state_name}`'s own \
-                             methods publish — move the method into its impl, or drop the \
-                             attribute"
-                        ),
-                    ));
-                }
-            }
+            // the macro's attributes from every fn — so a gate or a mark
+            // here would vanish without a word, exactly like one on a
+            // private method.
+            refuse_unpublished_marks(
+                block.items.iter(),
+                &format!(
+                    "only `{state_name}`'s own methods publish — move the method into its impl"
+                ),
+            )?;
             continue;
         }
         for item in &block.items {
@@ -866,17 +1038,11 @@ fn lower_methods(
             // would vanish along with the export the author thought
             // they were guarding. Forgetting `pub` is the classic slip,
             // and the refusal names the fix.
-            if !matches!(method.vis, syn::Visibility::Public(_))
-                && let Some(gate) = method
-                    .attrs
-                    .iter()
-                    .find(|attr| attr.path().is_ident("requires") || attr.path().is_ident("proves"))
-            {
-                return Err(syn::Error::new_spanned(
-                    gate,
-                    "a gate guards a published method, and a private one publishes \
-                     nothing — make the method `pub`, or drop the attribute",
-                ));
+            if !matches!(method.vis, syn::Visibility::Public(_)) {
+                refuse_unpublished_marks(
+                    std::iter::once(item),
+                    "a private one publishes nothing — make the method `pub`",
+                )?;
             }
             if matches!(method.vis, syn::Visibility::Public(_)) {
                 // The published name, not the Rust one: `#[name(..)]`
@@ -1285,9 +1451,9 @@ fn expand(
         ));
     };
 
-    check_marker_kinds(items)?;
     let state_name = state_struct(items, &module_name)?;
     let (fields, config_name) = parse_state(items)?;
+    check_marker_kinds(items, &state_name, config_name.as_ref())?;
     let config_fields = config_slots(items, config_name.as_ref());
     let events = event_names(items)?;
     let errors = error_names(items)?;

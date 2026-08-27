@@ -1,0 +1,5 @@
+error: `#[requires]` on a struct gates instantiation, and that gate is the configuration's — it is read on the `#[config]` struct alone
+  --> tests/refusals/requires_on_state_struct.rs:10:5
+   |
+10 |     #[requires(self)]
+   |     ^^^^^^^^^^^^^^^^^

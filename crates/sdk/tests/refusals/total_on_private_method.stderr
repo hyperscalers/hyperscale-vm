@@ -1,0 +1,5 @@
+error: this describes a published method, and a private one publishes nothing — make the method `pub`, or drop the attribute
+  --> tests/refusals/total_on_private_method.rs:15:9
+   |
+15 |         #[total]
+   |         ^^^^^^^^

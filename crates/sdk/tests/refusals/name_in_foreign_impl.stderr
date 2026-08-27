@@ -1,0 +1,5 @@
+error: this describes a published method, and only `Contract`'s own methods publish — move the method into its impl, or drop the attribute
+  --> tests/refusals/name_in_foreign_impl.rs:10:9
+   |
+10 |         #[name("noted")]
+   |         ^^^^^^^^^^^^^^^^

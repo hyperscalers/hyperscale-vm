@@ -1,0 +1,5 @@
+error: nothing reads `#[slot]` on this field — it is read on the `#[state]` struct's fields, and `Terms` is not it
+  --> tests/refusals/slot_on_config_field.rs:11:9
+   |
+11 |         #[slot(17)]
+   |         ^^^^^^^^^^^

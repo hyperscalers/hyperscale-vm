@@ -1,0 +1,5 @@
+error: `#[proves]` marks a method of `Contract`'s impl — a struct declares nothing with it
+ --> tests/refusals/proves_on_struct.rs:6:5
+  |
+6 |     #[proves(self)]
+  |     ^^^^^^^^^^^^^^^
