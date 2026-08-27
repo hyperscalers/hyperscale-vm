@@ -1394,3 +1394,53 @@ fn a_module_with_no_state_struct_declares_what_its_body_reaches() {
     };
     assert_eq!(**resource, Expr::ResourceOf(Box::new(Expr::Arg(0))));
 }
+
+/// Two exports writing one entry: the key spelled at the site, and the
+/// same key computed by a private method. A helper is the body it
+/// splices into, so the two declare the same access at the same order
+/// key.
+#[blueprint]
+mod ledger {
+    use hyperscale_vm_sdk::state::{OrderKey, Ordered, Quantity, pack};
+
+    #[state]
+    struct Ledger {
+        owed: Ordered<Quantity>,
+    }
+
+    impl Ledger {
+        /// The key spelled where it is used.
+        pub fn spelled(&mut self, party: u64, amount: Quantity) {
+            self.owed.at(pack(party, 1)).set(amount);
+        }
+
+        /// The same key, computed in a helper.
+        pub fn factored(&mut self, party: u64, amount: Quantity) {
+            self.owed.at(self.slot_of(party)).set(amount);
+        }
+
+        /// A helper yields its tail, so the key is the parameter's term
+        /// wherever the call stands.
+        fn slot_of(&self, party: u64) -> OrderKey {
+            pack(party, 1)
+        }
+    }
+}
+
+/// A private method substitutes where it is called, under the caller's
+/// own walk — a key computed in one routes exactly as the inline
+/// spelling routes.
+#[test]
+fn a_helper_splices_as_the_inline_spelling() {
+    let metadata = ledger::blueprint().metadata();
+    let effects = |name: &str| &metadata.methods[name].effects;
+    assert_eq!(
+        effects("spelled"),
+        effects("factored"),
+        "helper-computed key"
+    );
+    assert!(
+        !metadata.methods["factored"].effects.is_empty(),
+        "the spliced body declares its write"
+    );
+}

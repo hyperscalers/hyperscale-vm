@@ -1,0 +1,5 @@
+error: a helper's parameter must be a plain name, like an export's — inlining binds each argument to its name
+  --> tests/refusals/helper_pattern_param.rs:19:27
+   |
+19 |         fn log(&mut self, (a, _b): (Quantity, Quantity)) {
+   |                           ^^^^^^^

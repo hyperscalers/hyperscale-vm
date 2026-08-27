@@ -305,11 +305,7 @@ pub mod account {
             if let Some(pending) = self.pending.get()
                 && pending.effective_at_ms <= clock_ms()
             {
-                self.auth().set(Some(pending.primary));
-                self.recovery.set(Some(pending.recovery));
-                self.confirmation.set(Some(pending.confirmation));
-                self.delay_ms.set(pending.delay_ms);
-                self.pending.set(None);
+                self.enact(pending);
             }
         }
 
@@ -330,12 +326,17 @@ pub mod account {
         #[requires(governs(confirmation))]
         pub fn confirm(&mut self) {
             if let Some(pending) = self.pending.get() {
-                self.auth().set(Some(pending.primary));
-                self.recovery.set(Some(pending.recovery));
-                self.confirmation.set(Some(pending.confirmation));
-                self.delay_ms.set(pending.delay_ms);
-                self.pending.set(None);
+                self.enact(pending);
             }
+        }
+
+        /// File `pending` as the governing rules and clear the wait.
+        fn enact(&mut self, pending: Pending) {
+            self.auth().set(Some(pending.primary));
+            self.recovery.set(Some(pending.recovery));
+            self.confirmation.set(Some(pending.confirmation));
+            self.delay_ms.set(pending.delay_ms);
+            self.pending.set(None);
         }
 
         /// Strip the primary's acting power, now, keeping whatever

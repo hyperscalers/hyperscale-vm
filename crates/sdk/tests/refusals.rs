@@ -366,6 +366,19 @@ fn the_macro_refuses_a_marker_nothing_reads() {
     refuse.compile_fail("tests/refusals/marker_on_free_fn.rs");
 }
 
+/// A private method is an inlining site: its body substitutes where it
+/// is called, under the caller's own declaration walk. The bounds are
+/// what substitution needs — no cycle, no early `return`, plain-name
+/// parameters, and a name no accessor owns.
+#[test]
+fn the_macro_bounds_what_a_helper_may_be() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/helper_recursion.rs");
+    refuse.compile_fail("tests/refusals/helper_return.rs");
+    refuse.compile_fail("tests/refusals/helper_pattern_param.rs");
+    refuse.compile_fail("tests/refusals/helper_accessor_name.rs");
+}
+
 /// A key position takes the vocabulary.
 ///
 /// Whether a key is derivable is the walk's verdict, delivered at

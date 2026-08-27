@@ -1,10 +1,10 @@
-error: a contract method cannot call another method of the component — each method declares only its own body's accesses. Inline the access, or lift the shared value to a parameter
+error: a contract method cannot call a published method of the component — each method declares only its own body's accesses. Factor the shared code into a private method, which inlines where it is called, or lift the shared value to a parameter
   --> tests/refusals/self_call.rs:18:13
    |
 18 |             self.credit(a);
    |             ^^^^
 
-error: a contract method cannot call another method of the component — each method declares only its own body's accesses. Inline the access, or lift the shared value to a parameter
+error: a contract method cannot call a published method of the component — each method declares only its own body's accesses. Factor the shared code into a private method, which inlines where it is called, or lift the shared value to a parameter
   --> tests/refusals/self_call.rs:19:13
    |
 19 |             self.credit(a);

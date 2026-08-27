@@ -210,6 +210,19 @@ pub mod lending {
             held
         }
 
+        /// Decline unless the index has been carried to `now`.
+        ///
+        /// Every judgment prices shares through the index, so a body
+        /// that read one behind the clock would owe or seize at last
+        /// period's terms.
+        fn carried(&self, now: u64) -> Result<(), Error> {
+            if stale(self.accrued_at.get(), now) {
+                Err(Error::IndexStale)
+            } else {
+                Ok(())
+            }
+        }
+
         /// Draw debt against the collateral posted.
         ///
         /// Up wherever the number decides what the position owes, and
@@ -218,9 +231,7 @@ pub mod lending {
         /// for.
         pub fn draw(&mut self, want: Quantity, now: u64) -> Result<Bucket, Error> {
             let terms = self.config();
-            if stale(self.accrued_at.get(), now) {
-                return Err(Error::IndexStale);
-            }
+            self.carried(now)?;
             let collateral_price = self.collateral_price.get();
             let debt_price = self.debt_price.get();
             if collateral_price.is_zero() || debt_price.is_zero() {
@@ -249,9 +260,7 @@ pub mod lending {
         pub fn repay(&mut self, funds: Bucket, now: u64) -> Result<(), Error> {
             let mut owed_vault = self.vault(self.config().debt);
             let paid = funds.quantity();
-            if stale(self.accrued_at.get(), now) {
-                return Err(Error::IndexStale);
-            }
+            self.carried(now)?;
             owed_vault.put(funds);
 
             let (_, per_debt) = index(self.index.get());
@@ -276,9 +285,7 @@ pub mod lending {
         /// direction that fits inside it.
         pub fn liquidate(&mut self, now: u64) -> Result<Bucket, Error> {
             let terms = self.config();
-            if stale(self.accrued_at.get(), now) {
-                return Err(Error::IndexStale);
-            }
+            self.carried(now)?;
             let collateral_price = self.collateral_price.get();
             let debt_price = self.debt_price.get();
             if collateral_price.is_zero() || debt_price.is_zero() {

@@ -154,6 +154,7 @@ mod emit;
 mod gate;
 mod guest;
 mod host;
+mod inline;
 mod lanes;
 mod lower;
 mod records;
@@ -1141,6 +1142,7 @@ fn lower_methods(
 ) -> syn::Result<Vec<Lowered>> {
     let mut lowered = Vec::new();
     let mut published: Vec<String> = Vec::new();
+    let helpers = inline::helpers(items, state_name, declared.accessors)?;
     for item in items {
         let syn::Item::Impl(block) = item else {
             continue;
@@ -1162,15 +1164,16 @@ fn lower_methods(
             let syn::ImplItem::Fn(method) = item else {
                 continue;
             };
-            // Only `pub` methods lower, and `strip` removes the macro's
-            // attributes from every fn — so a gate on a private method
-            // would vanish along with the export the author thought
-            // they were guarding. Forgetting `pub` is the classic slip,
-            // and the refusal names the fix.
+            // Only `pub` methods publish, and `strip` removes the
+            // macro's attributes from every fn — a gate on a private
+            // method would vanish while its body keeps inlining into
+            // callers whose own gates govern. Forgetting `pub` is still
+            // the classic slip, and the refusal names the fix.
             if !matches!(method.vis, syn::Visibility::Public(_)) {
                 refuse_unpublished_marks(
                     std::iter::once(item),
-                    "a private one publishes nothing — make the method `pub`",
+                    "a private method inlines into its callers and publishes nothing — \
+                     make the method `pub`",
                 )?;
             }
             if matches!(method.vis, syn::Visibility::Public(_)) {
@@ -1204,7 +1207,8 @@ fn lower_methods(
                     ));
                 }
                 published.push(name);
-                lowered.push(lower_method(method, declared, serves)?);
+                let method = inline::splice(method, &helpers)?;
+                lowered.push(lower_method(&method, declared, serves)?);
             }
         }
     }

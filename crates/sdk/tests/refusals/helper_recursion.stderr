@@ -1,0 +1,11 @@
+error: this call re-enters `settle` — a helper cannot call into a cycle of itself
+  --> tests/refusals/helper_recursion.rs:27:22
+   |
+27 |                 self.settle(false);
+   |                      ^^^^^^
+
+error: `settle` began inlining at this call
+  --> tests/refusals/helper_recursion.rs:14:18
+   |
+14 |             self.settle(deep);
+   |                  ^^^^^^

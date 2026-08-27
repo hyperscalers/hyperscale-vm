@@ -1,4 +1,4 @@
-error: a gate guards a published method, and a private one publishes nothing — make the method `pub`, or drop the attribute
+error: a gate guards a published method, and a private method inlines into its callers and publishes nothing — make the method `pub`, or drop the attribute
   --> tests/refusals/private_gated.rs:12:9
    |
 12 |         #[requires(self)]

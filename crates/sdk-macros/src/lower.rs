@@ -669,8 +669,26 @@ fn selectable(branch: &syn::ExprIf) -> Option<(&syn::Expr, &syn::Expr)> {
 }
 
 /// Whether an expression is the bare `self` path.
-fn is_self(expr: &syn::Expr) -> bool {
+pub fn is_self(expr: &syn::Expr) -> bool {
     matches!(expr, syn::Expr::Path(path) if path.path.is_ident("self"))
+}
+
+/// Whether an expression is written block-first, which a statement would
+/// parse as a statement of its own — a consumer rendering tokens after
+/// one wraps it in parentheses so the whole stays one expression.
+const fn block_form(expr: &syn::Expr) -> bool {
+    matches!(
+        expr,
+        syn::Expr::Block(_)
+            | syn::Expr::If(_)
+            | syn::Expr::Match(_)
+            | syn::Expr::ForLoop(_)
+            | syn::Expr::While(_)
+            | syn::Expr::Loop(_)
+            | syn::Expr::Unsafe(_)
+            | syn::Expr::TryBlock(_)
+            | syn::Expr::Const(_)
+    )
 }
 
 /// The generated name of the `index`-th bound export value.
@@ -1853,6 +1871,40 @@ impl<'a> Lowerer<'a> {
         quote!({ #(#statements)* })
     }
 
+    /// A block in value position is its tail. Where every other
+    /// statement binds a name without emitting guest code, the tail's
+    /// evaluation — its term, where it has one — is the block's, so a
+    /// helper's spliced body routes exactly as the same text written
+    /// inline. A statement that renders real guest code keeps the block
+    /// opaque: discarding rendered code at a consumer that reads only
+    /// the value would drop its effects, so such a block stays what any
+    /// composite the declaration cannot read has always been.
+    fn block_expr(&mut self, block: &syn::ExprBlock) -> Eval {
+        let label = &block.label;
+        self.locals.push(BTreeMap::new());
+        let mut rendered: Vec<TokenStream> = Vec::new();
+        let mut tail: Option<Eval> = None;
+        for (index, stmt) in block.block.stmts.iter().enumerate() {
+            if index + 1 == block.block.stmts.len()
+                && label.is_none()
+                && let syn::Stmt::Expr(expr, None) = stmt
+            {
+                tail = Some(self.expr(expr));
+            } else {
+                rendered.push(self.stmt(stmt));
+            }
+        }
+        self.locals.pop();
+        match tail {
+            Some(eval) if rendered.iter().all(TokenStream::is_empty) => eval,
+            Some(eval) => {
+                let code = self.value(eval.code);
+                Eval::plain(quote!({ #(#rendered)* #code }))
+            }
+            None => Eval::plain(quote!(#label { #(#rendered)* })),
+        }
+    }
+
     fn stmt(&mut self, stmt: &syn::Stmt) -> TokenStream {
         match stmt {
             syn::Stmt::Local(local) => {
@@ -2356,11 +2408,7 @@ impl<'a> Lowerer<'a> {
                     .collect();
                 Eval::plain(quote!(match #scrutinee { #(#arms)* }))
             }
-            syn::Expr::Block(block) => {
-                let label = &block.label;
-                let code = self.block(&block.block);
-                Eval::plain(quote!(#label #code))
-            }
+            syn::Expr::Block(block) => self.block_expr(block),
             syn::Expr::ForLoop(loop_) => {
                 let code = self.for_loop(loop_);
                 Eval::plain(code)
@@ -2493,6 +2541,11 @@ impl<'a> Lowerer<'a> {
             }
             syn::Expr::Try(try_) => {
                 let inner = self.code(&try_.expr);
+                let inner = if block_form(&try_.expr) {
+                    quote!((#inner))
+                } else {
+                    inner
+                };
                 Eval::plain(quote!(#inner?))
             }
             syn::Expr::Index(index) => {
@@ -2760,6 +2813,11 @@ impl<'a> Lowerer<'a> {
             }
             _ => {
                 let code = self.value(base.code);
+                let code = if block_form(&field.base) {
+                    quote!((#code))
+                } else {
+                    code
+                };
                 Eval::plain(quote!(#code.#member))
             }
         }
@@ -2988,9 +3046,10 @@ impl<'a> Lowerer<'a> {
             }
             self.error(
                 call.span(),
-                "a contract method cannot call another method of the component — each \
-                 method declares only its own body's accesses. Inline the access, or \
-                 lift the shared value to a parameter",
+                "a contract method cannot call a published method of the component — \
+                 each method declares only its own body's accesses. Factor the shared \
+                 code into a private method, which inlines where it is called, or lift \
+                 the shared value to a parameter",
             );
             for arg in &call.args {
                 self.expr(arg);
@@ -3491,6 +3550,11 @@ impl<'a> Lowerer<'a> {
         call: &syn::ExprMethodCall,
     ) -> TokenStream {
         let receiver_code = self.value(receiver.code.clone());
+        let receiver_code = if block_form(&call.receiver) {
+            quote!((#receiver_code))
+        } else {
+            receiver_code
+        };
         let args: Vec<_> = evals
             .into_iter()
             .map(|eval| self.value(eval.code))

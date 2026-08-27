@@ -1,0 +1,5 @@
+error: a helper yields its tail expression — a `return` here would return from the export the helper splices into
+  --> tests/refusals/helper_return.rs:21:17
+   |
+21 |                 return Quantity::ZERO;
+   |                 ^^^^^^
