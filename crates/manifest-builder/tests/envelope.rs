@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, Socket, StoredRule, TestHasher, Value,
     admit_tree,
 };
-use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
+use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder, TypedError};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr, ResourceAddr};
 use proptest::prelude::{prop, proptest};
@@ -129,6 +129,27 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
             socket: 0
         })
     );
+}
+
+/// A call that acts as its proof takes its target from it, and a proof
+/// from a socket carries whatever claim the declaration named — which
+/// may be a badge, and a badge is nothing to call. An identity's socket
+/// proof names its target as any proof does.
+#[test]
+fn a_badge_socket_proof_names_no_target_for_a_self_gated_call() {
+    let chain = world();
+    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE);
+
+    let badge = decl.declare_proof(Claim::of_subject(RES_X));
+    let refused = account::withdraw(&mut decl, badge, RES_X, 100);
+    assert!(matches!(
+        refused,
+        Err(TypedError::SocketProofForSelf { ref method }) if method == "withdraw"
+    ));
+
+    let bob = decl.declare_proof(Claim::of_subject(BOB));
+    let _funds = account::withdraw(&mut decl, bob, RES_X, 100)
+        .expect("an identity's socket proof names its target");
 }
 
 /// A socket consumed from the wrong channel is refused at `adopt` — the
