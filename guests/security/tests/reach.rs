@@ -18,7 +18,7 @@
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_testing::{
-    Chain, Component, Outcome, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition,
+    Chain, Outcome, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition,
     account, address_text, package, principal,
 };
 use security_guest::security;
@@ -84,16 +84,15 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
         .expect_completed();
     assert_eq!(chain.balance(HOLDER, share), 90);
 
-    // Composed through the raw call: the requirement is the share's own
-    // entry, injected at admission rather than declared, so the
-    // package's signature says `halt` admits anyone and its generated
-    // client offers no proof-taking form. Attaching the proof is the
-    // composer's until the builder resolves grants for itself.
+    // The requirement is the share's own entry, injected at admission
+    // rather than declared, so the package's signature says `halt`
+    // admits anyone and its wrapper takes no proof. The scope is where
+    // the registrar's authority rides: a halt reaches the holder's
+    // prefix, and a call that could want evidence draws the span's.
     chain
         .transact(REGISTRAR, |b| {
             let registrar = account::authorize(b, REGISTRAR)?;
-            b.call_presenting(registrar, issuer.address(), "halt", (HOLDER.address(),))?
-                .none()
+            b.presenting(registrar, |b| issuer.halt(b, HOLDER.address()))
         })
         .expect_completed();
 
@@ -137,8 +136,7 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
     chain
         .transact(REGISTRAR, |b| {
             let registrar = account::authorize(b, REGISTRAR)?;
-            b.call_presenting(registrar, issuer.address(), "unhalt", (HOLDER.address(),))?
-                .none()
+            b.presenting(registrar, |b| issuer.unhalt(b, HOLDER.address()))
         })
         .expect_completed();
     transfer(&mut chain)

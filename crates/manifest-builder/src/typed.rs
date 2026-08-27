@@ -32,13 +32,15 @@ use hyperscale_vm_effects::vocabulary::{
 };
 use hyperscale_vm_effects::{
     ChainRecords, Claim, EdgeRef, EvalBudget, EvidenceRef, GraphArg, Hasher, InstanceMeta,
-    ManifestGraph, MethodSignature, PackageHash, PackageMetadata, Value,
+    ManifestGraph, MethodSignature, PackageHash, PackageMetadata, Value, claim_text,
 };
 use hyperscale_vm_types::{Address, AddressClass, CallTarget, PrincipalAddr};
 
 use crate::args::Args;
 use crate::builder::{Bucket, BuildError, GraphBuilder};
-use crate::projection::{earned_claims, eval_inputs, gated_claims, output_resources, typed_values};
+use crate::projection::{
+    earned_claims, eval_inputs, gated_claims, output_resources, proven_claims, typed_values,
+};
 use crate::unpack::{Arity, Unpacked};
 
 /// Why a call could not be typed against the target's signature.
@@ -140,6 +142,16 @@ pub enum TypedError {
     SignatureForGuarded {
         /// The method called.
         method: String,
+    },
+    /// A guarded call inside a `presenting` scope none of whose proofs
+    /// covers the gate the composer could read whole — admission's
+    /// judgment, reached at the call site with the claim named.
+    #[error("`{method}` requires a claim on {claim}, and nothing in scope proves it")]
+    UncoveredGate {
+        /// The method called.
+        method: String,
+        /// The first uncovered claim, rendered.
+        claim: String,
     },
     /// A proof requested from a method that proves nothing — admission's
     /// [`ProvesNothing`](hyperscale_vm_effects::AdmissionError::ProvesNothing)
@@ -254,6 +266,12 @@ pub struct Proof {
     /// from a socket carries whatever claim the declaration named — an
     /// identity, or a badge, and a badge is nothing to call.
     acting: Option<CallTarget>,
+    /// The claims it proves, as far as construction could read them off
+    /// the proving declaration — the claim and, for an instance, the
+    /// widened subject, exactly as the evaluator widens. What a
+    /// `presenting` scope's coverage is judged by; a claim construction
+    /// could not evaluate is absent and covers nothing.
+    proves: [Option<Claim>; 2],
 }
 
 impl Proof {
@@ -266,16 +284,28 @@ impl Proof {
 
     /// The proof a socket will be filled with, presented as this
     /// intent's `position`-th socket.
-    pub(crate) const fn from_socket(
+    pub(crate) fn from_socket(
         builder: u64,
         position: u32,
         acting: Option<CallTarget>,
+        claim: Claim,
     ) -> Self {
+        let widened = claim
+            .instance
+            .is_some()
+            .then(|| Claim::of_subject(claim.subject));
         Self {
             builder,
             reference: EvidenceRef::Socket(position),
             acting,
+            proves: [Some(claim), widened],
         }
+    }
+
+    /// Whether this proof proves `claim`, on the judge's own equality
+    /// terms.
+    pub(crate) fn covers(&self, claim: &Claim) -> bool {
+        self.proves.iter().flatten().any(|proven| proven == claim)
     }
 
     /// Refuse a proof this builder did not prove, on [`Bucket`]'s terms.
@@ -569,7 +599,7 @@ impl<'a> TypedBuilder<'a> {
         args: impl Args,
     ) -> Result<Outputs, TypedError> {
         self.append(target.into(), method, args, &[])
-            .map(|(_, outputs)| outputs)
+            .map(|(_, outputs, _)| outputs)
     }
 
     /// The same call, presenting `evidence` instead of the intent's
@@ -594,7 +624,7 @@ impl<'a> TypedBuilder<'a> {
         args: impl Args,
     ) -> Result<Outputs, TypedError> {
         self.append(target.into(), method, args, &evidence.proofs())
-            .map(|(_, outputs)| outputs)
+            .map(|(_, outputs, _)| outputs)
     }
 
     /// Append an invocation of `method`, a proving method of `target`,
@@ -670,12 +700,13 @@ impl<'a> TypedBuilder<'a> {
                 claimed: 0,
             });
         }
-        let (node, outputs) = self.append(target, method, args, proofs)?;
+        let (node, outputs, proves) = self.append(target, method, args, proofs)?;
         outputs.none()?;
         Ok(Proof {
             builder: self.graph.id(),
             reference: EvidenceRef::Node(node),
             acting: Some(target),
+            proves,
         })
     }
 
@@ -745,10 +776,80 @@ impl<'a> TypedBuilder<'a> {
         record: &InstanceMeta,
         values: &[Value],
         known: &[bool],
-    ) -> Vec<Claim> {
+    ) -> (Vec<Claim>, bool) {
         let budget = EvalBudget::default();
         let inputs = eval_inputs(target.address(), values, record, 0, &budget);
         gated_claims(signature, &inputs, known, self.hasher)
+    }
+
+    /// What a claim-gated call presents where the caller spelled
+    /// nothing: whatever its gate names that the signer's own account
+    /// can prove, composed ahead of the call.
+    ///
+    /// Where the account proves nothing, the enclosing scopes answer for
+    /// the call — a gate read whole that nothing in scope covers refuses
+    /// with the claim named, and one read only in part is left to
+    /// admission, since the leaf construction could not evaluate may be
+    /// exactly the claim a scope proves. With no scope at all, the
+    /// refusal is the signature's.
+    #[allow(clippy::too_many_arguments)] // one judgment, split for the line count
+    fn gate_proofs(
+        &mut self,
+        signature: &MethodSignature,
+        target: CallTarget,
+        record: &InstanceMeta,
+        values: &[Value],
+        known: &[bool],
+        method: &str,
+        scoped: &[Proof],
+    ) -> Result<Vec<Proof>, TypedError> {
+        let (asked, complete) = self.gated(signature, target, record, values, known);
+        let proven: Vec<Proof> = asked
+            .iter()
+            .filter_map(|claim| self.present(*claim))
+            .collect();
+        if proven.is_empty() {
+            if scoped.is_empty() {
+                return Err(TypedError::SignatureForGuarded {
+                    method: method.to_owned(),
+                });
+            }
+            let covered = asked
+                .iter()
+                .any(|claim| scoped.iter().any(|proof| proof.covers(claim)));
+            if !covered && complete {
+                let claim = asked.first().map(claim_text).unwrap_or_default();
+                return Err(TypedError::UncoveredGate {
+                    method: method.to_owned(),
+                    claim,
+                });
+            }
+        }
+        Ok(proven)
+    }
+
+    /// The claims this call proves, filed on the [`Proof`] handed back
+    /// so a scope's coverage can be judged without re-resolving the
+    /// call. `[None, None]` for a call that proves nothing.
+    fn filed_claims(
+        &self,
+        signature: &MethodSignature,
+        target: CallTarget,
+        record: &InstanceMeta,
+        values: &[Value],
+        known: &[bool],
+    ) -> [Option<Claim>; 2] {
+        if !signature.proves() {
+            return [None, None];
+        }
+        let budget = EvalBudget::default();
+        let inputs = eval_inputs(target.address(), values, record, 0, &budget);
+        let claims = proven_claims(signature, &inputs, known, self.hasher);
+        let mut filed = [None, None];
+        for (slot, claim) in filed.iter_mut().zip(claims) {
+            *slot = Some(claim);
+        }
+        filed
     }
 
     /// The node proving `claim`, composing one where this intent has
@@ -836,7 +937,7 @@ impl<'a> TypedBuilder<'a> {
         method: &str,
         args: impl Args,
         proofs: &[Proof],
-    ) -> Result<(u32, Outputs), TypedError> {
+    ) -> Result<(u32, Outputs, [Option<Claim>; 2]), TypedError> {
         // A proof's node index means nothing in another intent's graph;
         // cross-intent authority travels through a socket, never by
         // presenting a foreign handle.
@@ -888,17 +989,7 @@ impl<'a> TypedBuilder<'a> {
         // nothing, so the refusal leaves the graph as it was.
         let gated: Vec<Proof> =
             if signature.requires_evidence() && proofs.is_empty() && !signature.reads_a_rule() {
-                let proven: Vec<Proof> = self
-                    .gated(signature, target, meta, &values, &known)
-                    .iter()
-                    .filter_map(|claim| self.present(*claim))
-                    .collect();
-                if proven.is_empty() && scoped.is_empty() {
-                    return Err(TypedError::SignatureForGuarded {
-                        method: method.to_owned(),
-                    });
-                }
-                proven
+                self.gate_proofs(signature, target, meta, &values, &known, method, &scoped)?
             } else {
                 Vec::new()
             };
@@ -971,6 +1062,7 @@ impl<'a> TypedBuilder<'a> {
             .into_iter()
             .chain(scoped.iter().map(|proof| proof.reference()))
             .collect();
+        let proves = self.filed_claims(signature, target, meta, &values, &known);
         let outputs = resources.len();
         let producer = self
             .graph
@@ -991,6 +1083,7 @@ impl<'a> TypedBuilder<'a> {
                 },
                 items: buckets,
             },
+            proves,
         ))
     }
 

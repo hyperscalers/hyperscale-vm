@@ -269,8 +269,12 @@ pub(crate) fn gated_claims(
     inputs: &EvalInputs<'_>,
     known: &[bool],
     hasher: &dyn Hasher,
-) -> Vec<Claim> {
+) -> (Vec<Claim>, bool) {
     let mut wanted = Vec::new();
+    // Whether every claim leaf resolved: only a gate read whole is one a
+    // scope's coverage can be judged against, since a leaf this could
+    // not evaluate may be exactly the claim the scope proves.
+    let mut complete = true;
     let rules = signature
         .effects
         .iter()
@@ -285,12 +289,15 @@ pub(crate) fn gated_claims(
                 continue;
             };
             if !resolvable(expr, known, 0) {
+                complete = false;
                 continue;
             }
             let Ok(value) = evaluate_expr(expr, inputs, hasher) else {
+                complete = false;
                 continue;
             };
             let Some(claim) = Claim::of(&value) else {
+                complete = false;
                 continue;
             };
             if !wanted.contains(&claim) {
@@ -298,7 +305,53 @@ pub(crate) fn gated_claims(
             }
         }
     }
-    wanted
+    (wanted, complete)
+}
+
+/// The claims a proving call proves, as far as construction can evaluate
+/// them.
+///
+/// Mirrors the evaluator's own reading of the `Proves` clauses,
+/// widening included: an instance holder holds the badge, so a proof of
+/// one instance also proves the subject — kept here so a scope's
+/// coverage stays the same equality walk the judge runs. A claim this
+/// cannot evaluate is simply absent, which reads as covering nothing.
+pub(crate) fn proven_claims(
+    signature: &MethodSignature,
+    inputs: &EvalInputs<'_>,
+    known: &[bool],
+    hasher: &dyn Hasher,
+) -> Vec<Claim> {
+    let mut proves = Vec::new();
+    let exprs = signature
+        .effects
+        .iter()
+        .flat_map(Clause::effects)
+        .filter_map(|clause| match clause {
+            Clause::Proves { claim, .. } => Some(claim),
+            _ => None,
+        });
+    for expr in exprs {
+        if !resolvable(expr, known, 0) {
+            continue;
+        }
+        let Ok(value) = evaluate_expr(expr, inputs, hasher) else {
+            continue;
+        };
+        let Some(claim) = Claim::of(&value) else {
+            continue;
+        };
+        if !proves.contains(&claim) {
+            proves.push(claim);
+        }
+        if claim.instance.is_some() {
+            let widened = Claim::of_subject(claim.subject);
+            if !proves.contains(&widened) {
+                proves.push(widened);
+            }
+        }
+    }
+    proves
 }
 
 /// Every granted-rule record a graph's calls will be resolved against,

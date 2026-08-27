@@ -460,3 +460,45 @@ fn explicit_evidence_stands_alone_inside_a_scope() {
         "the per-call spelling is the whole of the evidence"
     );
 }
+
+/// A gate the signer cannot prove is answered by the scope that covers
+/// it: the pool's seal gates on its configured founder, the signer is
+/// somebody else, and the founder's sign-in rides the span.
+#[test]
+fn a_scope_covers_a_gate_the_signer_cannot_prove() {
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher, BOB);
+    let (seal, _) = b.seal_of(pool()).unwrap();
+    let founder = b.call_proving(OPERATOR, "authorize", ()).unwrap();
+    b.presenting(founder, |b| {
+        let badge = b.call(pool(), &seal, ())?.one()?;
+        account::deposit_nf(b, OPERATOR, badge)
+    })
+    .unwrap();
+    let graph = b.build().unwrap();
+
+    let sealed = &graph.nodes[1];
+    assert_eq!(sealed.method, seal);
+    assert!(
+        sealed.evidence.contains(&EvidenceRef::Node(0)),
+        "the founder's sign-in rides the seal: {:?}",
+        sealed.evidence
+    );
+}
+
+/// A gate read whole that nothing in scope covers refuses at the call,
+/// naming the claim — before admission ever sees the graph.
+#[test]
+fn an_uncovered_gate_refuses_with_the_claim_named() {
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher, BOB);
+    let (seal, _) = b.seal_of(pool()).unwrap();
+    let unrelated = b
+        .call_proving(BOB, "present-badge", (owner_badge(),))
+        .unwrap();
+    let refused = b.presenting(unrelated, |b| b.call(pool(), &seal, ()).map(|_| ()));
+    assert!(
+        matches!(&refused, Err(TypedError::UncoveredGate { method, .. }) if *method == seal),
+        "an uncovered gate names itself: {refused:?}"
+    );
+}

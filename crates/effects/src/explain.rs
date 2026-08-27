@@ -1544,7 +1544,8 @@ pub fn address_text(address: Address) -> String {
 /// and one on instance 7 are two different claims about one badge, and a
 /// rendering that drops it says the right badge was presented and
 /// mysteriously refused.
-fn claim_text(claim: &Claim) -> String {
+#[must_use]
+pub fn claim_text(claim: &Claim) -> String {
     format!("{}{}", address_text(claim.subject), instance_text(claim))
 }
 

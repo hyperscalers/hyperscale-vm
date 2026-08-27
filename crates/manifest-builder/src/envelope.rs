@@ -351,7 +351,7 @@ impl<'a> IntentBuilder<'a> {
         // reading the address class gives everywhere.
         let acting = CallTarget::try_from(claim.subject).ok();
         self.sockets.push(Socket::Authority(claim));
-        Proof::from_socket(self.graph_id(), position, acting)
+        Proof::from_socket(self.graph_id(), position, acting, claim)
     }
 
     /// The declaration, for its signer to sign and hand on.
