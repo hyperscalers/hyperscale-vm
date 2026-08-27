@@ -59,9 +59,9 @@ pub use hyperscale_vm_effects::{
     package_slot,
 };
 use hyperscale_vm_effects::{
-    ChainRecords, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, PresentedGrants,
-    Records, Value, admit_presenting, child_key, declaration_hash, explain_refusal,
-    holdings_collection, issued_record, issued_resource, route,
+    CallArg, ChainRecords, Hash32, Hasher, InstanceMeta, NodeCall, PackageHash,
+    PrefixShardResolver, PresentedGrants, Records, Value, admit_presenting, child_key,
+    declaration_hash, explain_refusal, holdings_collection, issued_record, issued_resource, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
@@ -601,6 +601,15 @@ impl Chain {
                     .map(|call| (call.export.as_str(), call.target)),
                 &errors,
             )),
+            // An infeasible movement names a leaf, and the coordinates
+            // that derive it are the transaction's own.
+            KernelOutcome::Infeasible { key, amount } => Some(explain_infeasible(
+                *key,
+                *amount,
+                &entry.calls,
+                signer,
+                &self.records,
+            )),
             _ => None,
         };
         Ok(Outcome::new(receipt, errors, explained, written))
@@ -659,5 +668,60 @@ fn vault(owner: impl Into<Address>, resource: impl Into<Address>) -> SubstateKey
         owner,
         VAULT,
         &[Value::Address(resource.into()).canonical_bytes()],
+    )
+}
+
+/// The sentence an infeasible movement reads back as: the vault that
+/// could not cover it, named by owner and resource rather than by the
+/// leaf hash the receipt carries.
+///
+/// The candidates are the transaction's own coordinates — every owner a
+/// call targets, plus the signer, crossed with every address the calls
+/// carry or their targets' configurations hold — because a leaf key is a
+/// hash that inverts to nothing, while the coordinates that built it are
+/// all in hand. A key none of them derives prints as itself, marked as
+/// such.
+fn explain_infeasible(
+    key: SubstateKey,
+    amount: u128,
+    calls: &[NodeCall],
+    signer: PrincipalAddr,
+    records: &Records,
+) -> String {
+    let mut owners: Vec<Address> = vec![signer.address()];
+    owners.extend(calls.iter().map(|call| call.target));
+
+    // Every address in reach is a candidate denomination: one that keys
+    // no vault simply fails the hash comparison, so nothing narrows by
+    // class here.
+    let mut addresses: Vec<Address> = Vec::new();
+    for call in calls {
+        addresses.extend(call.args.iter().filter_map(|arg| match arg {
+            CallArg::Address(address) => Some(*address),
+            _ => None,
+        }));
+        addresses.extend(call.issues.iter().map(|grant| grant.resource.address()));
+    }
+    for (_, meta) in records.instances.components() {
+        addresses.extend(meta.config.iter().filter_map(|value| match value {
+            Value::Address(address) => Some(*address),
+            _ => None,
+        }));
+    }
+
+    for &owner in &owners {
+        for &resource in &addresses {
+            if vault(owner, resource) == key {
+                return format!(
+                    "the vault of {} under {} could not cover it: short {amount}",
+                    address_text(resource),
+                    address_text(owner),
+                );
+            }
+        }
+    }
+    format!(
+        "cell {key:?} could not cover a movement: short {amount} — a leaf the transaction's \
+         own coordinates do not derive"
     )
 }

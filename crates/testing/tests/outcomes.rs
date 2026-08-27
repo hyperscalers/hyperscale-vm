@@ -9,7 +9,8 @@
 use hyperscale_vm_fixtures::amm;
 use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
-    Chain, Outcome, PrincipalAddr, ResourceAddr, account, package, principal, resource,
+    Chain, Outcome, PrincipalAddr, ResourceAddr, account, address_text, package, principal,
+    resource,
 };
 
 const ALICE: PrincipalAddr = principal(1);
@@ -65,4 +66,27 @@ fn expect_completed_names_the_decline() {
     let mut chain = Chain::native();
     let pool = pool(&mut chain);
     declined(&mut chain, pool).expect_completed();
+}
+
+/// An under-covered reservation names the vault, not the leaf hash.
+#[test]
+fn an_infeasible_movement_reads_as_the_vault_it_missed() {
+    let mut chain = Chain::native();
+    let pool = pool(&mut chain);
+    let outcome = chain.transact(ALICE, |b| {
+        let signed_in = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, signed_in, X, 5_000)?;
+        let bought = pool.swap(b, funds, 1u128)?;
+        account::deposit(b, ALICE, bought)
+    });
+
+    let sentence = outcome.refused_as();
+    assert!(sentence.contains("the vault of"), "{sentence}");
+    assert!(sentence.contains(&address_text(X.address())), "{sentence}");
+    assert!(
+        sentence.contains(&address_text(ALICE.address())),
+        "{sentence}"
+    );
+    assert!(sentence.contains("short"), "{sentence}");
+    assert!(!sentence.contains("SubstateKey"), "{sentence}");
 }
