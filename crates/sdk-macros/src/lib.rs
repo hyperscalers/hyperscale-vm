@@ -390,7 +390,13 @@ pub(crate) fn is_address(ty: &syn::Type) -> bool {
 /// The parameter kind a Rust type binds as in a manifest.
 fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
     let syn::Type::Path(path) = ty else {
-        return Err(syn::Error::new(ty.span(), "unsupported parameter type"));
+        return Err(syn::Error::new(
+            ty.span(),
+            "a contract parameter is a plain named type — a reference, tuple, or array is \
+             not one a manifest can bind. The kinds are `Bucket`, `NfBucket`, `Ids`, \
+             `Quantity`, `OrderKey`, `Fixed`, `SignedFixed`, `u128`, `u64`, `Address`, and \
+             bytes",
+        ));
     };
     // An address type declares its classes in the kind, so a wrong-class
     // argument is admission's refusal — which is what lets the generated
@@ -539,6 +545,55 @@ fn check_marker_kinds(
                 }
             }
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a local item whose name the macro matches by last path
+/// segment.
+///
+/// Parameter kinds, widening, and the `Result` detection all read a
+/// type's final segment, so a module-local `Bucket` or a `Result` alias
+/// would silently bind as the vocabulary's — the one mismatch the walk
+/// cannot see, closed here at the item that would cause it.
+fn check_vocabulary_shadows(items: &[syn::Item]) -> syn::Result<()> {
+    const MATCHED: &[&str] = &[
+        "Address",
+        "CallTarget",
+        "ComponentAddr",
+        "PackageAddr",
+        "PrincipalAddr",
+        "ResourceAddr",
+        "Bucket",
+        "NfBucket",
+        "Ids",
+        "Quantity",
+        "OrderKey",
+        "Fixed",
+        "SignedFixed",
+        "Vec",
+        "Bytes",
+        "Rule",
+        "RuleBytes",
+        "Result",
+    ];
+    for item in items {
+        let ident = match item {
+            syn::Item::Struct(item) => &item.ident,
+            syn::Item::Enum(item) => &item.ident,
+            syn::Item::Type(item) => &item.ident,
+            _ => continue,
+        };
+        if MATCHED.iter().any(|name| ident == name) {
+            return Err(syn::Error::new(
+                ident.span(),
+                format!(
+                    "`{ident}` is a name the macro matches by a type's last path segment, \
+                     so a local `{ident}` would silently bind as the vocabulary's — \
+                     rename it"
+                ),
+            ));
         }
     }
     Ok(())
@@ -955,7 +1010,16 @@ fn lower_method(
                     all.combine(error);
                     all
                 })
-                .unwrap_or_else(|| syn::Error::new(method.span(), "lowering failed"))
+                .unwrap_or_else(|| {
+                    syn::Error::new(
+                        method.span(),
+                        format!(
+                            "`{}` failed to lower with no line recorded — a defect of the \
+                             macro, not of this body",
+                            method.sig.ident
+                        ),
+                    )
+                })
         })?;
     check_gate_shape(&gate, &lowered, method)?;
 
@@ -1534,6 +1598,7 @@ fn expand(
     let state_name = state_struct(items, &module_name)?;
     let (fields, config_name) = parse_state(items)?;
     check_marker_kinds(items, &state_name, config_name.as_ref())?;
+    check_vocabulary_shadows(items)?;
     let config_fields = config_slots(items, config_name.as_ref());
     let events = event_names(items)?;
     let errors = error_names(items)?;

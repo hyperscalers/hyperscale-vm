@@ -2,21 +2,21 @@ config
       0  minter
 
 instantiate() — infallible
-  mints    "fixed" fungible
+  mints    "founded" fungible
   mints    "retired" fungible, granting burn to the issuer
   mints    "circulating" fungible, granting burn to anyone
   declares
       0  requires self.config is absent
       1  write self.config
-      2  requires self.resource[self-issued(fungible["fixed"])] is absent
-      3  write self.resource[self-issued(fungible["fixed"])]
+      2  requires self.resource[self-issued(fungible["founded"])] is absent
+      3  write self.resource[self-issued(fungible["founded"])]
       4  requires self.resource[self-issued(fungible["retired"]), granting burn to the issuer] is absent
       5  write self.resource[self-issued(fungible["retired"]), granting burn to the issuer]
       6  requires self.resource[self-issued(fungible["circulating"]), granting burn to anyone] is absent
       7  write self.resource[self-issued(fungible["circulating"]), granting burn to anyone]
       8  requires self.resource[self-issued(fungible["seat"]), granting mint to config.minter] is absent
       9  write self.resource[self-issued(fungible["seat"]), granting mint to config.minter]
-  yields   edge 0 = self-issued(fungible["fixed"])
+  yields   edge 0 = self-issued(fungible["founded"])
   yields   edge 1 = self-issued(fungible["retired"]), granting burn to the issuer
   yields   edge 2 = self-issued(fungible["circulating"]), granting burn to anyone
   exports  handle for clause 1, handle for clause 3, handle for clause 5, handle for clause 7, handle for clause 9, self.record

@@ -10,7 +10,7 @@
 //!
 //! What separates them is which entries they carry.
 //!
-//! `Fixed` carries none. Its whole supply is founded where its record is
+//! `Founded` carries none. Its whole supply is founded where its record is
 //! written, and founding is not minting — no `Mint` entry governs a
 //! creation — so the supply is exactly what the component came up
 //! holding and nothing can add to it. That is capped supply spelled as
@@ -46,7 +46,7 @@ pub mod capped {
     /// to admit a mint however the caller is authorized: publish refuses
     /// a body that mints this, so there is no such method to reach.
     #[resource(initial(1_000_000), display_digits = 0)]
-    struct Fixed;
+    struct Founded;
 
     /// Founded in full, and burnable by its issuer.
     ///
@@ -62,7 +62,7 @@ pub mod capped {
     /// The deflationary token: `burn = anyone` is an entry rather than a
     /// permission the kernel hands out, so retiring it goes through the
     /// holder's own account and the issuer is not a party to it. Absence
-    /// of the entry is what makes that the exception — `Fixed` beside it
+    /// of the entry is what makes that the exception — `Founded` beside it
     /// grants none, and nobody may destroy it at all.
     #[resource(initial(1_000), grants(burn = anyone), display_digits = 0)]
     struct Circulating;

@@ -258,6 +258,39 @@ pub fn parse_requires(
     })
 }
 
+/// The named parameter's position, held to the type the emitted read
+/// gives it: the runtime reads a badge as an address and an instance id
+/// as a `u64`, so a parameter declared anything else would compile here
+/// and trap at the first call, spanning nothing.
+fn parameter_position(
+    params: &[(String, syn::Type)],
+    named: &syn::Ident,
+    admits: fn(&syn::Type) -> bool,
+    expected: &str,
+) -> syn::Result<u32> {
+    let index = params
+        .iter()
+        .position(|(p, _)| named == p.as_str())
+        .ok_or_else(|| {
+            syn::Error::new(
+                named.span(),
+                format!(
+                    "`{named}` is not a parameter of this method — a gate reads the \
+                     badge and its id off the method's own parameters"
+                ),
+            )
+        })?;
+    let (_, ty) = &params[index];
+    if !admits(ty) {
+        let declared = quote!(#ty);
+        return Err(syn::Error::new(
+            named.span(),
+            format!("`{named}` is declared `{declared}`, and {expected}"),
+        ));
+    }
+    Ok(u32::try_from(index).expect("a parameter list is shorter than u32"))
+}
+
 /// Read a method's gate off its attributes.
 pub fn parse_gate(
     method: &syn::ImplItemFn,
@@ -317,26 +350,9 @@ pub fn parse_gate(
     }
     let auth = syn::Ident::new("auth", claim.span());
     let rule = cell(&auth)?;
-    // The named parameter, held to the type the emitted read gives it:
-    // the runtime reads a badge as an address and an instance id as a
-    // `u64`, so a parameter declared anything else would compile here
-    // and trap at the first call, spanning nothing.
-    let position =
-        |named: &syn::Ident, admits: fn(&syn::Type) -> bool, expected: &str| -> syn::Result<u32> {
-            let index = params
-                .iter()
-                .position(|(p, _)| named == p.as_str())
-                .ok_or_else(|| syn::Error::new(named.span(), "not a parameter of this method"))?;
-            let (_, ty) = &params[index];
-            if !admits(ty) {
-                let declared = quote!(#ty);
-                return Err(syn::Error::new(
-                    named.span(),
-                    format!("`{named}` is declared `{declared}`, and {expected}"),
-                ));
-            }
-            Ok(u32::try_from(index).expect("a parameter list is shorter than u32"))
-        };
+    let position = |named: &syn::Ident, admits: fn(&syn::Type) -> bool, expected: &str| {
+        parameter_position(params, named, admits, expected)
+    };
     let badge_position =
         |named: &syn::Ident| position(named, crate::is_address, "a badge is an address");
     // `proves(badge)` and `proves(badge[id])`: the stored rule,

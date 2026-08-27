@@ -602,12 +602,18 @@ pub fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
                 }
                 syn::Meta::List(list) if list.path.is_ident("grants") => {
                     if grants.replace(list.clone()).is_some() {
-                        return Err(syn::Error::new(list.path.span(), "grants, twice"));
+                        return Err(syn::Error::new(
+                            list.path.span(),
+                            "`grants(..)` twice — the entries are one list; fold the second into the first",
+                        ));
                     }
                 }
                 syn::Meta::List(list) if list.path.is_ident("initial") => {
                     if initial.replace(list.parse_args::<syn::LitInt>()?).is_some() {
-                        return Err(syn::Error::new(list.path.span(), "initial, twice"));
+                        return Err(syn::Error::new(
+                            list.path.span(),
+                            "`initial(..)` twice — a package states one bring-up supply",
+                        ));
                     }
                 }
                 syn::Meta::NameValue(nv) if nv.path.is_ident("display_digits") => {
@@ -622,7 +628,10 @@ pub fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
                         ));
                     };
                     if display_digits.replace(int.base10_parse::<u8>()?).is_some() {
-                        return Err(syn::Error::new(nv.path.span(), "display_digits, twice"));
+                        return Err(syn::Error::new(
+                            nv.path.span(),
+                            "`display_digits` twice — one display quantization per mark",
+                        ));
                     }
                 }
                 other => return Err(unknown_resource_term(other)),

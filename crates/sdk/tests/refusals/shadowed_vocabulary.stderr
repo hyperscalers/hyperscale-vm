@@ -1,0 +1,5 @@
+error: `Bucket` is a name the macro matches by a type's last path segment, so a local `Bucket` would silently bind as the vocabulary's — rename it
+ --> tests/refusals/shadowed_vocabulary.rs:7:12
+  |
+7 |     struct Bucket;
+  |            ^^^^^^

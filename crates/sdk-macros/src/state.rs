@@ -91,7 +91,12 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
     let slot = pinned.unwrap_or(next);
 
     let syn::Type::Path(path) = &field.ty else {
-        return Err(syn::Error::new(field.ty.span(), "unsupported state type"));
+        return Err(syn::Error::new(
+            field.ty.span(),
+            "a state field must be `Config<_>`, `Cell<_>`, `Keyed<_>`, `Ordered<_>`, or \
+             `Unordered<_>` — state is reachable only through these, which is what makes \
+             the access mode derivable from the body",
+        ));
     };
     let outer = path
         .path

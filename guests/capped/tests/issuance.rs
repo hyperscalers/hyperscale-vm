@@ -37,7 +37,7 @@ fn world(mut chain: Chain) -> (Chain, capped::client::Capped) {
 #[hyperscale_vm_testing::test]
 fn a_bring_up_founds_every_supply_its_package_states(chain: Chain) {
     let (chain, instance) = world(chain);
-    let fixed = instance.issued_fixed(&TestHasher);
+    let fixed = instance.issued_founded(&TestHasher);
     let retired = instance.issued_retired(&TestHasher);
 
     assert_eq!(chain.balance(FOUNDER, fixed), 1_000_000);
@@ -61,7 +61,7 @@ fn a_founded_supply_grants_no_mint_and_restricts_no_movement(chain: Chain) {
     let class = |resource: ResourceAddr| Address::from(resource).class();
 
     for resource in [
-        instance.issued_fixed(&TestHasher),
+        instance.issued_founded(&TestHasher),
         instance.issued_retired(&TestHasher),
         instance.issued_circulating(&TestHasher),
         instance.issued_seat(&TestHasher, terms()),
@@ -124,7 +124,7 @@ fn a_holder_destroys_what_the_resource_lets_them(chain: Chain) {
 #[hyperscale_vm_testing::test]
 fn a_resource_granting_no_burn_is_indestructible(chain: Chain) {
     let (mut chain, instance) = world(chain);
-    let fixed = instance.issued_fixed(&TestHasher);
+    let fixed = instance.issued_founded(&TestHasher);
 
     let refused = chain.try_transact(FOUNDER, |b| {
         let holder = account::authorize(b, FOUNDER)?;

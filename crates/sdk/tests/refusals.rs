@@ -379,3 +379,15 @@ fn the_vocabulary_closes_the_key_positions() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/string_key.rs");
 }
+
+/// A vocabulary name is not shadowable.
+///
+/// The macro matches types by their last path segment — parameter
+/// kinds, widening, the `Result` detection — so a local item under one
+/// of those names would silently bind as the vocabulary's. Refused at
+/// the item, which is the one place the mismatch is visible.
+#[test]
+fn the_macro_refuses_a_shadowed_vocabulary_name() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/shadowed_vocabulary.rs");
+}
