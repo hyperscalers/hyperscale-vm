@@ -6,6 +6,7 @@
 //! native execution of the same bodies would have nothing to say.
 
 use std::collections::BTreeMap;
+use std::sync::{LazyLock, Mutex};
 
 use hyperscale_vm_cli::compile;
 use hyperscale_vm_effects::PackageHash;
@@ -28,6 +29,23 @@ use crate::{Code, Package};
 /// a divergence with nothing to catch it.
 pub const FUEL_CEILING: u64 = 1_000_000_000;
 
+/// The one blessed engine of the process.
+///
+/// Every compiled [`Component`] is bound to the engine that compiled
+/// it, so one engine is what lets the compilation cache below hand a
+/// component to any chain in the process.
+static ENGINE: LazyLock<Engine> =
+    LazyLock::new(|| blessed_engine().expect("the blessed engine configures"));
+
+/// Components compiled once per process, by the content address a call
+/// names them at.
+///
+/// The key already means "these exact bytes", so the cache cannot go
+/// stale within a run — and the cargo build behind [`Blessed::build`]
+/// happens once per distinct package rather than once per test.
+static COMPILED: LazyLock<Mutex<BTreeMap<PackageHash, (Component, InstantiationCharges)>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
 /// Compiled packages, by the content address a call names them at.
 pub struct Blessed {
     engine: Engine,
@@ -35,7 +53,7 @@ pub struct Blessed {
 }
 
 impl Blessed {
-    /// An empty registry over a fresh blessed engine.
+    /// An empty registry over the process's blessed engine.
     ///
     /// # Panics
     ///
@@ -44,7 +62,7 @@ impl Blessed {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            engine: blessed_engine().expect("the blessed engine configures"),
+            engine: ENGINE.clone(),
             components: BTreeMap::new(),
         }
     }
@@ -57,15 +75,22 @@ impl Blessed {
     /// derive a charge sequence — a fixture defect, never a runtime
     /// condition.
     pub fn seed(&mut self, package: PackageHash, component: &[u8]) {
-        validate_component(component).expect("a seeded package clears the profile");
-        let charges = instantiation_charges(component).expect("a validated package derives");
-        self.components.insert(
-            package,
-            (
-                Component::new(&self.engine, component).expect("a seeded package compiles"),
-                charges,
-            ),
-        );
+        let entry = {
+            let mut compiled = COMPILED.lock().expect("no cache user panics mid-insert");
+            compiled
+                .entry(package)
+                .or_insert_with(|| {
+                    validate_component(component).expect("a seeded package clears the profile");
+                    let charges =
+                        instantiation_charges(component).expect("a validated package derives");
+                    (
+                        Component::new(&ENGINE, component).expect("a seeded package compiles"),
+                        charges,
+                    )
+                })
+                .clone()
+        };
+        self.components.insert(package, entry);
     }
 
     /// Build the package crate and take what it produced, under the
@@ -76,6 +101,14 @@ impl Blessed {
     /// Panics if the crate does not build, or on anything [`Self::seed`]
     /// panics on.
     pub fn build(&mut self, package: PackageHash, at: &Package) {
+        if let Some(entry) = COMPILED
+            .lock()
+            .expect("no cache user panics mid-insert")
+            .get(&package)
+        {
+            self.components.insert(package, entry.clone());
+            return;
+        }
         let Code::Crate(dir) = &at.code else {
             let Code::Unreachable(why) = &at.code else {
                 unreachable!("a package's code is one of two things")
