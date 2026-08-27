@@ -433,17 +433,30 @@ fn enroll(path: &Path, name: &str) -> Result<(), BuildError> {
     if manifest.contains(entry.trim_start()) {
         return Ok(());
     }
+    // The list itself, not `default-members`: the match is held to its
+    // own line's start.
     let open = manifest
-        .find("members = [")
+        .match_indices("members = [")
+        .map(|(at, _)| at)
+        .find(|at| *at == 0 || manifest[..*at].ends_with('\n'))
         .ok_or_else(|| BuildError(format!("{} declares no members list", path.display())))?;
     let list = open + "members = [".len();
     let close = manifest[list..]
         .find(']')
         .map(|at| list + at)
         .ok_or_else(|| BuildError(format!("{} members list does not close", path.display())))?;
+    // One entry per line is the shape the insertion writes; surgery on
+    // an inline list would drop a comma somewhere, so it is refused
+    // rather than corrupted.
+    if !manifest[list..close].contains('\n') {
+        return Err(BuildError(format!(
+            "{} writes its members inline — add \"{name}\" by hand",
+            path.display()
+        )));
+    }
     // The sorted position, so the list stays legible however many the
     // scaffold adds.
-    let at = manifest[list..close]
+    let mut at = manifest[list..close]
         .split_inclusive('\n')
         .scan(list, |cursor, line| {
             let start = *cursor;
@@ -456,6 +469,15 @@ fn enroll(path: &Path, name: &str) -> Result<(), BuildError> {
         })
         .map_or(close, |(start, _)| start);
     let mut updated = manifest;
+    // Appending after a last entry that carries no trailing comma would
+    // splice two strings; give it the comma first.
+    if at == close {
+        let end = list + updated[list..close].trim_end().len();
+        if updated[list..end].ends_with('"') {
+            updated.insert(end, ',');
+            at += 1;
+        }
+    }
     updated.insert_str(at, &entry);
     std::fs::write(path, updated)
         .map_err(|error| BuildError(format!("write {}: {error}", path.display())))
@@ -488,6 +510,81 @@ mod tests {
             include_str!("../../../guests/.cargo/config.toml"),
             "the scaffold ships new authors the workspace's own link terms"
         );
+    }
+
+    /// The third pin the standalone manifest restates: the codegen
+    /// crate's exact version, which the member shape inherits and the
+    /// standalone one has to say for itself.
+    #[test]
+    fn the_scaffolded_wit_bindgen_pin_is_the_guests_workspaces_own() {
+        let pin = |text: &str| {
+            let at = text.find("wit-bindgen = ").expect("a wit-bindgen pin");
+            text[at..].lines().next().expect("a line").to_owned()
+        };
+        assert_eq!(
+            pin(&super::manifest("probe", "\"0\"", "\"0\"")),
+            pin(include_str!("../../../guests/Cargo.toml")),
+            "the scaffold ships new authors the workspace's own codegen terms"
+        );
+    }
+
+    /// The member manifest names only dependencies the guests workspace
+    /// defines, so every `.workspace = true` line it writes resolves.
+    #[test]
+    fn a_member_names_only_dependencies_the_workspace_carries() {
+        let workspace = include_str!("../../../guests/Cargo.toml");
+        let table = &workspace[workspace
+            .find("[workspace.dependencies]")
+            .expect("a dependency table")..];
+        for line in super::member_manifest("probe").lines() {
+            let Some(dep) = line.strip_suffix(".workspace = true") else {
+                continue;
+            };
+            assert!(
+                table.contains(&format!("\n{dep} ")),
+                "`{dep}` is not a dependency the guests workspace defines"
+            );
+        }
+    }
+
+    /// The surgery holds to the members list itself and to the block
+    /// shape it can extend without dropping a comma.
+    #[test]
+    fn enrolling_holds_to_the_members_list_and_its_block_shape() {
+        let root =
+            std::env::temp_dir().join(format!("hyperscale-scaffold-enroll-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("Cargo.toml");
+
+        // A `default-members` list ahead of `members`: the entry lands
+        // in the members list alone.
+        std::fs::write(
+            &path,
+            "[workspace]\ndefault-members = [\n    \"aardvark\",\n]\nmembers = [\n    \
+             \"aardvark\",\n]\n",
+        )
+        .unwrap();
+        super::enroll(&path, "middling").unwrap();
+        let updated = std::fs::read_to_string(&path).unwrap();
+        let defaults = updated.find("default-members").unwrap();
+        let close = updated[defaults..].find(']').unwrap() + defaults;
+        assert!(!updated[defaults..close].contains("middling"), "{updated}");
+        assert!(updated[close..].contains("\"middling\","), "{updated}");
+
+        // A last entry without its trailing comma is given one.
+        std::fs::write(&path, "[workspace]\nmembers = [\n    \"aardvark\"\n]\n").unwrap();
+        super::enroll(&path, "zebra").unwrap();
+        let updated = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            updated.contains("\"aardvark\",\n    \"zebra\",\n]"),
+            "{updated}"
+        );
+
+        // An inline list is refused rather than corrupted.
+        std::fs::write(&path, "[workspace]\nmembers = [\"aardvark\"]\n").unwrap();
+        assert!(super::enroll(&path, "zebra").is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A member carries the crate alone and joins the members list in
