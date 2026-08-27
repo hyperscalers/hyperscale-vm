@@ -12,8 +12,7 @@ use custodian_guest::custodian;
 // `package!` names.
 use grammar_guest::grammar as shapes;
 use hyperscale_vm_testing::{
-    AbortReason, Chain, Component, PrincipalAddr, ResourceAddr, Worlds, account, package,
-    principal, resource,
+    AbortReason, Chain, PrincipalAddr, ResourceAddr, Worlds, account, package, principal, resource,
 };
 
 /// Who issues the seats this custodian keeps.
@@ -82,7 +81,7 @@ fn instances_filed_with_a_custodian_come_back_out(chain: &mut Chain) {
         !chain.holds(HOLDER, seat, 7),
         "the registration left the holder's own interval"
     );
-    assert!(chain.holds(keeper.address(), seat, 7));
+    assert!(chain.holds_at(keeper, custodian::client::LOCKER, seat, 7));
 
     chain
         .transact(HOLDER, |b| {
@@ -94,7 +93,7 @@ fn instances_filed_with_a_custodian_come_back_out(chain: &mut Chain) {
         chain.holds(HOLDER, seat, 7),
         "what the custodian filed is what it releases"
     );
-    assert!(!chain.holds(keeper.address(), seat, 7));
+    assert!(!chain.holds_at(keeper, custodian::client::LOCKER, seat, 7));
 }
 
 /// A custodian configured for one resource does not file another.

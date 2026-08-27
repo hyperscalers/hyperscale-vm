@@ -1,0 +1,5 @@
+error: an instance family holds one resource's instances and nothing names which: add `#[holds(config.<field>)]`, or `#[holds(issued(<Resource>))]` for a declared resource the instance issues
+ --> tests/refusals/instances_unheld.rs:9:9
+  |
+9 |         stock: Instances,
+  |         ^^^^^

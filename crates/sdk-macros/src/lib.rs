@@ -1496,6 +1496,16 @@ fn authoring_accessors(
                 let _ = resource;
                 ::core::unimplemented!("a contract body runs on the guest")
             }
+
+            /// The holder's instances of `resource`.
+            fn holdings<K: ::hyperscale_vm_sdk::state::KeyShape>(
+                &self,
+                resource: K,
+            ) -> ::hyperscale_vm_sdk::state::Ordered<::hyperscale_vm_sdk::state::NfVault>
+            {
+                let _ = resource;
+                ::core::unimplemented!("a contract body runs on the guest")
+            }
         )
     });
     let reading = role.reading();
@@ -1507,14 +1517,6 @@ fn authoring_accessors(
 
             #protocol_balances
 
-            /// The holder's instances of `resource`.
-            fn holdings<K: ::hyperscale_vm_sdk::state::KeyShape>(
-                &self,
-                resource: K,
-            ) -> ::hyperscale_vm_sdk::state::Ordered<::hyperscale_vm_sdk::state::NfVault> {
-                let _ = resource;
-                ::core::unimplemented!("a contract body runs on the guest")
-            }
             /// The rule governing this address, absent until the holder
             /// securifies.
             fn auth(&self) -> ::hyperscale_vm_sdk::state::Cell<
@@ -1673,6 +1675,10 @@ fn vault_markers(
 ) -> syn::Result<Vec<(String, u16, u32)>> {
     let vaults: Vec<(String, u16, u32)> = fields
         .iter()
+        // One leaf holding an amount: a named `Instances` family also
+        // carries a denomination, but its marker would promise a balance
+        // where there are entries.
+        .filter(|(_, field)| matches!(field.kind, lower::FieldKind::Cell))
         .filter_map(|(name, field)| {
             let index = state::config_index(field.denomination.as_ref()?, config_fields)?;
             Some((name.clone(), field.slot, index))

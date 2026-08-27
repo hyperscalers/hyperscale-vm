@@ -1554,19 +1554,77 @@ impl Vault {
     }
 }
 
-/// The element of a holder's non-fungible instances, reached by
-/// `holdings(resource)`.
+/// The element of a collection of non-fungible instances: the account's
+/// `holdings(resource)`, and a declared [`Instances`] family.
 ///
 /// A marker type, not the unit it encodes as: an instance's id is the
 /// entry's own order key, so the entry holds nothing and writes nothing
 /// in bytes — but the instance operations live on this element alone,
 /// so a collection of anything else has no value surface to reach. The
 /// name is what the derivation reads to learn that the interval holds
-/// value and is therefore narrowed by a resource — a package's own field
-/// cannot declare it, so only the accessor's collections denominate by
-/// key.
+/// value and is therefore narrowed by a resource. A field does not name
+/// it directly: the declared spelling is [`Instances`], which fixes the
+/// resource the way a vault's declaration does.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NfVault;
+
+/// A declared family of non-fungible instances this package custodies.
+///
+/// The instance mirror of a named [`Vault`]: the field states the one
+/// resource its entries are instances of through `#[holds(..)]`, and the
+/// interval operations land on the field, so the balance sheet reads off
+/// the state struct. Custody over an open set of marks is
+/// `Keyed<Instances>` — one collection per resource its narrowing names,
+/// denominated by the key exactly as a keyed vault is.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Instances;
+
+/// The declared family's own interval surface, as the authoring half
+/// type-checks it.
+///
+/// The same intervals [`Ordered`] opens: off-host stubs on the field's
+/// own type, so a body writes `self.x.whole()` and the lowering opens
+/// the collection the field declares.
+#[allow(clippy::unused_self, clippy::needless_pass_by_value)] // authoring stubs, run nowhere
+impl Instances {
+    /// The whole order-key space, capped implicitly at what the body's
+    /// own moves walk, on [`Ordered::whole`]'s terms.
+    #[must_use]
+    pub fn whole(&self) -> Interval<NfVault> {
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// The whole order-key space at a stated cap, on [`Ordered::all`]'s
+    /// terms.
+    #[must_use]
+    pub fn all(&self, cap: u64) -> Interval<NfVault> {
+        let _ = cap;
+        unimplemented!("{OFF_HOST}")
+    }
+
+    /// A declared interval of the order-key space, on
+    /// [`Ordered::range`]'s terms.
+    #[must_use]
+    pub fn range(&self, lo: OrderKey, hi: OrderKey, cap: u64) -> Interval<NfVault> {
+        let _ = (lo, hi, cap);
+        unimplemented!("{OFF_HOST}")
+    }
+}
+
+impl Keyed<Instances> {
+    /// The instances of `key`, as the one collection that holds them.
+    ///
+    /// A keyed family is denominated by its key, so the key is a
+    /// resource — [`Ordered::of`]'s narrowing under the family's own
+    /// slot, which is what keeps a collection keyed by what it holds
+    /// and takes from the collection it filed into.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    pub fn of(&self, key: impl Into<ResourceAddr>) -> Ordered<NfVault> {
+        let _ = key;
+        unimplemented!("{OFF_HOST}")
+    }
+}
 
 /// The record cell decodes under the same cap the protocol reads it at.
 impl Record for ResourceRecord {

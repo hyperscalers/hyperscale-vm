@@ -100,6 +100,8 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/undenominated_vault.rs");
     refuse.compile_fail("tests/refusals/keyed_denomination.rs");
     refuse.compile_fail("tests/refusals/nf_vault_field.rs");
+    refuse.compile_fail("tests/refusals/instances_unheld.rs");
+    refuse.compile_fail("tests/refusals/keyed_instances_held.rs");
     refuse.compile_fail("tests/refusals/nf_ops_on_unit.rs");
     refuse.compile_fail("tests/refusals/capless_interval.rs");
     refuse.compile_fail("tests/refusals/underivable_all_cap.rs");

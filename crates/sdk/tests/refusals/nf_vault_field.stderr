@@ -1,4 +1,4 @@
-error: `NfVault` is the holdings element and only the accessor names it — a holder's instances are reached by `holdings(resource)`, not declared as a field
+error: a package's instance custody is declared as `Instances` under `#[holds(..)]`, or `Keyed<Instances>` for a family keyed by the resource it holds — `NfVault` is the element those forms carry, not a field type
  --> tests/refusals/nf_vault_field.rs:9:20
   |
 9 |         instances: Ordered<NfVault>,

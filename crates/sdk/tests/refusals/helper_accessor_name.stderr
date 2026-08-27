@@ -1,14 +1,14 @@
-error: `holdings` is an accessor of every component, so a private method cannot take the name — every `self.holdings(..)` in a body is the vocabulary's
+error: `auth` is an accessor of every component, so a private method cannot take the name — every `self.auth(..)` in a body is the vocabulary's
   --> tests/refusals/helper_accessor_name.rs:19:12
    |
-19 |         fn holdings(&self) -> Quantity {
-   |            ^^^^^^^^
+19 |         fn auth(&self) -> Quantity {
+   |            ^^^^
 
-error[E0592]: duplicate definitions with name `holdings`
+error[E0592]: duplicate definitions with name `auth`
   --> tests/refusals/helper_accessor_name.rs:19:9
    |
  3 | #[blueprint]
-   | ------------ other definition for `holdings`
+   | ------------ other definition for `auth`
 ...
-19 |         fn holdings(&self) -> Quantity {
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate definitions for `holdings`
+19 |         fn auth(&self) -> Quantity {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate definitions for `auth`

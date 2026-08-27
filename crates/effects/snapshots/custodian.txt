@@ -1,6 +1,7 @@
 state
      16  till — one leaf, holding u128, denominated in config.asset
      17  other_till — one leaf, holding u128, denominated in config.other
+     18  locker — an ordered collection, holding nothing, denominated in config.instances
 config
       0  asset
       1  other
@@ -21,7 +22,7 @@ deposit(bucket) — infallible
 
 file(nf-bucket) — infallible
   declares
-      0  file self.nf-vault[config.instances] over 0..=u128::MAX, at most len(ids-of(arg0)) entries holding config.instances
+      0  file self.locker[config.instances] over 0..=u128::MAX, at most len(ids-of(arg0)) entries holding config.instances
   exports  handle for clause 0, edge arg0
 
 instantiate() — infallible
@@ -32,7 +33,7 @@ instantiate() — infallible
 
 release(ids) — infallible
   declares
-      0  take self.nf-vault[config.instances] over 0..=u128::MAX, at most len(arg0) entries holding config.instances
+      0  take self.locker[config.instances] over 0..=u128::MAX, at most len(arg0) entries holding config.instances
   yields   edge 0 = edge(config.instances × arg0)
   exports  handle for clause 0, arg0
 

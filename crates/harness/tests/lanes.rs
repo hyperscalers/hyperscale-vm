@@ -887,7 +887,9 @@ fn a_run_over_holdings_moves_instances_in_both_lanes() {
         let held = |chain: &Chain| {
             marks
                 .iter()
-                .flat_map(|mark| ids.map(|id| chain.holds(custodian, *mark, id)))
+                .flat_map(|mark| {
+                    ids.map(|id| chain.holds_at(custodian, grammar::STOWAGE, *mark, id))
+                })
                 .collect::<Vec<_>>()
         };
         let stowed = held(&chain);

@@ -1448,6 +1448,11 @@ fn value_text(value: &Value) -> String {
 /// What one leaf of a slot holds.
 fn leaf_form(form: &LeafForm) -> String {
     match form {
+        // An instance family's entry: the id is the entry's own order
+        // key, so the leaf has nothing left to hold.
+        LeafForm::Value(TypeShape::Tuple(parts)) if parts.is_empty() => {
+            "holding nothing".to_owned()
+        }
         LeafForm::Value(shape) => format!("holding {}", shape_of(shape)),
         LeafForm::Bytes => "holding its own bytes".to_owned(),
     }

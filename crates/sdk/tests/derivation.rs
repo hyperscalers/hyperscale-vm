@@ -1219,24 +1219,25 @@ fn every_address_type_declares_its_own_kind() {
     );
 }
 
-/// The holdings interval is the value-bearing collection, and its
+/// The custody interval is the value-bearing collection, and its
 /// narrowing is its denomination: one expression names the sub-collection
 /// and the resource its entries are instances of.
 #[blueprint]
 mod shelf {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Ids, Keyed, NfBucket, Ordered, Vault, pack};
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Ids, Instances, Keyed, NfBucket, Ordered, Vault, pack};
 
     #[state]
     struct Shelf {
         vaults: Keyed<Vault>,
         ledger: Ordered<u64>,
+        stock: Keyed<Instances>,
     }
 
     impl Shelf {
-        /// Take the named instances out of the caller's holdings.
-        pub fn pull(&mut self, resource: Address, ids: Ids) -> NfBucket {
-            self.holdings(resource).whole().take(ids)
+        /// Take the named instances out of this shelf's stock.
+        pub fn pull(&mut self, resource: ResourceAddr, ids: Ids) -> NfBucket {
+            self.stock.of(resource).whole().take(ids)
         }
 
         /// A page whose size is spelled rather than derived: the count
@@ -1260,9 +1261,9 @@ mod shelf {
         /// Two moves through one capless interval: the derived cap is
         /// the sum of what each walks.
         pub fn restock(&mut self, out: Ids, back: NfBucket) -> NfBucket {
-            let mut holdings = self.holdings(back.resource()).whole();
-            holdings.file(back);
-            holdings.take(out)
+            let mut stock = self.stock.of(back.resource()).whole();
+            stock.file(back);
+            stock.take(out)
         }
     }
 }
@@ -1370,8 +1371,9 @@ fn two_moves_through_one_interval_derive_the_summed_cap() {
 /// The protocol's own cells exist under every owner, so a package that
 /// stores nothing of its own still reaches them — which is what makes an
 /// empty `#[state]` struct a name an author has to keep in step with the
-/// module's for no other reason.
-#[blueprint]
+/// module's for no other reason. A principals blueprint, because the
+/// holdings it reaches are the protocol collection.
+#[blueprint(principals)]
 mod stateless {
     use hyperscale_vm_sdk::state::NfBucket;
 

@@ -61,7 +61,7 @@ pub use hyperscale_vm_effects::{
 use hyperscale_vm_effects::{
     CallArg, ChainRecords, Hash32, Hasher, InstanceMeta, NodeCall, PackageHash,
     PrefixShardResolver, PresentedGrants, Records, Value, admit_presenting, child_key,
-    declaration_hash, explain_refusal, holdings_collection, issued_record, route,
+    collection_id, declaration_hash, explain_refusal, holdings_collection, issued_record, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
@@ -594,6 +594,34 @@ impl Chain {
     pub fn holds(&self, owner: impl Into<Address>, resource: impl Into<Address>, id: u64) -> bool {
         let owner = owner.into();
         let collection = holdings_collection(&TestHasher, owner, resource);
+        self.store.collection_entries().any(|(key, _)| {
+            (key.owner, key.collection, key.order) == (owner, collection, u128::from(id))
+        })
+    }
+
+    /// Whether `instance`'s declared family custodies instance `id` of
+    /// `resource`: `chain.holds_at(shapes, grammar::STOWAGE, mark, id)`.
+    ///
+    /// The instance twin of [`balance_at`](Self::balance_at): the
+    /// family's slot constant rides the client module, and the
+    /// collection is narrowed by the resource whose instances it holds
+    /// — the key for a keyed family, the `#[holds(..)]` resource for a
+    /// named one.
+    #[must_use]
+    pub fn holds_at(
+        &self,
+        instance: impl Into<ComponentAddr>,
+        family: SlotId,
+        resource: impl Into<Address>,
+        id: u64,
+    ) -> bool {
+        let owner: Address = instance.into().into();
+        let collection = collection_id(
+            &TestHasher,
+            owner,
+            family,
+            &[Value::Address(resource.into()).canonical_bytes()],
+        );
         self.store.collection_entries().any(|(key, _)| {
             (key.owner, key.collection, key.order) == (owner, collection, u128::from(id))
         })

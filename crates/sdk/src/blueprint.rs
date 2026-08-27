@@ -214,10 +214,11 @@ impl Builder {
     /// Declare the vault `name` sits at, holding the resource its
     /// configuration slot names.
     ///
-    /// The balance-sheet twin of [`slot`](Self::slot): one leaf, and
-    /// the `#[holds(config.<field>)]` resource carried so a consumer
-    /// resolves it against the instance's own configuration. A vault
-    /// holding a resource the package issues declares through
+    /// The balance-sheet twin of [`slot`](Self::slot): the field's own
+    /// shape — one leaf for a vault, a collection for an instance
+    /// family — with the `#[holds(config.<field>)]` resource carried so
+    /// a consumer resolves it against the instance's own configuration.
+    /// A field holding a resource the package issues declares through
     /// [`slot`](Self::slot) — its address derives from the instance and
     /// nothing about it is a configured value.
     ///
@@ -225,10 +226,16 @@ impl Builder {
     ///
     /// If two fields claim one slot.
     #[must_use]
-    pub fn holds_config<T: LeafShape>(mut self, slot: u16, name: &str, config: u32) -> Self {
+    pub fn holds_config<T: LeafShape>(
+        mut self,
+        slot: u16,
+        name: &str,
+        kind: SlotKind,
+        config: u32,
+    ) -> Self {
         let declared = SlotShape {
             name: name.to_owned(),
-            kind: SlotKind::Cell,
+            kind,
             element: T::leaf_form(&mut self.blueprint.types),
             denomination: Some(Expr::Config(config)),
         };

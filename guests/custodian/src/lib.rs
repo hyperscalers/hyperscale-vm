@@ -22,7 +22,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod custodian {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Bucket, Ids, NfBucket, Quantity, Vault};
+    use hyperscale_vm_sdk::state::{Bucket, Ids, Instances, NfBucket, Quantity, Vault};
 
     /// Which resources this custodian keeps, fixed at creation.
     #[config]
@@ -44,6 +44,9 @@ pub mod custodian {
         /// The other side a swap pays out of.
         #[holds(config.other)]
         other_till: Vault,
+        /// The instances it custodies, of the one configured class.
+        #[holds(config.instances)]
+        locker: Instances,
     }
 
     impl Custodian {
@@ -86,21 +89,19 @@ pub mod custodian {
         /// Instances in, on the same terms: an interval admits a read
         /// and a write and says nothing about which way value went.
         ///
-        /// Keyed on the configured resource rather than on whatever the
+        /// Denominated by the configuration rather than by whatever the
         /// edge carries, exactly as the fungible half is — a collection
-        /// is keyed by what it holds, so filing under the edge's own
-        /// resource would open a collection nothing takes from, and what
-        /// went into it could never come out. An edge of any other
-        /// resource traps at the write instead.
+        /// is keyed by what it holds, so a family opened per edge would
+        /// be one nothing takes from, and what went into it could never
+        /// come out. An edge of any other resource traps at the write
+        /// instead.
         pub fn file(&mut self, instances: NfBucket) {
-            self.holdings(self.config().instances)
-                .whole()
-                .file(instances);
+            self.locker.whole().file(instances);
         }
 
         /// And instances back out, from the one collection `file` fills.
         pub fn release(&mut self, ids: Ids) -> NfBucket {
-            self.holdings(self.config().instances).whole().take(ids)
+            self.locker.whole().take(ids)
         }
     }
 }

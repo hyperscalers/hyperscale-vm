@@ -14,9 +14,9 @@ mod contract {
             self.held.get()
         }
 
-        // `self.holdings(..)` in any body is the vocabulary's accessor;
-        // a private method under the name would shadow it at every call.
-        fn holdings(&self) -> Quantity {
+        // `self.auth()` in any body is the vocabulary's accessor; a
+        // private method under the name would shadow it at every call.
+        fn auth(&self) -> Quantity {
             Quantity::ZERO
         }
     }

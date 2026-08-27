@@ -1,0 +1,5 @@
+error: a keyed instance family holds whatever the key a body names it at says, so it cannot also declare one
+  --> tests/refusals/keyed_instances_held.rs:15:9
+   |
+15 |         #[holds(config.mark)]
+   |         ^

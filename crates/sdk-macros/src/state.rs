@@ -63,14 +63,15 @@ pub fn element_of(ty: &syn::Type) -> Option<syn::Type> {
     })
 }
 
-/// Hold a field's vault spelling to the one form each shape has.
+/// Hold a field's value spelling to the one form each shape has.
 ///
-/// The one spelling for a package's own vault is the bare field form,
-/// so the balance sheet reads off the struct. A vault holds one
-/// resource and has to say which: a keyed family is denominated by
-/// whatever key a body names it at, so an attribute there would be a
-/// second answer to a question the key already settles; a named vault
-/// has no key, so `#[holds(..)]` is the only place it can be said.
+/// The one spelling for a package's own vault or instance family is the
+/// bare field form, so the balance sheet reads off the struct. Either
+/// holds one resource and has to say which: a keyed family is
+/// denominated by whatever key a body names it at, so an attribute
+/// there would be a second answer to a question the key already
+/// settles; a named field has no key, so `#[holds(..)]` is the only
+/// place it can be said.
 fn check_vault_form(
     field: &syn::Field,
     kind: FieldKind,
@@ -82,6 +83,30 @@ fn check_vault_form(
         return Err(syn::Error::new(
             field.ty.span(),
             "a vault is a field form of its own: spell it `Vault` under `#[holds(..)]`",
+        ));
+    }
+    let wrapped_instances = matches!(&element_of(&field.ty), Some(ty) if is_named(ty, "Instances"));
+    if wrapped_instances && outer != "Keyed" {
+        return Err(syn::Error::new(
+            field.ty.span(),
+            "an instance family is a field form of its own: spell it `Instances` under \
+             `#[holds(..)]`, or `Keyed<Instances>` for a family keyed by the resource \
+             it holds",
+        ));
+    }
+    if outer == "Instances" && !holds {
+        return Err(syn::Error::new(
+            field.span(),
+            "an instance family holds one resource's instances and nothing names which: \
+             add `#[holds(config.<field>)]`, or `#[holds(issued(<Resource>))]` for a \
+             declared resource the instance issues",
+        ));
+    }
+    if wrapped_instances && holds {
+        return Err(syn::Error::new(
+            field.span(),
+            "a keyed instance family holds whatever the key a body names it at says, so \
+             it cannot also declare one",
         ));
     }
     match (kind, outer == "Vault" || wrapped, holds) {
@@ -96,9 +121,10 @@ fn check_vault_form(
             "a keyed vault family holds whatever the key a body names it at says, so \
              it cannot also declare one",
         )),
-        (_, false, true) => Err(syn::Error::new(
+        (_, false, true) if outer != "Instances" => Err(syn::Error::new(
             field.span(),
-            "only a vault holds value — `#[holds(..)]` says nothing about this field",
+            "only a vault or an instance family holds value — `#[holds(..)]` says \
+             nothing about this field",
         )),
         _ => Ok(()),
     }
@@ -152,32 +178,40 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
         .last()
         .map(|s| s.ident.to_string())
         .unwrap_or_default();
+    let wrapped_instances = matches!(&element_of(&field.ty), Some(ty) if is_named(ty, "Instances"));
     let kind = match outer.as_str() {
         "Config" => FieldKind::Config,
         // A bare `Vault` is a field form of its own — the balance sheet
         // names it, the ops land on the field — and it is one leaf, so
         // the cell kind carries it.
         "Cell" | "Vault" => FieldKind::Cell,
+        // A keyed instance family is a collection per key, not a leaf
+        // per key, so the collection kind carries it.
+        "Keyed" if wrapped_instances => FieldKind::Ordered,
         "Keyed" => FieldKind::Keyed,
-        "Ordered" => FieldKind::Ordered,
+        // A bare `Instances` is the declared holdings collection: one
+        // family at the field's slot, its resource stated by the
+        // attribute rather than a key.
+        "Ordered" | "Instances" => FieldKind::Ordered,
         "Unordered" => FieldKind::Unordered,
         _ => {
             return Err(syn::Error::new(
                 field.ty.span(),
-                "a state field must be `Vault`, `Config<_>`, `Cell<_>`, `Keyed<_>`, \
-                 `Ordered<_>`, or `Unordered<_>` — state is reachable only through these, \
-                 which is what makes the access mode derivable from the body",
+                "a state field must be `Vault`, `Instances`, `Config<_>`, `Cell<_>`, \
+                 `Keyed<_>`, `Ordered<_>`, or `Unordered<_>` — state is reachable only \
+                 through these, which is what makes the access mode derivable from the body",
             ));
         }
     };
-    // The holdings element is the accessor's alone: a package's own
-    // non-fungible collection is not a shape the protocol slots support,
-    // and a holder's instances are reached through `holdings(resource)`.
+    // The element is the field type's own name: `NfVault` is what the
+    // derivation reads off a collection that holds instances, and the
+    // declared spellings are the ones that put it there.
     if matches!(&element_of(&field.ty), Some(ty) if is_named(ty, "NfVault")) {
         return Err(syn::Error::new(
             field.ty.span(),
-            "`NfVault` is the holdings element and only the accessor names it — a holder's \
-             instances are reached by `holdings(resource)`, not declared as a field",
+            "a package's instance custody is declared as `Instances` under `#[holds(..)]`, \
+             or `Keyed<Instances>` for a family keyed by the resource it holds — `NfVault` \
+             is the element those forms carry, not a field type",
         ));
     }
     check_vault_form(field, kind, &outer, denomination.is_some())?;
@@ -186,8 +220,13 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
     }
     // A bare `Vault` field is its own element: the generic forms carry
     // theirs as a type argument, and the vault has nothing else to say.
+    // An instance family's element is `NfVault` however it was spelled,
+    // which is the name the derivation reads to know the interval holds
+    // value.
     let element = if outer == "Vault" {
         Some(field.ty.clone())
+    } else if outer == "Instances" || wrapped_instances {
+        Some(syn::parse_quote!(::hyperscale_vm_sdk::state::NfVault))
     } else {
         element_of(&field.ty)
     };
@@ -249,8 +288,24 @@ pub fn accessors(config: Option<&syn::Ident>, serves: Serves) -> BTreeMap<String
         element: Some(syn::parse_quote!(::hyperscale_vm_sdk::state::Vault)),
         denomination: None,
     };
-    let mut cells = BTreeMap::from([
-        (
+    let mut cells = BTreeMap::from([(
+        "auth".to_owned(),
+        Field {
+            slot: AUTH.0,
+            kind: FieldKind::Cell,
+            element: Some(syn::parse_quote!(
+                ::core::option::Option<::hyperscale_vm_sdk::RuleBytes>
+            )),
+            denomination: None,
+        },
+    )]);
+    // The protocol balances are the principals': an instance package's
+    // reserves and custody are declared fields of its own state struct,
+    // so the anonymous accessors exist only where the holdings are the
+    // protocol cells by identity.
+    if matches!(serves, Serves::Principals) {
+        cells.insert("vault".to_owned(), vault());
+        cells.insert(
             "holdings".to_owned(),
             Field {
                 slot: NF_VAULT.0,
@@ -262,25 +317,7 @@ pub fn accessors(config: Option<&syn::Ident>, serves: Serves) -> BTreeMap<String
                 element: Some(syn::parse_quote!(::hyperscale_vm_sdk::state::NfVault)),
                 denomination: None,
             },
-        ),
-        (
-            "auth".to_owned(),
-            Field {
-                slot: AUTH.0,
-                kind: FieldKind::Cell,
-                element: Some(syn::parse_quote!(
-                    ::core::option::Option<::hyperscale_vm_sdk::RuleBytes>
-                )),
-                denomination: None,
-            },
-        ),
-    ]);
-    // The protocol balance is the principals': an instance package's
-    // reserves are declared fields of its own state struct, so the
-    // anonymous accessor exists only where the funds are the protocol
-    // cells by identity.
-    if matches!(serves, Serves::Principals) {
-        cells.insert("vault".to_owned(), vault());
+        );
     }
     // A package with no configuration struct has no configuration to
     // read, and `config()` is a name it never gets rather than one that
@@ -473,7 +510,7 @@ pub fn state_table(
             };
             let element = field.element.as_ref()?;
             let slot = field.slot;
-            // A vault holding a configured resource carries it into the
+            // A field holding a configured resource carries it into the
             // table, so the balance sheet a consumer reads resolves
             // against the instance's configuration. An issued resource's
             // address derives from the instance, which the table cannot
@@ -483,7 +520,12 @@ pub fn state_table(
                 .as_ref()
                 .and_then(|expr| config_index(expr, config_fields))
             {
-                return Some(quote!(.holds_config::<#element>(#slot, #name, #index)));
+                return Some(quote!(.holds_config::<#element>(
+                    #slot,
+                    #name,
+                    ::hyperscale_vm_sdk::SlotKind::#kind,
+                    #index,
+                )));
             }
             Some(quote!(.slot::<#element>(
                 #slot,

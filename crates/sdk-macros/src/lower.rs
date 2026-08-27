@@ -3669,6 +3669,20 @@ impl<'a> Lowerer<'a> {
     ) -> Eval {
         let slot = field.slot;
         let declared = self.field_denomination(field);
+        // A denominated family names one collection, keyed by the
+        // resource its field holds — the same addressing a keyed
+        // family's narrowing gives it, so `holds` and the key are one
+        // scheme in collection form as they are in leaf form.
+        let denominated: Vec<Term>;
+        let material = if material.is_empty()
+            && field.kind == FieldKind::Ordered
+            && let Some(resource) = &declared
+        {
+            denominated = vec![resource.clone()];
+            &denominated
+        } else {
+            material
+        };
         let vals: Vec<Val> = args.iter().map(|e| e.val.clone()).collect();
         match (field.kind, method) {
             // A family of leaves keyed by an address.

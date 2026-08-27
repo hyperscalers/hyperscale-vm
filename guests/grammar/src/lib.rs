@@ -18,7 +18,8 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 pub mod grammar {
     use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Ids, Keyed, NfBucket, OrderKey, Ordered, Quantity, Table, Vault, pack,
+        Bucket, Cell, Ids, Instances, Keyed, NfBucket, OrderKey, Ordered, Quantity, Table, Vault,
+        pack,
     };
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
@@ -94,6 +95,10 @@ pub mod grammar {
         /// The open family the movement grammar runs through: one vault
         /// per resource a body names.
         till: Keyed<Vault>,
+        /// Custody over an open mark set: one collection of instances
+        /// per resource a body names, which is the keyed mirror of the
+        /// till beside it.
+        stowage: Keyed<Instances>,
     }
 
     impl Grammar {
@@ -416,23 +421,26 @@ pub mod grammar {
         }
 
         /// File the instances an edge carries into this instance's own
-        /// holdings.
+        /// custody.
         pub fn stow(&mut self, instances: NfBucket) {
-            self.holdings(instances.resource()).whole().file(instances);
+            self.stowage
+                .of(instances.resource())
+                .whole()
+                .file(instances);
         }
 
         /// Every configured mark's instances, taken out of custody and
         /// filed back into it.
         ///
-        /// The one interval mode that moves value: a holdings interval
+        /// The one interval mode that moves value: a custody interval
         /// is narrowed by the resource whose instances it holds, so a
         /// walk over the configured marks is a family of them. The take
         /// and the file at one site are one clause, and the cap the
         /// declaration derives is the walk those moves perform.
         pub fn restow(&mut self, ids: Ids) {
             for &mark in &self.config().marks {
-                let held = self.holdings(mark).whole().take(ids.clone());
-                self.holdings(mark).whole().file(held);
+                let held = self.stowage.of(mark).whole().take(ids.clone());
+                self.stowage.of(mark).whole().file(held);
             }
         }
 
