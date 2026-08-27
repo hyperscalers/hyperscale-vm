@@ -9,7 +9,7 @@
 //! class, which is the property this file exists for.
 
 use hyperscale_vm_testing::{
-    Chain, Presence, PrincipalAddr, TestHasher, UnmetCondition, Verdict, account, package,
+    Chain, Presence, PrincipalAddr, TestHasher, UnmetCondition, Outcome, account, package,
     principal,
 };
 use security_guest::security;
@@ -75,7 +75,7 @@ fn a_share_reaches_nobody_the_register_does_not_name(chain: Chain) {
     assert!(
         matches!(
             refused.refused(),
-            Some(Verdict::ConditionUnmet {
+            Some(Outcome::ConditionUnmet {
                 condition: UnmetCondition::Holds {
                     required: Presence::Present,
                     ..

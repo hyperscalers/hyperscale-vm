@@ -18,7 +18,7 @@
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_testing::{
-    Chain, Component, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition, Verdict,
+    Chain, Component, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition, Outcome,
     account, address_text, package, principal,
 };
 use security_guest::security;
@@ -104,7 +104,7 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
     assert!(
         matches!(
             refused.refused(),
-            Some(Verdict::ConditionUnmet {
+            Some(Outcome::ConditionUnmet {
                 condition: UnmetCondition::Holds {
                     required: Presence::Absent,
                     ..

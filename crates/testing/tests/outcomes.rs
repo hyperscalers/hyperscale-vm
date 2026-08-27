@@ -9,7 +9,7 @@
 use hyperscale_vm_fixtures::amm;
 use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
-    Chain, Outcome, PrincipalAddr, ResourceAddr, account, address_text, package, principal,
+    Chain, Conclusion, PrincipalAddr, ResourceAddr, account, address_text, package, principal,
     resource,
 };
 
@@ -36,7 +36,7 @@ fn pool(chain: &mut Chain) -> amm::Amm {
 }
 
 /// A swap whose floor no pool this size can reach.
-fn declined(chain: &mut Chain, pool: amm::Amm) -> Outcome<()> {
+fn declined(chain: &mut Chain, pool: amm::Amm) -> Conclusion<()> {
     chain.transact(ALICE, |b| {
         let signed_in = account::authorize(b, ALICE)?;
         let funds = account::withdraw(b, signed_in, X, 500)?;

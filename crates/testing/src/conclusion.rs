@@ -5,7 +5,7 @@ use hyperscale_vm_kernel::Receipt;
 use hyperscale_vm_sdk::DeclinesAs;
 use hyperscale_vm_sdk::client::Answered;
 use hyperscale_vm_sdk::hbor::{HborDecode, from_slice};
-use hyperscale_vm_types::{AbortReason, Address, Answer, Outcome as KernelOutcome};
+use hyperscale_vm_types::{AbortReason, Address, Answer, Outcome};
 
 /// The receipt one [`transact`](crate::Chain::transact) produced.
 ///
@@ -16,7 +16,7 @@ use hyperscale_vm_types::{AbortReason, Address, Answer, Outcome as KernelOutcome
 /// `Debug` because an assertion that fails wants to say what it got, and
 /// what a transaction did is the first thing a reader asks.
 #[derive(Debug)]
-pub struct Outcome<T = ()> {
+pub struct Conclusion<T = ()> {
     receipt: Receipt,
     /// The declining node's package error table, where one declined.
     errors: Vec<String>,
@@ -34,7 +34,7 @@ pub struct Outcome<T = ()> {
     written: T,
 }
 
-impl<T> Outcome<T> {
+impl<T> Conclusion<T> {
     pub(crate) const fn new(
         receipt: Receipt,
         errors: Vec<String>,
@@ -52,7 +52,7 @@ impl<T> Outcome<T> {
     /// What writing the manifest handed back.
     ///
     /// Where a transaction wrote several answering calls, this is the
-    /// tuple of their handles, and [`Outcome::answer_at`] reads each.
+    /// tuple of their handles, and [`Conclusion::answer_at`] reads each.
     pub const fn written(&self) -> &T {
         &self.written
     }
@@ -66,7 +66,7 @@ impl<T> Outcome<T> {
     /// Whether the transaction ran to completion.
     #[must_use]
     pub const fn completed(&self) -> bool {
-        matches!(self.receipt.outcome, KernelOutcome::Completed { .. })
+        matches!(self.receipt.outcome, Outcome::Completed { .. })
     }
 
     /// The error code the method declined with, if it declined.
@@ -77,7 +77,7 @@ impl<T> Outcome<T> {
     #[must_use]
     pub const fn declined(&self) -> Option<u32> {
         match self.receipt.outcome {
-            KernelOutcome::Declined { code, .. } => Some(code),
+            Outcome::Declined { code, .. } => Some(code),
             _ => None,
         }
     }
@@ -97,7 +97,7 @@ impl<T> Outcome<T> {
     #[must_use]
     pub const fn aborted(&self) -> Option<AbortReason> {
         match self.receipt.outcome {
-            KernelOutcome::UserError { reason } => Some(reason),
+            Outcome::UserError { reason } => Some(reason),
             _ => None,
         }
     }
@@ -110,11 +110,11 @@ impl<T> Outcome<T> {
     /// refusal, and a test asserting `!completed()` would pass on a
     /// refusal it never meant to accept.
     #[must_use]
-    pub const fn refused(&self) -> Option<&KernelOutcome> {
+    pub const fn refused(&self) -> Option<&Outcome> {
         match &self.receipt.outcome {
-            KernelOutcome::Completed { .. }
-            | KernelOutcome::Declined { .. }
-            | KernelOutcome::UserError { .. } => None,
+            Outcome::Completed { .. } | Outcome::Declined { .. } | Outcome::UserError { .. } => {
+                None
+            }
             refusal => Some(refusal),
         }
     }
@@ -142,7 +142,7 @@ impl<T> Outcome<T> {
     #[must_use]
     pub fn answers(&self) -> &[Answer] {
         match &self.receipt.outcome {
-            KernelOutcome::Completed { answers } => answers,
+            Outcome::Completed { answers } => answers,
             _ => &[],
         }
     }
@@ -259,7 +259,7 @@ pub fn explain_decline(
 /// The common shape, and the one where nothing has to be named: the
 /// wrapper knew which node and knew the type, so a reader asks for the
 /// answer and gets it.
-impl<A: HborDecode> Outcome<Answered<A>> {
+impl<A: HborDecode> Conclusion<Answered<A>> {
     /// What the call answered with.
     ///
     /// # Panics

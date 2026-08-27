@@ -70,15 +70,15 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError, graph_records};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, instantiate};
 pub use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, PrincipalAddr, ResourceAddr};
-use hyperscale_vm_types::{
-    CallTarget, Outcome as KernelOutcome, SubstateKey, TxHash, encode_amount,
-};
+use hyperscale_vm_types::{CallTarget, SubstateKey, TxHash, encode_amount};
 
+mod conclusion;
 mod native;
-mod outcome;
 mod package;
 mod wasm;
 
+pub use conclusion::Conclusion;
+use conclusion::explain_decline;
 pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot};
 /// Run one test on every engine lane this crate was built with.
 ///
@@ -88,10 +88,8 @@ pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot};
 /// `#[test]` resolves.
 pub use hyperscale_vm_sdk_macros::lanes as test;
 pub use hyperscale_vm_stdlib::account;
-pub use hyperscale_vm_types::{AbortReason, Outcome as Verdict, Presence, UnmetCondition};
+pub use hyperscale_vm_types::{AbortReason, Outcome, Presence, UnmetCondition};
 pub use native::{Dispatch, Native};
-pub use outcome::Outcome;
-use outcome::explain_decline;
 pub use package::{Code, Package, code_at};
 pub use wasm::{Blessed, FUEL_CEILING};
 
@@ -491,7 +489,7 @@ impl Chain {
         &mut self,
         signer: PrincipalAddr,
         build: impl FnOnce(&mut TypedBuilder<'_>) -> Result<T, TypedError>,
-    ) -> Outcome<T> {
+    ) -> Conclusion<T> {
         self.try_transact(signer, build)
             .expect("the manifest builds and admits")
     }
@@ -513,7 +511,7 @@ impl Chain {
         &mut self,
         signer: PrincipalAddr,
         build: impl FnOnce(&mut TypedBuilder<'_>) -> Result<T, TypedError>,
-    ) -> Result<Outcome<T>, Refused> {
+    ) -> Result<Conclusion<T>, Refused> {
         let mut builder = TypedBuilder::new(&self.records, &TestHasher, signer);
         let written = build(&mut builder)?;
         let graph = builder.build()?;
@@ -572,7 +570,7 @@ impl Chain {
         // A decline names a node, and which package published the table
         // the code indexes is that node's own.
         let errors = match receipt.outcome {
-            KernelOutcome::Declined { node, .. } => entry
+            Outcome::Declined { node, .. } => entry
                 .calls
                 .get(node as usize)
                 .and_then(|call| self.records.packages.get(call.package))
@@ -587,12 +585,10 @@ impl Chain {
         let explained = match &receipt.outcome {
             // An unmet condition names a leaf, and a leaf is a hash of
             // the party and the badge that inverts to neither.
-            KernelOutcome::ConditionUnmet { condition } => {
-                Some(explain_refusal(&admitted, condition))
-            }
+            Outcome::ConditionUnmet { condition } => Some(explain_refusal(&admitted, condition)),
             // A decline names a node and an index into its package's
             // error table; the sentence is the method and the name.
-            KernelOutcome::Declined { node, code } => Some(explain_decline(
+            Outcome::Declined { node, code } => Some(explain_decline(
                 *node,
                 *code,
                 entry
@@ -603,7 +599,7 @@ impl Chain {
             )),
             // An infeasible movement names a leaf, and the coordinates
             // that derive it are the transaction's own.
-            KernelOutcome::Infeasible { key, amount } => Some(explain_infeasible(
+            Outcome::Infeasible { key, amount } => Some(explain_infeasible(
                 *key,
                 *amount,
                 &entry.calls,
@@ -612,7 +608,7 @@ impl Chain {
             )),
             _ => None,
         };
-        Ok(Outcome::new(receipt, errors, explained, written))
+        Ok(Conclusion::new(receipt, errors, explained, written))
     }
 }
 
