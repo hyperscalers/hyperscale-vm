@@ -47,6 +47,7 @@ static COMPILED: LazyLock<Mutex<BTreeMap<PackageHash, (Component, InstantiationC
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 /// Compiled packages, by the content address a call names them at.
+#[derive(Clone)]
 pub struct Blessed {
     engine: Engine,
     components: BTreeMap<PackageHash, (Component, InstantiationCharges)>,

@@ -4,27 +4,37 @@ use amm_guest::amm::Error;
 use amm_guest::amm::client::{Amm, Settings};
 use hyperscale_vm_sdk::state::UnitFixed;
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, ResourceAddr, account, package, principal, resource,
+    Chain, PrincipalAddr, ResourceAddr, Worlds, account, package, principal, resource,
 };
 
 const ALICE: PrincipalAddr = principal(1);
 const X: ResourceAddr = resource(0xE1);
 const Y: ResourceAddr = resource(0xE2);
 
-/// A pool holding a thousand of each side at 30 bps, and Alice with six
-/// hundred of the side she sells.
-fn pool(mut chain: Chain) -> (Chain, Amm) {
-    chain.publish(package!(amm_guest::amm));
-    let pool = chain.instantiate::<Amm>(
-        ALICE,
-        Settings {
-            x: X,
-            y: Y,
-            fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
-        },
-    );
-    chain.credit(ALICE, X, 600);
-    chain.credit(pool, X, 1_000);
+/// A pool at 30 bps holding a thousand of X, and Alice with six hundred
+/// of the side she sells — everything but the Y reserve, which is the
+/// one credit the variants disagree on.
+fn seeded(chain: Chain) -> (Chain, Amm) {
+    static WORLDS: Worlds<Amm> = Worlds::new();
+    WORLDS.open(chain, |chain| {
+        chain.publish(package!(amm_guest::amm));
+        let pool = chain.instantiate::<Amm>(
+            ALICE,
+            Settings {
+                x: X,
+                y: Y,
+                fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
+            },
+        );
+        chain.credit(ALICE, X, 600);
+        chain.credit(pool, X, 1_000);
+        pool
+    })
+}
+
+/// The seeded pool holding a thousand of each side.
+fn pool(chain: Chain) -> (Chain, Amm) {
+    let (mut chain, pool) = seeded(chain);
     chain.credit(pool, Y, 1_000);
     (chain, pool)
 }
@@ -78,18 +88,8 @@ fn a_floor_the_pool_cannot_reach_declines(chain: Chain) {
 /// bounded below one and the product is held whole inside a single
 /// division. The reserve here is the largest one there is.
 #[hyperscale_vm_testing::test]
-fn a_reserve_that_once_overflowed_the_curve_now_trades(mut chain: Chain) {
-    chain.publish(package!(amm_guest::amm));
-    let pool = chain.instantiate::<Amm>(
-        ALICE,
-        Settings {
-            x: X,
-            y: Y,
-            fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
-        },
-    );
-    chain.credit(ALICE, X, 600);
-    chain.credit(pool, X, 1_000);
+fn a_reserve_that_once_overflowed_the_curve_now_trades(chain: Chain) {
+    let (mut chain, pool) = seeded(chain);
     chain.credit(pool, Y, u128::MAX);
 
     chain

@@ -24,7 +24,7 @@ pub type Dispatch = fn(&str, KernelSession, &[GuestArg<'_>]) -> (KernelSession, 
 
 /// The published packages' bodies, by the content address a call names
 /// them at.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Native {
     packages: BTreeMap<PackageHash, Dispatch>,
 }

@@ -2,7 +2,8 @@
 
 use hyperscale_vm_sdk::state::{Fixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, Refused, ResourceAddr, TypedError, account, package, principal, resource,
+    Chain, PrincipalAddr, Refused, ResourceAddr, TypedError, Worlds, account, package, principal,
+    resource,
 };
 use perp_guest::perp::Error;
 use perp_guest::perp::client::{Perp, Terms};
@@ -17,21 +18,29 @@ const ONE: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;
 
 /// A market holding one position on the named side, at a tenth
 /// maintenance and a fifth liquidation bonus.
-fn market(mut chain: Chain, long: bool) -> (Chain, Perp) {
-    chain.publish(package!(perp_guest::perp));
-    let market = chain.instantiate::<Perp>(
-        TRADER,
-        Terms {
-            collateral: COLLATERAL,
-            oracle: ORACLE.into(),
-            maintenance_margin: UnitFixed::percent(10).expect("a tenth is under one"),
-            liquidation_bonus: UnitFixed::percent(20).expect("a fifth is under one"),
-            long,
-        },
-    );
-    chain.credit(TRADER, COLLATERAL, 10_000);
-    chain.credit(market, COLLATERAL, 10_000);
-    (chain, market)
+///
+/// A world per side: the side is creation-fixed, so a long market and a
+/// short one are two instances rather than one reconfigured.
+fn market(chain: Chain, long: bool) -> (Chain, Perp) {
+    static LONGS: Worlds<Perp> = Worlds::new();
+    static SHORTS: Worlds<Perp> = Worlds::new();
+    let worlds = if long { &LONGS } else { &SHORTS };
+    worlds.open(chain, |chain| {
+        chain.publish(package!(perp_guest::perp));
+        let market = chain.instantiate::<Perp>(
+            TRADER,
+            Terms {
+                collateral: COLLATERAL,
+                oracle: ORACLE.into(),
+                maintenance_margin: UnitFixed::percent(10).expect("a tenth is under one"),
+                liquidation_bonus: UnitFixed::percent(20).expect("a fifth is under one"),
+                long,
+            },
+        );
+        chain.credit(TRADER, COLLATERAL, 10_000);
+        chain.credit(market, COLLATERAL, 10_000);
+        market
+    })
 }
 
 /// A rate at `scaled`, which is what the cell the mark lands in holds.

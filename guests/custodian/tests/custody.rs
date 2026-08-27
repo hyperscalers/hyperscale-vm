@@ -12,8 +12,8 @@ use custodian_guest::custodian;
 // `package!` names.
 use grammar_guest::grammar as shapes;
 use hyperscale_vm_testing::{
-    AbortReason, Chain, Component, PrincipalAddr, ResourceAddr, TestHasher, account, package,
-    principal, resource,
+    AbortReason, Chain, Component, PrincipalAddr, ResourceAddr, TestHasher, Worlds, account,
+    package, principal, resource,
 };
 
 /// Who issues the seats this custodian keeps.
@@ -35,25 +35,29 @@ fn shape_terms() -> shapes::client::Terms {
 }
 
 /// A custodian configured for the seats, and a holder with one.
-fn world(mut chain: Chain) -> (Chain, custodian::client::Custodian, ResourceAddr) {
-    chain.publish(package!(grammar_guest::grammar at "../grammar"));
-    chain.publish(package!(custodian_guest::custodian));
-    let issuer = chain.instantiate::<shapes::client::Grammar>(ISSUER, shape_terms());
-    let seat = issuer.issued_seat(&TestHasher);
-    let keeper = chain.instantiate::<custodian::client::Custodian>(
-        ISSUER,
-        custodian::client::Terms {
-            asset: seat,
-            other: seat,
-            instances: seat,
-        },
-    );
-    chain
-        .transact(ISSUER, |b| {
-            let minted = issuer.seat(b, 7, 0)?;
-            account::deposit_nf(b, HOLDER, minted)
-        })
-        .expect_completed();
+fn world(chain: Chain) -> (Chain, custodian::client::Custodian, ResourceAddr) {
+    static WORLDS: Worlds<(custodian::client::Custodian, ResourceAddr)> = Worlds::new();
+    let (chain, (keeper, seat)) = WORLDS.open(chain, |chain| {
+        chain.publish(package!(grammar_guest::grammar at "../grammar"));
+        chain.publish(package!(custodian_guest::custodian));
+        let issuer = chain.instantiate::<shapes::client::Grammar>(ISSUER, shape_terms());
+        let seat = issuer.issued_seat(&TestHasher);
+        let keeper = chain.instantiate::<custodian::client::Custodian>(
+            ISSUER,
+            custodian::client::Terms {
+                asset: seat,
+                other: seat,
+                instances: seat,
+            },
+        );
+        chain
+            .transact(ISSUER, |b| {
+                let minted = issuer.seat(b, 7, 0)?;
+                account::deposit_nf(b, HOLDER, minted)
+            })
+            .expect_completed();
+        (keeper, seat)
+    });
     (chain, keeper, seat)
 }
 

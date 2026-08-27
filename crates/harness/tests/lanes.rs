@@ -1266,3 +1266,31 @@ fn a_lane_is_emitted_for_every_engine() {
     ];
     assert_eq!(lanes.len(), 2);
 }
+
+/// Chains opened from one snapshot are separate worlds: nothing moved
+/// through one — a raw credit or a whole transaction — is visible
+/// through a sibling or through the chain the snapshot froze.
+#[hyperscale_vm_testing::test]
+fn chains_opened_from_one_snapshot_do_not_observe_each_other(chain: Chain) {
+    let (chain, pool) = pool(chain);
+    let snapshot = chain.snapshot();
+
+    let mut first = snapshot.chain();
+    let second = snapshot.chain();
+    assert_eq!(first.balance(ALICE, X), 600, "the snapshot carried Alice");
+    assert_eq!(first.balance(pool, X), 1_000, "and the pool");
+    first.credit(ALICE, X, 1_000);
+    first
+        .transact(ALICE, |b| {
+            let funds = account::withdraw(b, ALICE, X, 500)?;
+            let bought = pool.swap(b, funds, 0u128)?;
+            account::deposit(b, ALICE, bought)
+        })
+        .expect_completed();
+
+    assert_eq!(first.balance(ALICE, X), 500);
+    assert_eq!(first.balance(pool, X), 1_500);
+    assert_eq!(second.balance(ALICE, X), 600, "a sibling observed nothing");
+    assert_eq!(second.balance(pool, X), 1_000);
+    assert_eq!(chain.balance(ALICE, X), 600, "the source observed nothing");
+}

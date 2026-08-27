@@ -42,7 +42,7 @@
 //! `wrapping_add` and passes both. Release is the arithmetic the chain
 //! runs. Neither is wrong to run; running only one is.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// The slots the protocol names under every owner, which a test reads a
 /// cell at.
@@ -131,6 +131,7 @@ pub struct Chain {
 }
 
 /// Whatever runs a package's code, behind the walk.
+#[derive(Clone)]
 enum Engine {
     /// The artifact a network would run, under the blessed engine.
     Blessed(Blessed),
@@ -193,6 +194,22 @@ impl Chain {
     pub const fn at(mut self, clock_ms: u64) -> Self {
         self.clock_ms = clock_ms;
         self
+    }
+
+    /// Freeze this world as it stands.
+    ///
+    /// The chain stays usable; what diverges after this instant is the
+    /// chain's alone, and every [`Snapshot::chain`] opens from here.
+    #[must_use]
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            store: self.store.clone(),
+            records: self.records.clone(),
+            engine: self.engine.clone(),
+            clock_ms: self.clock_ms,
+            sequence: self.sequence,
+            created: self.created,
+        }
     }
 
     /// Publish a package, at the address its declaration derives.
@@ -610,6 +627,81 @@ impl Chain {
             _ => None,
         };
         Ok(Conclusion::new(receipt, errors, explained, written))
+    }
+}
+
+/// A world frozen at a moment, from which any number of chains open.
+///
+/// A snapshot rather than `Chain: Clone`, because the frozen half is
+/// never run: a clone invites accidental divergence mid-test with both
+/// halves live, and a snapshot's one verb says which half is which.
+pub struct Snapshot {
+    store: MemoryStore,
+    records: Records,
+    engine: Engine,
+    clock_ms: u64,
+    sequence: u64,
+    created: u64,
+}
+
+impl Snapshot {
+    /// A fresh chain holding everything the snapshot froze.
+    ///
+    /// Every chain opened from one snapshot is its own world: nothing a
+    /// test does through one is visible through another.
+    #[must_use]
+    pub fn chain(&self) -> Chain {
+        Chain {
+            store: self.store.clone(),
+            records: self.records.clone(),
+            engine: self.engine.clone(),
+            clock_ms: self.clock_ms,
+            sequence: self.sequence,
+            created: self.created,
+        }
+    }
+}
+
+/// One built world per lane per process.
+///
+/// The building closure runs the first time each lane arrives; every
+/// later test opens a fresh chain from that lane's snapshot and takes a
+/// clone of the handles. A test file pays its setup once per lane, and
+/// no test observes another.
+pub struct Worlds<H> {
+    native: OnceLock<(Snapshot, H)>,
+    wasm: OnceLock<(Snapshot, H)>,
+}
+
+impl<H: Clone> Worlds<H> {
+    /// Two empty cells, one per lane.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            native: OnceLock::new(),
+            wasm: OnceLock::new(),
+        }
+    }
+
+    /// The chain's world: built by `build` the first time this lane
+    /// arrives, opened from the snapshot every time after.
+    pub fn open(&self, chain: Chain, build: impl FnOnce(&mut Chain) -> H) -> (Chain, H) {
+        let cell = match &chain.engine {
+            Engine::Native(_) => &self.native,
+            Engine::Blessed(_) => &self.wasm,
+        };
+        let (snapshot, handles) = cell.get_or_init(move || {
+            let mut chain = chain;
+            let handles = build(&mut chain);
+            (chain.snapshot(), handles)
+        });
+        (snapshot.chain(), handles.clone())
+    }
+}
+
+impl<H: Clone> Default for Worlds<H> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
