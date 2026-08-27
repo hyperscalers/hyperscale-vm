@@ -5,6 +5,14 @@
 //! vocabulary can name. The accessors a body reaches state through are
 //! derived from the same table, so what a package declares and what its
 //! bodies can touch are one text.
+//!
+//! Value the package holds is declared here too, one form per kind of
+//! holding: a named `Vault` or `Instances` field states its resource
+//! through `#[holds(..)]`, and a `Keyed<Vault>` or `Keyed<Instances>`
+//! family is denominated by the key a body names it at. The protocol
+//! balance accessors — `vault(resource)`, `holdings(resource)` — exist
+//! only under `#[blueprint(principals)]`, where the funds are the
+//! protocol cells by identity.
 
 use std::collections::BTreeMap;
 

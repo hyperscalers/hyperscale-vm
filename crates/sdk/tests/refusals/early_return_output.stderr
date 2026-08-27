@@ -1,17 +1,5 @@
-error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
-  --> tests/refusals/early_return_output.rs:15:24
-   |
-15 |                 return self.vault(a).take(Quantity::from_subunits(1));
-   |                        ^^^^
-
 error: what a method hands back must leave through its tail expression — the declared outputs are exact and the answer is one value, so an early return's cannot be reconciled with the tail's
-  --> tests/refusals/early_return_output.rs:15:17
+  --> tests/refusals/early_return_output.rs:16:17
    |
-15 |                 return self.vault(a).take(Quantity::from_subunits(1));
+16 |                 return self.till.at(a).take(Quantity::from_subunits(1));
    |                 ^^^^^^
-
-error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
-  --> tests/refusals/early_return_output.rs:17:13
-   |
-17 |             self.vault(b).take(Quantity::from_subunits(1))
-   |             ^^^^

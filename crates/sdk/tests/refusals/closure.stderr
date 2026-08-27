@@ -1,5 +1,5 @@
-error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
-  --> tests/refusals/closure.rs:14:29
+error: `#[blueprint]` does not model closures — an access inside one cannot be attributed to a declaration
+  --> tests/refusals/closure.rs:15:26
    |
-14 |             let credit = || self.vault(a).declared();
-   |                             ^^^^
+15 |             let credit = || self.till.at(a).declared();
+   |                          ^

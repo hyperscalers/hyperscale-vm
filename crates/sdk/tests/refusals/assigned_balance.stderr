@@ -1,14 +1,14 @@
-error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
-  --> tests/refusals/assigned_balance.rs:19:13
+error: a vault's balance is not written — value moves, and `put`, `take`, or `reserve` are what change it
+  --> tests/refusals/assigned_balance.rs:20:13
    |
-19 |             self.vault(holder).set(Quantity::from_subunits(1_000));
+20 |             self.till.at(holder).set(Quantity::from_subunits(1_000));
    |             ^^^^
 
 error[E0599]: the method `set` exists for struct `Slot<Vault>`, but its trait bounds were not satisfied
-  --> tests/refusals/assigned_balance.rs:19:32
+  --> tests/refusals/assigned_balance.rs:20:34
    |
-19 |             self.vault(holder).set(Quantity::from_subunits(1_000));
-   |                                ^^^ method cannot be called on `Slot<Vault>` due to unsatisfied trait bounds
+20 |             self.till.at(holder).set(Quantity::from_subunits(1_000));
+   |                                  ^^^ method cannot be called on `Slot<Vault>` due to unsatisfied trait bounds
    |
   ::: src/state.rs
    |

@@ -1,11 +1,11 @@
-error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
-  --> tests/refusals/unmodelled_handle_op.rs:20:13
+error: `siphon` names no operation a declaration can carry, so what it reaches the kernel for is not what this method declares. One of: get, count, covered, entry, order, balance, pick, picked, put, declared_credit, file, take, declared_debit, declared, reserve, set, insert, remove, create, seal, existing, exclusive, open, reseal, retire, rewrite, vacant
+  --> tests/refusals/unmodelled_handle_op.rs:22:29
    |
-20 |             self.vault(a).siphon(amount);
-   |             ^^^^
+22 |             self.till.at(a).siphon(amount);
+   |                             ^^^^^^
 
 error[E0599]: no method named `siphon` found for struct `Slot<T>` in the current scope
-  --> tests/refusals/unmodelled_handle_op.rs:20:27
+  --> tests/refusals/unmodelled_handle_op.rs:22:29
    |
-20 |             self.vault(a).siphon(amount);
-   |                           ^^^^^^ method not found in `Slot<Vault>`
+22 |             self.till.at(a).siphon(amount);
+   |                             ^^^^^^ method not found in `Slot<Vault>`

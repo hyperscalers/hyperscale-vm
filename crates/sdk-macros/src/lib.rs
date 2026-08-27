@@ -8,13 +8,15 @@
 //!
 //! ```ignore
 //! #[blueprint]
-//! mod account {
+//! mod pool {
 //!     #[state]
-//!     struct Account {}
+//!     struct Pool {
+//!         till: Keyed<Vault>,
+//!     }
 //!
-//!     impl Account {
+//!     impl Pool {
 //!         pub fn deposit(&mut self, funds: Bucket) {
-//!             self.vault(funds.resource()).put(funds);
+//!             self.till.at(funds.resource()).put(funds);
 //!         }
 //!     }
 //! }
@@ -30,8 +32,25 @@
 //! the module's name, so the `#[state]` struct carries that name in
 //! `PascalCase` and a struct named anything else is refused. A package
 //! that stores nothing of its own writes no `#[state]` struct at all —
-//! the macro writes the one its module implies, and the protocol's own
-//! cells, which exist under every owner, are reachable either way.
+//! the macro writes the one its module implies.
+//!
+//! # The state struct is the balance sheet
+//!
+//! Every value leaf an instance package holds is a field of its
+//! `#[state]` struct, in one of two forms per kind: a named field
+//! stating its resource — `Vault` or `Instances` under `#[holds(..)]`,
+//! where the expression is `config.<field>` or `issued(<Resource>)` —
+//! or an open family denominated by its key, `Keyed<Vault>` reached by
+//! `at(resource)` and `Keyed<Instances>` by `of(resource)`.
+//!
+//! The protocol balances — `self.vault(resource)`,
+//! `self.holdings(resource)` — are the principals blueprint's alone:
+//! where the kernel asks what somebody holds, it reads their protocol
+//! cells, so a badge in an account is a credential while the same badge
+//! handed to a component is an asset on that component's own sheet. The
+//! presenting gates (`#[proves(<badge>)]` and the custodial family)
+//! are the principals' for the same reason. `auth()` and `config()`
+//! remain accessors of every component.
 //!
 //! # The two halves
 //!
@@ -56,7 +75,8 @@
 //! On items of the module:
 //! - `#[state] struct <Module>` — the slots the package's keys sit under;
 //!   optional, name-checked, at most one. Fields take `#[slot(<n>)]`
-//!   (pin all or none) and `#[denomination(<expr>)]` on a value cell.
+//!   (pin all or none) and `#[holds(<expr>)]` on a named `Vault` or
+//!   `Instances`.
 //! - `#[config] struct …` — the creation-fixed fields `config.<field>`
 //!   resolves against; at most one.
 //! - `#[resource(…)] struct …` — a resource the package issues:

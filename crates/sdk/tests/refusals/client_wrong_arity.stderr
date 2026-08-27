@@ -1,5 +1,18 @@
-error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
-  --> tests/refusals/client_wrong_arity.rs:14:13
+error[E0061]: this method takes 2 arguments but 1 argument was supplied
+  --> tests/refusals/client_wrong_arity.rs:29:10
    |
-14 |             self.vault(funds.resource()).put(funds);
-   |             ^^^^
+29 |     pool.deposit(builder)
+   |          ^^^^^^^--------- argument #2 is missing
+   |
+note: method defined here
+  --> tests/refusals/client_wrong_arity.rs:15:16
+   |
+ 4 | #[blueprint]
+   | ------------
+...
+15 |         pub fn deposit(&mut self, funds: Bucket) {
+   |                ^^^^^^^
+help: provide the argument
+   |
+29 |     pool.deposit(builder, /* funds */)
+   |                         +++++++++++++

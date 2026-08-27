@@ -1,5 +1,5 @@
-error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
-  --> tests/refusals/untyped_credit.rs:22:13
+error: this cell is keyed by one resource and the lowering cannot see what is going into it. Credit an edge the method was handed, one taken from a declared cell, or one it issued
+  --> tests/refusals/untyped_credit.rs:23:27
    |
-22 |             self.vault(settings.asset).put(laundered.remove(0));
-   |             ^^^^
+23 |             self.till.put(laundered.remove(0));
+   |                           ^^^^^^^^^

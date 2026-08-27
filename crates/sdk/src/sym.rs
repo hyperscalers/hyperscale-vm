@@ -2,7 +2,7 @@
 //! is being traced.
 //!
 //! A [`Sym`] carries an [`Expr`] and a phantom kind. Building one is how
-//! the author writes `self.vault(input.resource())` and gets an
+//! the author writes `self.till.at(input.resource())` and gets an
 //! [`Expr::ChildKey`] out the other end — the declaration reads as ordinary
 //! Rust, and the DSL term is the residue.
 //!

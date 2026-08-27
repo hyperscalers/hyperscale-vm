@@ -17,8 +17,8 @@ mod contract {
     }
 
     impl Contract {
-        pub fn bank(&mut self, holder: Address, funds: Bucket) {
-            self.vault(holder).put(funds);
+        pub fn bank(&mut self, funds: Bucket) {
+            self.vaults.at(funds.resource()).put(funds);
         }
     }
 }

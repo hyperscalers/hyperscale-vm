@@ -3,11 +3,12 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::Cell;
+    use hyperscale_vm_sdk::state::{Cell, Keyed};
 
     #[state]
     struct Contract {
         pointer: Cell<Address>,
+        tab: Keyed<u64>,
     }
 
     impl Contract {
@@ -15,7 +16,7 @@ mod contract {
         // routing takes before the body runs.
         pub fn on_state(&mut self, a: Address, b: Address) {
             let side = if self.pointer.get() == a { a } else { b };
-            self.vault(side).declared();
+            self.tab.at(side).set(1);
         }
     }
 }

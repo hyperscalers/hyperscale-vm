@@ -1,5 +1,5 @@
-error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
-  --> tests/refusals/mode_mix.rs:15:29
+error: one handle declares one access mode — a reservation beside anything else, or a second reservation, folds to no single mode. Open a separate access for each mode instead
+  --> tests/refusals/mode_mix.rs:17:13
    |
-15 |             let mut vault = self.vault(a);
-   |                             ^^^^
+17 |             vault.reserve(amount);
+   |             ^^^^^

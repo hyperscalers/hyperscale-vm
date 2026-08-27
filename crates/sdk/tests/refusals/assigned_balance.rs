@@ -7,16 +7,17 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
-    use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::Quantity;
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Keyed, Quantity, Vault};
 
     #[state]
     struct Contract {
+        till: Keyed<Vault>,
     }
 
     impl Contract {
-        pub fn conjure(&mut self, holder: Address) {
-            self.vault(holder).set(Quantity::from_subunits(1_000));
+        pub fn conjure(&mut self, holder: ResourceAddr) {
+            self.till.at(holder).set(Quantity::from_subunits(1_000));
         }
     }
 }

@@ -3,10 +3,11 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
-    
+    use hyperscale_vm_sdk::state::Keyed;
 
     #[state]
     struct Contract {
+        tab: Keyed<u64>,
     }
 
     impl Contract {
@@ -15,7 +16,7 @@ mod contract {
             if flag == 0 {
                 key = b;
             }
-            self.vault(key).declared();
+            self.tab.at(key).set(1);
         }
     }
 }

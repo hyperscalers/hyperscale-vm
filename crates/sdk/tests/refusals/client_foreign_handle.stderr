@@ -1,11 +1,8 @@
-error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
-  --> tests/refusals/client_foreign_handle.rs:14:13
+error[E0599]: no method named `offer` found for struct `pool::client::Pool` in the current scope
+  --> tests/refusals/client_foreign_handle.rs:43:10
    |
-14 |             self.vault(funds.resource()).put(funds);
-   |             ^^^^
-
-error: a package's own reserves are declared: a `Vault` field under `#[holds(..)]`, or `Keyed<Vault>` for an open family — `self.vault()` reads the protocol balance, which is the principals blueprint's
-  --> tests/refusals/client_foreign_handle.rs:29:13
-   |
-29 |             self.vault(funds.resource()).put(funds);
-   |             ^^^^
+ 4 | #[blueprint]
+   | ------------ method `offer` not found for this struct
+...
+43 |     here.offer(builder, funds)
+   |          ^^^^^ method not found in `pool::client::Pool`
