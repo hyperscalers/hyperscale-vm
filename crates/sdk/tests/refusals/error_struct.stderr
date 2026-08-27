@@ -1,0 +1,5 @@
+error: `#[error]` marks an enum — the table it declares is the variants
+  --> tests/refusals/error_struct.rs:11:5
+   |
+11 |     #[error]
+   |     ^^^^^^^^

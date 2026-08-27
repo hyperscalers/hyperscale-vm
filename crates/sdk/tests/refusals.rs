@@ -198,6 +198,16 @@ fn the_lowering_refuses_a_decline_arm_outside_the_error_table() {
     refuse.compile_fail("tests/refusals/undeclared_decline.rs");
 }
 
+/// Each item marker lands on one item kind, and the scans read exactly
+/// that kind — a marker on the wrong one would be silently stripped
+/// with nothing declared.
+#[test]
+fn the_lowering_refuses_a_marker_on_the_wrong_item_kind() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/config_enum.rs");
+    refuse.compile_fail("tests/refusals/error_struct.rs");
+}
+
 /// A gate on a private method guards nothing: only `pub` methods lower,
 /// and the attribute would be silently stripped with the export the
 /// author thought they were guarding.

@@ -421,6 +421,39 @@ fn strip(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !OWN.iter().any(|own| attr.path().is_ident(own)));
 }
 
+/// Hold each item marker to the item kind its scan reads.
+///
+/// The scans are kind-filtered and `strip` is not, so a marker on the
+/// wrong kind — `#[config]` on an enum, `#[error]` on a struct — would
+/// otherwise vanish without declaring anything.
+fn check_marker_kinds(items: &[syn::Item]) -> syn::Result<()> {
+    const ON_A_STRUCT: &[&str] = &["state", "config", "event", "record", "resource"];
+    for item in items {
+        match item {
+            syn::Item::Struct(item) => {
+                if let Some(attr) = item.attrs.iter().find(|a| a.path().is_ident("error")) {
+                    return Err(syn::Error::new_spanned(
+                        attr,
+                        "`#[error]` marks an enum — the table it declares is the variants",
+                    ));
+                }
+            }
+            syn::Item::Enum(item) => {
+                for marker in ON_A_STRUCT {
+                    if let Some(attr) = item.attrs.iter().find(|a| a.path().is_ident(marker)) {
+                        return Err(syn::Error::new_spanned(
+                            attr,
+                            format!("`#[{marker}]` marks a struct — an enum declares nothing here"),
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// The configuration struct's fields in declaration order — which is what
 /// fixes each one's config slot index, and what a guest reading one gets
 /// handed.
@@ -1216,6 +1249,7 @@ fn expand(
         ));
     };
 
+    check_marker_kinds(items)?;
     let state_name = state_struct(items, &module_name)?;
     let (fields, config_name) = parse_state(items)?;
     let config_fields = config_slots(items, config_name.as_ref());

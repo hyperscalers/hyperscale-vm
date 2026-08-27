@@ -1,0 +1,5 @@
+error: `#[config]` marks a struct — an enum declares nothing here
+  --> tests/refusals/config_enum.rs:11:5
+   |
+11 |     #[config]
+   |     ^^^^^^^^^
