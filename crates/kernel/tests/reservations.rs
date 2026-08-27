@@ -171,6 +171,88 @@ fn a_fully_taken_hold_settles_the_whole_of_it() {
 /// is what keeps the two debits of one cell from spending the same
 /// value — the cell holds 100, the untaken hold is 60, and a movement
 /// of 50 aborts even though the cell alone would cover it.
+/// The composition the floor exists to serve, completing: reserved
+/// value leaves through the take, the unreserved remainder through the
+/// delta, and together they drain the cell exactly.
+#[test]
+fn a_take_and_a_delta_spend_the_two_halves_of_one_cell() {
+    let source = cell(SOURCE);
+    let sink = cell(SINK);
+    let ordered = vec![
+        DeclaredAccess {
+            reach: None,
+            effect: Effect {
+                target: EffectTarget::Point(source),
+                mode: Mode::Reserve { amount: 60 },
+            },
+            holds: Some(UNIT),
+            clause: None,
+        },
+        DeclaredAccess {
+            reach: None,
+            effect: Effect {
+                target: EffectTarget::Point(source),
+                mode: Mode::Delta { moves: Moves::Both },
+            },
+            holds: Some(UNIT),
+            clause: None,
+        },
+        DeclaredAccess {
+            reach: None,
+            effect: Effect {
+                target: EffectTarget::Point(sink),
+                mode: Mode::Delta { moves: Moves::Both },
+            },
+            holds: Some(UNIT),
+            clause: None,
+        },
+    ];
+    let mut set = EffectSet::new();
+    for declared in &ordered {
+        set.insert(declared.effect).expect("the clauses fold");
+    }
+    let mut store = MemoryStore::new();
+    store.write(source, encode_amount(100).to_vec());
+    let mut session = KernelSession::materialize(
+        OverlayStore::new(Arc::new(store)),
+        &Declaration {
+            set,
+            ordered,
+            ..Declaration::default()
+        },
+        TxHash(Hash32([7; 32])),
+        EnvInputs::unsealed(0),
+        hash,
+    )
+    .expect("the cell covers the hold");
+    let reserved = session.reserve_take(0, 0).expect("the grant is held");
+    session
+        .cell_put(2, 0, reserved)
+        .expect("into the sink it goes");
+    let rest = session.cell_take(1, 0, 40).expect("the remainder is free");
+    session.cell_put(2, 0, rest).expect("into the sink it goes");
+    let (receipt, store) = session.finish(vec![], 0).expect("the oracle stands");
+    assert!(
+        matches!(receipt.outcome, Outcome::Completed { .. }),
+        "the two debits split the cell: {:?}",
+        receipt.outcome
+    );
+    assert_eq!(
+        receipt.delta.settles.get(&source).map(|m| m.debit),
+        Some(60),
+        "the reserved half leaves through the settle"
+    );
+    assert_eq!(
+        receipt.delta.movements.get(&source).map(|m| m.debit),
+        Some(40),
+        "the unreserved half leaves through the delta"
+    );
+    let left = store
+        .cell(source)
+        .map_or(0, |held| decode_amount(&held).expect("an amount cell"));
+    assert_eq!(left, 0, "together they drain the cell exactly");
+}
+
 #[test]
 fn a_transactions_own_reservation_floors_its_own_delta() {
     let source = cell(SOURCE);
