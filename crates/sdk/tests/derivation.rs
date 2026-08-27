@@ -1523,3 +1523,84 @@ fn a_named_vault_declares_the_resource_it_holds() {
         );
     }
 }
+
+/// A `#[proves(self)]` body is ordinary and may decline: the
+/// declaration carries the gate's clauses — the stored-rule read and
+/// the claim — beside the body's own, so a pass paid for and a pass
+/// proven are one admission unit.
+#[blueprint]
+mod turnstile {
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Bucket, Quantity, Vault};
+
+    #[config]
+    struct Terms {
+        asset: ResourceAddr,
+    }
+
+    /// What a short payment declines with.
+    #[error]
+    enum Error {
+        Short,
+    }
+
+    #[state]
+    struct Turnstile {
+        /// What the passes were paid for with.
+        #[holds(config.asset)]
+        till: Vault,
+    }
+
+    impl Turnstile {
+        /// Prove this turnstile's identity to whoever pays its price.
+        #[proves(self)]
+        pub fn pass(&mut self, payment: Bucket) -> Result<(), Error> {
+            if payment.quantity() < Quantity::from_subunits(10) {
+                return Err(Error::Short);
+            }
+            self.till.put(payment);
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn a_conditional_prover_declares_the_gate_beside_its_body() {
+    use hyperscale_vm_effects::{Expr, RuleLeaf, TargetExpr};
+
+    let metadata = turnstile::blueprint().metadata();
+    let effects = &metadata.methods["pass"].effects;
+    assert!(
+        effects.iter().any(|clause| matches!(
+            clause,
+            Clause::Requires { rule, .. }
+                if rule.leaves().any(|leaf| matches!(leaf, RuleLeaf::Stored { .. }))
+        )),
+        "the gate's stored-rule read is declared: {effects:?}"
+    );
+    assert!(
+        effects.iter().any(|clause| matches!(
+            clause,
+            Clause::Proves {
+                guard: None,
+                claim: Expr::SelfAddr,
+            }
+        )),
+        "the claim is declared unconditionally: {effects:?}"
+    );
+    assert!(
+        effects.iter().any(|clause| matches!(
+            clause,
+            Clause::Effect {
+                mode: ModeExpr::Delta { moves: Moves::In },
+                target: TargetExpr::Point(_),
+                ..
+            }
+        )),
+        "the body's own credit is declared beside the gate: {effects:?}"
+    );
+    assert!(
+        metadata.methods["pass"].outputs.is_empty(),
+        "a proving call's one product is the claim"
+    );
+}

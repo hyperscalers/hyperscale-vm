@@ -1,0 +1,5 @@
+error: a proving call's one product is the claim, so a `#[proves(self)]` body produces no edge — move the payout to a method the proof gates
+  --> tests/refusals/proving_edge.rs:17:16
+   |
+17 |         pub fn pass(&mut self, asset: ResourceAddr, amount: Quantity) -> Bucket {
+   |                ^^^^

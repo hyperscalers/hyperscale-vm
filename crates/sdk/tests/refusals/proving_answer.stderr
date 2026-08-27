@@ -1,0 +1,5 @@
+error: a proving call's one product is the claim, so a `#[proves(self)]` body answers nothing — a composer reads a proving node as evidence, never as a value
+  --> tests/refusals/proving_answer.rs:17:16
+   |
+17 |         pub fn pass(&mut self) -> u64 {
+   |                ^^^^

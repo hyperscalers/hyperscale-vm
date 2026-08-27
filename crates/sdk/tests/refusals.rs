@@ -183,6 +183,18 @@ fn the_lowering_refuses_a_badge_gate_on_an_instance_package() {
     refuse.compile_fail("tests/refusals/badge_gate_on_instance.rs");
 }
 
+/// A proving call's one product is the claim. A `#[proves(self)]` body
+/// is ordinary and may decline, but an edge or an answer out of it
+/// would reopen the call matrix — and a presenting gate's body stays
+/// empty, since the kernel makes every read it is about.
+#[test]
+fn the_lowering_refuses_a_prover_that_produces() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/proving_edge.rs");
+    refuse.compile_fail("tests/refusals/proving_answer.rs");
+    refuse.compile_fail("tests/refusals/badge_gate_body.rs");
+}
+
 /// A refusal crosses the boundary as a bare code, so a fielded
 /// `#[error]` variant is refused on the variant's own line — not left
 /// to a cast error spanned at `#[blueprint]`.

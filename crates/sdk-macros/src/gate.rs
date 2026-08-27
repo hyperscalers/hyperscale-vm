@@ -382,9 +382,10 @@ pub fn parse_gate(
 
 /// The tracer calls a gate becomes.
 ///
-/// An authorizing method's clause is the gate's, not the body's: the
-/// kernel reads the stored rule before the export runs, so the read is
-/// declared here and no handle is bound for it.
+/// A gate's clauses are its own, declared beside whatever the body
+/// declares: the kernel reads an authorizing method's stored rule
+/// before the export runs, so the read is declared here and no handle
+/// is bound for it.
 pub fn gate_calls(gate: &Gate, lowered: &lower::Lowered) -> TokenStream2 {
     match gate {
         Gate::Public => quote!(),
@@ -483,15 +484,28 @@ pub fn check_gate_shape(
         // has written is the rule's own second branch, so a rewrite needs
         // no reading of what it replaces.
         Gate::Public | Gate::Guarded { .. } | Gate::Governed(_) => Ok(()),
+        // An authorizing body is ordinary — banking a payment, burning a
+        // receipt, marking a pass consumed — and may decline: the claim
+        // is judged at admission, and a declined prover fails the
+        // transaction wholesale, so nothing downstream ever ran with the
+        // proof. Its one product is the claim, so an edge or an answer
+        // is refused: either would reopen the call matrix, and a
+        // composer reads a proving node as evidence, never as value
+        // flow.
         Gate::Authorizing(_) => {
-            if lowered.sites.is_empty() {
-                Ok(())
-            } else {
+            if !lowered.outputs.is_empty() {
                 refuse(
-                    "an authorizing method declares exactly one point read — the cell its \
-                     stored rule lives in, which the kernel reads before the export runs. \
-                     The body has nothing left to say, so it must be empty",
+                    "a proving call's one product is the claim, so a `#[proves(self)]` body \
+                     produces no edge — move the payout to a method the proof gates",
                 )
+            } else if lowered.answer.is_some() {
+                refuse(
+                    "a proving call's one product is the claim, so a `#[proves(self)]` body \
+                     answers nothing — a composer reads a proving node as evidence, never \
+                     as a value",
+                )
+            } else {
+                Ok(())
             }
         }
         Gate::Custodial { .. } => {
