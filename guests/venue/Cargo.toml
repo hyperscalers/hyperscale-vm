@@ -1,0 +1,18 @@
+[package]
+name = "venue-guest"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata.hyperscale]
+module = "venue_guest::venue"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen.workspace = true
+hyperscale-vm-sdk.workspace = true
+
+[dev-dependencies]
+hyperscale-vm-testing.workspace = true

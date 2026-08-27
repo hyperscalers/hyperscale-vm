@@ -1,0 +1,28 @@
+state
+     16  till — one leaf, holding u128, denominated in config.asset
+     17  admitted — one leaf, holding u64
+config
+      0  asset
+      1  price
+      2  door
+errors
+      0  short
+
+enter() — infallible, answers
+  declares
+      0  requires claim config.door
+      1  write self.admitted
+  exports  handle for clause 1
+
+instantiate() — infallible
+  declares
+      0  requires self.config is absent
+      1  write self.config
+  exports  handle for clause 1, self.record
+
+pass(bucket) — fallible
+  takes    arg0 carrying config.asset
+  declares
+      0  proves self
+      1  credit self.till[config.asset] holding config.asset
+  exports  handle for clause 1, edge arg0, config.price

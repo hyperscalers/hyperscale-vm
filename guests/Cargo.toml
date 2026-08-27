@@ -28,6 +28,7 @@ members = [
     "security",
     "shares",
     "staking",
+    "venue",
 ]
 
 [workspace.dependencies]

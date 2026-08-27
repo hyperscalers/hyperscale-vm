@@ -337,6 +337,18 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("staking", "stake", open(), vec![]),
         ("staking", "unjail", owner_badge(), vec![]),
         ("staking", "unstake", open(), vec![]),
+        // The door's proof is its body's judgment: a component's
+        // identity is its code, so `pass` declares no rule and mints
+        // the claim — and the hall spends it where its configuration
+        // names the door.
+        (
+            "venue",
+            "enter",
+            vec![RuleExpr::claim(Expr::Config(2))],
+            vec![],
+        ),
+        ("venue", "instantiate", open(), vec![]),
+        ("venue", "pass", open(), vec![Expr::SelfAddr]),
     ]
 }
 

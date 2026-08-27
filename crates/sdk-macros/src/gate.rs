@@ -10,6 +10,7 @@ use quote::quote;
 use syn::spanned::Spanned as _;
 
 use crate::Declared;
+use crate::client::Serves;
 use crate::lower::{self};
 use crate::resource::Resource;
 use crate::rule::{RuleAst, calls, config_slot, diagnose_bare_name, parse_rule};
@@ -386,12 +387,19 @@ pub fn parse_gate(
 /// declares: the kernel reads an authorizing method's stored rule
 /// before the export runs, so the read is declared here and no handle
 /// is bound for it.
-pub fn gate_calls(gate: &Gate, lowered: &lower::Lowered) -> TokenStream2 {
+pub fn gate_calls(gate: &Gate, lowered: &lower::Lowered, serves: Serves) -> TokenStream2 {
     match gate {
         Gate::Public => quote!(),
         Gate::Guarded { rule, .. } => quote!({
             let __rule = #rule;
             __t.guarded_by(__rule);
+        }),
+        // A principal's sign-in reads the stored rule; a component has
+        // no rule anyone can store and no signature yields a claim on a
+        // derived address, so its identity is its code — the claim is
+        // declared bare and the body is the gate.
+        Gate::Authorizing(_) if matches!(serves, Serves::Instances) => quote!({
+            __t.proving();
         }),
         Gate::Authorizing(slot) => quote!({
             let __owner = __t.self_addr();

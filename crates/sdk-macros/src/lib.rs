@@ -1142,7 +1142,7 @@ fn lower_method(
     let total = claim.is_some();
     let closure = emit::declaration(
         &lowered,
-        &gate_calls(&gate, &lowered),
+        &gate_calls(&gate, &lowered, serves),
         declining.is_some(),
         total,
         &grant_registrations(declared.resources),

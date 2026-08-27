@@ -765,6 +765,22 @@ impl Trace {
         });
     }
 
+    /// Record that this method mints the target's identity on its own
+    /// body's judgment — the instance package's proving form.
+    ///
+    /// A component's identity is its code: nothing can store a rule in
+    /// a component's auth cell and no signature yields a claim on a
+    /// derived address, so the one party that can vouch for a component
+    /// is the component — and its body may decline, which is where the
+    /// condition lives. The account's sign-in is [`Trace::authorizing`],
+    /// which reads the stored rule instead.
+    pub fn proving(&mut self) {
+        self.emit(Clause::Proves {
+            guard: None,
+            claim: Expr::SelfAddr,
+        });
+    }
+
     /// Record that naming this method requires satisfying the target's
     /// own stored rule — read through the cell the last emitted clause
     /// declared — and mints the target's identity.

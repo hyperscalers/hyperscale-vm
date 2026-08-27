@@ -1524,10 +1524,10 @@ fn a_named_vault_declares_the_resource_it_holds() {
     }
 }
 
-/// A `#[proves(self)]` body is ordinary and may decline: the
-/// declaration carries the gate's clauses — the stored-rule read and
-/// the claim — beside the body's own, so a pass paid for and a pass
-/// proven are one admission unit.
+/// A `#[proves(self)]` body is ordinary and may decline: a component's
+/// identity is its code, so the declaration carries the bare claim
+/// beside the body's own clauses and no rule at all — the body is the
+/// gate, and a pass paid for and a pass proven are one admission unit.
 #[blueprint]
 mod turnstile {
     use hyperscale_vm_sdk::ResourceAddr;
@@ -1566,17 +1566,15 @@ mod turnstile {
 
 #[test]
 fn a_conditional_prover_declares_the_gate_beside_its_body() {
-    use hyperscale_vm_effects::{Expr, RuleLeaf, TargetExpr};
+    use hyperscale_vm_effects::{Expr, TargetExpr};
 
     let metadata = turnstile::blueprint().metadata();
     let effects = &metadata.methods["pass"].effects;
     assert!(
-        effects.iter().any(|clause| matches!(
-            clause,
-            Clause::Requires { rule, .. }
-                if rule.leaves().any(|leaf| matches!(leaf, RuleLeaf::Stored { .. }))
-        )),
-        "the gate's stored-rule read is declared: {effects:?}"
+        !effects
+            .iter()
+            .any(|clause| matches!(clause, Clause::Requires { .. })),
+        "a component's own body is the gate — no rule stands beside the claim: {effects:?}"
     );
     assert!(
         effects.iter().any(|clause| matches!(

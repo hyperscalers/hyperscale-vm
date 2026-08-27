@@ -201,6 +201,10 @@ packages! {
     security => (SECURITY_COMPONENT, security_artifact, security_package_hash, "security.component.wasm");
     // The share vault: assets in, shares out, at whatever the pool is worth.
     shares => (SHARES_COMPONENT, shares_artifact, shares_package_hash, "shares.component.wasm");
+    // The pass sold at the door: a component proving conditionally.
+    // Declared and never seeded — what it is for is the proving grammar,
+    // which the corpus reaches without a network.
+    venue;
 }
 
 /// The packages whose declaration is written out beside them rather

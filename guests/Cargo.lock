@@ -1485,6 +1485,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "venue-guest"
+version = "0.0.0"
+dependencies = [
+ "hyperscale-vm-sdk",
+ "hyperscale-vm-testing",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

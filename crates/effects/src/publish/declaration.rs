@@ -1309,6 +1309,14 @@ fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
         };
         let clause = u32::try_from(index).unwrap_or(u32::MAX);
         let under = guard.as_deref();
+        // The target's own identity needs no condition beside it: only
+        // the package's own declaration can mint its address's claim,
+        // so the claim is the package vouching — a component's identity
+        // is its code, and its body may decline. What the account's
+        // sign-in reads beside it is that package's own design.
+        if matches!(claim, Expr::SelfAddr) {
+            continue;
+        }
         let justified = flat.iter().any(|beside| {
             matches!(
                 beside,
@@ -1325,9 +1333,6 @@ fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
             return Err(DeclarationError::UnjustifiedProof { clause });
         }
         let possession = match claim {
-            // The target's own identity: the stored rule alone is the
-            // justification.
-            Expr::SelfAddr => continue,
             // One instance: held when the badge-keyed holdings entry at
             // the id is there.
             Expr::Tuple(parts) if parts.len() == 2 => {
@@ -1764,7 +1769,7 @@ mod tests {
             })
         };
 
-        // Identity: the stored rule alone justifies it.
+        // Identity: the sign-in form, stored rule beside it.
         assert_eq!(
             declared(vec![
                 read(TargetExpr::Point(auth_cell())),
@@ -1773,22 +1778,10 @@ mod tests {
             ]),
             Ok(())
         );
-        // No stored-rule condition beside it: forgeable identity.
-        assert_eq!(
-            declared(vec![proves(Expr::SelfAddr)]),
-            Err(DeclarationError::UnjustifiedProof { clause: 0 })
-        );
-        assert_eq!(
-            declared(vec![
-                Clause::Requires {
-                    guard: None,
-                    rule: RuleExpr::claim(Expr::Config(0)),
-                },
-                proves(Expr::SelfAddr),
-            ]),
-            Err(DeclarationError::UnjustifiedProof { clause: 1 }),
-            "a claim-only rule verifies no stored authority"
-        );
+        // And the component form, bare: only the package's own
+        // declaration can mint its address's claim, so the claim is the
+        // package vouching and no condition is owed beside it.
+        assert_eq!(declared(vec![proves(Expr::SelfAddr)]), Ok(()));
 
         // A badge: the possession condition, keyed by the same
         // expression the claim names.
