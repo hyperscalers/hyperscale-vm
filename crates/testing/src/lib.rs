@@ -67,7 +67,8 @@ use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
     decode_amount, execute_batch,
 };
-use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError, graph_records};
+pub use hyperscale_vm_manifest_builder::TypedError;
+use hyperscale_vm_manifest_builder::{TypedBuilder, graph_records};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, instantiate};
 pub use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_types::{CallTarget, SubstateKey, TxHash, encode_amount};

@@ -16,6 +16,7 @@
 use hyperscale_hbor::to_vec;
 use hyperscale_vm_effects::{PackageMetadata, RuleBytes, StoredRule};
 use hyperscale_vm_manifest_builder::{Proof, TypedBuilder, TypedError};
+use hyperscale_vm_types::PrincipalAddr;
 
 // The package, read from the crate the artifact is built from rather
 // than copied into this one: a second copy is the drift the derivation
@@ -95,14 +96,14 @@ pub fn metadata() -> PackageMetadata {
 /// would accept; the compose site is where its author can fix it.
 pub fn securify_uniform(
     b: &mut TypedBuilder<'_>,
-    proof: Proof,
+    who: PrincipalAddr,
     rule: &StoredRule,
     recovery_delay_ms: u64,
 ) -> Result<(), TypedError> {
     let sealed = RuleBytes::try_from(rule).expect("a rule within the caps encodes");
     securify(
         b,
-        proof,
+        who,
         sealed.clone(),
         sealed.clone(),
         sealed,

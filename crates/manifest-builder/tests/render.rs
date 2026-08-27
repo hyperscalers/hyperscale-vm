@@ -92,8 +92,7 @@ fn vocabulary() -> Names {
 fn a_swap_reads_as_the_surface_syntax_names_it() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut b, ALICE).unwrap();
-    let funds = account::withdraw(&mut b, alice_proof, XRD, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, XRD, 100).unwrap();
     let proceeds = pool().swap(&mut b, funds, 1).unwrap();
     account::deposit(&mut b, ALICE, proceeds).unwrap();
     let graph = b.build().unwrap();
@@ -113,8 +112,7 @@ fn a_swap_reads_as_the_surface_syntax_names_it() {
 fn an_unnamed_address_renders_as_itself_and_types_its_binding() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut b, ALICE).unwrap();
-    let funds = account::withdraw(&mut b, alice_proof, XRD, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, XRD, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
 
@@ -138,8 +136,7 @@ fn an_unnamed_address_renders_as_itself_and_types_its_binding() {
 fn a_split_binds_both_halves_and_numbers_the_repeat() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut b, ALICE).unwrap();
-    let funds = account::withdraw(&mut b, alice_proof, XRD, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, XRD, 100).unwrap();
     let [taken, rest] = payouts::Payouts::at(splitter())
         .in_lots(&mut b, funds, 30u128)
         .unwrap();
@@ -216,8 +213,7 @@ fn a_socket_renders_as_the_opening_it_is() {
 fn a_network_word_the_encoding_refuses_fails_here_too() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut b, ALICE).unwrap();
-    let funds = account::withdraw(&mut b, alice_proof, XRD, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, XRD, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     assert!(matches!(

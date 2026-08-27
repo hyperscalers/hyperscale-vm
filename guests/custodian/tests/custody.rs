@@ -71,8 +71,7 @@ fn instances_filed_with_a_custodian_come_back_out(chain: Chain) {
 
     chain
         .transact(HOLDER, |b| {
-            let holder = account::authorize(b, HOLDER)?;
-            let entry = account::withdraw_nf(b, holder, seat, &[7])?;
+            let entry = account::withdraw_nf(b, HOLDER, seat, &[7])?;
             keeper.file(b, entry)
         })
         .expect_completed();
@@ -121,8 +120,7 @@ fn a_custodian_files_nothing_it_was_not_configured_for(chain: Chain) {
     );
 
     let filed = chain.try_transact(HOLDER, |b| {
-        let holder = account::authorize(b, HOLDER)?;
-        let entry = account::withdraw_nf(b, holder, seat, &[7])?;
+        let entry = account::withdraw_nf(b, HOLDER, seat, &[7])?;
         elsewhere.file(b, entry)
     });
     // The graph admits — a declaration keyed by the edge's own resource

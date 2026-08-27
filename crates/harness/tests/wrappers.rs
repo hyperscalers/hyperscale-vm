@@ -144,19 +144,20 @@ fn admits(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -
 #[test]
 fn the_account_wrappers_match_their_signatures() {
     let graph = admits(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, BASE, 100)?;
+        let funds = account::withdraw(b, ALICE, BASE, 100)?;
         account::deposit(b, BOB, funds)?;
         // Securify a third account: creating ALICE's stored authority in
         // the same transaction that proposes against it would require the
         // cell absent and present at once, which no execution satisfies.
         let carol = account::authorize(b, CAROL)?;
-        account::securify_uniform(
-            b,
-            carol,
-            &StoredRule::claim(Claim::of_subject(BOB)),
-            86_400_000,
-        )?;
+        b.presenting(carol, |b| {
+            account::securify_uniform(
+                b,
+                CAROL,
+                &StoredRule::claim(Claim::of_subject(BOB)),
+                86_400_000,
+            )
+        })?;
         let rule = RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(BOB)))
             .expect("a rule within the vocabulary caps");
         account::propose(b, ALICE, rule.clone(), rule.clone(), rule, 86_400_000)?;
@@ -171,13 +172,11 @@ fn the_account_wrappers_match_their_signatures() {
 #[test]
 fn sign_in_is_authorize_as_the_builders_own_signer() {
     let named = admits(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, BASE, 100)?;
+        let funds = account::withdraw(b, ALICE, BASE, 100)?;
         account::deposit(b, BOB, funds)
     });
     let seeded = admits(|b| {
-        let alice = account::sign_in(b)?;
-        let funds = account::withdraw(b, alice, BASE, 100)?;
+        let funds = account::withdraw(b, ALICE, BASE, 100)?;
         account::deposit(b, BOB, funds)
     });
     assert_eq!(named, seeded);
@@ -190,10 +189,9 @@ fn sign_in_is_authorize_as_the_builders_own_signer() {
 fn a_degenerate_rule_is_refused_where_it_is_written() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice = account::authorize(&mut b, ALICE).unwrap();
     let refused = account::securify_uniform(
         &mut b,
-        alice,
+        ALICE,
         &StoredRule::CountOf {
             count: 2,
             rules: vec![StoredRule::claim(Claim::of_subject(ALICE))],
@@ -220,42 +218,45 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
 fn the_empty_threshold_reaches_the_account() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice = account::authorize(&mut b, ALICE).unwrap();
-    account::securify_uniform(&mut b, alice, &always(), 86_400_000)
+    account::securify_uniform(&mut b, ALICE, &always(), 86_400_000)
         .expect("anyone is a rule the vocabulary can carry");
 }
 
-/// A chained sign-in composes and admits: the second authorize presents
-/// the first's proven claim rather than the intent's signature.
+/// A chained sign-in composes and admits: the second authorize draws
+/// the first's proven claim from the enclosing scope, beside the
+/// intent's signature the rule arm always presents.
 #[test]
 fn a_chained_sign_in_admits() {
     let graph = admits(|b| {
         let alice = account::authorize(b, ALICE)?;
-        let bob = account::authorize_as(b, alice, BOB)?;
-        let funds = account::withdraw(b, bob, BASE, 100)?;
+        let bob = b.presenting(alice, |b| account::authorize(b, BOB))?;
+        let funds = b.presenting(bob, |b| account::withdraw(b, BOB, BASE, 100))?;
         account::deposit(b, ALICE, funds)
     });
-    assert_eq!(
-        graph.nodes[1].evidence,
-        BTreeSet::from([EvidenceRef::Node(0)])
+    assert!(
+        graph.nodes[1].evidence.contains(&EvidenceRef::Node(0)),
+        "the scope's proof rides the chained sign-in: {:?}",
+        graph.nodes[1].evidence
     );
 }
 
 /// A stored rule can be a threshold, so a sign-in can take a set of
-/// proofs: the `presenting` form carries every one to the gate, and the
+/// proofs: a scope holding both carries every one to the gate, and the
 /// judgment against the stored rule stays where it always is.
 #[test]
 fn a_threshold_sign_in_composes() {
     let graph = admits(|b| {
         let bob = account::authorize(b, BOB)?;
         let carol = account::authorize(b, CAROL)?;
-        let alice = account::authorize_presenting(b, &[bob, carol], ALICE)?;
-        let funds = account::withdraw(b, alice, BASE, 100)?;
+        let alice = b.presenting([bob, carol], |b| account::authorize(b, ALICE))?;
+        let funds = b.presenting(alice, |b| account::withdraw(b, ALICE, BASE, 100))?;
         account::deposit(b, BOB, funds)
     });
-    assert_eq!(
-        graph.nodes[2].evidence,
-        BTreeSet::from([EvidenceRef::Node(0), EvidenceRef::Node(1)])
+    assert!(
+        graph.nodes[2].evidence.contains(&EvidenceRef::Node(0))
+            && graph.nodes[2].evidence.contains(&EvidenceRef::Node(1)),
+        "both proofs ride the threshold sign-in: {:?}",
+        graph.nodes[2].evidence
     );
 }
 
@@ -299,7 +300,7 @@ fn misplaced_evidence_is_refused_at_the_call_site() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let alice = account::authorize(&mut b, ALICE).unwrap();
-    let funds = account::withdraw(&mut b, alice, BASE, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, BASE, 100).unwrap();
     assert!(matches!(
         b.call_presenting(alice, BOB, "deposit", (funds,)),
         Err(TypedError::UnexpectedEvidence { .. })
@@ -318,19 +319,15 @@ fn misplaced_evidence_is_refused_at_the_call_site() {
 fn the_staking_wrappers_match_their_signatures() {
     let pool = staking::Staking::at(address("staking", pool_config()));
     let graph = admits(|b| {
-        // One sign-in acts for the whole graph: the delegation round
-        // trip and the operator surface both present Alice's proof.
-        let alice = account::authorize(b, ALICE)?;
-
         // The delegation round trip: funds in, the pool's own units out
         // and into an account, then units back to the pool. The deposit
         // lands at BOB while the return draws from ALICE: one vault
         // created and drawn from in a single transaction would require
         // its leaf absent and present at once.
-        let funds = account::withdraw(b, alice, BASE, 100)?;
+        let funds = account::withdraw(b, ALICE, BASE, 100)?;
         let units = pool.stake(b, funds)?;
         account::deposit(b, BOB, units)?;
-        let returned = account::withdraw(b, alice, staking_units(pool), 40)?;
+        let returned = account::withdraw(b, ALICE, staking_units(pool), 40)?;
         pool.unstake(b, returned)?;
 
         // The operator surface, which supplies no funds and produces
@@ -342,11 +339,13 @@ fn the_staking_wrappers_match_their_signatures() {
         // transaction would require its leaf absent and present at once.
         let operator =
             account::present_instance(b, ALICE, pool.issued_owner_badge(&TestHasher), 0)?;
-        pool.register_validator(b, operator, 7, vec![0xAA; 48], vec![0xBB; 96])?;
-        pool.deactivate_validator(b, operator, 8)?;
-        pool.unjail(b, operator, 8)?;
-        pool.cast_param_vote(b, operator, 9_000, 30, 12)?;
-        pool.clear_param_vote(b, operator)
+        b.presenting(operator, |b| {
+            pool.register_validator(b, 7, vec![0xAA; 48], vec![0xBB; 96])?;
+            pool.deactivate_validator(b, 8)?;
+            pool.unjail(b, 8)?;
+            pool.cast_param_vote(b, 9_000, 30, 12)?;
+            pool.clear_param_vote(b)
+        })
     });
     assert_eq!(graph.nodes.len(), 12);
 }
@@ -363,8 +362,7 @@ fn the_amm_wrapper_matches_its_signature() {
     admits(|b| {
         // The pool's output is typed by its second configured resource,
         // so what comes back is quote against a base input.
-        let alice_proof = account::authorize(b, ALICE)?;
-        let input = account::withdraw(b, alice_proof, BASE, 100)?;
+        let input = account::withdraw(b, ALICE, BASE, 100)?;
         let proceeds = pool.swap(b, input, 1)?;
         account::deposit(b, ALICE, proceeds)
     });
@@ -374,11 +372,10 @@ fn the_amm_wrapper_matches_its_signature() {
 fn the_book_wrappers_match_their_signatures() {
     let book = book::Book::at(address("book", pair_config()));
     admits(|b| {
-        let alice_proof = account::authorize(b, ALICE)?;
-        let offered = account::withdraw(b, alice_proof, BASE, 100)?;
+        let offered = account::withdraw(b, ALICE, BASE, 100)?;
         book.place_ask(b, 10, offered)?;
-        let bob_proof = account::authorize(b, BOB)?;
-        let payment = account::withdraw(b, bob_proof, QUOTE, 50)?;
+        let bob = account::authorize(b, BOB)?;
+        let payment = b.presenting(bob, |b| account::withdraw(b, BOB, QUOTE, 50))?;
         let [bought, unspent] = book.fill_asks(b, 1, 20, payment)?;
         account::deposit(b, BOB, bought)?;
         account::deposit(b, BOB, unspent)
@@ -399,8 +396,7 @@ fn the_registry_wrappers_match_their_signatures() {
 fn the_lottery_wrappers_match_their_signatures() {
     let lottery_addr = lottery::Lottery::at(address("lottery", vec![]));
     admits(|b| {
-        let alice_proof = account::authorize(b, ALICE)?;
-        let stake = account::withdraw(b, alice_proof, BASE, 100)?;
+        let stake = account::withdraw(b, ALICE, BASE, 100)?;
         // Alice pays and Bob is entered: the entrant is named by the
         // composer, not by whoever the funds came from.
         lottery_addr.enter(b, BOB, stake)?;
@@ -414,8 +410,7 @@ fn the_lottery_wrappers_match_their_signatures() {
 fn the_payouts_wrappers_match_their_signatures() {
     let splitter = payouts::Payouts::at(address("payouts", payouts_config()));
     admits(|b| {
-        let alice_proof = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice_proof, BASE, 100)?;
+        let funds = account::withdraw(b, ALICE, BASE, 100)?;
         let [payable, change] = splitter.in_lots(b, funds, 30u128)?;
         account::deposit(b, BOB, payable)?;
         account::deposit(b, ALICE, change)
@@ -457,8 +452,7 @@ fn the_custody_wrappers_match_their_signatures() {
         // Alice's own gate takes Alice's own proof: the badge proof
         // carries the badge, and a claim on it opens what names the
         // badge and nothing else.
-        let alice = account::authorize(b, ALICE)?;
-        let moved = account::withdraw_nf(b, alice, resource, &[7])?;
+        let moved = account::withdraw_nf(b, ALICE, resource, &[7])?;
         account::deposit_nf(b, BOB, moved)
     });
 }

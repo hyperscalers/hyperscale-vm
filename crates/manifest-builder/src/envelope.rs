@@ -38,7 +38,7 @@ use hyperscale_vm_effects::{
     InstanceMeta, IntentDecl, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ResourceMeta, Socket,
     Subintent,
 };
-use hyperscale_vm_types::{CallTarget, MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
 use crate::builder::{Bucket, SocketRef, next_space};
 use crate::projection::graph_records;
@@ -346,12 +346,8 @@ impl<'a> IntentBuilder<'a> {
     pub fn declare_proof(&mut self, claim: Claim) -> Proof {
         let position =
             u32::try_from(self.sockets.len()).expect("sockets are bounded by MAX_SOCKETS");
-        // The claim's own subject, where a call can be made against it:
-        // an identity is callable and a badge is not, which is the same
-        // reading the address class gives everywhere.
-        let acting = CallTarget::try_from(claim.subject).ok();
         self.sockets.push(Socket::Authority(claim));
-        Proof::from_socket(self.graph_id(), position, acting, claim)
+        Proof::from_socket(self.graph_id(), position, claim)
     }
 
     /// The declaration, for its signer to sign and hand on.

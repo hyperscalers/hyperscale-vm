@@ -84,8 +84,7 @@ fn world(_senders: u32) -> Records {
 
 fn transfer_graph(world: &Records, from: PrincipalAddr) -> ManifestGraph {
     let mut b = TypedBuilder::new(world, &TestHasher, from);
-    let proof = account::authorize(&mut b, from).expect("sign-in types");
-    let funds = account::withdraw(&mut b, proof, RES, AMOUNT).expect("withdraw types");
+    let funds = account::withdraw(&mut b, from, RES, AMOUNT).expect("withdraw types");
     account::deposit(&mut b, RECIPIENT, funds).expect("deposit types");
     b.build().expect("every output is consumed")
 }

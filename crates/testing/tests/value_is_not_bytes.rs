@@ -584,8 +584,7 @@ fn a_cell_that_says_nothing_takes_no_value() {
     chain.credit(ATTACKER, TREASURE, 1_000);
 
     let outcome = chain.transact(ATTACKER, |b| {
-        let attacker = account::authorize(b, ATTACKER)?;
-        let funds = account::withdraw(b, attacker, TREASURE, 1_000)?;
+        let funds = account::withdraw(b, ATTACKER, TREASURE, 1_000)?;
         b.call(pot, "fill", (funds,))?.none()
     });
 

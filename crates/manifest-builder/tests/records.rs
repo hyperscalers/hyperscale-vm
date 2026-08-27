@@ -65,8 +65,7 @@ fn world() -> (Records, ResourceAddr) {
 /// One ordinary transfer, declaring nothing about any rule.
 fn transfer(chain: &Records, resource: ResourceAddr) -> Result<TypedBuilder<'_>, TypedError> {
     let mut b = TypedBuilder::new(chain, &TestHasher, ALICE);
-    let caller = account::authorize(&mut b, ALICE)?;
-    let funds = account::withdraw(&mut b, caller, resource, 40)?;
+    let funds = account::withdraw(&mut b, ALICE, resource, 40)?;
     account::deposit(&mut b, BOB, funds)?;
     Ok(b)
 }

@@ -202,8 +202,7 @@ fn a_recall_finds_value_at_the_slot_the_holder_keeps_it_in(mut chain: Chain) {
     for (id, who) in [(1u64, WARDEN), (2, HOLDER)] {
         chain
             .transact(WARDEN, |b| {
-                let warden = account::authorize(b, WARDEN)?;
-                let entry = issuer.register(b, warden, id)?;
+                let entry = issuer.register(b, id)?;
                 account::deposit_nf(b, who, entry)
             })
             .expect_completed();
@@ -211,10 +210,7 @@ fn a_recall_finds_value_at_the_slot_the_holder_keeps_it_in(mut chain: Chain) {
     // The holder decides they do not want it, so the deposit lands in
     // the account's own quarantine rather than in the vault.
     chain
-        .transact(HOLDER, |b| {
-            let holder = account::authorize(b, HOLDER)?;
-            account::refuse(b, holder, share)
-        })
+        .transact(HOLDER, |b| account::refuse(b, HOLDER, share))
         .expect_completed();
     chain
         .transact(WARDEN, |b| {

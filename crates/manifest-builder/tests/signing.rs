@@ -106,8 +106,7 @@ const fn terms() -> Terms {
 fn a_transaction_signs_and_verifies_inside_this_workspace() {
     let chain = world();
     let mut builder = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice = account::authorize(&mut builder, ALICE).expect("an account signs in");
-    let funds = account::withdraw(&mut builder, alice, RES, 100).expect("an account withdraws");
+    let funds = account::withdraw(&mut builder, ALICE, RES, 100).expect("an account withdraws");
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");
     let graph = builder.build().expect("every output is consumed");
 
@@ -144,8 +143,7 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
 fn the_signature_covers_what_the_envelope_says() {
     let chain = world();
     let mut builder = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice = account::authorize(&mut builder, ALICE).expect("an account signs in");
-    let funds = account::withdraw(&mut builder, alice, RES, 100).expect("an account withdraws");
+    let funds = account::withdraw(&mut builder, ALICE, RES, 100).expect("an account withdraws");
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");
     let tree = EnvelopeTree {
         root: IntentDecl {

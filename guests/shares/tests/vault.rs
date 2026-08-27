@@ -25,8 +25,7 @@ fn vault(mut chain: Chain) -> (Chain, Shares) {
 fn deposit(chain: &mut Chain, vault: Shares, who: PrincipalAddr, amount: u128) {
     chain
         .transact(who, |b| {
-            let signed_in = account::authorize(b, who)?;
-            let funds = account::withdraw(b, signed_in, ASSET, amount)?;
+            let funds = account::withdraw(b, who, ASSET, amount)?;
             let shares = vault.deposit(b, funds)?;
             account::deposit(b, who, shares)
         })
@@ -62,8 +61,7 @@ fn redeeming_every_share_returns_every_asset(chain: Chain) {
     let shares = chain.issues(vault, ResourceKind::Fungible, shares_guest::shares::UNIT);
     chain
         .transact(ALICE, |b| {
-            let signed_in = account::authorize(b, ALICE)?;
-            let units = account::withdraw(b, signed_in, shares, 1_000)?;
+            let units = account::withdraw(b, ALICE, shares, 1_000)?;
             let back = vault.redeem(b, units)?;
             account::deposit(b, ALICE, back)
         })
@@ -112,8 +110,7 @@ fn there_is_no_path_that_grows_assets_without_minting_shares(chain: Chain) {
     let shares = chain.issues(vault, ResourceKind::Fungible, shares_guest::shares::UNIT);
     chain
         .transact(ALICE, |b| {
-            let signed_in = account::authorize(b, ALICE)?;
-            let units = account::withdraw(b, signed_in, shares, 1_000)?;
+            let units = account::withdraw(b, ALICE, shares, 1_000)?;
             let back = vault.redeem(b, units)?;
             account::deposit(b, ALICE, back)
         })
@@ -146,8 +143,7 @@ fn a_deposit_of_a_foreign_resource_is_refused(chain: Chain) {
     chain.credit(MALLORY, OTHER, 5_000);
 
     let refused = chain.try_transact(MALLORY, |b| {
-        let signed_in = account::authorize(b, MALLORY)?;
-        let funds = account::withdraw(b, signed_in, OTHER, 5_000)?;
+        let funds = account::withdraw(b, MALLORY, OTHER, 5_000)?;
         let shares = vault.deposit(b, funds)?;
         account::deposit(b, MALLORY, shares)
     });

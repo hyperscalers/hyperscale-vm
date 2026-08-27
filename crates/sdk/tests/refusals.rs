@@ -335,18 +335,16 @@ fn the_lowering_refuses_a_threshold_nobody_could_have_meant() {
 /// What the generated calling surface refuses.
 ///
 /// Each of these is a fact the wrapper's own signature carries — the
-/// arity, the parameter kinds, whether a proof is presented, and which
-/// package the target runs — so getting one wrong is a type error rather
-/// than a graph the chain declines to admit.
+/// arity, the parameter kinds, that no wrapper presents anything, and
+/// which package the target runs — so getting one wrong is a type error
+/// rather than a graph the chain declines to admit.
 #[test]
 fn the_generated_client_refuses_a_call_it_cannot_shape() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/client_wrong_arity.rs");
     refuse.compile_fail("tests/refusals/client_wrong_param_type.rs");
     refuse.compile_fail("tests/refusals/client_proof_to_public.rs");
-    refuse.compile_fail("tests/refusals/client_proof_omitted.rs");
     refuse.compile_fail("tests/refusals/client_foreign_handle.rs");
-    refuse.compile_fail("tests/refusals/client_threshold_one_proof.rs");
 }
 
 /// A marker nothing reads is refused where it sits.

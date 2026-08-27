@@ -156,8 +156,7 @@ fn first_test(module: &str) -> String {
          \n\
          \x20   chain\n\
          \x20       .transact(alice, |b| {{\n\
-         \x20           let signed_in = account::authorize(b, alice)?;\n\
-         \x20           let funds = account::withdraw(b, signed_in, xrd, 40)?;\n\
+         \x20           let funds = account::withdraw(b, alice, xrd, 40)?;\n\
          \x20           instance.deposit(b, funds)\n\
          \x20       }})\n\
          \x20       .expect_completed();\n\

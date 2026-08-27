@@ -2,8 +2,7 @@
 
 use hyperscale_vm_sdk::state::{Fixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
-    AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, account, package, principal,
-    resource,
+    Chain, PrincipalAddr, Refused, ResourceAddr, TypedError, account, package, principal, resource,
 };
 use perp_guest::perp::Error;
 use perp_guest::perp::client::{Perp, Terms};
@@ -42,18 +41,14 @@ fn rate<A, B>(scaled: u128) -> Fixed<A, B> {
 
 fn mark(chain: &mut Chain, market: Perp, scaled: u128) {
     chain
-        .transact(ORACLE, |b| {
-            let signed_in = account::authorize(b, ORACLE)?;
-            market.post_mark(b, signed_in, rate(scaled))
-        })
+        .transact(ORACLE, |b| market.post_mark(b, rate(scaled)))
         .expect_completed();
 }
 
 fn open(chain: &mut Chain, market: Perp, margin: u128, size: u128) {
     chain
         .transact(TRADER, |b| {
-            let signed_in = account::authorize(b, TRADER)?;
-            let funds = account::withdraw(b, signed_in, COLLATERAL, margin)?;
+            let funds = account::withdraw(b, TRADER, COLLATERAL, margin)?;
             market.open(b, funds, size)
         })
         .expect_completed();
@@ -119,10 +114,8 @@ fn funding_that_flips_sign_settles_the_net(chain: Chain) {
 
     chain
         .transact(ORACLE, |b| {
-            let signed_in = account::authorize(b, ORACLE)?;
-            market.charge_longs(b, signed_in, rate(ONE / 10))?;
-            let signed_in = account::authorize(b, ORACLE)?;
-            market.credit_longs(b, signed_in, rate(3 * ONE / 10))
+            market.charge_longs(b, rate(ONE / 10))?;
+            market.credit_longs(b, rate(3 * ONE / 10))
         })
         .expect_completed();
     close(&mut chain, market);
@@ -133,19 +126,17 @@ fn funding_that_flips_sign_settles_the_net(chain: Chain) {
 /// Only the oracle may mark the market.
 ///
 /// Refused before the transaction exists: the gate is a rule over a
-/// configuration slot, so what satisfies it is a pure match over what the
-/// signed form presents, and no state is read to answer. A keeper who is
-/// not the oracle pays nothing to find out.
+/// configuration slot, and the builder reads the same declaration
+/// admission judges — so a keeper who is not the oracle is refused at
+/// the compose site, before anything is signed.
 #[hyperscale_vm_testing::test]
 fn only_the_oracle_may_mark(chain: Chain) {
     let (mut chain, market) = market(chain, true);
 
     let refused = chain
         .try_transact(KEEPER, |b| {
-            let signed_in = account::authorize(b, KEEPER)?;
             market.post_mark(
                 b,
-                signed_in,
                 rate::<perp_guest::perp::Quote, perp_guest::perp::Base>(ONE),
             )
         })
@@ -154,9 +145,7 @@ fn only_the_oracle_may_mark(chain: Chain) {
     assert!(
         matches!(
             refused,
-            Some(Refused::Admission(
-                AdmissionError::EvidenceUnsatisfied { .. }
-            ))
+            Some(Refused::Typed(TypedError::SignatureForGuarded { .. }))
         ),
         "a mark nobody may post is not a transaction: {refused:?}"
     );
@@ -216,8 +205,7 @@ fn a_position_of_no_size_is_refused(chain: Chain) {
     mark(&mut chain, market, 2 * ONE);
 
     let outcome = chain.transact(TRADER, |b| {
-        let signed_in = account::authorize(b, TRADER)?;
-        let funds = account::withdraw(b, signed_in, COLLATERAL, 1_000)?;
+        let funds = account::withdraw(b, TRADER, COLLATERAL, 1_000)?;
         market.open(b, funds, 0u128)
     });
 
@@ -242,8 +230,7 @@ fn a_market_holding_a_position_takes_no_other(chain: Chain) {
     open(&mut chain, market, 1_000, 100);
 
     let outcome = chain.transact(TRADER, |b| {
-        let signed_in = account::authorize(b, TRADER)?;
-        let funds = account::withdraw(b, signed_in, COLLATERAL, 1_000)?;
+        let funds = account::withdraw(b, TRADER, COLLATERAL, 1_000)?;
         market.open(b, funds, 100u128)
     });
 
@@ -285,10 +272,8 @@ fn the_two_directions_of_funding_round_apart(chain: Chain) {
 
     chain
         .transact(ORACLE, |b| {
-            let signed_in = account::authorize(b, ORACLE)?;
-            market.charge_longs(b, signed_in, rate(a_third))?;
-            let signed_in = account::authorize(b, ORACLE)?;
-            market.credit_longs(b, signed_in, rate(a_third))
+            market.charge_longs(b, rate(a_third))?;
+            market.credit_longs(b, rate(a_third))
         })
         .expect_completed();
     close(&mut chain, market);

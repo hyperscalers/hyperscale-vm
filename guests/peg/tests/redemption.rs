@@ -2,8 +2,7 @@
 
 use hyperscale_vm_sdk::state::{Fixed, Quantity, Sign, SignedFixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
-    AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, account, package, principal,
-    resource,
+    Chain, PrincipalAddr, Refused, ResourceAddr, TypedError, account, package, principal, resource,
 };
 use peg_guest::peg::client::{Peg, Terms};
 use peg_guest::peg::{Error, Reserve, Stable};
@@ -42,18 +41,14 @@ fn window(mut chain: Chain) -> (Chain, Peg) {
 
 fn post(chain: &mut Chain, window: Peg, scaled: u128, way: Sign) {
     chain
-        .transact(ORACLE, |b| {
-            let signed_in = account::authorize(b, ORACLE)?;
-            window.post_deviation(b, signed_in, deviation(scaled, way))
-        })
+        .transact(ORACLE, |b| window.post_deviation(b, deviation(scaled, way)))
         .expect_completed();
 }
 
 fn redeem(chain: &mut Chain, window: Peg, amount: u128) {
     chain
         .transact(HOLDER, |b| {
-            let signed_in = account::authorize(b, HOLDER)?;
-            let funds = account::withdraw(b, signed_in, STABLE, amount)?;
+            let funds = account::withdraw(b, HOLDER, STABLE, amount)?;
             let back = window.redeem(b, funds)?;
             account::deposit(b, HOLDER, back)
         })
@@ -135,8 +130,7 @@ fn a_deviation_outside_the_band_is_refused(chain: Chain) {
     let (mut chain, window) = window(chain);
     let try_redeem = |chain: &mut Chain| {
         chain.transact(HOLDER, |b| {
-            let signed_in = account::authorize(b, HOLDER)?;
-            let funds = account::withdraw(b, signed_in, STABLE, 1_000)?;
+            let funds = account::withdraw(b, HOLDER, STABLE, 1_000)?;
             let back = window.redeem(b, funds)?;
             account::deposit(b, HOLDER, back)
         })
@@ -158,24 +152,21 @@ fn a_deviation_outside_the_band_is_refused(chain: Chain) {
 /// Only the configured oracle may say what the stable is trading at.
 ///
 /// Refused before the transaction exists: the gate is a rule over a
-/// configuration slot, so what satisfies it is a pure match over what the
-/// signed form presents, and no state is read to answer. A sender who is
-/// not the oracle pays nothing to find out.
+/// configuration slot, and the builder reads the same declaration
+/// admission judges — so a sender who is not the oracle is refused at
+/// the compose site, before anything is signed.
 #[hyperscale_vm_testing::test]
 fn only_the_oracle_may_post_a_deviation(chain: Chain) {
     let (mut chain, window) = window(chain);
 
     let refused = chain.try_transact(HOLDER, |b| {
-        let signed_in = account::authorize(b, HOLDER)?;
-        window.post_deviation(b, signed_in, deviation(ONE / 20, Sign::Positive))
+        window.post_deviation(b, deviation(ONE / 20, Sign::Positive))
     });
 
     assert!(
         matches!(
             refused,
-            Err(Refused::Admission(
-                AdmissionError::EvidenceUnsatisfied { .. }
-            ))
+            Err(Refused::Typed(TypedError::SignatureForGuarded { .. }))
         ),
         "a price nobody may post is not a transaction: {refused:?}"
     );
@@ -215,8 +206,7 @@ fn a_quote_outside_the_band_declines_as_a_redemption_would(chain: Chain) {
     quoted.expect_declined(Error::OutsideBand);
 
     let redeemed = chain.transact(HOLDER, |b| {
-        let signed_in = account::authorize(b, HOLDER)?;
-        let funds = account::withdraw(b, signed_in, STABLE, 1_000)?;
+        let funds = account::withdraw(b, HOLDER, STABLE, 1_000)?;
         let back = window.redeem(b, funds)?;
         account::deposit(b, HOLDER, back)
     });

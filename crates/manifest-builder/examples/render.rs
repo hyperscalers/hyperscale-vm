@@ -140,16 +140,14 @@ fn main() {
         (
             "a transfer",
             build(&|b| {
-                let alice = account::authorize(b, ALICE)?;
-                let funds = account::withdraw(b, alice, XRD, 100)?;
+                let funds = account::withdraw(b, ALICE, XRD, 100)?;
                 account::deposit(b, BOB, funds)
             }),
         ),
         (
             "a swap",
             build(&|b| {
-                let alice = account::authorize(b, ALICE)?;
-                let funds = account::withdraw(b, alice, XRD, 100)?;
+                let funds = account::withdraw(b, ALICE, XRD, 100)?;
                 let proceeds = pool().swap(b, funds, 90)?;
                 account::deposit(b, ALICE, proceeds)
             }),
@@ -158,8 +156,7 @@ fn main() {
             "a split, with the change routed by policy",
             build(&|b| {
                 b.rest_to(ALICE);
-                let alice = account::authorize(b, ALICE)?;
-                let funds = account::withdraw(b, alice, XRD, 100)?;
+                let funds = account::withdraw(b, ALICE, XRD, 100)?;
                 let [taken, _change] =
                     payouts::Payouts::at(splitter()).in_lots(b, funds, 30u128)?;
                 account::deposit(b, BOB, taken.min(30))
@@ -168,15 +165,14 @@ fn main() {
         (
             "a delegation, and the operator surface beside it",
             build(&|b| {
-                let alice = account::authorize(b, ALICE)?;
-                let funds = account::withdraw(b, alice, XRD, 1_000)?;
+                let funds = account::withdraw(b, ALICE, XRD, 1_000)?;
                 let position = stake_pool().stake(b, funds)?;
                 account::deposit(b, ALICE, position)?;
                 // The operator surface is the configured operator's, so
                 // it acts under the operator's own sign-in beside
                 // Alice's.
                 let operator = account::authorize(b, OPERATOR)?;
-                stake_pool().unjail(b, operator, 42)
+                b.presenting(operator, |b| stake_pool().unjail(b, 42))
             }),
         ),
     ];

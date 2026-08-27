@@ -24,13 +24,6 @@ pub enum Gate {
     Guarded {
         /// The rule, as a tracer call answering a `Requirement`.
         rule: TokenStream2,
-        /// Whether the rule is the target's own address and nothing
-        /// else, which is what lets a call take its target from the
-        /// proof presented.
-        on_self: bool,
-        /// Whether meeting it can take more than one claim, so a caller
-        /// presents a set rather than a proof.
-        threshold: bool,
     },
     /// The target's own stored rule, read at the named field's cell.
     Authorizing(u16),
@@ -61,25 +54,22 @@ pub enum Gate {
 /// one operator flattens into one threshold rather than nesting, because
 /// depth is the cap that binds first.
 ///
-/// Answers the rule, whether it is the target's own address alone, and
-/// whether meeting it can take more than one claim.
+/// Answers the rule alone: how many claims meeting it takes, and whose,
+/// is the judge's business at the call rather than a shape carried here.
 pub fn guarded_rule(
     expr: &syn::Expr,
     config_fields: &[(String, syn::Type)],
     resources: &[Resource],
     params: &[(String, syn::Type)],
     depth: usize,
-) -> syn::Result<(TokenStream2, bool, bool)> {
+) -> syn::Result<TokenStream2> {
     let rule = parse_rule(expr, "a gate", depth, &mut |leaf| {
         guarded_identity(leaf, config_fields, resources, params)
     })?;
-    match &rule {
-        // Whether the rule is the target's own address is a question
-        // about a single claim; a threshold is answerable for its
-        // branches and not for itself.
-        RuleAst::Leaf((identity, on_self)) => Ok((quote!(__t.claim(&#identity)), *on_self, false)),
-        node @ RuleAst::CountOf { .. } => Ok((emit_guarded(node), false, true)),
-    }
+    Ok(match &rule {
+        RuleAst::Leaf((identity, _)) => quote!(__t.claim(&#identity)),
+        node @ RuleAst::CountOf { .. } => emit_guarded(node),
+    })
 }
 
 /// A gate's rule, as a tracer call answering a `Requirement`.
@@ -244,18 +234,14 @@ pub fn parse_requires(
         }
         return Ok(Gate::Governed(field.slot));
     }
-    let (rule, on_self, threshold) = guarded_rule(
+    let rule = guarded_rule(
         &written,
         declared.config_fields,
         declared.resources,
         params,
         0,
     )?;
-    Ok(Gate::Guarded {
-        rule,
-        on_self,
-        threshold,
-    })
+    Ok(Gate::Guarded { rule })
 }
 
 /// The named parameter's position, held to the type the emitted read

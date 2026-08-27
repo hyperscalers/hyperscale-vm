@@ -130,8 +130,7 @@ fn value_does_not_change_resource_by_crossing_a_cell() {
 
     chain
         .transact(ATTACKER, |b| {
-            let attacker = account::authorize(b, ATTACKER)?;
-            let funds = account::withdraw(b, attacker, CHEAP, 1_000)?;
+            let funds = account::withdraw(b, ATTACKER, CHEAP, 1_000)?;
             b.call(mixer, "fill", (funds,))?.none()
         })
         .expect_completed();

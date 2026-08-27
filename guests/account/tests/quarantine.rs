@@ -23,10 +23,7 @@ const ASSET: ResourceAddr = resource(0xA5);
 /// Put `ASSET` aside from here on.
 fn refuse(chain: &mut Chain) {
     chain
-        .transact(HOLDER, |b| {
-            let holder = account::authorize(b, HOLDER)?;
-            account::refuse(b, holder, ASSET)
-        })
+        .transact(HOLDER, |b| account::refuse(b, HOLDER, ASSET))
         .expect_completed();
 }
 
@@ -34,8 +31,7 @@ fn refuse(chain: &mut Chain) {
 fn pay(chain: &mut Chain, amount: u128) {
     chain
         .transact(SENDER, |b| {
-            let sender = account::authorize(b, SENDER)?;
-            let funds = account::withdraw(b, sender, ASSET, amount)?;
+            let funds = account::withdraw(b, SENDER, ASSET, amount)?;
             account::deposit(b, HOLDER, funds)
         })
         .expect_completed();
@@ -57,8 +53,7 @@ fn a_quarantined_deposit_is_the_holder_s_to_spend(mut chain: Chain) {
 
     chain
         .transact(HOLDER, |b| {
-            let holder = account::authorize(b, HOLDER)?;
-            let funds = account::sweep(b, holder, ASSET, 100u128)?;
+            let funds = account::sweep(b, HOLDER, ASSET, 100u128)?;
             account::deposit(b, SENDER, funds)
         })
         .expect_completed();
@@ -80,10 +75,7 @@ fn accepting_redirects_the_next_deposit_and_moves_no_earlier_one(mut chain: Chai
     pay(&mut chain, 60);
 
     chain
-        .transact(HOLDER, |b| {
-            let holder = account::authorize(b, HOLDER)?;
-            account::accept(b, holder, ASSET)
-        })
+        .transact(HOLDER, |b| account::accept(b, HOLDER, ASSET))
         .expect_completed();
     pay(&mut chain, 40);
     assert_eq!(
@@ -97,8 +89,7 @@ fn accepting_redirects_the_next_deposit_and_moves_no_earlier_one(mut chain: Chai
     // same method, a destination that moved.
     chain
         .transact(HOLDER, |b| {
-            let holder = account::authorize(b, HOLDER)?;
-            let funds = account::sweep(b, holder, ASSET, 60u128)?;
+            let funds = account::sweep(b, HOLDER, ASSET, 60u128)?;
             account::deposit(b, HOLDER, funds)
         })
         .expect_completed();

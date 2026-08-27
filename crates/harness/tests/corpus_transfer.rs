@@ -135,8 +135,7 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() {
         // Not a wrapper call: `dana` runs the mirror package, so its
         // deposit is the one this test published rather than the account's.
         let mut b = TypedBuilder::new(&world, &TestHasher, ALICE);
-        let alice = account::authorize(&mut b, ALICE).unwrap();
-        let funds = account::withdraw(&mut b, alice, RES_X, 100).unwrap();
+        let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
         b.call(dana, "deposit", (funds,)).unwrap().none().unwrap();
         b.build().expect("every output is consumed")
     };
@@ -163,8 +162,7 @@ fn a_package_published_at_runtime_is_callable_through_the_same_walk() {
 /// cannot meet.
 fn bounded_transfer_graph(constraint: Constraint) -> ManifestGraph {
     graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, RES_X, 100)?;
+        let funds = account::withdraw(b, ALICE, RES_X, 100)?;
         account::deposit(b, BOB, funds.constrain(constraint))
     })
 }

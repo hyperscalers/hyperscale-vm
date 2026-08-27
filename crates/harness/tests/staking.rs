@@ -160,8 +160,7 @@ fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) ->
 /// delegation goes in and the position comes back as an ordinary balance.
 fn stake_graph(amount: u128) -> ManifestGraph {
     graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, XRD, amount)?;
+        let funds = account::withdraw(b, ALICE, XRD, amount)?;
         let units = pool().stake(b, funds)?;
         account::deposit(b, ALICE, units)
     })
@@ -171,8 +170,7 @@ fn stake_graph(amount: u128) -> ManifestGraph {
 /// Nothing comes back — the release leg is not built.
 fn unstake_graph(amount: u128) -> ManifestGraph {
     graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let units = account::withdraw(b, alice, unit(), amount)?;
+        let units = account::withdraw(b, ALICE, unit(), amount)?;
         pool().unstake(b, units)
     })
 }
@@ -187,8 +185,7 @@ fn unstake_graph(amount: u128) -> ManifestGraph {
 fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
     let world = world();
     let tree = single_intent(graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, unit(), 40)?;
+        let funds = account::withdraw(b, ALICE, unit(), 40)?;
         let units = pool().stake(b, funds)?;
         account::deposit(b, ALICE, units)
     }));
@@ -240,13 +237,9 @@ fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
 fn register_graph(validator: u64) -> ManifestGraph {
     graph(|b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
-        pool().register_validator(
-            b,
-            operator,
-            validator,
-            PUBKEY.to_vec(),
-            POSSESSION_PROOF.to_vec(),
-        )
+        b.presenting(operator, |b| {
+            pool().register_validator(b, validator, PUBKEY.to_vec(), POSSESSION_PROOF.to_vec())
+        })
     })
 }
 
@@ -815,7 +808,9 @@ fn cast_payload() -> Vec<u8> {
 fn cast_graph() -> ManifestGraph {
     graph(|b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
-        pool().cast_param_vote(b, operator, SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT)
+        b.presenting(operator, |b| {
+            pool().cast_param_vote(b, SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT)
+        })
     })
 }
 
@@ -844,7 +839,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
 
     let cleared = graph(|b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
-        pool().clear_param_vote(b, operator)
+        b.presenting(operator, |b| pool().clear_param_vote(b))
     });
     let entry = batch_entry(&world, &single_intent(cleared), OPERATOR)?;
     let (outcome, end) = run_both(&store, std::slice::from_ref(&entry));

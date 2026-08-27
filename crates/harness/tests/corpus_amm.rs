@@ -24,8 +24,7 @@ use common::world::*;
 /// last time.
 fn reverse_swap_graph(min_out: u128) -> ManifestGraph {
     graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, RES_Y, 500)?;
+        let funds = account::withdraw(b, ALICE, RES_Y, 500)?;
         let out = pool().swap(b, funds, min_out)?;
         account::deposit(b, ALICE, out)
     })
@@ -34,8 +33,7 @@ fn reverse_swap_graph(min_out: u128) -> ManifestGraph {
 /// The same trade, paid in a resource the pool does not trade at all.
 fn untraded_swap_graph() -> ManifestGraph {
     graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, RES_Z, 500)?;
+        let funds = account::withdraw(b, ALICE, RES_Z, 500)?;
         let out = pool().swap(b, funds, 0)?;
         account::deposit(b, ALICE, out)
     })
@@ -303,8 +301,7 @@ fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() {
     // 100 assets into 1000 assets against 777 shares mints
     // floor(100 * 777 / 1000) = 77 shares, not 77.7.
     let deposit = graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, RES_X, 100)?;
+        let funds = account::withdraw(b, ALICE, RES_X, 100)?;
         let units = shares_vault().deposit(b, funds)?;
         account::deposit(b, ALICE, units)
     });
@@ -326,8 +323,7 @@ fn the_share_vault_rounds_toward_the_pool_on_both_runtimes() {
     // floor(77 * 1100 / 854) = 99 assets, not 99.18 — so the depositor
     // is one subunit down and the pool is one subunit up.
     let redeem = graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let units = account::withdraw(b, alice, shares_unit(), 77)?;
+        let units = account::withdraw(b, ALICE, shares_unit(), 77)?;
         let assets = shares_vault().redeem(b, units)?;
         account::deposit(b, ALICE, assets)
     });
@@ -466,8 +462,7 @@ fn approval_request(approver: Claim) -> IntentDecl {
     let chain = world();
     let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE);
     let approval = decl.declare_proof(approver);
-    let alice = account::authorize(&mut decl, ALICE).expect("sign-in types");
-    let funds = account::withdraw(&mut decl, alice, RES_X, 500).expect("withdraw types");
+    let funds = account::withdraw(&mut decl, ALICE, RES_X, 500).expect("withdraw types");
     let out = decl
         .call_presenting([approval], approval_pool(), "swap", (funds, 300u128))
         .expect("the swap types")
@@ -558,8 +553,7 @@ fn an_approved_trade_settles_through_a_venue_holding_no_credential() {
 fn an_unapproved_trade_never_becomes_a_transaction() {
     let world = world();
     let graph = graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, RES_X, 500)?;
+        let funds = account::withdraw(b, ALICE, RES_X, 500)?;
         let out = approval_pool().swap(b, funds, 300u128)?;
         account::deposit(b, ALICE, out)
     });

@@ -38,8 +38,7 @@ fn a_payment_that_divides_pays_every_share(chain: Chain) {
 
     chain
         .transact(PAYER, |b| {
-            let signed_in = account::authorize(b, PAYER)?;
-            let pot = account::withdraw(b, signed_in, ASSET, 100)?;
+            let pot = account::withdraw(b, PAYER, ASSET, 100)?;
             let [protocol, treasury, referrer] = splitter.disburse(b, pot)?;
             account::deposit(b, PROTOCOL, protocol)?;
             account::deposit(b, TREASURY, treasury)?;
@@ -66,8 +65,7 @@ fn a_payment_that_does_not_divide_keeps_the_dust(chain: Chain) {
 
     chain
         .transact(PAYER, |b| {
-            let signed_in = account::authorize(b, PAYER)?;
-            let pot = account::withdraw(b, signed_in, ASSET, 101)?;
+            let pot = account::withdraw(b, PAYER, ASSET, 101)?;
             let [protocol, treasury, referrer] = splitter.disburse(b, pot)?;
             account::deposit(b, PROTOCOL, protocol)?;
             account::deposit(b, TREASURY, treasury)?;
@@ -88,8 +86,7 @@ fn a_schedule_that_adds_up_settles(chain: Chain) {
 
     chain
         .transact(PAYER, |b| {
-            let signed_in = account::authorize(b, PAYER)?;
-            let pot = account::withdraw(b, signed_in, ASSET, 100)?;
+            let pot = account::withdraw(b, PAYER, ASSET, 100)?;
             let [protocol, treasury, referrer] = splitter.settle(b, pot)?;
             account::deposit(b, PROTOCOL, protocol)?;
             account::deposit(b, TREASURY, treasury)?;
@@ -108,8 +105,7 @@ fn a_schedule_that_must_add_up_refuses_the_dust(chain: Chain) {
     let (mut chain, splitter) = splitter(chain);
 
     let outcome = chain.transact(PAYER, |b| {
-        let signed_in = account::authorize(b, PAYER)?;
-        let pot = account::withdraw(b, signed_in, ASSET, 101)?;
+        let pot = account::withdraw(b, PAYER, ASSET, 101)?;
         let [protocol, treasury, referrer] = splitter.settle(b, pot)?;
         account::deposit(b, PROTOCOL, protocol)?;
         account::deposit(b, TREASURY, treasury)?;
@@ -133,8 +129,7 @@ fn a_payment_is_rounded_down_to_whole_lots(chain: Chain) {
 
     chain
         .transact(PAYER, |b| {
-            let signed_in = account::authorize(b, PAYER)?;
-            let pot = account::withdraw(b, signed_in, ASSET, 950)?;
+            let pot = account::withdraw(b, PAYER, ASSET, 950)?;
             let [payable, change] = splitter.in_lots(b, pot, 100u128)?;
             account::deposit(b, TREASURY, payable)?;
             account::deposit(b, PAYER, change)
@@ -152,8 +147,7 @@ fn a_payment_short_of_one_lot_is_refused(chain: Chain) {
     let (mut chain, splitter) = splitter(chain);
 
     let outcome = chain.transact(PAYER, |b| {
-        let signed_in = account::authorize(b, PAYER)?;
-        let pot = account::withdraw(b, signed_in, ASSET, 50)?;
+        let pot = account::withdraw(b, PAYER, ASSET, 50)?;
         let [payable, change] = splitter.in_lots(b, pot, 100u128)?;
         account::deposit(b, TREASURY, payable)?;
         account::deposit(b, PAYER, change)
@@ -173,8 +167,7 @@ fn a_lot_of_nothing_is_refused(chain: Chain) {
     let (mut chain, splitter) = splitter(chain);
 
     let outcome = chain.transact(PAYER, |b| {
-        let signed_in = account::authorize(b, PAYER)?;
-        let pot = account::withdraw(b, signed_in, ASSET, 950)?;
+        let pot = account::withdraw(b, PAYER, ASSET, 950)?;
         let [payable, change] = splitter.in_lots(b, pot, 0u128)?;
         account::deposit(b, TREASURY, payable)?;
         account::deposit(b, PAYER, change)

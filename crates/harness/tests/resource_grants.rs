@@ -88,8 +88,7 @@ fn governed_tree(entry: RuleBytes) -> Result<EnvelopeTree> {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
-        let caller = account::authorize(b, HOLDER)?;
-        let funds = account::withdraw(b, caller, governed(entry.clone()), 40)?;
+        let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         account::deposit(b, HOLDER, funds)
     };
     build(&mut root).context("the withdrawal types against the account")?;
@@ -166,8 +165,7 @@ fn an_unpresented_record_refuses_at_admission() -> Result<()> {
     let chain = world();
     let (env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
-        let caller = account::authorize(b, HOLDER)?;
-        let funds = account::withdraw(b, caller, governed(entry.clone()), 40)?;
+        let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         account::deposit(b, HOLDER, funds)
     };
     build(&mut root).context("the withdrawal types")?;
@@ -194,8 +192,7 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
-        let caller = account::authorize(b, HOLDER)?;
-        let funds = account::withdraw(b, caller, governed(entry.clone()), 40)?;
+        let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         account::deposit(b, HOLDER, funds)
     };
     build(&mut root).context("the withdrawal types")?;
@@ -276,8 +273,7 @@ fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
-        let caller = account::authorize(b, HOLDER)?;
-        let funds = account::withdraw(b, caller, governed(entry.clone()), 40)?;
+        let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         // To a party holding no credential of any kind.
         account::deposit(b, STRANGER, funds)
     };
@@ -453,8 +449,7 @@ fn admitted_tree(entry: RuleBytes, recipient: PrincipalAddr) -> Result<EnvelopeT
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
-        let caller = account::authorize(b, HOLDER)?;
-        let funds = account::withdraw(b, caller, admitting(entry.clone()), 40)?;
+        let funds = account::withdraw(b, HOLDER, admitting(entry.clone()), 40)?;
         account::deposit(b, recipient, funds)
     };
     build(&mut root).context("the transfer types against the account")?;

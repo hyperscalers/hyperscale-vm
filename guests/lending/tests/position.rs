@@ -2,8 +2,7 @@
 
 use hyperscale_vm_sdk::state::{Fixed, UnitFixed, Wide};
 use hyperscale_vm_testing::{
-    AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, account, package, principal,
-    resource,
+    Chain, PrincipalAddr, Refused, ResourceAddr, TypedError, account, package, principal, resource,
 };
 use lending_guest::lending::Error;
 use lending_guest::lending::client::{Lending, Terms};
@@ -51,8 +50,7 @@ fn rate<A, B>(scaled: u128) -> Fixed<A, B> {
 fn price(chain: &mut Chain, market: Lending, collateral: u128, debt: u128) {
     chain
         .transact(ORACLE, |b| {
-            let signed_in = account::authorize(b, ORACLE)?;
-            market.post_price(b, signed_in, rate(collateral), rate(debt))
+            market.post_price(b, rate(collateral), rate(debt))
         })
         .expect_completed();
 }
@@ -62,8 +60,7 @@ fn price(chain: &mut Chain, market: Lending, collateral: u128, debt: u128) {
 fn open(chain: &mut Chain, market: Lending, posted: u128, drawn: u128, now: u64) {
     chain
         .transact(BORROWER, |b| {
-            let signed_in = account::authorize(b, BORROWER)?;
-            let funds = account::withdraw(b, signed_in, COLLATERAL, posted)?;
+            let funds = account::withdraw(b, BORROWER, COLLATERAL, posted)?;
             market.deposit(b, funds)?;
             market.accrue(b, now)?;
             let drawn = market.draw(b, drawn, now)?;
@@ -94,8 +91,7 @@ fn a_draw_past_the_ratio_is_refused(chain: Chain) {
     price(&mut chain, market, 2 * ONE, ONE);
 
     let outcome = chain.transact(BORROWER, |b| {
-        let signed_in = account::authorize(b, BORROWER)?;
-        let funds = account::withdraw(b, signed_in, COLLATERAL, 1_000)?;
+        let funds = account::withdraw(b, BORROWER, COLLATERAL, 1_000)?;
         market.deposit(b, funds)?;
         market.accrue(b, 0u64)?;
         let drawn = market.draw(b, 1_100u128, 0u64)?;
@@ -114,8 +110,7 @@ fn a_draw_against_a_stale_index_is_refused(chain: Chain) {
     price(&mut chain, market, 2 * ONE, ONE);
 
     let outcome = chain.transact(BORROWER, |b| {
-        let signed_in = account::authorize(b, BORROWER)?;
-        let funds = account::withdraw(b, signed_in, COLLATERAL, 1_000)?;
+        let funds = account::withdraw(b, BORROWER, COLLATERAL, 1_000)?;
         market.deposit(b, funds)?;
         let drawn = market.draw(b, 100u128, 7u64)?;
         account::deposit(b, BORROWER, drawn)
@@ -127,27 +122,22 @@ fn a_draw_against_a_stale_index_is_refused(chain: Chain) {
 /// Only the configured oracle may say what the sides are worth.
 ///
 /// Refused before the transaction exists: the gate is a rule over a
-/// configuration slot, so what satisfies it is a pure match over what the
-/// signed form presents, and no state is read to answer. A keeper who is
-/// not the oracle pays nothing to find out — which is also why it is not
-/// a decline: a decline is a body's own verdict, and no body ran.
+/// configuration slot, and the builder reads the same declaration
+/// admission judges — so a keeper who is not the oracle is refused at
+/// the compose site, before anything is signed. Not a decline either
+/// way: a decline is a body's own verdict, and no body ran.
 #[hyperscale_vm_testing::test]
 fn only_the_oracle_may_post_a_price(chain: Chain) {
     let (mut chain, market) = market(chain);
 
     let refused = chain
-        .try_transact(KEEPER, |b| {
-            let signed_in = account::authorize(b, KEEPER)?;
-            market.post_price(b, signed_in, rate(ONE), rate(ONE))
-        })
+        .try_transact(KEEPER, |b| market.post_price(b, rate(ONE), rate(ONE)))
         .err();
 
     assert!(
         matches!(
             refused,
-            Some(Refused::Admission(
-                AdmissionError::EvidenceUnsatisfied { .. }
-            ))
+            Some(Refused::Typed(TypedError::SignatureForGuarded { .. }))
         ),
         "a price nobody may post is not a transaction: {refused:?}"
     );

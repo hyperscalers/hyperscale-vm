@@ -170,18 +170,6 @@ pub enum TypedError {
         /// The method called.
         method: String,
     },
-    /// A proof from a socket named as the actor for a gate on the
-    /// target's own identity.
-    ///
-    /// Such a call takes its target from the proof, and one from a socket
-    /// carries whatever claim the declaration named — which may be a
-    /// badge, and a badge is nothing to call. Where the claim *is* an
-    /// identity the call is written as it always was.
-    #[error("`{method}` acts as the proof it is given, and a proof from a socket names no target")]
-    SocketProofForSelf {
-        /// The method called.
-        method: String,
-    },
     /// The graph's own structural refusal, reached at [`TypedBuilder::build`].
     #[error(transparent)]
     Build(#[from] BuildError),
@@ -245,9 +233,6 @@ impl<const N: usize> Evidence for &[Proof; N] {
 /// presenting it twice says nothing presenting it once does not. It
 /// carries authority only downward — admission refuses a proof drawn
 /// from a node that is not earlier.
-///
-/// The proof remembers whose identity it carries, so a call acting *as*
-/// that identity names no target of its own: the proof is the actor.
 #[derive(Clone, Copy, Debug)]
 #[must_use = "an unpresented proof authorizes nothing"]
 pub struct Proof {
@@ -259,13 +244,6 @@ pub struct Proof {
     /// How the presenting node names it: a node of the same intent, or
     /// a socket this intent declared for a proof from outside it.
     reference: EvidenceRef,
-    /// The identity it carries, where that is something a call can be
-    /// made against.
-    ///
-    /// A node proof carries its own target, which is always callable. One
-    /// from a socket carries whatever claim the declaration named — an
-    /// identity, or a badge, and a badge is nothing to call.
-    acting: Option<CallTarget>,
     /// The claims it proves, as far as construction could read them off
     /// the proving declaration — the claim and, for an instance, the
     /// widened subject, exactly as the evaluator widens. What a
@@ -275,21 +253,9 @@ pub struct Proof {
 }
 
 impl Proof {
-    /// The instance whose identity this proof carries, where it names
-    /// one a call can be made against.
-    #[must_use]
-    pub const fn acting(&self) -> Option<CallTarget> {
-        self.acting
-    }
-
     /// The proof a socket will be filled with, presented as this
     /// intent's `position`-th socket.
-    pub(crate) fn from_socket(
-        builder: u64,
-        position: u32,
-        acting: Option<CallTarget>,
-        claim: Claim,
-    ) -> Self {
+    pub(crate) fn from_socket(builder: u64, position: u32, claim: Claim) -> Self {
         let widened = claim
             .instance
             .is_some()
@@ -297,7 +263,6 @@ impl Proof {
         Self {
             builder,
             reference: EvidenceRef::Socket(position),
-            acting,
             proves: [Some(claim), widened],
         }
     }
@@ -705,7 +670,6 @@ impl<'a> TypedBuilder<'a> {
         Ok(Proof {
             builder: self.graph.id(),
             reference: EvidenceRef::Node(node),
-            acting: Some(target),
             proves,
         })
     }
@@ -804,20 +768,27 @@ impl<'a> TypedBuilder<'a> {
         scoped: &[Proof],
     ) -> Result<Vec<Proof>, TypedError> {
         let (asked, complete) = self.gated(signature, target, record, values, known);
-        let proven: Vec<Proof> = asked
+        // A claim the scope covers is never auto-proven: the composer
+        // already answered it, and a second answer composed from the
+        // signer's account would be a node that can fail on its own —
+        // presenting a badge the signer does not hold, for one.
+        let uncovered: Vec<Claim> = asked
+            .iter()
+            .filter(|claim| !scoped.iter().any(|proof| proof.covers(claim)))
+            .copied()
+            .collect();
+        let any_covered = uncovered.len() < asked.len();
+        let proven: Vec<Proof> = uncovered
             .iter()
             .filter_map(|claim| self.present(*claim))
             .collect();
-        if proven.is_empty() {
+        if proven.is_empty() && !any_covered {
             if scoped.is_empty() {
                 return Err(TypedError::SignatureForGuarded {
                     method: method.to_owned(),
                 });
             }
-            let covered = asked
-                .iter()
-                .any(|claim| scoped.iter().any(|proof| proof.covers(claim)));
-            if !covered && complete {
+            if complete {
                 let claim = asked.first().map(claim_text).unwrap_or_default();
                 return Err(TypedError::UncoveredGate {
                     method: method.to_owned(),
@@ -996,6 +967,7 @@ impl<'a> TypedBuilder<'a> {
         let earned = if proofs.is_empty() {
             wanted
                 .iter()
+                .filter(|claim| !scoped.iter().any(|proof| proof.covers(claim)))
                 .filter_map(|claim| self.present(*claim))
                 .collect()
         } else {

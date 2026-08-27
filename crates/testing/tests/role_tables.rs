@@ -126,10 +126,7 @@ fn seeded() -> (Chain, registry::client::Registry) {
     let (mut chain, instance) = setup();
     let rule = stored(&StoredRule::claim(Claim::of_instance(badge(instance), 0)));
     chain
-        .transact(FOUNDER, |b| {
-            let founder = account::authorize(b, FOUNDER)?;
-            instance.seed_admin(b, founder, rule.clone(), DELAY_MS)
-        })
+        .transact(FOUNDER, |b| instance.seed_admin(b, rule.clone(), DELAY_MS))
         .expect_completed();
     (chain, instance)
 }
@@ -199,10 +196,7 @@ fn a_second_seeding_is_refused_where_the_table_lives() {
     let (mut chain, instance) = seeded();
     let rule = stored(&StoredRule::claim(Claim::of_instance(badge(instance), 0)));
     let outcome = chain
-        .transact(FOUNDER, |b| {
-            let founder = account::authorize(b, FOUNDER)?;
-            instance.seed_admin(b, founder, rule.clone(), DELAY_MS)
-        })
+        .transact(FOUNDER, |b| instance.seed_admin(b, rule.clone(), DELAY_MS))
         .refused()
         .cloned()
         .expect("the second seeding is refused");
@@ -228,8 +222,7 @@ fn a_transferred_badge_rotates_the_admin_without_touching_the_registry() {
     let (mut chain, instance) = seeded();
     chain
         .transact(FOUNDER, |b| {
-            let owner = account::authorize(b, FOUNDER)?;
-            let seat = account::withdraw_nf(b, owner, badge(instance), &[0])?;
+            let seat = account::withdraw_nf(b, FOUNDER, badge(instance), &[0])?;
             account::deposit_nf(b, SUCCESSOR, seat)
         })
         .expect_completed();

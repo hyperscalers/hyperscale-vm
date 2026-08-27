@@ -75,8 +75,7 @@ const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
 fn a_report_is_what_the_chain_derives() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut b, ALICE).unwrap();
-    let funds = account::withdraw(&mut b, alice_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
 
@@ -113,8 +112,7 @@ fn a_report_is_what_the_chain_derives() {
 fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut b, ALICE).unwrap();
-    let funds = account::withdraw(&mut b, alice_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
@@ -135,7 +133,7 @@ fn the_operator_surface_is_the_badge_holders_custody() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, OPERATOR);
     let operator = account::present_badge(&mut b, OPERATOR, badge()).unwrap();
-    pool().unjail(&mut b, operator, 42).unwrap();
+    b.presenting(operator, |b| pool().unjail(b, 42)).unwrap();
     let graph = b.build().unwrap();
     let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
 
@@ -167,8 +165,7 @@ fn the_operator_surface_is_the_badge_holders_custody() {
 fn every_address_the_report_names_is_named_for_the_network() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut b, ALICE).unwrap();
-    let funds = account::withdraw(&mut b, alice_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
@@ -190,8 +187,7 @@ fn every_address_the_report_names_is_named_for_the_network() {
 fn a_network_word_the_encoding_refuses_fails_once() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut b, ALICE).unwrap();
-    let funds = account::withdraw(&mut b, alice_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     assert!(matches!(
@@ -210,15 +206,13 @@ fn a_composition_names_every_signer_it_needs() {
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
 
     let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
-    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     let paid_x = root.export(funds);
     account::deposit(&mut root, ALICE, taken).unwrap();
 
     let mut sub = env.subintent(BOB);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
-    let bob_proof = account::authorize(&mut sub, BOB).unwrap();
-    let funds = account::withdraw(&mut sub, bob_proof, RES_Y, 10).unwrap();
+    let funds = account::withdraw(&mut sub, BOB, RES_Y, 10).unwrap();
     let paid_y = sub.export(funds);
     account::deposit(&mut sub, BOB, taken).unwrap();
 

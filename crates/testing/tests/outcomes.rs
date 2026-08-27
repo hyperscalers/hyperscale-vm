@@ -38,8 +38,7 @@ fn pool(chain: &mut Chain) -> amm::Amm {
 /// A swap whose floor no pool this size can reach.
 fn declined(chain: &mut Chain, pool: amm::Amm) -> Conclusion<()> {
     chain.transact(ALICE, |b| {
-        let signed_in = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, signed_in, X, 500)?;
+        let funds = account::withdraw(b, ALICE, X, 500)?;
         let bought = pool.swap(b, funds, 100_000u128)?;
         account::deposit(b, ALICE, bought)
     })
@@ -84,8 +83,7 @@ fn an_infeasible_movement_reads_as_the_vault_it_missed() {
     let mut chain = Chain::native();
     let pool = pool(&mut chain);
     let outcome = chain.transact(ALICE, |b| {
-        let signed_in = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, signed_in, X, 5_000)?;
+        let funds = account::withdraw(b, ALICE, X, 5_000)?;
         let bought = pool.swap(b, funds, 1u128)?;
         account::deposit(b, ALICE, bought)
     });

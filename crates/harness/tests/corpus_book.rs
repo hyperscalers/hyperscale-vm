@@ -16,7 +16,7 @@ use common::world::*;
 fn place_graph() -> ManifestGraph {
     graph(|b| {
         let maker = account::authorize(b, MAKER)?;
-        let funds = account::withdraw(b, maker, BASE, 50)?;
+        let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, BASE, 50))?;
         book().place_ask(b, 3, funds)
     })
 }
@@ -38,7 +38,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
     // A maker escrowing quote where the book escrows base.
     let wrong_ask = graph(|b| {
         let maker = account::authorize(b, MAKER)?;
-        let funds = account::withdraw(b, maker, QUOTE, 50)?;
+        let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, QUOTE, 50))?;
         book().place_ask(b, 3, funds)
     });
     assert!(
@@ -53,7 +53,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
     // A taker paying base where the book is paid in quote.
     let wrong_fill = graph(|b| {
         let taker = account::authorize(b, TAKER)?;
-        let payment = account::withdraw(b, taker, BASE, 100)?;
+        let payment = b.presenting(taker, |b| account::withdraw(b, TAKER, BASE, 100))?;
         let [bought, refund] = book().fill_asks(b, 3, 5, payment)?;
         account::deposit(b, TAKER, bought)?;
         account::deposit(b, TAKER, refund)
@@ -223,7 +223,7 @@ fn a_finer_tick_prices_between_two_integers_on_both_runtimes() {
 
     let fill = graph(|b| {
         let taker = account::authorize(b, TAKER)?;
-        let payment = account::withdraw(b, taker, QUOTE, 60)?;
+        let payment = b.presenting(taker, |b| account::withdraw(b, TAKER, QUOTE, 60))?;
         let [bought, change] = fine_book().fill_asks(b, 1, 9, payment)?;
         account::deposit(b, TAKER, bought)?;
         account::deposit(b, TAKER, change)

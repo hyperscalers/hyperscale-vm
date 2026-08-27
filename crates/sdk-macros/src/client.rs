@@ -40,12 +40,11 @@ pub enum Serves {
 pub enum Shape {
     /// Anyone may name it.
     Public,
-    /// A rule over identities the target names. `on_self` is the case
-    /// where the rule is the target's own address and nothing else,
-    /// which is what lets the call take its target from the proof rather
-    /// than from an argument. `threshold` is where meeting it can take
-    /// more than one claim, so a caller presents a set.
-    Guarded { on_self: bool, threshold: bool },
+    /// A rule over identities the target names. What satisfies it is
+    /// the call's own business at compose time: the builder proves what
+    /// the signer's account can, and an enclosing `presenting` scope
+    /// carries the rest.
+    Guarded,
     /// The target's stored primary, proving the target's identity.
     Authorizing,
     /// A rule the target stores beside its primary, proving nothing.
@@ -60,27 +59,11 @@ impl Shape {
     pub const fn of(gate: &Gate) -> Self {
         match gate {
             Gate::Public => Self::Public,
-            Gate::Guarded {
-                on_self, threshold, ..
-            } => Self::Guarded {
-                on_self: *on_self,
-                threshold: *threshold,
-            },
+            Gate::Guarded { .. } => Self::Guarded,
             Gate::Authorizing(_) => Self::Authorizing,
             Gate::Governed(_) => Self::Governed,
             Gate::Custodial { .. } => Self::Custodial,
         }
-    }
-
-    /// Whether naming the method requires presenting anything.
-    const fn requires_evidence(self) -> bool {
-        !matches!(self, Self::Public)
-    }
-
-    /// Whether the gate judges against a rule the target stores, which
-    /// is what the intent's own signature can reach.
-    const fn reads_a_rule(self) -> bool {
-        matches!(self, Self::Authorizing | Self::Governed | Self::Custodial)
     }
 
     /// Whether naming the method proves evidence for later nodes.
@@ -91,19 +74,16 @@ impl Shape {
 
 /// Refuse a parameter that would shadow one the wrapper injects.
 ///
-/// Which names those are is the method's own gate and the package's own
-/// service class, so the reservation is exactly as wide as the wrapper
-/// generated for *this* method: `builder` always, `proof` wherever
-/// something is presented, and `who` only where free functions name a
-/// principal. A blanket reservation would cost an entrant a good name
+/// The wrapper's own parameters are `builder` on every method and `who`
+/// where a principal package's free functions name the caller — never a
+/// proof, because evidence is the builder's to resolve and the scope's
+/// to carry. A blanket reservation would cost an entrant a good name
 /// for the sake of a wrapper that never takes one.
 pub fn check_names(params: &[syn::Ident], shape: Shape, serves: Serves) -> syn::Result<()> {
+    let _ = shape;
     let injects = |name: &str| match name {
         "builder" => true,
-        "proof" | "proofs" => shape.requires_evidence() || shape.reads_a_rule(),
-        "who" => {
-            serves == Serves::Principals && !matches!(shape, Shape::Guarded { on_self: true, .. })
-        }
+        "who" => serves == Serves::Principals,
         _ => false,
     };
     for param in params {
@@ -246,35 +226,14 @@ fn produced(method: &Method) -> (TokenStream2, TokenStream2) {
     )
 }
 
-/// Whether the call presents a named proof, and so which builder form
-/// it takes.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Presenting {
-    /// The enclosing intent's own signature.
-    Signature,
-    /// A proof an earlier node proved.
-    Proof,
-    /// A set of them: what a threshold takes, where one claim is not
-    /// enough and the wrapper cannot say which are.
-    Proofs,
-}
-
 /// One wrapper.
-fn wrapper(
-    method: &Method,
-    serves: Serves,
-    presenting: Presenting,
-    suffix: Option<&str>,
-) -> TokenStream2 {
+fn wrapper(method: &Method, serves: Serves) -> TokenStream2 {
     let builder = sdk("TypedBuilder");
     let error = sdk("TypedError");
     let proof_ty = sdk("Proof");
     let principal = sdk("PrincipalAddr");
 
-    let name = suffix.map_or_else(
-        || method.rust.clone(),
-        |suffix| format_ident!("{}_{suffix}", method.rust),
-    );
+    let name = method.rust.clone();
     let published = &method.published;
     let docs = &method.docs;
 
@@ -284,55 +243,20 @@ fn wrapper(
         .map(|(param, ty)| widen(&format_ident!("{param}"), ty))
         .unzip();
 
-    // Whose address the call is made against. A handle is the target;
-    // a principal package names one, except where the gate is the
-    // target's own identity and the proof is therefore the actor.
-    let from_proof = presenting == Presenting::Proof
-        && matches!(method.shape, Shape::Guarded { on_self: true, .. });
-    let (receiver, target) = match (serves, from_proof) {
-        (Serves::Instances, _) => (quote!(self,), quote!(self.0)),
-        (Serves::Principals, true) => (
-            quote!(),
-            quote!(proof.acting().ok_or(
-                ::hyperscale_vm_sdk::client::TypedError::SocketProofForSelf {
-                    method: #published.to_owned(),
-                }
-            )?),
-        ),
-        (Serves::Principals, false) => (quote!(), quote!(who)),
+    // Whose address the call is made against: a handle is the target,
+    // and a principal package names one.
+    let (receiver, target) = match serves {
+        Serves::Instances => (quote!(self,), quote!(self.0)),
+        Serves::Principals => (quote!(), quote!(who)),
     };
-    let who = matches!((serves, from_proof), (Serves::Principals, false))
-        .then(|| quote!(who: #principal,));
-    let proof = match presenting {
-        Presenting::Proof => Some(quote!(proof: #proof_ty,)),
-        Presenting::Proofs => Some(quote!(proofs: &[#proof_ty],)),
-        Presenting::Signature => None,
-    };
+    let who = (serves == Serves::Principals).then(|| quote!(who: #principal,));
 
     let (returns, body) = if method.shape.proves() {
-        let call = match presenting {
-            Presenting::Signature => {
-                quote!(builder.call_proving(#target, #published, (#(#args,)*)))
-            }
-            Presenting::Proof => {
-                quote!(builder.call_proving_presenting(proof, #target, #published, (#(#args,)*)))
-            }
-            Presenting::Proofs => {
-                quote!(builder.call_proving_presenting(proofs, #target, #published, (#(#args,)*)))
-            }
-        };
+        let call = quote!(builder.call_proving(#target, #published, (#(#args,)*)));
         (quote!(#proof_ty), call)
     } else {
         let (returns, projection) = produced(method);
-        let call = match presenting {
-            Presenting::Signature => quote!(builder.call(#target, #published, (#(#args,)*))),
-            Presenting::Proof => {
-                quote!(builder.call_presenting(proof, #target, #published, (#(#args,)*)))
-            }
-            Presenting::Proofs => {
-                quote!(builder.call_presenting(proofs, #target, #published, (#(#args,)*)))
-            }
-        };
+        let call = quote!(builder.call(#target, #published, (#(#args,)*)));
         (
             returns,
             quote!({
@@ -352,7 +276,6 @@ fn wrapper(
         pub fn #name(
             #receiver
             builder: &mut #builder<'_>,
-            #proof
             #who
             #(#decls,)*
         ) -> ::core::result::Result<#returns, #error> {
@@ -361,31 +284,15 @@ fn wrapper(
     )
 }
 
-/// Every wrapper one method takes.
+/// The one wrapper a method takes.
 ///
-/// A gate that reads a rule can be satisfied by the intent's own
-/// signature, by a proof proven earlier, or by a set of proofs where
-/// the stored rule is a threshold — the gate's written form never says
-/// which, because what is stored is the target's own business — so it
-/// takes all three forms. One that names an identity takes the proof
-/// alone, and a public method presents nothing at all.
+/// Never a proof parameter: evidence is the builder's to resolve — the
+/// signer's own account answers what it can — and an enclosing
+/// `presenting` scope carries what it cannot. How many claims a gate
+/// takes, and whose, stays the gate's own business rather than a shape
+/// the wrapper spells.
 fn wrappers(method: &Method, serves: Serves) -> Vec<TokenStream2> {
-    let shape = method.shape;
-    if shape.reads_a_rule() {
-        return vec![
-            wrapper(method, serves, Presenting::Signature, None),
-            wrapper(method, serves, Presenting::Proof, Some("as")),
-            wrapper(method, serves, Presenting::Proofs, Some("presenting")),
-        ];
-    }
-    let presenting = match shape {
-        Shape::Guarded {
-            threshold: true, ..
-        } => Presenting::Proofs,
-        _ if shape.requires_evidence() => Presenting::Proof,
-        _ => Presenting::Signature,
-    };
-    vec![wrapper(method, serves, presenting, None)]
+    vec![wrapper(method, serves)]
 }
 
 /// The `ConfigValues` impl over a package's configuration struct.

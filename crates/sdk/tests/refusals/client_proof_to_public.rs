@@ -21,7 +21,9 @@ mod contract {
     }
 }
 
-// `deposit` admits anyone, so its wrapper takes nothing to present.
+// No wrapper takes anything to present: evidence is the builder's to
+// resolve and an enclosing `presenting` scope's to carry, so a proof
+// handed to any wrapper has no parameter to land in.
 fn call(
     builder: &mut TypedBuilder<'_>,
     pool: contract::client::Contract,

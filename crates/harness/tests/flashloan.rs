@@ -161,10 +161,9 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> (BatchOutcome, MemoryStor
 fn a_repaid_loan_commits_on_both_runtimes() -> Result<()> {
     let world = world();
     let borrowed = graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
         let [loan, debt] = pool().draw(b, 100)?;
         account::deposit(b, ALICE, loan)?;
-        let funds = account::withdraw(b, alice, XRD, 100)?;
+        let funds = account::withdraw(b, ALICE, XRD, 100)?;
         pool().repay(b, funds, debt)
     });
     let entry = batch_entry(&world, &intent(borrowed), ALICE)?;
@@ -280,10 +279,9 @@ fn the_obligation_cannot_be_routed_into_a_vault() {
 fn a_repayment_that_falls_short_declines_on_the_method_s_own_arm() -> Result<()> {
     let world = world();
     let short = graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
         let [loan, debt] = pool().draw(b, 100)?;
         account::deposit(b, ALICE, loan)?;
-        let funds = account::withdraw(b, alice, XRD, 60)?;
+        let funds = account::withdraw(b, ALICE, XRD, 60)?;
         pool().repay(b, funds, debt)
     });
     let entry = batch_entry(&world, &intent(short), ALICE)?;

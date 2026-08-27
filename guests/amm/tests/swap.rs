@@ -39,8 +39,7 @@ fn a_swap_pays_the_curve_less_the_fee(chain: Chain) {
 
     chain
         .transact(ALICE, |b| {
-            let signed_in = account::authorize(b, ALICE)?;
-            let funds = account::withdraw(b, signed_in, X, 500)?;
+            let funds = account::withdraw(b, ALICE, X, 500)?;
             let bought = pool.swap(b, funds, 300u128)?;
             account::deposit(b, ALICE, bought)
         })
@@ -60,8 +59,7 @@ fn a_floor_the_pool_cannot_reach_declines(chain: Chain) {
     let (mut chain, pool) = pool(chain);
 
     let outcome = chain.transact(ALICE, |b| {
-        let signed_in = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, signed_in, X, 500)?;
+        let funds = account::withdraw(b, ALICE, X, 500)?;
         let bought = pool.swap(b, funds, 400u128)?;
         account::deposit(b, ALICE, bought)
     });
@@ -96,8 +94,7 @@ fn a_reserve_that_once_overflowed_the_curve_now_trades(mut chain: Chain) {
 
     chain
         .transact(ALICE, |b| {
-            let signed_in = account::authorize(b, ALICE)?;
-            let funds = account::withdraw(b, signed_in, X, 500)?;
+            let funds = account::withdraw(b, ALICE, X, 500)?;
             let bought = pool.swap(b, funds, 0u128)?;
             account::deposit(b, ALICE, bought)
         })

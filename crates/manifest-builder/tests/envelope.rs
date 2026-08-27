@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, Socket, StoredRule, TestHasher, Value,
     admit_tree,
 };
-use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr, ResourceAddr};
 use proptest::prelude::{prop, proptest};
@@ -48,15 +48,13 @@ fn swap(pay_x: u128, pay_y: u128) -> Result<EnvelopeTree, EnvelopeError> {
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
 
     let taken_y = root.declare(RES_Y, [Constraint::MinAmount(pay_y)]);
-    let alice_proof = account::authorize(&mut root, ALICE)?;
-    let funds = account::withdraw(&mut root, alice_proof, RES_X, pay_x)?;
+    let funds = account::withdraw(&mut root, ALICE, RES_X, pay_x)?;
     let paid_x = root.export(funds);
     account::deposit(&mut root, ALICE, taken_y)?;
 
     let mut sub = env.subintent(BOB);
     let taken_x = sub.declare(RES_X, [Constraint::MinAmount(pay_x)]);
-    let bob_proof = account::authorize(&mut sub, BOB)?;
-    let funds = account::withdraw(&mut sub, bob_proof, RES_Y, pay_y)?;
+    let funds = account::withdraw(&mut sub, BOB, RES_Y, pay_y)?;
     let paid_y = sub.export(funds);
     account::deposit(&mut sub, BOB, taken_x)?;
 
@@ -98,8 +96,7 @@ fn a_presented_declaration_is_carried_verbatim() {
 
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     let paid = root.export(funds);
     let wants = env.adopt(BOB, request).unwrap().one().unwrap();
     env.seal(root).unwrap().none().unwrap();
@@ -118,8 +115,7 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     // The composer took the request and then routed nothing to it.
     let _wants = env.adopt(BOB, payment_request(100)).unwrap();
-    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut root, ALICE, funds).unwrap();
     env.seal(root).unwrap().none().unwrap();
     assert_eq!(
@@ -131,25 +127,19 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
     );
 }
 
-/// A call that acts as its proof takes its target from it, and a proof
-/// from a socket carries whatever claim the declaration named — which
-/// may be a badge, and a badge is nothing to call. An identity's socket
-/// proof names its target as any proof does.
+/// Acting as another party is a scope holding their proof — here from a
+/// socket, filled by whoever proves it. The call names its target
+/// itself, so there is no proof-as-actor spelling left to hand a badge
+/// to.
 #[test]
-fn a_badge_socket_proof_names_no_target_for_a_self_gated_call() {
+fn a_socket_proof_in_scope_acts_for_a_self_gated_call() {
     let chain = world();
     let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE);
 
-    let badge = decl.declare_proof(Claim::of_subject(RES_X));
-    let refused = account::withdraw(&mut decl, badge, RES_X, 100);
-    assert!(matches!(
-        refused,
-        Err(TypedError::SocketProofForSelf { ref method }) if method == "withdraw"
-    ));
-
     let bob = decl.declare_proof(Claim::of_subject(BOB));
-    let _funds = account::withdraw(&mut decl, bob, RES_X, 100)
-        .expect("an identity's socket proof names its target");
+    let _funds = decl
+        .presenting(bob, |decl| account::withdraw(decl, BOB, RES_X, 100))
+        .expect("an identity's socket proof rides the gate in scope");
 }
 
 /// A socket consumed from the wrong channel is refused at `adopt` — the
@@ -195,8 +185,7 @@ fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
 fn a_presented_record_too_deep_to_encode_refuses_at_build() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_proof, RES_X, 5).unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 5).unwrap();
     account::deposit(&mut root, ALICE, funds).unwrap();
     let mut nested = Value::U64(0);
     for _ in 0..=MAX_VALUE_DEPTH {
@@ -252,7 +241,7 @@ fn a_proof_offered_to_a_value_socket_is_refused() {
     );
     // Both handles came back: route the right half through the same
     // socket and the composition completes.
-    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     let paid = root.export(funds);
     env.bind(refused.socket, paid).unwrap();
     env.seal(root).unwrap().none().unwrap();
@@ -287,8 +276,7 @@ fn a_hole_the_graph_never_consumes_is_refused() {
     // Declared and then dropped: the yielded bucket would arrive with
     // nothing to receive it.
     let _taken = root.declare(RES_Y, []);
-    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut root, ALICE, funds).unwrap();
     assert!(matches!(
         env.seal(root),
@@ -359,8 +347,7 @@ fn a_hole_the_composition_never_bound_is_refused() {
 fn an_intent_still_under_construction_is_refused() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
-    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut root, BOB, funds).unwrap();
     let _sub = env.subintent(BOB);
     env.seal(root).unwrap().none().unwrap();
@@ -380,8 +367,7 @@ fn a_handle_from_another_envelope_is_refused() {
     let wants = mine.seal(root).unwrap().one().unwrap();
 
     let (_theirs, mut other) = EnvelopeBuilder::new(&chain, &TestHasher, BOB);
-    let bob_proof = account::authorize(&mut other, BOB).unwrap();
-    let funds = account::withdraw(&mut other, bob_proof, RES_X, 100).unwrap();
+    let funds = account::withdraw(&mut other, BOB, RES_X, 100).unwrap();
     let elsewhere = other.export(funds);
     let _ = mine.bind(wants, elsewhere);
 }
@@ -395,8 +381,7 @@ fn an_intent_filling_its_own_socket_is_refused_at_the_wiring() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     let taken = root.declare(RES_X, []);
-    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_proof, RES_X, 5).unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 5).unwrap();
     let paid = root.export(funds);
     account::deposit(&mut root, ALICE, taken).unwrap();
     let wants = env.seal(root).unwrap().one().unwrap();
@@ -454,8 +439,7 @@ proptest! {
         let mut paid = Vec::with_capacity(legs.len());
         for (pay, _) in &legs {
             let taken = root.declare(RES_Y, [Constraint::MinAmount(1)]);
-            let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let funds = account::withdraw(&mut root, alice_proof, RES_X, *pay).unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, *pay).unwrap();
             paid.push(root.export(funds));
             account::deposit(&mut root, ALICE, taken).unwrap();
         }
@@ -465,8 +449,7 @@ proptest! {
             let signer = PrincipalAddr::new([u8::try_from(index).unwrap() + 1; 31]);
             let mut leg = env.subintent(signer);
             let taken = leg.declare(RES_X, [Constraint::MinAmount(1)]);
-            let signer_proof = account::authorize(&mut leg, signer).unwrap();
-    let funds = account::withdraw(&mut leg, signer_proof, RES_Y, *receive).unwrap();
+    let funds = account::withdraw(&mut leg, signer, RES_Y, *receive).unwrap();
             let yielded = leg.export(funds);
             account::deposit(&mut leg, signer, taken).unwrap();
             let wants = env.seal(leg).unwrap().one().unwrap();
@@ -611,8 +594,7 @@ fn an_edge_offered_to_an_authority_socket_is_refused() {
     let request = note_request(Claim::of_subject(DESK));
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK);
-    let desk = account::authorize(&mut root, DESK).unwrap();
-    let funds = account::withdraw(&mut root, desk, RES_X, 5).unwrap();
+    let funds = account::withdraw(&mut root, DESK, RES_X, 5).unwrap();
     let paid = root.export(funds);
     let wants = env.adopt(BOB, request).unwrap().one().unwrap();
     let refused = env

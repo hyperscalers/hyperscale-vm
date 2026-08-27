@@ -83,8 +83,7 @@ fn a_deflationary_supply_only_ever_falls(chain: Chain) {
 
     chain
         .transact(FOUNDER, |b| {
-            let holder = account::authorize(b, FOUNDER)?;
-            let funds = account::withdraw(b, holder, retired, 200u128)?;
+            let funds = account::withdraw(b, FOUNDER, retired, 200u128)?;
             instance.retire(b, funds)
         })
         .expect_completed();
@@ -106,8 +105,7 @@ fn a_holder_destroys_what_the_resource_lets_them(chain: Chain) {
 
     chain
         .transact(FOUNDER, |b| {
-            let holder = account::authorize(b, FOUNDER)?;
-            let funds = account::withdraw(b, holder, circulating, 400u128)?;
+            let funds = account::withdraw(b, FOUNDER, circulating, 400u128)?;
             account::burn(b, FOUNDER, funds)
         })
         .expect_completed();
@@ -127,8 +125,7 @@ fn a_resource_granting_no_burn_is_indestructible(chain: Chain) {
     let fixed = instance.issued_founded(&TestHasher);
 
     let refused = chain.try_transact(FOUNDER, |b| {
-        let holder = account::authorize(b, FOUNDER)?;
-        let funds = account::withdraw(b, holder, fixed, 1u128)?;
+        let funds = account::withdraw(b, FOUNDER, fixed, 1u128)?;
         account::burn(b, FOUNDER, funds)
     });
     assert!(
@@ -202,8 +199,7 @@ fn a_holder_destroys_nothing_whose_burn_names_its_issuer(chain: Chain) {
     let retired = instance.issued_retired(&TestHasher);
 
     let refused = chain.try_transact(FOUNDER, |b| {
-        let holder = account::authorize(b, FOUNDER)?;
-        let funds = account::withdraw(b, holder, retired, 1u128)?;
+        let funds = account::withdraw(b, FOUNDER, retired, 1u128)?;
         account::burn(b, FOUNDER, funds)
     });
     assert!(

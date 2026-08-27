@@ -48,15 +48,13 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, composer);
 
     let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
-    let composer_proof = account::authorize(&mut root, composer).expect("sign-in types");
-    let funds = account::withdraw(&mut root, composer_proof, RES_X, pay).expect("withdraw types");
+    let funds = account::withdraw(&mut root, composer, RES_X, pay).expect("withdraw types");
     let paid_x = root.export(funds);
     account::deposit(&mut root, composer, taken).expect("deposit types");
 
     let mut sub = env.subintent(BOB);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
-    let bob_proof = account::authorize(&mut sub, BOB).expect("sign-in types");
-    let funds = account::withdraw(&mut sub, bob_proof, RES_Y, 10).expect("withdraw types");
+    let funds = account::withdraw(&mut sub, BOB, RES_Y, 10).expect("withdraw types");
     let paid_y = sub.export(funds);
     account::deposit(&mut sub, BOB, taken).expect("deposit types");
 

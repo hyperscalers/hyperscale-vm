@@ -50,10 +50,7 @@ fn a_refused_authorization_takes_its_consumers_with_it() {
 
 /// Sign in and hand the account to Bob's rule, uniformly.
 fn securify_graph(rule: &StoredRule) -> ManifestGraph {
-    graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        account::securify_uniform(b, alice, rule, DAY_MS)
-    })
+    graph(|b| account::securify_uniform(b, ALICE, rule, DAY_MS))
 }
 
 /// The whole one-way door, end to end on both runtimes: an account
@@ -160,8 +157,8 @@ fn a_chained_sign_in_acts_two_rules_deep() {
     // and the maker's rule admits only Alice's.
     let direct = graph(|b| {
         let bob = account::authorize(b, BOB)?;
-        let maker = account::authorize_as(b, bob, MAKER)?;
-        let funds = account::withdraw(b, maker, RES_X, 100)?;
+        let maker = b.presenting(bob, |b| account::authorize(b, MAKER))?;
+        let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, RES_X, 100))?;
         account::deposit(b, BOB, funds)
     });
     let (results, store) = run_both_signed(
@@ -180,8 +177,8 @@ fn a_chained_sign_in_acts_two_rules_deep() {
 
     let transfer = graph(|b| {
         let alice = account::authorize(b, ALICE)?;
-        let maker = account::authorize_as(b, alice, MAKER)?;
-        let funds = account::withdraw(b, maker, RES_X, 100)?;
+        let maker = b.presenting(alice, |b| account::authorize(b, MAKER))?;
+        let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, RES_X, 100))?;
         account::deposit(b, BOB, funds)
     });
     let (results, store) = run_both_signed(
@@ -1146,8 +1143,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
     // The badge moves to Bob: operatorship moves with it, and the
     // seller's custody opens nothing.
     let transfer = graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let moved = account::withdraw_nf(b, alice, badge, &[id])?;
+        let moved = account::withdraw_nf(b, ALICE, badge, &[id])?;
         account::deposit_nf(b, BOB, moved)
     });
     let (results, _) = run_both(
@@ -1430,8 +1426,7 @@ fn a_drained_badge_vault_closes_the_custody_it_opened() {
     // Alice spends the whole of it, so the leaf is removed rather than
     // written back as zero.
     let drain = graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, RES_X, 1)?;
+        let funds = account::withdraw(b, ALICE, RES_X, 1)?;
         account::deposit(b, BOB, funds)
     });
     let (results, store) = run_both_signed(

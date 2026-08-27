@@ -43,9 +43,8 @@ fn share(chain: &Chain, pool: Amm) -> ResourceAddr {
 fn add(chain: &mut Chain, pool: Amm, who: PrincipalAddr, dx: u128, dy: u128) {
     chain
         .transact(who, |b| {
-            let signed_in = account::authorize(b, who)?;
-            let x_side = account::withdraw(b, signed_in, X, dx)?;
-            let y_side = account::withdraw(b, signed_in, Y, dy)?;
+            let x_side = account::withdraw(b, who, X, dx)?;
+            let y_side = account::withdraw(b, who, Y, dy)?;
             let claim = pool.add_liquidity(b, x_side, y_side)?;
             account::deposit(b, who, claim)
         })
@@ -109,9 +108,8 @@ fn funding_one_side_alone_is_refused(chain: Chain) {
     add(&mut chain, pool, ALICE, 1_000, 4_000);
 
     let outcome = chain.transact(BOB, |b| {
-        let signed_in = account::authorize(b, BOB)?;
-        let x_side = account::withdraw(b, signed_in, X, 0)?;
-        let y_side = account::withdraw(b, signed_in, Y, 500)?;
+        let x_side = account::withdraw(b, BOB, X, 0)?;
+        let y_side = account::withdraw(b, BOB, Y, 500)?;
         let claim = pool.add_liquidity(b, x_side, y_side)?;
         account::deposit(b, BOB, claim)
     });
@@ -133,8 +131,7 @@ fn redeeming_the_only_position_returns_the_whole_pair(chain: Chain) {
     let claim_on = share(&chain, pool);
     chain
         .transact(ALICE, |b| {
-            let signed_in = account::authorize(b, ALICE)?;
-            let claim = account::withdraw(b, signed_in, claim_on, 2_000)?;
+            let claim = account::withdraw(b, ALICE, claim_on, 2_000)?;
             let [back_x, back_y] = pool.remove_liquidity(b, claim)?;
             account::deposit(b, ALICE, back_x)?;
             account::deposit(b, ALICE, back_y)

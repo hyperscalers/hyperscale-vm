@@ -18,8 +18,8 @@
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_testing::{
-    Chain, Outcome, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition,
-    account, address_text, package, principal,
+    Chain, Outcome, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition, account,
+    address_text, package, principal,
 };
 use security_guest::security;
 
@@ -46,8 +46,7 @@ fn world(mut chain: Chain) -> (Chain, security::client::Security, ResourceAddr) 
     for (id, who) in [(1u64, HOLDER), (2, OTHER)] {
         chain
             .transact(REGISTRAR, |b| {
-                let registrar = account::authorize(b, REGISTRAR)?;
-                let entry = issuer.register(b, registrar, id)?;
+                let entry = issuer.register(b, id)?;
                 account::deposit_nf(b, who, entry)
             })
             .expect_completed();
@@ -73,8 +72,7 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: Chain) {
 
     let transfer = |chain: &mut Chain| {
         chain.try_transact(HOLDER, |b| {
-            let holder = account::authorize(b, HOLDER)?;
-            let moved = account::withdraw(b, holder, share, 10u128)?;
+            let moved = account::withdraw(b, HOLDER, share, 10u128)?;
             account::deposit(b, OTHER, moved)
         })
     };
@@ -179,8 +177,7 @@ fn a_recall_reaches_past_every_rule_the_resource_carries(chain: Chain) {
     let stranger = principal(0xA4);
     chain
         .transact(REGISTRAR, |b| {
-            let registrar = account::authorize(b, REGISTRAR)?;
-            let entry = issuer.register(b, registrar, 3)?;
+            let entry = issuer.register(b, 3)?;
             account::deposit_nf(b, stranger, entry)
         })
         .expect_completed();

@@ -90,8 +90,8 @@ fn the_round_settles_on_the_entrant_its_sealed_draw_picks() {
 
     let enter = |who: PrincipalAddr, stake: u128| {
         graph(move |b| {
-            let proof = account::authorize(b, who)?;
-            let funds = account::withdraw(b, proof, RES_X, stake)?;
+            let entrant = account::authorize(b, who)?;
+            let funds = b.presenting(entrant, |b| account::withdraw(b, who, RES_X, stake))?;
             lottery_addr().enter(b, who, funds)
         })
     };
@@ -183,8 +183,7 @@ fn a_settled_round_refuses_a_second_settlement() {
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
 
     let enter = graph(|b| {
-        let proof = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, proof, RES_X, 100)?;
+        let funds = account::withdraw(b, ALICE, RES_X, 100)?;
         lottery_addr().enter(b, ALICE, funds)
     });
     let close = graph(|b| lottery_addr().close(b));
@@ -258,8 +257,7 @@ fn a_settlement_buys_a_page_past_any_ceiling() {
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
 
     let enter = graph(|b| {
-        let proof = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, proof, RES_X, 100)?;
+        let funds = account::withdraw(b, ALICE, RES_X, 100)?;
         lottery_addr().enter(b, ALICE, funds)
     });
     let close = graph(|b| lottery_addr().close(b));
@@ -300,8 +298,8 @@ fn a_settlement_declines_a_page_that_did_not_cover_the_round() {
 
     let enter = |who: PrincipalAddr| {
         graph(move |b| {
-            let proof = account::authorize(b, who)?;
-            let funds = account::withdraw(b, proof, RES_X, 100)?;
+            let entrant = account::authorize(b, who)?;
+            let funds = b.presenting(entrant, |b| account::withdraw(b, who, RES_X, 100))?;
             lottery_addr().enter(b, who, funds)
         })
     };

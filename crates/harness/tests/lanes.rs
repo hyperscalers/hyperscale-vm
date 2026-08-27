@@ -86,8 +86,7 @@ fn pool(mut chain: Chain) -> (Chain, amm::Amm) {
 fn swap(chain: Chain, floor: u128) -> (Receipt, [u128; 4]) {
     let (mut chain, pool) = pool(chain);
     let outcome = chain.transact(ALICE, |b| {
-        let signed_in = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, signed_in, X, 500)?;
+        let funds = account::withdraw(b, ALICE, X, 500)?;
         let bought = pool.swap(b, funds, floor)?;
         account::deposit(b, ALICE, bought)
     });
@@ -149,8 +148,7 @@ fn a_transfer_reads_the_same_in_both_lanes() {
     let run = |mut chain: Chain| {
         chain.credit(ALICE, X, 100);
         let outcome = chain.transact(ALICE, |b| {
-            let signed_in = account::authorize(b, ALICE)?;
-            let funds = account::withdraw(b, signed_in, X, 40)?;
+            let funds = account::withdraw(b, ALICE, X, 40)?;
             account::deposit(b, bob, funds)
         });
         let receipt = outcome.receipt().clone();
@@ -451,8 +449,7 @@ fn an_edge_of_any_width_is_read_and_retired_whole_in_both_lanes() {
         // clause each, and what it answers is their sum.
         chain
             .transact(ALICE, |b| {
-                let signed_in = account::authorize(b, ALICE)?;
-                let edge = account::withdraw_nf(b, signed_in, seat, &ids)?;
+                let edge = account::withdraw_nf(b, ALICE, seat, &ids)?;
                 let back = shapes.survey(b, edge)?;
                 account::deposit_nf(b, ALICE, back)
             })
@@ -463,8 +460,7 @@ fn an_edge_of_any_width_is_read_and_retired_whole_in_both_lanes() {
 
         chain
             .transact(ALICE, |b| {
-                let signed_in = account::authorize(b, ALICE)?;
-                let edge = account::withdraw_nf(b, signed_in, seat, &ids)?;
+                let edge = account::withdraw_nf(b, ALICE, seat, &ids)?;
                 shapes.unseat(b, edge)
             })
             .expect_completed();
@@ -559,8 +555,7 @@ fn a_run_over_vaults_reads_at_its_own_mode_in_both_lanes() {
             chain.credit(ALICE, asset, held);
             chain
                 .transact(ALICE, |b| {
-                    let signed_in = account::authorize(b, ALICE)?;
-                    let funds = account::withdraw(b, signed_in, asset, held)?;
+                    let funds = account::withdraw(b, ALICE, asset, held)?;
                     shapes.fund(b, funds)
                 })
                 .expect_completed();
@@ -614,8 +609,7 @@ fn two_sites_of_different_modes_walk_one_loop_in_both_lanes() {
             chain.credit(ALICE, asset, held);
             chain
                 .transact(ALICE, |b| {
-                    let signed_in = account::authorize(b, ALICE)?;
-                    let funds = account::withdraw(b, signed_in, asset, held)?;
+                    let funds = account::withdraw(b, ALICE, asset, held)?;
                     shapes.fund(b, funds)
                 })
                 .expect_completed();
@@ -656,8 +650,7 @@ fn a_run_of_reservations_grants_per_element_in_both_lanes() {
             chain.credit(ALICE, asset, held);
             chain
                 .transact(ALICE, |b| {
-                    let signed_in = account::authorize(b, ALICE)?;
-                    let funds = account::withdraw(b, signed_in, asset, held)?;
+                    let funds = account::withdraw(b, ALICE, asset, held)?;
                     shapes.fund(b, funds)
                 })
                 .expect_completed();
@@ -872,8 +865,7 @@ fn a_run_over_holdings_moves_instances_in_both_lanes() {
             }
             chain
                 .transact(ALICE, |b| {
-                    let signed_in = account::authorize(b, ALICE)?;
-                    let edge = account::withdraw_nf(b, signed_in, *mark, &ids)?;
+                    let edge = account::withdraw_nf(b, ALICE, *mark, &ids)?;
                     custodian.stow(b, edge)
                 })
                 .expect_completed();
@@ -1066,8 +1058,7 @@ fn an_instance_rewrites_only_while_it_is_live_in_both_lanes() {
 
         chain
             .transact(ALICE, |b| {
-                let signed_in = account::authorize(b, ALICE)?;
-                let edge = account::withdraw_nf(b, signed_in, seat, &[3])?;
+                let edge = account::withdraw_nf(b, ALICE, seat, &[3])?;
                 shapes.unseat(b, edge)
             })
             .expect_completed();
@@ -1135,8 +1126,7 @@ fn a_burned_instance_frees_its_cell_and_its_id_in_both_lanes() {
 
         chain
             .transact(ALICE, |b| {
-                let signed_in = account::authorize(b, ALICE)?;
-                let edge = account::withdraw_nf(b, signed_in, seat, &[3])?;
+                let edge = account::withdraw_nf(b, ALICE, seat, &[3])?;
                 shapes.unseat(b, edge)
             })
             .expect_completed();
@@ -1210,8 +1200,7 @@ fn the_instance_an_edge_carries_reads_the_same_in_both_lanes() {
 
         let read = |chain: &mut Chain, ids: &[u64]| {
             chain.try_transact(ALICE, |b| {
-                let signed_in = account::authorize(b, ALICE)?;
-                let edge = account::withdraw_nf(b, signed_in, seat, ids)?;
+                let edge = account::withdraw_nf(b, ALICE, seat, ids)?;
                 let handed_back = shapes.seated(b, edge)?;
                 account::deposit_nf(b, ALICE, handed_back)
             })

@@ -468,8 +468,7 @@ pub fn register_pool_meta() -> InstanceMeta {
 /// shares.
 pub fn register_swap_graph(min_out: u128) -> ManifestGraph {
     graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, RES_X, 500)?;
+        let funds = account::withdraw(b, ALICE, RES_X, 500)?;
         let out = register_pool().swap(b, funds, min_out)?;
         account::deposit(b, ALICE, out)
     })
@@ -896,8 +895,7 @@ pub fn graph_in(
 
 pub fn transfer_graph() -> ManifestGraph {
     graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, RES_X, 100)?;
+        let funds = account::withdraw(b, ALICE, RES_X, 100)?;
         account::deposit(b, BOB, funds)
     })
 }
@@ -934,8 +932,7 @@ pub fn propose_graph() -> ManifestGraph {
 
 pub fn swap_graph(min_out: u128) -> ManifestGraph {
     graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = account::withdraw(b, alice, RES_X, 500)?;
+        let funds = account::withdraw(b, ALICE, RES_X, 500)?;
         let out = pool().swap(b, funds, min_out)?;
         account::deposit(b, ALICE, out)
     })
@@ -944,7 +941,7 @@ pub fn swap_graph(min_out: u128) -> ManifestGraph {
 pub fn fill_graph() -> ManifestGraph {
     graph(|b| {
         let taker = account::authorize(b, TAKER)?;
-        let payment = account::withdraw(b, taker, QUOTE, 100)?;
+        let payment = b.presenting(taker, |b| account::withdraw(b, TAKER, QUOTE, 100))?;
         let [bought, refund] = book().fill_asks(b, 3, 5, payment)?;
         account::deposit(b, TAKER, bought)?;
         account::deposit(b, TAKER, refund)

@@ -34,8 +34,7 @@ fn ladder(mut chain: Chain) -> (Chain, Book) {
 fn place(chain: &mut Chain, ladder: Book, ticks: u64, size: u128) {
     chain
         .transact(MAKER, |b| {
-            let signed_in = account::authorize(b, MAKER)?;
-            let offered = account::withdraw(b, signed_in, BASE_ASSET, size)?;
+            let offered = account::withdraw(b, MAKER, BASE_ASSET, size)?;
             ladder.place_ask(b, ticks, offered)
         })
         .expect_completed();
@@ -44,8 +43,7 @@ fn place(chain: &mut Chain, ladder: Book, ticks: u64, size: u128) {
 fn fill(chain: &mut Chain, ladder: Book, from: u64, to: u64, budget: u128) {
     chain
         .transact(TAKER, |b| {
-            let signed_in = account::authorize(b, TAKER)?;
-            let payment = account::withdraw(b, signed_in, QUOTE_ASSET, budget)?;
+            let payment = account::withdraw(b, TAKER, QUOTE_ASSET, budget)?;
             let [bought, change] = ladder.fill_asks(b, from, to, payment)?;
             account::deposit(b, TAKER, bought)?;
             account::deposit(b, TAKER, change)
@@ -63,8 +61,7 @@ fn an_unpriced_ask_is_refused_where_it_would_be_placed(chain: Chain) {
     let (mut chain, ladder) = ladder(chain);
 
     let outcome = chain.transact(MAKER, |b| {
-        let signed_in = account::authorize(b, MAKER)?;
-        let offered = account::withdraw(b, signed_in, BASE_ASSET, 100)?;
+        let offered = account::withdraw(b, MAKER, BASE_ASSET, 100)?;
         ladder.place_ask(b, 0, offered)
     });
 

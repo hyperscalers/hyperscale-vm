@@ -33,8 +33,7 @@ fn world(mut chain: Chain) -> (Chain, security::client::Security) {
     let issuer = chain.instantiate::<security::client::Security>(REGISTRAR, terms());
     chain
         .transact(REGISTRAR, |b| {
-            let registrar = account::authorize(b, REGISTRAR)?;
-            let entry = issuer.register(b, registrar, 1)?;
+            let entry = issuer.register(b, 1)?;
             account::deposit_nf(b, HOLDER, entry)
         })
         .expect_completed();
@@ -67,8 +66,7 @@ fn a_share_reaches_nobody_the_register_does_not_name(chain: Chain) {
 
     let refused = chain
         .try_transact(HOLDER, |b| {
-            let holder = account::authorize(b, HOLDER)?;
-            let moved = account::withdraw(b, holder, share, 10u128)?;
+            let moved = account::withdraw(b, HOLDER, share, 10u128)?;
             account::deposit(b, STRANGER, moved)
         })
         .expect("a party off the register is not a reason to refuse the manifest");
