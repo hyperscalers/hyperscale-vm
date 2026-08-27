@@ -207,6 +207,15 @@ fn the_lowering_refuses_a_gate_on_a_private_method() {
     refuse.compile_fail("tests/refusals/private_gated.rs");
 }
 
+/// A gate in another type's impl block guards nothing either: only the
+/// state struct's own methods lower, and the attribute would be
+/// silently stripped with the export the author thought they wrote.
+#[test]
+fn the_lowering_refuses_a_gate_outside_the_state_impl() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/foreign_gated.rs");
+}
+
 /// A published name names one export. The collision the `instantiate`
 /// check already caught for the seal is every name's hazard, and it
 /// refuses at the line that wrote it rather than panicking inside the

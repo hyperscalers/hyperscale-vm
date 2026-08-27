@@ -1,0 +1,5 @@
+error: a gate guards a published method, and only `Contract`'s own methods publish — move the method into its impl, or drop the attribute
+  --> tests/refusals/foreign_gated.rs:14:9
+   |
+14 |         #[requires(self)]
+   |         ^^^^^^^^^^^^^^^^^

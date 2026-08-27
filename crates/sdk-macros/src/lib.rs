@@ -781,6 +781,29 @@ fn lower_methods(
             continue;
         };
         if !matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name)) {
+            // Another type's impl publishes nothing, and `strip` removes
+            // the macro's attributes from every fn — so a gate here
+            // would vanish without a word, exactly like one on a private
+            // method.
+            for item in &block.items {
+                let syn::ImplItem::Fn(method) = item else {
+                    continue;
+                };
+                if let Some(gate) = method
+                    .attrs
+                    .iter()
+                    .find(|attr| attr.path().is_ident("requires") || attr.path().is_ident("proves"))
+                {
+                    return Err(syn::Error::new_spanned(
+                        gate,
+                        format!(
+                            "a gate guards a published method, and only `{state_name}`'s own \
+                             methods publish — move the method into its impl, or drop the \
+                             attribute"
+                        ),
+                    ));
+                }
+            }
             continue;
         }
         for item in &block.items {
