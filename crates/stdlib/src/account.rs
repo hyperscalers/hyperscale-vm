@@ -28,6 +28,23 @@ mod package;
 pub use package::account::Pending;
 pub use package::account::client::*;
 
+/// Sign in as the principal the builder declares: [`authorize`], with
+/// the signer the builder already names rather than a second naming of
+/// the same party.
+///
+/// The explicit form stays for a composition signing into another
+/// party's account through that account's own stored rule; this one is
+/// for the intent's own principal, where naming anyone else would only
+/// be the disagreement admission refuses.
+///
+/// # Errors
+///
+/// As [`authorize`].
+pub fn sign_in(builder: &mut TypedBuilder<'_>) -> Result<Proof, TypedError> {
+    let who = builder.signer();
+    authorize(builder, who)
+}
+
 /// One replacement as the cell holds it.
 ///
 /// The account's own encoder rather than a second one beside it: a

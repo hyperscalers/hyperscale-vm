@@ -166,6 +166,23 @@ fn the_account_wrappers_match_their_signatures() {
     assert_eq!(graph.nodes.len(), 8);
 }
 
+/// Signing in without naming a principal signs in as the builder's own
+/// signer: the two spellings compose one graph.
+#[test]
+fn sign_in_is_authorize_as_the_builders_own_signer() {
+    let named = admits(|b| {
+        let alice = account::authorize(b, ALICE)?;
+        let funds = account::withdraw(b, alice, BASE, 100)?;
+        account::deposit(b, BOB, funds)
+    });
+    let seeded = admits(|b| {
+        let alice = account::sign_in(b)?;
+        let funds = account::withdraw(b, alice, BASE, 100)?;
+        account::deposit(b, BOB, funds)
+    });
+    assert_eq!(named, seeded);
+}
+
 /// A rule literal is judged by decoding it as the vocabulary — the same
 /// predicate admission runs — so a threshold its own branches can never
 /// meet is refused at the call site that writes it.
