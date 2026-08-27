@@ -17,8 +17,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use hyperscale_vm_cli::{
-    Address, BuildError, Provenance, artifact, artifact_path, build, declaration, explain,
-    explain_issued, explain_method, scaffold,
+    Address, BuildError, NetworkId, PrincipalAddr, Provenance, artifact, artifact_path, build,
+    declaration, explain, explain_issued, explain_method, publish_envelope, scaffold,
 };
 
 const USAGE: &str = "\
@@ -27,7 +27,11 @@ cargo hyperscale — build a package crate into an artifact the chain admits
     cargo hyperscale new <path>      scaffold a package crate; --member joins
                                      the enclosing guests workspace instead of
                                      standing alone
-    cargo hyperscale build [dir]     build, attach, and admit; writes the artifact
+    cargo hyperscale build [dir]     build, attach, and admit; writes the artifact.
+                                     With `--envelope <out> --payer <addr>
+                                     --network <id>`, also writes the unsigned
+                                     publish intent a host with keys signs and
+                                     submits
     cargo hyperscale check [dir]     the same verdict, without the write
     cargo hyperscale explain [dir]   print what the package declares
 
@@ -73,6 +77,12 @@ struct Invocation {
     member: bool,
     method: Option<String>,
     resources: bool,
+    /// Where the unsigned publish intent goes, when the build writes one.
+    envelope: Option<PathBuf>,
+    /// Who the intent names as its fee payer.
+    payer: Option<Address>,
+    /// Which network the intent is for.
+    network: Option<u8>,
     /// The configuration a resource's rules seal against, by field name.
     config: BTreeMap<String, Address>,
     instance: Option<Address>,
@@ -100,6 +110,9 @@ impl Invocation {
             member: false,
             method: None,
             resources: false,
+            envelope: None,
+            payer: None,
+            network: None,
             config: BTreeMap::new(),
             instance: None,
         };
@@ -119,6 +132,27 @@ impl Invocation {
                     invocation
                         .config
                         .insert(field.to_owned(), read_address(address)?);
+                }
+                "--envelope" => {
+                    let out = rest
+                        .next()
+                        .ok_or_else(|| BuildError("`--envelope` takes an output path".into()))?;
+                    invocation.envelope = Some(PathBuf::from(out));
+                }
+                "--payer" => {
+                    let text = rest
+                        .next()
+                        .ok_or_else(|| BuildError("`--payer` takes an address".into()))?;
+                    invocation.payer = Some(read_address(text)?);
+                }
+                "--network" => {
+                    let text = rest
+                        .next()
+                        .ok_or_else(|| BuildError("`--network` takes a network id".into()))?;
+                    invocation.network = Some(
+                        text.parse()
+                            .map_err(|error| BuildError(format!("{text}: {error}")))?,
+                    );
                 }
                 "--instance" => {
                     let text = rest
@@ -186,7 +220,27 @@ fn run(args: &[String]) -> Result<String, BuildError> {
         Some("build") => {
             let path = build(&invocation.target(), invocation.provenance())?;
             let bytes = std::fs::metadata(&path).map_or(0, |file| file.len());
-            Ok(format!("wrote {} ({bytes} bytes)", path.display()))
+            let Some(out) = &invocation.envelope else {
+                return Ok(format!("wrote {} ({bytes} bytes)", path.display()));
+            };
+            let (Some(payer), Some(network)) = (invocation.payer, invocation.network) else {
+                return Err(BuildError(
+                    "`--envelope` names a fee payer and a network: pass `--payer <addr>`                      and `--network <id>`"
+                        .into(),
+                ));
+            };
+            let payer = PrincipalAddr::try_from(payer)
+                .map_err(|_| BuildError("`--payer` takes a principal's address".into()))?;
+            let artifact_bytes = std::fs::read(&path)
+                .map_err(|error| BuildError(format!("read {}: {error}", path.display())))?;
+            let intent = publish_envelope(artifact_bytes, payer, NetworkId(network))?;
+            std::fs::write(out, &intent)
+                .map_err(|error| BuildError(format!("write {}: {error}", out.display())))?;
+            Ok(format!(
+                "wrote {} ({bytes} bytes)\nwrote {} — the unsigned publish intent; a host                  with keys states its terms, signs, and submits it",
+                path.display(),
+                out.display()
+            ))
         }
         Some("check") => {
             let bytes = artifact(&invocation.target(), invocation.provenance())?;

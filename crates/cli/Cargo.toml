@@ -10,7 +10,12 @@ name = "cargo-hyperscale"
 path = "src/bin/cargo-hyperscale.rs"
 
 [dependencies]
+hyperscale-hbor.workspace = true
 hyperscale-vm-effects.workspace = true
+# The publish envelope: the last mile between the artifact and the
+# transaction a host signs.
+hyperscale-vm-manifest-builder.workspace = true
+hyperscale-vm-types.workspace = true
 # The publish gate, run locally against exactly the bytes a publish would
 # carry: a package that builds here has passed the call admission runs.
 hyperscale-vm-gate.workspace = true
@@ -21,8 +26,10 @@ thiserror.workspace = true
 wit-component.workspace = true
 
 [dev-dependencies]
+hyperscale-hbor.workspace = true
 hyperscale-vm-fixtures.workspace = true
 hyperscale-vm-gate.workspace = true
+hyperscale-vm-types.workspace = true
 
 [lints]
 workspace = true

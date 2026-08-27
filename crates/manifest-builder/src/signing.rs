@@ -69,6 +69,35 @@ pub fn wrap(
     }
 }
 
+/// An unsigned envelope publishing `artifact`, naming `payer` and
+/// `network`.
+///
+/// The `Publish` twin of [`wrap`]: same terms, same signing path, and a
+/// body that carries the artifact's bytes instead of a call tree. A
+/// host with keys signs it with [`sign`], exactly as it signs a call.
+#[must_use]
+pub fn wrap_publish(
+    artifact: Vec<u8>,
+    payer: PrincipalAddr,
+    network: NetworkId,
+    terms: Terms,
+) -> TransactionEnvelope {
+    TransactionEnvelope {
+        body: TransactionBody::Publish(artifact),
+        subintent_sigs: Vec::new(),
+        fee_payer: payer,
+        max_fee: terms.max_fee,
+        gas_limit: terms.gas_limit,
+        validity_start_ms: terms.validity_start_ms,
+        validity_end_ms: terms.validity_end_ms,
+        message: terms.message,
+        network,
+        signer_scheme: SchemeId::NONE,
+        signer: Vec::new(),
+        signature: Vec::new(),
+    }
+}
+
 /// Sign an envelope's content, filling its scheme, key and signature.
 ///
 /// The scheme is stamped before the preimage is taken, because a scheme

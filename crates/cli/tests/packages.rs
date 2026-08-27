@@ -328,3 +328,28 @@ fn a_manifest_without_the_module_key_names_the_key_to_add() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The publish intent round-trips the codec carrying exactly the bytes
+/// the gate admitted, unsigned and naming its payer and network.
+#[test]
+fn the_publish_envelope_carries_the_admitted_artifact() {
+    use hyperscale_hbor::from_slice as decode;
+    use hyperscale_vm_cli::{NetworkId, PrincipalAddr, publish_envelope};
+    use hyperscale_vm_gate::admit_package;
+    use hyperscale_vm_types::{SchemeId, TransactionBody, TransactionEnvelope};
+
+    let dir = guests().join("flashloan");
+    let bytes = artifact(&dir, Provenance::Published).expect("flashloan builds");
+    let payer = PrincipalAddr::new([0x41; 31]);
+    let intent = publish_envelope(bytes.clone(), payer, NetworkId(7)).expect("the intent encodes");
+
+    let decoded: TransactionEnvelope = decode(&intent).expect("the intent round-trips");
+    assert_eq!(decoded.network, NetworkId(7));
+    assert_eq!(decoded.fee_payer, payer);
+    assert_eq!(decoded.signer_scheme, SchemeId::NONE, "unsigned");
+    let TransactionBody::Publish(carried) = decoded.body else {
+        panic!("a publish body");
+    };
+    assert_eq!(carried, bytes, "exactly the artifact the gate admitted");
+    admit_package(&carried).expect("the same gate admits the carried bytes");
+}

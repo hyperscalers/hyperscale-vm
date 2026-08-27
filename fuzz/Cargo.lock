@@ -638,9 +638,12 @@ dependencies = [
 name = "hyperscale-vm-cli"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-hbor",
  "hyperscale-vm-effects",
  "hyperscale-vm-gate",
+ "hyperscale-vm-manifest-builder",
  "hyperscale-vm-runtime",
+ "hyperscale-vm-types",
  "serde_json",
  "thiserror 2.0.19",
  "wit-component",

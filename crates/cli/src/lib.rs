@@ -25,6 +25,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use hyperscale_hbor::to_vec;
 // The address vocabulary a caller writes on the command line, re-exported
 // beside the renderer that reads one.
 pub use hyperscale_vm_effects::{Address, AddressClass, PackageMetadata};
@@ -36,7 +37,9 @@ use hyperscale_vm_effects::{
 pub use hyperscale_vm_effects::{explain, explain_method};
 pub use hyperscale_vm_gate::{GateError, Provenance};
 use hyperscale_vm_gate::{admit_package, admit_protocol_package, attach_metadata, decode_metadata};
+use hyperscale_vm_manifest_builder::signing::{Terms, wrap_publish};
 use hyperscale_vm_runtime::validate_component;
+pub use hyperscale_vm_types::{NetworkId, PrincipalAddr};
 use serde_json::{Value as Json, from_str};
 use wit_component::ComponentEncoder;
 
@@ -395,6 +398,40 @@ pub fn artifact(dir: &Path, provenance: Provenance) -> Result<Vec<u8>, BuildErro
     }
     .map_err(|refusal| BuildError::new(explain_gate_refusal(&refusal, &metadata)))?;
     Ok(artifact)
+}
+
+/// The canonical unsigned publish intent for `artifact`, as the bytes a
+/// host with keys decodes, terms, signs, and submits.
+///
+/// The scheme is none and the terms are zero: which fee a payer offers
+/// and which window they sign for are theirs to state before signing,
+/// and the CLI's whole say is the body — the artifact it just admitted,
+/// wrapped the way [`hyperscale_vm_manifest_builder::signing::sign`]
+/// expects to receive it.
+///
+/// # Errors
+///
+/// [`BuildError`] if the envelope does not encode, which an artifact
+/// within the wire caps never is.
+pub fn publish_envelope(
+    artifact: Vec<u8>,
+    payer: PrincipalAddr,
+    network: NetworkId,
+) -> Result<Vec<u8>, BuildError> {
+    let envelope = wrap_publish(
+        artifact,
+        payer,
+        network,
+        Terms {
+            max_fee: 0,
+            gas_limit: 0,
+            validity_start_ms: 0,
+            validity_end_ms: 0,
+            message: Vec::new(),
+        },
+    );
+    to_vec(&envelope)
+        .map_err(|error| BuildError::new(format!("encode the publish envelope: {error}")))
 }
 
 /// A gate refusal, with the declaration of the method it is about
