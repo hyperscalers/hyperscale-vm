@@ -470,11 +470,13 @@ fn ticket_order() -> u128 {
 /// one entrant's ticket for it to select.
 fn closed_round() -> MemoryStore {
     let mut store = MemoryStore::new();
-    // The kernel's own leaf: the epoch it stamped, little-endian. Built
-    // here rather than sealed through a session, on the same terms as
-    // the word below — a change to what a seal holds fails here rather
-    // than agreeing with itself.
-    store.write(round_key(), SEALED_AT.to_le_bytes().to_vec());
+    // The kernel's own leaf: its tag, then the epoch it stamped,
+    // little-endian. Built here rather than sealed through a session, on
+    // the same terms as the word below — a change to what a seal holds
+    // fails here rather than agreeing with itself.
+    let mut sealed = vec![0x5E];
+    sealed.extend_from_slice(&SEALED_AT.to_le_bytes());
+    store.write(round_key(), sealed);
     store.entry_write(
         LOTTERY,
         ticket_collection(),

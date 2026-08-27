@@ -19,15 +19,37 @@ use crate::store::WorkingStore as _;
 /// its own draw from parts it holds would not need the seal.
 pub const DOMAIN_SEALED_DRAW: &[u8] = b"hyperscale/vm/sealed-draw";
 
+/// The byte a seal cell's bytes open with: what marks them as the
+/// kernel's own writing rather than a record sharing the width.
+///
+/// A bare eight-byte epoch would read any guest-written `u64` — a
+/// counter, a timestamp — as a seal, and one whose figure decodes to a
+/// lapsed epoch would then be silently overwritten by `seal`. The tag
+/// is what lets those refuse as `NotASeal` instead; a body that spells
+/// the seal's own shape by hand has said what it means the cell for.
+const SEAL_TAG: u8 = 0x5E;
+
 /// The epoch a seal cell's bytes record.
 ///
-/// Eight little-endian bytes and nothing else, because the kernel is the
-/// only writer: anything of another width is a package that wrote over
-/// its own seal through the same handle it opens with.
+/// The tag and eight little-endian bytes, and nothing else: anything of
+/// another shape is a package that wrote over its own seal through the
+/// same handle it opens with.
 fn sealed_epoch(site: u32, held: &[u8]) -> Result<u64, SessionTrap> {
-    held.try_into()
-        .map(u64::from_le_bytes)
-        .map_err(|_| SessionTrap::NotASeal(site))
+    match held {
+        [SEAL_TAG, epoch @ ..] => epoch
+            .try_into()
+            .map(u64::from_le_bytes)
+            .map_err(|_| SessionTrap::NotASeal(site)),
+        _ => Err(SessionTrap::NotASeal(site)),
+    }
+}
+
+/// The bytes `seal` writes: the running epoch behind the kernel's tag.
+fn seal_bytes(epoch: u64) -> Vec<u8> {
+    let mut sealed = Vec::with_capacity(1 + size_of::<u64>());
+    sealed.push(SEAL_TAG);
+    sealed.extend_from_slice(&epoch.to_le_bytes());
+    sealed
 }
 
 impl KernelSession {
@@ -65,9 +87,7 @@ impl KernelSession {
         {
             return Err(SessionTrap::SealStanding(site));
         }
-        Ok(self
-            .store
-            .write(key, self.env.epoch.to_le_bytes().to_vec())?)
+        Ok(self.store.write(key, seal_bytes(self.env.epoch))?)
     }
 
     /// The draw the seal in this cell matures into.
@@ -225,14 +245,26 @@ mod tests {
     /// destroy them through the very handle that wrote them — and it is
     /// the same `NotASeal` an opened-over cell answers, because both are
     /// one fact: this cell does not hold a seal.
+    ///
+    /// The eight-byte case is the tag's whole reason: an untagged `u64`
+    /// counter whose figure decodes to a long-lapsed epoch is exactly
+    /// what a width-only reading would have read as a replaceable seal
+    /// and silently emptied.
     #[test]
     fn a_cell_holding_guest_bytes_takes_no_seal() {
-        let set = writing(key(1));
-        let mut session = session_for(MemoryStore::new(), &set, sealed_env(9), tx(1));
-        session
-            .write_cell_set(0, 0, vec![0xAB; 3])
-            .expect("a write handle sets");
-        assert_eq!(session.seal(0, 0), Err(SessionTrap::NotASeal(0)));
+        for guest_bytes in [vec![0xAB; 3], 2u64.to_le_bytes().to_vec()] {
+            let set = writing(key(1));
+            let mut session = session_for(MemoryStore::new(), &set, sealed_env(9), tx(1));
+            session
+                .write_cell_set(0, 0, guest_bytes.clone())
+                .expect("a write handle sets");
+            assert_eq!(session.seal(0, 0), Err(SessionTrap::NotASeal(0)));
+            assert_eq!(
+                session.cell_get(0, 0),
+                Ok(guest_bytes),
+                "the refusal leaves the guest's bytes standing"
+            );
+        }
     }
 
     /// Two cells, one epoch, two words. The cell's key is what separates
@@ -261,10 +293,12 @@ mod tests {
     #[test]
     fn a_seal_records_the_epoch_the_kernel_is_running() {
         let mut session = sealed_session(&writing(key(1)), sealed_env(9), tx(1));
+        let mut sealed = vec![0x5E];
+        sealed.extend_from_slice(&9u64.to_le_bytes());
         assert_eq!(
             session.cell_get(0, 0),
-            Ok(9u64.to_le_bytes().to_vec()),
-            "the leaf holds the running epoch"
+            Ok(sealed),
+            "the leaf holds the tag and the running epoch"
         );
 
         // The same cell written over by hand, naming an epoch whose seed
@@ -319,7 +353,9 @@ mod tests {
         );
         assert_eq!(lapsed.open_seal(0, 0), Ok(Drawn::Expired));
         assert_eq!(lapsed.seal(0, 0), Ok(()));
-        assert_eq!(lapsed.cell_get(0, 0), Ok(8u64.to_le_bytes().to_vec()));
+        let mut resealed = vec![0x5E];
+        resealed.extend_from_slice(&8u64.to_le_bytes());
+        assert_eq!(lapsed.cell_get(0, 0), Ok(resealed));
     }
 
     /// A seal is opened through the handle that holds it, so a
