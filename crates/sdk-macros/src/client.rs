@@ -232,7 +232,7 @@ fn produced(method: &Method) -> (TokenStream2, TokenStream2) {
         return (
             quote!(#answered<#answer>),
             quote!({
-                let (answer, outputs) = outputs.answering();
+                let (answer, outputs) = outputs.answering()?;
                 outputs.none().map(|()| answer)
             }),
         );
@@ -240,7 +240,7 @@ fn produced(method: &Method) -> (TokenStream2, TokenStream2) {
     (
         quote!((#answered<#answer>, #edges)),
         quote!({
-            let (answer, outputs) = outputs.answering();
+            let (answer, outputs) = outputs.answering()?;
             outputs.#discharge.map(|edges| (answer, edges))
         }),
     )

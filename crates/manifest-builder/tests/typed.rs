@@ -113,6 +113,25 @@ fn a_typed_edge_asserts_its_own_resource() {
     admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
+/// An answer is asked of the declaration, where the method is named,
+/// rather than of the receipt, where nothing would ever be filed.
+#[test]
+fn an_answer_from_a_method_that_answers_nothing_is_refused() {
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
+    let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
+    let funds = b
+        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
+        .unwrap()
+        .one()
+        .unwrap();
+    let outputs = b.call(BOB, "deposit", (funds,)).unwrap();
+    assert!(matches!(
+        outputs.answering::<u128>(),
+        Err(TypedError::AnswersNothing { method }) if method == "deposit"
+    ));
+}
+
 #[test]
 fn a_split_of_a_typed_edge_is_two_typed_edges() {
     let chain = world();

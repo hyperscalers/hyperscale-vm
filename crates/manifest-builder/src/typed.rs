@@ -149,6 +149,14 @@ pub enum TypedError {
         /// The method called.
         method: String,
     },
+    /// An answer requested from a method whose declaration answers with
+    /// no value — refused where the method is named, rather than at the
+    /// receipt where nothing would ever be filed.
+    #[error("`{method}` answers with no value")]
+    AnswersNothing {
+        /// The method called.
+        method: String,
+    },
     /// A proof from a socket named as the actor for a gate on the
     /// target's own identity.
     ///
@@ -299,6 +307,9 @@ pub type Outputs = Unpacked<Bucket, ProducedBy>;
 pub struct ProducedBy {
     pub(crate) method: String,
     pub(crate) node: u32,
+    /// Whether the method's declaration answers with a value — what
+    /// [`answering`](Outputs::answering) is held to.
+    pub(crate) answers: bool,
 }
 
 impl Arity for ProducedBy {
@@ -317,21 +328,32 @@ impl Outputs {
     /// Split off the handle on what this call answered with, leaving the
     /// edges beside it to be discharged like any other call's.
     ///
-    /// Total, and a split rather than a discharge of its own: a method
-    /// answers with at most one value and yields any number of edges,
-    /// and the two are independent facts about its signature. Answering
-    /// is not a third arity — it is a thing that happens alongside
-    /// whichever arity the method has.
+    /// A split rather than a discharge of its own: a method answers with
+    /// at most one value and yields any number of edges, and the two are
+    /// independent facts about its signature. Answering is not a third
+    /// arity — it is a thing that happens alongside whichever arity the
+    /// method has.
     ///
     /// The node is what a receipt files an answer under, so handing it
     /// back typed is what lets a reader ask for the answer rather than
     /// count the calls before it.
-    pub fn answering<T>(self) -> (Answered<T>, Self) {
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::AnswersNothing`] on a method whose declaration
+    /// answers with no value — refused here, where the method is named,
+    /// rather than at the receipt where nothing would ever be filed.
+    pub fn answering<T>(self) -> Result<(Answered<T>, Self), TypedError> {
+        if !self.context.answers {
+            return Err(TypedError::AnswersNothing {
+                method: self.context.method,
+            });
+        }
         let handle = Answered {
             node: self.context.node,
             answer: PhantomData,
         };
-        (handle, self)
+        Ok((handle, self))
     }
 }
 
@@ -343,10 +365,11 @@ impl Outputs {
 /// is the question rather than the answer. A reader hands it to the
 /// receipt.
 ///
-/// The type rides along because the method's own signature knows it. A
-/// caller that had to name both the position and the type could get
-/// either wrong and would learn so from a decode failure rather than
-/// from the compiler.
+/// The type rides along so the reader is not asked to name one at the
+/// receipt. The generated wrappers take it from the method's own
+/// signature; records carry no type names, so a hand author's wrong `T`
+/// surfaces as a decode failure at the receipt rather than from the
+/// compiler.
 #[derive(Debug)]
 pub struct Answered<T> {
     node: u32,
@@ -883,6 +906,7 @@ impl<'a> TypedBuilder<'a> {
                 context: ProducedBy {
                     method: method.to_owned(),
                     node: producer,
+                    answers: signature.answers,
                 },
                 items: buckets,
             },
