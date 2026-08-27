@@ -18,7 +18,7 @@
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_testing::{
-    Chain, Component, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition, Outcome,
+    Chain, Component, Outcome, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition,
     account, address_text, package, principal,
 };
 use security_guest::security;
