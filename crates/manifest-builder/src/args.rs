@@ -13,7 +13,7 @@ use hyperscale_vm_types::{
     Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
 
-use crate::builder::{Bucket, GraphBuilder, SocketRef};
+use crate::builder::{Bucket, BuildError, GraphBuilder, SocketRef};
 
 mod sealed {
     /// The sealing marker for [`Arg`](super::Arg) and
@@ -27,26 +27,26 @@ pub trait Arg: sealed::Sealed {
     /// not make. Binding does not consume: the edge is spent when the node
     /// carrying it is appended, so a layer that judges bound arguments
     /// before appending can refuse without having spent anything.
-    fn bind(self, builder: &GraphBuilder) -> GraphArg;
+    fn bind(self, builder: &mut GraphBuilder) -> GraphArg;
 }
 
 impl sealed::Sealed for u64 {}
 impl Arg for u64 {
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+    fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
         GraphArg::Literal(Value::U64(self))
     }
 }
 
 impl sealed::Sealed for u128 {}
 impl Arg for u128 {
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+    fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
         GraphArg::Literal(Value::U128(self))
     }
 }
 
 impl sealed::Sealed for Address {}
 impl Arg for Address {
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+    fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
         GraphArg::Literal(Value::Address(self))
     }
 }
@@ -62,7 +62,7 @@ macro_rules! address_arg {
         $(
             impl sealed::Sealed for $name {}
             impl Arg for $name {
-                fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+                fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
                     GraphArg::Literal(Value::Address(self.address()))
                 }
             }
@@ -80,35 +80,35 @@ address_arg!(
 
 impl sealed::Sealed for Vec<u8> {}
 impl Arg for Vec<u8> {
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+    fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
         GraphArg::Literal(Value::Bytes(self))
     }
 }
 
 impl sealed::Sealed for &[u8] {}
 impl Arg for &[u8] {
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+    fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
         GraphArg::Literal(Value::Bytes(self.to_vec()))
     }
 }
 
 impl<const N: usize> sealed::Sealed for &[u8; N] {}
 impl<const N: usize> Arg for &[u8; N] {
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+    fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
         GraphArg::Literal(Value::Bytes(self.to_vec()))
     }
 }
 
 impl<const N: usize> sealed::Sealed for [u8; N] {}
 impl<const N: usize> Arg for [u8; N] {
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+    fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
         GraphArg::Literal(Value::Bytes(self.to_vec()))
     }
 }
 
 impl sealed::Sealed for Value {}
 impl Arg for Value {
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+    fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
         GraphArg::Literal(self)
     }
 }
@@ -124,7 +124,7 @@ macro_rules! canonical_bytes_arg {
         $(
             impl sealed::Sealed for $name {}
             impl Arg for $name {
-                fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+                fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
                     GraphArg::Literal(Value::Bytes(
                         self.to_bytes().expect("a value within the caps encodes"),
                     ))
@@ -140,27 +140,34 @@ canonical_bytes_arg!(StoredRule);
 /// whoever built them encoded the rule.
 impl sealed::Sealed for RuleBytes {}
 impl Arg for RuleBytes {
-    fn bind(self, _builder: &GraphBuilder) -> GraphArg {
+    fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
         GraphArg::Literal(Value::Bytes(self.0))
     }
 }
 
 impl sealed::Sealed for Bucket {}
 impl Arg for Bucket {
-    fn bind(self, builder: &GraphBuilder) -> GraphArg {
-        builder.check(&self);
+    fn bind(mut self, builder: &mut GraphBuilder) -> GraphArg {
+        if let Some(error) = self.refused.take() {
+            builder.refuse(error);
+        }
+        if !builder.holds(&self) {
+            // The edge's indices mean nothing in this builder's tables,
+            // and the recorded refusal preempts the graph — so nothing
+            // real binds.
+            builder.refuse(BuildError::ForeignBucket);
+            return GraphArg::Literal(Value::U64(0));
+        }
         self.into_arg()
     }
 }
 
 impl sealed::Sealed for SocketRef {}
 impl Arg for SocketRef {
-    fn bind(self, builder: &GraphBuilder) -> GraphArg {
-        assert_eq!(
-            self.builder,
-            builder.id(),
-            "a socket is consumed by the intent that declared it"
-        );
+    fn bind(self, builder: &mut GraphBuilder) -> GraphArg {
+        if self.builder != builder.id() {
+            builder.refuse(BuildError::ForeignSocket);
+        }
         GraphArg::Socket(self.position)
     }
 }
@@ -204,14 +211,14 @@ address_args!(
 /// A tuple of [`Arg`]s, bound in parameter order.
 pub trait Args: sealed::Sealed {
     /// Bind every element in order.
-    fn bind_all(self, builder: &GraphBuilder) -> Vec<GraphArg>;
+    fn bind_all(self, builder: &mut GraphBuilder) -> Vec<GraphArg>;
 }
 
 macro_rules! impl_args {
     ($($name:ident)*) => {
         impl<$($name: Arg),*> sealed::Sealed for ($($name,)*) {}
         impl<$($name: Arg),*> Args for ($($name,)*) {
-            fn bind_all(self, _builder: &GraphBuilder) -> Vec<GraphArg> {
+            fn bind_all(self, _builder: &mut GraphBuilder) -> Vec<GraphArg> {
                 #[allow(non_snake_case, reason = "one binding per tuple type parameter")]
                 let ($($name,)*) = self;
                 vec![$($name.bind(_builder)),*]

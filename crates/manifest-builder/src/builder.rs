@@ -38,6 +38,27 @@ pub enum BuildError {
     /// More nodes than admission accepts.
     #[error("graph has more nodes than admission can address")]
     TooManyNodes,
+    /// An edge retyped against the resource its producing signature
+    /// declared — an assertion admission would refuse.
+    #[error("the producing signature types this edge as {derived:?}, not {asserted:?}")]
+    ResourceRetyped {
+        /// What the producer declared the edge carries.
+        derived: ResourceAddr,
+        /// What the consumer asserted instead.
+        asserted: ResourceAddr,
+    },
+    /// A bucket bound by a builder that did not mint it, whose indices
+    /// this graph's tables mean nothing by.
+    #[error("a bucket must be consumed by the builder that made it")]
+    ForeignBucket,
+    /// A socket consumed by an intent that did not declare it.
+    #[error("a socket is consumed by the intent that declared it")]
+    ForeignSocket,
+    /// A yield exported carrying constraints — a yield's constraints
+    /// declare the socket it fills, and taking them here would drop
+    /// them silently.
+    #[error("a yield edge's constraints belong on the socket it fills")]
+    ConstrainedExport,
 }
 
 /// One output edge of a node already added to a [`GraphBuilder`], with the
@@ -66,6 +87,11 @@ pub struct Bucket {
     pub(crate) resource: Option<ResourceAddr>,
     /// The consumer's constraints, in the order they were asserted.
     pub(crate) constraints: Vec<Constraint>,
+    /// A composing mistake this handle already saw — an assertion its
+    /// own producer contradicts. Carried rather than panicked, and
+    /// transferred to the builder where the handle binds, so the
+    /// process survives to hand the refusal back at `build`.
+    pub(crate) refused: Option<BuildError>,
 }
 
 impl Bucket {
@@ -103,18 +129,22 @@ impl Bucket {
     /// own — so the argument is the pair of them rather than a single
     /// class, and naming an account or a package here does not compile.
     ///
-    /// # Panics
-    ///
-    /// On an edge whose producing signature already typed it as something
-    /// else. Admission would refuse the assertion anyway; a handle that
-    /// knows its own type can say so at the line that wrote it.
+    /// An edge whose producing signature already typed it as something
+    /// else keeps the handle and carries the refusal: admission would
+    /// refuse the assertion anyway, and the build that consumes this
+    /// handle hands the mistake back as [`BuildError::ResourceRetyped`].
     #[must_use]
-    pub fn resource_is(self, resource: impl Into<ResourceAddr>) -> Self {
+    pub fn resource_is(mut self, resource: impl Into<ResourceAddr>) -> Self {
         let resource = resource.into();
-        assert!(
-            self.resource.is_none_or(|derived| derived == resource),
-            "the producing signature types this edge as a different resource"
-        );
+        if let Some(derived) = self.resource
+            && derived != resource
+        {
+            self.refused.get_or_insert(BuildError::ResourceRetyped {
+                derived,
+                asserted: resource,
+            });
+            return self;
+        }
         self.constrain(Constraint::ResourceIs(resource))
     }
 
@@ -198,6 +228,13 @@ pub struct GraphBuilder {
     /// Where unconsumed outputs go at [`build`](Self::build), if the
     /// author named somewhere.
     rest: Option<PrincipalAddr>,
+    /// The first composing mistake recorded against this builder.
+    ///
+    /// A mistake made through an infallible surface — a foreign handle,
+    /// a constrained yield — poisons the builder instead of killing the
+    /// process, and [`build`](Self::build) hands it back before any
+    /// structural verdict.
+    refused: Option<BuildError>,
 }
 
 /// One output edge slot: what it carries, and whether anything took it.
@@ -216,6 +253,7 @@ impl GraphBuilder {
             nodes: Vec::new(),
             outputs: Vec::new(),
             rest: None,
+            refused: None,
         }
     }
 
@@ -390,6 +428,7 @@ impl GraphBuilder {
             edge: EdgeRef { producer, output },
             resource: slot.resource,
             constraints: Vec::new(),
+            refused: None,
         }
     }
 
@@ -412,17 +451,16 @@ impl GraphBuilder {
         self.nodes.is_empty()
     }
 
-    /// Refuse a handle this builder did not mint, whose indices its tables
-    /// cannot mean anything by.
-    ///
-    /// # Panics
-    ///
-    /// On a bucket made by a different builder.
-    pub(crate) fn check(&self, bucket: &Bucket) {
-        assert_eq!(
-            bucket.builder, self.id,
-            "a bucket must be consumed by the builder that made it"
-        );
+    /// Whether this builder minted `bucket` — the only handles whose
+    /// indices its tables mean anything by.
+    pub(crate) const fn holds(&self, bucket: &Bucket) -> bool {
+        bucket.builder == self.id
+    }
+
+    /// Record a composing mistake; the first one recorded is the one
+    /// [`build`](Self::build) hands back.
+    pub(crate) fn refuse(&mut self, error: BuildError) {
+        self.refused.get_or_insert(error);
     }
 
     /// This builder's identity, for the handles that must remember it.
@@ -434,23 +472,24 @@ impl GraphBuilder {
     /// envelope's [`Binding`] to another intent's socket,
     /// rather than by a node of this graph.
     ///
-    /// # Panics
-    ///
-    /// On a bucket carrying constraints — a yield's constraints are the
-    /// declaration of the socket it fills, and accepting them here would
-    /// drop them silently — and on a bucket made by a different builder.
+    /// A bucket carrying constraints, one made by a different builder,
+    /// or one already carrying a refusal poisons the builder — a
+    /// yield's constraints declare the socket it fills, and a foreign
+    /// handle's indices mean nothing here — and [`build`](Self::build)
+    /// hands the mistake back.
     ///
     /// [`Binding`]: hyperscale_vm_effects::Binding
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "taking the bucket by value is the consumption; a borrow would let it be spent twice"
-    )]
-    pub fn export(&mut self, bucket: Bucket) -> EdgeRef {
-        assert!(
-            bucket.constraints.is_empty(),
-            "a yield edge's constraints belong on the socket it fills"
-        );
-        self.check(&bucket);
+    pub fn export(&mut self, mut bucket: Bucket) -> EdgeRef {
+        if let Some(error) = bucket.refused.take() {
+            self.refuse(error);
+        }
+        if !bucket.constraints.is_empty() {
+            self.refuse(BuildError::ConstrainedExport);
+        }
+        if !self.holds(&bucket) {
+            self.refuse(BuildError::ForeignBucket);
+            return bucket.edge;
+        }
         self.consume(bucket.edge);
         bucket.edge
     }
@@ -477,6 +516,9 @@ impl GraphBuilder {
     /// node order; [`BuildError::TooManyNodes`] past
     /// [`MAX_MANIFEST_NODES`], counted after any rest edges are routed.
     pub fn build(mut self) -> Result<ManifestGraph, BuildError> {
+        if let Some(error) = self.refused.take() {
+            return Err(error);
+        }
         if let Some(sink) = self.rest {
             // Read whole first: routing a rest edge appends to the very
             // table the walk reads.
@@ -537,11 +579,12 @@ mod tests {
     };
     use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
 
-    use super::{BuildError, GraphBuilder, SocketRef};
+    use super::{BuildError, GraphBuilder, SocketRef, next_space};
 
     const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
     const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
     const RES: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+    const OTHER_RES: ResourceAddr = ResourceAddr::new([0xE2; 31]);
 
     #[test]
     fn a_transfer_builds_the_hand_written_graph() {
@@ -633,15 +676,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "the socket it fills")]
     fn a_constrained_export_is_refused() {
         let mut b = GraphBuilder::new();
         let [funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
         let _ = b.export(funds.min(1));
+        assert_eq!(b.build(), Err(BuildError::ConstrainedExport));
     }
 
     #[test]
-    #[should_panic(expected = "the builder that made it")]
     fn a_foreign_bucket_is_refused() {
         let mut minting = GraphBuilder::new();
         let [funds] = minting.call_signed(ALICE, "withdraw", (RES, 100u128));
@@ -651,5 +693,44 @@ mod tests {
             reason = "the tuple is an argument list, not a conversion"
         )]
         let [] = other.call(BOB, "deposit", (funds,));
+        assert_eq!(other.build(), Err(BuildError::ForeignBucket));
+    }
+
+    #[test]
+    fn a_foreign_socket_is_refused() {
+        let socket = SocketRef {
+            builder: next_space(),
+            position: 0,
+        };
+        let mut b = GraphBuilder::new();
+        #[allow(
+            clippy::tuple_array_conversions,
+            reason = "the tuple is an argument list, not a conversion"
+        )]
+        let [] = b.call(BOB, "deposit", (socket,));
+        assert_eq!(b.build(), Err(BuildError::ForeignSocket));
+    }
+
+    #[test]
+    fn a_retyped_edge_carries_the_refusal_to_its_binding() {
+        let mut b = GraphBuilder::new();
+        let [funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
+        // The handle survives the mistaken assertion — the fluent chain
+        // continues — and the mistake surfaces where the graph would.
+        let mut funds = funds;
+        funds.resource = Some(RES);
+        let funds = funds.resource_is(OTHER_RES);
+        #[allow(
+            clippy::tuple_array_conversions,
+            reason = "the tuple is an argument list, not a conversion"
+        )]
+        let [] = b.call(BOB, "deposit", (funds,));
+        assert_eq!(
+            b.build(),
+            Err(BuildError::ResourceRetyped {
+                derived: RES,
+                asserted: OTHER_RES,
+            })
+        );
     }
 }

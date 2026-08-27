@@ -127,6 +127,11 @@ pub enum TypedError {
         /// The parameter position.
         param: u32,
     },
+    /// A proof presented by a builder that did not prove it — a node
+    /// index means nothing in another intent's graph, and cross-intent
+    /// authority travels through a socket, never a foreign handle.
+    #[error("a proof must be presented by the builder that proved it")]
+    ForeignProof,
     /// Outputs unpacked into a different arity than the method declares.
     #[error("`{method}` produces {declared} outputs, unpacked as {claimed}")]
     OutputArity {
@@ -285,14 +290,11 @@ impl Proof {
         self.proves.iter().flatten().any(|proven| proven == claim)
     }
 
-    /// Refuse a proof this builder did not prove, on [`Bucket`]'s terms.
+    /// Whether this builder proved the proof, on [`Bucket`]'s terms.
     ///
     /// [`Bucket`]: crate::Bucket
-    pub(crate) fn check(&self, builder: u64) {
-        assert_eq!(
-            self.builder, builder,
-            "a proof must be presented by the builder that proved it"
-        );
+    pub(crate) const fn proved_by(&self, builder: u64) -> bool {
+        self.builder == builder
     }
 
     /// How a node presents it.
@@ -492,11 +494,6 @@ impl<'a> TypedBuilder<'a> {
     ///
     /// Whatever `write` itself refuses; the scope adds no refusals.
     ///
-    /// # Panics
-    ///
-    /// On a proof made by a different builder, on [`Bucket`]'s terms.
-    ///
-    /// [`Bucket`]: crate::Bucket
     pub fn presenting<R>(
         &mut self,
         evidence: impl Evidence,
@@ -504,7 +501,9 @@ impl<'a> TypedBuilder<'a> {
     ) -> Result<R, TypedError> {
         let proofs = evidence.proofs();
         for proof in &proofs {
-            proof.check(self.graph.id());
+            if !proof.proved_by(self.graph.id()) {
+                return Err(TypedError::ForeignProof);
+            }
         }
         self.scopes.push(proofs);
         let written = write(self);
@@ -925,14 +924,16 @@ impl<'a> TypedBuilder<'a> {
         // cross-intent authority travels through a socket, never by
         // presenting a foreign handle.
         for proof in proofs {
-            proof.check(self.graph.id());
+            if !proof.proved_by(self.graph.id()) {
+                return Err(TypedError::ForeignProof);
+            }
         }
         let (meta, package) = self.resolve(target, method)?;
         let signature = &package.methods[method];
         let meta = meta.as_ref();
         let hasher = self.hasher;
 
-        let args = args.bind_all(&self.graph);
+        let args = args.bind_all(&mut self.graph);
         let (values, known) = typed_values(method, &args, &signature.params)?;
 
         // What the resources this call moves and the authority it

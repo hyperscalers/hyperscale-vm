@@ -10,5 +10,5 @@ error[E0277]: the trait bound `ResourceAddr: From<PrincipalAddr>` is not satisfi
 note: required by a bound in `Bucket::resource_is`
   --> src/builder.rs
    |
-   |     pub fn resource_is(self, resource: impl Into<ResourceAddr>) -> Self {
-   |                                             ^^^^^^^^^^^^^^^^^^ required by this bound in `Bucket::resource_is`
+   |     pub fn resource_is(mut self, resource: impl Into<ResourceAddr>) -> Self {
+   |                                                 ^^^^^^^^^^^^^^^^^^ required by this bound in `Bucket::resource_is`

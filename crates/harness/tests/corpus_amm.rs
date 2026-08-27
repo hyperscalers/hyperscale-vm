@@ -482,7 +482,7 @@ fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeErr
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR);
     let registrar = account::authorize(&mut root, REGISTRAR)?;
-    let offered = root.offer(registrar);
+    let offered = root.offer(registrar).expect("the root's own proof offers");
     let wants = env
         .adopt(ALICE, request)?
         .one()

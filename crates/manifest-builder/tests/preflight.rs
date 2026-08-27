@@ -294,7 +294,7 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     let request = root;
     let mut sub = env.subintent(DESK);
     let desk = account::authorize(&mut sub, DESK).unwrap();
-    let offered = sub.offer(desk);
+    let offered = sub.offer(desk).expect("the intent's own proof offers");
     let wants = env.seal(request).unwrap().one().unwrap();
     env.seal(sub).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();
@@ -459,7 +459,7 @@ fn a_conjunction_reports_what_each_branch_asks() {
 
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK);
     let desk = account::authorize(&mut root, DESK).unwrap();
-    let offered = root.offer(desk);
+    let offered = root.offer(desk).expect("the intent's own proof offers");
     let wants = env.adopt(BOB, request).unwrap().one().unwrap();
     env.seal(root).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();

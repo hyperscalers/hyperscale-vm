@@ -13,7 +13,9 @@ use hyperscale_vm_effects::{
     ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, Socket, StoredRule, TestHasher, Value,
     admit_tree,
 };
-use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
+use hyperscale_vm_manifest_builder::{
+    BuildError, EnvelopeBuilder, EnvelopeError, IntentBuilder, TypedError,
+};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{Address, AddressClass, PrincipalAddr, ResourceAddr};
 use proptest::prelude::{prop, proptest};
@@ -225,7 +227,9 @@ fn a_proof_offered_to_a_value_socket_is_refused() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let offered = root.offer(alice_proof);
+    let offered = root
+        .offer(alice_proof)
+        .expect("the root's own proof offers");
     let wants = env.adopt(BOB, payment_request(100)).unwrap().one().unwrap();
     // The socket asks for funds; authority is not funds, however the
     // composer wired it.
@@ -358,7 +362,6 @@ fn an_intent_still_under_construction_is_refused() {
 }
 
 #[test]
-#[should_panic(expected = "filled within the envelope that opened it")]
 fn a_handle_from_another_envelope_is_refused() {
     let chain = world();
     let (mut mine, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, BOB);
@@ -369,7 +372,10 @@ fn a_handle_from_another_envelope_is_refused() {
     let (_theirs, mut other) = EnvelopeBuilder::new(&chain, &TestHasher, BOB);
     let funds = account::withdraw(&mut other, BOB, RES_X, 100).unwrap();
     let elsewhere = other.export(funds);
-    let _ = mine.bind(wants, elsewhere);
+    let refused = mine
+        .bind(wants, elsewhere)
+        .expect_err("a handle from another envelope");
+    assert_eq!(refused.cause, EnvelopeError::ForeignBinding);
 }
 
 /// An intent filling its own socket is a cycle admission names in
@@ -402,19 +408,22 @@ fn an_intent_filling_its_own_socket_is_refused_at_the_wiring() {
 /// site rather than reaching admission as a claim mismatch in
 /// flattened-tree coordinates.
 #[test]
-#[should_panic(expected = "the builder that proved it")]
 fn a_proof_proved_by_another_intent_cannot_be_offered() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
     let sub = env.subintent(BOB);
-    let _ = sub.offer(alice_proof);
+    assert_eq!(
+        sub.offer(alice_proof).expect_err("a foreign proof"),
+        EnvelopeError::ForeignProof,
+    );
 }
 
 /// The same fence for the socket token: a position indexes the
-/// declaration of the intent that declared it, and nothing else's.
+/// declaration of the intent that declared it, and nothing else's. The
+/// call itself survives — the refusal rides the graph and comes back at
+/// the seal.
 #[test]
-#[should_panic(expected = "the intent that declared it")]
 fn a_socket_token_from_another_intent_cannot_be_consumed() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE);
@@ -423,6 +432,10 @@ fn a_socket_token_from_another_intent_cannot_be_consumed() {
         sub.declare(RES_X, [])
     };
     account::deposit(&mut root, ALICE, theirs).unwrap();
+    assert_eq!(
+        env.seal(root).expect_err("a foreign socket"),
+        EnvelopeError::Intent(TypedError::Build(BuildError::ForeignSocket)),
+    );
 }
 
 proptest! {
@@ -515,7 +528,7 @@ fn approved(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK);
     let desk = account::authorize(&mut root, DESK)?;
-    let offered = root.offer(desk);
+    let offered = root.offer(desk)?;
     let wants = env.adopt(BOB, request)?.one()?;
     env.seal(root)?.none()?;
     env.bind(wants, offered)?;

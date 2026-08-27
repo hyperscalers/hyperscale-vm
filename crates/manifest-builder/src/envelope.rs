@@ -63,6 +63,27 @@ pub enum EnvelopeError {
         /// The intent: `0` is the root, `i + 1` is subintent `i`.
         intent: u32,
     },
+    /// An intent sealed into an envelope that did not open it.
+    #[error("an intent must be sealed into the envelope that opened it")]
+    ForeignIntent,
+    /// An intent sealed into its envelope twice.
+    #[error("intent {intent} is sealed into the envelope once")]
+    SealedTwice {
+        /// The intent: `0` is the root, `i + 1` is subintent `i`.
+        intent: u32,
+    },
+    /// A proof offered by an intent that did not prove it.
+    #[error("a proof must be offered by the intent that proved it")]
+    ForeignProof,
+    /// A proof that itself arrived through a socket, offered onward — a
+    /// socket cannot fill a socket, and the composition that filled
+    /// this one is the one that would have to offer it.
+    #[error("a proof from a socket is not this intent's to offer")]
+    SocketProofOffered,
+    /// A handle from a different envelope at a wiring — a socket or an
+    /// offering is filled within the envelope that opened it.
+    #[error("a socket is filled within the envelope that opened it")]
+    ForeignBinding,
     /// A socket no node of the declaring graph reaches, so nothing
     /// would consume what the composition puts in it.
     #[error("intent {intent} socket {socket} is never reached")]
@@ -394,22 +415,25 @@ impl<'a> IntentBuilder<'a> {
     /// node stands where it stood, and what crosses is the claim it
     /// mints. So one minting node answers every socket that asks for it.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// On a proof that itself came through a socket: a socket cannot fill
-    /// a socket, and the composition that filled this one is the one that
-    /// would have to offer it.
-    #[must_use]
-    pub fn offer(&self, proof: Proof) -> Offered {
-        proof.check(self.graph_id());
+    /// [`EnvelopeError::ForeignProof`] on a proof another intent proved,
+    /// and [`EnvelopeError::SocketProofOffered`] on one that itself came
+    /// through a socket — a socket cannot fill a socket, and the
+    /// composition that filled this one is the one that would have to
+    /// offer it.
+    pub fn offer(&self, proof: Proof) -> Result<Offered, EnvelopeError> {
+        if !proof.proved_by(self.graph_id()) {
+            return Err(EnvelopeError::ForeignProof);
+        }
         let EvidenceRef::Node(producer) = proof.reference() else {
-            panic!("a proof from a socket is not this intent's to offer");
+            return Err(EnvelopeError::SocketProofOffered);
         };
-        Offered {
+        Ok(Offered {
             envelope: self.envelope,
             intent: self.intent,
             offering: Offering::Proof(producer),
-        }
+        })
     }
 }
 
@@ -567,18 +591,17 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// On an intent from a different envelope, or one sealed twice.
+    /// Never for an intent this envelope minted: the slot index was
+    /// bounded when the intent was opened.
     pub fn seal(&mut self, intent: IntentBuilder<'a>) -> Result<Sockets, EnvelopeError> {
-        assert_eq!(
-            intent.envelope, self.id,
-            "an intent must be sealed into the envelope that opened it"
-        );
+        if intent.envelope != self.id {
+            return Err(EnvelopeError::ForeignIntent);
+        }
         let index = intent.intent;
         let slot = usize::try_from(index).expect("minted indices fit");
-        assert!(
-            self.intents[slot].is_none(),
-            "an intent is sealed into the envelope once"
-        );
+        if self.intents[slot].is_some() {
+            return Err(EnvelopeError::SealedTwice { intent: index });
+        }
         let decl = intent.finish(index)?;
         let sockets = self.open_sockets(index, decl.sockets.len());
         self.carry(&decl.graph);
@@ -635,10 +658,13 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// On a handle minted by a different envelope.
     pub fn bind(&mut self, socket: OpenSocket, offered: Offered) -> Result<(), BindRefusal> {
-        assert!(
-            socket.envelope == self.id && offered.envelope == self.id,
-            "a socket is filled within the envelope that opened it"
-        );
+        if socket.envelope != self.id || offered.envelope != self.id {
+            return Err(BindRefusal {
+                socket,
+                offered,
+                cause: EnvelopeError::ForeignBinding,
+            });
+        }
         // A socket is a dependency on another intent; one filled from
         // its own would stall the interleave and die at admission as
         // `CyclicSockets`, in coordinates the author never wrote.

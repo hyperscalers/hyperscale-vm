@@ -7,7 +7,7 @@ use hyperscale_vm_effects::{
     PackageHash, Records, TestHasher, Value, admit,
 };
 use hyperscale_vm_fixtures::payouts;
-use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{BuildError, TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
 use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
 
@@ -239,8 +239,10 @@ fn an_asserted_type_carries_through_the_untyped_path() {
     assert_eq!(rest.resource(), Some(RES));
 }
 
+/// A contradicting assertion keeps the handle and rides it to the
+/// build: the composer's fluent chain survives, and the refusal comes
+/// back naming both resources.
 #[test]
-#[should_panic(expected = "types this edge as a different resource")]
 fn a_typed_edge_refuses_a_contradicting_assertion() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
@@ -250,7 +252,16 @@ fn a_typed_edge_refuses_a_contradicting_assertion() {
         .unwrap()
         .one()
         .unwrap();
-    let _ = funds.resource_is(ResourceAddr::new([0xE2; 31]));
+    let other = ResourceAddr::new([0xE2; 31]);
+    let funds = funds.resource_is(other);
+    b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
+    assert_eq!(
+        b.build().expect_err("a retyped edge"),
+        TypedError::Build(BuildError::ResourceRetyped {
+            derived: RES,
+            asserted: other,
+        })
+    );
 }
 
 #[test]
