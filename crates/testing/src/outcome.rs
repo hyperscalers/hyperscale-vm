@@ -1,9 +1,10 @@
 //! What one transaction did, as a test asks about it.
 
+use hyperscale_vm_effects::address_text;
 use hyperscale_vm_kernel::Receipt;
 use hyperscale_vm_sdk::client::Answered;
 use hyperscale_vm_sdk::hbor::{HborDecode, from_slice};
-use hyperscale_vm_types::{AbortReason, Answer, Outcome as KernelOutcome};
+use hyperscale_vm_types::{AbortReason, Address, Answer, Outcome as KernelOutcome};
 
 /// The receipt one [`transact`](crate::Chain::transact) produced.
 ///
@@ -18,9 +19,11 @@ pub struct Outcome<T = ()> {
     receipt: Receipt,
     /// The declining node's package error table, where one declined.
     errors: Vec<String>,
-    /// The unmet condition, read back into the requirement that put it
-    /// there — where the transaction was refused by one.
-    refusal: Option<String>,
+    /// The outcome read back into legible terms, where the receipt's own
+    /// `Debug` is not: an unmet condition as the requirement that put it
+    /// there, a decline as the method and the name its package gave the
+    /// code.
+    explained: Option<String>,
     /// Whatever writing the manifest handed back — nothing, usually, and
     /// the handle on an answer where a call produced one.
     ///
@@ -34,13 +37,13 @@ impl<T> Outcome<T> {
     pub(crate) const fn new(
         receipt: Receipt,
         errors: Vec<String>,
-        refusal: Option<String>,
+        explained: Option<String>,
         written: T,
     ) -> Self {
         Self {
             receipt,
             errors,
-            refusal,
+            explained,
             written,
         }
     }
@@ -186,14 +189,44 @@ impl<T> Outcome<T> {
     /// An unmet condition reads back as the requirement that put it
     /// there — the resource, the behaviour, and the question — because
     /// what the receipt carries is a leaf key, and a leaf key is a hash
-    /// of the party and the badge that inverts to neither. Every other
-    /// verdict is already self-describing and reads as itself.
+    /// of the party and the badge that inverts to neither. A decline
+    /// reads back as the method and the name its package gave the code,
+    /// because the receipt carries a node index and a table index. Every
+    /// other verdict is already self-describing and reads as itself.
     #[must_use]
     pub fn refused_as(&self) -> String {
-        self.refusal
+        self.explained
             .clone()
             .unwrap_or_else(|| format!("{:?}", self.receipt.outcome))
     }
+}
+
+/// The sentence a decline reads back as: the method, its target, and the
+/// name the package gave the code.
+///
+/// Rendered while the routed calls are in hand, because the receipt
+/// alone carries a node index and a table index — two coordinates
+/// nobody can act on.
+pub fn explain_decline(
+    node: u32,
+    code: u32,
+    call: Option<(&str, Address)>,
+    errors: &[String],
+) -> String {
+    let Some((method, target)) = call else {
+        return format!("node {node} declined with code {code}");
+    };
+    let target = address_text(target);
+    errors.get(code as usize).map_or_else(
+        || {
+            format!(
+                "node {node}: `{method}` on {target} declined with code {code}, past its \
+                 {}-entry error table",
+                errors.len()
+            )
+        },
+        |name| format!("node {node}: `{method}` on {target} declined: {name}"),
+    )
 }
 
 /// A transaction whose manifest ended in one answering call.
@@ -210,5 +243,49 @@ impl<A: HborDecode> Outcome<Answered<A>> {
     #[must_use]
     pub fn answer(&self) -> A {
         self.answer_at(*self.written())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hyperscale_vm_types::{Address, AddressClass};
+
+    use super::explain_decline;
+
+    fn target() -> Address {
+        Address::new([0xAB; 31], AddressClass::Component)
+    }
+
+    /// The common arm: the table names the code, and the sentence is the
+    /// method plus that name.
+    #[test]
+    fn a_decline_reads_as_the_method_and_the_named_error() {
+        let errors = vec!["slippage-exceeded".to_owned(), "empty-pool".to_owned()];
+        let sentence = explain_decline(2, 0, Some(("swap", target())), &errors);
+        assert!(sentence.contains("`swap`"), "{sentence}");
+        assert!(sentence.contains("slippage-exceeded"), "{sentence}");
+        assert!(sentence.contains("node 2"), "{sentence}");
+    }
+
+    /// A code past the table still prints, marked as such rather than
+    /// dressed up as a name.
+    #[test]
+    fn a_code_past_the_table_is_marked_as_such() {
+        let errors = vec!["short".to_owned()];
+        let sentence = explain_decline(1, 7, Some(("repay", target())), &errors);
+        assert!(sentence.contains("code 7"), "{sentence}");
+        assert!(
+            sentence.contains("past its 1-entry error table"),
+            "{sentence}"
+        );
+    }
+
+    /// No routed call at the node — the bare coordinates, honestly.
+    #[test]
+    fn a_decline_with_no_call_prints_its_coordinates() {
+        assert_eq!(
+            explain_decline(3, 1, None, &[]),
+            "node 3 declined with code 1"
+        );
     }
 }

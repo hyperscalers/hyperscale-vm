@@ -91,6 +91,7 @@ pub use hyperscale_vm_stdlib::account;
 pub use hyperscale_vm_types::{AbortReason, Outcome as Verdict, Presence, UnmetCondition};
 pub use native::{Dispatch, Native};
 pub use outcome::Outcome;
+use outcome::explain_decline;
 pub use package::{Code, Package, code_at};
 pub use wasm::{Blessed, FUEL_CEILING};
 
@@ -579,18 +580,30 @@ impl Chain {
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
-        // An unmet condition names a leaf, and a leaf is a hash of the
-        // party and the badge that inverts to neither. Read back here,
-        // while the admitted form the derivation needs is still in hand
-        // — a test that fails on one of these otherwise reports the
-        // hash, which is the one thing nobody can act on.
-        let refusal = match &receipt.outcome {
+        // Read back here, while the admitted form and the routed calls
+        // are still in hand — a test that fails on one of these
+        // otherwise reports a leaf hash or a bare code, the coordinates
+        // nobody can act on.
+        let explained = match &receipt.outcome {
+            // An unmet condition names a leaf, and a leaf is a hash of
+            // the party and the badge that inverts to neither.
             KernelOutcome::ConditionUnmet { condition } => {
                 Some(explain_refusal(&admitted, condition))
             }
+            // A decline names a node and an index into its package's
+            // error table; the sentence is the method and the name.
+            KernelOutcome::Declined { node, code } => Some(explain_decline(
+                *node,
+                *code,
+                entry
+                    .calls
+                    .get(*node as usize)
+                    .map(|call| (call.export.as_str(), call.target)),
+                &errors,
+            )),
             _ => None,
         };
-        Ok(Outcome::new(receipt, errors, refusal, written))
+        Ok(Outcome::new(receipt, errors, explained, written))
     }
 }
 
