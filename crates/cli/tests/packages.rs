@@ -298,3 +298,33 @@ fn a_gate_refusal_carries_the_declaration_its_indices_are_into() {
         elsewhere.to_string(),
     );
 }
+
+/// A manifest naming no `#[blueprint]` module is refused with the exact
+/// TOML to add, before anything builds.
+#[test]
+fn a_manifest_without_the_module_key_names_the_key_to_add() {
+    let dir = std::env::temp_dir().join(format!("hyperscale-keyless-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).expect("a scratch dir writes");
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"keyless-guest\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    )
+    .expect("a manifest writes");
+    std::fs::write(dir.join("src").join("lib.rs"), "").expect("a library writes");
+
+    let refused = declaration(&dir).expect_err("a manifest naming no module");
+    assert!(
+        refused
+            .to_string()
+            .contains("[package.metadata.hyperscale]"),
+        "the refusal spells the table: {refused}"
+    );
+    assert!(
+        refused
+            .to_string()
+            .contains("module = \"keyless_guest::<module>\""),
+        "and the key, on the crate's own name: {refused}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -225,44 +225,6 @@ pub use hyperscale_vm_effects::{
     GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issued, LeafForm, ParamType,
     ResourceKind, RuleBytes, SlotId, SlotKind, encode_metadata,
 };
-/// The declaration binary a package crate ships: one line, and the
-/// whole of it.
-///
-/// `cargo hyperscale build` gets a package's declaration by running this
-/// binary and reading the canonical section bytes it prints. Running it
-/// is what keeps the tracer the single implementation of what a
-/// declaration means — the macro emits tracer calls rather than `Expr`
-/// literals, so the declaration is derived by the same code a test
-/// derives it with.
-///
-/// The path is the `#[blueprint]` module's, qualified by the crate that
-/// holds it, because a binary is compiled beside its library and reaches
-/// it by name:
-///
-/// ```ignore
-/// // src/bin/lottery-metadata.rs
-/// hyperscale_vm_sdk::declaration_main!(lottery_guest::lottery);
-/// ```
-///
-/// The file is named for the package rather than for what it does,
-/// because binaries share a name space with everything built beside
-/// them and `metadata` is what every package would call its own.
-#[macro_export]
-macro_rules! declaration_main {
-    ($($module:ident)::+) => {
-        fn main() {
-            use ::std::io::Write as _;
-
-            let metadata = $($module)::+::blueprint().metadata();
-            let bytes =
-                $crate::encode_metadata(&metadata).expect("a traced declaration encodes");
-            ::std::io::stdout()
-                .write_all(&bytes)
-                .expect("write the declaration");
-        }
-    };
-}
-
 /// Author a package from one module.
 ///
 /// Which halves this yields is the compiling crate's own: a crate that

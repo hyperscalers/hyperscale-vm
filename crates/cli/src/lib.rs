@@ -186,41 +186,171 @@ pub fn compile(dir: &Path) -> Result<Vec<u8>, BuildError> {
     Ok(component)
 }
 
+/// What a package's own manifest says about deriving its declaration.
+struct ManifestFacts {
+    /// The crate's name, as the manifest spells it.
+    name: String,
+    /// The crate's edition, which the synthesized shim compiles under.
+    edition: String,
+    /// The `#[blueprint]` module, qualified by the crate:
+    /// `[package.metadata.hyperscale] module = "amm_guest::amm"`.
+    module: String,
+    /// Where builds from this crate land.
+    target_directory: PathBuf,
+    /// The SDK's own crate directory, resolved through the package's
+    /// dependency graph.
+    sdk_dir: PathBuf,
+}
+
+/// Read the facts off `cargo metadata`, which parses the manifest the
+/// way every build of it does.
+fn manifest_facts(dir: &Path) -> Result<ManifestFacts, BuildError> {
+    let run = cargo(dir, &["metadata", "--format-version", "1"])?;
+    if !run.status.success() {
+        return Err(BuildError::new(format!(
+            "cargo metadata refused in {}:\n{}",
+            dir.display(),
+            String::from_utf8_lossy(&run.stderr)
+        )));
+    }
+    let metadata: Json = from_str(&String::from_utf8_lossy(&run.stdout))
+        .map_err(|error| BuildError::new(format!("cargo metadata is not JSON: {error}")))?;
+    let manifest = dir.join("Cargo.toml").canonicalize().map_err(|error| {
+        BuildError::new(format!(
+            "resolve {}: {error}",
+            dir.join("Cargo.toml").display()
+        ))
+    })?;
+    let packages = metadata["packages"].as_array().cloned().unwrap_or_default();
+    let own = packages
+        .iter()
+        .find(|package| {
+            Path::new(package["manifest_path"].as_str().unwrap_or_default()) == manifest
+        })
+        .ok_or_else(|| {
+            BuildError::new(format!("{} is not a package cargo knows", dir.display()))
+        })?;
+    let name = own["name"].as_str().unwrap_or_default().to_owned();
+    let module = own["metadata"]["hyperscale"]["module"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            BuildError::new(format!(
+                "{name} names no `#[blueprint]` module. Add\n\n\
+                 [package.metadata.hyperscale]\n\
+                 module = \"{}::<module>\"\n\n\
+                 to its Cargo.toml — the module the `#[blueprint]` is on, qualified by \
+                 the crate",
+                name.replace('-', "_"),
+            ))
+        })?;
+    let sdk_dir = packages
+        .iter()
+        .find(|package| package["name"] == "hyperscale-vm-sdk")
+        .and_then(|package| package["manifest_path"].as_str())
+        .and_then(|path| Path::new(path).parent())
+        .map(Path::to_path_buf)
+        .ok_or_else(|| BuildError::new(format!("{name} does not depend on hyperscale-vm-sdk")))?;
+    Ok(ManifestFacts {
+        edition: own["edition"].as_str().unwrap_or("2024").to_owned(),
+        target_directory: PathBuf::from(metadata["target_directory"].as_str().unwrap_or_default()),
+        name,
+        module,
+        sdk_dir,
+    })
+}
+
 /// The package's declaration, from a host build of the same crate.
 ///
-/// Runs the crate's `metadata` binary, whose whole job is to print the
-/// canonical section bytes of `blueprint()`. Its output is decoded here
-/// rather than trusted as text, so a binary that printed anything else
-/// fails now instead of at attach time.
+/// The module path lives in the manifest —
+/// `[package.metadata.hyperscale] module = "…"` — and the host program
+/// that prints the canonical section bytes of `blueprint()` is
+/// synthesized under the target directory and run there. Its output is
+/// decoded here rather than trusted as text, so a program that printed
+/// anything else fails now instead of at attach time.
 ///
 /// # Errors
 ///
-/// [`BuildError`] if the host build fails, the binary does not run, or
-/// what it printed is not canonical metadata.
+/// [`BuildError`] if the manifest names no module, the host build
+/// fails, or what it printed is not canonical metadata.
 pub fn declaration(dir: &Path) -> Result<PackageMetadata, BuildError> {
-    // Answered before the build, because cargo's own answer is that the
-    // package has no binary to run, which says nothing about what a
-    // package crate owes or what to write.
-    //
-    // The binary is the package's one binary rather than one named here:
-    // a crate's binaries share a name space with every other crate built
-    // beside it, so a fixed name is one every package in a workspace of
-    // packages would collide on.
-    let binaries = std::fs::read_dir(dir.join("src").join("bin"))
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().extension().is_some_and(|it| it == "rs"))
-        .count();
-    if binaries != 1 {
-        return Err(BuildError::new(format!(
-            "{} has {binaries} binaries under `src/bin`, and a package's declaration is \
-             derived by running its one. Its whole content is \
-             `hyperscale_vm_sdk::declaration_main!(<crate>::<module>);`",
-            dir.display()
-        )));
+    let facts = manifest_facts(dir)?;
+    let shim = facts
+        .target_directory
+        .join("hyperscale")
+        .join("metadata")
+        .join(&facts.name);
+    let write = |path: PathBuf, body: String| {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                BuildError::new(format!("create {}: {error}", parent.display()))
+            })?;
+        }
+        std::fs::write(&path, body)
+            .map_err(|error| BuildError::new(format!("write {}: {error}", path.display())))
+    };
+    let dir_abs = dir
+        .canonicalize()
+        .map_err(|error| BuildError::new(format!("resolve {}: {error}", dir.display())))?;
+    write(
+        shim.join("Cargo.toml"),
+        format!(
+            "# Synthesized by `cargo hyperscale`: the host program that prints the\n\
+             # declaration of the package beside it. Rewritten on every build.\n\
+             [package]\n\
+             name = \"{name}-declaration\"\n\
+             version = \"0.0.0\"\n\
+             edition = \"{edition}\"\n\
+             publish = false\n\
+             \n\
+             [dependencies]\n\
+             {name} = {{ path = \"{dir}\" }}\n\
+             hyperscale-vm-sdk = {{ path = \"{sdk}\" }}\n\
+             \n\
+             [workspace]\n",
+            name = facts.name,
+            edition = facts.edition,
+            dir = dir_abs.display(),
+            sdk = facts.sdk_dir.display(),
+        ),
+    )?;
+    write(
+        shim.join("src").join("main.rs"),
+        format!(
+            "//! Print the package's declaration as its canonical section bytes.\n\
+             \n\
+             use std::io::Write as _;\n\
+             \n\
+             fn main() {{\n\
+             \x20   let metadata = {module}::blueprint().metadata();\n\
+             \x20   let bytes = hyperscale_vm_sdk::encode_metadata(&metadata)\n\
+             \x20       .expect(\"a traced declaration encodes\");\n\
+             \x20   std::io::stdout()\n\
+             \x20       .write_all(&bytes)\n\
+             \x20       .expect(\"write the declaration\");\n\
+             }}\n",
+            module = facts.module,
+        ),
+    )?;
+    // The package pins its toolchain; the shim compiles the package, so
+    // it compiles under the same pin.
+    if let Ok(pin) = std::fs::read_to_string(dir.join("rust-toolchain.toml")) {
+        write(shim.join("rust-toolchain.toml"), pin)?;
     }
-    let run = cargo(dir, &["run", "--release", "--quiet"])?;
+    // The shim shares the package's own target directory, so the host
+    // units its dependencies compile are compiled once per workspace
+    // rather than once per shim.
+    let run = Command::new("cargo")
+        .args(["run", "--release", "--quiet"])
+        .current_dir(&shim)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("CARGO")
+        .env_remove("CARGO_HOME")
+        .env_remove("RUSTC")
+        .env_remove("RUSTUP_HOME")
+        .env("CARGO_TARGET_DIR", &facts.target_directory)
+        .output()
+        .map_err(|error| BuildError::new(format!("spawn cargo in {}: {error}", shim.display())))?;
     if !run.status.success() {
         return Err(BuildError::new(format!(
             "the package's declaration did not build:\n{}",

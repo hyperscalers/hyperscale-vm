@@ -4,6 +4,9 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[package.metadata.hyperscale]
+module = "book_guest::book"
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

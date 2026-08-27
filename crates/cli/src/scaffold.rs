@@ -16,6 +16,7 @@ use crate::BuildError;
 /// The manifest: a `cdylib` for the chain and an `rlib` so the
 /// declaration binary can link the same library the guest build compiles.
 fn manifest(name: &str, sdk: &str, testing: &str) -> String {
+    let module = name.replace('-', "_");
     format!(
         "# `trim-paths` is unstable, and the toolchain is pinned anyway.\n\
          cargo-features = [\"trim-paths\"]\n\
@@ -25,6 +26,11 @@ fn manifest(name: &str, sdk: &str, testing: &str) -> String {
          version = \"0.0.0\"\n\
          edition = \"2024\"\n\
          publish = false\n\
+         \n\
+         # The `#[blueprint]` module, qualified by the crate: what\n\
+         # `cargo hyperscale build` derives the declaration from.\n\
+         [package.metadata.hyperscale]\n\
+         module = \"{module}::{module}\"\n\
          \n\
          [lib]\n\
          crate-type = [\"cdylib\", \"rlib\"]\n\
@@ -110,22 +116,6 @@ fn library(module: &str) -> String {
          \x20       }}\n\
          \x20   }}\n\
          }}\n"
-    )
-}
-
-/// The declaration binary: the host half of the build, whose whole job is
-/// to print what `blueprint()` traced.
-///
-/// A binary rather than a const, because the declaration is *run* — the
-/// macro emits tracer calls rather than `Expr` literals, so the tracer
-/// stays the single implementation of what a declaration means.
-fn declaration_bin(krate: &str, module: &str) -> String {
-    format!(
-        "//! Print this package's declaration as its canonical section\n\
-         //! bytes. `cargo hyperscale build` runs this and attaches what it\n\
-         //! prints to the code beside it.\n\
-         \n\
-         hyperscale_vm_sdk::declaration_main!({krate}::{module});\n"
     )
 }
 
@@ -333,10 +323,6 @@ pub fn package(dir: &Path) -> Result<PathBuf, BuildError> {
         manifest(&name, &sdk_dependency(dir), &testing_dependency(dir)),
     )?;
     write(dir.join("src/lib.rs"), library(&module))?;
-    write(
-        dir.join(format!("src/bin/{module}-metadata.rs")),
-        declaration_bin(&module, &module),
-    )?;
     write(dir.join("tests/first.rs"), first_test(&module))?;
     write(dir.join(".cargo/config.toml"), CARGO_CONFIG.to_owned())?;
     write(dir.join("rust-toolchain.toml"), TOOLCHAIN.to_owned())?;
@@ -347,12 +333,16 @@ pub fn package(dir: &Path) -> Result<PathBuf, BuildError> {
 /// profile, the pins and the build configuration are the workspace's,
 /// so restating any of them here is the drift the merge deleted.
 fn member_manifest(name: &str) -> String {
+    let module = name.replace('-', "_");
     format!(
         "[package]\n\
          name = \"{name}\"\n\
          version = \"0.0.0\"\n\
          edition = \"2024\"\n\
          publish = false\n\
+         \n\
+         [package.metadata.hyperscale]\n\
+         module = \"{module}::{module}\"\n\
          \n\
          [lib]\n\
          crate-type = [\"cdylib\", \"rlib\"]\n\
@@ -414,10 +404,6 @@ pub fn member(dir: &Path) -> Result<PathBuf, BuildError> {
 
     write(dir.join("Cargo.toml"), member_manifest(&name))?;
     write(dir.join("src/lib.rs"), library(&module))?;
-    write(
-        dir.join(format!("src/bin/{module}-metadata.rs")),
-        declaration_bin(&module, &module),
-    )?;
     write(dir.join("tests/first.rs"), first_test(&module))?;
     enroll(&workspace, &name)?;
     Ok(dir.to_path_buf())
