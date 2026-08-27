@@ -1,7 +1,8 @@
 //! The share vault's own tests, against the real kernel.
 
 use hyperscale_vm_testing::{
-    Chain, PrincipalAddr, ResourceAddr, ResourceKind, account, package, principal, resource,
+    AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, ResourceKind, account, package,
+    principal, resource,
 };
 use shares_guest::shares::client::{Settings, Shares};
 
@@ -152,8 +153,15 @@ fn a_deposit_of_a_foreign_resource_is_refused(chain: Chain) {
     });
 
     assert!(
-        refused.is_err(),
-        "a vault takes the resource it prices and no other"
+        matches!(
+            refused,
+            Err(Refused::Admission(AdmissionError::WrongDenomination {
+                expected: ASSET,
+                found: OTHER,
+                ..
+            }))
+        ),
+        "a vault takes the resource it prices and no other: {refused:?}"
     );
     assert_eq!(chain.balance(vault, ASSET), 1_000, "and nothing moved");
 }

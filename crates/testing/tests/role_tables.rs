@@ -300,12 +300,19 @@ fn a_rotation_governs_only_after_the_stored_delay() {
     // After it, anybody may enact what the clock has licensed — and
     // until somebody does, the rule that governs is still the old one.
     let mut chain = chain.at(1_000_000 + DELAY_MS);
+    let outcome = chain
+        .transact(SUCCESSOR, |b| instance.set_flag(b, 4))
+        .refused()
+        .cloned()
+        .expect("a replacement past its instant still has to be enacted");
     assert!(
-        chain
-            .transact(SUCCESSOR, |b| instance.set_flag(b, 4))
-            .refused()
-            .is_some(),
-        "a replacement past its instant still has to be enacted",
+        matches!(
+            outcome,
+            Outcome::ConditionUnmet {
+                condition: UnmetCondition::Satisfies { .. },
+            }
+        ),
+        "refused as the standing rule, unsatisfied: {outcome:?}",
     );
     chain
         .transact(SUCCESSOR, |b| instance.promote(b))
@@ -313,15 +320,22 @@ fn a_rotation_governs_only_after_the_stored_delay() {
     chain
         .transact(SUCCESSOR, |b| instance.set_flag(b, 4))
         .expect_completed();
+    let outcome = chain
+        .transact(FOUNDER, |b| {
+            let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
+            b.call_presenting(held, instance, "set-flag", (4u128,))?
+                .none()
+        })
+        .refused()
+        .cloned()
+        .expect("the badge's rule is the one it replaced");
     assert!(
-        chain
-            .transact(FOUNDER, |b| {
-                let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
-                b.call_presenting(held, instance, "set-flag", (4u128,))?
-                    .none()
-            })
-            .refused()
-            .is_some(),
-        "and the badge's rule is the one it replaced",
+        matches!(
+            outcome,
+            Outcome::ConditionUnmet {
+                condition: UnmetCondition::Satisfies { .. },
+            }
+        ),
+        "refused as the replaced rule, unsatisfied by the old badge: {outcome:?}",
     );
 }
