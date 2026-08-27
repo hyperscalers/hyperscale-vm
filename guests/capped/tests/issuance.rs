@@ -8,7 +8,7 @@
 use capped_guest::capped;
 use hyperscale_vm_testing::{
     Address, AddressClass, AdmissionError, Chain, GrantedBehaviour, PrincipalAddr, Refused,
-    ResourceAddr, TestHasher, Worlds, account, package, principal,
+    ResourceAddr, Worlds, account, package, principal,
 };
 
 const FOUNDER: PrincipalAddr = principal(0x91);
@@ -39,13 +39,13 @@ fn world(chain: &mut Chain) -> capped::client::Capped {
 #[hyperscale_vm_testing::test]
 fn a_bring_up_founds_every_supply_its_package_states(chain: &mut Chain) {
     let instance = world(chain);
-    let fixed = instance.issued_founded(&TestHasher);
-    let retired = instance.issued_retired(&TestHasher);
+    let fixed = chain.issued(instance, capped::client::Founded);
+    let retired = chain.issued(instance, capped::client::Retired);
 
     assert_eq!(chain.balance(FOUNDER, fixed), 1_000_000);
     assert_eq!(chain.balance(FOUNDER, retired), 500);
     assert_eq!(
-        chain.balance(FOUNDER, instance.issued_circulating(&TestHasher)),
+        chain.balance(FOUNDER, chain.issued(instance, capped::client::Circulating)),
         1_000
     );
 }
@@ -63,10 +63,10 @@ fn a_founded_supply_grants_no_mint_and_restricts_no_movement(chain: &mut Chain) 
     let class = |resource: ResourceAddr| Address::from(resource).class();
 
     for resource in [
-        instance.issued_founded(&TestHasher),
-        instance.issued_retired(&TestHasher),
-        instance.issued_circulating(&TestHasher),
-        instance.issued_seat(&TestHasher, terms()),
+        chain.issued(instance, capped::client::Founded),
+        chain.issued(instance, capped::client::Retired),
+        chain.issued(instance, capped::client::Circulating),
+        chain.issued(instance, capped::client::Seat),
     ] {
         assert_eq!(
             class(resource),
@@ -81,7 +81,7 @@ fn a_founded_supply_grants_no_mint_and_restricts_no_movement(chain: &mut Chain) 
 #[hyperscale_vm_testing::test]
 fn a_deflationary_supply_only_ever_falls(chain: &mut Chain) {
     let instance = world(chain);
-    let retired = instance.issued_retired(&TestHasher);
+    let retired = chain.issued(instance, capped::client::Retired);
 
     chain
         .transact(FOUNDER, |b| {
@@ -103,7 +103,7 @@ fn a_deflationary_supply_only_ever_falls(chain: &mut Chain) {
 #[hyperscale_vm_testing::test]
 fn a_holder_destroys_what_the_resource_lets_them(chain: &mut Chain) {
     let instance = world(chain);
-    let circulating = instance.issued_circulating(&TestHasher);
+    let circulating = chain.issued(instance, capped::client::Circulating);
 
     chain
         .transact(FOUNDER, |b| {
@@ -124,7 +124,7 @@ fn a_holder_destroys_what_the_resource_lets_them(chain: &mut Chain) {
 #[hyperscale_vm_testing::test]
 fn a_resource_granting_no_burn_is_indestructible(chain: &mut Chain) {
     let instance = world(chain);
-    let fixed = instance.issued_founded(&TestHasher);
+    let fixed = chain.issued(instance, capped::client::Founded);
 
     let refused = chain.try_transact(FOUNDER, |b| {
         let funds = account::withdraw(b, FOUNDER, fixed, 1u128)?;
@@ -154,7 +154,7 @@ fn a_resource_granting_no_burn_is_indestructible(chain: &mut Chain) {
 #[hyperscale_vm_testing::test]
 fn a_seat_is_minted_by_whoever_the_entry_names(chain: &mut Chain) {
     let instance = world(chain);
-    let seat = instance.issued_seat(&TestHasher, terms());
+    let seat = chain.issued(instance, capped::client::Seat);
 
     chain
         .transact(MINTER, |b| {
@@ -173,7 +173,7 @@ fn a_seat_is_minted_by_whoever_the_entry_names(chain: &mut Chain) {
 #[hyperscale_vm_testing::test]
 fn the_issuers_own_founder_cannot_spend_the_mint_it_delegated(chain: &mut Chain) {
     let instance = world(chain);
-    let seat = instance.issued_seat(&TestHasher, terms());
+    let seat = chain.issued(instance, capped::client::Seat);
 
     let refused = chain.try_transact(FOUNDER, |b| {
         let minted = instance.issue(b, 40u128)?;
@@ -198,7 +198,7 @@ fn the_issuers_own_founder_cannot_spend_the_mint_it_delegated(chain: &mut Chain)
 #[hyperscale_vm_testing::test]
 fn a_holder_destroys_nothing_whose_burn_names_its_issuer(chain: &mut Chain) {
     let instance = world(chain);
-    let retired = instance.issued_retired(&TestHasher);
+    let retired = chain.issued(instance, capped::client::Retired);
 
     let refused = chain.try_transact(FOUNDER, |b| {
         let funds = account::withdraw(b, FOUNDER, retired, 1u128)?;

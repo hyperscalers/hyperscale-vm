@@ -61,7 +61,7 @@ pub use hyperscale_vm_effects::{
 use hyperscale_vm_effects::{
     CallArg, ChainRecords, Hash32, Hasher, InstanceMeta, NodeCall, PackageHash,
     PrefixShardResolver, PresentedGrants, Records, Value, admit_presenting, child_key,
-    declaration_hash, explain_refusal, holdings_collection, issued_record, issued_resource, route,
+    declaration_hash, explain_refusal, holdings_collection, issued_record, route,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
@@ -80,7 +80,7 @@ mod wasm;
 
 pub use conclusion::Conclusion;
 use conclusion::explain_decline;
-pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot};
+pub use hyperscale_vm_sdk::client::{Component, ConfigValues, IntoSlot, Mark};
 /// Run one test on every engine lane this crate was built with.
 ///
 /// The body takes the [`Chain`] it runs on and says nothing about what
@@ -379,24 +379,24 @@ impl Chain {
         address
     }
 
-    /// The resource an instance issues under `mark`.
+    /// The resource `instance` issues under the mark the client module
+    /// names as a type: `chain.issued(pool, amm::client::Share)`.
     ///
-    /// The same derivation `issued(mark)` reaches inside a body: an
-    /// instance's own address over the mark that separates one of its
-    /// resources from another. A test naming a contract's shares or its
-    /// badge is asking for this, and spelling it out per test is how two
-    /// spellings of one address get written.
+    /// Answered from the chain's own records — the instance's declared
+    /// grants and configuration included — so the address is the one the
+    /// chain registered, not a derivation a test restates. The marker is
+    /// tied to the handle's package, so a marker of some other package's
+    /// resource does not compile.
     ///
-    /// An empty mark is no material rather than one empty element, which
-    /// is what the tracer means by it and the only spelling that reaches
-    /// the address the body does.
+    /// # Panics
+    ///
+    /// If the chain does not hold the instance, its package, or an
+    /// issuance under the mark — each a test naming a world it never
+    /// built.
     #[must_use]
-    pub fn issued(
-        instance: impl Into<ComponentAddr>,
-        kind: ResourceKind,
-        mark: &[u8],
-    ) -> ResourceAddr {
-        issued_resource(&TestHasher, instance.into(), kind, mark)
+    pub fn issued<M: Mark>(&self, instance: M::Of, mark: M) -> ResourceAddr {
+        let _ = mark;
+        self.issues(instance.address(), M::KIND, M::MARK)
     }
 
     /// The resource `instance` issues under `mark`, as the chain derives

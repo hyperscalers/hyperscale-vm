@@ -165,11 +165,25 @@ fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
             )),
         );
     }
-    // A quantity and an order key are both a `u128` at the boundary: what
-    // the type says is the guest's and erases where a manifest binds a
-    // number.
-    if is_named(ty, "Quantity") || is_named(ty, "OrderKey") {
-        return (quote!(#name: u128), quote!(#name));
+    // A quantity and an order key are a `u128` where a manifest binds a
+    // number, and the vocabulary's type at the wrapper: the conversion
+    // target is spelled by absolute path, so a caller holding the typed
+    // value passes it as itself, a literal still converts, and a local
+    // type wearing the name fails to convert instead of silently
+    // binding.
+    if is_named(ty, "Quantity") {
+        let quantity = quote!(::hyperscale_vm_sdk::state::Quantity);
+        return (
+            quote!(#name: impl ::core::convert::Into<#quantity>),
+            quote!(::core::convert::Into::<#quantity>::into(#name).subunits()),
+        );
+    }
+    if is_named(ty, "OrderKey") {
+        let order = quote!(::hyperscale_vm_sdk::state::OrderKey);
+        return (
+            quote!(#name: impl ::core::convert::Into<#order>),
+            quote!(::core::convert::Into::<#order>::into(#name).bits()),
+        );
     }
     // A stored rate binds as its scaled integer, at the width a rate has,
     // and the caller writes the rate — so the scale is the type's and
@@ -424,6 +438,40 @@ pub struct Surface<'a> {
     pub resources: &'a [Resource],
 }
 
+/// One marker type per issued resource: the mark as a type, tied to the
+/// handle of the package that issues under it. What lets a chain answer
+/// `chain.issued(pool, client::Share)` from its records, with a foreign
+/// marker refused where the handle's type is named.
+fn marks(resources: &[Resource], handle: &syn::Ident) -> Vec<TokenStream2> {
+    let kind_ty = quote!(::hyperscale_vm_sdk::ResourceKind);
+    resources
+        .iter()
+        .map(|resource| {
+            let name = syn::Ident::new(&resource.name, Span::call_site());
+            let mark = syn::LitByteStr::new(&resource.mark, Span::call_site());
+            let kind = match resource.kind {
+                ResourceKind::Fungible => quote!(#kind_ty::Fungible),
+                ResourceKind::NonFungible => quote!(#kind_ty::NonFungible),
+            };
+            let doc = format!(
+                "The `{}` this package issues, named as a type.",
+                resource.name
+            );
+            quote!(
+                #[doc = #doc]
+                #[derive(Clone, Copy, Debug)]
+                pub struct #name;
+
+                impl ::hyperscale_vm_sdk::client::Mark for #name {
+                    type Of = #handle;
+                    const MARK: &'static [u8] = #mark;
+                    const KIND: #kind_ty = #kind;
+                }
+            )
+        })
+        .collect()
+}
+
 /// The package's calling surface.
 pub fn module(surface: &Surface<'_>) -> TokenStream2 {
     let &Surface {
@@ -437,6 +485,7 @@ pub fn module(surface: &Surface<'_>) -> TokenStream2 {
     } = surface;
     let slots = slots(fields);
     let issued = issued(resources, config);
+    let marks = marks(resources, handle);
     // The seal is composed rather than called: what a bring-up carries
     // beside it — the sign-in a gated package asks for, the account the
     // supply is filed in — is read off the declaration by the stdlib's
@@ -540,6 +589,8 @@ pub fn module(surface: &Surface<'_>) -> TokenStream2 {
 
                 #(#issued)*
             }
+
+            #(#marks)*
         ),
     };
 

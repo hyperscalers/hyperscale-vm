@@ -17,8 +17,8 @@
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::vocabulary::NF_VAULT;
 use hyperscale_vm_testing::{
-    Address, AdmissionError, Chain, EvalError, PrincipalAddr, Refused, TestHasher, Worlds, account,
-    package, package_slot, principal,
+    Address, AdmissionError, Chain, EvalError, PrincipalAddr, Refused, Worlds, account, package,
+    package_slot, principal,
 };
 use security_guest::security;
 
@@ -85,7 +85,7 @@ fn deeds(chain: &mut Chain) -> (bailiff::client::Bailiff, Address) {
     WORLDS.open(chain, |chain| {
         chain.publish(package!(bailiff));
         let issuer = chain.instantiate::<bailiff::client::Bailiff>(WARDEN, deed_terms());
-        let deed = issuer.issued_deed(&TestHasher, deed_terms());
+        let deed = chain.issued(issuer, bailiff::client::Deed);
         for id in [1u64, 2, 3] {
             chain
                 .transact(WARDEN, |b| {
@@ -196,7 +196,7 @@ const fn share_terms() -> security::client::Terms {
 fn a_recall_finds_value_at_the_slot_the_holder_keeps_it_in(chain: &mut Chain) {
     chain.publish(package!(security_guest::security));
     let issuer = chain.instantiate::<security::client::Security>(WARDEN, share_terms());
-    let share = issuer.issued_share(&TestHasher, share_terms());
+    let share = chain.issued(issuer, security::client::Share);
 
     // Both parties on the register, since the share class asks the
     // register about the party each movement is under — the recall

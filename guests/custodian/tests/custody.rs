@@ -12,8 +12,8 @@ use custodian_guest::custodian;
 // `package!` names.
 use grammar_guest::grammar as shapes;
 use hyperscale_vm_testing::{
-    AbortReason, Chain, Component, PrincipalAddr, ResourceAddr, TestHasher, Worlds, account,
-    package, principal, resource,
+    AbortReason, Chain, Component, PrincipalAddr, ResourceAddr, Worlds, account, package,
+    principal, resource,
 };
 
 /// Who issues the seats this custodian keeps.
@@ -41,7 +41,7 @@ fn world(chain: &mut Chain) -> (custodian::client::Custodian, ResourceAddr) {
         chain.publish(package!(grammar_guest::grammar));
         chain.publish(package!(custodian_guest::custodian));
         let issuer = chain.instantiate::<shapes::client::Grammar>(ISSUER, shape_terms());
-        let seat = issuer.issued_seat(&TestHasher);
+        let seat = chain.issued(issuer, shapes::client::Seat);
         let keeper = chain.instantiate::<custodian::client::Custodian>(
             ISSUER,
             custodian::client::Terms {
@@ -108,19 +108,16 @@ fn instances_filed_with_a_custodian_come_back_out(chain: &mut Chain) {
 fn a_custodian_files_nothing_it_was_not_configured_for(chain: &mut Chain) {
     let (_, seat) = world(chain);
     let other = chain.instantiate::<shapes::client::Grammar>(HOLDER, shape_terms());
+    let foreign_seat = chain.issued(other, shapes::client::Seat);
     let elsewhere = chain.instantiate::<custodian::client::Custodian>(
         ISSUER,
         custodian::client::Terms {
-            asset: other.issued_seat(&TestHasher),
-            other: other.issued_seat(&TestHasher),
-            instances: other.issued_seat(&TestHasher),
+            asset: foreign_seat,
+            other: foreign_seat,
+            instances: foreign_seat,
         },
     );
-    assert_ne!(
-        other.issued_seat(&TestHasher),
-        seat,
-        "two issuers issue two marks"
-    );
+    assert_ne!(foreign_seat, seat, "two issuers issue two marks");
 
     let filed = chain.try_transact(HOLDER, |b| {
         let entry = account::withdraw_nf(b, HOLDER, seat, &[7])?;

@@ -2418,6 +2418,15 @@ impl Ids {
     }
 }
 
+/// The packed integer, read back as the key it is — the wrapper-side
+/// twin of [`OrderKey::bits`], for the generated wrappers taking
+/// `impl Into<OrderKey>`.
+impl From<u128> for OrderKey {
+    fn from(bits: u128) -> Self {
+        Self(bits)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Cellular, Fixed, SignedFixed, Wide};

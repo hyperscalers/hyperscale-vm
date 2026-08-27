@@ -121,6 +121,21 @@ pub trait Component: Copy {
     fn address(self) -> ComponentAddr;
 }
 
+/// A resource a package issues, named as a type.
+///
+/// The client module carries one marker per `#[resource]` struct, tied
+/// to the handle of the package that issues it — so a chain answers the
+/// mark's address from its own records, and a marker of some other
+/// package's resource is refused where the handle's type is named.
+pub trait Mark: Copy {
+    /// The handle of the package that issues under this mark.
+    type Of: Component;
+    /// The mark's bytes, as the declaration separates its resources.
+    const MARK: &'static [u8];
+    /// Whether the resource is fungible or non-fungible.
+    const KIND: ResourceKind;
+}
+
 /// An instance's creation-fixed configuration, as the thing creating it
 /// writes one.
 ///

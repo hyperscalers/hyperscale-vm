@@ -23,8 +23,8 @@
 
 use custodian_guest::custodian;
 use hyperscale_vm_testing::{
-    AdmissionError, Chain, Component, PrincipalAddr, Refused, ResourceAddr, TestHasher, Worlds,
-    account, package, principal,
+    AdmissionError, Chain, Component, PrincipalAddr, Refused, ResourceAddr, Worlds, account,
+    package, principal,
 };
 use security_guest::security;
 
@@ -48,7 +48,7 @@ fn world(chain: &mut Chain) -> (custodian::client::Custodian, ResourceAddr) {
         chain.publish(package!(security_guest::security));
         chain.publish(package!(custodian_guest::custodian));
         let issuer = chain.instantiate::<security::client::Security>(ISSUER, terms());
-        let note = issuer.issued_approved(&TestHasher, terms());
+        let note = chain.issued(issuer, security::client::Approved);
         let keeper = chain.instantiate::<custodian::client::Custodian>(
             ISSUER,
             custodian::client::Terms {

@@ -18,8 +18,8 @@
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::vocabulary::{NF_VAULT, VAULT};
 use hyperscale_vm_testing::{
-    Chain, Outcome, Presence, PrincipalAddr, ResourceAddr, TestHasher, UnmetCondition, Worlds,
-    account, address_text, package, principal,
+    Chain, Outcome, Presence, PrincipalAddr, ResourceAddr, UnmetCondition, Worlds, account,
+    address_text, package, principal,
 };
 use security_guest::security;
 
@@ -43,7 +43,7 @@ fn world(chain: &mut Chain) -> (security::client::Security, ResourceAddr) {
     WORLDS.open(chain, |chain| {
         chain.publish(package!(security_guest::security));
         let issuer = chain.instantiate::<security::client::Security>(REGISTRAR, terms());
-        let share = issuer.issued_share(&TestHasher, terms());
+        let share = chain.issued(issuer, security::client::Share);
 
         for (id, who) in [(1u64, HOLDER), (2, OTHER)] {
             chain
@@ -168,7 +168,7 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: &mut Chain) {
 #[hyperscale_vm_testing::test]
 fn a_recall_reaches_past_every_rule_the_resource_carries(chain: &mut Chain) {
     let (issuer, share) = world(chain);
-    let entry = issuer.issued_registered(&TestHasher, terms());
+    let entry = chain.issued(issuer, security::client::Registered);
     // Two slots, because a holder keeps the two in different cells: the
     // share class is a balance and the register entry is an interval, so
     // an issuer reaching for either names where that one lives.
@@ -276,7 +276,7 @@ fn an_issuer_whose_entry_names_itself_reaches_presenting_nothing(chain: &mut Cha
     let holder = principal(0xA7);
     chain.publish(package!(sovereign));
     let issuer = chain.instantiate::<sovereign::client::Sovereign>(REGISTRAR, ());
-    let note = issuer.issued_note(&TestHasher);
+    let note = chain.issued(issuer, sovereign::client::Note);
     let slot = u64::from(VAULT.0);
 
     chain

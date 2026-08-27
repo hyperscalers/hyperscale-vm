@@ -1464,6 +1464,16 @@ impl UnitFixed {
     }
 }
 
+/// A bare number is subunits — the manifest's own denomination, and the
+/// one reading a conversion this direct can have. What it buys is the
+/// generated wrappers taking `impl Into<Quantity>`: a literal call site
+/// keeps working, and a `Quantity` in hand says what it is.
+impl From<u128> for Quantity {
+    fn from(subunits: u128) -> Self {
+        Self::from_subunits(subunits)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::{from_slice, to_vec};

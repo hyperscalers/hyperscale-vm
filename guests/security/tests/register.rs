@@ -9,8 +9,7 @@
 //! class, which is the property this file exists for.
 
 use hyperscale_vm_testing::{
-    Chain, Outcome, Presence, PrincipalAddr, TestHasher, UnmetCondition, Worlds, account, package,
-    principal,
+    Chain, Outcome, Presence, PrincipalAddr, UnmetCondition, Worlds, account, package, principal,
 };
 use security_guest::security;
 
@@ -65,7 +64,7 @@ fn world(chain: &mut Chain) -> security::client::Security {
 #[hyperscale_vm_testing::test]
 fn a_share_reaches_nobody_the_register_does_not_name(chain: &mut Chain) {
     let issuer = world(chain);
-    let share = issuer.issued_share(&TestHasher, terms());
+    let share = chain.issued(issuer, security::client::Share);
 
     let refused = chain
         .try_transact(HOLDER, |b| {
