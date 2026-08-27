@@ -21,6 +21,9 @@ hyperscale-vm-sdk-macros.workspace = true
 # answered by one. A test that seeds a balance is seeding an account's
 # vault, so the package is part of the world rather than part of a test.
 hyperscale-vm-stdlib.workspace = true
+# Reads `cargo metadata` so `package!` resolves a foreign guest crate's
+# directory from the workspace itself rather than from a spelled path.
+serde_json.workspace = true
 thiserror.workspace = true
 
 # The blessed engine, and the guest build that feeds it. The heavy half

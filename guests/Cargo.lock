@@ -795,6 +795,7 @@ dependencies = [
  "hyperscale-vm-sdk-macros",
  "hyperscale-vm-stdlib",
  "hyperscale-vm-types",
+ "serde_json",
  "thiserror 2.0.20",
  "wasmtime",
 ]

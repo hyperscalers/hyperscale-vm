@@ -45,7 +45,7 @@ const fn terms() -> security::client::Terms {
 fn world(chain: &mut Chain) -> (custodian::client::Custodian, ResourceAddr) {
     static WORLDS: Worlds<(custodian::client::Custodian, ResourceAddr)> = Worlds::new();
     WORLDS.open(chain, |chain| {
-        chain.publish(package!(security_guest::security at "../security"));
+        chain.publish(package!(security_guest::security));
         chain.publish(package!(custodian_guest::custodian));
         let issuer = chain.instantiate::<security::client::Security>(ISSUER, terms());
         let note = issuer.issued_approved(&TestHasher, terms());

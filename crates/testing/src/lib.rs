@@ -275,7 +275,8 @@ impl Chain {
             declaration_hash(&TestHasher, &C::metadata()).expect("a traced declaration encodes");
         assert!(
             self.records.packages.get(package).is_some(),
-            "the package must be published before an instance of it is created"
+            "the package must be published before an instance of it is created — \
+             `chain.publish(package!(..))` names the code a declaration alone cannot"
         );
         C::at(self.create(founder, package, config.values()))
     }

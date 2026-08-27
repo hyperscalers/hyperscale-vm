@@ -38,7 +38,7 @@ fn shape_terms() -> shapes::client::Terms {
 fn world(chain: &mut Chain) -> (custodian::client::Custodian, ResourceAddr) {
     static WORLDS: Worlds<(custodian::client::Custodian, ResourceAddr)> = Worlds::new();
     WORLDS.open(chain, |chain| {
-        chain.publish(package!(grammar_guest::grammar at "../grammar"));
+        chain.publish(package!(grammar_guest::grammar));
         chain.publish(package!(custodian_guest::custodian));
         let issuer = chain.instantiate::<shapes::client::Grammar>(ISSUER, shape_terms());
         let seat = issuer.issued_seat(&TestHasher);

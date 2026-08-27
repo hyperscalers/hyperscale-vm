@@ -116,8 +116,8 @@ impl Blessed {
             };
             panic!(
                 "this package has no code the wasm lane can build: {why}. The wasm lane \
-                 runs from the package's own crate; a test written elsewhere reaches the \
-                 bodies through `Chain::native()`"
+                 runs from the package's own crate; a test of bodies written elsewhere \
+                 says so with `#[hyperscale_vm_testing::test(native)]`"
             );
         };
         let component =
