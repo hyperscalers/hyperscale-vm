@@ -28,10 +28,8 @@ use std::process::Command;
 use hyperscale_hbor::to_vec;
 // The address vocabulary a caller writes on the command line, re-exported
 // beside the renderer that reads one.
-pub use hyperscale_vm_effects::{Address, AddressClass, PackageMetadata};
-use hyperscale_vm_effects::{
-    ProtocolHasher, ResourceMeta, Value, explain_resource, grants_read_config,
-};
+pub use hyperscale_vm_effects::{Address, AddressClass, PackageMetadata, Value};
+use hyperscale_vm_effects::{ProtocolHasher, ResourceMeta, explain_resource, grants_read_config};
 // The rendering `explain` prints, re-exported so the command reaches one
 // dependency for the whole pipeline it drives.
 pub use hyperscale_vm_effects::{explain, explain_method};
@@ -478,13 +476,18 @@ pub fn explain_gate_refusal(refusal: &GateError, metadata: &PackageMetadata) -> 
 pub fn explain_issued(
     metadata: &PackageMetadata,
     namespace: Option<Address>,
-    config: &BTreeMap<String, Address>,
+    config: &BTreeMap<String, Value>,
 ) -> Result<String, BuildError> {
     let issuer = namespace.unwrap_or(STAND_IN);
     let values: Vec<Value> = metadata
         .config
         .iter()
-        .map(|field| Value::Address(config.get(field).copied().unwrap_or(STAND_IN)))
+        .map(|field| {
+            config
+                .get(field)
+                .cloned()
+                .unwrap_or(Value::Address(STAND_IN))
+        })
         .collect();
 
     let mut out = String::new();
@@ -499,7 +502,7 @@ pub fn explain_issued(
             .into_iter()
             .filter_map(|slot| metadata.config.get(slot as usize))
             .filter(|field| !config.contains_key(*field))
-            .map(|field| format!("--config {field}=<address>"))
+            .map(|field| format!("--config {field}=<value>"))
             .collect();
         if !unanswered.is_empty() {
             return Err(BuildError::new(format!(

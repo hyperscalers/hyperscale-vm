@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use hyperscale_vm_cli::{
-    Address, AddressClass, GateError, Provenance, artifact, declaration, explain,
+    Address, AddressClass, GateError, Provenance, Value, artifact, declaration, explain,
     explain_gate_refusal, explain_issued, explain_method, scaffold,
 };
 use hyperscale_vm_fixtures::security;
@@ -228,11 +228,11 @@ fn a_package_says_what_its_resources_say_to_a_holder() {
     let refused = explain_issued(&metadata, None, &BTreeMap::new())
         .expect_err("the share class reads configuration");
     assert!(
-        refused.to_string().contains("--config registrar=<address>"),
+        refused.to_string().contains("--config registrar=<value>"),
         "{refused}"
     );
 
-    let config = BTreeMap::from([("registrar".to_owned(), registrar)]);
+    let config = BTreeMap::from([("registrar".to_owned(), Value::Address(registrar))]);
     let told = explain_issued(&metadata, None, &config).expect("the rules seal");
     // The stand-in is declared rather than left for the reader to find.
     assert!(told.contains("stand-in"), "{told}");

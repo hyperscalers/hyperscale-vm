@@ -17,8 +17,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use hyperscale_vm_cli::{
-    Address, BuildError, NetworkId, PrincipalAddr, Provenance, artifact, artifact_path, build,
-    declaration, explain, explain_issued, explain_method, publish_envelope, scaffold,
+    Address, BuildError, NetworkId, PrincipalAddr, Provenance, Value, artifact, artifact_path,
+    build, declaration, explain, explain_issued, explain_method, publish_envelope, scaffold,
 };
 
 const USAGE: &str = "\
@@ -84,7 +84,7 @@ struct Invocation {
     /// Which network the intent is for.
     network: Option<u8>,
     /// The configuration a resource's rules seal against, by field name.
-    config: BTreeMap<String, Address>,
+    config: BTreeMap<String, Value>,
     instance: Option<Address>,
 }
 
@@ -98,6 +98,51 @@ fn read_address(text: &str) -> Result<Address, BuildError> {
     Address::from_text(text)
         .map(|(address, _)| address)
         .map_err(|error| BuildError(format!("{text}: {error}")))
+}
+
+/// One configuration value as an author writes it: a tagged address, a
+/// decimal integer — `u64` where it fits, or suffixed `u64`/`u128` to
+/// say so — or `0x…` bytes. A `Value` carries its own kind, so the
+/// spelling is the type, and the sealed record's field is compared at
+/// the kind the author spelled.
+fn read_value(text: &str) -> Result<Value, BuildError> {
+    if let Some(hex) = text.strip_prefix("0x") {
+        if hex.len() % 2 != 0 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(BuildError(format!("{text}: `0x…` takes whole hex bytes")));
+        }
+        let bytes = (0..hex.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).expect("checked hex"))
+            .collect();
+        return Ok(Value::Bytes(bytes));
+    }
+    if let Some(digits) = text.strip_suffix("u64") {
+        return digits
+            .parse()
+            .map(Value::U64)
+            .map_err(|error| BuildError(format!("{text}: {error}")));
+    }
+    if let Some(digits) = text.strip_suffix("u128") {
+        return digits
+            .parse()
+            .map(Value::U128)
+            .map_err(|error| BuildError(format!("{text}: {error}")));
+    }
+    if text.chars().all(|c| c.is_ascii_digit()) && !text.is_empty() {
+        if let Ok(number) = text.parse() {
+            return Ok(Value::U64(number));
+        }
+        return text
+            .parse()
+            .map(Value::U128)
+            .map_err(|error| BuildError(format!("{text}: {error}")));
+    }
+    read_address(text).map(Value::Address).map_err(|_| {
+        BuildError(format!(
+            "{text}: a configuration value is a tagged address, a decimal integer \
+             (suffix `u64`/`u128` to fix the width), or `0x…` bytes"
+        ))
+    })
 }
 
 impl Invocation {
@@ -125,13 +170,13 @@ impl Invocation {
                 "--config" => {
                     let pair = rest
                         .next()
-                        .ok_or_else(|| BuildError("`--config` takes `<field>=<address>`".into()))?;
+                        .ok_or_else(|| BuildError("`--config` takes `<field>=<value>`".into()))?;
                     let (field, address) = pair.split_once('=').ok_or_else(|| {
-                        BuildError(format!("{pair}: `--config` takes `<field>=<address>`"))
+                        BuildError(format!("{pair}: `--config` takes `<field>=<value>`"))
                     })?;
                     invocation
                         .config
-                        .insert(field.to_owned(), read_address(address)?);
+                        .insert(field.to_owned(), read_value(address)?);
                 }
                 "--envelope" => {
                     let out = rest
@@ -267,5 +312,30 @@ fn run(args: &[String]) -> Result<String, BuildError> {
             Ok(rendered.trim_end().to_owned())
         }
         _ => Err(BuildError(USAGE.to_owned())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Value, read_value};
+
+    /// The spelling is the type: a bare integer is the narrow width, a
+    /// suffix fixes it, hex is bytes, and anything else must be an
+    /// address — refused naming the admissible spellings.
+    #[test]
+    fn a_configuration_value_parses_by_its_spelling() {
+        assert_eq!(read_value("7").unwrap(), Value::U64(7));
+        assert_eq!(read_value("7u128").unwrap(), Value::U128(7));
+        assert_eq!(
+            read_value("340282366920938463463374607431768211455").unwrap(),
+            Value::U128(u128::MAX)
+        );
+        assert_eq!(
+            read_value("0x0a0b").unwrap(),
+            Value::Bytes(vec![0x0A, 0x0B])
+        );
+        let refused = read_value("sideways").expect_err("no spelling admits it");
+        assert!(refused.to_string().contains("tagged address"), "{refused}");
+        assert!(refused.to_string().contains("`0x…` bytes"), "{refused}");
     }
 }
