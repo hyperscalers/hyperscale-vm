@@ -1602,3 +1602,86 @@ fn a_conditional_prover_declares_the_gate_beside_its_body() {
         "a proving call's one product is the claim"
     );
 }
+
+/// A named field may hold a resource the package itself issues:
+/// `#[holds(issued(..))]`, denominated by the declared resource's own
+/// derivation rather than by configuration — for the vault and for the
+/// instance family alike.
+#[blueprint]
+mod casino {
+    use hyperscale_vm_sdk::state::{Bucket, Instances, NfBucket, Vault};
+
+    /// The house's own chip.
+    #[resource(grants(mint = self, burn = self))]
+    struct Chip;
+
+    /// A seat at a table.
+    #[resource(non_fungible, grants(mint = self, burn = self))]
+    struct Seat;
+
+    #[state]
+    struct Casino {
+        /// The chips the house keeps on hand.
+        #[holds(issued(Chip))]
+        bank: Vault,
+        /// The seats not currently sold.
+        #[holds(issued(Seat))]
+        seats: Instances,
+    }
+
+    impl Casino {
+        /// Bank a chip payment.
+        pub fn stash(&mut self, chips: Bucket) {
+            self.bank.put(chips);
+        }
+
+        /// Reclaim seats into the house's own custody.
+        pub fn reclaim(&mut self, seats: NfBucket) {
+            self.seats.whole().file(seats);
+        }
+    }
+}
+
+#[test]
+fn an_issued_denomination_names_the_declared_resource() {
+    use hyperscale_vm_effects::{Expr, TargetExpr, Value};
+
+    let metadata = casino::blueprint().metadata();
+    let issued = |mark: &[u8], clause: &Clause| {
+        matches!(
+            clause,
+            Clause::Effect {
+                denomination: Some(resource),
+                ..
+            } if matches!(
+                &**resource,
+                Expr::SelfResource { material, .. }
+                    if material == &[Expr::Literal(Value::Bytes(mark.to_vec()))]
+            )
+        )
+    };
+    let effects = &metadata.methods["stash"].effects;
+    assert!(
+        effects.iter().any(|clause| issued(b"chip", clause)
+            && matches!(
+                clause,
+                Clause::Effect {
+                    target: TargetExpr::Point(_),
+                    ..
+                }
+            )),
+        "the vault's leaf holds the issued chip: {effects:?}"
+    );
+    let effects = &metadata.methods["reclaim"].effects;
+    assert!(
+        effects.iter().any(|clause| issued(b"seat", clause)
+            && matches!(
+                clause,
+                Clause::Effect {
+                    target: TargetExpr::Range { .. },
+                    ..
+                }
+            )),
+        "the family's interval holds the issued seat: {effects:?}"
+    );
+}
