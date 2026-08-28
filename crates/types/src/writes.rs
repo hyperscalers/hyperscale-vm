@@ -191,9 +191,19 @@ impl Movement {
 
     /// `before` with this movement applied, or `None` if the debit runs
     /// past what the cell holds.
+    ///
+    /// The two sides net before they touch `before`, so a movement whose
+    /// credit and debit both land on one cell cannot overflow on a net that
+    /// fits: only a genuine debit past the balance returns `None`. This
+    /// matches the execution-side fold in `fold_deltas`, which the settled
+    /// value must agree with.
     #[must_use]
-    pub fn apply(self, before: u128) -> Option<u128> {
-        before.checked_add(self.credit)?.checked_sub(self.debit)
+    pub const fn apply(self, before: u128) -> Option<u128> {
+        if self.credit >= self.debit {
+            before.checked_add(self.credit - self.debit)
+        } else {
+            before.checked_sub(self.debit - self.credit)
+        }
     }
 }
 
@@ -578,6 +588,39 @@ mod tests {
         assert_eq!(
             read_amount(&resolved.cells[&vault].clone().unwrap()),
             Some(150)
+        );
+    }
+
+    /// A net-zero pass-through onto a near-max cell nets to the balance it
+    /// found, not to zero: crediting before debiting would overflow on a net
+    /// that fits and drop the leaf. This is the case the execution-side
+    /// `fold_deltas` reports as `CellOverflow`; settlement, which cannot
+    /// error, must land the correct net instead.
+    #[test]
+    fn a_net_fitting_movement_does_not_overflow_to_zero() {
+        let near_max = u128::MAX - 50;
+        let pass_through = Movement {
+            resource: RESOURCE,
+            credit: 100,
+            debit: 100,
+        };
+        assert_eq!(pass_through.apply(near_max), Some(near_max));
+
+        // A genuine debit past the balance still saturates at the caller.
+        let overdraw = Movement {
+            resource: RESOURCE,
+            credit: 10,
+            debit: 20,
+        };
+        assert_eq!(overdraw.apply(5), None);
+
+        let vault = key(4, 4);
+        let mut writes = StateWrites::default();
+        writes.movements.insert(vault, pass_through);
+        let resolved = writes.resolve(&mut |_| amount_cell(near_max).map(|cell| cell.to_vec()));
+        assert_eq!(
+            read_amount(&resolved.cells[&vault].clone().unwrap()),
+            Some(near_max)
         );
     }
 
