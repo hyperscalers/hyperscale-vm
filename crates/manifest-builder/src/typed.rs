@@ -289,13 +289,9 @@ impl Proof {
     /// The proof a socket will be filled with, presented as this
     /// intent's `position`-th socket.
     pub(crate) fn from_socket(builder: u64, position: u32, claim: Claim) -> Self {
-        let widened = claim
-            .instance
-            .is_some()
-            .then(|| Claim::of_subject(claim.subject));
         let mut proves = [None; MAX_PROVEN_PER_SIGNATURE];
         proves[0] = Some(claim);
-        proves[1] = widened;
+        proves[1] = claim.widened();
         Self {
             builder,
             reference: EvidenceRef::Socket(position),

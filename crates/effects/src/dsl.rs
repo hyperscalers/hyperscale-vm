@@ -1626,13 +1626,11 @@ fn eval_clauses(
                 }
                 let claim = proven;
                 out.proves.push(claim);
-                // An instance holder holds the badge, so presenting one
-                // satisfies a rule naming the resource as well as a rule
-                // naming the instance. The widening happens where it is proven,
-                // where possession was verified, which is what keeps the
-                // judge an equality walk.
-                if claim.instance.is_some() {
-                    out.proves.push(Claim::of_subject(claim.subject));
+                // The widening happens where it is proven, where possession
+                // was verified, which is what keeps the judge an equality
+                // walk.
+                if let Some(widened) = claim.widened() {
+                    out.proves.push(widened);
                 }
                 // The cap is on the claims, and publish counting the
                 // clauses cannot see how many a loop yields — so the set

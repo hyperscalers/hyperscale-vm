@@ -356,11 +356,10 @@ pub(crate) fn proven_claims(
         if !proves.contains(&claim) {
             proves.push(claim);
         }
-        if claim.instance.is_some() {
-            let widened = Claim::of_subject(claim.subject);
-            if !proves.contains(&widened) {
-                proves.push(widened);
-            }
+        if let Some(widened) = claim.widened()
+            && !proves.contains(&widened)
+        {
+            proves.push(widened);
         }
     }
     proves

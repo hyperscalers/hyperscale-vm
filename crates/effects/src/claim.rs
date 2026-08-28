@@ -57,6 +57,21 @@ impl Claim {
         }
     }
 
+    /// The claim proving this one also proves, where proving it is wider
+    /// than the instance it names.
+    ///
+    /// An instance holder holds the badge, so presenting one instance
+    /// satisfies a rule naming the resource as well as a rule naming the
+    /// instance — `None` for a claim already about a whole subject, which
+    /// widens to nothing. The one statement of the rule, so the evaluator
+    /// that mints and the builder that predicts coverage cannot drift.
+    #[must_use]
+    pub fn widened(&self) -> Option<Self> {
+        self.instance
+            .is_some()
+            .then(|| Self::of_subject(self.subject))
+    }
+
     /// The badge this claim names, where its subject is one.
     #[must_use]
     pub fn badge(&self) -> Option<ResourceAddr> {
@@ -215,5 +230,24 @@ mod tests {
         ] {
             assert_eq!(Claim::of(&value), None, "{value:?}");
         }
+    }
+
+    /// Proving one instance also proves the badge as a whole; a claim
+    /// already about a whole subject widens to nothing. The one rule the
+    /// evaluator and the builder both read, so their coverage cannot drift.
+    #[test]
+    fn an_instance_claim_widens_to_its_subject() {
+        let badge = ResourceAddr::try_from(address(0xB0, AddressClass::Resource))
+            .expect("a resource address");
+        let instance = Claim::of_instance(badge, 7);
+        assert_eq!(instance.widened(), Some(Claim::of_subject(badge.address())));
+
+        // A whole-subject claim — a badge in any amount, or an address
+        // acting as itself — widens to nothing.
+        assert_eq!(Claim::of_subject(badge.address()).widened(), None);
+        assert_eq!(
+            Claim::of_subject(address(0x11, AddressClass::Component)).widened(),
+            None
+        );
     }
 }
