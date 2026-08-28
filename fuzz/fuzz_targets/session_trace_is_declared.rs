@@ -269,8 +269,9 @@ fn session(fx: &Fx) -> Option<KernelSession> {
                 // a meaningful value depends on the effect it sits beside
                 // (a reach names a denominated value behaviour), so an
                 // arbitrary one would refuse at materialization far more
-                // often than it would exercise the machinery. The seeded
-                // corpus lanes cover those axes instead.
+                // often than it would exercise the machinery. The kernel
+                // never reads them; their coverage is the admission-tier
+                // reach tests in `crates/effects/tests/admission.rs`.
                 reach: None,
                 clause: None,
             })

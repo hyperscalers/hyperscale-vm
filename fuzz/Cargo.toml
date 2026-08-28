@@ -46,4 +46,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "consensus_decode"
+path = "fuzz_targets/consensus_decode.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
