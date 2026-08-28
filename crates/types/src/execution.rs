@@ -20,6 +20,7 @@ pub const ABSENT_REP: u32 = u32::MAX;
 use hyperscale_hbor::Hbor;
 
 use crate::address::{Address, EffectTarget, SubstateKey};
+use crate::envelope::TxHash;
 use crate::mode::Presence;
 
 /// The events one transaction may emit.
@@ -490,6 +491,20 @@ pub enum Outcome {
     ConditionUnmet {
         /// The condition that went unmet.
         condition: UnmetCondition,
+    },
+    /// A group-mate this execution ran after flipped at apply, so writes
+    /// it may have read never committed.
+    ///
+    /// The same lost race [`Outcome::Infeasible`] names, one step
+    /// removed: a canonically earlier transaction in another group moved
+    /// a cell, the group-mate lost its floor at apply, and this
+    /// transaction executed against the group's threaded store while the
+    /// discarded writes were still in it. Priced with
+    /// [`Outcome::Infeasible`].
+    #[hbor(discriminant = 10)]
+    BaselineDiscarded {
+        /// The flipped group-mate whose writes this execution could see.
+        flipped: TxHash,
     },
 }
 

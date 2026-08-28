@@ -430,6 +430,174 @@ fn a_completion_flipped_at_apply_drops_its_fuel_but_keeps_its_declaration() {
     assert!(work.units > 0);
 }
 
+/// A pure commutative movement: debit the outbound delta cell, credit the
+/// inbound one. Unlike a reservation it is never judged upfront — each
+/// group judges it against its own store, and apply re-judges it against
+/// the committed floor, which is where a contested cell flips its loser.
+fn delta_transfer_declared() -> EffectSet {
+    let mut set = EffectSet::new();
+    set.insert(Effect {
+        target: EffectTarget::Point(cell(PAYER_BYTE)),
+        mode: Mode::Delta { moves: Moves::Out },
+    })
+    .unwrap();
+    set.insert(Effect {
+        target: EffectTarget::Point(cell(RECIPIENT_BYTE)),
+        mode: Mode::Delta { moves: Moves::In },
+    })
+    .unwrap();
+    set
+}
+
+/// The guest for [`delta_transfer_declared`]: moves 600 out of the
+/// outbound cell into the inbound one. A session without both delta
+/// capabilities completes without touching anything.
+fn delta_transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
+    let caps: Vec<Capability> = session.capabilities().to_vec();
+    let source = caps.iter().enumerate().find_map(|(rep, c)| match c {
+        Capability::Delta {
+            moves: Moves::Out, ..
+        } => Some(u32::try_from(rep).unwrap()),
+        _ => None,
+    });
+    let sink = caps.iter().enumerate().find_map(|(rep, c)| match c {
+        Capability::Delta {
+            moves: Moves::In, ..
+        } => Some(u32::try_from(rep).unwrap()),
+        _ => None,
+    });
+    if let (Some(source), Some(sink)) = (source, sink) {
+        let funds = session.cell_take(source, 0, 600).unwrap();
+        session.cell_put(sink, 0, funds).unwrap();
+    }
+    RunResult::Completed {
+        session,
+        answers: vec![],
+        fuel: 7,
+    }
+}
+
+#[test]
+fn a_dependent_of_a_flipped_completion_flips_with_it() {
+    // Two delta debits of 600 against 1_000, each in its own group; both
+    // complete, and the canonically later one loses its floor at apply.
+    // A third transaction shares the loser's group through an exclusive
+    // write on a cell the loser declares a read of, so it executed
+    // against the loser's threaded writes — and flips with it rather
+    // than committing state conditioned on writes that never landed.
+    let watched = cell(0xD1);
+    let mut observed = delta_transfer_declared();
+    observed
+        .insert(Effect {
+            target: EffectTarget::Point(watched),
+            mode: Mode::Read,
+        })
+        .unwrap();
+    let mut dependent = EffectSet::new();
+    dependent
+        .insert(Effect {
+            target: EffectTarget::Point(watched),
+            mode: Mode::Write { moves: Moves::Both },
+        })
+        .unwrap();
+
+    let batch = [
+        BatchTx::new(
+            tx(1),
+            moving(delta_transfer_declared()),
+            EnvInputs::unsealed(1_000),
+        ),
+        BatchTx::new(tx(2), moving(observed), EnvInputs::unsealed(1_000)),
+        BatchTx::new(tx(3), moving(dependent.clone()), EnvInputs::unsealed(1_000)),
+    ];
+    let outcome = run_batch(
+        funded_store(1_000),
+        &batch,
+        &delta_transfer_guest,
+        &Locality::All,
+    );
+
+    assert!(matches!(
+        outcome.receipts[&tx(1)].outcome,
+        Outcome::Completed { .. }
+    ));
+    assert!(matches!(
+        outcome.receipts[&tx(2)].outcome,
+        Outcome::Infeasible { .. }
+    ));
+    assert_eq!(
+        outcome.receipts[&tx(3)].outcome,
+        Outcome::BaselineDiscarded { flipped: tx(2) },
+        "the group-mate that could see the discarded writes flips with them"
+    );
+
+    // The cascade prices as the abort it is: the declaration stands, the
+    // fuel term does not.
+    let work = outcome.work[&tx(3)];
+    assert_eq!(work.footprint, footprint(&dependent));
+    assert_eq!(work.units, work_units(0, work.footprint));
+}
+
+#[test]
+fn a_group_mate_out_of_the_flipped_ones_reach_survives() {
+    // A reader of the payer cell shares a group with both movers, and a
+    // fourth transaction joins only through that reader's second cell.
+    // When the later mover flips at apply, the fourth's declaration
+    // conflicts with nothing that flipped — the reader completed and
+    // applied — so it commits untouched.
+    let bridge = cell(0xD2);
+    let mut linking = EffectSet::new();
+    linking
+        .insert(Effect {
+            target: EffectTarget::Point(cell(PAYER_BYTE)),
+            mode: Mode::Read,
+        })
+        .unwrap();
+    linking
+        .insert(Effect {
+            target: EffectTarget::Point(bridge),
+            mode: Mode::Read,
+        })
+        .unwrap();
+    let mut apart = EffectSet::new();
+    apart
+        .insert(Effect {
+            target: EffectTarget::Point(bridge),
+            mode: Mode::Write { moves: Moves::Both },
+        })
+        .unwrap();
+
+    let batch = [
+        BatchTx::new(tx(1), moving(linking), EnvInputs::unsealed(1_000)),
+        BatchTx::new(
+            tx(2),
+            moving(delta_transfer_declared()),
+            EnvInputs::unsealed(1_000),
+        ),
+        BatchTx::new(
+            tx(3),
+            moving(delta_transfer_declared()),
+            EnvInputs::unsealed(1_000),
+        ),
+        BatchTx::new(tx(4), moving(apart), EnvInputs::unsealed(1_000)),
+    ];
+    let outcome = run_batch(
+        funded_store(1_000),
+        &batch,
+        &delta_transfer_guest,
+        &Locality::All,
+    );
+
+    assert!(matches!(
+        outcome.receipts[&tx(3)].outcome,
+        Outcome::Infeasible { .. }
+    ));
+    assert!(
+        matches!(outcome.receipts[&tx(4)].outcome, Outcome::Completed { .. }),
+        "a declaration the flipped one could not have touched survives the flip"
+    );
+}
+
 #[test]
 fn work_is_a_function_of_the_batch_alone() {
     // R4's shape, at the reach of an in-process lane: the same batch under

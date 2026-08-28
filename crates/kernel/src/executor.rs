@@ -20,10 +20,14 @@
 //! group's store, so it can flip to infeasible there even though a
 //! canonically earlier transaction in a different group credited the same
 //! cell; that credit becomes visible only at apply, where the converse
-//! flip is handled. Every replica agrees, because every replica groups
-//! identically — but a change to how batches are composed can change
-//! which transaction loses a contested cell, and that is a property of
-//! batch composition rather than of the executor.
+//! flip is handled. A flip cascades: a group-mate that ran after the
+//! flipped transaction and whose declaration conflicts with it executed
+//! against writes that never committed, so it flips too rather than
+//! committing state conditioned on a world that never existed. Every
+//! replica agrees, because every replica groups identically — but a
+//! change to how batches are composed can change which transaction loses
+//! a contested cell, and that is a property of batch composition rather
+//! than of the executor.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -942,7 +946,14 @@ pub fn execute_batch<R: GuestRunner>(
     }
 
     let mut store = Arc::try_unwrap(judged).expect("no group overlay outlives its group");
-    apply_receipts(&mut store, batch, &mut receipts, locality)?;
+    apply_receipts(
+        &mut store,
+        batch,
+        &groups,
+        &runnable,
+        &mut receipts,
+        locality,
+    )?;
     store.merge_active();
 
     let work = attest_work(batch, &receipts, locality);
@@ -960,26 +971,121 @@ pub fn execute_batch<R: GuestRunner>(
 /// transaction whose local debit the floor no longer covers — earlier
 /// transactions drained the cell — flips to an infeasible receipt here, its
 /// fuel kept, its state never applied.
+/// Whether any pair of declared effects across two sets conflicts: the
+/// relation grouping is built from, asked of two members directly.
+fn sets_conflict(a: &EffectSet, b: &EffectSet) -> bool {
+    a.iter()
+        .any(|left| b.iter().any(|right| effects_conflict(&left, &right)))
+}
+
+/// Whether two declared effects conflict: their targets can alias and
+/// their modes do not share a class.
+fn effects_conflict(a: &Effect, b: &Effect) -> bool {
+    let (left, right) = (
+        a.mode.kind().conflict_class(),
+        b.mode.kind().conflict_class(),
+    );
+    if !left.conflicts_with(right) {
+        return false;
+    }
+    match (&a.target, &b.target) {
+        (EffectTarget::Point(left), EffectTarget::Point(right)) => left == right,
+        (
+            EffectTarget::Entry {
+                owner: left,
+                collection: on,
+                ..
+            }
+            | EffectTarget::Range {
+                owner: left,
+                collection: on,
+                ..
+            },
+            EffectTarget::Entry {
+                owner: right,
+                collection: of,
+                ..
+            }
+            | EffectTarget::Range {
+                owner: right,
+                collection: of,
+                ..
+            },
+        ) => {
+            if (left, on) != (right, of) {
+                return false;
+            }
+            match (claim_interval(&a.target), claim_interval(&b.target)) {
+                (Some((alo, ahi)), Some((blo, bhi))) => alo <= bhi && blo <= ahi,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 fn apply_receipts(
     store: &mut OverlayStore,
     batch: &[BatchTx],
+    groups: &[Vec<usize>],
+    runnable: &[&BatchTx],
     receipts: &mut BTreeMap<TxHash, Receipt>,
     locality: &Locality,
 ) -> Result<(), BatchError> {
     let entries: BTreeMap<TxHash, &BatchTx> = batch.iter().map(|entry| (entry.tx, entry)).collect();
+    let mut group_of: BTreeMap<TxHash, usize> = BTreeMap::new();
+    for (id, group) in groups.iter().enumerate() {
+        for &index in group {
+            group_of.insert(runnable[index].tx, id);
+        }
+    }
+    // Per group, the flipped members' declarations: the writes a later
+    // group-mate may have executed against and must not commit over.
+    let mut discarded: BTreeMap<usize, Vec<(TxHash, &EffectSet)>> = BTreeMap::new();
     let order: Vec<TxHash> = receipts.keys().copied().collect();
     for tx in order {
         let receipt = receipts.get(&tx).expect("walked from keys");
         let completed = matches!(receipt.outcome, Outcome::Completed { .. });
         let fuel = receipt.fuel;
-        let refusal = if completed {
-            apply_completed(store, receipt, tx, locality)?
+        // A group runs threaded, each member reading what the members
+        // before it wrote — and those writes commit only if their
+        // transaction still applies. A completion whose declaration
+        // conflicts with a flipped group-mate's is conditioned on state
+        // that never landed, so it flips with it rather than committing
+        // over its absence. Group order and apply order are both
+        // canonical, so every flipped member is known before its
+        // dependents apply; compatible modes cannot observe each other,
+        // which is what makes the declared conflict the bound on what a
+        // member could see.
+        let observed = completed
+            .then(|| group_of.get(&tx))
+            .flatten()
+            .and_then(|id| {
+                let flipped = discarded.get(id)?;
+                let set = &entries.get(&tx)?.declaration.set;
+                flipped
+                    .iter()
+                    .find(|(_, lost)| sets_conflict(lost, set))
+                    .map(|(source, _)| *source)
+            });
+        let flip = if let Some(flipped) = observed {
+            Some(Outcome::BaselineDiscarded { flipped })
+        } else if completed {
+            apply_completed(store, receipt, tx, locality)?.map(|(key, amount)| {
+                store.discard_active();
+                Outcome::Infeasible { key, amount }
+            })
         } else {
             None
         };
-        if let Some((key, amount)) = refusal {
-            store.discard_active();
-            receipts.insert(tx, abort_receipt(Outcome::Infeasible { key, amount }, fuel));
+        if let Some(outcome) = flip {
+            receipts.insert(tx, abort_receipt(outcome, fuel));
+            if let (Some(&id), Some(entry)) = (group_of.get(&tx), entries.get(&tx)) {
+                discarded
+                    .entry(id)
+                    .or_default()
+                    .push((tx, &entry.declaration.set));
+            }
         }
         // Whatever the receipt settled is gone by now. A hold still
         // standing is one nothing spent — a remote reservation, settled
@@ -1086,7 +1192,7 @@ mod tests {
     use proptest::collection::vec as prop_vec;
     use proptest::prelude::{Strategy, prop_oneof, proptest};
 
-    use super::{BatchTx, Outcome, conflict_groups, merge, root};
+    use super::{BatchTx, Outcome, conflict_groups, effects_conflict, merge, root};
     use crate::conflict::conflicts;
     use crate::modes::ModeError;
     use crate::session::{EnvInputs, MaterializeError};
@@ -1225,6 +1331,18 @@ mod tests {
                 .collect();
             let entries: Vec<&BatchTx> = batch.iter().collect();
             assert_eq!(conflict_groups(&entries), pairwise_groups(&entries));
+        }
+
+        /// The flip cascade asks the pairwise question directly, through
+        /// `effects_conflict` — a member flips only if its declaration
+        /// conflicts with a flipped group-mate's — so its relation is run
+        /// against the same oracle the grouping is.
+        #[test]
+        fn the_cascades_pairwise_relation_agrees_with_the_oracle(
+            left in arb_effect(),
+            right in arb_effect(),
+        ) {
+            assert_eq!(effects_conflict(&left, &right), conflicts(&left, &right));
         }
     }
 
