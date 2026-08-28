@@ -1,0 +1,5 @@
+error: `__found` starts with `__`, which the generated code reserves for its own items — name the function without the leading underscores
+  --> tests/refusals/reserved_item_name.rs:13:12
+   |
+13 |         fn __found() {}
+   |            ^^^^^^^

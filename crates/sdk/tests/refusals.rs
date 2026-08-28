@@ -451,6 +451,10 @@ fn the_macro_bounds_what_a_helper_may_be() {
     // The `__` reservation covers a body's own bindings, not just its
     // parameters — a `__`-named local shadows a lowered binding.
     refuse.compile_fail("tests/refusals/reserved_local.rs");
+    // And item names: the kernel-issuance spellings are unspellable
+    // because declaring anything under the prefix is refused, not
+    // because a stub happens to be missing.
+    refuse.compile_fail("tests/refusals/reserved_item_name.rs");
 }
 
 /// A key position takes the vocabulary.

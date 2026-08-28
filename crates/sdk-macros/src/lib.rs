@@ -714,11 +714,21 @@ fn check_use_shadows(tree: &syn::UseTree, matched: &[&str]) -> syn::Result<()> {
     }
 }
 
-/// Refuse a `__`-prefixed binding inside a lowered body: the generated
-/// code emits `__value_N`, `__capability_N` and their kin into the same
-/// body, so an author's `let __value_0` would shadow the binding the
-/// lowered effect reads. `check_names` reserves the prefix for parameters;
-/// this holds the rest of a body to it.
+/// Refuse a `__`-prefixed name anywhere the module can author one.
+///
+/// Bindings first: the generated code emits `__value_N`,
+/// `__capability_N` and their kin into a lowered body, so an author's
+/// `let __value_0` would shadow the binding the lowered effect reads.
+/// `check_names` reserves the prefix for parameters; this holds the rest
+/// of a body to it.
+///
+/// Item names too, and these carry more than shadowing: the kernel
+/// spellings `__found`, `__record` and `__seal` exist only as the
+/// lowering's own emissions, and their gates assume no authored text can
+/// spell them. An author supplying `fn __found` on a mark would hand the
+/// reading build the stub that assumption rests on being absent — so the
+/// whole prefix is refused where a name is declared, which is what makes
+/// the assumption true by construction.
 fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::Result<()> {
     struct Reserved<'e> {
         errors: &'e mut Vec<syn::Error>,
@@ -739,25 +749,39 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
         }
     }
     let mut errors = Vec::new();
+    let reserve_name = |ident: &syn::Ident, errors: &mut Vec<syn::Error>| {
+        if ident.to_string().starts_with("__") {
+            errors.push(syn::Error::new(
+                ident.span(),
+                format!(
+                    "`{ident}` starts with `__`, which the generated code reserves for its own \
+                     items — name the function without the leading underscores"
+                ),
+            ));
+        }
+    };
     for item in items {
-        let syn::Item::Impl(block) = item else {
-            continue;
-        };
-        if block.trait_.is_some() {
-            continue;
-        }
-        if !matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name)) {
-            continue;
-        }
-        for item in &block.items {
-            if let syn::ImplItem::Fn(method) = item {
-                syn::visit::Visit::visit_block(
-                    &mut Reserved {
-                        errors: &mut errors,
-                    },
-                    &method.block,
-                );
+        match item {
+            syn::Item::Fn(function) => reserve_name(&function.sig.ident, &mut errors),
+            syn::Item::Impl(block) => {
+                for inner in &block.items {
+                    let syn::ImplItem::Fn(method) = inner else {
+                        continue;
+                    };
+                    reserve_name(&method.sig.ident, &mut errors);
+                    let on_state = block.trait_.is_none()
+                        && matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name));
+                    if on_state {
+                        syn::visit::Visit::visit_block(
+                            &mut Reserved {
+                                errors: &mut errors,
+                            },
+                            &method.block,
+                        );
+                    }
+                }
             }
+            _ => {}
         }
     }
     errors
