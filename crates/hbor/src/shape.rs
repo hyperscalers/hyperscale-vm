@@ -555,8 +555,10 @@ impl TypeShape {
     /// one byte string per value — because it hashes the bytes, or trusts
     /// what it read to re-encode identically — must hold that itself, or
     /// read only bytes the codec already wrote. The package-metadata
-    /// readers that call this do the latter: they walk a package's own
-    /// committed metadata, which the encoder wrote canonically.
+    /// readers that read state leaves do the latter: a leaf is bytes the
+    /// encoder wrote canonically. An event payload is not — it is guest
+    /// bytes the kernel bounds in length but does not canonicalize — so a
+    /// reader that hashes or re-encodes one canonicalizes it first.
     ///
     /// Nesting is bounded by [`Resolution::readable`], which runs first:
     /// a shape within the cap bounds this walk's own recursion, because
