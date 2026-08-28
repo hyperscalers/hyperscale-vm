@@ -1,0 +1,5 @@
+error[E0599]: no method named `clone` found for struct `Draw` in the current scope
+  --> tests/refusals/cloned_draw.rs:24:49
+   |
+24 |             if let Some(who) = window.pick(draw.clone()) {
+   |                                                 ^^^^^ method not found in `Draw`

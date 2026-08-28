@@ -79,6 +79,9 @@ fn the_lowering_refuses_a_fresh_read_beside_a_write_of_one_leaf() {
 fn a_draw_selects_once() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/reused_draw.rs");
+    // Nor cloned into a second selection: a draw is neither `Copy` nor
+    // `Clone`.
+    refuse.compile_fail("tests/refusals/cloned_draw.rs");
 }
 
 #[test]

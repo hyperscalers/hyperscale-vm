@@ -705,7 +705,7 @@ pub struct Seal(());
 /// Three answers because a package does three things with them. A
 /// pending seal is early and opens later; an expired one never will,
 /// and whatever it was closing must be closed again.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Drawn {
     /// The seed this seal matures into is not rolled yet.
     Pending,
@@ -739,10 +739,12 @@ impl Drawn {
 /// package cannot pick a winner with bytes a caller supplied by
 /// accident.
 ///
-/// Not `Copy`, and every selection consumes it: two picks off one draw
-/// are perfectly correlated, and a body that means two independent
-/// selections needs two draws rather than one used twice.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Neither `Copy` nor `Clone`, and every selection consumes it: two
+/// picks off one draw are perfectly correlated, so a body that means two
+/// independent selections needs two draws rather than one used — or
+/// cloned — twice. Enforced by the type: [`Interval::pick`] and
+/// [`Interval::picked`] take it by value, and nothing reconstructs one.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Draw(Word);
 
 impl Draw {
@@ -2069,7 +2071,8 @@ impl<T> Interval<T> {
     /// `u32` to begin with, so the narrowing has nothing to refuse.
     #[must_use]
     #[inline(always)]
-    pub fn picked(&self, draw: &Draw) -> Option<u32> {
+    #[allow(clippy::needless_pass_by_value)] // consumes the draw: one draw, one selection
+    pub fn picked(&self, draw: Draw) -> Option<u32> {
         let entries = self.count();
         if entries == 0 {
             return None;
@@ -2109,9 +2112,8 @@ impl<T: Cellular> Interval<T> {
     /// read, because a body that picks wants what was picked.
     #[must_use]
     #[inline(always)]
-    #[allow(clippy::needless_pass_by_value)] // one draw, one selection
     pub fn pick(&self, draw: Draw) -> Option<T> {
-        self.picked(&draw).map(|index| self.entry(index))
+        self.picked(draw).map(|index| self.entry(index))
     }
 
     /// Replace the value at `index`.
