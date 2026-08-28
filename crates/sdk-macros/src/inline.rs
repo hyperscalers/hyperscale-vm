@@ -31,6 +31,13 @@ pub fn helpers(
         let syn::Item::Impl(block) = item else {
             continue;
         };
+        // A trait impl's methods are the trait's, resolved by Rust's own
+        // rules — capturing them as helpers would splice a trait body where
+        // the author's text named an inherent method of the same name, and
+        // refuse a `return` in a trait method nothing here even calls.
+        if block.trait_.is_some() {
+            continue;
+        }
         if !matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name)) {
             continue;
         }
