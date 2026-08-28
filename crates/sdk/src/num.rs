@@ -416,6 +416,13 @@ impl Quantity {
     /// This quantity over another of the same resource, as a
     /// dimensionless ratio.
     ///
+    /// Where the denominator is nonzero by the package's own invariant —
+    /// a supply with claims still outstanding, an index anchored at one —
+    /// the arm this leaves is unreachable, and the idiom is an `expect`
+    /// naming the invariant (`guests/lending`'s `index`) rather than an
+    /// error variant: an arm nothing can reach reads as a case somebody
+    /// should think about, and there is none.
+    ///
     /// # Errors
     ///
     /// [`NumError::ZeroDenominator`] against nothing — an empty pool,

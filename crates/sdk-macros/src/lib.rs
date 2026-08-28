@@ -171,6 +171,24 @@
 //! still stands, and the package's component is then written the long way:
 //! the publish gate judges artifacts, never authorship.
 //!
+//! # Order is wire-visible, and why that is safe
+//!
+//! Several orders in a module reach the published artifact: the export's
+//! parameter list follows the order the body opened its handles, an
+//! event's index is its `#[event]` struct's position, an error's code is
+//! its variant's position across the module's `#[error]` enums in
+//! declaration order — explicit discriminants are refused — and a
+//! `#[config]` struct's field order is its slot numbering. Reordering
+//! any of them is a different artifact, from an edit as small as
+//! swapping two independent statements. One argument makes that safe:
+//! a package is immutable — the artifact's hash is committed in its
+//! address, and every consumer resolves names through the metadata
+//! published beside that same artifact — so a renumbering ships as a
+//! new package, never as a change under a caller's feet. `#[state]`
+//! slots are the one order an author can pin (`#[slot(<n>)]`), because
+//! the protocol's own packages upgrade in place and a pinned slot is
+//! what holds a leaf still across one.
+//!
 //! # What it does not do
 //!
 //! It does not build `Expr` literals. Every declaration it derives is
