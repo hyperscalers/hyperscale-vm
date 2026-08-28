@@ -23,6 +23,12 @@
 //! slot *numbers*, which are integers rather than a closed set, and it
 //! falls through to the number itself.
 //!
+//! A self-issued resource is spelled once. The tables carry a
+//! `resources` line for every derivation the methods reach, grants and
+//! all, and a mention whose kind and mark name exactly one of those
+//! lines renders without them. Two derivations one mark cannot separate
+//! stay fully spelled, everywhere.
+//!
 //! Clauses are numbered by the preorder a clause index names, which is
 //! the walk [`check_declarations`] judges them in and the numbering a
 //! refusal's clause index counts in. An ABI binding names a top-level
@@ -32,7 +38,7 @@
 //!
 //! [`check_declarations`]: crate::publish::check_declarations
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
@@ -61,7 +67,7 @@ use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT}
 /// The whole package: its tables, then every method it declares.
 #[must_use]
 pub fn explain(metadata: &PackageMetadata) -> String {
-    let names = Names(metadata);
+    let names = Names::new(metadata);
     let mut out = String::new();
     names.tables(&mut out);
     for (name, signature) in &metadata.methods {
@@ -78,7 +84,7 @@ pub fn explain(metadata: &PackageMetadata) -> String {
 pub fn explain_method(metadata: &PackageMetadata, method: &str) -> Option<String> {
     let signature = metadata.methods.get(method)?;
     let mut out = String::new();
-    Names(metadata).method(method, signature, &mut out);
+    Names::new(metadata).method(method, signature, &mut out);
     Some(out)
 }
 
@@ -624,7 +630,7 @@ fn bound_abi(records: &dyn ChainRecords, node: &GraphNode, abi: u32) -> Option<S
     let metadata = records.package(instance.package)?;
     let signature = metadata.methods.get(&node.method)?;
     let param = signature.abi.get(usize::try_from(abi).ok()?)?;
-    Some(Names(&metadata).abi_param(param, &signature.effects))
+    Some(Names::new(&metadata).abi_param(param, &signature.effects))
 }
 
 /// The node a refusal points at.
@@ -707,7 +713,7 @@ fn declared_clause(records: &dyn ChainRecords, node: &GraphNode, clause: u32) ->
     for declared in &signature.effects {
         let mut listing = String::new();
         let from = index;
-        Names(&metadata).clause(declared, &mut index, 0, &mut listing);
+        Names::new(&metadata).clause(declared, &mut index, 0, &mut listing);
         if (from..index).contains(&clause) {
             out = listing;
             break;
@@ -762,8 +768,21 @@ fn key_text(key: &SubstateKey) -> String {
     format!("{}/{}", address_text(key.owner), hex(&key.local.0))
 }
 
-/// The tables a rendering resolves names through.
-struct Names<'a>(&'a PackageMetadata);
+/// The tables a rendering resolves names through, and the census of
+/// self-issued resources that lets a mention leave its grants to the
+/// resources table.
+struct Names<'a> {
+    metadata: &'a PackageMetadata,
+    /// Every self-issued resource the package's methods derive, keyed by
+    /// its rendered kind and material, holding each distinct grants
+    /// trailer seen under that key.
+    ///
+    /// A key with one trailer names one derivation, so a mention of it
+    /// renders without the grants and the resources table says them
+    /// once. A key with several is two resources a mark cannot tell
+    /// apart, and every mention stays fully spelled.
+    issued: BTreeMap<(String, String), BTreeSet<String>>,
+}
 
 /// Binding strength, so a rendered expression reparses as the tree it
 /// came from with no parentheses nothing needed.
@@ -778,12 +797,64 @@ const SUM: u8 = 4;
 const UNARY: u8 = 5;
 const ATOM: u8 = 6;
 
-impl Names<'_> {
+impl<'a> Names<'a> {
+    fn new(metadata: &'a PackageMetadata) -> Self {
+        let mut names = Self {
+            metadata,
+            issued: BTreeMap::new(),
+        };
+        let mut issued: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+        for signature in metadata.methods.values() {
+            for issuance in &signature.issues {
+                let Issuance {
+                    mark,
+                    kind,
+                    direction: _,
+                    grants,
+                } = issuance;
+                issued
+                    .entry((
+                        resource_kind(*kind).to_owned(),
+                        format!("[{}]", bytes(mark)),
+                    ))
+                    .or_default()
+                    .insert(names.grants_of(grants));
+            }
+            for top in signature_exprs(signature) {
+                let mut stack = vec![top];
+                while let Some(expr) = stack.pop() {
+                    stack.extend(expr.children());
+                    if let Expr::SelfResource {
+                        kind,
+                        material,
+                        grants,
+                    } = expr
+                    {
+                        issued
+                            .entry((resource_kind(*kind).to_owned(), names.material(material)))
+                            .or_default()
+                            .insert(names.grants_of(grants));
+                    }
+                }
+            }
+        }
+        names.issued = issued;
+        names
+    }
+
+    /// Whether one derivation answers to this kind and material, so a
+    /// mention may leave its grants to the resources table.
+    fn tabled(&self, kind: ResourceKind, material: &str) -> bool {
+        self.issued
+            .get(&(resource_kind(kind).to_owned(), material.to_owned()))
+            .is_some_and(|grants| grants.len() == 1)
+    }
+
     /// The package's own tables, each omitted where it is empty.
     fn tables(&self, out: &mut String) {
-        if !self.0.state.is_empty() {
+        if !self.metadata.state.is_empty() {
             out.push_str("state\n");
-            for (slot, shape) in &self.0.state {
+            for (slot, shape) in &self.metadata.state {
                 let SlotShape {
                     name,
                     kind,
@@ -803,12 +874,25 @@ impl Names<'_> {
                 );
             }
         }
-        name_table("config", &self.0.config, out);
-        name_table("events", &self.0.events, out);
-        name_table("errors", &self.0.errors, out);
-        if !self.0.types.is_empty() {
+        name_table("config", &self.metadata.config, out);
+        // The census, spelled once: every mention below whose kind and
+        // material name exactly one line here leaves its grants to it.
+        if !self.issued.is_empty() {
+            out.push_str("resources\n");
+            for ((kind, material), grants) in &self.issued {
+                for trailer in grants {
+                    let granted = trailer
+                        .strip_prefix(", ")
+                        .map_or_else(String::new, |granted| format!(" — {granted}"));
+                    let _ = writeln!(out, "  {kind}{material}{granted}");
+                }
+            }
+        }
+        name_table("events", &self.metadata.events, out);
+        name_table("errors", &self.metadata.errors, out);
+        if !self.metadata.types.is_empty() {
             out.push_str("types\n");
-            for (name, shape) in &self.0.types {
+            for (name, shape) in &self.metadata.types {
                 let _ = writeln!(out, "  {name} = {}", shape_of(shape));
             }
         }
@@ -864,17 +948,22 @@ impl Names<'_> {
             // grant is which of the resource's authority entries it
             // answers to, so a reader should not have to find it in a
             // clause further down.
+            let material = format!("[{}]", bytes(mark));
+            let granted = if self.tabled(*kind, &material) {
+                String::new()
+            } else {
+                self.grants_of(grants)
+            };
             let _ = writeln!(
                 out,
-                "  {}{} {}{}",
+                "  {}{} {}{granted}",
                 match direction {
                     Issued::Minted => "mints    ",
                     Issued::Burned => "burns    ",
                     Issued::Either => "issues   ",
                 },
                 bytes(mark),
-                resource_kind(*kind),
-                self.grants_of(grants)
+                resource_kind(*kind)
             );
         }
         // What a caller hands over to be destroyed, which is the other
@@ -1135,15 +1224,18 @@ impl Names<'_> {
                 kind,
                 material,
                 grants,
-            } => (
-                format!(
-                    "self-issued({}{}){}",
-                    resource_kind(*kind),
-                    self.material(material),
+            } => {
+                let material = self.material(material);
+                let grants = if self.tabled(*kind, &material) {
+                    String::new()
+                } else {
                     self.grants_of(grants)
-                ),
-                ATOM,
-            ),
+                };
+                (
+                    format!("self-issued({}{material}){grants}", resource_kind(*kind)),
+                    ATOM,
+                )
+            }
             Expr::ChildKey {
                 owner,
                 slot,
@@ -1353,7 +1445,7 @@ impl Names<'_> {
     fn config(&self, field: u32) -> String {
         usize::try_from(field)
             .ok()
-            .and_then(|index| self.0.config.get(index))
+            .and_then(|index| self.metadata.config.get(index))
             .map_or_else(
                 || format!("config[{field}]"),
                 |name| format!("config.{name}"),
@@ -1384,10 +1476,131 @@ impl Names<'_> {
         if let Some(name) = vocabulary {
             return name.to_owned();
         }
-        self.0
+        self.metadata
             .state
             .get(&slot)
             .map_or_else(|| format!("slot {}", slot.0), |shape| shape.name.clone())
+    }
+}
+
+/// Every expression a signature holds at top level, wherever the
+/// declaration puts one — the walk the resource census descends from.
+///
+/// Destructured whole, on the module's own terms: a signature, clause,
+/// target or rule that grows an expression-bearing field stops compiling
+/// rather than quietly escaping the census.
+fn signature_exprs(signature: &MethodSignature) -> Vec<&Expr> {
+    let MethodSignature {
+        totality: _,
+        issues: _,
+        destroys: _,
+        params: _,
+        outputs,
+        answers: _,
+        denominations,
+        effects,
+        abi,
+    } = signature;
+    let mut exprs: Vec<&Expr> = Vec::new();
+    exprs.extend(denominations.iter().flatten());
+    exprs.extend(outputs);
+    for param in abi {
+        match param {
+            AbiParam::Handle { .. } | AbiParam::Bucket(_) | AbiParam::Guard(_) => {}
+            AbiParam::Derived(expr) => exprs.push(expr),
+        }
+    }
+    for clause in effects.iter().flat_map(Clause::effects) {
+        clause_exprs(clause, &mut exprs);
+    }
+    exprs
+}
+
+/// One clause's own expressions — a loop's body is walked by the caller,
+/// which iterates the preorder.
+fn clause_exprs<'a>(clause: &'a Clause, into: &mut Vec<&'a Expr>) {
+    match clause {
+        Clause::Effect {
+            guard,
+            target,
+            mode,
+            denomination,
+            reach: _,
+        } => {
+            into.extend(guard.as_deref());
+            target_exprs(target, into);
+            match mode {
+                ModeExpr::Read | ModeExpr::Delta { .. } | ModeExpr::Write { .. } => {}
+                ModeExpr::Reserve(amount) => into.push(amount),
+            }
+            into.extend(denomination.as_deref());
+        }
+        Clause::ForEach {
+            guard,
+            list,
+            body: _,
+        } => {
+            into.extend(guard.as_deref());
+            into.push(list);
+        }
+        Clause::Requires { guard, rule } => {
+            into.extend(guard.as_deref());
+            rule_exprs(rule, into);
+        }
+        Clause::Proves { guard, claim } => {
+            into.extend(guard.as_deref());
+            into.push(claim);
+        }
+    }
+}
+
+/// A target's expressions: the owner, whatever names the slot, the
+/// material, and the bounds.
+fn target_exprs<'a>(target: &'a TargetExpr, into: &mut Vec<&'a Expr>) {
+    match target {
+        TargetExpr::Point(key) => into.push(key),
+        TargetExpr::Entry {
+            owner,
+            collection,
+            material,
+            order,
+        } => {
+            into.push(owner);
+            into.extend(collection.reached());
+            into.extend(material);
+            into.push(order);
+        }
+        TargetExpr::Range {
+            owner,
+            collection,
+            material,
+            lo,
+            hi,
+            cap,
+        } => {
+            into.push(owner);
+            into.extend(collection.reached());
+            into.extend(material);
+            into.push(lo);
+            into.push(hi);
+            into.push(cap);
+        }
+    }
+}
+
+/// A declared rule's expressions, leaf by leaf.
+fn rule_exprs<'a>(rule: &'a RuleExpr, into: &mut Vec<&'a Expr>) {
+    match rule {
+        Rule::Require(leaf) => match leaf {
+            RuleLeaf::Claim(claim) => into.push(claim),
+            RuleLeaf::Stored { cell } => into.push(cell),
+            RuleLeaf::Presence { target, expect: _ } => target_exprs(target, into),
+        },
+        Rule::CountOf { count: _, rules } => {
+            for branch in rules {
+                rule_exprs(branch, into);
+            }
+        }
     }
 }
 
@@ -1903,29 +2116,57 @@ mod tests {
         );
     }
 
+    /// A mention of a self-issued resource leaves its grants to the
+    /// resources table, which spells them once — unless two derivations
+    /// share a mark, in which case no mention leaves anything implicit.
     #[test]
-    fn an_issued_resource_carries_the_rules_its_address_grants() {
-        let mut grants = GrantsExpr::new();
-        grants.set(
-            GrantedBehaviour::Deposit,
-            GrantRuleExpr::Require(GrantSubject::SelfBadge {
-                mark: b"owner-badge".to_vec(),
-                kind: ResourceKind::Fungible,
-                rules: GrantsExpr::new(),
-            }),
-        );
-        let text = rendered(
+    fn an_issued_resource_spells_its_grants_in_the_resources_table() {
+        let granting = |badge: &[u8]| {
+            let mut grants = GrantsExpr::new();
+            grants.set(
+                GrantedBehaviour::Deposit,
+                GrantRuleExpr::Require(GrantSubject::SelfBadge {
+                    mark: badge.to_vec(),
+                    kind: ResourceKind::Fungible,
+                    rules: GrantsExpr::new(),
+                }),
+            );
+            grants
+        };
+        let ticket = |grants| Expr::SelfResource {
+            kind: ResourceKind::NonFungible,
+            material: vec![Expr::Literal(Value::Bytes(b"ticket".to_vec()))],
+            grants,
+        };
+        let text = explain(&package(
             "issues",
-            declaring(vec![read(Expr::SelfResource {
-                kind: ResourceKind::NonFungible,
-                material: vec![Expr::Literal(Value::Bytes(b"ticket".to_vec()))],
-                grants,
-            })]),
-        );
+            declaring(vec![read(ticket(granting(b"owner-badge")))]),
+        ));
         assert!(
             text.contains(
-                "read self-issued(non-fungible[\"ticket\"]), \
-                 granting deposit to whoever holds the issuer's \"owner-badge\" badge"
+                "resources\n  non-fungible[\"ticket\"] — granting deposit to whoever \
+                 holds the issuer's \"owner-badge\" badge"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("read self-issued(non-fungible[\"ticket\"])\n"),
+            "{text}"
+        );
+
+        // Two grant sets under one mark are two resources a reader
+        // cannot tell apart by name, so every mention stays whole.
+        let text = explain(&package(
+            "issues",
+            declaring(vec![
+                read(ticket(granting(b"owner-badge"))),
+                read(ticket(granting(b"court-badge"))),
+            ]),
+        ));
+        assert!(
+            text.contains(
+                "read self-issued(non-fungible[\"ticket\"]), granting deposit to \
+                 whoever holds the issuer's \"owner-badge\" badge"
             ),
             "{text}"
         );

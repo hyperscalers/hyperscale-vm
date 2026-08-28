@@ -5,6 +5,9 @@ state
 config
       0  staked_resource
       1  founder
+resources
+  fungible["stake-unit"] — granting mint to the issuer and burn to the issuer
+  non-fungible["owner-badge"]
 events
       0  staked
       1  unstaked
@@ -51,8 +54,8 @@ instantiate() — infallible
       2  write self.config
       3  requires self.resource[self-issued(non-fungible["owner-badge"])] is absent
       4  write self.resource[self-issued(non-fungible["owner-badge"])]
-      5  requires self.resource[self-issued(fungible["stake-unit"]), granting mint to the issuer and burn to the issuer] is absent
-      6  write self.resource[self-issued(fungible["stake-unit"]), granting mint to the issuer and burn to the issuer]
+      5  requires self.resource[self-issued(fungible["stake-unit"])] is absent
+      6  write self.resource[self-issued(fungible["stake-unit"])]
       7  requires self.instance[self-issued(non-fungible["owner-badge"]), 0] is absent
       8  write self.instance[self-issued(non-fungible["owner-badge"]), 0]
   yields   edge 0 = edge(self-issued(non-fungible["owner-badge"]) × [0])
@@ -67,10 +70,10 @@ register-validator(u64, [u8; 48], [u8; 96]) — infallible
 
 stake(bucket) — infallible
   takes    arg0 carrying config.staked_resource
-  mints    "stake-unit" fungible, granting mint to the issuer and burn to the issuer
+  mints    "stake-unit" fungible
   declares
       0  credit self.pool[config.staked_resource] holding config.staked_resource
-  yields   edge 0 = self-issued(fungible["stake-unit"]), granting mint to the issuer and burn to the issuer
+  yields   edge 0 = self-issued(fungible["stake-unit"])
   exports  handle for clause 0, edge arg0
 
 unjail(u64) — infallible
@@ -81,6 +84,6 @@ unjail(u64) — infallible
   exports  arg0
 
 unstake(bucket) — infallible
-  takes    arg0 carrying self-issued(fungible["stake-unit"]), granting mint to the issuer and burn to the issuer
-  burns    "stake-unit" fungible, granting mint to the issuer and burn to the issuer
+  takes    arg0 carrying self-issued(fungible["stake-unit"])
+  burns    "stake-unit" fungible
   exports  edge arg0
