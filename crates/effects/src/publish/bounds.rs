@@ -257,37 +257,12 @@ fn check_clause_bounds(
 }
 
 fn check_target_bounds(target: &TargetExpr) -> Result<(), SignatureBoundsError> {
-    match target {
-        TargetExpr::Point(key) => check_expr_bounds(key, 0),
-        TargetExpr::Entry {
-            owner,
-            material,
-            order,
-            ..
-        } => {
-            check_expr_bounds(owner, 0)?;
-            for part in material {
-                check_expr_bounds(part, 0)?;
-            }
-            check_expr_bounds(order, 0)
-        }
-        TargetExpr::Range {
-            owner,
-            material,
-            lo,
-            hi,
-            cap,
-            ..
-        } => {
-            check_expr_bounds(owner, 0)?;
-            for part in material {
-                check_expr_bounds(part, 0)?;
-            }
-            check_expr_bounds(lo, 0)?;
-            check_expr_bounds(hi, 0)?;
-            check_expr_bounds(cap, 0)
-        }
-    }
+    // Over `parts()`, the one statement of a target's structure, so the
+    // walk cannot bury a subterm the evaluator will reach — the `collection`
+    // slot's `Reached` expression is one a hand-written destructure drops.
+    target
+        .parts()
+        .try_for_each(|part| check_expr_bounds(part, 0))
 }
 
 fn check_mode_bounds(mode: &ModeExpr) -> Result<(), SignatureBoundsError> {
@@ -597,6 +572,28 @@ mod tests {
         assert_bounded(
             &capped(nested_projection(MAX_EXPR_DEPTH)),
             &capped(nested_projection(MAX_EXPR_DEPTH + 1)),
+        );
+    }
+
+    #[test]
+    fn a_reached_collection_slot_walks_the_target_bounds() {
+        // The slot the target reaches through is an expression like every
+        // other part; a walk that dropped it would admit an over-deep slot
+        // the evaluator then refuses at every call — a published-but-
+        // uncallable method.
+        let target = |slot: Expr| TargetExpr::Entry {
+            owner: Expr::SelfAddr,
+            collection: SlotRef::Reached(Box::new(slot)),
+            material: vec![],
+            order: Expr::Literal(Value::U128(0)),
+        };
+        assert_eq!(
+            check_target_bounds(&target(nested_projection(MAX_EXPR_DEPTH))),
+            Ok(())
+        );
+        assert!(
+            check_target_bounds(&target(nested_projection(MAX_EXPR_DEPTH + 1))).is_err(),
+            "an over-deep reached collection slot must be refused at publish"
         );
     }
 
