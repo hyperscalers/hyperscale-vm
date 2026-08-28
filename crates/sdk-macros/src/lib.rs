@@ -648,6 +648,10 @@ fn check_vocabulary_shadows(items: &[syn::Item]) -> syn::Result<()> {
         "Result",
     ];
     for item in items {
+        if let syn::Item::Use(item) = item {
+            check_use_shadows(&item.tree, MATCHED)?;
+            continue;
+        }
         let ident = match item {
             syn::Item::Struct(item) => &item.ident,
             syn::Item::Enum(item) => &item.ident,
@@ -666,6 +670,37 @@ fn check_vocabulary_shadows(items: &[syn::Item]) -> syn::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Refuse a `use … as Alias` that binds some other type under a vocabulary
+/// name: the macro matches by last path segment, so `NfBucket as Bucket`
+/// would lower as the fungible `Bucket` the alias only spells. A plain
+/// import of a vocabulary name is left alone — that is how the vocabulary
+/// itself is brought into scope.
+fn check_use_shadows(tree: &syn::UseTree, matched: &[&str]) -> syn::Result<()> {
+    match tree {
+        syn::UseTree::Path(path) => check_use_shadows(&path.tree, matched),
+        syn::UseTree::Group(group) => group
+            .items
+            .iter()
+            .try_for_each(|item| check_use_shadows(item, matched)),
+        syn::UseTree::Rename(rename) => {
+            let alias = &rename.rename;
+            if alias != &rename.ident && matched.iter().any(|name| alias == name) {
+                return Err(syn::Error::new(
+                    alias.span(),
+                    format!(
+                        "`{alias}` is a name the macro matches by a type's last path \
+                         segment, so aliasing `{}` to it would silently bind as the \
+                         vocabulary's — drop the rename",
+                        rename.ident
+                    ),
+                ));
+            }
+            Ok(())
+        }
+        syn::UseTree::Name(_) | syn::UseTree::Glob(_) => Ok(()),
+    }
 }
 
 /// The markers whose reader scans structs, and the two field pins.

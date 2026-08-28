@@ -1,0 +1,5 @@
+error: `Bucket` is a name the macro matches by a type's last path segment, so aliasing `NfBucket` to it would silently bind as the vocabulary's — drop the rename
+ --> tests/refusals/aliased_vocabulary.rs:9:47
+  |
+9 |     use hyperscale_vm_sdk::state::NfBucket as Bucket;
+  |                                               ^^^^^^

@@ -444,4 +444,7 @@ fn the_vocabulary_closes_the_key_positions() {
 fn the_macro_refuses_a_shadowed_vocabulary_name() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/shadowed_vocabulary.rs");
+    // A `use … as` rename reaches the same shadow the last-segment match
+    // would miss, so it is refused at the alias.
+    refuse.compile_fail("tests/refusals/aliased_vocabulary.rs");
 }
