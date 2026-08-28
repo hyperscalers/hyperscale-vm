@@ -1,4 +1,5 @@
 state
+  the protocol's own — config
      16  bank — one leaf, holding u128, denominated in config.collateral
      17  mark — one leaf, holding [u8; 32]
      18  funding_charged — one leaf, holding [u8; 32]

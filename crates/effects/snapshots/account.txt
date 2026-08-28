@@ -1,4 +1,5 @@
 state
+  the protocol's own — vault, auth, nf-vault
      16  refused — a leaf per key, holding [u8; 1]
      17  quarantine — a leaf per key, holding u128
      18  recovery — one leaf, holding [u8]

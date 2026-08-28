@@ -1,4 +1,5 @@
 state
+  the protocol's own — config
      16  pot — a leaf per key, holding u128
      17  tickets — an unordered collection, holding address
      18  round — one leaf, holding u64

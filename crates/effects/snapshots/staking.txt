@@ -1,4 +1,5 @@
 state
+  the protocol's own — config, resource, instance
      16  pool — one leaf, holding u128, denominated in config.staked_resource
      17  validators — a leaf per key, holding validator
      18  vote — one leaf, holding param-vote

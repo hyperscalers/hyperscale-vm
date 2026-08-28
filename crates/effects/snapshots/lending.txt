@@ -1,4 +1,5 @@
 state
+  the protocol's own — config
      16  posted — one leaf, holding u128, denominated in config.collateral
      17  reserves — one leaf, holding u128, denominated in config.debt
      18  index — one leaf, holding [u8; 32]

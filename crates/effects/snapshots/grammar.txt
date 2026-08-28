@@ -1,4 +1,5 @@
 state
+  the protocol's own — config, resource, instance
      16  entries — an ordered collection, holding u128
      17  ledger — an ordered collection, holding u64
      18  noted — one leaf, holding u64

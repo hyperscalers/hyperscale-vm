@@ -1,3 +1,5 @@
+state
+  the protocol's own — config, resource
 config
       0  minter
 resources

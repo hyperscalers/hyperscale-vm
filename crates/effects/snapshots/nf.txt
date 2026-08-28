@@ -1,3 +1,5 @@
+state
+  the protocol's own — nf-vault, instance
 resources
   non-fungible["badge"] — granting mint to the issuer and burn to the issuer
 

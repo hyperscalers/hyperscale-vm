@@ -1,4 +1,5 @@
 state
+  the protocol's own — config
      16  retired — one leaf, holding u128, denominated in config.stable
      17  backing — one leaf, holding u128, denominated in config.reserve
      18  deviation — one leaf, holding [u8; 32]

@@ -1,3 +1,5 @@
+state
+  the protocol's own — config, resource, instance, halt
 config
       0  registrar
 resources

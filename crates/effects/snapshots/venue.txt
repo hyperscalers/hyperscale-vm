@@ -1,4 +1,5 @@
 state
+  the protocol's own — config
      16  till — one leaf, holding u128, denominated in config.asset
      17  admitted — one leaf, holding u64
 config

@@ -68,7 +68,7 @@ use crate::rule::{
     always, never,
 };
 use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, ParamType, Totality};
-use crate::types::{EdgeContent, Value, u256_decimal};
+use crate::types::{EdgeContent, SlotId, Value, u256_decimal};
 use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 
 /// The whole package: its tables, then every method it declares.
@@ -858,6 +858,62 @@ impl<'a> Names<'a> {
         names
     }
 
+    /// The protocol's own slots the methods reach, in slot order.
+    ///
+    /// The state table's answer to a reader met by `self.vault` with no
+    /// row spelling it: the low slots are the protocol's, named by its
+    /// vocabulary rather than by anything the package declares.
+    fn protocol_slots(&self) -> Vec<&'static str> {
+        fn fixed(collection: &SlotRef, into: &mut BTreeMap<u16, &'static str>) {
+            if let SlotRef::Fixed(slot) = collection
+                && let Some(name) = vocabulary_name(*slot)
+            {
+                into.insert(slot.0, name);
+            }
+        }
+        fn keyed(target: &TargetExpr, into: &mut BTreeMap<u16, &'static str>) {
+            match target {
+                TargetExpr::Point(_) => {}
+                TargetExpr::Entry { collection, .. } | TargetExpr::Range { collection, .. } => {
+                    fixed(collection, into);
+                }
+            }
+        }
+        fn ruled(rule: &RuleExpr, into: &mut BTreeMap<u16, &'static str>) {
+            match rule {
+                Rule::Require(RuleLeaf::Presence { target, expect: _ }) => keyed(target, into),
+                Rule::Require(RuleLeaf::Claim(_) | RuleLeaf::Stored { .. }) => {}
+                Rule::CountOf { count: _, rules } => {
+                    for branch in rules {
+                        ruled(branch, into);
+                    }
+                }
+            }
+        }
+        let mut found: BTreeMap<u16, &'static str> = BTreeMap::new();
+        for signature in self.metadata.methods.values() {
+            for clause in signature.effects.iter().flat_map(Clause::effects) {
+                match clause {
+                    Clause::Effect { target, .. } => keyed(target, &mut found),
+                    Clause::Requires { rule, .. } => ruled(rule, &mut found),
+                    Clause::ForEach { .. } | Clause::Proves { .. } => {}
+                }
+            }
+            for top in signature_exprs(signature) {
+                let mut stack = vec![top];
+                while let Some(expr) = stack.pop() {
+                    stack.extend(expr.children());
+                    match expr {
+                        Expr::ChildKey { slot, .. } => fixed(slot, &mut found),
+                        Expr::OrderKey { slot, .. } => fixed(&SlotRef::Fixed(*slot), &mut found),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        found.into_values().collect()
+    }
+
     /// Whether one derivation answers to this kind and material, so a
     /// mention may leave its grants to the resources table.
     fn tabled(&self, kind: ResourceKind, material: &str) -> bool {
@@ -868,8 +924,14 @@ impl<'a> Names<'a> {
 
     /// The package's own tables, each omitted where it is empty.
     fn tables(&self, out: &mut String) {
-        if !self.metadata.state.is_empty() {
+        let protocol = self.protocol_slots();
+        if !self.metadata.state.is_empty() || !protocol.is_empty() {
             out.push_str("state\n");
+            // Why the package's rows start at 16: the low slots are the
+            // protocol's, and the ones the methods reach are named here.
+            if !protocol.is_empty() {
+                let _ = writeln!(out, "  the protocol's own — {}", protocol.join(", "));
+            }
             for (slot, shape) in &self.metadata.state {
                 let SlotShape {
                     name,
@@ -1539,19 +1601,7 @@ impl<'a> Names<'a> {
             SlotRef::Fixed(slot) => *slot,
             SlotRef::Reached(expr) => return self.expr(expr, ATOM),
         };
-        let vocabulary = match slot {
-            VAULT => Some("vault"),
-            HALT => Some("halt"),
-            CONFIG => Some("config"),
-            AUTH => Some("auth"),
-            RESOURCE => Some("resource"),
-            NF_VAULT => Some("nf-vault"),
-            INSTANCE => Some("instance"),
-            PACKAGE_SLOT => Some("package"),
-            NULLIFIER_SLOT => Some("nullifier"),
-            _ => None,
-        };
-        if let Some(name) = vocabulary {
+        if let Some(name) = vocabulary_name(slot) {
             return name.to_owned();
         }
         self.metadata
@@ -1629,6 +1679,22 @@ fn clause_exprs<'a>(clause: &'a Clause, into: &mut Vec<&'a Expr>) {
             into.extend(guard.as_deref());
             into.push(claim);
         }
+    }
+}
+
+/// The name the protocol's vocabulary gives a slot, where it gives one.
+const fn vocabulary_name(slot: SlotId) -> Option<&'static str> {
+    match slot {
+        VAULT => Some("vault"),
+        HALT => Some("halt"),
+        CONFIG => Some("config"),
+        AUTH => Some("auth"),
+        RESOURCE => Some("resource"),
+        NF_VAULT => Some("nf-vault"),
+        INSTANCE => Some("instance"),
+        PACKAGE_SLOT => Some("package"),
+        NULLIFIER_SLOT => Some("nullifier"),
+        _ => None,
     }
 }
 
@@ -2136,6 +2202,24 @@ mod tests {
         assert!(text.contains("read self.vault[config.x]"), "{text}");
         assert!(text.contains("read self.entries"), "{text}");
         assert!(text.contains("read self.slot 999"), "{text}");
+    }
+
+    /// The state table opens by naming the protocol slots the methods
+    /// reach, so `self.vault` never appears with no row spelling it —
+    /// and says nothing where they reach none.
+    #[test]
+    fn the_state_table_names_the_protocol_slots_the_methods_reach() {
+        let text = explain(&package(
+            "reads",
+            declaring(vec![read(self_child(VAULT, vec![Expr::Config(0)]))]),
+        ));
+        assert!(
+            text.contains("state\n  the protocol's own — vault\n     16  entries"),
+            "{text}"
+        );
+
+        let text = explain(&package("reads", declaring(vec![read(Expr::SelfAddr)])));
+        assert!(!text.contains("the protocol's own"), "{text}");
     }
 
     #[test]
