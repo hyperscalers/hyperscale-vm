@@ -2346,12 +2346,14 @@ fn find<'a>(
     key: &Value,
     budget: &Budget<'_>,
 ) -> Result<Option<&'a Value>, EvalError> {
+    // Each pair is a comparison against the probe, and a comparison walks
+    // the probe to the first difference — the same structural walk
+    // `Expr::Eq` prices on its operands. Charged per pair, this makes the
+    // ceiling a bound on the compares performed rather than on the pair
+    // count, so a wide-keyed table cannot amplify a scan under a flat unit.
+    let probe = walked(key);
     for pair in pairs {
-        // Per pair examined. A scan is the one operation whose cost is
-        // the table's rather than the expression's, and charging it here
-        // is what makes the ceiling a bound on work instead of on the
-        // number of scans a signature spells.
-        budget.spend(1)?;
+        budget.spend(probe)?;
         let Value::Tuple(fields) = pair else {
             return Err(EvalError::LookupNotPairs);
         };
@@ -3569,6 +3571,52 @@ mod tests {
         let wide = [elements, Value::List(vec![Value::U64(0); MAX_VALUE_ITEMS])];
         assert_eq!(
             evaluate_effects(&clauses, &inputs(&wide, &[]), &TestHasher),
+            Err(EvalError::TooMuchWork)
+        );
+    }
+
+    /// A scan prices the probe it compares, not just the pairs it visits.
+    ///
+    /// A comparison walks the probe to the first difference — the same
+    /// walk `Expr::Eq` prices — so a table keyed by a wide value forces
+    /// that walk per pair. The two below hold one pair scanned to a hit at
+    /// the same pair count and footprint, differing only in the probe's
+    /// width; without pricing the probe they are one transaction at one
+    /// price and a hundredfold apart in the compares a node performs
+    /// deciding them, before any fee is assured.
+    #[test]
+    fn a_scan_is_charged_for_the_probe_it_compares() {
+        let over = |width: usize| {
+            let key = Value::List(vec![Value::U64(0); width]);
+            let table = Value::List(vec![Value::Tuple(vec![key.clone(), Value::U64(0)])]);
+            [Clause::ForEach {
+                guard: None,
+                list: Expr::Arg(0),
+                body: vec![Clause::Effect {
+                    reach: None,
+                    guard: Some(Box::new(Expr::Contains {
+                        map: Box::new(Expr::Literal(table)),
+                        key: Box::new(Expr::Literal(key)),
+                    })),
+                    target: TargetExpr::Point(Expr::ChildKey {
+                        owner: Box::new(Expr::SelfAddr),
+                        slot: SlotRef::Fixed(SlotId(16)),
+                        material: vec![Expr::Binding(0)],
+                    }),
+                    mode: ModeExpr::Write { moves: Moves::Both },
+                    denomination: None,
+                }],
+            }]
+        };
+        let args = [Value::List(vec![Value::U64(0); MAX_FOREACH_ELEMENTS])];
+        let ins = inputs(&args, &[]);
+
+        // A narrow probe a table could plausibly be keyed by, compared once
+        // per element.
+        assert!(evaluate_effects(&over(4), &ins, &TestHasher).is_ok());
+        // The widest a list admits, at the same pair count and footprint.
+        assert_eq!(
+            evaluate_effects(&over(MAX_VALUE_ITEMS), &ins, &TestHasher),
             Err(EvalError::TooMuchWork)
         );
     }
