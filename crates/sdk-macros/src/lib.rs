@@ -114,15 +114,16 @@
 //! # Names the generated client takes
 //!
 //! Every method gets a client wrapper, and the wrapper's own parameters
-//! are named: `builder` on all of them, `proof` or `proofs` where the
-//! method presents something, and `who` where a principal package's free
-//! functions name the caller. A method parameter of that name would
-//! shadow one of those and is refused.
+//! are named: `builder` on all of them, and `who` on a principal package's,
+//! where its free functions name the caller. A method parameter of one of
+//! those names would shadow it and is refused. Evidence is the builder's to
+//! resolve from the scope, so no wrapper takes a proof parameter and none
+//! is reserved.
 //!
-//! The reservation is exactly as wide as the wrapper this method gets,
-//! rather than blanket — which means **adding a gate can reserve a name
-//! that was free before**: an ungated method may take a parameter called
-//! `proof`, and the same method with `#[requires(…)]` may not.
+//! Beside those, the `__` prefix is reserved whole: the lowering emits
+//! `__value_N`, `__capability_N` and their kin into the generated body, so
+//! a parameter — or a body's own local — wearing one would shadow a
+//! binding the lowered effects read, and is refused.
 //!
 //! # What the macro refuses
 //!
@@ -1412,6 +1413,16 @@ fn lower_methods(
             declared,
             serves,
         )?);
+    } else if let Some(attr) = instantiation_gate(items) {
+        // A principals package instantiates nothing — the registry serves
+        // it to every principal address by class — so an instantiation gate
+        // has no call to gate. Read only in the branch above, it would be
+        // stripped in silence rather than enforced, so it is refused here.
+        return Err(syn::Error::new_spanned(
+            attr,
+            "`#[requires]` on the configuration gates instantiation, and a package serving \
+             principals is never instantiated — the gate would bind nothing; remove it",
+        ));
     }
     Ok(lowered)
 }

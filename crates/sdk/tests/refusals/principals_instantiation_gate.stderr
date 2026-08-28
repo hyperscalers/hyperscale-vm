@@ -1,0 +1,5 @@
+error: `#[requires]` on the configuration gates instantiation, and a package serving principals is never instantiated — the gate would bind nothing; remove it
+  --> tests/refusals/principals_instantiation_gate.rs:12:5
+   |
+12 |     #[requires(config.founder)]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^

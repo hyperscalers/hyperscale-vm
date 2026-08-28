@@ -192,6 +192,16 @@ fn the_lowering_refuses_a_badge_gate_on_an_instance_package() {
     refuse.compile_fail("tests/refusals/badge_gate_on_instance.rs");
 }
 
+/// The other direction: an instantiation gate belongs to a package that
+/// instantiates. A principals package is served by class and never brought
+/// up, so `#[requires]` on its configuration binds nothing and is refused
+/// rather than stripped in silence.
+#[test]
+fn the_lowering_refuses_an_instantiation_gate_on_a_principals_package() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/principals_instantiation_gate.rs");
+}
+
 /// A proving call's one product is the claim. A `#[proves(self)]` body
 /// is ordinary and may decline, but an edge or an answer out of it
 /// would reopen the call matrix — and a presenting gate's body stays
