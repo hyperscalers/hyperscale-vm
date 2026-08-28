@@ -138,6 +138,21 @@ fn check_vault_form(
     }
 }
 
+/// A second `#[slot]`/`#[holds]` on one field, refused across both spans:
+/// last-write-wins would take the second's word while the first vanished,
+/// the silently-smaller declaration this derivation must not have.
+fn duplicate_attr(second: &syn::Attribute, first: &syn::Attribute, name: &str) -> syn::Error {
+    let mut refusal = syn::Error::new_spanned(
+        second,
+        format!("a field carries one `#[{name}]` — this repeats it"),
+    );
+    refusal.combine(syn::Error::new_spanned(
+        first,
+        format!("the `#[{name}]` this field already carries"),
+    ));
+    refusal
+}
+
 /// The state field's slot and shape, read off its declaration.
 pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
     let name = field
@@ -147,14 +162,24 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
         .to_string();
 
     let mut pinned = None;
+    let mut slot_attr = None;
     let mut denomination = None;
+    let mut holds_attr = None;
     for attr in &field.attrs {
         if attr.path().is_ident("slot") {
+            if let Some(first) = slot_attr {
+                return Err(duplicate_attr(attr, first, "slot"));
+            }
             let literal: syn::LitInt = attr.parse_args()?;
             pinned = Some(literal.base10_parse::<u16>()?);
+            slot_attr = Some(attr);
         }
         if attr.path().is_ident("holds") {
+            if let Some(first) = holds_attr {
+                return Err(duplicate_attr(attr, first, "holds"));
+            }
             denomination = Some(attr.parse_args::<syn::Expr>()?);
+            holds_attr = Some(attr);
         }
         if attr.path().is_ident("denomination") {
             return Err(syn::Error::new(

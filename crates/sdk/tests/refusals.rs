@@ -281,6 +281,17 @@ fn the_lowering_refuses_a_second_gate() {
     refuse.compile_fail("tests/refusals/duplicate_requires.rs");
 }
 
+/// A field's `#[slot]`/`#[holds]` and a method's `#[name]` are each one
+/// pin. A second would silently win while the first vanished — the
+/// smaller-than-written declaration this derivation must not have — so it
+/// is refused across both spans, like a second gate.
+#[test]
+fn the_lowering_refuses_a_duplicate_pin() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/duplicate_slot.rs");
+    refuse.compile_fail("tests/refusals/duplicate_name.rs");
+}
+
 /// One `#[state]` struct, one `#[config]` struct.
 ///
 /// Each names a namespace that is one namespace — the slot table, the

@@ -495,22 +495,32 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
 /// it, and a package whose method reads better under another name says
 /// so once.
 fn method_name(method: &syn::ImplItemFn) -> syn::Result<String> {
-    for attr in &method.attrs {
-        if attr.path().is_ident("name") {
-            let literal: syn::LitStr = attr.parse_args()?;
-            let published = literal.value();
-            if published == kebab(&method.sig.ident.to_string()) {
-                return Err(syn::Error::new_spanned(
-                    attr,
-                    "this is the name the method already publishes — a `#[name]` that \
-                     restates the derivation says nothing, and one that stops agreeing \
-                     with it silently renames the method",
-                ));
-            }
-            return Ok(published);
-        }
+    let mut names = method.attrs.iter().filter(|a| a.path().is_ident("name"));
+    let Some(attr) = names.next() else {
+        return Ok(kebab(&method.sig.ident.to_string()));
+    };
+    // Reading the first and stopping would take one `#[name]`'s word while
+    // a second vanished — the silently-renamed method this must not allow.
+    if let Some(second) = names.next() {
+        let mut refusal =
+            syn::Error::new_spanned(second, "a method carries one `#[name]` — this repeats it");
+        refusal.combine(syn::Error::new_spanned(
+            attr,
+            "the `#[name]` this method already carries",
+        ));
+        return Err(refusal);
     }
-    Ok(kebab(&method.sig.ident.to_string()))
+    let literal: syn::LitStr = attr.parse_args()?;
+    let published = literal.value();
+    if published == kebab(&method.sig.ident.to_string()) {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "this is the name the method already publishes — a `#[name]` that \
+             restates the derivation says nothing, and one that stops agreeing \
+             with it silently renames the method",
+        ));
+    }
+    Ok(published)
 }
 
 /// The macro's own attributes, which are read and then removed so what it

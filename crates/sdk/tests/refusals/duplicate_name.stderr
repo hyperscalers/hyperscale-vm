@@ -1,0 +1,11 @@
+error: a method carries one `#[name]` — this repeats it
+  --> tests/refusals/duplicate_name.rs:16:9
+   |
+16 |         #[name("second-name")]
+   |         ^^^^^^^^^^^^^^^^^^^^^^
+
+error: the `#[name]` this method already carries
+  --> tests/refusals/duplicate_name.rs:15:9
+   |
+15 |         #[name("first-name")]
+   |         ^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,11 @@
+error: a field carries one `#[slot]` — this repeats it
+  --> tests/refusals/duplicate_slot.rs:11:9
+   |
+11 |         #[slot(30)]
+   |         ^^^^^^^^^^^
+
+error: the `#[slot]` this field already carries
+  --> tests/refusals/duplicate_slot.rs:10:9
+   |
+10 |         #[slot(20)]
+   |         ^^^^^^^^^^^
