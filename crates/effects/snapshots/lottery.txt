@@ -31,7 +31,7 @@ enter(address, bucket) — infallible
       1  read self.round
       2  write self.tickets at order-key(self.tickets[arg0])
       3  credit self.pot[resource-of(arg1)]
-  exports  handle for clause 1, handle for clause 2, handle for clause 3, order-key(self.tickets[arg0]), arg0, edge arg1
+  exports  handles for clauses 1–3, order-key(self.tickets[arg0]), arg0, edge arg1
 
 instantiate() — infallible
   declares

@@ -17,7 +17,7 @@ fill-asks(u64, u64, bucket) — infallible
       2  credit self.quote[config.quote]
   yields   edge 0 = config.base
   yields   edge 1 = resource-of(arg2)
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, edge arg2, config.tick
+  exports  handles for clauses 0–2, edge arg2, config.tick
 
 instantiate() — infallible
   declares

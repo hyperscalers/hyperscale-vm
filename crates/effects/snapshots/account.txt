@@ -48,14 +48,14 @@ confirm() — infallible
       3  write self.confirmation
       4  write self.delay_ms
       5  requires 1 of (the rule stored at self.confirmation, 2 of (self.confirmation is absent, claim self))
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4
+  exports  handles for clauses 0–4
 
 deposit(bucket) — total
   declares
       0  read self.refused[resource-of(arg0)]
       1  credit self.vault[resource-of(arg0)]
       2  credit self.quarantine[resource-of(arg0)]
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, edge arg0
+  exports  handles for clauses 0–2, edge arg0
 
 deposit-nf(nf-bucket) — infallible
   declares
@@ -92,7 +92,7 @@ promote() — infallible
       2  write self.recovery
       3  write self.confirmation
       4  write self.delay_ms
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4
+  exports  handles for clauses 0–4
 
 propose(rule, rule, rule, u64) — infallible
   declares
@@ -116,7 +116,7 @@ securify(rule, rule, rule, u64) — infallible
       3  write self.recovery
       4  write self.confirmation
       5  write self.delay_ms
-  exports  handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, arg0, arg1, arg2, arg3
+  exports  handles for clauses 2–5, arg0, arg1, arg2, arg3
 
 sweep(resource-address, u128) — infallible
   declares

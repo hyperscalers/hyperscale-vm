@@ -990,12 +990,48 @@ impl<'a> Names<'a> {
             let _ = writeln!(out, "  yields   edge {edge} = {}", self.expr(output, ATOM));
         }
         if !abi.is_empty() {
-            let bound: Vec<String> = abi
-                .iter()
-                .map(|param| self.abi_param(param, effects))
-                .collect();
-            let _ = writeln!(out, "  exports  {}", bound.join(", "));
+            let _ = writeln!(
+                out,
+                "  exports  {}",
+                self.abi_params(abi, effects).join(", ")
+            );
         }
+    }
+
+    /// The exports line's entries, with an unbroken run of clause
+    /// handles said once — `handles for clauses 0–6` rather than seven
+    /// spellings of one word. A run of two stays spelled out: the
+    /// compression pays only where the counting does.
+    fn abi_params(&self, abi: &[AbiParam], effects: &[Clause]) -> Vec<String> {
+        fn flush(bound: &mut Vec<String>, run: &mut Vec<u32>) {
+            match run.as_slice() {
+                [] => {}
+                &[first, .., last] if run.len() >= 3 => {
+                    bound.push(format!("handles for clauses {first}–{last}"));
+                }
+                lines => {
+                    bound.extend(lines.iter().map(|line| format!("handle for clause {line}")));
+                }
+            }
+            run.clear();
+        }
+        let mut bound: Vec<String> = Vec::new();
+        let mut run: Vec<u32> = Vec::new();
+        for param in abi {
+            if let AbiParam::Handle { clause, site } = param
+                && let Some(line) = listed_line(effects, *clause, Some(*site))
+            {
+                if run.last().is_some_and(|last| line != last + 1) {
+                    flush(&mut bound, &mut run);
+                }
+                run.push(line);
+                continue;
+            }
+            flush(&mut bound, &mut run);
+            bound.push(self.abi_param(param, effects));
+        }
+        flush(&mut bound, &mut run);
+        bound
     }
 
     /// One clause and, for a loop, its body — numbering in the preorder a
@@ -1834,7 +1870,7 @@ mod tests {
     use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape};
     use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
     use crate::rule::{GrantRuleExpr, GrantSubject, Rule, RuleLeaf};
-    use crate::signature::{MethodSignature, ParamType, Totality};
+    use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
     use crate::types::{SlotId, Value, package_slot};
     use crate::vocabulary::VAULT;
 
@@ -1928,6 +1964,39 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// An unbroken run of clause handles is counted once; a pair is
+    /// spelled out.
+    #[test]
+    fn a_run_of_clause_handles_is_counted_once() {
+        let handle = |clause| AbiParam::Handle { clause, site: 0 };
+        let mut signature = declaring(vec![
+            read(Expr::SelfAddr),
+            read(Expr::SelfAddr),
+            read(Expr::SelfAddr),
+            read(Expr::SelfAddr),
+        ]);
+        signature.abi = vec![
+            handle(0),
+            handle(1),
+            handle(2),
+            handle(3),
+            AbiParam::Derived(Expr::Arg(0)),
+        ];
+        let text = rendered("runs", signature);
+        assert!(
+            text.contains("exports  handles for clauses 0–3, arg0"),
+            "{text}"
+        );
+
+        let mut signature = declaring(vec![read(Expr::SelfAddr), read(Expr::SelfAddr)]);
+        signature.abi = vec![handle(0), handle(1)];
+        let text = rendered("pair", signature);
+        assert!(
+            text.contains("exports  handle for clause 0, handle for clause 1"),
+            "{text}"
+        );
     }
 
     /// A denomination the key already shows is the key restated, and

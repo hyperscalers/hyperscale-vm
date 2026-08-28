@@ -44,7 +44,7 @@ draw(u128, u64) — fallible
       5  read self.posted[config.collateral]
       6  debit self.reserves[config.debt]
   yields   edge 0 = config.debt
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, handle for clause 6, arg1, arg0, config.ltv
+  exports  handles for clauses 0–6, arg1, arg0, config.ltv
 
 index-scaled() — infallible, answers
   declares
@@ -66,7 +66,7 @@ liquidate(u64) — fallible
       4  write self.shares
       5  debit-only self.posted[config.collateral]
   yields   edge 0 = config.collateral
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 4, handle for clause 5, arg0, config.liquidation_threshold
+  exports  handles for clauses 0–5, arg0, config.liquidation_threshold
 
 post-price(u256, u256) — infallible
   declares
@@ -82,4 +82,4 @@ repay(bucket, u64) — fallible
       1  credit self.reserves[config.debt]
       2  read self.index
       3  write self.shares
-  exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, edge arg0, arg1
+  exports  handles for clauses 0–3, edge arg0, arg1
