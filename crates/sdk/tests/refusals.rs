@@ -121,6 +121,7 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/overstated_record.rs");
     refuse.compile_fail("tests/refusals/emitted_record_carries_a_length.rs");
     refuse.compile_fail("tests/refusals/colliding_marks.rs");
+    refuse.compile_fail("tests/refusals/duplicate_resource_attr.rs");
     refuse.compile_fail("tests/refusals/rebalanced_across.rs");
     refuse.compile_fail("tests/refusals/merged_across.rs");
     refuse.compile_fail("tests/refusals/burned_foreign.rs");

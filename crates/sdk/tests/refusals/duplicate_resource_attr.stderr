@@ -1,0 +1,11 @@
+error: a mark carries one `#[resource(…)]` — combine what it says into it
+  --> tests/refusals/duplicate_resource_attr.rs:10:5
+   |
+10 |     #[resource(non_fungible, grants(mint = self))]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: the attribute this mark already carries
+ --> tests/refusals/duplicate_resource_attr.rs:9:5
+  |
+9 |     #[resource]
+  |     ^^^^^^^^^^^

@@ -38,9 +38,25 @@ pub fn resources(items: &[syn::Item], config_fields: &[String]) -> syn::Result<V
         let syn::Item::Struct(item) = item else {
             continue;
         };
-        let Some(attr) = item.attrs.iter().find(|a| a.path().is_ident("resource")) else {
+        // A second attribute would be silently stripped while the first
+        // spoke for the struct — and a mark whose kind, grants, or issue
+        // differ from what the author wrote is a different resource at a
+        // different address.
+        let mut attrs = item.attrs.iter().filter(|a| a.path().is_ident("resource"));
+        let Some(attr) = attrs.next() else {
             continue;
         };
+        if let Some(second) = attrs.next() {
+            let mut refusal = syn::Error::new_spanned(
+                second,
+                "a mark carries one `#[resource(…)]` — combine what it says into it",
+            );
+            refusal.combine(syn::Error::new_spanned(
+                attr,
+                "the attribute this mark already carries",
+            ));
+            return Err(refusal);
+        }
         let ResourceAttr {
             kind,
             display_digits,
