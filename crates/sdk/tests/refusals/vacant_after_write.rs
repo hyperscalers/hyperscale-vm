@@ -5,7 +5,6 @@ mod contract {
     use hyperscale_vm_sdk::state::Cell;
 
     #[record]
-    #[derive(Clone)]
     struct Mark {
         n: u64,
     }

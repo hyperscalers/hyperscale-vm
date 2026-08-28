@@ -1,5 +1,5 @@
 error: a fresh read requiring the leaf absent sits beside a write of the same leaf, so the site has two modes and no way to declare both. Use `create` for a write that requires absence
-  --> tests/refusals/write_after_vacant.rs:21:13
+  --> tests/refusals/write_after_vacant.rs:20:13
    |
-21 |             self.mark.set(Some(Mark { n }));
+20 |             self.mark.set(Some(Mark { n }));
    |             ^^^^

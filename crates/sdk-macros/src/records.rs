@@ -168,7 +168,12 @@ pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ide
             continue;
         }
         item.attrs.push(syn::parse_quote!(
-            #[derive(::core::fmt::Debug, ::core::cmp::PartialEq, ::core::cmp::Eq)]
+            #[derive(
+                ::core::clone::Clone,
+                ::core::fmt::Debug,
+                ::core::cmp::PartialEq,
+                ::core::cmp::Eq
+            )]
         ));
         item.attrs.push(syn::parse_quote!(
             #[derive(::hyperscale_vm_sdk::hbor::Hbor, ::hyperscale_vm_sdk::hbor::HborShape)]

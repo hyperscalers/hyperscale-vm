@@ -85,7 +85,6 @@ pub mod lottery {
     /// A round nobody entered still drew, so the winner is optional and
     /// the draw is not.
     #[record]
-    #[derive(Clone)]
     struct Outcome {
         draw: Word,
         winner: Option<Address>,

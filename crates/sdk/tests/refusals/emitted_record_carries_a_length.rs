@@ -9,7 +9,6 @@ mod contract {
     use hyperscale_vm_sdk::state::Cell;
 
     #[record]
-    #[derive(Clone)]
     struct Tally {
         count: u64,
         note: Vec<u8>,

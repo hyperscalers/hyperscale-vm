@@ -119,14 +119,12 @@ pub mod staking {
     /// A validator the pool operates: the consensus key it registered,
     /// which is the whole of its claim on that validator.
     #[record]
-    #[derive(Clone)]
     struct Validator {
         pubkey: [u8; PUBKEY_BYTES],
     }
 
     /// The pool's position on the network's parameters.
     #[record]
-    #[derive(Clone)]
     struct ParamVote {
         split_bytes: u64,
         impound_epochs: u64,
