@@ -1,0 +1,5 @@
+error: `__value_0` starts with `__`, which the generated code reserves for its own bindings — name the binding without the leading underscores
+  --> tests/refusals/reserved_local.rs:16:17
+   |
+16 |             let __value_0 = Quantity::ZERO;
+   |                 ^^^^^^^^^

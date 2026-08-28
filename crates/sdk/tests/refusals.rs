@@ -420,6 +420,9 @@ fn the_macro_bounds_what_a_helper_may_be() {
     // The bounds are an inherent helper's; a trait impl's methods are the
     // trait's, so an early `return` and a shared name are both fine there.
     refuse.pass("tests/refusals/helper_trait_impl.rs");
+    // The `__` reservation covers a body's own bindings, not just its
+    // parameters — a `__`-named local shadows a lowered binding.
+    refuse.compile_fail("tests/refusals/reserved_local.rs");
 }
 
 /// A key position takes the vocabulary.

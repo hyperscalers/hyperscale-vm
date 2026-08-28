@@ -703,6 +703,61 @@ fn check_use_shadows(tree: &syn::UseTree, matched: &[&str]) -> syn::Result<()> {
     }
 }
 
+/// Refuse a `__`-prefixed binding inside a lowered body: the generated
+/// code emits `__value_N`, `__capability_N` and their kin into the same
+/// body, so an author's `let __value_0` would shadow the binding the
+/// lowered effect reads. `check_names` reserves the prefix for parameters;
+/// this holds the rest of a body to it.
+fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::Result<()> {
+    struct Reserved<'e> {
+        errors: &'e mut Vec<syn::Error>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Reserved<'_> {
+        fn visit_pat_ident(&mut self, pat: &'ast syn::PatIdent) {
+            if pat.ident.to_string().starts_with("__") {
+                self.errors.push(syn::Error::new(
+                    pat.ident.span(),
+                    format!(
+                        "`{}` starts with `__`, which the generated code reserves for its \
+                         own bindings — name the binding without the leading underscores",
+                        pat.ident
+                    ),
+                ));
+            }
+            syn::visit::visit_pat_ident(self, pat);
+        }
+    }
+    let mut errors = Vec::new();
+    for item in items {
+        let syn::Item::Impl(block) = item else {
+            continue;
+        };
+        if block.trait_.is_some() {
+            continue;
+        }
+        if !matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name)) {
+            continue;
+        }
+        for item in &block.items {
+            if let syn::ImplItem::Fn(method) = item {
+                syn::visit::Visit::visit_block(
+                    &mut Reserved {
+                        errors: &mut errors,
+                    },
+                    &method.block,
+                );
+            }
+        }
+    }
+    errors
+        .into_iter()
+        .reduce(|mut all, error| {
+            all.combine(error);
+            all
+        })
+        .map_or(Ok(()), Err)
+}
+
 /// The markers whose reader scans structs, and the two field pins.
 const ON_A_STRUCT: &[&str] = &["state", "config", "event", "record", "resource"];
 const ON_A_METHOD: &[&str] = &["proves", "total", "name"];
@@ -1845,6 +1900,7 @@ fn expand(
     let (fields, config_name) = parse_state(items)?;
     check_marker_kinds(items, &state_name, config_name.as_ref())?;
     check_vocabulary_shadows(items)?;
+    check_reserved_locals(items, &state_name)?;
     let config_fields = config_slots(items, config_name.as_ref());
     check_config_width(config_name.as_ref(), config_fields.len())?;
     let events = event_names(items)?;
