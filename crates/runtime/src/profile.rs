@@ -5,8 +5,15 @@
 //! depth) live on the engine configuration; these are the shapes checked once,
 //! before code enters state.
 
+use hyperscale_vm_types::MAX_TX_BYTES_LEN;
+
 /// Maximum size of a component artifact, custom sections included.
-pub const MAX_COMPONENT_BYTES: usize = 4 * 1024 * 1024;
+///
+/// A component reaches the chain as a publish transaction's body, so it can
+/// be no larger than one: the deploy ceiling is the wire ceiling, and the two
+/// are one constant so they cannot drift into a component that admits at
+/// deploy but no envelope can carry.
+pub const MAX_COMPONENT_BYTES: usize = MAX_TX_BYTES_LEN;
 
 /// Maximum core modules inside one component.
 pub const MAX_CORE_MODULES: usize = 8;

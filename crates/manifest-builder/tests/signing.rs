@@ -15,11 +15,11 @@
 
 use hyperscale_vm_effects::{EnvelopeTree, Hasher, IntentDecl, PackageHash, Records, TestHasher};
 use hyperscale_vm_manifest_builder::TypedBuilder;
-use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap};
+use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap, wrap_publish};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    AccountSigner, NetworkId, PrincipalAddr, ResourceAddr, SchemeId, SchemeVerifier,
-    TransactionEnvelope,
+    AccountSigner, MAX_TX_BYTES_LEN, NetworkId, PrincipalAddr, ResourceAddr, SchemeId,
+    SchemeVerifier, TransactionEnvelope,
 };
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -126,14 +126,15 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
         wrap(&tree, Vec::new(), ALICE, NETWORK, terms()),
         &key,
         &TestHasher,
-    );
+    )
+    .expect("an envelope within its caps signs");
 
     assert_eq!(envelope.signer_scheme, SchemeId::ED25519);
     assert!(TestVerifier.verify(
         envelope.signer_scheme,
         &envelope.signer,
         &envelope.signature,
-        &envelope.signing_digest(&TestHasher),
+        &envelope.signing_digest(&TestHasher).expect("it encodes"),
     ));
 }
 
@@ -161,14 +162,15 @@ fn the_signature_covers_what_the_envelope_says() {
         wrap(&tree, Vec::new(), ALICE, NETWORK, terms()),
         &key,
         &TestHasher,
-    );
+    )
+    .expect("an envelope within its caps signs");
     let (material, signature) = (signed.signer.clone(), signed.signature.clone());
     let accepts = |envelope: &TransactionEnvelope| {
         TestVerifier.verify(
             SchemeId::ED25519,
             &material,
             &signature,
-            &envelope.signing_digest(&TestHasher),
+            &envelope.signing_digest(&TestHasher).expect("it encodes"),
         )
     };
     assert!(accepts(&signed));
@@ -186,4 +188,18 @@ fn the_signature_covers_what_the_envelope_says() {
     let mut retargeted = signed;
     retargeted.network = NetworkId(1);
     assert!(!accepts(&retargeted));
+}
+
+/// A locally built publish body over the wire cap comes back as a refusal
+/// from `sign`, not a panic.
+///
+/// A decoded envelope is bounded — the decoder holds the same cap — so this
+/// reaches `sign` only for an envelope a host built in memory, where the
+/// artifact outsizes what any envelope can carry. The signer is handed the
+/// encode error rather than a signature over bytes it can never submit.
+#[test]
+fn an_over_cap_publish_body_refuses_to_sign() {
+    let key = TestSigner(7);
+    let envelope = wrap_publish(vec![0u8; MAX_TX_BYTES_LEN + 1], ALICE, NETWORK, terms());
+    assert!(sign(envelope, &key, &TestHasher).is_err());
 }

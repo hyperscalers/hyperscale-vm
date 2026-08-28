@@ -17,7 +17,7 @@
 use core::fmt;
 
 use hyperscale_hbor::hash::Hasher;
-use hyperscale_hbor::{Hash32, Hbor, HborSigned};
+use hyperscale_hbor::{EncodeError, Hash32, Hbor, HborSigned};
 
 use crate::address::PrincipalAddr;
 use crate::scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId};
@@ -241,16 +241,16 @@ impl TransactionEnvelope {
     /// the first, because two byte strings for one commitment is what the
     /// preimage encoding exists to prevent.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// On an envelope past this crate's own caps, which no decoded
-    /// envelope can be.
-    #[must_use]
-    pub fn signing_digest(&self, hasher: &dyn Hasher) -> [u8; 32] {
-        let preimage = self
-            .signing_bytes()
-            .expect("an envelope within its caps encodes");
-        hasher.hash(&[], &[&preimage]).0
+    /// [`EncodeError`] when a field exceeds this crate's caps. A decoded
+    /// envelope never does — the decoder holds the same bounds — but a
+    /// locally built one can carry, say, a publish body over the wire cap,
+    /// and a digest over bytes no envelope can carry is a signature over
+    /// nothing.
+    pub fn signing_digest(&self, hasher: &dyn Hasher) -> Result<[u8; 32], EncodeError> {
+        let preimage = self.signing_bytes()?;
+        Ok(hasher.hash(&[], &[&preimage]).0)
     }
 
     /// What every signature this envelope binds costs to carry and check.

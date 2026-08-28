@@ -10,6 +10,7 @@
 //! [`AccountSigner`], which is what lets a wallet sign without this crate
 //! knowing what blake3 or ed25519 are.
 
+use hyperscale_hbor::EncodeError;
 use hyperscale_vm_effects::{EnvelopeTree, Hasher, encode_tree};
 use hyperscale_vm_types::{
     AccountSigner, NetworkId, PrincipalAddr, SchemeId, SubintentSig, TransactionBody,
@@ -103,17 +104,23 @@ pub fn wrap_publish(
 /// The scheme is stamped before the preimage is taken, because a scheme
 /// is signed content: a signer commits to which one they used, and an
 /// envelope re-tagged afterwards loses the signature that covered it.
-#[must_use]
+///
+/// # Errors
+///
+/// [`EncodeError`] when the envelope's content does not encode — a
+/// locally built body past the wire cap, which a decoded one never is.
+/// A signer is handed the refusal rather than a signature over bytes no
+/// envelope can carry.
 pub fn sign<S: AccountSigner>(
     mut envelope: TransactionEnvelope,
     key: &S,
     hasher: &dyn Hasher,
-) -> TransactionEnvelope {
+) -> Result<TransactionEnvelope, EncodeError> {
     envelope.signer_scheme = key.scheme();
-    let digest = envelope.signing_digest(hasher);
+    let digest = envelope.signing_digest(hasher)?;
     envelope.signer = key.public_key_bytes();
     envelope.signature = key.sign_digest(&digest);
-    envelope
+    Ok(envelope)
 }
 
 /// One bound subintent's signature over its declaration hash.
