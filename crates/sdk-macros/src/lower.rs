@@ -1617,13 +1617,13 @@ impl<'a> Lowerer<'a> {
             Term::LitU64(value) => quote!(#value),
             Term::LitU128(value) => quote!(#value),
             Term::Pack { hi, lo } => {
-                // `pack` is ordinary arithmetic, so the guest folds the
-                // two halves itself rather than taking the packed key —
-                // which is what makes a price and a sequence id two
+                // A packed key is ordinary arithmetic, so the guest folds
+                // the two halves itself rather than taking the packed key
+                // — which is what makes a price and a sequence id two
                 // parameters instead of one opaque cell.
                 let hi = self.term_value(span, hi);
                 let lo = self.term_value(span, lo);
-                quote!(::hyperscale_vm_sdk::state::pack(#hi, #lo))
+                quote!(::hyperscale_vm_sdk::state::OrderKey::at(#hi, #lo))
             }
             // Everything the evaluator can reach from the call's own
             // inputs is a value the kernel hands over: a resource is one
@@ -3013,10 +3013,11 @@ impl<'a> Lowerer<'a> {
         }
         let evals: Vec<Eval> = call.args.iter().map(|a| self.expr(a)).collect();
         let vals: Vec<Val> = evals.iter().map(|e| e.val.clone()).collect();
-        // `OrderKey::at(primary, seq)` and the kernel seam's `pack` are
-        // one term: the key packed from its two halves.
-        let packs = name == "pack" || order_key_at(&call.func);
-        if packs && let [Val::Term(hi), Val::Term(lo)] = vals.as_slice() {
+        // `OrderKey::at(primary, seq)`: the key packed from its two
+        // halves, which the declaration reads as one term.
+        if order_key_at(&call.func)
+            && let [Val::Term(hi), Val::Term(lo)] = vals.as_slice()
+        {
             let term = Term::Pack {
                 hi: Box::new(hi.clone()),
                 lo: Box::new(lo.clone()),

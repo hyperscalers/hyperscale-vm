@@ -19,7 +19,6 @@ use hyperscale_vm_sdk::blueprint;
 pub mod grammar {
     use hyperscale_vm_sdk::state::{
         Bucket, Cell, Ids, Instances, Keyed, NfBucket, OrderKey, Ordered, Quantity, Table, Vault,
-        pack,
     };
     use hyperscale_vm_sdk::{Address, ResourceAddr};
 
@@ -109,9 +108,11 @@ pub mod grammar {
         pub fn file(&mut self, ids: Ids) {
             // The whole space spelled as a range: what `all(64)` says in
             // one word, kept in the long form here.
-            let mut held = self.entries.range(pack(0, 0), pack(u64::MAX, u64::MAX), 64);
+            let mut held =
+                self.entries
+                    .range(OrderKey::at(0, 0), OrderKey::at(u64::MAX, u64::MAX), 64);
             for id in ids.named().iter().copied() {
-                held.insert(pack(0, id), Quantity::from_subunits(1));
+                held.insert(OrderKey::at(0, id), Quantity::from_subunits(1));
             }
         }
 

@@ -2438,15 +2438,6 @@ pub fn burn_nf_granted(funds: NfBucket) {
     return host::burn(funds.rep());
 }
 
-/// A 128-bit order key packed from a primary dimension over a tiebreaker.
-///
-/// The free spelling of [`OrderKey::at`], kept for the kernel seam and
-/// for the spelled long form of a range.
-#[must_use]
-pub const fn pack(hi: u64, lo: u64) -> OrderKey {
-    OrderKey::at(hi, lo)
-}
-
 /// A deterministic fresh id, unique within this call.
 #[must_use]
 pub fn fresh_id() -> u64 {

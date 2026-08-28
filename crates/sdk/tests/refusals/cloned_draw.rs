@@ -3,7 +3,7 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Cell, Drawn, Seal, Unordered, pack};
+    use hyperscale_vm_sdk::state::{Cell, Drawn, OrderKey, Seal, Unordered};
 
     #[state]
     struct Contract {
@@ -18,7 +18,7 @@ mod contract {
             let Drawn::Ready(draw) = self.round.open() else {
                 return;
             };
-            let window = self.entrants.sweep(pack(0, 0), cap);
+            let window = self.entrants.sweep(OrderKey::at(0, 0), cap);
             // A draw is linear: cloning it to pick twice is refused — it
             // is neither `Copy` nor `Clone`.
             if let Some(who) = window.pick(draw.clone()) {

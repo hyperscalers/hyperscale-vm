@@ -1225,7 +1225,7 @@ fn every_address_type_declares_its_own_kind() {
 #[blueprint]
 mod shelf {
     use hyperscale_vm_sdk::ResourceAddr;
-    use hyperscale_vm_sdk::state::{Ids, Instances, Keyed, NfBucket, Ordered, Vault, pack};
+    use hyperscale_vm_sdk::state::{Ids, Instances, Keyed, NfBucket, OrderKey, Ordered, Vault};
 
     #[state]
     struct Shelf {
@@ -1251,8 +1251,8 @@ mod shelf {
         /// values is itself derivable.
         pub fn window_both(&mut self, some: Ids, more: Ids) {
             let entries = self.ledger.range(
-                pack(0, 0),
-                pack(u64::MAX, u64::MAX),
+                OrderKey::at(0, 0),
+                OrderKey::at(u64::MAX, u64::MAX),
                 some.count() + more.count(),
             );
             let _ = entries.count();
