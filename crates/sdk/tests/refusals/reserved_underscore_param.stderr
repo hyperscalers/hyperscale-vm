@@ -1,0 +1,5 @@
+error: `__value_0` starts with `__`, which the generated code reserves for its own bindings — name the parameter without the leading underscores
+  --> tests/refusals/reserved_underscore_param.rs:13:31
+   |
+13 |         pub fn set(&mut self, __value_0: Quantity) {
+   |                               ^^^^^^^^^

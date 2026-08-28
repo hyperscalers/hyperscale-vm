@@ -1688,6 +1688,61 @@ fn executing(world: &str, methods: &[Lowered], role: Role) -> (TokenStream2, Tok
 /// a module that glob-imports the author's items — a module type
 /// wearing that name would be silently shadowed there, so the collision
 /// is refused where the field is named.
+/// A field naming `#[holds(issued(<Resource>))]` holds a resource whose
+/// kind its own shape can carry.
+///
+/// A vault is a fungible balance cell and an instance family is
+/// non-fungible custody, so a field naming a resource of the other kind is
+/// a declaration that cannot mean what it says. Caught here, on the
+/// attribute, rather than at a later `put`/`file` that would pin a
+/// wrong-kind bucket and fail with an admission error naming neither the
+/// field nor the line. Only `issued(<Resource>)` names a compile-time
+/// resource whose kind is known; `config.<field>` is a runtime address.
+fn check_holds_kinds(fields: &BTreeMap<String, Field>, resources: &[Resource]) -> syn::Result<()> {
+    for field in fields.values() {
+        let Some(expr) = &field.denomination else {
+            continue;
+        };
+        let syn::Expr::Call(call) = expr else {
+            continue;
+        };
+        if !matches!(&*call.func, syn::Expr::Path(path) if path.path.is_ident("issued")) {
+            continue;
+        }
+        let Some(name) = call.args.first().and_then(|arg| match arg {
+            syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let Some(resource) = resources.iter().find(|r| r.name == name) else {
+            continue;
+        };
+        let non_fungible = field.kind == lower::FieldKind::Ordered;
+        let fits = if non_fungible {
+            resource.kind == ResourceKind::NonFungible
+        } else {
+            resource.kind == ResourceKind::Fungible
+        };
+        if !fits {
+            let (shape, wanted) = if non_fungible {
+                ("an instance family", "non-fungible")
+            } else {
+                ("a vault", "fungible")
+            };
+            return Err(syn::Error::new(
+                expr.span(),
+                format!(
+                    "{shape} holds a {wanted} resource, and this names one of the other \
+                     kind — spell the field the shape its resource wants, or name a \
+                     {wanted} resource here"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn vault_markers(
     items: &[syn::Item],
     fields: &BTreeMap<String, Field>,
@@ -1725,6 +1780,7 @@ fn vault_markers(
     Ok(vaults)
 }
 
+#[allow(clippy::too_many_lines)] // linear assembly: parse, check, then emit
 fn expand(
     mut module: syn::ItemMod,
     serves: client::Serves,
@@ -1760,6 +1816,7 @@ fn expand(
             .map(|(name, _)| name.clone())
             .collect::<Vec<_>>(),
     )?;
+    check_holds_kinds(&fields, &declared_resources)?;
     let accessors = accessors(config_name.as_ref(), serves);
     let declared = Declared {
         fields: &fields,

@@ -1,0 +1,5 @@
+error: this cell holds `config.mark` and the value going into it is `issued(Ticket)`. A credit does not convert what it moves — take from the family holding what you have, or issue the resource this one is denominated in
+  --> tests/refusals/filed_into_foreign.rs:26:37
+   |
+26 |             self.stock.whole().file(Ticket::mint(id, Ticket { holder }));
+   |                                     ^^^^^^

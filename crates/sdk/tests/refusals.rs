@@ -106,6 +106,10 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/capless_interval.rs");
     refuse.compile_fail("tests/refusals/underivable_all_cap.rs");
     refuse.compile_fail("tests/refusals/minted_into_foreign.rs");
+    refuse.compile_fail("tests/refusals/filed_into_foreign.rs");
+    refuse.compile_fail("tests/refusals/vault_holds_non_fungible.rs");
+    refuse.compile_fail("tests/refusals/instances_hold_fungible.rs");
+    refuse.compile_fail("tests/refusals/reserved_underscore_param.rs");
     refuse.compile_fail("tests/refusals/minted_wrong_kind.rs");
     refuse.compile_fail("tests/refusals/unmarked_mint.rs");
     refuse.compile_fail("tests/refusals/instance_of_undeclared.rs");

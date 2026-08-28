@@ -72,13 +72,20 @@ impl Shape {
     }
 }
 
-/// Refuse a parameter that would shadow one the wrapper injects.
+/// Refuse a parameter that would shadow one the generated code binds.
 ///
 /// The wrapper's own parameters are `builder` on every method and `who`
 /// where a principal package's free functions name the caller — never a
 /// proof, because evidence is the builder's to resolve and the scope's
 /// to carry. A blanket reservation would cost an entrant a good name
 /// for the sake of a wrapper that never takes one.
+///
+/// The `__`-prefixed names are a whole namespace rather than a list: the
+/// lowering emits `__value_N`, `__capability_N`, `__records` and their
+/// kin into the guest body, and a parameter wearing one shadows the
+/// binding the body reads — a type error inside generated code, spanning
+/// nothing. Rust convention already frowns on `__` identifiers, so
+/// reserving the prefix costs an author nothing.
 pub fn check_names(params: &[syn::Ident], shape: Shape, serves: Serves) -> syn::Result<()> {
     let _ = shape;
     let injects = |name: &str| match name {
@@ -87,7 +94,17 @@ pub fn check_names(params: &[syn::Ident], shape: Shape, serves: Serves) -> syn::
         _ => false,
     };
     for param in params {
-        if injects(&param.to_string()) {
+        let name = param.to_string();
+        if name.starts_with("__") {
+            return Err(syn::Error::new(
+                param.span(),
+                format!(
+                    "`{param}` starts with `__`, which the generated code reserves for its own \
+                     bindings — name the parameter without the leading underscores"
+                ),
+            ));
+        }
+        if injects(&name) {
             return Err(syn::Error::new(
                 param.span(),
                 format!(

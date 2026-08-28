@@ -1,0 +1,5 @@
+error: an instance family holds a non-fungible resource, and this names one of the other kind — spell the field the shape its resource wants, or name a non-fungible resource here
+  --> tests/refusals/instances_hold_fungible.rs:12:17
+   |
+12 |         #[holds(issued(Coin))]
+   |                 ^^^^^^

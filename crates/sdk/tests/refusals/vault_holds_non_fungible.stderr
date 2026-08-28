@@ -1,0 +1,5 @@
+error: a vault holds a fungible resource, and this names one of the other kind — spell the field the shape its resource wants, or name a fungible resource here
+  --> tests/refusals/vault_holds_non_fungible.rs:14:17
+   |
+14 |         #[holds(issued(Ticket))]
+   |                 ^^^^^^

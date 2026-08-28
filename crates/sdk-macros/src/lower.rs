@@ -1413,6 +1413,8 @@ impl<'a> Lowerer<'a> {
             }
             // `issued(Name)` — the instance's own resource, by the
             // declared `#[resource]` struct whose mark and kind derive it.
+            // Its kind is checked against the field's shape at declaration,
+            // in `check_holds_kinds`, so the resolution here trusts it.
             syn::Expr::Call(call) => {
                 if free_call_name(call).as_deref() != Some("issued") {
                     return refuse(self);
@@ -3190,13 +3192,23 @@ impl<'a> Lowerer<'a> {
         // constrains nothing reads as a method taking any
         // resource, so a credit nobody can type would publish as
         // a promise the body never made.
+        // What the credited edge carries, as a bare resource. A produced
+        // instance edge names its resource inside an `NfBucket`, where a
+        // fungible edge names it directly — unwrap the one so a filed set
+        // of instances compares against the cell's key the way a credited
+        // amount does.
+        let credited_resource = match &credited {
+            Some(Term::NfBucket { resource, .. }) => Some((**resource).clone()),
+            other => other.clone(),
+        };
         if op == Op::Credit
-            && call.method == "put"
+            && (call.method == "put" || call.method == "file")
             && let Some(keyed) = resource.clone()
         {
-            match &credited {
+            match &credited_resource {
                 // The cell is keyed by what arrived, so it names
-                // whatever comes and fixes nothing.
+                // whatever comes and fixes nothing — a wallet, whether
+                // the value is fungible or a set of instances.
                 Some(term) if *term == keyed => {}
                 // An edge a caller supplies, credited to a cell
                 // keyed by something else: that key is what the
@@ -3214,22 +3226,37 @@ impl<'a> Lowerer<'a> {
                 // simply wrong.
                 Some(held) => {
                     let (held, keyed) = (self.describe(held), self.describe(&keyed));
+                    // A fungible cell mints; a custody family issues.
+                    let advice = if instances {
+                        "take from the family holding what you have, or issue the \
+                             resource this one is denominated in"
+                    } else {
+                        "take from the cell holding what you have, or mint the \
+                             resource this one is denominated in"
+                    };
                     self.error(
                         call.args.span(),
                         &format!(
                             "this cell holds {keyed} and the value going into it is \
-                                 {held}. A credit does not convert what it moves — take \
-                                 from the cell holding what you have, or mint the \
-                                 resource this one is denominated in"
+                                 {held}. A credit does not convert what it moves — {advice}"
                         ),
                     );
                 }
-                None => self.error(
-                    call.args.span(),
-                    "this cell is keyed by one resource and the lowering cannot see \
-                         what is going into it. Credit an edge the method was handed, \
-                         one taken from a declared cell, or one it issued",
-                ),
+                None => {
+                    let source = if instances {
+                        "one taken from a declared family, or one it issued"
+                    } else {
+                        "one taken from a declared cell, or one it issued"
+                    };
+                    self.error(
+                        call.args.span(),
+                        &format!(
+                            "this cell is keyed by one resource and the lowering cannot \
+                                 see what is going into it. Credit an edge the method was \
+                                 handed, {source}"
+                        ),
+                    );
+                }
             }
         }
 

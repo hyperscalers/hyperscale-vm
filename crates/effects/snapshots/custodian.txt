@@ -21,6 +21,7 @@ deposit(bucket) — infallible
   exports  handle for clause 0, edge arg0
 
 file(nf-bucket) — infallible
+  takes    arg0 carrying config.instances
   declares
       0  file self.locker[config.instances] over 0..=u128::MAX, at most len(ids-of(arg0)) entries holding config.instances
   exports  handle for clause 0, edge arg0
