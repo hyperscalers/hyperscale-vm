@@ -761,11 +761,18 @@ fn target_text(target: &EffectTarget) -> String {
             lo,
             hi,
             cap,
-        } => format!(
-            "{}'s collection {} over {lo}..={hi}, at most {cap} entries",
-            address_text(*owner),
-            hex(&collection.0)
-        ),
+        } => {
+            let over = if *lo == 0 && *hi == u128::MAX {
+                "the whole order space".to_owned()
+            } else {
+                format!("{lo}..={hi}")
+            };
+            format!(
+                "{}'s collection {} over {over}, at most {cap} entries",
+                address_text(*owner),
+                hex(&collection.0)
+            )
+        }
     }
 }
 
@@ -1207,13 +1214,18 @@ impl<'a> Names<'a> {
                 lo,
                 hi,
                 cap,
-            } => format!(
-                "{} over {}..={}, at most {} entries",
-                self.collection(owner, collection, material),
-                self.expr(lo, ATOM),
-                self.expr(hi, ATOM),
-                self.expr(cap, ATOM)
-            ),
+            } => {
+                let over = if is_least(lo) && is_greatest(hi) {
+                    "the whole order space".to_owned()
+                } else {
+                    format!("{}..={}", self.expr(lo, ATOM), self.expr(hi, ATOM))
+                };
+                format!(
+                    "{} over {over}, at most {} entries",
+                    self.collection(owner, collection, material),
+                    self.expr(cap, ATOM)
+                )
+            }
         }
     }
 
@@ -1615,6 +1627,28 @@ fn clause_exprs<'a>(clause: &'a Clause, into: &mut Vec<&'a Expr>) {
             into.extend(guard.as_deref());
             into.push(claim);
         }
+    }
+}
+
+/// Whether an order bound is the bottom of the whole space, however
+/// spelled: `0` and `pack(0, 0)` name one bound, and a range over the
+/// whole space says less as sixty digits than as the phrase — the same
+/// judgment the saturated literals get.
+fn is_least(bound: &Expr) -> bool {
+    match bound {
+        Expr::Literal(Value::U64(0) | Value::U128(0)) => true,
+        Expr::Pack { hi, lo } => is_least(hi) && is_least(lo),
+        _ => false,
+    }
+}
+
+/// Whether an order bound is the top of the whole space, on
+/// [`is_least`]'s terms.
+fn is_greatest(bound: &Expr) -> bool {
+    match bound {
+        Expr::Literal(Value::U64(u64::MAX) | Value::U128(u128::MAX)) => true,
+        Expr::Pack { hi, lo } => is_greatest(hi) && is_greatest(lo),
+        _ => false,
     }
 }
 
@@ -2311,7 +2345,7 @@ mod tests {
                     owner: Expr::SelfAddr,
                     collection: SlotRef::Fixed(package_slot(0)),
                     material: vec![Expr::Arg(0)],
-                    lo: Expr::Literal(Value::U128(0)),
+                    lo: Expr::Literal(Value::U128(3)),
                     hi: Expr::Literal(Value::U128(u128::MAX)),
                     cap: Expr::Len(Box::new(Expr::Arg(1))),
                 },
@@ -2320,9 +2354,56 @@ mod tests {
             }]),
         );
         assert!(
-            text.contains("read self.entries[arg0] over 0..=u128::MAX, at most len(arg1) entries"),
+            text.contains("read self.entries[arg0] over 3..=u128::MAX, at most len(arg1) entries"),
             "{text}"
         );
+    }
+
+    /// A range over the whole order space is named rather than spelled,
+    /// whichever way its bounds are written.
+    #[test]
+    fn a_range_over_the_whole_space_is_named_rather_than_spelled() {
+        let range = |lo, hi| Clause::Effect {
+            reach: None,
+            guard: None,
+            target: TargetExpr::Range {
+                owner: Expr::SelfAddr,
+                collection: SlotRef::Fixed(package_slot(0)),
+                material: vec![],
+                lo,
+                hi,
+                cap: Expr::Literal(Value::U64(8)),
+            },
+            mode: ModeExpr::Read,
+            denomination: None,
+        };
+        let text = rendered(
+            "whole",
+            declaring(vec![range(
+                Expr::Literal(Value::U128(0)),
+                Expr::Literal(Value::U128(u128::MAX)),
+            )]),
+        );
+        assert!(
+            text.contains("read self.entries over the whole order space, at most 8 entries"),
+            "{text}"
+        );
+
+        let half = |part: u64| Box::new(Expr::Literal(Value::U64(part)));
+        let text = rendered(
+            "whole",
+            declaring(vec![range(
+                Expr::Pack {
+                    hi: half(0),
+                    lo: half(0),
+                },
+                Expr::Pack {
+                    hi: half(u64::MAX),
+                    lo: half(u64::MAX),
+                },
+            )]),
+        );
+        assert!(text.contains("over the whole order space"), "{text}");
     }
 
     #[test]

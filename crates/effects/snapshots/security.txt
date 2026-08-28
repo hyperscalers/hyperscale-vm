@@ -42,7 +42,7 @@ issue-bearer(u128) — infallible
 
 recall-registrations(address, u64, ids) — infallible
   declares
-      0  take arg0.arg1[self-issued(non-fungible["registered"])] over 0..=u128::MAX, at most len(arg2) entries, reaching under recall
+      0  take arg0.arg1[self-issued(non-fungible["registered"])] over the whole order space, at most len(arg2) entries, reaching under recall
   yields   edge 0 carrying self-issued(non-fungible["registered"]) × arg2
   exports  handle for clause 0, arg2
 

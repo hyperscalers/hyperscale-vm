@@ -59,7 +59,7 @@ deposit(bucket) — total
 
 deposit-nf(nf-bucket) — infallible
   declares
-      0  file self.nf-vault[resource-of(arg0)] over 0..=u128::MAX, at most len(ids-of(arg0)) entries
+      0  file self.nf-vault[resource-of(arg0)] over the whole order space, at most len(ids-of(arg0)) entries
   exports  handle for clause 0, edge arg0
 
 freeze() — infallible
@@ -135,6 +135,6 @@ withdraw(resource-address, u128) — infallible
 withdraw-nf(resource-address, ids) — infallible
   declares
       0  requires claim self
-      1  take self.nf-vault[arg0] over 0..=u128::MAX, at most len(arg1) entries
+      1  take self.nf-vault[arg0] over the whole order space, at most len(arg1) entries
   yields   edge 0 carrying arg0 × arg1
   exports  handle for clause 1, arg1

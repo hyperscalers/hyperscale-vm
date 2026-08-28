@@ -23,7 +23,7 @@ deposit(bucket) — infallible
 file(nf-bucket) — infallible
   takes    arg0 carrying config.instances
   declares
-      0  file self.locker[config.instances] over 0..=u128::MAX, at most len(ids-of(arg0)) entries
+      0  file self.locker[config.instances] over the whole order space, at most len(ids-of(arg0)) entries
   exports  handle for clause 0, edge arg0
 
 instantiate() — infallible
@@ -34,7 +34,7 @@ instantiate() — infallible
 
 release(ids) — infallible
   declares
-      0  take self.locker[config.instances] over 0..=u128::MAX, at most len(arg0) entries
+      0  take self.locker[config.instances] over the whole order space, at most len(arg0) entries
   yields   edge 0 carrying config.instances × arg0
   exports  handle for clause 0, arg0
 
