@@ -1685,3 +1685,62 @@ fn an_issued_denomination_names_the_declared_resource() {
         "the family's interval holds the issued seat: {effects:?}"
     );
 }
+
+/// The framed scalar: a `Cell<Option<u64>>` carries the record framing,
+/// so presence is a fact its declaration states — `create`, `existing`,
+/// `vacant` and `retire` are the same words a record cell gets, over a
+/// leaf that is the value's own eight bytes or nothing at all.
+#[blueprint]
+mod meter {
+    use hyperscale_vm_sdk::state::Cell;
+
+    #[state]
+    struct Meter {
+        anchored_at: Cell<Option<u64>>,
+    }
+
+    impl Meter {
+        /// Anchor the meter at `period`, once: the leaf must be absent.
+        pub fn anchor(&mut self, period: u64) {
+            self.anchored_at.create(period);
+        }
+
+        /// The period the meter anchored at, which must be there.
+        pub fn anchored(&self) -> u64 {
+            self.anchored_at.existing()
+        }
+
+        /// End the anchor, which must be there to end.
+        pub fn reset(&mut self) {
+            self.anchored_at.retire();
+        }
+
+        /// Gated on the anchor not having happened yet.
+        pub fn before(&self) {
+            self.anchored_at.vacant();
+        }
+    }
+}
+
+#[test]
+fn a_framed_scalar_cell_speaks_presence() {
+    use hyperscale_vm_effects::Clause;
+
+    let metadata = meter::blueprint().metadata();
+    // Each presence word is the record cell's own pair of clauses — the
+    // requirement, and the access it licenses — so the framed scalar
+    // buys the whole vocabulary rather than only the optional read.
+    for method in ["anchor", "anchored", "reset", "before"] {
+        let effects = &metadata.methods[method].effects;
+        assert_eq!(effects.len(), 2, "{method}: {effects:?}");
+        assert!(
+            effects
+                .iter()
+                .any(|clause| matches!(clause, Clause::Requires { .. })),
+            "{method} states its presence requirement: {effects:?}"
+        );
+    }
+    // A framed `u64` describes as the scalar it is: no wrapper shape
+    // reaches the registry the way a declared record's would.
+    assert!(metadata.types.is_empty());
+}

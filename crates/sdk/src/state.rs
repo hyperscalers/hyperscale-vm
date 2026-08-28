@@ -243,7 +243,9 @@ pub trait Cellular: LeafShape + Sized {
 /// bytes and every implementation takes that as its zero, and a struct has
 /// no zero — HBOR decodes no fields from nothing. `None` is the zero the
 /// type does have, so an unwritten cell reads as the absence it is rather
-/// than as a record nobody stored.
+/// than as a record nobody stored. `u64` carries both framings: bare
+/// through its own `Cellular`, where absence is zero, and framed through
+/// this one, where absence is `None`.
 pub trait Record: HborEncode + HborDecode + HborShape + LeafShape {
     /// The decoder nesting cap this type is read under.
     ///
@@ -286,6 +288,18 @@ impl<T: Record> Cellular for Option<T> {
 /// is the one level a byte string occupies. This is what frames a rule
 /// cell, and the framing `RuleBytes::rule_in_cell` reads back.
 impl Record for RuleBytes {
+    const WIRE_DEPTH: usize = 1;
+}
+
+/// A period, an epoch, a sequence number: the one scalar the vocabulary
+/// frames the way it frames a record, so a cell of it can hold *nothing*
+/// rather than a zero a body has to spend. A bare `Cell<u64>` reads an
+/// unwritten leaf as zero; `Cell<Option<u64>>` reads it as the `None` it
+/// is, because the framed form writes the value's own eight bytes or no
+/// bytes at all — the same eight little-endian bytes the bare cell
+/// holds, so the two forms differ in what absence means and in nothing
+/// about a present value.
+impl Record for u64 {
     const WIRE_DEPTH: usize = 1;
 }
 
@@ -1080,13 +1094,15 @@ impl<T: Cellular> Cell<T> {
     }
 }
 
-/// What a record cell says about the leaf it is writing.
+/// What a framed cell says about the leaf it is writing.
 ///
 /// Only on the `Option<T>` shape, and that is the whole distinction: a
-/// record's absence is a `None` a body can tell from every value it
-/// holds, where a scalar cell's absence reads as its zero and "was it
-/// already there" is a question its own value cannot answer. A cell that
-/// cannot tell the difference gets no word for it.
+/// framed cell's absence is a `None` a body can tell from every value it
+/// holds, where a bare scalar cell's absence reads as its zero and "was
+/// it already there" is a question its own value cannot answer. A cell
+/// that cannot tell the difference gets no word for it — and what can is
+/// what carries a [`Record`] framing, which is every declared record and
+/// the one scalar framed the same way.
 ///
 /// The requirement is judged by the shard holding the cell, before the
 /// body runs, where a reservation is judged — so a one-way door refuses

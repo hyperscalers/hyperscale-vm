@@ -109,17 +109,6 @@ pub mod lending {
         NothingOwed,
     }
 
-    /// The period the index has been carried to.
-    ///
-    /// A record so the cell can hold *nothing*, which is what a market
-    /// nobody has accrued is. A bare `u64` would have to spend a period
-    /// to say it — and period zero is a period this market's own tests
-    /// borrow in, so the one it would spend is a real one.
-    #[record]
-    struct Accrued {
-        period: u64,
-    }
-
     #[state]
     struct Lending {
         /// The collateral the position posted.
@@ -139,7 +128,12 @@ pub mod lending {
         /// What this position owes, in shares.
         shares: Cell<Quantity>,
         /// The period the index has been carried to, where anyone has.
-        accrued_at: Cell<Option<Accrued>>,
+        ///
+        /// Framed so the cell can hold *nothing*, which is what a market
+        /// nobody has accrued is. A bare `u64` would have to spend a
+        /// period to say it — and period zero is a period this market's
+        /// own tests borrow in, so the one it would spend is a real one.
+        accrued_at: Cell<Option<u64>>,
     }
 
     impl Lending {
@@ -178,7 +172,7 @@ pub mod lending {
         /// survives.
         pub fn accrue(&mut self, now: u64) {
             if let Some(last) = self.accrued_at.get() {
-                let periods = u32::try_from(now.saturating_sub(last.period)).unwrap_or(u32::MAX);
+                let periods = u32::try_from(now.saturating_sub(last)).unwrap_or(u32::MAX);
                 let growth = self
                     .config()
                     .growth_per_period
@@ -195,7 +189,7 @@ pub mod lending {
                 let carried = index(self.index.get()).0.compose(growth.rate());
                 self.index.set(carried.quantize(Rounding::Down));
             }
-            self.accrued_at.set(Some(Accrued { period: now }));
+            self.accrued_at.set(Some(now));
         }
 
         /// Post collateral against the position, and answer with what
@@ -339,8 +333,8 @@ pub mod lending {
     ///
     /// A market nobody has accrued is stale at every period, including
     /// the one it would read as if the cell held a bare number.
-    fn stale(accrued: Option<Accrued>, now: u64) -> bool {
-        accrued.is_none_or(|last| last.period != now)
+    fn stale(accrued: Option<u64>, now: u64) -> bool {
+        accrued.is_none_or(|last| last != now)
     }
 
     /// The index a market starts at, which is one debt subunit per share.
