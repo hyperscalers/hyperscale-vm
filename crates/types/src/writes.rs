@@ -165,11 +165,13 @@ impl Movement {
         }
     }
 
-    /// This movement followed by `next` on the same cell.
+    /// This movement followed by `next` on the same cell, or `None`
+    /// where a composed total leaves `u128`.
     ///
-    /// Saturating on each side rather than checked: the totals are
-    /// bounded by the balances that fed them, and a sum that could not
-    /// overflow a cell cannot overflow here.
+    /// Checked rather than saturating: the totals a kernel records are
+    /// bounded by the balances that fed them, so a sum past `u128` is a
+    /// movement no kernel produced — a malformed receipt for the caller
+    /// to refuse whole, not a total to pin at the ceiling and settle on.
     ///
     /// # Panics
     ///
@@ -177,16 +179,16 @@ impl Movement {
     /// one resource, so composing across two is the kernel disagreeing
     /// with itself rather than anything a caller can cause.
     #[must_use]
-    pub fn then(self, next: Self) -> Self {
+    pub fn then(self, next: Self) -> Option<Self> {
         debug_assert_eq!(
             self.resource, next.resource,
             "composing movements of different resources on one cell",
         );
-        Self {
+        Some(Self {
             resource: self.resource,
-            credit: self.credit.saturating_add(next.credit),
-            debit: self.debit.saturating_add(next.debit),
-        }
+            credit: self.credit.checked_add(next.credit)?,
+            debit: self.debit.checked_add(next.debit)?,
+        })
     }
 
     /// `before` with this movement applied, or `None` if the debit runs

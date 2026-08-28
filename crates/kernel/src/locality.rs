@@ -118,8 +118,12 @@ impl StateDelta {
     /// are: the kernel grants only range read/write capabilities over a
     /// collection, so an entry has no movement form and nothing about it
     /// resolves later.
+    ///
+    /// Returns `None` where two composed movements on one cell leave
+    /// `u128` — a delta no kernel produced, for the caller to refuse
+    /// whole rather than settle on a pinned total.
     #[must_use]
-    pub fn project(&self, locality: &Locality) -> StateWrites {
+    pub fn project(&self, locality: &Locality) -> Option<StateWrites> {
         let owned = self.owned(locality);
         let mut writes = StateWrites::default();
         for (key, change) in owned.cells() {
@@ -129,13 +133,13 @@ impl StateDelta {
             writes.entries.insert(key, change.clone());
         }
         for (key, movement) in owned.movements().chain(owned.settles()) {
-            writes
-                .movements
-                .entry(key)
-                .and_modify(|standing| *standing = standing.then(movement))
-                .or_insert(movement);
+            let standing = match writes.movements.remove(&key) {
+                Some(standing) => standing.then(movement)?,
+                None => movement,
+            };
+            writes.movements.insert(key, standing);
         }
-        writes
+        Some(writes)
     }
 }
 
@@ -288,6 +292,7 @@ mod tests {
 
         let writes = delta
             .project(&Locality::All)
+            .expect("kernel-produced movements compose")
             .resolve(&mut |cell| base.cells.get(&cell).cloned());
         let mut folded: BTreeMap<_, _> = base.cells.clone();
         for (cell, change) in writes.cells() {
@@ -323,7 +328,9 @@ mod tests {
                 debit: 30,
             },
         );
-        let projected = delta.project(&Locality::All);
+        let projected = delta
+            .project(&Locality::All)
+            .expect("kernel-produced movements compose");
         assert!(
             projected.cells.is_empty(),
             "a movement is not an absolute yet"
@@ -337,6 +344,25 @@ mod tests {
                 after,
             );
         }
+    }
+
+    /// A composed movement past `u128` is a delta no kernel produced,
+    /// and the projection refuses it whole rather than pinning the
+    /// total and settling on it.
+    #[test]
+    fn a_projection_refuses_movements_that_leave_u128() {
+        let vault = key(2, 1);
+        let mut delta = StateDelta::default();
+        delta.movements.insert(
+            vault,
+            Movement {
+                resource: RESOURCE,
+                credit: 0,
+                debit: u128::MAX,
+            },
+        );
+        delta.settles.insert(vault, Movement::debit(RESOURCE, 1));
+        assert!(delta.project(&Locality::All).is_none());
     }
 
     /// A movement folds over this receipt's own exclusive write before it
@@ -356,6 +382,7 @@ mod tests {
         );
         let writes = delta
             .project(&Locality::All)
+            .expect("kernel-produced movements compose")
             .resolve(&mut |_| panic!("the receipt's own write answers this read"));
         assert_eq!(writes.cells()[&cell], Some(encode_amount(30).to_vec()));
     }
@@ -379,7 +406,9 @@ mod tests {
         delta.entries.insert(entry(remote_book, 7), Some(vec![5]));
 
         let locality = Locality::Owned(Arc::new(move |owner: Address| owner == local_book));
-        let projected = delta.project(&locality);
+        let projected = delta
+            .project(&locality)
+            .expect("kernel-produced movements compose");
         assert_eq!(
             projected.entries,
             BTreeMap::from([
@@ -412,7 +441,10 @@ mod tests {
         let locality = Locality::Owned(Arc::new(|owner: Address| {
             owner == Address::new([1; 31], AddressClass::Component)
         }));
-        let writes = delta.project(&locality).resolve(&mut |_| None);
+        let writes = delta
+            .project(&locality)
+            .expect("kernel-produced movements compose")
+            .resolve(&mut |_| None);
         assert_eq!(writes.cells().len(), 1);
         assert_eq!(writes.cells()[&local], Some(encode_amount(5).to_vec()));
     }
