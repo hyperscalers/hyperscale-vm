@@ -113,28 +113,25 @@ impl Arg for Value {
     }
 }
 
-/// A vocabulary value binds as its canonical bytes — the form admission
+/// A stored rule binds as its canonical bytes — the form admission
 /// decodes as the vocabulary.
 ///
-/// Binding panics on a value past the vocabulary's own caps, which no
-/// admission path would accept; the compose site is where its author
-/// can fix it.
-macro_rules! canonical_bytes_arg {
-    ($($name:ident),+ $(,)?) => {
-        $(
-            impl sealed::Sealed for $name {}
-            impl Arg for $name {
-                fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
-                    GraphArg::Literal(Value::Bytes(
-                        self.to_bytes().expect("a value within the caps encodes"),
-                    ))
-                }
-            }
-        )+
-    };
+/// A rule the composer nested past its wire depth does not encode; rather
+/// than panic, the refusal is recorded and handed back at `build`, the way
+/// every other compose mistake is. The compose site is where its author can
+/// fix it.
+impl sealed::Sealed for StoredRule {}
+impl Arg for StoredRule {
+    fn bind(self, builder: &mut GraphBuilder) -> GraphArg {
+        self.to_bytes().map_or_else(
+            |_| {
+                builder.refuse(BuildError::RuleArgTooDeep);
+                GraphArg::Literal(Value::Bytes(Vec::new()))
+            },
+            |bytes| GraphArg::Literal(Value::Bytes(bytes)),
+        )
+    }
 }
-
-canonical_bytes_arg!(StoredRule);
 
 /// A stored rule's bytes bind as themselves: they were canonical when
 /// whoever built them encoded the rule.

@@ -578,9 +578,9 @@ impl<'a> TypedBuilder<'a> {
     /// not resolve; [`TypedError::ArityMismatch`] and the per-argument
     /// kind refusals when the arguments disagree with the signature.
     ///
-    /// # Panics
-    ///
-    /// On a [`Bucket`] argument made by a different builder.
+    /// A [`Bucket`] made by a different builder does not panic: it is
+    /// recorded as [`BuildError::ForeignBucket`] and handed back when the
+    /// graph builds.
     pub fn call(
         &mut self,
         target: impl Into<CallTarget>,
@@ -602,9 +602,7 @@ impl<'a> TypedBuilder<'a> {
     /// [`TypedError::UnexpectedEvidence`] on a method that admits
     /// anyone, and everything [`call`](Self::call) refuses.
     ///
-    /// # Panics
-    ///
-    /// As [`call`](Self::call).
+    /// Its refusal surface is [`call`](Self::call)'s.
     pub fn call_presenting(
         &mut self,
         evidence: impl Evidence,
@@ -629,9 +627,7 @@ impl<'a> TypedBuilder<'a> {
     /// [`TypedError::ProvesNothing`] when the method's accessibility
     /// proves nothing, and everything [`call`](Self::call) refuses.
     ///
-    /// # Panics
-    ///
-    /// As [`call`](Self::call).
+    /// Its refusal surface is [`call`](Self::call)'s.
     pub fn call_proving(
         &mut self,
         target: impl Into<CallTarget>,
@@ -652,9 +648,7 @@ impl<'a> TypedBuilder<'a> {
     ///
     /// As [`call_proving`](Self::call_proving).
     ///
-    /// # Panics
-    ///
-    /// As [`call`](Self::call).
+    /// Its refusal surface is [`call`](Self::call)'s.
     pub fn call_proving_presenting(
         &mut self,
         evidence: impl Evidence,
@@ -1087,10 +1081,9 @@ impl<'a> TypedBuilder<'a> {
 
     /// Consume an output as a yield edge, as [`GraphBuilder::export`].
     ///
-    /// # Panics
-    ///
-    /// On a bucket carrying constraints, or one made by a different
-    /// builder.
+    /// A bucket carrying constraints, or one made by a different builder,
+    /// does not panic: it poisons the builder and the refusal is handed
+    /// back when the graph builds, as [`GraphBuilder::export`] documents.
     pub fn export(&mut self, bucket: Bucket) -> EdgeRef {
         self.graph.export(bucket)
     }

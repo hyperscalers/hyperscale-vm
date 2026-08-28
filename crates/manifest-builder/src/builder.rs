@@ -59,6 +59,11 @@ pub enum BuildError {
     /// them silently.
     #[error("a yield edge's constraints belong on the socket it fills")]
     ConstrainedExport,
+    /// A rule bound as an argument nests deeper than its wire encoding
+    /// admits. Admission could not decode the bytes, so the composer is
+    /// handed the refusal here rather than at submission.
+    #[error("a rule argument nests too deep to encode")]
+    RuleArgTooDeep,
 }
 
 /// One output edge of a node already added to a [`GraphBuilder`], with the
@@ -288,12 +293,10 @@ impl GraphBuilder {
     /// supply, so naming either as a target does not compile rather than
     /// failing admission.
     ///
-    /// # Panics
-    ///
-    /// On a [`Bucket`] argument made by a different builder, and on more
-    /// nodes or outputs than a `u32` can address — the latter far past
-    /// [`MAX_MANIFEST_NODES`], which [`build`](Self::build) enforces as an
-    /// error rather than a panic.
+    /// A [`Bucket`] argument made by a different builder, or a rule nested
+    /// past its wire depth, does not panic: the refusal is recorded and
+    /// handed back at [`build`](Self::build), the way every compose mistake
+    /// is. So is exceeding [`MAX_MANIFEST_NODES`].
     #[must_use = "every output edge must be consumed for the graph to build"]
     pub fn call<const N: usize>(
         &mut self,
@@ -311,9 +314,7 @@ impl GraphBuilder {
     /// signatures; here the author says so, because a bare graph builder
     /// has no metadata to consult.
     ///
-    /// # Panics
-    ///
-    /// As [`call`](Self::call).
+    /// Its refusal surface is [`call`](Self::call)'s.
     #[must_use = "every output edge must be consumed for the graph to build"]
     pub fn call_signed<const N: usize>(
         &mut self,
@@ -337,9 +338,7 @@ impl GraphBuilder {
     /// consult. Whether the named producer actually mints is admission's
     /// verdict.
     ///
-    /// # Panics
-    ///
-    /// As [`call`](Self::call).
+    /// Its refusal surface is [`call`](Self::call)'s.
     #[must_use = "every output edge must be consumed for the graph to build"]
     pub fn call_bearing<const N: usize>(
         &mut self,
@@ -582,7 +581,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_effects::{
-        Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, ManifestGraph, Value,
+        Claim, Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, ManifestGraph, StoredRule,
+        Value,
     };
     use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
 
@@ -701,6 +701,28 @@ mod tests {
         )]
         let [] = other.call(BOB, "deposit", (funds,));
         assert_eq!(other.build(), Err(BuildError::ForeignBucket));
+    }
+
+    #[test]
+    fn a_rule_argument_too_deep_to_encode_is_refused() {
+        // A rule nested far past `MAX_RULE_WIRE_DEPTH`: it has public
+        // fields, so a composer can build one its own wire encoding
+        // refuses. Binding it as an argument records the refusal rather
+        // than panicking, and `build` hands it back.
+        let mut rule = StoredRule::claim(Claim::of_subject(ALICE));
+        for _ in 0..32 {
+            rule = StoredRule::CountOf {
+                count: 1,
+                rules: vec![rule],
+            };
+        }
+        let mut b = GraphBuilder::new();
+        #[allow(
+            clippy::tuple_array_conversions,
+            reason = "the tuple is an argument list, not a conversion"
+        )]
+        let [] = b.call(ALICE, "securify", (rule,));
+        assert_eq!(b.build(), Err(BuildError::RuleArgTooDeep));
     }
 
     #[test]

@@ -653,11 +653,15 @@ impl<'a> EnvelopeBuilder<'a> {
     /// # Errors
     ///
     /// [`BindRefusal`], carrying the socket and the offering, where the
-    /// offering is not the half the socket declares it takes.
+    /// offering is not the half the socket declares it takes, where either
+    /// handle was minted by a different envelope
+    /// ([`EnvelopeError::ForeignBinding`]), or where a socket is filled
+    /// from its own intent ([`EnvelopeError::SelfFilledSocket`]).
     ///
     /// # Panics
     ///
-    /// On a handle minted by a different envelope.
+    /// Never for a socket this envelope minted: the intent index was
+    /// bounded when the socket was opened.
     pub fn bind(&mut self, socket: OpenSocket, offered: Offered) -> Result<(), BindRefusal> {
         if socket.envelope != self.id || offered.envelope != self.id {
             return Err(BindRefusal {

@@ -15,7 +15,7 @@
 
 use hyperscale_hbor::to_vec;
 use hyperscale_vm_effects::{PackageMetadata, RuleBytes, StoredRule};
-use hyperscale_vm_manifest_builder::{Proof, TypedBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{BuildError, Proof, TypedBuilder, TypedError};
 use hyperscale_vm_types::PrincipalAddr;
 
 // The package, read from the crate the artifact is built from rather
@@ -88,19 +88,17 @@ pub fn metadata() -> PackageMetadata {
 ///
 /// # Errors
 ///
-/// Any refusal the call does not type against `securify`.
-///
-/// # Panics
-///
-/// On a rule past the vocabulary's own caps, which no admission path
-/// would accept; the compose site is where its author can fix it.
+/// Any refusal the call does not type against `securify`, and
+/// [`BuildError::RuleArgTooDeep`] where the rule nests past what its wire
+/// encoding admits — handed back rather than panicked, the compose site
+/// being where its author can fix it.
 pub fn securify_uniform(
     b: &mut TypedBuilder<'_>,
     who: PrincipalAddr,
     rule: &StoredRule,
     recovery_delay_ms: u64,
 ) -> Result<(), TypedError> {
-    let sealed = RuleBytes::try_from(rule).expect("a rule within the caps encodes");
+    let sealed = RuleBytes::try_from(rule).map_err(|_| BuildError::RuleArgTooDeep)?;
     securify(
         b,
         who,
@@ -109,4 +107,35 @@ pub fn securify_uniform(
         sealed,
         recovery_delay_ms,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use hyperscale_vm_effects::{Claim, Records, StoredRule, TestHasher};
+    use hyperscale_vm_manifest_builder::{BuildError, TypedBuilder, TypedError};
+    use hyperscale_vm_types::PrincipalAddr;
+
+    use super::securify_uniform;
+
+    const WHO: PrincipalAddr = PrincipalAddr::new([0x11; 31]);
+
+    /// A rule nested past its wire depth comes back from `securify_uniform`
+    /// as a refusal, not a panic — the encode fails before the call to
+    /// `securify` is ever composed.
+    #[test]
+    fn securify_uniform_refuses_a_rule_too_deep_to_encode() {
+        let chain = Records::new();
+        let mut builder = TypedBuilder::new(&chain, &TestHasher, WHO);
+        let mut rule = StoredRule::claim(Claim::of_subject(WHO));
+        for _ in 0..32 {
+            rule = StoredRule::CountOf {
+                count: 1,
+                rules: vec![rule],
+            };
+        }
+        assert!(matches!(
+            securify_uniform(&mut builder, WHO, &rule, 0),
+            Err(TypedError::Build(BuildError::RuleArgTooDeep)),
+        ));
+    }
 }
