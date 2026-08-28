@@ -107,19 +107,19 @@ fn account() -> Blueprint {
             let holder = t.self_addr();
 
             // The flag first, because the body reads it before it picks
-            // a destination — and both destinations after it, because a
-            // total method materializes every handle it declares or
-            // none, so which one the body fills is not the
-            // declaration's business.
+            // a destination — and both destinations after it, in the
+            // order the body's arms reach them, because a total method
+            // materializes every handle it declares or none, so which
+            // one the body fills is not the declaration's business.
             let refused = holder.child(own(0), &[resource.clone().cast()]);
-            let vault = holder.child(VAULT, &[resource.clone().cast()]);
             let quarantine = holder.child(own(1), &[resource.clone().cast()]);
+            let vault = holder.child(VAULT, &[resource.clone().cast()]);
             t.point(&refused).read();
             // Both credits: a deposit only ever pays in, and saying so is
             // what keeps a resource governing withdrawals from asking
             // this method for a withdrawal credential.
-            t.point(&vault).holding(&resource).credit();
             t.point(&quarantine).holding(&resource).credit();
+            t.point(&vault).holding(&resource).credit();
         })
         // The sign-in's whole body is its gate's read: the cell the
         // account's stored rule lives in.

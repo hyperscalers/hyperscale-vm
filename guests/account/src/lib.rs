@@ -141,8 +141,6 @@ pub mod account {
             let credited = funds.quantity();
             let resource = funds.resource();
             let refused = self.refused.at(resource).get();
-            self.vault(resource).declared_credit();
-            self.quarantine.at(resource).declared_credit();
             if refused {
                 self.quarantine.at(resource).put(funds);
             } else {

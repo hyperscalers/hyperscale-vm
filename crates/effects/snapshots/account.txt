@@ -54,8 +54,8 @@ confirm() — infallible
 deposit(bucket) — total
   declares
       0  read self.refused[resource-of(arg0)]
-      1  credit self.vault[resource-of(arg0)]
-      2  credit self.quarantine[resource-of(arg0)]
+      1  credit self.quarantine[resource-of(arg0)]
+      2  credit self.vault[resource-of(arg0)]
   exports  handles for clauses 0–2, edge arg0
 
 deposit-nf(nf-bucket) — infallible
