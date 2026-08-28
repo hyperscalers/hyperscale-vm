@@ -114,8 +114,7 @@ pub mod peg {
 
         /// Hand in stable, take reserve at parity plus the deviation.
         pub fn redeem(&mut self, funds: Bucket) -> Result<Bucket, Error> {
-            let terms = self.config();
-            let payout = quoted(funds.quantity(), self.deviation.get(), terms.band)?;
+            let payout = self.quoted(funds.quantity())?;
             self.retired.put(funds);
             Ok(self.backing.take(payout))
         }
@@ -132,42 +131,41 @@ pub mod peg {
         /// a window that quoted a number it would then decline to honour
         /// would be answering a question nobody asked.
         pub fn quote(&self, amount: Quantity) -> Result<Quantity, Error> {
-            let payout = quoted(amount, self.deviation.get(), self.config().band)?;
+            let payout = self.quoted(amount)?;
             Ok(payout)
         }
-    }
 
-    /// What `handed_in` fetches at the posted deviation, or the refusal a
-    /// redemption of it would meet.
-    ///
-    /// The whole of the window's judgment in one place, so the quote and
-    /// the redemption cannot come apart: a quote is a redemption with the
-    /// movement left out, and the two agreeing is then a fact about the
-    /// text rather than a thing each body has to remember.
-    fn quoted(
-        handed_in: Quantity,
-        deviation: SignedFixed<Reserve, Stable>,
-        bound: UnitFixed,
-    ) -> Result<Quantity, Error> {
-        let (distance, way) = deviation.split();
-        if distance > band(bound) {
-            return Err(Error::OutsideBand);
+        /// What `handed_in` fetches at the posted deviation, or the
+        /// refusal a redemption of it would meet.
+        ///
+        /// The whole of the window's judgment in one place, so the quote
+        /// and the redemption cannot come apart: a quote is a redemption
+        /// with the movement left out, and the two agreeing is then a
+        /// fact about the text rather than a thing each body has to
+        /// remember. A private method splices into each caller before
+        /// the walk, so both bodies declare the reads the judgment makes
+        /// as their own.
+        fn quoted(&self, handed_in: Quantity) -> Result<Quantity, Error> {
+            let (distance, way) = self.deviation.get().split();
+            if distance > band(self.config().band) {
+                Err(Error::OutsideBand)
+            } else {
+                let payout = payout(handed_in, distance, way);
+                if payout.is_zero() {
+                    Err(Error::NothingRedeemed)
+                } else {
+                    Ok(payout)
+                }
+            }
         }
-        let payout = payout(handed_in, distance, way);
-        if payout.is_zero() {
-            return Err(Error::NothingRedeemed);
-        }
-        Ok(payout)
     }
 
     /// What `handed_in` fetches at a deviation of `distance` in the
     /// direction `way`.
     ///
-    /// A free function over values already read, which is how two bodies
-    /// share one calculation here: a method cannot call another method of
-    /// its own component, because each declares only its own accesses.
-    /// Lifting the reads to parameters is what the refusal points at, and
-    /// it is cheaper than the alternative both bodies writing it out.
+    /// Ordinary arithmetic over values already in hand: nothing here
+    /// reaches state, so there is no access for a declaration to carry
+    /// and a free function is its natural home.
     ///
     /// Rounded down *for the redeemer* on both sides, which is one rule
     /// spelled as two operations: a floor on a sum and a floor on a

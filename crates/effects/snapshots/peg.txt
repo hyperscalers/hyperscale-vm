@@ -27,7 +27,7 @@ post-deviation(u256) — infallible
 quote(u128) — fallible, answers
   declares
       0  read self.deviation
-  exports  handle for clause 0, arg0, config.band
+  exports  handle for clause 0, config.band, arg0
 
 redeem(bucket) — fallible
   takes    arg0 carrying config.stable

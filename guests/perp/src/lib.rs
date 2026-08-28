@@ -194,17 +194,9 @@ pub mod perp {
 
         /// Close the position and take what it is worth.
         pub fn close(&mut self) -> Bucket {
-            let terms = self.config();
             let held = self.bank.balance();
             let position = self.position.existing();
-
-            let worth = equity(
-                &position,
-                self.mark.get(),
-                self.funding_charged.get(),
-                self.funding_credited.get(),
-                terms.long,
-            );
+            let worth = self.equity(&position);
 
             self.position.retire();
             // Bounded by what the vault holds: this market is the other
@@ -218,15 +210,10 @@ pub mod perp {
             let held = self.bank.balance();
             let position = self.position.existing();
 
-            let mark = self.mark.get();
-            let worth = equity(
-                &position,
-                mark,
-                self.funding_charged.get(),
-                self.funding_credited.get(),
-                terms.long,
-            );
-            let notional = position.size.convert(mark.rate(), Rounding::Down);
+            let worth = self.equity(&position);
+            let notional = position
+                .size
+                .convert(self.mark.get().rate(), Rounding::Down);
             if worth >= notional.scale(terms.maintenance_margin.ratio(), Rounding::Down) {
                 return Err(Error::StillCovered);
             }
@@ -238,53 +225,49 @@ pub mod perp {
             let (cut, _kept) = worth.min(held).divide(terms.liquidation_bonus.ratio());
             Ok(self.bank.take(cut))
         }
-    }
 
-    /// What a position is worth right now, floored at nothing.
-    ///
-    /// A free function over values already read, which is how the two
-    /// bodies that settle a position share one calculation: a method
-    /// cannot call another method of its own component, because each
-    /// declares only its own accesses, and lifting the reads to
-    /// parameters is what that refusal points at.
-    ///
-    /// Floored because a position that owes more than it posted is bad
-    /// debt this market absorbs, which is what having no insurance fund
-    /// means.
-    fn equity(
-        position: &Position,
-        mark: Fixed<Quote, Base>,
-        charged: Fixed<Quote, Base>,
-        credited: Fixed<Quote, Base>,
-        long: bool,
-    ) -> Quantity {
-        // The profit and the loss, as two unsigned branches rather than
-        // one signed difference: a long gains what the mark rose and
-        // loses what it fell, and a short is the same sentence the other
-        // way round.
-        let now = position.size.convert(mark.rate(), Rounding::Down);
-        let then = position.size.convert(position.entry.rate(), Rounding::Down);
-        let (profit, loss) = if long {
-            (now.saturating_sub(then), then.saturating_sub(now))
-        } else {
-            (then.saturating_sub(now), now.saturating_sub(then))
-        };
+        /// What `position` is worth right now, floored at nothing.
+        ///
+        /// A private method splices into each caller before the walk, so
+        /// the two bodies that settle a position share one calculation
+        /// and each declares the reads it makes as its own.
+        ///
+        /// Floored because a position that owes more than it posted is
+        /// bad debt this market absorbs, which is what having no
+        /// insurance fund means.
+        fn equity(&self, position: &Position) -> Quantity {
+            let mark = self.mark.get();
+            let long = self.config().long;
 
-        // What each counter did while the position was open. Both are a
-        // counter less a snapshot of itself, so neither runs below zero.
-        let longs_paid = charged - position.entry_charged;
-        let longs_took = credited - position.entry_credited;
-        let (owed, due) = if long {
-            (longs_paid, longs_took)
-        } else {
-            (longs_took, longs_paid)
-        };
-        // Up on what the position pays and down on what it is paid,
-        // which favours the market at both ends — and is the whole reason
-        // the two directions are kept apart this far.
-        let paid = position.size.convert(owed.rate(), Rounding::Up);
-        let received = position.size.convert(due.rate(), Rounding::Down);
+            // The profit and the loss, as two unsigned branches rather
+            // than one signed difference: a long gains what the mark rose
+            // and loses what it fell, and a short is the same sentence
+            // the other way round.
+            let now = position.size.convert(mark.rate(), Rounding::Down);
+            let then = position.size.convert(position.entry.rate(), Rounding::Down);
+            let (profit, loss) = if long {
+                (now.saturating_sub(then), then.saturating_sub(now))
+            } else {
+                (then.saturating_sub(now), now.saturating_sub(then))
+            };
 
-        (position.margin + profit + received).saturating_sub(loss + paid)
+            // What each counter did while the position was open. Both are
+            // a counter less a snapshot of itself, so neither runs below
+            // zero.
+            let longs_paid = self.funding_charged.get() - position.entry_charged;
+            let longs_took = self.funding_credited.get() - position.entry_credited;
+            let (owed, due) = if long {
+                (longs_paid, longs_took)
+            } else {
+                (longs_took, longs_paid)
+            };
+            // Up on what the position pays and down on what it is paid,
+            // which favours the market at both ends — and is the whole
+            // reason the two directions are kept apart this far.
+            let paid = position.size.convert(owed.rate(), Rounding::Up);
+            let received = position.size.convert(due.rate(), Rounding::Down);
+
+            (position.margin + profit + received).saturating_sub(loss + paid)
+        }
     }
 }
