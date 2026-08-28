@@ -1409,11 +1409,11 @@ fn lower_methods(
     }
     if matches!(serves, client::Serves::Instances) {
         lowered.push(lower_method(
-            &instantiate_method(declared.resources, instantiation_gate(items)),
+            &instantiate_method(declared.resources, instantiation_gate(items)?),
             declared,
             serves,
         )?);
-    } else if let Some(attr) = instantiation_gate(items) {
+    } else if let Some(attr) = instantiation_gate(items)? {
         // A principals package instantiates nothing — the registry serves
         // it to every principal address by class — so an instantiation gate
         // has no call to gate. Read only in the branch above, it would be
@@ -1516,16 +1516,37 @@ fn instantiate_method(resources: &[Resource], gate: Option<&syn::Attribute>) -> 
 /// field is what makes one address's bring-up different from another's,
 /// and the gate is what holds the two together. Inherited by the
 /// generated `instantiate`, which is the whole of bringing up.
-fn instantiation_gate(items: &[syn::Item]) -> Option<&syn::Attribute> {
-    items.iter().find_map(|item| {
+fn instantiation_gate(items: &[syn::Item]) -> syn::Result<Option<&syn::Attribute>> {
+    for item in items {
         let syn::Item::Struct(item) = item else {
-            return None;
+            continue;
         };
         if !item.attrs.iter().any(|a| a.path().is_ident("config")) {
-            return None;
+            continue;
         }
-        item.attrs.iter().find(|a| a.path().is_ident("requires"))
-    })
+        // Reading the first and stopping would take a second attribute's
+        // word for nothing while `strip` removed it, and a gate silently
+        // weaker than what the author wrote is the failure this
+        // derivation must not have.
+        let mut gates = item.attrs.iter().filter(|a| a.path().is_ident("requires"));
+        let Some(first) = gates.next() else {
+            return Ok(None);
+        };
+        if let Some(second) = gates.next() {
+            let mut refusal = syn::Error::new_spanned(
+                second,
+                "a configuration carries one instantiation gate — combine what it asks into a \
+                 single `#[requires(…)]`",
+            );
+            refusal.combine(syn::Error::new_spanned(
+                first,
+                "the gate this configuration already carries",
+            ));
+            return Err(refusal);
+        }
+        return Ok(Some(first));
+    }
+    Ok(None)
 }
 
 /// Remove the macro's own attributes, so what it emits is ordinary Rust.

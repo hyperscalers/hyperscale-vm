@@ -292,6 +292,7 @@ fn the_lowering_refuses_a_second_gate() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/two_gates.rs");
     refuse.compile_fail("tests/refusals/duplicate_requires.rs");
+    refuse.compile_fail("tests/refusals/duplicate_config_requires.rs");
 }
 
 /// A field's `#[slot]`/`#[holds]` and a method's `#[name]` are each one

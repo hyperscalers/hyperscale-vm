@@ -1,0 +1,11 @@
+error: a configuration carries one instantiation gate — combine what it asks into a single `#[requires(…)]`
+  --> tests/refusals/duplicate_config_requires.rs:12:5
+   |
+12 |     #[requires(config.founder)]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: the gate this configuration already carries
+  --> tests/refusals/duplicate_config_requires.rs:11:5
+   |
+11 |     #[requires(config.founder)]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
