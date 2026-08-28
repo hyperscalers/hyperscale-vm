@@ -432,21 +432,35 @@ impl<A, B> Cellular for SignedFixed<A, B> {
 
 impl LeafShape for UnitFixed {
     fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::ByteArray(32))
+        LeafForm::Value(TypeShape::U128)
     }
 }
 
 impl Cellular for UnitFixed {
+    /// The same sixteen little-endian bytes an amount cell has: the
+    /// bound is the type's, not the wire's.
+    ///
     /// # Panics
     ///
-    /// On a cell holding a value above one. The range is checked where
-    /// the value enters state, so a cell that holds a wider one was never
-    /// written through a constructor — a defect in state rather than in
-    /// the call that found it, on the same terms a malformed address is,
-    /// and the trap is the deterministic answer to it.
+    /// On a cell of any other width, or one holding a value above one.
+    /// The range is checked where the value enters state, so a cell that
+    /// fails either test was never written through a constructor — a
+    /// defect in state rather than in the call that found it, on the
+    /// same terms a malformed address is, and the trap is the
+    /// deterministic answer to it. An unwritten leaf reads as zero,
+    /// which is the value zero rather than a state a body has to tell
+    /// apart from it.
     fn from_cell(cell: &[u8]) -> Self {
-        let scaled = cell.try_into().map_or(0, u128::from_le_bytes);
-        Self::new(scaled).expect("a bounded configuration cell")
+        if cell.is_empty() {
+            return Self::ZERO;
+        }
+        let bytes: [u8; 16] = cell.try_into().unwrap_or_else(|_| {
+            panic!(
+                "a bounded configuration cell holds sixteen bytes, not {}",
+                cell.len()
+            )
+        });
+        Self::new(u128::from_le_bytes(bytes)).expect("a bounded configuration cell")
     }
 
     fn to_cell(&self) -> Vec<u8> {
@@ -2520,7 +2534,10 @@ impl From<u128> for OrderKey {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cellular, Fixed, SignedFixed, Wide};
+    use super::{
+        Cellular, Fixed, LeafForm, LeafShape, ShapeRegistry, SignedFixed, TypeShape, UnitFixed,
+        Wide,
+    };
 
     /// A dimension, for the rates that need two of them.
     struct Up;
@@ -2545,5 +2562,31 @@ mod tests {
                 "{width} bytes is not a rate"
             );
         }
+    }
+
+    /// The bound is the type's, not the wire's: the leaf is the sixteen
+    /// bytes every other packed integer's is, and a cell of any other
+    /// width is the same defect a malformed rate cell is.
+    #[test]
+    fn a_bounded_configuration_cell_is_sixteen_bytes_or_nothing_at_all() {
+        assert_eq!(UnitFixed::from_cell(&[]), UnitFixed::ZERO);
+
+        let written = UnitFixed::bps(30).expect("thirty basis points");
+        assert_eq!(UnitFixed::from_cell(&written.to_cell()), written);
+        assert_eq!(written.to_cell().len(), 16);
+        assert!(matches!(
+            UnitFixed::leaf_form(&mut ShapeRegistry::default()),
+            LeafForm::Value(TypeShape::U128)
+        ));
+
+        for width in [1, 15, 17, 32] {
+            let cell = vec![0u8; width];
+            assert!(
+                std::panic::catch_unwind(|| UnitFixed::from_cell(&cell)).is_err(),
+                "{width} bytes is not a bounded configuration"
+            );
+        }
+        let above_one = (UnitFixed::ONE.scaled() + 1).to_le_bytes();
+        assert!(std::panic::catch_unwind(|| UnitFixed::from_cell(&above_one)).is_err());
     }
 }
