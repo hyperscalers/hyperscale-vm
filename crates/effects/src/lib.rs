@@ -93,7 +93,8 @@ pub use metadata::{
 pub use publish::{
     AbiError, CheckedMetadata, CheckedSignature, DeclarationError, MetadataError, PlacedBounds,
     ResourceSite, SignatureBoundsError, SignatureError, SignatureSite, check_abi,
-    check_declarations, check_metadata, check_signature, founds_its_resource, seal_clauses, seals,
+    check_declarations, check_metadata, check_signature, founds_its_resource,
+    presents_a_held_badge, seal_clauses, seals,
 };
 pub use records::{ChainRecords, Composed, Records, issued_record};
 pub use resource::{

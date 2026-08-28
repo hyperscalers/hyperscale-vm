@@ -22,7 +22,8 @@ use std::fmt;
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
     AbiParam, Clause, MethodSignature, PackageMetadata, Totality,
-    attach_metadata as attach_canonical, check_signature, metadata_section, seals, supports,
+    attach_metadata as attach_canonical, check_signature, metadata_section, presents_a_held_badge,
+    seals, supports,
 };
 use hyperscale_vm_runtime::{
     ExportParam, ExportShape, check_method, classify_exports, validated_component,
@@ -206,7 +207,34 @@ fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, Gat
         judged().map_err(|refusal| refusal.about(method))?;
     }
     judge_seal(&metadata, provenance)?;
+    judge_custody(&metadata, provenance)?;
     Ok(metadata)
+}
+
+/// Judge that a published package presents no badge from custody.
+///
+/// A custodial method proves a badge the holder keeps — and a badge
+/// presented is a credential, not the asset custody holds. Only the
+/// account may, because only there is the holder the signer, and the
+/// account is a protocol package: so this is a claim only provenance
+/// grants, judged the way a totality mark is. A published package holding
+/// a badge holds an asset; proving it would make authority delegable,
+/// which is the one thing the model forbids of it.
+fn judge_custody(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), GateError> {
+    if matches!(provenance, Provenance::Protocol) {
+        return Ok(());
+    }
+    for (method, signature) in &metadata.methods {
+        if presents_a_held_badge(signature) {
+            return Err(GateError::new(
+                "a published package cannot present a badge it holds: custody is an asset, \
+                 not a credential, and proving one held would make authority delegable — a \
+                 method presenting a badge belongs to the account",
+            )
+            .about(method));
+        }
+    }
+    Ok(())
 }
 
 /// Judge that a published package can bring its components up.
@@ -692,6 +720,47 @@ mod tests {
         // principal has no creation to finish, and the package serving
         // them is seeded at genesis rather than published.
         assert!(admit_protocol_package(account_artifact()).is_ok());
+    }
+
+    /// Presenting a badge from custody is the account's alone, because only
+    /// there is the holder the signer — so the gate grants it by provenance
+    /// the way it grants a totality mark, and a published package is
+    /// refused naming the method that would delegate authority.
+    #[test]
+    fn a_published_package_cannot_present_a_held_badge() {
+        let proving = |claim: Expr| MethodSignature {
+            effects: vec![Clause::Proves { guard: None, claim }],
+            ..MethodSignature::default()
+        };
+
+        // The predicate reads a badge proof, not a self-prove or a method
+        // that proves nothing: a claim other than the target's own identity.
+        assert!(presents_a_held_badge(&proving(Expr::Arg(0))));
+        assert!(!presents_a_held_badge(&proving(Expr::SelfAddr)));
+        assert!(!presents_a_held_badge(&MethodSignature::default()));
+
+        let mut metadata = PackageMetadata::default();
+        metadata
+            .methods
+            .insert("present".into(), proving(Expr::Arg(0)));
+
+        // The protocol's own account may; a publisher may not, and the
+        // refusal names the method.
+        assert!(judge_custody(&metadata, Provenance::Protocol).is_ok());
+        let refused =
+            judge_custody(&metadata, Provenance::Published).expect_err("a publisher is refused");
+        assert!(
+            refused.to_string().contains("present"),
+            "names the method: {refused}"
+        );
+
+        // A package proving only its own identity — the venue shape — is
+        // untouched whoever publishes it.
+        let mut selves = PackageMetadata::default();
+        selves
+            .methods
+            .insert("pass".into(), proving(Expr::SelfAddr));
+        assert!(judge_custody(&selves, Provenance::Published).is_ok());
     }
 
     #[test]

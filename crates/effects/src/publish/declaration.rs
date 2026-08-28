@@ -869,6 +869,24 @@ pub fn seals(signature: &MethodSignature) -> bool {
         })
 }
 
+/// Whether a method presents a badge from custody: a `Proves` of a claim
+/// other than the target's own identity.
+///
+/// A published package holding a badge holds an asset, and proving it
+/// would make custody a credential — the delegation the authority model
+/// forbids. Only the account presents a badge it holds, because only there
+/// is the holder the signer, and only a protocol package is the account —
+/// so the publish gate reads this against provenance the way it reads a
+/// totality claim. `check_declarations` has already held every such
+/// `Proves` to a possession the same method declares, so a claim that is
+/// not the target's own `SelfAddr` here is a held badge.
+#[must_use]
+pub fn presents_a_held_badge(signature: &MethodSignature) -> bool {
+    signature.effects.iter().flat_map(Clause::effects).any(
+        |clause| matches!(clause, Clause::Proves { claim, .. } if !matches!(claim, Expr::SelfAddr)),
+    )
+}
+
 /// The clauses a component's seal declares: the write of its own
 /// configuration leaf, under the one-way door its absence is.
 #[must_use]

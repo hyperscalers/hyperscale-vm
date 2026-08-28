@@ -26,7 +26,8 @@ pub use abi::{AbiError, check_abi};
 use bounds::check_signature_bounds;
 pub use bounds::{PlacedBounds, SignatureBoundsError, SignatureSite};
 pub use declaration::{
-    DeclarationError, ResourceSite, check_declarations, founds_its_resource, seal_clauses, seals,
+    DeclarationError, ResourceSite, check_declarations, founds_its_resource, presents_a_held_badge,
+    seal_clauses, seals,
 };
 pub use package::{CheckedMetadata, MetadataError, check_metadata};
 
