@@ -551,7 +551,8 @@ impl TypeShape {
     ///
     /// So `read` is not a canonicity gate, where the codec is: two byte
     /// strings differing only in the order of a set's or a map's members
-    /// both read here, to values that compare equal. A caller that needs
+    /// both read here, to values that keep the wire's order and so
+    /// compare unequal. A caller that needs
     /// one byte string per value — because it hashes the bytes, or trusts
     /// what it read to re-encode identically — must hold that itself, or
     /// read only bytes the codec already wrote. The package-metadata
