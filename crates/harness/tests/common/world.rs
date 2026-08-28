@@ -753,9 +753,10 @@ pub fn sharded_routing(world: &Records, graph: &ManifestGraph) -> Routing {
     first
 }
 
-/// A stable rendering of everything a routing carries, digested so the
-/// pin below is one line per pattern rather than pages of debug output.
-pub fn routing_fingerprint(routing: &Routing) -> String {
+/// A stable rendering of everything a routing carries — the pre-image the
+/// fingerprint digests, and the witness a drift is discharged against: the
+/// encoded role sets, calls, frames, and folded declaration in full.
+pub fn routing_rendering(routing: &Routing) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     for (shard, set) in &routing.per_shard {
@@ -768,7 +769,15 @@ pub fn routing_fingerprint(routing: &Routing) -> String {
     let folded: Vec<_> = declaration.set.iter().collect();
     let _ = writeln!(out, "set: {folded:?}");
     let _ = writeln!(out, "ordered: {:?}", declaration.ordered);
-    let digest = TestHasher.hash(b"routing-vector", &[out.as_bytes()]);
+    out
+}
+
+/// The rendering digested, so the pin is one line per pattern rather than
+/// pages of debug output.
+pub fn routing_fingerprint(routing: &Routing) -> String {
+    use std::fmt::Write as _;
+    let rendering = routing_rendering(routing);
+    let digest = TestHasher.hash(b"routing-vector", &[rendering.as_bytes()]);
     digest.0.iter().fold(String::new(), |mut hex, byte| {
         let _ = write!(hex, "{byte:02x}");
         hex

@@ -18,10 +18,11 @@ use common::world::*;
 /// as it stands; a change to any of them is a change to what routing
 /// says, and needs a protocol answer rather than a regenerated literal.
 /// The digest is over a Debug rendering, so one drift is dischargeable
-/// short of a protocol answer: a vocabulary reshape whose rendering diff
-/// shows the same addresses under new type names, with the wire bytes —
-/// the encoded role sets in the propose vector are the witness —
-/// unchanged, is a re-pin of the same routing.
+/// short of a protocol answer: a vocabulary reshape whose rendering shows
+/// the same addresses under new type names is a re-pin of the same
+/// routing. The rendering is the witness, and a drift prints it in full
+/// beside the new digest — the encoded role sets, calls, frames, and
+/// folded declaration — so the discharge is a read rather than a guess.
 ///
 /// A drift in the addresses themselves is not that. Until a network
 /// runs, the protocol answer to one can be that the derivation was
@@ -125,7 +126,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
         let routing = sharded_routing(&world, &graph);
         let fingerprint = routing_fingerprint(&routing);
         if fingerprint != pin {
-            drifted.push(format!("{name} = {fingerprint}"));
+            // The witness the digest is over, printed beside the new hex —
+            // so a rendering-only reshape can be discharged by reading it
+            // rather than re-pinning blind.
+            drifted.push(format!(
+                "{name} = {fingerprint}\n{}",
+                routing_rendering(&routing)
+            ));
         }
     }
     assert!(
