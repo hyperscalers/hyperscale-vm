@@ -226,6 +226,18 @@ pub struct Resolution<'a> {
     /// Names walked and admitted. A name that faulted is absent, because
     /// a fault ends the walk that met it and nothing asks twice.
     resolved: BTreeMap<&'a str, Walked>,
+    /// A run element's minimum encoded length, kept by node identity for
+    /// the duration of one read. A run asks the same element node once per
+    /// occurrence in the payload, so without this a wide inline element is
+    /// re-walked per value — the same exponent `resolved` closes for names.
+    ///
+    /// Keyed by raw pointer, which is sound only while every keyed node is
+    /// alive: a read holds its whole shape tree borrowed, so the nodes
+    /// coexist and no address is reused. Populated and read exclusively
+    /// through [`cached_min_len`](Self::cached_min_len), reached only from
+    /// the read walk — never from the `pub` walkers, which a caller may
+    /// reuse across independent, short-lived shapes.
+    element_len: BTreeMap<*const TypeShape, usize>,
 }
 
 impl<'a> Resolution<'a> {
@@ -235,7 +247,23 @@ impl<'a> Resolution<'a> {
         Self {
             types,
             resolved: BTreeMap::new(),
+            element_len: BTreeMap::new(),
         }
+    }
+
+    /// The fewest bytes a run element can occupy, kept by node identity so
+    /// a wide element is walked once however many times the payload
+    /// repeats its collection. Reached only from the read walk, where the
+    /// whole shape tree is borrowed alive — so a pointer key names one
+    /// live node throughout, never a freed address a later shape reused.
+    fn cached_min_len(&mut self, element: &TypeShape) -> Result<usize, ShapeFault> {
+        let key: *const TypeShape = std::ptr::from_ref(element);
+        if let Some(least) = self.element_len.get(&key).copied() {
+            return Ok(least);
+        }
+        let least = self.min_encoded_len(element, MAX_SHAPE_DEPTH)?;
+        self.element_len.insert(key, least);
+        Ok(least)
     }
 
     /// The table this resolves against.
@@ -609,8 +637,8 @@ impl TypeShape {
             }
             Self::Map { key, value } => {
                 let pair = resolution
-                    .min_encoded_len(key, MAX_SHAPE_DEPTH)?
-                    .saturating_add(resolution.min_encoded_len(value, MAX_SHAPE_DEPTH)?);
+                    .cached_min_len(key)?
+                    .saturating_add(resolution.cached_min_len(value)?);
                 if pair == 0 {
                     return Err(ShapeFault::ZeroWidth.into());
                 }
@@ -675,7 +703,7 @@ impl TypeShape {
         resolution: &mut Resolution<'_>,
         element: &Self,
     ) -> Result<usize, ReadError> {
-        let least = resolution.min_encoded_len(element, MAX_SHAPE_DEPTH)?;
+        let least = resolution.cached_min_len(element)?;
         if least == 0 {
             return Err(ShapeFault::ZeroWidth.into());
         }
@@ -1095,6 +1123,26 @@ mod tests {
         // Every name but the one the walk started from, which is reached
         // as a shape rather than through a reference.
         assert_eq!(resolution.resolved.len(), NAMES - 1);
+    }
+
+    /// A run element reached once per occurrence in the payload is walked
+    /// once. The read walk asks `cached_min_len` for each collection it
+    /// meets, and a wide element answered from the cache costs nothing per
+    /// repeat — where re-walking it would be the payload-times-shape
+    /// quadratic the memo closes.
+    #[test]
+    fn a_run_element_is_walked_once_per_node() {
+        let empty = ShapeTable::new();
+        let element = TypeShape::Tuple(vec![TypeShape::U8; 50]);
+        let mut resolution = Resolution::of(&empty);
+        assert_eq!(resolution.cached_min_len(&element).unwrap(), 50);
+        assert_eq!(resolution.element_len.len(), 1);
+        for _ in 0..1000 {
+            assert_eq!(resolution.cached_min_len(&element).unwrap(), 50);
+        }
+        // A thousand more asks against the same node add no entries and no
+        // walk: the answer is the node's, kept.
+        assert_eq!(resolution.element_len.len(), 1);
     }
 
     #[test]
