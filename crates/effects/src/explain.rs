@@ -29,6 +29,13 @@
 //! lines renders without them. Two derivations one mark cannot separate
 //! stay fully spelled, everywhere.
 //!
+//! A denomination the target's key already shows is not written again:
+//! `credit self.till[config.asset]` moves what its key names, and a
+//! trailer restating it would say nothing. The one reading this folds
+//! is a read's — whether a bare `read` of a keyed cell declared its
+//! denomination is answered by the state table rather than the clause
+//! line.
+//!
 //! Clauses are numbered by the preorder a clause index names, which is
 //! the walk [`check_declarations`] judges them in and the numbering a
 //! refusal's clause index counts in. An ABI binding names a top-level
@@ -1010,8 +1017,19 @@ impl<'a> Names<'a> {
                 mode,
                 denomination,
             } => {
+                // A vault-like cell is keyed by the resource it holds, so
+                // its denomination is its key restated — written once, as
+                // the key. Only a denomination the key does not already
+                // show is worth a trailer.
                 let held = denomination.as_ref().map_or_else(String::new, |resource| {
-                    format!(" holding {}", self.expr(resource, ATOM))
+                    let restated = key_material(target)
+                        .iter()
+                        .any(|material| self.expr(material, SELECT) == self.expr(resource, SELECT));
+                    if restated {
+                        String::new()
+                    } else {
+                        format!(" holding {}", self.expr(resource, ATOM))
+                    }
                 });
                 // A reach names whose authority lets it name somebody
                 // else's cell, which is the first thing a reader of the
@@ -1554,6 +1572,17 @@ fn clause_exprs<'a>(clause: &'a Clause, into: &mut Vec<&'a Expr>) {
     }
 }
 
+/// The material a target's rendered key shows, against which a
+/// denomination is judged already visible.
+fn key_material(target: &TargetExpr) -> &[Expr] {
+    match target {
+        TargetExpr::Point(Expr::ChildKey { material, .. })
+        | TargetExpr::Entry { material, .. }
+        | TargetExpr::Range { material, .. } => material,
+        TargetExpr::Point(_) => &[],
+    }
+}
+
 /// A target's expressions: the owner, whatever names the slot, the
 /// material, and the bounds.
 fn target_exprs<'a>(target: &'a TargetExpr, into: &mut Vec<&'a Expr>) {
@@ -1899,6 +1928,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A denomination the key already shows is the key restated, and
+    /// only one the key does not show earns a trailer.
+    #[test]
+    fn a_denomination_the_key_shows_is_not_written_twice() {
+        let keyed = |denomination: Expr| Clause::Effect {
+            reach: None,
+            guard: None,
+            target: TargetExpr::Point(self_child(VAULT, vec![Expr::Config(0)])),
+            mode: ModeExpr::Delta { moves: Moves::In },
+            denomination: Some(Box::new(denomination)),
+        };
+        let text = rendered("keeps", declaring(vec![keyed(Expr::Config(0))]));
+        assert!(text.contains("credit self.vault[config.x]\n"), "{text}");
+        let text = rendered("keeps", declaring(vec![keyed(Expr::Config(1))]));
+        assert!(
+            text.contains("credit self.vault[config.x] holding config.y"),
+            "{text}"
+        );
     }
 
     /// A package declaring one method, so a rendering has a name table

@@ -10,20 +10,20 @@ config
 churn(bucket, u128) — infallible
   takes    arg0 carrying config.asset
   declares
-      0  delta self.till[config.asset] holding config.asset
+      0  delta self.till[config.asset]
   yields   edge 0 = config.asset
   exports  handle for clause 0, edge arg0, arg1
 
 deposit(bucket) — infallible
   takes    arg0 carrying config.asset
   declares
-      0  credit self.till[config.asset] holding config.asset
+      0  credit self.till[config.asset]
   exports  handle for clause 0, edge arg0
 
 file(nf-bucket) — infallible
   takes    arg0 carrying config.instances
   declares
-      0  file self.locker[config.instances] over 0..=u128::MAX, at most len(ids-of(arg0)) entries holding config.instances
+      0  file self.locker[config.instances] over 0..=u128::MAX, at most len(ids-of(arg0)) entries
   exports  handle for clause 0, edge arg0
 
 instantiate() — infallible
@@ -34,20 +34,20 @@ instantiate() — infallible
 
 release(ids) — infallible
   declares
-      0  take self.locker[config.instances] over 0..=u128::MAX, at most len(arg0) entries holding config.instances
+      0  take self.locker[config.instances] over 0..=u128::MAX, at most len(arg0) entries
   yields   edge 0 = edge(config.instances × arg0)
   exports  handle for clause 0, arg0
 
 swap(bucket, u128) — infallible
   takes    arg0 carrying config.asset
   declares
-      0  credit self.till[config.asset] holding config.asset
-      1  debit self.other_till[config.other] holding config.other
+      0  credit self.till[config.asset]
+      1  debit self.other_till[config.other]
   yields   edge 0 = config.other
   exports  handle for clause 0, handle for clause 1, edge arg0, arg1
 
 withdraw(u128) — infallible
   declares
-      0  debit self.till[config.asset] holding config.asset
+      0  debit self.till[config.asset]
   yields   edge 0 = config.asset
   exports  handle for clause 0, arg0

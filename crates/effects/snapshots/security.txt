@@ -42,13 +42,13 @@ issue-bearer(u128) — infallible
 
 recall-registrations(address, u64, ids) — infallible
   declares
-      0  take arg0.arg1[self-issued(non-fungible["registered"])] over 0..=u128::MAX, at most len(arg2) entries holding self-issued(non-fungible["registered"]), reaching under recall
+      0  take arg0.arg1[self-issued(non-fungible["registered"])] over 0..=u128::MAX, at most len(arg2) entries, reaching under recall
   yields   edge 0 = edge(self-issued(non-fungible["registered"]) × arg2)
   exports  handle for clause 0, arg2
 
 recall-shares(address, u64, u128) — infallible
   declares
-      0  reserve arg2 arg0.arg1[self-issued(fungible["share"])] holding self-issued(fungible["share"]), reaching under recall
+      0  reserve arg2 arg0.arg1[self-issued(fungible["share"])], reaching under recall
   yields   edge 0 = self-issued(fungible["share"])
   exports  handle for clause 0
 

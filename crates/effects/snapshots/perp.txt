@@ -26,7 +26,7 @@ charge-longs(u256) — infallible
 
 close() — infallible
   declares
-      0  debit-only self.bank[config.collateral] holding config.collateral
+      0  debit-only self.bank[config.collateral]
       1  requires self.position is present
       2  write self.position
       3  read self.mark
@@ -49,7 +49,7 @@ instantiate() — infallible
 
 liquidate() — fallible
   declares
-      0  debit-only self.bank[config.collateral] holding config.collateral
+      0  debit-only self.bank[config.collateral]
       1  requires self.position is present
       2  write self.position
       3  read self.mark
@@ -64,7 +64,7 @@ open(bucket, u128) — fallible
       0  read self.mark
       1  read self.funding_charged
       2  read self.funding_credited
-      3  credit self.bank[config.collateral] holding config.collateral
+      3  credit self.bank[config.collateral]
       4  requires self.position is absent
       5  write self.position
   exports  handle for clause 0, handle for clause 1, handle for clause 2, handle for clause 3, handle for clause 5, edge arg0, arg1, config.maintenance_margin

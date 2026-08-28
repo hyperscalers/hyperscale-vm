@@ -72,7 +72,7 @@ stake(bucket) — infallible
   takes    arg0 carrying config.staked_resource
   mints    "stake-unit" fungible
   declares
-      0  credit self.pool[config.staked_resource] holding config.staked_resource
+      0  credit self.pool[config.staked_resource]
   yields   edge 0 = self-issued(fungible["stake-unit"])
   exports  handle for clause 0, edge arg0
 

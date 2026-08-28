@@ -10,7 +10,7 @@ errors
 draw(u128) — infallible
   mints    "debt" fungible
   declares
-      0  debit self.till[config.asset] holding config.asset
+      0  debit self.till[config.asset]
   yields   edge 0 = config.asset
   yields   edge 1 = self-issued(fungible["debt"])
   exports  handle for clause 0, arg0
@@ -28,5 +28,5 @@ repay(bucket, bucket) — fallible
   takes    arg1 carrying self-issued(fungible["debt"])
   burns    "debt" fungible
   declares
-      0  credit self.till[config.asset] holding config.asset
+      0  credit self.till[config.asset]
   exports  handle for clause 0, edge arg0, edge arg1

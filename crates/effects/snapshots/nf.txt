@@ -7,7 +7,7 @@ burn(nf-bucket) — infallible
 
 deposit(nf-bucket) — infallible
   declares
-      0  write self.nf-vault[resource-of(arg0)] over 0..=u128::MAX, at most len(ids-of(arg0)) entries holding resource-of(arg0)
+      0  write self.nf-vault[resource-of(arg0)] over 0..=u128::MAX, at most len(ids-of(arg0)) entries
   exports  handle for clause 0, edge arg0
 
 mint() — infallible
@@ -32,6 +32,6 @@ operate-quorum() — infallible
 
 withdraw(address, ids) — infallible
   declares
-      0  write self.nf-vault[arg0] over 0..=u128::MAX, at most len(arg1) entries holding arg0
+      0  write self.nf-vault[arg0] over 0..=u128::MAX, at most len(arg1) entries
   yields   edge 0 = edge(arg0 × arg1)
   exports  handle for clause 0, arg1

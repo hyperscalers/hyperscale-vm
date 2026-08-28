@@ -13,8 +13,8 @@ fill-asks(u64, u64, bucket) — infallible
   takes    arg2 carrying config.quote
   declares
       0  write self.asks over pack(arg0, 0)..=pack(arg1, u64::MAX), at most 64 entries
-      1  debit self.base[config.base] holding config.base
-      2  credit self.quote[config.quote] holding config.quote
+      1  debit self.base[config.base]
+      2  credit self.quote[config.quote]
   yields   edge 0 = config.base
   yields   edge 1 = resource-of(arg2)
   exports  handle for clause 0, handle for clause 1, handle for clause 2, edge arg2, config.tick
@@ -29,5 +29,5 @@ place-ask(u64, bucket) — fallible
   takes    arg1 carrying config.base
   declares
       0  write self.asks at pack(arg0, fresh-id(0))
-      1  credit self.base[config.base] holding config.base
+      1  credit self.base[config.base]
   exports  handle for clause 0, handle for clause 1, arg0, fresh-id(0), edge arg1
