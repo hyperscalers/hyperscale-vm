@@ -19,7 +19,7 @@ use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap, wrap_publish};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     AccountSigner, MAX_TX_BYTES_LEN, NetworkId, PrincipalAddr, ResourceAddr, SchemeId,
-    SchemeVerifier, TransactionEnvelope,
+    SchemeVerifier, TransactionBody, TransactionEnvelope,
 };
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -188,6 +188,49 @@ fn the_signature_covers_what_the_envelope_says() {
     let mut retargeted = signed;
     retargeted.network = NetworkId(1);
     assert!(!accepts(&retargeted));
+}
+
+/// A signed publish envelope verifies, and its body is signed content.
+///
+/// The `Publish` half of the signing seam: `wrap_publish` builds the
+/// unsigned intent, `sign` fills the scheme, key and signature, and the
+/// signature covers the artifact — so altering a byte of the body loses
+/// it, exactly as re-tagging the scheme does for a call.
+#[test]
+fn a_publish_envelope_signs_and_verifies() {
+    let key = TestSigner(7);
+    let signed = sign(
+        wrap_publish(vec![0xAB; 64], ALICE, NETWORK, terms()),
+        &key,
+        &TestHasher,
+    )
+    .expect("a publish envelope within its caps signs");
+
+    assert_eq!(signed.signer_scheme, SchemeId::ED25519);
+    let accepts = |envelope: &TransactionEnvelope| {
+        TestVerifier.verify(
+            envelope.signer_scheme,
+            &envelope.signer,
+            &envelope.signature,
+            &envelope.signing_digest(&TestHasher).expect("it encodes"),
+        )
+    };
+    assert!(
+        accepts(&signed),
+        "the signature covers the envelope it signed"
+    );
+
+    // The artifact is signed content: a body flipped after signing no
+    // longer verifies.
+    let mut tampered = signed;
+    let TransactionBody::Publish(bytes) = &mut tampered.body else {
+        panic!("wrap_publish builds a publish body");
+    };
+    bytes[0] ^= 1;
+    assert!(
+        !accepts(&tampered),
+        "a tampered artifact loses the signature"
+    );
 }
 
 /// A locally built publish body over the wire cap comes back as a refusal

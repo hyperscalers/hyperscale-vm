@@ -263,6 +263,14 @@ fn session(fx: &Fx) -> Option<KernelSession> {
             .map(|(effect, holds)| DeclaredAccess {
                 effect,
                 holds,
+                // This lane fuzzes the blessed-vs-reference differential
+                // over the declared set. `reach` and `clause` — the
+                // conditional-proving axes — are pinned off deliberately:
+                // a meaningful value depends on the effect it sits beside
+                // (a reach names a denominated value behaviour), so an
+                // arbitrary one would refuse at materialization far more
+                // often than it would exercise the machinery. The seeded
+                // corpus lanes cover those axes instead.
                 reach: None,
                 clause: None,
             })
