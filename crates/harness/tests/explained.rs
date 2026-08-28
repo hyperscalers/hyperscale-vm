@@ -15,6 +15,7 @@
 //! built from something, and that something is kept beside it.
 
 use hyperscale_vm_effects::{Hash32, address_text, explain_refusal, explain_requirements};
+use hyperscale_vm_testing::snapshot;
 use hyperscale_vm_types::{Address, Outcome, TxHash, UnmetCondition};
 
 mod common;
@@ -116,6 +117,39 @@ fn a_refusal_names_the_resource_and_the_behaviour_behind_it() {
     // And that nobody declared it, which is what separates this from a
     // gate the package's own author wrote and a reader can go and find.
     assert!(text.contains("Nothing declared this"), "{text}");
+}
+
+/// The requirements rendering whole, committed — the sentence a sender
+/// reads before signing, as a review artifact rather than a set of
+/// substring checks.
+#[test]
+fn the_requirements_rendering_matches_its_snapshot() {
+    let world = world();
+    let text = explain_requirements(
+        &admit_here(&register_swap_graph(300), ALICE, &world).expect("admits"),
+    );
+    snapshot(env!("CARGO_MANIFEST_DIR"), "requirements", &text);
+}
+
+/// The refusal rendering whole, committed — the sentence a refused
+/// sender reads, on the same terms.
+#[test]
+fn the_refusal_rendering_matches_its_snapshot() {
+    let world = world();
+    let graph = register_swap_graph(300);
+    let (results, _) = run_both(
+        &world,
+        &register_store(false),
+        &[(&graph, TxHash(Hash32([0x7C; 32])))],
+    );
+    let TxResult::Refused(Outcome::ConditionUnmet { condition }) = &results[0] else {
+        panic!("the venue is off the register: {:?}", results[0]);
+    };
+    let text = explain_refusal(
+        &admit_here(&graph, ALICE, &world).expect("admits"),
+        condition,
+    );
+    snapshot(env!("CARGO_MANIFEST_DIR"), "refusal", &text);
 }
 
 /// The attribution is the asking node's, not the first node whose

@@ -76,6 +76,7 @@ use hyperscale_vm_types::{CallTarget, SubstateKey, TxHash, encode_amount};
 mod conclusion;
 mod native;
 mod package;
+mod snapshot;
 mod wasm;
 
 pub use conclusion::Conclusion;
@@ -92,6 +93,7 @@ pub use hyperscale_vm_stdlib::account;
 pub use hyperscale_vm_types::{AbortReason, Outcome, Presence, UnmetCondition};
 pub use native::{Dispatch, Native};
 pub use package::{Code, Package, code_at};
+pub use snapshot::snapshot;
 pub use wasm::{Blessed, FUEL_CEILING};
 
 /// An address the chain holds no instance of the wanted package at.

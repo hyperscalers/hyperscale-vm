@@ -1,0 +1,29 @@
+resource restricted:a9b5d521481789af02ca39777e7bab336b850fa3de7d2674d136cc82799df606  fungible
+  issued by  component:a74454d1d44212db4c009bf4c3ba89f9afb1cc65355619ea69f8d207d4573802
+  class      restricted — an entry here can stop a movement of it, so a transfer presents this record
+  mint       the issuer's own code, which proves nothing to itself
+  withdraw   the moving party holds any instance of restricted:a29bcb12f7bc85afb66b2062133de4e3e202954ec507b37695f6401ceb7e2a06 — heard before any body runs
+  deposit    the moving party holds any instance of restricted:a29bcb12f7bc85afb66b2062133de4e3e202954ec507b37695f6401ceb7e2a06 — heard before any body runs
+  halt       approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
+  recall     approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
+
+resource restricted:2f298d5524f93ac1d5b444e4e2ffecd2c2f3bfc41f418889e3e88560f5de4606  fungible
+  issued by  component:a74454d1d44212db4c009bf4c3ba89f9afb1cc65355619ea69f8d207d4573802
+  class      restricted — an entry here can stop a movement of it, so a transfer presents this record
+  mint       the issuer's own code, which proves nothing to itself
+  withdraw   approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
+  deposit    approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
+  recall     approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
+
+resource resource:ca04fdac31b7c60b2693b42fa50c3c2385b131ac89d75106724b6bab5b8bcb04  fungible
+  issued by  component:a74454d1d44212db4c009bf4c3ba89f9afb1cc65355619ea69f8d207d4573802
+  class      plain — nothing here can stop a movement, so a transfer pays for none of it
+  mint       the issuer's own code, which proves nothing to itself
+  recall     approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
+
+resource restricted:a29bcb12f7bc85afb66b2062133de4e3e202954ec507b37695f6401ceb7e2a06  non-fungible
+  issued by  component:a74454d1d44212db4c009bf4c3ba89f9afb1cc65355619ea69f8d207d4573802
+  class      restricted — an entry here can stop a movement of it, so a transfer presents this record
+  mint       the issuer's own code, which proves nothing to itself
+  withdraw   nobody, ever
+  recall     approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction

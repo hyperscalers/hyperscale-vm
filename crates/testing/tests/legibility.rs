@@ -16,7 +16,9 @@ use hyperscale_vm_effects::{
     ResourceMeta, TestHasher, Value, explain_resource, granting_issued_resource,
 };
 use hyperscale_vm_fixtures::security;
-use hyperscale_vm_testing::{Chain, Component, PrincipalAddr, ResourceAddr, package, principal};
+use hyperscale_vm_testing::{
+    Chain, Component, PrincipalAddr, ResourceAddr, package, principal, snapshot,
+};
 
 /// Who keeps the register, and whom every approval entry names.
 const REGISTRAR: PrincipalAddr = principal(0xC1);
@@ -75,6 +77,23 @@ fn issuer() -> security::Security {
     let mut chain = Chain::native();
     chain.publish(package!(security));
     chain.instantiate::<security::Security>(REGISTRAR, terms())
+}
+
+/// Every record the issuer declares, committed as one artifact.
+///
+/// The record tier's own corpus, beside the declaration tier's package
+/// snapshots: every entry of every issued resource passes through
+/// [`explain_resource`] on the way to the file, so a change to the
+/// sealed-rule rendering shows up as a diff to read rather than moving
+/// silently.
+#[test]
+fn every_issued_record_matches_its_snapshot() {
+    let corpus: Vec<String> = rendered().into_iter().map(|(_, text)| text).collect();
+    snapshot(
+        env!("CARGO_MANIFEST_DIR"),
+        "security-records",
+        &corpus.join("\n"),
+    );
 }
 
 /// The two postures of one movement entry, told apart by what a reader
