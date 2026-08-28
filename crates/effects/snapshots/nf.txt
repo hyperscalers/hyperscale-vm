@@ -15,7 +15,7 @@ mint() — infallible
   declares
       0  write self.instance[self-issued(non-fungible["badge"]), fresh-id(0)]
       1  requires self.instance[self-issued(non-fungible["badge"]), fresh-id(0)] is absent
-  yields   edge 0 = edge(self-issued(non-fungible["badge"]) × [fresh-id(0)])
+  yields   edge 0 carrying self-issued(non-fungible["badge"]) × [fresh-id(0)]
   exports  handle for clause 0, fresh-id(0)
 
 operate() — infallible
@@ -33,5 +33,5 @@ operate-quorum() — infallible
 withdraw(address, ids) — infallible
   declares
       0  write self.nf-vault[arg0] over 0..=u128::MAX, at most len(arg1) entries
-  yields   edge 0 = edge(arg0 × arg1)
+  yields   edge 0 carrying arg0 × arg1
   exports  handle for clause 0, arg1

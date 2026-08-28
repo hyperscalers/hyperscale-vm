@@ -11,8 +11,8 @@ draw(u128) — infallible
   mints    "debt" fungible
   declares
       0  debit self.till[config.asset]
-  yields   edge 0 = config.asset
-  yields   edge 1 = self-issued(fungible["debt"])
+  yields   edge 0 carrying config.asset
+  yields   edge 1 carrying self-issued(fungible["debt"])
   exports  handle for clause 0, arg0
 
 instantiate() — infallible

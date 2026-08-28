@@ -27,29 +27,29 @@ instantiate() — infallible
 
 issue(u128) — infallible
   mints    "share" fungible
-  yields   edge 0 = self-issued(fungible["share"])
+  yields   edge 0 carrying self-issued(fungible["share"])
   exports  arg0
 
 issue-approved(u128) — infallible
   mints    "approved" fungible
-  yields   edge 0 = self-issued(fungible["approved"])
+  yields   edge 0 carrying self-issued(fungible["approved"])
   exports  arg0
 
 issue-bearer(u128) — infallible
   mints    "bearer" fungible
-  yields   edge 0 = self-issued(fungible["bearer"])
+  yields   edge 0 carrying self-issued(fungible["bearer"])
   exports  arg0
 
 recall-registrations(address, u64, ids) — infallible
   declares
       0  take arg0.arg1[self-issued(non-fungible["registered"])] over 0..=u128::MAX, at most len(arg2) entries, reaching under recall
-  yields   edge 0 = edge(self-issued(non-fungible["registered"]) × arg2)
+  yields   edge 0 carrying self-issued(non-fungible["registered"]) × arg2
   exports  handle for clause 0, arg2
 
 recall-shares(address, u64, u128) — infallible
   declares
       0  reserve arg2 arg0.arg1[self-issued(fungible["share"])], reaching under recall
-  yields   edge 0 = self-issued(fungible["share"])
+  yields   edge 0 carrying self-issued(fungible["share"])
   exports  handle for clause 0
 
 register(u64) — infallible
@@ -58,7 +58,7 @@ register(u64) — infallible
       0  requires claim config.registrar
       1  requires self.instance[self-issued(non-fungible["registered"]), arg0] is absent
       2  write self.instance[self-issued(non-fungible["registered"]), arg0]
-  yields   edge 0 = edge(self-issued(non-fungible["registered"]) × [arg0])
+  yields   edge 0 carrying self-issued(non-fungible["registered"]) × [arg0]
   exports  handle for clause 2, arg0
 
 unhalt(address) — infallible

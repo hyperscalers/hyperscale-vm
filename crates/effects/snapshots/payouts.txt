@@ -13,17 +13,17 @@ disburse(bucket) — infallible
   takes    arg0 carrying config.asset
   declares
       0  credit self.kept[config.asset]
-  yields   edge 0 = resource-of(arg0)
-  yields   edge 1 = resource-of(arg0)
-  yields   edge 2 = resource-of(arg0)
+  yields   edge 0 carrying resource-of(arg0)
+  yields   edge 1 carrying resource-of(arg0)
+  yields   edge 2 carrying resource-of(arg0)
   exports  handle for clause 0, config.protocol, config.treasury, config.referrer, edge arg0
 
 divides(u128, u128) — infallible, answers
   exports  arg0, arg1
 
 in-lots(bucket, u128) — fallible
-  yields   edge 0 = resource-of(arg0)
-  yields   edge 1 = resource-of(arg0)
+  yields   edge 0 carrying resource-of(arg0)
+  yields   edge 1 carrying resource-of(arg0)
   exports  edge arg0, arg1
 
 instantiate() — infallible
@@ -36,7 +36,7 @@ settle(bucket) — fallible
   takes    arg0 carrying config.asset
   declares
       0  credit self.kept[config.asset]
-  yields   edge 0 = resource-of(arg0)
-  yields   edge 1 = resource-of(arg0)
-  yields   edge 2 = resource-of(arg0)
+  yields   edge 0 carrying resource-of(arg0)
+  yields   edge 1 carrying resource-of(arg0)
+  yields   edge 2 carrying resource-of(arg0)
   exports  handle for clause 0, config.protocol, config.treasury, config.referrer, edge arg0

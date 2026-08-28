@@ -32,7 +32,7 @@ close() — infallible
       3  read self.mark
       4  read self.funding_charged
       5  read self.funding_credited
-  yields   edge 0 = config.collateral
+  yields   edge 0 carrying config.collateral
   exports  handle for clause 0, handles for clauses 2–5, config.long
 
 credit-longs(u256) — infallible
@@ -55,7 +55,7 @@ liquidate() — fallible
       3  read self.mark
       4  read self.funding_charged
       5  read self.funding_credited
-  yields   edge 0 = config.collateral
+  yields   edge 0 carrying config.collateral
   exports  handle for clause 0, handles for clauses 2–5, config.long, config.maintenance_margin, config.liquidation_bonus
 
 open(bucket, u128) — fallible

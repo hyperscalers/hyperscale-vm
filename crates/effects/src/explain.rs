@@ -987,7 +987,17 @@ impl<'a> Names<'a> {
             }
         }
         for (edge, output) in outputs.iter().enumerate() {
-            let _ = writeln!(out, "  yields   edge {edge} = {}", self.expr(output, ATOM));
+            // What an edge carries, on the same word `takes` uses. The
+            // line already says it is an edge, so a constructed bucket
+            // sheds its wrapper: the resource and, for a non-fungible,
+            // the ids beside it.
+            let carried = match output {
+                Expr::NfBucket { resource, ids } => {
+                    format!("{} × {}", self.expr(resource, ATOM), self.expr(ids, ATOM))
+                }
+                _ => self.expr(output, ATOM),
+            };
+            let _ = writeln!(out, "  yields   edge {edge} carrying {carried}");
         }
         if !abi.is_empty() {
             let _ = writeln!(

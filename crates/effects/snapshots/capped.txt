@@ -21,14 +21,14 @@ instantiate() — infallible
       7  write self.resource[self-issued(fungible["circulating"])]
       8  requires self.resource[self-issued(fungible["seat"])] is absent
       9  write self.resource[self-issued(fungible["seat"])]
-  yields   edge 0 = self-issued(fungible["founded"])
-  yields   edge 1 = self-issued(fungible["retired"])
-  yields   edge 2 = self-issued(fungible["circulating"])
+  yields   edge 0 carrying self-issued(fungible["founded"])
+  yields   edge 1 carrying self-issued(fungible["retired"])
+  yields   edge 2 carrying self-issued(fungible["circulating"])
   exports  handle for clause 1, handle for clause 3, handle for clause 5, handle for clause 7, handle for clause 9, self.record
 
 issue(u128) — infallible
   mints    "seat" fungible
-  yields   edge 0 = self-issued(fungible["seat"])
+  yields   edge 0 carrying self-issued(fungible["seat"])
   exports  arg0
 
 retire(bucket) — infallible

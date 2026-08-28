@@ -122,19 +122,19 @@ sweep(resource-address, u128) — infallible
   declares
       0  requires claim self
       1  reserve arg1 self.quarantine[arg0]
-  yields   edge 0 = arg0
+  yields   edge 0 carrying arg0
   exports  handle for clause 1
 
 withdraw(resource-address, u128) — infallible
   declares
       0  requires claim self
       1  reserve arg1 self.vault[arg0]
-  yields   edge 0 = arg0
+  yields   edge 0 carrying arg0
   exports  handle for clause 1
 
 withdraw-nf(resource-address, ids) — infallible
   declares
       0  requires claim self
       1  take self.nf-vault[arg0] over 0..=u128::MAX, at most len(arg1) entries
-  yields   edge 0 = edge(arg0 × arg1)
+  yields   edge 0 carrying arg0 × arg1
   exports  handle for clause 1, arg1

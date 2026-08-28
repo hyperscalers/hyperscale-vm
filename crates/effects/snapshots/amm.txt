@@ -20,7 +20,7 @@ add-liquidity(bucket, bucket) — fallible
       0  credit-only self.reserves[config.x]
       1  credit-only self.reserves[config.y]
       2  write self.supply
-  yields   edge 0 = self-issued(fungible["share"])
+  yields   edge 0 carrying self-issued(fungible["share"])
   exports  handles for clauses 0–2, edge arg0, edge arg1
 
 instantiate() — infallible
@@ -38,8 +38,8 @@ remove-liquidity(bucket) — fallible
       0  debit-only self.reserves[config.x]
       1  debit-only self.reserves[config.y]
       2  write self.supply
-  yields   edge 0 = config.x
-  yields   edge 1 = config.y
+  yields   edge 0 carrying config.x
+  yields   edge 1 carrying config.y
   exports  handles for clauses 0–2, edge arg0
 
 swap(bucket, u128) — fallible
@@ -47,7 +47,7 @@ swap(bucket, u128) — fallible
   declares
       0  credit-only self.reserves[if resource-of(arg0) == config.x then config.x else config.y]
       1  debit-only self.reserves[if resource-of(arg0) == config.x then config.y else config.x]
-  yields   edge 0 = (if resource-of(arg0) == config.x then config.y else config.x)
+  yields   edge 0 carrying (if resource-of(arg0) == config.x then config.y else config.x)
   exports  handle for clause 0, handle for clause 1, config.fee, edge arg0, arg1
 
 trades(resource-address) — infallible, answers

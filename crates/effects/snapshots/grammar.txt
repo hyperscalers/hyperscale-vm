@@ -116,7 +116,7 @@ seat(u64, u64) — infallible
       0  requires self.instance[self-issued(non-fungible["seat"]), arg0] is absent
       1  write self.instance[self-issued(non-fungible["seat"]), arg0]
       2  write self.noted
-  yields   edge 0 = edge(self-issued(non-fungible["seat"]) × [arg0])
+  yields   edge 0 carrying self-issued(non-fungible["seat"]) × [arg0]
   exports  handle for clause 1, handle for clause 2, arg1, arg0
 
 seated(nf-bucket) — infallible
@@ -124,7 +124,7 @@ seated(nf-bucket) — infallible
   declares
       0  read self.instance[self-issued(non-fungible["seat"]), only(ids-of(arg0))]
       1  write self.noted
-  yields   edge 0 = edge(resource-of(arg0) × ids-of(arg0))
+  yields   edge 0 carrying resource-of(arg0) × ids-of(arg0)
   exports  handle for clause 0, handle for clause 1, edge arg0
 
 settle(u64) — infallible
@@ -160,7 +160,7 @@ survey(nf-bucket) — infallible
       0  for each of ids-of(arg0)
         1  read self.instance[self-issued(non-fungible["seat"]), element]
       2  write self.noted
-  yields   edge 0 = edge(resource-of(arg0) × ids-of(arg0))
+  yields   edge 0 carrying resource-of(arg0) × ids-of(arg0)
   exports  handle for clause 1, handle for clause 2, edge arg0
 
 surveyed() — infallible
@@ -179,14 +179,14 @@ sweep(resource-address) — infallible
 take(resource-address, u128) — infallible
   declares
       0  reserve arg1 self.till[arg0]
-  yields   edge 0 = arg0
+  yields   edge 0 carrying arg0
   exports  handle for clause 0
 
 take-noting(resource-address, u128) — infallible, answers
   declares
       0  reserve arg1 self.till[arg0]
       1  read self.noted
-  yields   edge 0 = arg0
+  yields   edge 0 carrying arg0
   exports  handle for clause 0, handle for clause 1
 
 tallied(u64) — infallible

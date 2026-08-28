@@ -34,5 +34,5 @@ redeem(bucket) — fallible
       0  read self.deviation
       1  credit self.retired[config.stable]
       2  debit self.backing[config.reserve]
-  yields   edge 0 = config.reserve
+  yields   edge 0 carrying config.reserve
   exports  handles for clauses 0–2, edge arg0, config.band
