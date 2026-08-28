@@ -413,3 +413,42 @@ fn identical_bytes_under_different_types_do_not_share_a_root() {
         &proof
     ));
 }
+
+/// A `#[hbor(skip)]` variant field is omitted from the wire, so the tree
+/// omits it too — else `merkle_root(decode(encode(x))) != merkle_root(x)`
+/// once the skipped value is non-default, and the leaves stop partitioning
+/// the encoding.
+#[derive(Debug, Clone, PartialEq, Eq, Hbor, HborMerkle)]
+#[hbor(merkle_domain = "test-skip-v1")]
+enum Tagged {
+    Kept {
+        seen: u32,
+        #[hbor(skip)]
+        ignored: u32,
+    },
+}
+
+#[test]
+fn a_skipped_variant_field_is_not_a_leaf() {
+    let hasher = TestHasher;
+    let with_value = Tagged::Kept {
+        seen: 7,
+        ignored: 99,
+    };
+    // The wire omits the skipped field, so a value carrying one encodes
+    // exactly as one that defaulted it.
+    let defaulted = Tagged::Kept {
+        seen: 7,
+        ignored: 0,
+    };
+    assert_eq!(to_vec(&with_value).unwrap(), to_vec(&defaulted).unwrap());
+    assert_eq!(
+        with_value.merkle_root(&hasher).unwrap(),
+        defaulted.merkle_root(&hasher).unwrap(),
+    );
+
+    // And the leaves are exactly the encoding, with nothing invented for
+    // the skipped field.
+    let joined: Vec<u8> = with_value.chunks().unwrap().concat();
+    assert_eq!(joined, to_vec(&with_value).unwrap());
+}

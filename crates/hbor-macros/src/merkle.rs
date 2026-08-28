@@ -104,31 +104,41 @@ fn enum_chunks(data: &DataEnum) -> Result<TokenStream> {
     let mut arms = TokenStream::new();
     for (variant, tag) in data.variants.iter().zip(variant_tags(data)?) {
         let variant_name = &variant.ident;
-        let bindings: Vec<_> = variant
-            .fields
-            .iter()
-            .enumerate()
-            .map(|(position, field)| {
-                field
-                    .ident
-                    .as_ref()
-                    .map_or_else(|| quote::format_ident!("field_{position}"), Clone::clone)
-            })
-            .collect();
+        // A `#[hbor(skip)]` field is bound to `_` and contributes no leaf,
+        // the same way the wire codec omits it — so the tree partitions the
+        // encoding rather than a wider preimage the bytes never carry.
+        let mut binders = Vec::new();
+        let mut leaves = TokenStream::new();
+        for (position, field) in variant.fields.iter().enumerate() {
+            let skip = FieldAttrs::parse(&field.attrs)?.skip;
+            let binding = field
+                .ident
+                .as_ref()
+                .map_or_else(|| quote::format_ident!("field_{position}"), Clone::clone);
+            match (&field.ident, skip) {
+                (Some(name), true) => binders.push(quote!(#name: _)),
+                (Some(name), false) => binders.push(quote!(#name)),
+                (None, true) => binders.push(quote!(_)),
+                (None, false) => binders.push(quote!(#binding)),
+            }
+            if !skip {
+                reject_unencodable(&field.ty)?;
+                leaves.extend(quote! {
+                    leaves.push(::hyperscale_hbor::to_vec(#binding)?);
+                });
+            }
+        }
         let pattern = match &variant.fields {
-            Fields::Named(_) => quote!(Self::#variant_name { #(#bindings),* }),
-            Fields::Unnamed(_) => quote!(Self::#variant_name ( #(#bindings),* )),
+            Fields::Named(_) => quote!(Self::#variant_name { #(#binders),* }),
+            Fields::Unnamed(_) => quote!(Self::#variant_name ( #(#binders),* )),
             Fields::Unit => quote!(Self::#variant_name),
         };
-        for field in &variant.fields {
-            reject_unencodable(&field.ty)?;
-        }
         // The discriminant is its own leaf, so which variant this is can be
         // proven without revealing the variant's content.
         arms.extend(quote! {
             #pattern => {
                 leaves.push(::hyperscale_hbor::to_vec(&#tag)?);
-                #(leaves.push(::hyperscale_hbor::to_vec(#bindings)?);)*
+                #leaves
             }
         });
     }
