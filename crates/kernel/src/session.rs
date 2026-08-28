@@ -398,10 +398,12 @@ impl KernelSession {
     /// Whether the target a declared read names holds anything.
     ///
     /// Presence rather than contents, because that is the whole of what
-    /// a credential asks — and for a value cell the two agree, since a
-    /// balance reaching zero deletes its leaf. The same read
-    /// materialization performs, so a rule mixing presence with evidence
-    /// gets the same answer wherever the mix sends it.
+    /// a credential asks — and for a value cell the two agree: a balance
+    /// reaching zero deletes its leaf, and the transaction's own queued
+    /// movements fold into the answer the way they will fold into the
+    /// cell. The same read materialization performs, so a rule mixing
+    /// presence with evidence gets the same answer wherever the mix
+    /// sends it.
     ///
     /// # Errors
     ///

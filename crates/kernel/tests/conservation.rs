@@ -138,6 +138,29 @@ mod through_the_session {
         receipt.supply
     }
 
+    /// A queued movement answers a presence question the way it will
+    /// answer at commit: a credited cell is present to the gate that
+    /// asks, and a drained one is not.
+    #[test]
+    fn presence_follows_the_queued_movements() {
+        let key = vault(1, UNIT.address());
+        let target = EffectTarget::Point(key);
+
+        let mut crediting = session();
+        assert!(!crediting.declared_present(target).expect("declared"));
+        let minted = crediting.mint(0, 500).expect("the grant mints");
+        crediting.cell_put(0, 0, minted).expect("the credit queues");
+        assert!(crediting.declared_present(target).expect("declared"));
+
+        let mut held = MemoryStore::new();
+        held.write(key, encode_amount(500).to_vec());
+        let mut draining = session_over(held);
+        assert!(draining.declared_present(target).expect("declared"));
+        let taken = draining.cell_take(0, 0, 500).expect("the debit queues");
+        draining.burn(taken).expect("the grant burns");
+        assert!(!draining.declared_present(target).expect("declared"));
+    }
+
     /// A mint credits the shard's accumulator by what it created.
     #[test]
     fn a_mint_is_what_the_receipt_reports_and_the_ledger_takes() {

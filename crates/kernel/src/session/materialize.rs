@@ -19,6 +19,7 @@ use super::ranges::Ranges;
 use super::{EnvInputs, KernelSession};
 use crate::ledger::AmountLedger;
 use crate::locality::Locality;
+use crate::modes::decode_amount;
 use crate::overlay::OverlayStore;
 use crate::store::{StoreError, WorkingStore};
 use crate::supply::SupplyDelta;
@@ -716,7 +717,21 @@ fn judge(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<Judgement,
 /// Whatever the store raises.
 pub fn occupied(store: &mut OverlayStore, target: EffectTarget) -> Result<bool, StoreError> {
     let (owner, collection, lo, hi) = match target {
-        EffectTarget::Point(key) => return Ok(store.read(key)?.is_some()),
+        // A value cell's presence is its balance — the leaf deletes at
+        // zero — so the transaction's own queued movements answer here
+        // the way they will answer at commit. A credited cell is present
+        // to the gate that asks, and a drained one is not.
+        EffectTarget::Point(key) => {
+            let cell = store.read(key)?;
+            if !store.queued().contains_key(&key) {
+                return Ok(cell.is_some());
+            }
+            let committed = match cell.as_deref() {
+                Some(bytes) if !bytes.is_empty() => decode_amount(bytes)?,
+                _ => 0,
+            };
+            return Ok(store.with_queued(key, committed)? > 0);
+        }
         // An entry is the width-one interval at its order, which is the
         // normalization every other reader of a collection applies.
         EffectTarget::Entry {
