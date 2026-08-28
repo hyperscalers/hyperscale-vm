@@ -369,6 +369,10 @@ pub enum AbortReason {
     /// value rather than that a transaction asked it to.
     #[hbor(discriminant = 64)]
     ValueNotConserved,
+    /// A written cell or entry value past the byte cap a cell carries
+    /// wherever it travels.
+    #[hbor(discriminant = 65)]
+    CellValueTooLarge,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -619,6 +623,7 @@ mod tests {
             (62, AbortReason::MalformedSeal),
             (63, AbortReason::SealStanding),
             (64, AbortReason::ValueNotConserved),
+            (65, AbortReason::CellValueTooLarge),
         ];
         for (byte, reason) in classes {
             assert_eq!(

@@ -50,7 +50,9 @@ use hyperscale_vm_types::{
 // The emission caps and the event record are the shared vocabulary: the
 // same constants bound the kernel's emission here and the wire's decode in
 // the consensus workspace, so the two cannot drift.
-use hyperscale_vm_types::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX};
+use hyperscale_vm_types::{
+    Event, MAX_CELL_VALUE_LEN, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
+};
 pub use materialize::{Capability, Interval, MaterializeError, Settlement};
 use ranges::Ranges;
 pub use ranges::SCAN_SEEK_BYTES;
@@ -448,8 +450,21 @@ impl KernelSession {
         element: u32,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
+        Self::check_value_len(value.len())?;
         let key = self.acting_key(site, element, Op::Write)?;
         Ok(self.store.write(key, value)?)
+    }
+
+    /// The byte cap a written cell or entry value carries wherever it
+    /// travels, held at production the way an event payload's is — so an
+    /// oversized value fails the transaction that made it rather than
+    /// entering committed state a provision or a snap-sync import cannot
+    /// decode.
+    pub(crate) const fn check_value_len(len: usize) -> Result<(), SessionTrap> {
+        if len > MAX_CELL_VALUE_LEN {
+            return Err(SessionTrap::CellValueTooLarge(len));
+        }
+        Ok(())
     }
 
     /// The other end of a write capability: the leaf ends rather than
@@ -612,7 +627,8 @@ mod tests {
 
     use hyperscale_vm_types::{
         ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectTarget,
-        MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode, Moves, encode_amount,
+        MAX_CELL_VALUE_LEN, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode,
+        Moves, encode_amount,
     };
 
     use super::fixtures::{declared, env, key, session_holding, session_over, tx};
@@ -854,6 +870,25 @@ mod tests {
 
         session.leave_invocation();
         assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::NoInvocation));
+    }
+
+    /// A written value past the cell cap traps at production. The guard
+    /// sits ahead of the capability check, so an oversized value fails the
+    /// transaction that made it rather than reaching committed state a
+    /// provision or a snap-sync import could never decode.
+    #[test]
+    fn a_write_past_the_cell_cap_traps_at_production() {
+        assert_eq!(
+            KernelSession::check_value_len(MAX_CELL_VALUE_LEN + 1),
+            Err(SessionTrap::CellValueTooLarge(MAX_CELL_VALUE_LEN + 1)),
+        );
+        assert_eq!(KernelSession::check_value_len(MAX_CELL_VALUE_LEN), Ok(()));
+
+        let mut session = holding(Capability::Read(key(1)));
+        assert_eq!(
+            session.write_cell_set(0, 0, vec![0u8; MAX_CELL_VALUE_LEN + 1]),
+            Err(SessionTrap::CellValueTooLarge(MAX_CELL_VALUE_LEN + 1)),
+        );
     }
 
     /// The grant is a quantity and it leaves the kernel once: a second

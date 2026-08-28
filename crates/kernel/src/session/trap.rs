@@ -7,7 +7,8 @@
 
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
-    AbortReason, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENTS_PER_TX, ResourceAddr, SubstateKey,
+    AbortReason, MAX_CELL_VALUE_LEN, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENTS_PER_TX, ResourceAddr,
+    SubstateKey,
 };
 
 use super::{Capability, Op};
@@ -188,6 +189,9 @@ pub enum SessionTrap {
     /// An event payload past the per-event byte cap.
     #[error("event payload of {0} bytes past the cap of {MAX_EVENT_PAYLOAD_BYTES}")]
     EventPayloadTooLarge(usize),
+    /// A written cell or entry value past the byte cap a cell carries.
+    #[error("cell value of {0} bytes past the cap of {MAX_CELL_VALUE_LEN}")]
+    CellValueTooLarge(usize),
     /// A proportional split by a share above one.
     #[error("a split by a share above one leaves no remainder")]
     ShareAboveOne,
@@ -230,6 +234,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::EventTypeOutOfRange(_) => Self::EventTypeOutOfRange,
             SessionTrap::TooManyEvents => Self::EventCountExceeded,
             SessionTrap::EventPayloadTooLarge(_) => Self::EventPayloadTooLarge,
+            SessionTrap::CellValueTooLarge(_) => Self::CellValueTooLarge,
             SessionTrap::ShareAboveOne => Self::ShareAboveOne,
             SessionTrap::WrongResource { .. } => Self::WrongResource,
             SessionTrap::BytesAsValue { .. } => Self::BytesAsValue,

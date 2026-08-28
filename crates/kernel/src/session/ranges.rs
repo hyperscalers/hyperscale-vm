@@ -346,6 +346,7 @@ impl KernelSession {
         index: u32,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
+        Self::check_value_len(value.len())?;
         let interval = self.write_interval(site, element)?;
         self.scan(site, element)?;
         let order = *indexed(&self.ranges.scans[&(site, element)].entries, index)
@@ -370,6 +371,7 @@ impl KernelSession {
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
+        Self::check_value_len(value.len())?;
         let interval = self.write_interval(site, element)?;
         if !interval.holds(order) {
             return Err(SessionTrap::OrderOutsideInterval);
@@ -463,6 +465,7 @@ impl KernelSession {
         funds: u32,
         value: &[u8],
     ) -> Result<(), SessionTrap> {
+        Self::check_value_len(value.len())?;
         let interval = self.filing_interval(site, element)?;
         self.judge_credit(site, element, funds)?;
         let Held::Instances(ids) = self.bucket(funds)? else {
