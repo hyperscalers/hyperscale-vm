@@ -5,10 +5,11 @@
 //! wrappers a client calls it through. A signature and the wrapper
 //! mirroring it drift the moment they live apart.
 
+use hyperscale_hbor::TypeShape;
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::{
-    AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, SlotId, SlotRef, Totality, Value,
-    package_slot,
+    AbiParam, Expr, LeafForm, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
+    SlotRef, SlotShape, Totality, Value, package_slot,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_types::{ComponentAddr, Moves};
@@ -45,6 +46,15 @@ pub fn metadata() -> PackageMetadata {
         )
     };
     let mut methods = PackageMetadata::default();
+    methods.state.insert(
+        NAMES,
+        SlotShape {
+            name: "names".to_owned(),
+            kind: SlotKind::Unordered,
+            element: LeafForm::Value(TypeShape::U128),
+            denomination: None,
+        },
+    );
     let (target, order) = binding(0);
     methods.methods.insert(
         "bind".into(),

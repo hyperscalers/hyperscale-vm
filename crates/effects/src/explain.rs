@@ -78,7 +78,9 @@ pub fn explain(metadata: &PackageMetadata) -> String {
     let mut out = String::new();
     names.tables(&mut out);
     for (name, signature) in &metadata.methods {
-        out.push('\n');
+        if !out.is_empty() {
+            out.push('\n');
+        }
         names.method(name, signature, &mut out);
     }
     out
