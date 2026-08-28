@@ -105,6 +105,15 @@ use common::world::*;
 /// propose reach only principals, which have no creation to finish and
 /// take no fence.
 ///
+/// Transfer, swap and fill moved when the account's deposit stopped
+/// declaring its two credits by hand: the arms declare them, so the
+/// quarantine's clause precedes the vault's in the deposit frame, and
+/// the rebuilt artifacts reseat every package hash and every instance
+/// address derived from one. The leaves, their modes and the shards
+/// asked for them are the ones already pinned — what renumbered is one
+/// frame's clause order and the addresses under it. Propose alone stood
+/// still, because its manifest never deposits.
+///
 /// The fingerprint is over the routing's `Debug` rendering, so it is
 /// sensitive to more than routing: renaming a type the declaration holds
 /// moves it too. What that costs is a re-record whenever the vocabulary
@@ -142,11 +151,11 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "0f5dbeeea871f0ac21249fa9ac32f7dd14f12e19a7fd7b8b024b4028d13602a4";
+const PIN_TRANSFER: &str = "c2540621ed29b6bc4156d70c2cd0e08f1a8ff356c4f137adc59e94a9d624aa5a";
 
-const PIN_SWAP: &str = "9613d88b14125268732c4b4d64bf547b1d7f645732a8cad9cba07abe6b7fb594";
+const PIN_SWAP: &str = "e14f63469695b7574ea180cde0a6a84c5994ac3a227db304ef5fe48703b6616a";
 
-const PIN_FILL: &str = "677935ac742b38107603306a861852e5d6464676a116f4a270dc1770d7ca6944";
+const PIN_FILL: &str = "77f730a9471e87df50e8d3b6b73d891ddc47f035706f18718e28e94f7999c23b";
 
 const PIN_PROPOSE: &str = "9034ede521aeb9c053f724d9f95ae126d4e933abe168399ecbb021ae20edcd43";
 

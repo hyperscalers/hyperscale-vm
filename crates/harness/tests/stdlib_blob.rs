@@ -208,8 +208,8 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
         "deposit",
         &[
             CVal::Borrow(flag_rep, HandleKind::Site),
-            CVal::Borrow(recipient_rep, HandleKind::Site),
             CVal::Borrow(quarantine_rep, HandleKind::Site),
+            CVal::Borrow(recipient_rep, HandleKind::Site),
             CVal::Own(funds),
         ],
     )?;

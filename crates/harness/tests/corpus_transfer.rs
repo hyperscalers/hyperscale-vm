@@ -39,11 +39,11 @@ fn mirror_meta() -> InstanceMeta {
 /// here and published at runtime.
 ///
 /// `deposit` declares its two delta clauses in the opposite order to the
-/// stdlib account's and binds the ABI handle to the second one. Nothing
-/// about the resulting call can come from a table of known method names,
-/// and nothing can come from a convention that a method's first clause is
-/// its first handle: if either were true the credit would land on the
-/// decoy cell instead of the vault.
+/// stdlib account's and binds each export site to its clause by name.
+/// Nothing about the resulting call can come from a table of known
+/// method names, and nothing can come from a convention that a method's
+/// clauses bind its handles in order: if either were true the credit
+/// would land on the decoy cell instead of the vault.
 /// The flag the borrowed body reads before it picks a destination. Its
 /// contents do not matter here — an absent cell reads as "not refused",
 /// which is the path the case is about.
@@ -80,9 +80,10 @@ fn mirror_metadata() -> PackageMetadata {
             totality: Totality::Fallible,
             params: vec![ParamType::Bucket],
             // The bindings name clauses out of order on purpose: the
-            // export's second site is what the body credits, and this
-            // says that site is clause 2. If a handle resolved by
-            // position the credit would land on the decoy instead.
+            // export's third site is what the body credits on the
+            // not-refused path, and this says that site is clause 1. If
+            // a handle resolved by position the credit would land on
+            // the decoy instead.
             abi: vec![
                 AbiParam::Handle { clause: 0, site: 0 },
                 AbiParam::Handle { clause: 2, site: 0 },
@@ -100,14 +101,14 @@ fn mirror_metadata() -> PackageMetadata {
                 Clause::Effect {
                     reach: None,
                     guard: None,
-                    target: TargetExpr::Point(self_child(DECOY, vec![resource_of_arg0()])),
+                    target: TargetExpr::Point(self_child(VAULT, vec![resource_of_arg0()])),
                     mode: ModeExpr::Delta { moves: Moves::Both },
                     denomination: Some(Box::new(resource_of_arg0())),
                 },
                 Clause::Effect {
                     reach: None,
                     guard: None,
-                    target: TargetExpr::Point(self_child(VAULT, vec![resource_of_arg0()])),
+                    target: TargetExpr::Point(self_child(DECOY, vec![resource_of_arg0()])),
                     mode: ModeExpr::Delta { moves: Moves::Both },
                     denomination: Some(Box::new(resource_of_arg0())),
                 },
