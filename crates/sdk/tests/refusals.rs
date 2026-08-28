@@ -96,6 +96,8 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/branched_arm.rs");
     refuse.compile_fail("tests/refusals/early_return_output.rs");
     refuse.compile_fail("tests/refusals/two_denominations.rs");
+    refuse.compile_fail("tests/refusals/holds_typo.rs");
+    refuse.compile_fail("tests/refusals/holds_wrong_base.rs");
     refuse.compile_fail("tests/refusals/assigned_balance.rs");
     refuse.compile_fail("tests/refusals/undenominated_vault.rs");
     refuse.compile_fail("tests/refusals/keyed_denomination.rs");

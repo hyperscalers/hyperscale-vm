@@ -1,0 +1,5 @@
+error: a denomination is `config.<field>` for a configured resource, or `issued(<Resource>)` for a declared one the instance derives from its own address
+  --> tests/refusals/holds_typo.rs:20:17
+   |
+20 |         #[holds(config.tokn)]
+   |                 ^^^^^^

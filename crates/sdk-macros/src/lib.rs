@@ -1797,25 +1797,63 @@ fn executing(world: &str, methods: &[Lowered], role: Role) -> (TokenStream2, Tok
 /// wrong-kind bucket and fail with an admission error naming neither the
 /// field nor the line. Only `issued(<Resource>)` names a compile-time
 /// resource whose kind is known; `config.<field>` is a runtime address.
-fn check_holds_kinds(fields: &BTreeMap<String, Field>, resources: &[Resource]) -> syn::Result<()> {
+/// What a `#[holds(..)]` denomination may spell, stated for the refusal
+/// that names it.
+const HOLDS_GRAMMAR: &str = "a denomination is `config.<field>` for a configured resource, or \
+     `issued(<Resource>)` for a declared one the instance derives from its own address";
+
+fn check_holds_kinds(
+    fields: &BTreeMap<String, Field>,
+    config_fields: &[(String, syn::Type)],
+    resources: &[Resource],
+) -> syn::Result<()> {
     for field in fields.values() {
         let Some(expr) = &field.denomination else {
             continue;
         };
-        let syn::Expr::Call(call) = expr else {
-            continue;
+        // The `config.<field>` arm resolves nowhere until a body reaches
+        // the field, so a typo or a wrong base would drop the holding from
+        // the balance sheet with no diagnostic. Validate the grammar here,
+        // where every declared holding passes through, so the attribute is
+        // refused rather than silently emptied.
+        let call = match expr {
+            syn::Expr::Field(access) => {
+                // The base is the fixed `config` accessor, or a Config-kind
+                // state field named directly — the two `field_denomination`
+                // resolves through `state()`.
+                let base_names_config = matches!(&*access.base, syn::Expr::Path(base)
+                if base.path.get_ident().is_some_and(|ident| {
+                    ident == "config"
+                        || fields
+                            .get(&ident.to_string())
+                            .is_some_and(|f| f.kind == lower::FieldKind::Config)
+                }));
+                let member_is_a_slot = match &access.member {
+                    syn::Member::Named(name) => {
+                        let name = name.to_string();
+                        config_fields.iter().any(|(f, _)| *f == name)
+                    }
+                    syn::Member::Unnamed(_) => false,
+                };
+                if !base_names_config || !member_is_a_slot {
+                    return Err(syn::Error::new(expr.span(), HOLDS_GRAMMAR));
+                }
+                continue;
+            }
+            syn::Expr::Call(call) => call,
+            _ => return Err(syn::Error::new(expr.span(), HOLDS_GRAMMAR)),
         };
         if !matches!(&*call.func, syn::Expr::Path(path) if path.path.is_ident("issued")) {
-            continue;
+            return Err(syn::Error::new(expr.span(), HOLDS_GRAMMAR));
         }
         let Some(name) = call.args.first().and_then(|arg| match arg {
             syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
             _ => None,
         }) else {
-            continue;
+            return Err(syn::Error::new(expr.span(), HOLDS_GRAMMAR));
         };
         let Some(resource) = resources.iter().find(|r| r.name == name) else {
-            continue;
+            return Err(syn::Error::new(expr.span(), HOLDS_GRAMMAR));
         };
         let non_fungible = field.kind == lower::FieldKind::Ordered;
         let fits = if non_fungible {
@@ -1916,7 +1954,7 @@ fn expand(
             .map(|(name, _)| name.clone())
             .collect::<Vec<_>>(),
     )?;
-    check_holds_kinds(&fields, &declared_resources)?;
+    check_holds_kinds(&fields, &config_fields, &declared_resources)?;
     let accessors = accessors(config_name.as_ref(), serves);
     let declared = Declared {
         fields: &fields,
