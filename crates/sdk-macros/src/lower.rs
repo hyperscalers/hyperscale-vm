@@ -1401,10 +1401,11 @@ impl<'a> Lowerer<'a> {
                     .iter()
                     .position(|(f, _)| *f == name)
                 else {
-                    self.error(
-                        expr.span(),
-                        "not a field of the component's configuration struct",
+                    let message = crate::rule::unknown_config_field(
+                        &name,
+                        self.declared.config_fields.iter().map(|(f, _)| f.as_str()),
                     );
+                    self.error(expr.span(), &message);
                     return None;
                 };
                 Some(Term::Config(
@@ -2641,9 +2642,13 @@ impl<'a> Lowerer<'a> {
             other => {
                 self.error(
                     other.span(),
-                    "`#[blueprint]` does not model this expression, so it cannot see \
-                     the accesses inside it — rewrite the body with the forms the \
-                     macro admits (see the crate docs)",
+                    &format!(
+                        "`#[blueprint]` does not model {}, so it cannot see the \
+                         accesses inside it — rewrite in the forms the walk admits: \
+                         the crate docs index them, and `guests/grammar` executes \
+                         every one",
+                        expr_form(other)
+                    ),
                 );
                 Eval::absent(other.span(), "an unmodelled expression")
             }
@@ -2838,10 +2843,11 @@ impl<'a> Lowerer<'a> {
             .iter()
             .position(|(f, _)| f == name)
         else {
-            self.error(
-                field.span(),
-                "not a field of the component's configuration struct",
+            let message = crate::rule::unknown_config_field(
+                name,
+                self.declared.config_fields.iter().map(|(f, _)| f.as_str()),
             );
+            self.error(field.span(), &message);
             return Eval::absent(field.span(), "an unknown configuration field");
         };
         let term =
@@ -4176,6 +4182,22 @@ fn free_call_name(call: &syn::ExprCall) -> Option<String> {
         return None;
     };
     path.path.segments.last().map(|s| s.ident.to_string())
+}
+
+/// The name an unmodelled expression form goes by in its refusal, so the
+/// author hears which construct stopped the walk rather than working it
+/// out from the span alone.
+const fn expr_form(expr: &syn::Expr) -> &'static str {
+    match expr {
+        syn::Expr::Async(_) => "an `async` block",
+        syn::Expr::Await(_) => "an `.await`",
+        syn::Expr::Const(_) => "a `const` block",
+        syn::Expr::Loop(_) => "a bare `loop`",
+        syn::Expr::TryBlock(_) => "a `try` block",
+        syn::Expr::Unsafe(_) => "an `unsafe` block",
+        syn::Expr::Yield(_) => "a `yield`",
+        _ => "this expression",
+    }
 }
 
 /// Whether a call's function is the qualified `OrderKey::at`.

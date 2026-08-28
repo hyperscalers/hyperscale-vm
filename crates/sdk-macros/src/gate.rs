@@ -485,7 +485,6 @@ pub fn check_gate_shape(
     lowered: &lower::Lowered,
     method: &syn::ImplItemFn,
 ) -> syn::Result<()> {
-    let refuse = |message: &str| Err(syn::Error::new(method.sig.ident.span(), message));
     match gate {
         // A public method, a gate over claims, and a gate over a stored
         // rule all put no shape on the body: what governs a cell nothing
@@ -499,19 +498,22 @@ pub fn check_gate_shape(
         // proof. Its one product is the claim, so an edge or an answer
         // is refused: either would reopen the call matrix, and a
         // composer reads a proving node as evidence, never as value
-        // flow.
+        // flow. Both live in the return type, which is what the error
+        // underlines.
         Gate::Authorizing(_) => {
             if !lowered.outputs.is_empty() {
-                refuse(
+                Err(syn::Error::new(
+                    method.sig.output.span(),
                     "a proving call's one product is the claim, so a `#[proves(self)]` body \
                      produces no edge — move the payout to a method the proof gates",
-                )
+                ))
             } else if lowered.answer.is_some() {
-                refuse(
+                Err(syn::Error::new(
+                    method.sig.output.span(),
                     "a proving call's one product is the claim, so a `#[proves(self)]` body \
                      answers nothing — a composer reads a proving node as evidence, never \
                      as a value",
-                )
+                ))
             } else {
                 Ok(())
             }
@@ -520,12 +522,14 @@ pub fn check_gate_shape(
             if lowered.sites.is_empty() {
                 Ok(())
             } else {
-                refuse(
+                // The body is the offender, so the body is the span.
+                Err(syn::Error::new(
+                    method.block.span(),
                     "a custodial method declares two reads — its rule cell, and the \
                      badge-keyed vault or holdings entry its claim names — and the \
                      kernel makes both before the export runs. The body has nothing \
                      left to say, so it must be empty",
-                )
+                ))
             }
         }
     }

@@ -218,16 +218,38 @@ pub fn config_slot(
         return None;
     }
     let named = field.to_string();
-    let Some(slot) = config_fields
+    let fields: Vec<String> = config_fields
         .into_iter()
-        .position(|field| field.as_ref() == named)
-    else {
+        .map(|field| field.as_ref().to_owned())
+        .collect();
+    let Some(slot) = fields.iter().position(|field| *field == named) else {
         return Some(Err(syn::Error::new(
             access.span(),
-            format!("`{named}` is not a configuration field of this package"),
+            unknown_config_field(&named, fields.iter().map(String::as_str)),
         )));
     };
     Some(Ok(
         u32::try_from(slot).expect("a configuration list is shorter than u32")
     ))
+}
+
+/// What a `config.` access naming no declared field hears: the name that
+/// missed, and the fields the `#[config]` struct does declare — or that
+/// the package declares none at all.
+pub fn unknown_config_field<'a>(
+    named: &str,
+    declared: impl IntoIterator<Item = &'a str>,
+) -> String {
+    let declared: Vec<String> = declared.into_iter().map(|f| format!("`{f}`")).collect();
+    if declared.is_empty() {
+        format!(
+            "`{named}` is not a configuration field — this package declares no \
+             `#[config]` struct"
+        )
+    } else {
+        format!(
+            "`{named}` is not a configuration field — the `#[config]` struct declares {}",
+            declared.join(", ")
+        )
+    }
 }

@@ -1,0 +1,5 @@
+error: `#[blueprint]` does not model an `unsafe` block, so it cannot see the accesses inside it — rewrite in the forms the walk admits: the crate docs index them, and `guests/grammar` executes every one
+  --> tests/refusals/unmodelled_expression.rs:17:26
+   |
+17 |             let folded = unsafe { seed.unchecked_mul(2) };
+   |                          ^^^^^^

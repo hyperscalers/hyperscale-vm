@@ -1,8 +1,11 @@
 error: a custodial method declares two reads — its rule cell, and the badge-keyed vault or holdings entry its claim names — and the kernel makes both before the export runs. The body has nothing left to say, so it must be empty
-  --> tests/refusals/badge_gate_body.rs:17:16
+  --> tests/refusals/badge_gate_body.rs:17:51
    |
-17 |         pub fn present(&mut self, badge: Address) {
-   |                ^^^^^^^
+17 |           pub fn present(&mut self, badge: Address) {
+   |  ___________________________________________________^
+18 | |             self.presented.set(1);
+19 | |         }
+   | |_________^
 
 warning: unused variable: `badge`
   --> tests/refusals/badge_gate_body.rs:17:35

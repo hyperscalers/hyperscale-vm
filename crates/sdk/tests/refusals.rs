@@ -27,6 +27,7 @@ fn the_lowering_refuses_what_it_cannot_see_into() {
     refuse.compile_fail("tests/refusals/loopless_loop.rs");
     refuse.compile_fail("tests/refusals/uncrossable_sequence.rs");
     refuse.compile_fail("tests/refusals/untyped_credit.rs");
+    refuse.compile_fail("tests/refusals/unmodelled_expression.rs");
 }
 
 /// Not a lowering refusal but a type: an interval names no leaf a write
@@ -354,6 +355,7 @@ fn the_lowering_refuses_a_leaf_spelled_as_a_bare_name() {
     refuse.compile_fail("tests/refusals/bare_config_name.rs");
     refuse.compile_fail("tests/refusals/bare_badge_name.rs");
     refuse.compile_fail("tests/refusals/bare_grant_name.rs");
+    refuse.compile_fail("tests/refusals/unknown_config_field.rs");
 }
 
 /// One rule grammar, and the position it was written in is the only

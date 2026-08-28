@@ -1,0 +1,5 @@
+error: `chairr` is not a configuration field — the `#[config]` struct declares `chair`, `treasurer`
+  --> tests/refusals/unknown_config_field.rs:22:20
+   |
+22 |         #[requires(config.chairr)]
+   |                    ^^^^^^
