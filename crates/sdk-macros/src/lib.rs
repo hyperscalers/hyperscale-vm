@@ -104,12 +104,13 @@
 //!
 //! `#[proves(self)]` is a component vouching for its own identity: only
 //! this package's own code can mint its address's claim, so the method
-//! *is* the gate. That means a **public** `#[proves(self)]` method whose
-//! body always succeeds hands that claim to every caller — a gate keyed
-//! on the component's identity opens to anyone who calls it first. Where
-//! that is not intended, gate the proving method itself (`#[requires(…)]`)
-//! or have its body decline on the paths that should not vouch. It reads
-//! like "authenticate me"; it means "anyone who calls me speaks as me."
+//! *is* the gate. A body that could only succeed would hand that claim
+//! to every caller — it reads like "authenticate me" and means "anyone
+//! who calls me speaks as me" — so on an instance package the macro
+//! refuses the shape: a proving method carries the package's error arm,
+//! and declines the paths that should not vouch. The account's is the
+//! exception, because the kernel judges its stored rule before the
+//! export runs — an empty principals body is already gated.
 //!
 //! # Names the generated client takes
 //!
@@ -1252,6 +1253,23 @@ fn lower_method(
     let declining = declined_with(method);
     if let Some(arm) = &declining {
         check_decline_arm(arm, declared.declines)?;
+    }
+    // A component's self-proof is conditional or it is no gate at all:
+    // only this package's code can mint its address's claim, so a body
+    // that cannot decline vouches for whoever calls it first. The
+    // account's stored rule is judged by the kernel before its export
+    // runs, which is why principals prove with an empty body.
+    if matches!(gate, Gate::Authorizing(_))
+        && matches!(serves, client::Serves::Instances)
+        && declining.is_none()
+        && let Some((attr, _)) = own_attr(&method.attrs, &["proves"])
+    {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "a `#[proves(self)]` body that cannot decline vouches for every caller — \
+             whoever calls it first speaks as the component. Give the method the \
+             package's error arm and decline the paths that should not vouch",
+        ));
     }
     let claim = total_attr(method);
     // What the mark promises is that a caller committing against this

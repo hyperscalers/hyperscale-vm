@@ -1,0 +1,5 @@
+error: a `#[proves(self)]` body that cannot decline vouches for every caller — whoever calls it first speaks as the component. Give the method the package's error arm and decline the paths that should not vouch
+  --> tests/refusals/unconditional_prover.rs:23:9
+   |
+23 |         #[proves(self)]
+   |         ^^^^^^^^^^^^^^^
