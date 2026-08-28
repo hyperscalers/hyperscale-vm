@@ -1,0 +1,5 @@
+error: `transparent` makes the wrapper its one field on the wire; `skip` would leave it no wire at all
+ --> tests/refusals/transparent_skip_field.rs:5:16
+  |
+5 | struct Wrapper(#[hbor(skip)] Vec<u8>);
+  |                ^

@@ -451,11 +451,26 @@ fn transparent(fields: &Fields) -> Result<(TokenStream, TokenStream, TokenStream
 
     let ty = &field.ty;
     let access = SelfAccess.get(0, field.ident.as_ref());
+    let attrs = FieldAttrs::parse(&field.attrs)?;
+    if attrs.skip {
+        return Err(Error::new(
+            field.span(),
+            "`transparent` makes the wrapper its one field on the wire; `skip` would leave it \
+             no wire at all",
+        ));
+    }
+    if attrs.unsigned {
+        return Err(Error::new(
+            field.span(),
+            "`transparent` has no field subset to sign; mark `unsigned` where the wrapper is a \
+             field instead",
+        ));
+    }
     // No `descend`: a transparent wrapper is not a level, it is a name. The
     // inner type still charges for whatever it nests. A capped field swaps
     // in the bounded reader and writer at the same depth — the newtype's
     // own bound, expressed where the collection is written.
-    let (encode, inner) = match FieldAttrs::parse(&field.attrs)?.max {
+    let (encode, inner) = match attrs.max {
         Some(max) => {
             let Some(CapSite::Direct(inner_shape)) = cap_site(ty) else {
                 return Err(capped_opaque(ty));

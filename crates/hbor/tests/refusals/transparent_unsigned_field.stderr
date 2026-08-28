@@ -1,0 +1,5 @@
+error: `transparent` has no field subset to sign; mark `unsigned` where the wrapper is a field instead
+ --> tests/refusals/transparent_unsigned_field.rs:5:16
+  |
+5 | struct Wrapper(#[hbor(unsigned)] Vec<u8>);
+  |                ^

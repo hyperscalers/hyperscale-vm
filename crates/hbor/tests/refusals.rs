@@ -16,6 +16,8 @@ fn the_derive_refuses_what_has_no_canonical_form() {
     refuse.compile_fail("tests/refusals/cap_on_opaque_field.rs");
     refuse.compile_fail("tests/refusals/duplicate_discriminant.rs");
     refuse.compile_fail("tests/refusals/transparent_two_fields.rs");
+    refuse.compile_fail("tests/refusals/transparent_skip_field.rs");
+    refuse.compile_fail("tests/refusals/transparent_unsigned_field.rs");
     refuse.compile_fail("tests/refusals/unknown_attribute.rs");
 }
 
