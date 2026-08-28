@@ -240,18 +240,23 @@ impl Denominations {
         self.entries.get(&(key.owner, key.collection)).copied()
     }
 
-    /// What `taken` exercised against the reservations on `key`.
+    /// What `taken` exercised against the reservations on `key`, or `None`
+    /// where those amounts sum past `u128::MAX`.
     ///
     /// Each grant's own declared amount rather than the folded hold:
     /// several clauses may reserve one cell, and the hold is their sum,
-    /// so what leaves the cell is the sum of the ones a body took.
-    fn taken_against(&self, key: SubstateKey, taken: &BTreeSet<u32>) -> u128 {
+    /// so what leaves the cell is the sum of the ones a body took. Summed
+    /// with `checked_add`, as every conservation-relevant total is — the
+    /// sum is bounded by a cell it was judged feasible against, so the
+    /// overflow is unreachable, but a value total that saturates rather
+    /// than refusing is the one seam a later change could turn into a hole.
+    fn taken_against(&self, key: SubstateKey, taken: &BTreeSet<u32>) -> Option<u128> {
         self.reserved
             .get(&key)
             .into_iter()
             .flatten()
             .filter(|(rep, _)| taken.contains(rep))
-            .fold(0u128, |total, (_, amount)| total.saturating_add(*amount))
+            .try_fold(0u128, |total, (_, amount)| total.checked_add(*amount))
     }
 }
 
@@ -392,7 +397,11 @@ impl KernelSession {
             let Some(resource) = denominations.cell(key) else {
                 return Err(FinishError::UndenominatedMovement(key));
             };
-            let taken = denominations.taken_against(key, &self.taken);
+            let Some(taken) = denominations.taken_against(key, &self.taken) else {
+                return Ok(Phase::Aborted(Outcome::ProtocolError {
+                    reason: AbortReason::ValueNotConserved,
+                }));
+            };
             let settled = if taken == 0 {
                 self.store.release(key, self.tx).map(|_| None)
             } else if self.locality.is_local(key.owner) {
@@ -613,6 +622,21 @@ impl KernelSession {
         delta.movements = movements.into();
         delta.settles = settles.into();
         for key in &self.nullifiers {
+            // A nullifier cell records a spend as raw bytes — the 32-byte
+            // transaction hash, never a well-formed amount. A key that also
+            // materialized as a denominated value cell would take this
+            // write and, at apply, decode it back as an amount and fail the
+            // whole batch. State the invariant here, as a per-transaction
+            // abort: a nullifier cell is not a value cell.
+            if denominations.cell(*key).is_some() {
+                return Ok(abort_with(
+                    self.store,
+                    Outcome::ProtocolError {
+                        reason: AbortReason::MalformedAmountCell,
+                    },
+                    fuel,
+                ));
+            }
             delta.cells.insert(*key, Some(spent.clone()));
         }
         if self.unconserved(&delta, &denominations).is_some() {

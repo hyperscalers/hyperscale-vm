@@ -249,6 +249,48 @@ mod through_the_session {
         assert!(receipt.supply.is_empty(), "and nothing it claimed does");
     }
 
+    /// A nullifier key that also materialized as a value cell aborts the
+    /// transaction rather than crashing the batch.
+    ///
+    /// The spend is raw bytes — the transaction hash — which a cell
+    /// denominated in a resource would decode back as an amount at apply,
+    /// failing the whole batch. The nullifier is declared as the
+    /// `Write { Both }` its screen demands and denominated all the same, so
+    /// it materializes as a value cell; `finish` states the invariant
+    /// instead of writing the spend: a nullifier cell is not a value cell.
+    #[test]
+    fn a_nullifier_that_is_a_value_cell_aborts_the_transaction() {
+        let key = vault(1, UNIT.address());
+        let writing = Effect {
+            target: EffectTarget::Point(key),
+            mode: Mode::Write { moves: Moves::Both },
+        };
+        let mut set = EffectSet::new();
+        set.insert(writing).expect("one cell");
+        let declaration = Declaration::from_set(set).denominated(|_| Some(UNIT));
+        let session = KernelSession::materialize(
+            OverlayStore::new(Arc::new(MemoryStore::new())),
+            &declaration,
+            TxHash(Hash32([9; 32])),
+            EnvInputs::unsealed(0),
+            hash,
+        )
+        .expect("one denominated write cell materializes")
+        .with_nullifiers(vec![key]);
+
+        let (receipt, _) = session
+            .finish(vec![], 0)
+            .expect("the guard produces a receipt rather than failing the batch");
+        assert_eq!(
+            receipt.outcome,
+            Outcome::ProtocolError {
+                reason: AbortReason::MalformedAmountCell,
+            },
+            "a nullifier cell is not a value cell"
+        );
+        assert!(receipt.delta.is_empty(), "nothing it wrote survives");
+    }
+
     /// The same in the other direction: a debit that reached no bucket.
     #[test]
     fn value_into_nowhere_does_not_commit_either() {
