@@ -32,7 +32,8 @@ use hyperscale_vm_effects::vocabulary::{
 };
 use hyperscale_vm_effects::{
     ChainRecords, Claim, EdgeRef, EvalBudget, EvidenceRef, GraphArg, Hasher, InstanceMeta,
-    ManifestGraph, MethodSignature, PackageHash, PackageMetadata, Value, claim_text,
+    MAX_PROVEN_PER_SIGNATURE, ManifestGraph, MethodSignature, PackageHash, PackageMetadata, Value,
+    claim_text,
 };
 use hyperscale_vm_types::{Address, AddressClass, CallTarget, PrincipalAddr};
 
@@ -275,11 +276,13 @@ pub struct Proof {
     /// a socket this intent declared for a proof from outside it.
     reference: EvidenceRef,
     /// The claims it proves, as far as construction could read them off
-    /// the proving declaration — the claim and, for an instance, the
-    /// widened subject, exactly as the evaluator widens. What a
+    /// the proving declaration — each proved claim and, for an instance,
+    /// the widened subject, exactly as the evaluator widens. What a
     /// `presenting` scope's coverage is judged by; a claim construction
-    /// could not evaluate is absent and covers nothing.
-    proves: [Option<Claim>; 2],
+    /// could not evaluate is absent and covers nothing. Sized to the most
+    /// a signature may prove, so a method proving several files them all
+    /// rather than dropping the tail past the first.
+    proves: [Option<Claim>; MAX_PROVEN_PER_SIGNATURE],
 }
 
 impl Proof {
@@ -290,10 +293,13 @@ impl Proof {
             .instance
             .is_some()
             .then(|| Claim::of_subject(claim.subject));
+        let mut proves = [None; MAX_PROVEN_PER_SIGNATURE];
+        proves[0] = Some(claim);
+        proves[1] = widened;
         Self {
             builder,
             reference: EvidenceRef::Socket(position),
-            proves: [Some(claim), widened],
+            proves,
         }
     }
 
@@ -819,7 +825,7 @@ impl<'a> TypedBuilder<'a> {
 
     /// The claims this call proves, filed on the [`Proof`] handed back
     /// so a scope's coverage can be judged without re-resolving the
-    /// call. `[None, None]` for a call that proves nothing.
+    /// call. All `None` for a call that proves nothing.
     fn filed_claims(
         &self,
         signature: &MethodSignature,
@@ -827,14 +833,14 @@ impl<'a> TypedBuilder<'a> {
         record: &InstanceMeta,
         values: &[Value],
         known: &[bool],
-    ) -> [Option<Claim>; 2] {
+    ) -> [Option<Claim>; MAX_PROVEN_PER_SIGNATURE] {
+        let mut filed = [None; MAX_PROVEN_PER_SIGNATURE];
         if !signature.proves() {
-            return [None, None];
+            return filed;
         }
         let budget = EvalBudget::default();
         let inputs = eval_inputs(target.address(), values, record, 0, &budget);
         let claims = proven_claims(signature, &inputs, known, self.hasher);
-        let mut filed = [None, None];
         for (slot, claim) in filed.iter_mut().zip(claims) {
             *slot = Some(claim);
         }
@@ -926,7 +932,7 @@ impl<'a> TypedBuilder<'a> {
         method: &str,
         args: impl Args,
         proofs: &[Proof],
-    ) -> Result<(u32, Outputs, [Option<Claim>; 2]), TypedError> {
+    ) -> Result<(u32, Outputs, [Option<Claim>; MAX_PROVEN_PER_SIGNATURE]), TypedError> {
         // A proof's node index means nothing in another intent's graph;
         // cross-intent authority travels through a socket, never by
         // presenting a foreign handle.
@@ -1127,6 +1133,35 @@ impl<'a> TypedBuilder<'a> {
                 })
             }
             outcome => Ok(outcome?),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hyperscale_vm_types::{Address, AddressClass};
+
+    use super::*;
+
+    /// A method may prove up to [`MAX_PROVEN_PER_SIGNATURE`] claims, and a
+    /// `Proof` files them all: a scope's coverage is judged against every
+    /// one, not the first two.
+    #[test]
+    fn a_proof_files_every_claim_it_proves() {
+        let subject = |n: u8| Claim::of_subject(Address::new([n; 31], AddressClass::Component));
+        let mut proves = [None; MAX_PROVEN_PER_SIGNATURE];
+        let filed: u8 = 5;
+        assert!(usize::from(filed) > 2 && usize::from(filed) <= MAX_PROVEN_PER_SIGNATURE);
+        for (slot, n) in proves.iter_mut().zip(0..filed) {
+            *slot = Some(subject(n));
+        }
+        let proof = Proof {
+            builder: 1,
+            reference: EvidenceRef::Node(0),
+            proves,
+        };
+        for n in 0..filed {
+            assert!(proof.covers(&subject(n)), "claim {n} is filed and covered");
         }
     }
 }
