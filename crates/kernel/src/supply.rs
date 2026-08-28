@@ -128,17 +128,34 @@ impl SupplyDelta {
 
     /// Move a shard's accumulator by what this transaction did.
     ///
+    /// Everything fallible lands before anything mutable, so a refused
+    /// delta leaves the accumulator exactly as it found it.
+    ///
     /// # Errors
     ///
     /// [`ModeError::SupplyOutOfBounds`] on overflow, or on a burn past
     /// what the shard accumulated — which is a shard destroying value it
     /// never held, and so a defect rather than a business condition.
     pub fn apply(&self, ledger: &mut SupplyLedger) -> Result<(), ModeError> {
+        let mut totals: BTreeMap<ResourceAddr, u128> = BTreeMap::new();
         for (resource, amount) in &self.minted {
-            ledger.credit(*resource, *amount)?;
+            let total = ledger
+                .amount(*resource)
+                .checked_add(*amount)
+                .ok_or(ModeError::SupplyOutOfBounds)?;
+            totals.insert(*resource, total);
         }
         for (resource, amount) in &self.burned {
-            ledger.debit(*resource, *amount)?;
+            let total = totals
+                .get(resource)
+                .copied()
+                .unwrap_or_else(|| ledger.amount(*resource))
+                .checked_sub(*amount)
+                .ok_or(ModeError::SupplyOutOfBounds)?;
+            totals.insert(*resource, total);
+        }
+        for (resource, total) in totals {
+            ledger.set(resource, total);
         }
         Ok(())
     }
@@ -268,6 +285,21 @@ mod tests {
             ledger.credit(resource(1), 1),
             Err(ModeError::SupplyOutOfBounds)
         );
+    }
+
+    /// A refused delta is refused whole: the burn that cannot land keeps
+    /// the mints beside it from landing either.
+    #[test]
+    fn a_refused_delta_leaves_the_accumulator_untouched() {
+        let mut ledger = SupplyLedger::new();
+        ledger.credit(resource(1), 3).unwrap();
+        let before = ledger.clone();
+
+        let mut delta = SupplyDelta::default();
+        delta.mint(resource(1), 10).expect("within bounds");
+        delta.burn(resource(2), 5).expect("within bounds");
+        assert_eq!(delta.apply(&mut ledger), Err(ModeError::SupplyOutOfBounds));
+        assert_eq!(ledger, before);
     }
 
     #[test]
