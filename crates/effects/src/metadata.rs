@@ -239,6 +239,10 @@ impl PackageMetadata {
     /// the wrong shape rather than against none. Pairing an emitter with
     /// the package that answers for it is the caller's.
     ///
+    /// The payload is one the VM's own encoder wrote, so it is canonical:
+    /// [`TypeShape::read`] does not gate a set's or a map's key order, and
+    /// this reads only bytes that were canonical when they were written.
+    ///
     /// # Errors
     ///
     /// [`ReadError`] for a payload the declared shape does not describe.
