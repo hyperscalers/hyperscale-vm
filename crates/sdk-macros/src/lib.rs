@@ -102,6 +102,15 @@
 //!
 //! A method carries at most one gate attribute.
 //!
+//! `#[proves(self)]` is a component vouching for its own identity: only
+//! this package's own code can mint its address's claim, so the method
+//! *is* the gate. That means a **public** `#[proves(self)]` method whose
+//! body always succeeds hands that claim to every caller — a gate keyed
+//! on the component's identity opens to anyone who calls it first. Where
+//! that is not intended, gate the proving method itself (`#[requires(…)]`)
+//! or have its body decline on the paths that should not vouch. It reads
+//! like "authenticate me"; it means "anyone who calls me speaks as me."
+//!
 //! # Names the generated client takes
 //!
 //! Every method gets a client wrapper, and the wrapper's own parameters
