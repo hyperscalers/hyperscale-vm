@@ -911,4 +911,36 @@ mod tests {
         let artifact = attach_metadata(&borrow_export, &sound).expect("attaches");
         assert!(admit_package(&artifact).is_ok());
     }
+
+    /// INV-VM-GATE-2's one door: a signature's declared value outputs equal
+    /// the edges its export hands back, and its answers claim matches. The
+    /// gate is the single enforcement point, so both refusal arms are
+    /// driven here — inverting or dropping the check turns this red.
+    #[test]
+    fn a_signature_that_disagrees_with_its_export_on_outputs_refuses() {
+        let export = |edges: usize, answers: bool| ExportShape {
+            params: Vec::new(),
+            edges,
+            answers,
+            declines: false,
+        };
+        let signature = |outputs: usize, answers: bool| MethodSignature {
+            outputs: vec![Expr::SelfAddr; outputs],
+            answers,
+            ..MethodSignature::default()
+        };
+
+        // Agreement passes, edges and answers alike.
+        assert!(check_outputs_against_export(&signature(2, false), &export(2, false)).is_ok());
+        assert!(check_outputs_against_export(&signature(0, true), &export(0, true)).is_ok());
+
+        // Fewer declared edges than the export hands back, and more: both
+        // refused.
+        assert!(check_outputs_against_export(&signature(1, false), &export(2, false)).is_err());
+        assert!(check_outputs_against_export(&signature(3, false), &export(2, false)).is_err());
+
+        // The answers claim disagreeing with the export, both directions.
+        assert!(check_outputs_against_export(&signature(0, true), &export(0, false)).is_err());
+        assert!(check_outputs_against_export(&signature(0, false), &export(0, true)).is_err());
+    }
 }
