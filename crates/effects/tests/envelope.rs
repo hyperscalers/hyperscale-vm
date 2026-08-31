@@ -7,10 +7,10 @@ use std::collections::BTreeSet;
 use hyperscale_vm_effects::{
     AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, Constraint, EdgeContent,
     EdgeRef, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl,
-    MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput,
-    PackageHash, PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket, Subintent,
-    TestHasher, Value, admit, admit_tree, child_key, explain_admission_tree, nullifier_key,
-    route_tree,
+    IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT,
+    NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket,
+    Subintent, TestHasher, Value, admit, admit_tree, child_key, explain_admission_tree,
+    nullifier_key, route_tree,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -22,6 +22,13 @@ use proptest::prelude::{any, proptest};
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const TEST_HEADER: IntentHeader = IntentHeader {
+    network: TEST_NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -68,7 +75,7 @@ fn deposit_param(target: impl Into<CallTarget>, param: u32) -> GraphNode {
 fn composed_tree(pay: u128) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
-            network: TEST_NETWORK,
+            header: TEST_HEADER,
             graph: ManifestGraph {
                 nodes: vec![
                     authorize(ALICE),
@@ -90,7 +97,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
         }],
         subintents: vec![Subintent {
             decl: IntentDecl {
-                network: TEST_NETWORK,
+                header: TEST_HEADER,
                 graph: ManifestGraph {
                     nodes: vec![
                         authorize(BOB),
@@ -144,7 +151,7 @@ fn a_tree_refusal_is_explained_at_the_interleaved_node() {
     );
     let tree = EnvelopeTree {
         root: IntentDecl {
-            network: TEST_NETWORK,
+            header: TEST_HEADER,
             graph: ManifestGraph {
                 nodes: vec![deposit_param(ALICE, 0)],
             },
@@ -162,7 +169,7 @@ fn a_tree_refusal_is_explained_at_the_interleaved_node() {
         }],
         subintents: vec![Subintent {
             decl: IntentDecl {
-                network: TEST_NETWORK,
+                header: TEST_HEADER,
                 graph: ManifestGraph {
                     nodes: vec![broken_authorize, withdraw(BOB, RES_X, 5)],
                 },
@@ -352,6 +359,28 @@ fn the_declaration_hash_covers_params_and_constraints() {
     assert_ne!(decl.hash(&TestHasher), retyped.hash(&TestHasher));
 }
 
+#[test]
+fn the_declaration_hash_covers_every_term_of_the_header() {
+    // The header is what the intent is admissible under, and a signer
+    // signs it with the rest. Two offers alike but for the network they
+    // stand on, or the window they stand in, are two identities — and so
+    // two nullifiers, which is what stops one signature answering for
+    // both.
+    let decl = composed_tree(100).subintents[0].decl.clone();
+
+    let mut elsewhere = decl.clone();
+    elsewhere.header.network = NetworkId(1);
+    assert_ne!(decl.hash(&TestHasher), elsewhere.hash(&TestHasher));
+
+    let mut later = decl.clone();
+    later.header.validity_start_ms += 1;
+    assert_ne!(decl.hash(&TestHasher), later.hash(&TestHasher));
+
+    let mut longer = decl.clone();
+    longer.header.validity_end_ms += 1;
+    assert_ne!(decl.hash(&TestHasher), longer.hash(&TestHasher));
+}
+
 /// The same binding, naming another node of the same intent.
 const fn rebind(binding: Binding, producer: u32) -> Binding {
     Binding::Value {
@@ -409,7 +438,7 @@ fn withdraw_nf(target: impl Into<CallTarget>, resource: impl Into<Address>, id: 
 fn an_edge_filling_a_socket_is_judged_by_its_kind() {
     let nf_tree = |consumer: GraphNode| EnvelopeTree {
         root: IntentDecl {
-            network: TEST_NETWORK,
+            header: TEST_HEADER,
             graph: ManifestGraph {
                 nodes: vec![authorize(ALICE), withdraw(ALICE, RES_X, 100), consumer],
             },
@@ -427,7 +456,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
         }],
         subintents: vec![Subintent {
             decl: IntentDecl {
-                network: TEST_NETWORK,
+                header: TEST_HEADER,
                 graph: ManifestGraph {
                     nodes: vec![
                         authorize(BOB),
@@ -836,7 +865,7 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
     let round = meta.address(&TestHasher);
     let calling = |method: &str, args: Vec<GraphArg>, records: Vec<InstanceMeta>| EnvelopeTree {
         root: IntentDecl {
-            network: TEST_NETWORK,
+            header: TEST_HEADER,
             graph: ManifestGraph {
                 nodes: vec![GraphNode {
                     target: round.into(),

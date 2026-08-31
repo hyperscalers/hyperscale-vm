@@ -25,8 +25,9 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::{
     AdmissionError, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode,
-    Hash32, InstanceMeta, IntentDecl, Issuance, JudgedLeaf, ManifestGraph, Records, ResourceMeta,
-    Rule, TestHasher, Value, admit_tree, granting_issued_resource, holdings_collection,
+    Hash32, InstanceMeta, IntentDecl, IntentHeader, Issuance, JudgedLeaf, ManifestGraph, Records,
+    ResourceMeta, Rule, TestHasher, Value, admit_tree, granting_issued_resource,
+    holdings_collection,
 };
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_types::{
@@ -36,6 +37,13 @@ use hyperscale_vm_types::{
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const TEST_HEADER: IntentHeader = IntentHeader {
+    network: TEST_NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 /// Who keeps the register: the identity the issuer's configuration names.
 const REGISTRAR: PrincipalAddr = PrincipalAddr::new([0x71; 31]);
@@ -126,7 +134,7 @@ fn transfer(resource: ResourceAddr) -> EnvelopeTree {
 fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
-            network: TEST_NETWORK,
+            header: TEST_HEADER,
             graph: ManifestGraph {
                 nodes: vec![
                     GraphNode {

@@ -19,9 +19,9 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
-    AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, IntentDecl, ManifestGraph,
-    PackageHash, PrefixShardResolver, Records, ResourceRecord, TestHasher, Value, admit_tree,
-    child_key, holdings_collection, instance_data_key, resource_record_key, route_tree,
+    AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader,
+    ManifestGraph, PackageHash, PrefixShardResolver, Records, ResourceRecord, TestHasher, Value,
+    admit_tree, child_key, holdings_collection, instance_data_key, resource_record_key, route_tree,
 };
 use hyperscale_vm_harness::driver::{
     Lanes, amount_of, cells, declared_vault, run_lanes, seed_vault, vault,
@@ -41,6 +41,13 @@ use wasmtime::error::{Context, ensure};
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const TEST_HEADER: IntentHeader = IntentHeader {
+    network: TEST_NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 /// The resource a delegation is denominated in.
@@ -255,7 +262,7 @@ fn register_graph(validator: u64) -> ManifestGraph {
 const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
-            network: TEST_NETWORK,
+            header: TEST_HEADER,
             graph,
             sockets: Vec::new(),
         },

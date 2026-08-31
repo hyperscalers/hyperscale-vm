@@ -22,9 +22,9 @@ use common::{ALICE, BOB, meta_granting, pkg, world};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, Claim, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg,
-    GraphNode, Hash32, Holding, InstanceMeta, IntentDecl, JudgedLeaf, ManifestGraph, Records,
-    ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef, StoredRule, TestHasher,
-    Value, admit_tree, child_key,
+    GraphNode, Hash32, Holding, InstanceMeta, IntentDecl, IntentHeader, JudgedLeaf, ManifestGraph,
+    Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef, StoredRule,
+    TestHasher, Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -34,6 +34,13 @@ use hyperscale_vm_types::{
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const TEST_HEADER: IntentHeader = IntentHeader {
+    network: TEST_NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 /// The badge the governed resource's withdraw entry names.
 const BADGE: ResourceAddr = ResourceAddr::new([0x77; 31]);
@@ -129,7 +136,7 @@ fn credential(owner: impl Into<Address>) -> SubstateKey {
 fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
-            network: TEST_NETWORK,
+            header: TEST_HEADER,
             graph: ManifestGraph {
                 nodes: vec![
                     GraphNode {
@@ -170,7 +177,7 @@ fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
 fn round_trip(custodian: ComponentAddr) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
-            network: TEST_NETWORK,
+            header: TEST_HEADER,
             graph: ManifestGraph {
                 nodes: vec![
                     GraphNode {
@@ -434,7 +441,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
         chain.instances.create(&TestHasher, instance);
         let env = EnvelopeTree {
             root: IntentDecl {
-                network: TEST_NETWORK,
+                header: TEST_HEADER,
                 graph: ManifestGraph {
                     nodes: vec![GraphNode {
                         target: target.into(),
@@ -511,7 +518,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
 fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
-            network: TEST_NETWORK,
+            header: TEST_HEADER,
             graph: ManifestGraph {
                 nodes: vec![
                     GraphNode {

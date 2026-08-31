@@ -13,7 +13,9 @@
 //! questions can sign an envelope, and a verifier that agrees with it can
 //! accept the result.
 
-use hyperscale_vm_effects::{EnvelopeTree, Hasher, IntentDecl, PackageHash, Records, TestHasher};
+use hyperscale_vm_effects::{
+    EnvelopeTree, Hasher, IntentDecl, IntentHeader, PackageHash, Records, TestHasher,
+};
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap, wrap_publish};
 use hyperscale_vm_stdlib::account;
@@ -26,6 +28,13 @@ const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
 const RES: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const HEADER: IntentHeader = IntentHeader {
+    network: NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 /// A key whose signature is a digest anyone holding the same seed can
 /// recompute. Test-grade: reproducible, and secret from nobody.
@@ -112,7 +121,7 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
 
     let tree = EnvelopeTree {
         root: IntentDecl {
-            network: NETWORK,
+            header: HEADER,
             graph,
             sockets: Vec::new(),
         },
@@ -149,7 +158,7 @@ fn the_signature_covers_what_the_envelope_says() {
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");
     let tree = EnvelopeTree {
         root: IntentDecl {
-            network: NETWORK,
+            header: HEADER,
             graph: builder.build().expect("every output is consumed"),
             sockets: Vec::new(),
         },

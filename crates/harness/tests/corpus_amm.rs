@@ -2,8 +2,8 @@
 //! math, output floors, and the share vault's rounding.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Claim, EnvelopeTree, Hash32, IntentDecl, ManifestGraph, SlotId, TestHasher,
-    Value, child_key, holdings_collection,
+    AdmissionError, Claim, EnvelopeTree, Hash32, IntentDecl, IntentHeader, ManifestGraph, SlotId,
+    TestHasher, Value, child_key, holdings_collection,
 };
 use hyperscale_vm_fixtures::{amm, shares};
 use hyperscale_vm_harness::driver::{amount_of, declared_vault, vault};
@@ -24,6 +24,13 @@ use hyperscale_vm_types::NetworkId;
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const TEST_HEADER: IntentHeader = IntentHeader {
+    network: TEST_NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 /// The share vault's one declared pool, at its marker's slot.
 const SHARES_POOL: SlotId = SlotId(<shares::Pool as VaultField>::SLOT);
@@ -479,7 +486,7 @@ fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
 /// for it.
 fn approval_request(approver: Claim) -> IntentDecl {
     let chain = world();
-    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_HEADER);
     let approval = decl.declare_proof(approver);
     let funds = account::withdraw(&mut decl, ALICE, RES_X, 500).expect("withdraw types");
     let out = decl
@@ -499,7 +506,7 @@ fn approval_request(approver: Claim) -> IntentDecl {
 /// claim their own node mints.
 fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_HEADER);
     let registrar = account::authorize(&mut root, REGISTRAR)?;
     let offered = root.offer(registrar).expect("the root's own proof offers");
     let wants = env

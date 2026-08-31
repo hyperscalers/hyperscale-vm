@@ -6,7 +6,7 @@
 //! checked against the same call made directly.
 
 use hyperscale_vm_effects::{
-    Claim, Clause, Constraint, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
+    Claim, Clause, Constraint, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, IntentHeader,
     MethodSignature, PackageHash, PackageMetadata, PrefixShardResolver, Records, ResourceGrants,
     ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, Totality, Value, admit,
     footprint, route,
@@ -23,6 +23,13 @@ use hyperscale_vm_types::{
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const TEST_HEADER: IntentHeader = IntentHeader {
+    network: TEST_NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -206,14 +213,14 @@ fn a_network_word_the_encoding_refuses_fails_once() {
 #[test]
 fn a_composition_names_every_signer_it_needs() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
 
     let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
     let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     let paid_x = root.export(funds);
     account::deposit(&mut root, ALICE, taken).unwrap();
 
-    let mut sub = env.subintent(BOB);
+    let mut sub = env.subintent(BOB, TEST_HEADER);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
     let funds = account::withdraw(&mut sub, BOB, RES_Y, 10).unwrap();
     let paid_y = sub.export(funds);
@@ -285,7 +292,7 @@ fn either_note_meta() -> ResourceMeta {
 fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     let chain = world();
     let note = either_note_meta().address(&TestHasher);
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let approval = root.declare_proof(Claim::of_subject(DESK));
     let alice = account::authorize(&mut root, ALICE).unwrap();
     let funds = root
@@ -295,7 +302,7 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
         .unwrap();
     account::deposit(&mut root, ALICE, funds).unwrap();
     let request = root;
-    let mut sub = env.subintent(DESK);
+    let mut sub = env.subintent(DESK, TEST_HEADER);
     let desk = account::authorize(&mut sub, DESK).unwrap();
     let offered = sub.offer(desk).expect("the intent's own proof offers");
     let wants = env.seal(request).unwrap().one().unwrap();
@@ -413,7 +420,7 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
     let venue = venue_meta().address(&TestHasher);
     let ticket = ticket_meta().address(&TestHasher);
 
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let approval = root.call_proving(venue, "approve", ()).unwrap();
     let alice = account::authorize(&mut root, ALICE).unwrap();
     let funds = root
@@ -449,7 +456,7 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
 fn a_conjunction_reports_what_each_branch_asks() {
     let chain = world();
     let note = note_meta().address(&TestHasher);
-    let mut request = IntentBuilder::declaration(&chain, &TestHasher, BOB, TEST_NETWORK);
+    let mut request = IntentBuilder::declaration(&chain, &TestHasher, BOB, TEST_HEADER);
     let approval = request.declare_proof(Claim::of_subject(DESK));
     let bob = account::authorize(&mut request, BOB).unwrap();
     let funds = request
@@ -460,7 +467,7 @@ fn a_conjunction_reports_what_each_branch_asks() {
     account::deposit(&mut request, BOB, funds).unwrap();
     let request = request.into_decl().unwrap();
 
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
     let desk = account::authorize(&mut root, DESK).unwrap();
     let offered = root.offer(desk).expect("the intent's own proof offers");
     let wants = env.adopt(BOB, request).unwrap().one().unwrap();

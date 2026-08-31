@@ -9,7 +9,7 @@
 
 use hyperscale_vm_effects::{
     AdmissionError, Claim, Constraint, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg,
-    Hash32, Hasher, InstanceMeta, IntentDecl, MAX_VALUE_DEPTH, PackageHash, Records,
+    Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader, MAX_VALUE_DEPTH, PackageHash, Records,
     ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, Socket, StoredRule, TestHasher, Value,
     admit_tree,
 };
@@ -22,6 +22,13 @@ use proptest::prelude::{prop, proptest};
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const TEST_HEADER: IntentHeader = IntentHeader {
+    network: TEST_NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -50,14 +57,14 @@ fn admits(tree: &EnvelopeTree) {
 /// other; the envelope is the two edges between them.
 fn swap(pay_x: u128, pay_y: u128) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
 
     let taken_y = root.declare(RES_Y, [Constraint::MinAmount(pay_y)]);
     let funds = account::withdraw(&mut root, ALICE, RES_X, pay_x)?;
     let paid_x = root.export(funds);
     account::deposit(&mut root, ALICE, taken_y)?;
 
-    let mut sub = env.subintent(BOB);
+    let mut sub = env.subintent(BOB, TEST_HEADER);
     let taken_x = sub.declare(RES_X, [Constraint::MinAmount(pay_x)]);
     let funds = account::withdraw(&mut sub, BOB, RES_Y, pay_y)?;
     let paid_y = sub.export(funds);
@@ -86,7 +93,7 @@ fn a_composed_swap_admits() {
 /// hands them at least `amount` of X, they will bank it.
 fn payment_request(amount: u128) -> IntentDecl {
     let chain = world();
-    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_HEADER);
     let incoming = decl.declare(RES_X, [Constraint::MinAmount(amount)]);
     account::deposit(&mut decl, BOB, incoming).unwrap();
     decl.into_decl()
@@ -100,7 +107,7 @@ fn a_presented_declaration_is_carried_verbatim() {
     let signed = request.hash(&TestHasher);
 
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     let paid = root.export(funds);
     let wants = env.adopt(BOB, request).unwrap().one().unwrap();
@@ -117,7 +124,7 @@ fn a_presented_declaration_is_carried_verbatim() {
 #[test]
 fn a_presented_hole_the_composition_never_bound_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     // The composer took the request and then routed nothing to it.
     let _wants = env.adopt(BOB, payment_request(100)).unwrap();
     let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
@@ -139,7 +146,7 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
 #[test]
 fn a_socket_proof_in_scope_acts_for_a_self_gated_call() {
     let chain = world();
-    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_HEADER);
 
     let bob = decl.declare_proof(Claim::of_subject(BOB));
     let _funds = decl
@@ -160,7 +167,7 @@ fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
     request.graph.nodes[0]
         .evidence
         .insert(EvidenceRef::Socket(0));
-    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert_eq!(
         env.adopt(BOB, request).map(|_| ()),
         Err(EnvelopeError::SocketChannelMismatch {
@@ -172,7 +179,7 @@ fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
     // An authority socket, filled into an argument position.
     let mut request = payment_request(100);
     request.sockets[0] = Socket::Authority(Claim::of_subject(ALICE));
-    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert_eq!(
         env.adopt(BOB, request).map(|_| ()),
         Err(EnvelopeError::SocketChannelMismatch {
@@ -189,7 +196,7 @@ fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
 #[test]
 fn a_presented_record_too_deep_to_encode_refuses_at_build() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let funds = account::withdraw(&mut root, ALICE, RES_X, 5).unwrap();
     account::deposit(&mut root, ALICE, funds).unwrap();
     let mut nested = Value::U64(0);
@@ -211,7 +218,7 @@ fn a_presented_record_too_deep_to_encode_refuses_at_build() {
 #[test]
 fn sockets_unpacked_at_the_wrong_arity_are_refused() {
     let chain = world();
-    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let wants = env.adopt(BOB, payment_request(100)).unwrap();
     // The composer expected an intent declaring nothing; the count is the
     // declaration's answer, not theirs.
@@ -228,7 +235,7 @@ fn sockets_unpacked_at_the_wrong_arity_are_refused() {
 #[test]
 fn a_proof_offered_to_a_value_socket_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
     let offered = root
         .offer(alice_proof)
@@ -266,7 +273,7 @@ fn a_presented_declaration_that_discharges_nothing_is_refused() {
     malformed
         .sockets
         .push(payment_request(50).sockets.remove(0));
-    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         env.adopt(BOB, malformed),
         Err(EnvelopeError::UnconsumedSocket {
@@ -279,7 +286,7 @@ fn a_presented_declaration_that_discharges_nothing_is_refused() {
 #[test]
 fn a_hole_the_graph_never_consumes_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     // Declared and then dropped: the yielded bucket would arrive with
     // nothing to receive it.
     let _taken = root.declare(RES_Y, []);
@@ -303,7 +310,7 @@ fn a_hole_two_arguments_consume_is_refused() {
     let mut malformed = payment_request(100);
     let again = malformed.graph.nodes[0].clone();
     malformed.graph.nodes.push(again);
-    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         env.adopt(BOB, malformed),
         Err(EnvelopeError::SocketReused {
@@ -322,7 +329,7 @@ fn a_parameter_the_intent_never_declared_is_refused() {
             *socket = 3;
         }
     }
-    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, _root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         env.adopt(BOB, malformed),
         Err(EnvelopeError::UnknownSocket {
@@ -335,7 +342,7 @@ fn a_parameter_the_intent_never_declared_is_refused() {
 #[test]
 fn a_hole_the_composition_never_bound_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let taken = root.declare(RES_Y, []);
     account::deposit(&mut root, ALICE, taken).unwrap();
     let _wants = env.seal(root).unwrap();
@@ -353,10 +360,10 @@ fn a_hole_the_composition_never_bound_is_refused() {
 #[test]
 fn an_intent_still_under_construction_is_refused() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut root, BOB, funds).unwrap();
-    let _sub = env.subintent(BOB);
+    let _sub = env.subintent(BOB, TEST_HEADER);
     env.seal(root).unwrap().none().unwrap();
     assert_eq!(
         env.build(),
@@ -367,12 +374,12 @@ fn an_intent_still_under_construction_is_refused() {
 #[test]
 fn a_handle_from_another_envelope_is_refused() {
     let chain = world();
-    let (mut mine, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, BOB, TEST_NETWORK);
+    let (mut mine, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let taken = root.declare(RES_X, []);
     account::deposit(&mut root, ALICE, taken).unwrap();
     let wants = mine.seal(root).unwrap().one().unwrap();
 
-    let (_theirs, mut other) = EnvelopeBuilder::new(&chain, &TestHasher, BOB, TEST_NETWORK);
+    let (_theirs, mut other) = EnvelopeBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let funds = account::withdraw(&mut other, BOB, RES_X, 100).unwrap();
     let elsewhere = other.export(funds);
     let refused = mine
@@ -388,7 +395,7 @@ fn a_handle_from_another_envelope_is_refused() {
 #[test]
 fn an_intent_filling_its_own_socket_is_refused_at_the_wiring() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let taken = root.declare(RES_X, []);
     let funds = account::withdraw(&mut root, ALICE, RES_X, 5).unwrap();
     let paid = root.export(funds);
@@ -413,9 +420,9 @@ fn an_intent_filling_its_own_socket_is_refused_at_the_wiring() {
 #[test]
 fn a_proof_proved_by_another_intent_cannot_be_offered() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let sub = env.subintent(BOB);
+    let sub = env.subintent(BOB, TEST_HEADER);
     assert_eq!(
         sub.offer(alice_proof).expect_err("a foreign proof"),
         EnvelopeError::ForeignProof,
@@ -429,9 +436,9 @@ fn a_proof_proved_by_another_intent_cannot_be_offered() {
 #[test]
 fn a_socket_token_from_another_intent_cannot_be_consumed() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let theirs = {
-        let mut sub = env.subintent(BOB);
+        let mut sub = env.subintent(BOB, TEST_HEADER);
         sub.declare(RES_X, [])
     };
     account::deposit(&mut root, ALICE, theirs).unwrap();
@@ -450,7 +457,7 @@ proptest! {
         legs in prop::collection::vec((100..1000u128, 1..100u128), 1..6),
     ) {
         let chain = world();
-        let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_NETWORK);
+        let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
 
         let mut paid = Vec::with_capacity(legs.len());
         for (pay, _) in &legs {
@@ -463,7 +470,7 @@ proptest! {
 
         for (index, (_, receive)) in legs.iter().enumerate() {
             let signer = PrincipalAddr::new([u8::try_from(index).unwrap() + 1; 31]);
-            let mut leg = env.subintent(signer);
+            let mut leg = env.subintent(signer, TEST_HEADER);
             let taken = leg.declare(RES_X, [Constraint::MinAmount(1)]);
     let funds = account::withdraw(&mut leg, signer, RES_Y, *receive).unwrap();
             let yielded = leg.export(funds);
@@ -510,7 +517,7 @@ fn note_meta() -> ResourceMeta {
 fn note_request(approver: Claim) -> IntentDecl {
     let chain = world();
     let note = note_meta().address(&TestHasher);
-    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, BOB, TEST_NETWORK);
+    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, BOB, TEST_HEADER);
     let approval = decl.declare_proof(approver);
     let bob = account::authorize(&mut decl, BOB).unwrap();
     // Two proofs at one node: the holder's own gate takes theirs, and
@@ -529,7 +536,7 @@ fn note_request(approver: Claim) -> IntentDecl {
 /// its own node mints.
 fn approved(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
     let desk = account::authorize(&mut root, DESK)?;
     let offered = root.offer(desk)?;
     let wants = env.adopt(BOB, request)?.one()?;
@@ -609,7 +616,7 @@ fn a_hole_bound_to_the_wrong_claim_is_refused() {
 fn an_edge_offered_to_an_authority_socket_is_refused() {
     let request = note_request(Claim::of_subject(DESK));
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
     let funds = account::withdraw(&mut root, DESK, RES_X, 5).unwrap();
     let paid = root.export(funds);
     let wants = env.adopt(BOB, request).unwrap().one().unwrap();

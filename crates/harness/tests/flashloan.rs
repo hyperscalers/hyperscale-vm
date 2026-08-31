@@ -19,8 +19,8 @@ use std::sync::LazyLock;
 use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
     AdmissionError, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta,
-    IntentDecl, ManifestGraph, Records, ResourceMeta, ResourceRecord, TestHasher, Value,
-    admit_tree, child_key, resource_record_key,
+    IntentDecl, IntentHeader, ManifestGraph, Records, ResourceMeta, ResourceRecord, TestHasher,
+    Value, admit_tree, child_key, resource_record_key,
 };
 use hyperscale_vm_fixtures::{FLASHLOAN_COMPONENT, flashloan};
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
@@ -36,6 +36,13 @@ use hyperscale_vm_types::NetworkId;
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const TEST_HEADER: IntentHeader = IntentHeader {
+    network: TEST_NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 /// The borrower.
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -134,7 +141,7 @@ fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) ->
 fn intent(graph: ManifestGraph) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
-            network: TEST_NETWORK,
+            header: TEST_HEADER,
             graph,
             sockets: Vec::new(),
         },

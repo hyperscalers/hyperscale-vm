@@ -6,8 +6,8 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    AdmittedTree, Constraint, EnvelopeTree, Hasher, PackageHash, PrefixShardResolver, Records,
-    TestHasher, admit_tree, route_tree,
+    AdmittedTree, Constraint, EnvelopeTree, Hasher, IntentHeader, PackageHash, PrefixShardResolver,
+    Records, TestHasher, admit_tree, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
@@ -20,6 +20,13 @@ use wasmtime::error::{Context, ensure};
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const TEST_HEADER: IntentHeader = IntentHeader {
+    network: TEST_NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -48,14 +55,14 @@ fn world() -> Records {
 /// between them.
 fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, composer, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, composer, TEST_HEADER);
 
     let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
     let funds = account::withdraw(&mut root, composer, RES_X, pay).expect("withdraw types");
     let paid_x = root.export(funds);
     account::deposit(&mut root, composer, taken).expect("deposit types");
 
-    let mut sub = env.subintent(BOB);
+    let mut sub = env.subintent(BOB, TEST_HEADER);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
     let funds = account::withdraw(&mut sub, BOB, RES_Y, 10).expect("withdraw types");
     let paid_y = sub.export(funds);

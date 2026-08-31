@@ -94,6 +94,34 @@ pub enum Socket {
     Authority(Claim),
 }
 
+/// The terms an intent is admissible under: the network it was declared
+/// for and the window it stands in.
+///
+/// Its signer signs these with the rest of the declaration, so a
+/// composition can neither retarget an intent nor outlive the window the
+/// signer offered it for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub struct IntentHeader {
+    /// The network this intent is declared for.
+    ///
+    /// Signed by the intent's own signer rather than inherited from the
+    /// composition, so a subintent binds only into an envelope for the
+    /// network its signer named.
+    pub network: NetworkId,
+    /// The window's inclusive start, in weighted-time milliseconds.
+    ///
+    /// Milliseconds rather than a range type: what a clock reading
+    /// *means* is the workspace's, and this crate holds the number its
+    /// signer signed. The envelope states its own window the same way.
+    pub validity_start_ms: u64,
+    /// The window's exclusive end.
+    ///
+    /// What ends the intent's admissibility, and so what ends the life
+    /// of the nullifier that makes a subintent once-only. A signer who
+    /// names no window is offering something forever.
+    pub validity_end_ms: u64,
+}
+
 /// One intent's declared form: a graph over typed sockets.
 ///
 /// The root intent and every subintent share this shape; a subintent's
@@ -103,15 +131,13 @@ pub enum Socket {
 /// must bind every one to some intent's socket.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct IntentDecl {
-    /// The network this intent is declared for.
+    /// What the intent is admissible under, as against what it does.
     ///
-    /// Signed by the intent's own signer rather than inherited from the
-    /// composition, so a subintent binds only into an envelope for the
-    /// network its signer named. Without it the composer's envelope is
-    /// the only thing naming a network, and a signature covering neither
-    /// the network nor a window is a standing offer on every network at
-    /// once.
-    pub network: NetworkId,
+    /// Grouped rather than flat because these are the terms that bound
+    /// the intent and the nullifier it spends, and because the preimage
+    /// then covers the header whole — a term added here cannot go
+    /// unsigned.
+    pub header: IntentHeader,
     /// The intent's invocation graph; arguments may reference the
     /// sockets via [`crate::GraphArg::Socket`].
     pub graph: ManifestGraph,
@@ -131,15 +157,16 @@ const DOMAIN_SUBINTENT: &[u8] = b"hyperscale-vm/subintent";
 const DOMAIN_ENVELOPE_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
 
 impl IntentDecl {
-    /// The declaration's identity through the hasher seam: the network,
+    /// The declaration's identity through the hasher seam: the header,
     /// the graph hash, and every socket it declares, each one part
     /// carrying its canonical encoding.
     ///
-    /// The fields are destructured rather than read one at a time,
-    /// because everything the declaration carries is content its signer
-    /// signs. A field this preimage misses is a field in the format, in
-    /// the encoding, and unsigned — so a new one has to fail the build
-    /// here rather than pass it silently.
+    /// The fields are destructured rather than read one at a time, and
+    /// the header enters whole through its own encoding, because
+    /// everything the declaration carries is content its signer signs. A
+    /// field this preimage misses is a field in the format, in the
+    /// encoding, and unsigned — so a new one either fails the build here
+    /// or rides the header's encoding, and never passes silently.
     ///
     /// # Panics
     ///
@@ -149,13 +176,13 @@ impl IntentDecl {
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> SubintentHash {
         let Self {
-            network,
+            header,
             graph,
             sockets,
         } = self;
         let graph = graph.hash(hasher);
         let mut parts: Vec<Vec<u8>> = Vec::with_capacity(2 + sockets.len());
-        parts.push(vec![network.0]);
+        parts.push(to_vec(header).expect("a header is three scalars"));
         parts.push(graph.0.0.to_vec());
         for socket in sockets {
             parts.push(to_vec(socket).expect("a socket is shallow"));

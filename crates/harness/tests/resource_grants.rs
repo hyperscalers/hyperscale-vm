@@ -12,9 +12,9 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    AdmissionError, EnvelopeTree, GrantedBehaviour, Holding, Records, ResourceGrants, ResourceKind,
-    ResourceMeta, RuleBytes, StoredRule, TestHasher, Totality, admit_tree, holdings_collection,
-    never,
+    AdmissionError, EnvelopeTree, GrantedBehaviour, Holding, IntentHeader, Records, ResourceGrants,
+    ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, Totality, admit_tree,
+    holdings_collection, never,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
@@ -33,6 +33,13 @@ use hyperscale_vm_types::NetworkId;
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
+
+/// Any window; these tests never validate one against a clock.
+const TEST_HEADER: IntentHeader = IntentHeader {
+    network: TEST_NETWORK,
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+};
 
 /// The account that holds the granting resource.
 const HOLDER: PrincipalAddr = PrincipalAddr::new([0x61; 31]);
@@ -90,7 +97,7 @@ fn governed(entry: RuleBytes) -> ResourceAddr {
 /// rule, which is the whole point.
 fn governed_tree(entry: RuleBytes) -> Result<EnvelopeTree> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         account::deposit(b, HOLDER, funds)
@@ -167,7 +174,7 @@ fn a_credential_governs_a_withdrawal_no_package_declared() -> Result<()> {
 fn an_unpresented_record_refuses_at_admission() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
     let chain = world();
-    let (env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_NETWORK);
+    let (env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         account::deposit(b, HOLDER, funds)
@@ -194,7 +201,7 @@ fn an_unpresented_record_refuses_at_admission() -> Result<()> {
 fn a_changed_rule_is_a_different_resource() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         account::deposit(b, HOLDER, funds)
@@ -275,7 +282,7 @@ fn a_resource_no_vault_may_hold_refuses_at_admission() -> Result<()> {
 fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         // To a party holding no credential of any kind.
@@ -451,7 +458,7 @@ fn admitting(entry: RuleBytes) -> ResourceAddr {
 /// same ordinary transfer a package that declared nothing composes.
 fn admitted_tree(entry: RuleBytes, recipient: PrincipalAddr) -> Result<EnvelopeTree> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_NETWORK);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let funds = account::withdraw(b, HOLDER, admitting(entry.clone()), 40)?;
         account::deposit(b, recipient, funds)

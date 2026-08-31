@@ -35,10 +35,10 @@ use std::ops::{Deref, DerefMut};
 
 use hyperscale_vm_effects::{
     Binding, ChainRecords, Claim, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, GraphArg, Hasher,
-    InstanceMeta, IntentDecl, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ResourceMeta, Socket,
-    Subintent,
+    InstanceMeta, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph,
+    ResourceMeta, Socket, Subintent,
 };
-use hyperscale_vm_types::{MAX_SUBINTENTS, NetworkId, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
 use crate::builder::{Bucket, SocketRef, next_space};
 use crate::projection::graph_records;
@@ -294,7 +294,7 @@ pub struct IntentBuilder<'a> {
     graph: TypedBuilder<'a>,
     envelope: u64,
     intent: u32,
-    network: NetworkId,
+    header: IntentHeader,
     sockets: Vec<Socket>,
 }
 
@@ -311,13 +311,13 @@ impl<'a> IntentBuilder<'a> {
         chain: &'a dyn ChainRecords,
         hasher: &'a dyn Hasher,
         signer: PrincipalAddr,
-        network: NetworkId,
+        header: IntentHeader,
     ) -> Self {
         Self {
             graph: TypedBuilder::new(chain, hasher, signer),
             envelope: next_space(),
             intent: 0,
-            network,
+            header,
             sockets: Vec::new(),
         }
     }
@@ -390,11 +390,11 @@ impl<'a> IntentBuilder<'a> {
             return Err(EnvelopeError::TooManySockets { intent });
         }
         let sockets = self.sockets;
-        let network = self.network;
+        let header = self.header;
         let graph = self.graph.build()?;
         check_sockets(&graph, &sockets, intent)?;
         Ok(IntentDecl {
-            network,
+            header,
             graph,
             sockets,
         })
@@ -465,8 +465,6 @@ pub struct EnvelopeBuilder<'a> {
     chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
     id: u64,
-    /// The network every intent this envelope seals is declared for.
-    network: NetworkId,
     /// The signer of each subintent, in envelope order; the root has none.
     signers: Vec<PrincipalAddr>,
     /// Sealed declarations by slot — `0` is the root — `None` until the
@@ -492,14 +490,13 @@ impl<'a> EnvelopeBuilder<'a> {
         chain: &'a dyn ChainRecords,
         hasher: &'a dyn Hasher,
         signer: PrincipalAddr,
-        network: NetworkId,
+        header: IntentHeader,
     ) -> (Self, IntentBuilder<'a>) {
         let id = next_space();
         let envelope = Self {
             chain,
             hasher,
             id,
-            network,
             signers: Vec::new(),
             intents: vec![None],
             bindings: BTreeMap::new(),
@@ -510,7 +507,7 @@ impl<'a> EnvelopeBuilder<'a> {
             graph: TypedBuilder::new(chain, hasher, signer),
             envelope: id,
             intent: 0,
-            network,
+            header,
             sockets: Vec::new(),
         };
         (envelope, root)
@@ -542,7 +539,7 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// Past a `u32` of intents, far beyond [`MAX_SUBINTENTS`], which
     /// [`build`](Self::build) enforces as an error.
-    pub fn subintent(&mut self, signer: PrincipalAddr) -> IntentBuilder<'a> {
+    pub fn subintent(&mut self, signer: PrincipalAddr, header: IntentHeader) -> IntentBuilder<'a> {
         let intent = u32::try_from(self.intents.len()).expect("intents fit an index");
         self.signers.push(signer);
         self.intents.push(None);
@@ -550,7 +547,7 @@ impl<'a> EnvelopeBuilder<'a> {
             graph: TypedBuilder::new(self.chain, self.hasher, signer),
             envelope: self.id,
             intent,
-            network: self.network,
+            header,
             sockets: Vec::new(),
         }
     }
