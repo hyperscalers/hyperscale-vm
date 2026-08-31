@@ -14,9 +14,12 @@ use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
 use hyperscale_vm_stdlib::account;
-use hyperscale_vm_types::{AbortReason, Outcome, PrincipalAddr, ResourceAddr, TxHash};
+use hyperscale_vm_types::{AbortReason, NetworkId, Outcome, PrincipalAddr, ResourceAddr, TxHash};
 use wasmtime::Result;
 use wasmtime::error::{Context, ensure};
+
+/// Any network; these tests only need every intent to name the same one.
+const TEST_NETWORK: NetworkId = NetworkId(242);
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -45,7 +48,7 @@ fn world() -> Records {
 /// between them.
 fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, composer);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, composer, TEST_NETWORK);
 
     let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
     let funds = account::withdraw(&mut root, composer, RES_X, pay).expect("withdraw types");

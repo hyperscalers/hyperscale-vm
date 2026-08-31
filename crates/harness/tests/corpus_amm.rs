@@ -20,6 +20,10 @@ use hyperscale_vm_types::{
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
 use common::world::*;
+use hyperscale_vm_types::NetworkId;
+
+/// Any network; these tests only need every intent to name the same one.
+const TEST_NETWORK: NetworkId = NetworkId(242);
 
 /// The share vault's one declared pool, at its marker's slot.
 const SHARES_POOL: SlotId = SlotId(<shares::Pool as VaultField>::SLOT);
@@ -475,7 +479,7 @@ fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
 /// for it.
 fn approval_request(approver: Claim) -> IntentDecl {
     let chain = world();
-    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE);
+    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_NETWORK);
     let approval = decl.declare_proof(approver);
     let funds = account::withdraw(&mut decl, ALICE, RES_X, 500).expect("withdraw types");
     let out = decl
@@ -495,7 +499,7 @@ fn approval_request(approver: Claim) -> IntentDecl {
 /// claim their own node mints.
 fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_NETWORK);
     let registrar = account::authorize(&mut root, REGISTRAR)?;
     let offered = root.offer(registrar).expect("the root's own proof offers");
     let wants = env

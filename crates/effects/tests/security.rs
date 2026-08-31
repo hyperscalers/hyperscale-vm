@@ -30,9 +30,12 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Presence, PrincipalAddr,
-    ResourceAddr,
+    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, NetworkId, Presence,
+    PrincipalAddr, ResourceAddr,
 };
+
+/// Any network; these tests only need every intent to name the same one.
+const TEST_NETWORK: NetworkId = NetworkId(242);
 
 /// Who keeps the register: the identity the issuer's configuration names.
 const REGISTRAR: PrincipalAddr = PrincipalAddr::new([0x71; 31]);
@@ -123,6 +126,7 @@ fn transfer(resource: ResourceAddr) -> EnvelopeTree {
 fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
+            network: TEST_NETWORK,
             graph: ManifestGraph {
                 nodes: vec![
                     GraphNode {

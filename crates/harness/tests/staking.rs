@@ -33,11 +33,14 @@ use hyperscale_vm_sdk::hbor::{ShapeValue, from_slice, to_vec};
 use hyperscale_vm_sdk::{SlotId, SlotKind};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, instantiate, staking};
 use hyperscale_vm_types::{
-    Address, Outcome, Presence, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
-    encode_amount,
+    Address, NetworkId, Outcome, Presence, PrincipalAddr, ResourceAddr, SubstateKey, TxHash,
+    UnmetCondition, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::{Context, ensure};
+
+/// Any network; these tests only need every intent to name the same one.
+const TEST_NETWORK: NetworkId = NetworkId(242);
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 /// The resource a delegation is denominated in.
@@ -252,6 +255,7 @@ fn register_graph(validator: u64) -> ManifestGraph {
 const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
+            network: TEST_NETWORK,
             graph,
             sockets: Vec::new(),
         },

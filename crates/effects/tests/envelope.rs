@@ -15,10 +15,13 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Moves, PrincipalAddr,
-    ResourceAddr,
+    Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Moves, NetworkId,
+    PrincipalAddr, ResourceAddr,
 };
 use proptest::prelude::{any, proptest};
+
+/// Any network; these tests only need every intent to name the same one.
+const TEST_NETWORK: NetworkId = NetworkId(242);
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -65,6 +68,7 @@ fn deposit_param(target: impl Into<CallTarget>, param: u32) -> GraphNode {
 fn composed_tree(pay: u128) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
+            network: TEST_NETWORK,
             graph: ManifestGraph {
                 nodes: vec![
                     authorize(ALICE),
@@ -86,6 +90,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
         }],
         subintents: vec![Subintent {
             decl: IntentDecl {
+                network: TEST_NETWORK,
                 graph: ManifestGraph {
                     nodes: vec![
                         authorize(BOB),
@@ -139,6 +144,7 @@ fn a_tree_refusal_is_explained_at_the_interleaved_node() {
     );
     let tree = EnvelopeTree {
         root: IntentDecl {
+            network: TEST_NETWORK,
             graph: ManifestGraph {
                 nodes: vec![deposit_param(ALICE, 0)],
             },
@@ -156,6 +162,7 @@ fn a_tree_refusal_is_explained_at_the_interleaved_node() {
         }],
         subintents: vec![Subintent {
             decl: IntentDecl {
+                network: TEST_NETWORK,
                 graph: ManifestGraph {
                     nodes: vec![broken_authorize, withdraw(BOB, RES_X, 5)],
                 },
@@ -402,6 +409,7 @@ fn withdraw_nf(target: impl Into<CallTarget>, resource: impl Into<Address>, id: 
 fn an_edge_filling_a_socket_is_judged_by_its_kind() {
     let nf_tree = |consumer: GraphNode| EnvelopeTree {
         root: IntentDecl {
+            network: TEST_NETWORK,
             graph: ManifestGraph {
                 nodes: vec![authorize(ALICE), withdraw(ALICE, RES_X, 100), consumer],
             },
@@ -419,6 +427,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
         }],
         subintents: vec![Subintent {
             decl: IntentDecl {
+                network: TEST_NETWORK,
                 graph: ManifestGraph {
                     nodes: vec![
                         authorize(BOB),
@@ -827,6 +836,7 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
     let round = meta.address(&TestHasher);
     let calling = |method: &str, args: Vec<GraphArg>, records: Vec<InstanceMeta>| EnvelopeTree {
         root: IntentDecl {
+            network: TEST_NETWORK,
             graph: ManifestGraph {
                 nodes: vec![GraphNode {
                     target: round.into(),

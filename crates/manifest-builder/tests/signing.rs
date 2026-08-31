@@ -112,6 +112,7 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
 
     let tree = EnvelopeTree {
         root: IntentDecl {
+            network: NETWORK,
             graph,
             sockets: Vec::new(),
         },
@@ -148,6 +149,7 @@ fn the_signature_covers_what_the_envelope_says() {
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");
     let tree = EnvelopeTree {
         root: IntentDecl {
+            network: NETWORK,
             graph: builder.build().expect("every output is consumed"),
             sockets: Vec::new(),
         },

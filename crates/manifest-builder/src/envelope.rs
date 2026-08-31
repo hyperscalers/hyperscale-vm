@@ -38,7 +38,7 @@ use hyperscale_vm_effects::{
     InstanceMeta, IntentDecl, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ResourceMeta, Socket,
     Subintent,
 };
-use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{MAX_SUBINTENTS, NetworkId, PrincipalAddr, ResourceAddr};
 
 use crate::builder::{Bucket, SocketRef, next_space};
 use crate::projection::graph_records;
@@ -294,6 +294,7 @@ pub struct IntentBuilder<'a> {
     graph: TypedBuilder<'a>,
     envelope: u64,
     intent: u32,
+    network: NetworkId,
     sockets: Vec<Socket>,
 }
 
@@ -310,11 +311,13 @@ impl<'a> IntentBuilder<'a> {
         chain: &'a dyn ChainRecords,
         hasher: &'a dyn Hasher,
         signer: PrincipalAddr,
+        network: NetworkId,
     ) -> Self {
         Self {
             graph: TypedBuilder::new(chain, hasher, signer),
             envelope: next_space(),
             intent: 0,
+            network,
             sockets: Vec::new(),
         }
     }
@@ -387,9 +390,14 @@ impl<'a> IntentBuilder<'a> {
             return Err(EnvelopeError::TooManySockets { intent });
         }
         let sockets = self.sockets;
+        let network = self.network;
         let graph = self.graph.build()?;
         check_sockets(&graph, &sockets, intent)?;
-        Ok(IntentDecl { graph, sockets })
+        Ok(IntentDecl {
+            network,
+            graph,
+            sockets,
+        })
     }
 
     /// Consume an output as this intent's yield edge, for the composition
@@ -457,6 +465,8 @@ pub struct EnvelopeBuilder<'a> {
     chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
     id: u64,
+    /// The network every intent this envelope seals is declared for.
+    network: NetworkId,
     /// The signer of each subintent, in envelope order; the root has none.
     signers: Vec<PrincipalAddr>,
     /// Sealed declarations by slot — `0` is the root — `None` until the
@@ -482,12 +492,14 @@ impl<'a> EnvelopeBuilder<'a> {
         chain: &'a dyn ChainRecords,
         hasher: &'a dyn Hasher,
         signer: PrincipalAddr,
+        network: NetworkId,
     ) -> (Self, IntentBuilder<'a>) {
         let id = next_space();
         let envelope = Self {
             chain,
             hasher,
             id,
+            network,
             signers: Vec::new(),
             intents: vec![None],
             bindings: BTreeMap::new(),
@@ -498,6 +510,7 @@ impl<'a> EnvelopeBuilder<'a> {
             graph: TypedBuilder::new(chain, hasher, signer),
             envelope: id,
             intent: 0,
+            network,
             sockets: Vec::new(),
         };
         (envelope, root)
@@ -537,6 +550,7 @@ impl<'a> EnvelopeBuilder<'a> {
             graph: TypedBuilder::new(self.chain, self.hasher, signer),
             envelope: self.id,
             intent,
+            network: self.network,
             sockets: Vec::new(),
         }
     }

@@ -29,8 +29,8 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
-    Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, PrincipalAddr, ResourceAddr,
-    SubstateKey,
+    Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr,
+    ResourceAddr, SubstateKey,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -101,8 +101,17 @@ pub enum Socket {
 /// identity whatever composition later carries it. Outputs the graph
 /// does not consume internally are the intent's yields — the composition
 /// must bind every one to some intent's socket.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct IntentDecl {
+    /// The network this intent is declared for.
+    ///
+    /// Signed by the intent's own signer rather than inherited from the
+    /// composition, so a subintent binds only into an envelope for the
+    /// network its signer named. Without it the composer's envelope is
+    /// the only thing naming a network, and a signature covering neither
+    /// the network nor a window is a standing offer on every network at
+    /// once.
+    pub network: NetworkId,
     /// The intent's invocation graph; arguments may reference the
     /// sockets via [`crate::GraphArg::Socket`].
     pub graph: ManifestGraph,
@@ -122,9 +131,15 @@ const DOMAIN_SUBINTENT: &[u8] = b"hyperscale-vm/subintent";
 const DOMAIN_ENVELOPE_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
 
 impl IntentDecl {
-    /// The declaration's identity through the hasher seam: the graph
-    /// hash plus every socket it declares, each one part carrying its
-    /// canonical encoding.
+    /// The declaration's identity through the hasher seam: the network,
+    /// the graph hash, and every socket it declares, each one part
+    /// carrying its canonical encoding.
+    ///
+    /// The fields are destructured rather than read one at a time,
+    /// because everything the declaration carries is content its signer
+    /// signs. A field this preimage misses is a field in the format, in
+    /// the encoding, and unsigned — so a new one has to fail the build
+    /// here rather than pass it silently.
     ///
     /// # Panics
     ///
@@ -133,10 +148,16 @@ impl IntentDecl {
     /// requires of the literals the graph hash feeds on.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> SubintentHash {
-        let graph = self.graph.hash(hasher);
-        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(1 + self.sockets.len());
+        let Self {
+            network,
+            graph,
+            sockets,
+        } = self;
+        let graph = graph.hash(hasher);
+        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(2 + sockets.len());
+        parts.push(vec![network.0]);
         parts.push(graph.0.0.to_vec());
-        for socket in &self.sockets {
+        for socket in sockets {
             parts.push(to_vec(socket).expect("a socket is shallow"));
         }
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
@@ -205,7 +226,7 @@ pub struct Subintent {
 
 /// The bound envelope tree admission runs over: the composer's root
 /// intent plus every bound subintent.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct EnvelopeTree {
     /// The composer's own intent.
     pub root: IntentDecl,

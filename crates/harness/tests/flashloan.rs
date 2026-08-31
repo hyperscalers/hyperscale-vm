@@ -32,6 +32,10 @@ use hyperscale_vm_types::{AddressClass, ComponentAddr, Outcome, PrincipalAddr, R
 use wasmtime::Result;
 mod common;
 use common::world::{account_lanes, account_world, pkg};
+use hyperscale_vm_types::NetworkId;
+
+/// Any network; these tests only need every intent to name the same one.
+const TEST_NETWORK: NetworkId = NetworkId(242);
 
 /// The borrower.
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -130,6 +134,7 @@ fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) ->
 fn intent(graph: ManifestGraph) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
+            network: TEST_NETWORK,
             graph,
             sockets: Vec::new(),
         },

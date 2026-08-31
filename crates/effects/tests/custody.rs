@@ -28,9 +28,12 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, Presence,
+    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, NetworkId, Presence,
     PrincipalAddr, ResourceAddr, SubstateKey,
 };
+
+/// Any network; these tests only need every intent to name the same one.
+const TEST_NETWORK: NetworkId = NetworkId(242);
 
 /// The badge the governed resource's withdraw entry names.
 const BADGE: ResourceAddr = ResourceAddr::new([0x77; 31]);
@@ -126,6 +129,7 @@ fn credential(owner: impl Into<Address>) -> SubstateKey {
 fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
+            network: TEST_NETWORK,
             graph: ManifestGraph {
                 nodes: vec![
                     GraphNode {
@@ -166,6 +170,7 @@ fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
 fn round_trip(custodian: ComponentAddr) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
+            network: TEST_NETWORK,
             graph: ManifestGraph {
                 nodes: vec![
                     GraphNode {
@@ -429,6 +434,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
         chain.instances.create(&TestHasher, instance);
         let env = EnvelopeTree {
             root: IntentDecl {
+                network: TEST_NETWORK,
                 graph: ManifestGraph {
                     nodes: vec![GraphNode {
                         target: target.into(),
@@ -505,6 +511,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
 fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -> EnvelopeTree {
     EnvelopeTree {
         root: IntentDecl {
+            network: TEST_NETWORK,
             graph: ManifestGraph {
                 nodes: vec![
                     GraphNode {
