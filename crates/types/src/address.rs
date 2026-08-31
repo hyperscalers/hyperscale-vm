@@ -346,6 +346,17 @@ pub struct NotCallable {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Address([u8; 32]);
 
+/// [`Address::MIN`] is only a lower bound while `Principal` carries the
+/// lowest assigned tag, since two zero bodies then order by their tags.
+const _: () = assert!(
+    AddressClass::Principal.tag() < AddressClass::Component.tag()
+        && AddressClass::Principal.tag() < AddressClass::Package.tag()
+        && AddressClass::Principal.tag() < AddressClass::Resource.tag()
+        && AddressClass::Principal.tag() < AddressClass::Native.tag()
+        && AddressClass::Principal.tag() < AddressClass::Restricted.tag(),
+    "the lowest address carries the lowest class tag",
+);
+
 impl Address {
     /// The address with `body` under `class`.
     #[must_use]
@@ -359,6 +370,14 @@ impl Address {
         bytes[31] = class.tag();
         Self(bytes)
     }
+
+    /// The lowest address in key order.
+    ///
+    /// A strict-enough lower bound for a range over any keyspace an
+    /// owner prefix leads: the class tag is the *last* byte, so the
+    /// body dominates the order and a zero body sorts below every
+    /// address a derivation can produce.
+    pub const MIN: Self = Self::new([0; 31], AddressClass::Principal);
 
     /// The class this address names.
     ///
