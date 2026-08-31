@@ -9,14 +9,14 @@ use hyperscale_vm_effects::{
     EdgeRef, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl,
     IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT,
     NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket,
-    Subintent, TestHasher, Value, admit, admit_tree, child_key, explain_admission_tree,
+    Subintent, TestHasher, Value, admit, admit_tree, bucketed_child_key, explain_admission_tree,
     nullifier_key, route_tree,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Moves, NetworkId,
-    PrincipalAddr, ResourceAddr,
+    PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT, SweepBucket,
 };
 use proptest::prelude::{any, proptest};
 
@@ -339,14 +339,15 @@ fn identities_differ_while_subintent_hashes_agree() {
         nullifier_key(&TestHasher, ALICE, hash, EXPIRY_MS),
         nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS)
     );
-    // The nullifier is an ordinary child key under the reserved role,
+    // The nullifier is a bucketed child key under the reserved role,
     // over the subintent and the moment the record stops being owed.
     assert_eq!(
         nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS),
-        child_key(
+        bucketed_child_key(
             &TestHasher,
             BOB,
             NULLIFIER_SLOT,
+            SweepBucket::of(EXPIRY_MS),
             &[hash.0.0.to_vec(), EXPIRY_MS.to_le_bytes().to_vec()]
         )
     );
@@ -356,6 +357,45 @@ fn identities_differ_while_subintent_hashes_agree() {
         nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS),
         nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS + 1)
     );
+}
+
+#[test]
+fn a_nullifier_leads_with_the_bucket_its_expiry_falls_in() {
+    let hash = composed_tree(100).subintents[0].decl.hash(&TestHasher);
+    let key = nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS);
+    assert_eq!(
+        SweepBucket::claimed_by(key.local),
+        SweepBucket::of(EXPIRY_MS)
+    );
+
+    // A whole bucket apart, the leaf keys order the way the expiries do,
+    // which is what lets a sweep walk one signer's bucket as a range.
+    let later = EXPIRY_MS + (1 << SWEEP_BUCKET_SHIFT);
+    let later_key = nullifier_key(&TestHasher, BOB, hash, later);
+    assert_ne!(
+        SweepBucket::claimed_by(later_key.local),
+        SweepBucket::of(EXPIRY_MS)
+    );
+    assert!(key.to_bytes() < later_key.to_bytes());
+
+    // Within a bucket the body decides, so two lives one millisecond
+    // apart are still two cells.
+    let nudged = nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS + 1);
+    assert_eq!(
+        SweepBucket::claimed_by(nudged.local),
+        SweepBucket::of(EXPIRY_MS)
+    );
+    assert_ne!(key, nudged);
+}
+
+#[test]
+fn an_absurd_expiry_buckets_high_rather_than_wrapping() {
+    // The bucket is signer-chosen content until a window check refuses
+    // it, so the layout has to survive `u64::MAX`. Saturating puts the
+    // cell above every frontier — unsweepable, never below one that has
+    // already passed.
+    assert_eq!(SweepBucket::of(u64::MAX), SweepBucket(u32::MAX));
+    assert!(SweepBucket::of(u64::MAX) > SweepBucket::of(EXPIRY_MS));
 }
 
 #[test]

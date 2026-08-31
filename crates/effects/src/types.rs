@@ -4,7 +4,7 @@
 use hyperscale_hbor::{Hbor, to_vec};
 use hyperscale_vm_types::{
     Address, CollectionId, ComponentAddr, LocalKey, NativeAddr, PackageAddr, PrincipalAddr,
-    ResourceAddr, SchemeId, SubstateKey,
+    ResourceAddr, SWEEP_BUCKET_BYTES, SchemeId, SubstateKey, SweepBucket,
 };
 
 use crate::hash::{Hash32, Hasher};
@@ -133,6 +133,39 @@ pub fn child_key(
     SubstateKey {
         owner,
         local: LocalKey(local),
+    }
+}
+
+/// The canonical child key for slot-bound state that a sweep retires:
+/// as [`child_key`], but with the expiry bucket ahead of the hash body.
+///
+/// The bucket leads so that one owner's cells for one bucket are a
+/// contiguous leaf-key range — see [`SweepBucket`]. It is derived from
+/// the same expiry the caller folds into `material`, so the two halves
+/// of the local key cannot disagree, and a reader that re-derives the
+/// whole key checks both at once.
+///
+/// The four bucket bytes come out of the hash body, leaving 96 bits
+/// rather than 128 — a 48-bit birthday bound per owner instead of 64.
+/// That is affordable *only* where the material is the owner's own
+/// signed content, as it is for a nullifier: both halves of a collision
+/// have to be signed by the owner, so grinding one buys nothing the
+/// owner could not have by declining to sign. A family whose material a
+/// third party chooses must not use this.
+#[must_use]
+pub fn bucketed_child_key(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    slot: SlotId,
+    bucket: SweepBucket,
+    material: &[Vec<u8>],
+) -> SubstateKey {
+    let key = child_key(hasher, owner, slot, material);
+    let mut local = key.local.0;
+    local[..SWEEP_BUCKET_BYTES].copy_from_slice(&bucket.to_bytes());
+    SubstateKey {
+        local: LocalKey(local),
+        ..key
     }
 }
 

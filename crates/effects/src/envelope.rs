@@ -30,7 +30,7 @@ use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
     Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, NULLIFIER_GRACE_MS, NetworkId,
-    PrincipalAddr, ResourceAddr, SubstateKey, TxHash,
+    PrincipalAddr, ResourceAddr, SubstateKey, SweepBucket, TxHash,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -47,7 +47,7 @@ use crate::manifest::ManifestHash;
 use crate::records::{ChainRecords, Composed};
 use crate::resource::ResourceMeta;
 use crate::route::{Routing, ShardResolver, route};
-use crate::types::{SlotId, child_key};
+use crate::types::{SlotId, bucketed_child_key};
 
 /// The kernel-reserved role of subintent nullifier substates under a
 /// signer's prefix.
@@ -323,14 +323,20 @@ impl EnvelopeTree {
 }
 
 /// The canonical nullifier key for a signed subintent under its signer:
-/// `signer_prefix | H(nullifier_role, subintent_hash, expiry)`.
+/// `signer_prefix | expiry_bucket | H(nullifier_role, subintent_hash,
+/// expiry)`.
 ///
 /// The expiry is part of the identity rather than only of the value, so
 /// a spend cannot claim a life the declaration does not give it: the key
 /// a false expiry names is not the key the screen expects, and the
-/// declaration does not cover it. It also means a cell answers when it
-/// stops being needed from its own key, which is what a sweep of these
-/// would read.
+/// declaration does not cover it.
+///
+/// It is in the identity twice over — hashed into the body and, coarsely,
+/// leading the local half — so a nullifier answers *when* it stops being
+/// needed from its key alone, and one signer's nullifiers for one bucket
+/// are a contiguous leaf-key range for a sweep to walk. Both halves come
+/// from the one `expiry_ms` argument, so neither can drift from the
+/// other.
 #[must_use]
 pub fn nullifier_key(
     hasher: &dyn Hasher,
@@ -338,10 +344,11 @@ pub fn nullifier_key(
     subintent: SubintentHash,
     expiry_ms: u64,
 ) -> SubstateKey {
-    child_key(
+    bucketed_child_key(
         hasher,
         signer,
         NULLIFIER_SLOT,
+        SweepBucket::of(expiry_ms),
         &[subintent.0.0.to_vec(), expiry_ms.to_le_bytes().to_vec()],
     )
 }

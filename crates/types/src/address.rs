@@ -15,6 +15,64 @@ use thiserror::Error;
 #[hbor(transparent)]
 pub struct LocalKey(pub [u8; 16]);
 
+/// How many bytes of a sweepable cell's local half the expiry bucket
+/// takes, ahead of the hash body.
+pub const SWEEP_BUCKET_BYTES: usize = 4;
+
+/// How many low bits of a millisecond expiry the bucket discards, so one
+/// bucket spans `2^SWEEP_BUCKET_SHIFT` ms — a little over a minute.
+///
+/// Four big-endian bytes at this shift address every expiry a `u64`
+/// millisecond clock can name until long past any horizon the protocol
+/// reasons about, so the layout has no wrap to defend.
+pub const SWEEP_BUCKET_SHIFT: u32 = 16;
+
+/// The expiry bucket a sweepable cell sorts into.
+///
+/// A sweep enumerates by expiry, and the keyspace is owner-major and
+/// always will be — an owner prefix fixes a key's shard. So the bucket
+/// leads the local half instead: one owner's cells for one bucket are a
+/// contiguous leaf-key range, and how complete a removal set is *within
+/// an owner* is answerable from the state root by a range walk, with no
+/// index consulted at all.
+///
+/// The bucket is coarser than the expiry it derives from. It orders and
+/// it narrows; the exact instant stays in the value, and it is the value
+/// that decides whether a cell is past its life.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SweepBucket(pub u32);
+
+impl SweepBucket {
+    /// The bucket an expiry falls in.
+    ///
+    /// Saturating, so a nonsense expiry lands in the last bucket rather
+    /// than wrapping into an early one — a wrap would put a cell below a
+    /// frontier that has already passed, which is the one thing the
+    /// layout must not allow.
+    #[must_use]
+    pub fn of(expiry_ms: u64) -> Self {
+        Self(u32::try_from(expiry_ms >> SWEEP_BUCKET_SHIFT).unwrap_or(u32::MAX))
+    }
+
+    /// The bucket bytes a local half leads with, big-endian so byte
+    /// order is bucket order.
+    #[must_use]
+    pub const fn to_bytes(self) -> [u8; SWEEP_BUCKET_BYTES] {
+        self.0.to_be_bytes()
+    }
+
+    /// The bucket a local half claims, read from its leading bytes.
+    ///
+    /// Every local half has these bytes; only one that re-derives under
+    /// a sweepable family means anything by them.
+    #[must_use]
+    pub const fn claimed_by(local: LocalKey) -> Self {
+        Self(u32::from_be_bytes([
+            local.0[0], local.0[1], local.0[2], local.0[3],
+        ]))
+    }
+}
+
 /// The identity of one ordered collection under an owner.
 ///
 /// A collection is named by its role and its material together — the role
