@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hyperscale_vm_effects::{NullifierCell, SubintentRecord};
 use hyperscale_vm_types::{
     AbortReason, Address, Answer, CollectionId, EntryKey, Event, Movement, Outcome, ResourceAddr,
     SubstateKey,
@@ -441,6 +442,19 @@ impl KernelSession {
         Ok(Phase::Produced(settles))
     }
 
+    /// What a nullifier cell holds: the subintent this spend consumed,
+    /// the transaction that consumed it, and when the record stops being
+    /// owed. Self-describing, and keyed by what it says — the cell's own
+    /// key re-derives from the subintent and the expiry.
+    fn spend_record(&self, record: &SubintentRecord) -> Vec<u8> {
+        NullifierCell {
+            subintent: record.subintent,
+            tx: self.tx,
+            expiry_ms: record.expiry_ms,
+        }
+        .to_bytes()
+    }
+
     /// The queued deltas as checked totals, judged against the floor on
     /// every cell this shard owns, and folded into it.
     ///
@@ -604,10 +618,10 @@ impl KernelSession {
         // check reads it. The receipt carries the write wherever the
         // transaction ran, as the outbound effect record every other
         // operation reaches other shards through.
-        let spent = self.tx.0.0.to_vec();
-        for key in self.nullifiers.clone() {
-            if self.locality.is_local(key.owner) {
-                self.store.write(key, spent.clone())?;
+        for record in self.nullifiers.clone() {
+            if self.locality.is_local(record.nullifier.owner) {
+                self.store
+                    .write(record.nullifier, self.spend_record(&record))?;
             }
         }
         let escaped = undeclared_accesses(self.store.access_log(), &self.declared);
@@ -621,14 +635,14 @@ impl KernelSession {
             .retain(|key, _| !movements.contains_key(key) && !settles.contains_key(key));
         delta.movements = movements.into();
         delta.settles = settles.into();
-        for key in &self.nullifiers {
-            // A nullifier cell records a spend as raw bytes — the 32-byte
-            // transaction hash, never a well-formed amount. A key that also
-            // materialized as a denominated value cell would take this
-            // write and, at apply, decode it back as an amount and fail the
-            // whole batch. State the invariant here, as a per-transaction
-            // abort: a nullifier cell is not a value cell.
-            if denominations.cell(*key).is_some() {
+        for record in &self.nullifiers {
+            // A nullifier cell records a spend as its own encoding, never
+            // a well-formed amount. A key that also materialized as a
+            // denominated value cell would take this write and, at apply,
+            // decode it back as an amount and fail the whole batch. State
+            // the invariant here, as a per-transaction abort: a nullifier
+            // cell is not a value cell.
+            if denominations.cell(record.nullifier).is_some() {
                 return Ok(abort_with(
                     self.store,
                     Outcome::ProtocolError {
@@ -637,7 +651,9 @@ impl KernelSession {
                     fuel,
                 ));
             }
-            delta.cells.insert(*key, Some(spent.clone()));
+            delta
+                .cells
+                .insert(record.nullifier, Some(self.spend_record(record)));
         }
         if self.unconserved(&delta, &denominations).is_some() {
             return Ok(abort_with(

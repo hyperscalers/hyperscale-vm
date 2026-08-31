@@ -819,13 +819,7 @@ pub fn run_both_tree(
     let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
     let entry = BatchTx::new(TxHash(identity.0), routing.declaration().clone(), env())
         .with_calls(routing.calls)
-        .with_nullifiers(
-            admitted
-                .subintents
-                .iter()
-                .map(|record| record.nullifier)
-                .collect(),
-        );
+        .with_nullifiers(admitted.subintents);
     Ok(run_lanes(&LANES, store, &[entry]))
 }
 

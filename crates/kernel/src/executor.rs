@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread;
 
-use hyperscale_vm_effects::{Declaration, NodeCall};
+use hyperscale_vm_effects::{Declaration, NodeCall, SubintentRecord};
 use hyperscale_vm_types::{
     AbortReason, Address, Answer, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget,
     Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
@@ -90,7 +90,7 @@ pub struct BatchTx {
     /// where the spent check sees the winner's write. An existing cell
     /// at any of them aborts the transaction before it runs; completing
     /// writes them all — once-only by creation conflict.
-    pub nullifiers: Vec<SubstateKey>,
+    pub nullifiers: Vec<SubintentRecord>,
     /// The deterministic environment: the transaction clock, the epoch
     /// it falls in, and the seeds a matured seal opens against. Per
     /// transaction, not per batch — every replica executing this
@@ -150,7 +150,7 @@ impl BatchTx {
     /// Bind the subintents this transaction commits. Each key must also be
     /// declared as an exclusive write.
     #[must_use]
-    pub fn with_nullifiers(mut self, nullifiers: Vec<SubstateKey>) -> Self {
+    pub fn with_nullifiers(mut self, nullifiers: Vec<SubintentRecord>) -> Self {
         self.nullifiers = nullifiers;
         self
     }
@@ -675,15 +675,22 @@ fn run_group<R: GuestRunner>(
         // own cancellation — already committed the subintent. Only the
         // signer's shard holds the cell; elsewhere the owning shard's
         // verdict arrives through the tick combine.
+        // Presence, not presence-and-unexpired. A nullifier past its
+        // expiry is unreachable rather than ignorable: the subintent it
+        // records stopped being admissible a full grace earlier, so no
+        // spend can arrive to read it. Reading it as absent would only
+        // matter where one did arrive — a chain whose committed clock
+        // lags far enough to admit a lapsed subintent — and there the
+        // cell is the last thing refusing the replay.
         let spent = entry
             .nullifiers
             .iter()
-            .find(|key| locality.is_local(key.owner) && store.cell(**key).is_some());
+            .find(|record| {
+                locality.is_local(record.nullifier.owner) && store.cell(record.nullifier).is_some()
+            })
+            .map(|record| record.nullifier);
         if let Some(key) = spent {
-            receipts.push((
-                entry.tx,
-                abort_receipt(Outcome::NullifierSpent { key: *key }, 0),
-            ));
+            receipts.push((entry.tx, abort_receipt(Outcome::NullifierSpent { key }, 0)));
             continue;
         }
         let before = store.clone();
@@ -804,14 +811,14 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
             return Err(BatchError::InconsistentDeclaration { tx: entry.tx });
         }
 
-        for key in &entry.nullifiers {
+        for record in &entry.nullifiers {
             if !entry.declaration.set.contains(&Effect {
-                target: EffectTarget::Point(*key),
+                target: EffectTarget::Point(record.nullifier),
                 mode: Mode::Write { moves: Moves::Both },
             }) {
                 return Err(BatchError::UndeclaredNullifier {
                     tx: entry.tx,
-                    key: *key,
+                    key: record.nullifier,
                 });
             }
         }

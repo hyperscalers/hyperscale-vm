@@ -43,7 +43,7 @@ use std::collections::BTreeSet;
 use buckets::Buckets;
 pub use buckets::Held;
 pub use grants::{Op, grants};
-use hyperscale_vm_effects::IssuanceGrant;
+use hyperscale_vm_effects::{IssuanceGrant, SubintentRecord};
 use hyperscale_vm_types::{
     ABSENT_REP, Address, EffectSet, EffectTarget, ResourceAddr, SeedWindow, SubstateKey, TxHash,
 };
@@ -113,7 +113,7 @@ pub struct KernelSession {
     /// Held here rather than written by the caller because spending is
     /// part of committing: the write belongs in the layer the rest of
     /// the transaction wrote into, so it merges or discards with it.
-    nullifiers: Vec<SubstateKey>,
+    nullifiers: Vec<SubintentRecord>,
     /// The interval machinery: materialized scans, scan debt, write caps.
     ranges: Ranges,
     /// The instance whose method is executing, set by the runner as it
@@ -189,7 +189,7 @@ impl KernelSession {
 
     /// The subintent cells a commit spends.
     #[must_use]
-    pub fn with_nullifiers(mut self, nullifiers: Vec<SubstateKey>) -> Self {
+    pub fn with_nullifiers(mut self, nullifiers: Vec<SubintentRecord>) -> Self {
         self.nullifiers = nullifiers;
         self
     }

@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, DeclaredAccess, Hash32, Hasher, IssuanceGrant, Issued, ResourceKind, SlotId,
-    SubintentHash, TestHasher, child_key, nullifier_key,
+    Declaration, DeclaredAccess, Hash32, Hasher, IssuanceGrant, Issued, NullifierCell,
+    ResourceKind, SlotId, SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
@@ -16,8 +16,14 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome,
-    ResourceAddr, SubstateKey, TxHash, encode_amount,
+    PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
+
+/// Any expiry; these tests never reach one.
+const TEST_EXPIRY_MS: u64 = 1_000_000;
+
+/// The subintent these tests commit.
+const SUBINTENT: SubintentHash = SubintentHash(Hash32([0x99; 32]));
 
 /// What every cell these fixtures move value through holds.
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
@@ -325,6 +331,7 @@ fn nullifier() -> SubstateKey {
         &TestHasher,
         Address::new([0x77; 31], AddressClass::Component),
         SubintentHash(Hash32([0x99; 32])),
+        TEST_EXPIRY_MS,
     )
 }
 
@@ -333,7 +340,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
         tx: tx(id),
         declaration: Declaration::from_set(point(nullifier(), Mode::Write { moves: Moves::Both })),
         calls: Vec::new(),
-        nullifiers: vec![nullifier()],
+        nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limit: u64::MAX,
     }
@@ -369,10 +376,7 @@ fn racing_nullifier_writers_commit_exactly_once() {
     );
     // The cell records the consuming transaction.
     let mut store = outcome.store.clone();
-    assert_eq!(
-        store.read(nullifier()).unwrap(),
-        Some(tx(0x01).0.0.to_vec())
-    );
+    assert_eq!(store.read(nullifier()).unwrap(), Some(spend_of(tx(0x01))));
 
     // The next batch still sees it spent.
     let replay = execute_batch(
@@ -427,7 +431,7 @@ fn nullifier_and_shared_tx(id: u8) -> BatchTx {
         tx: tx(id),
         declaration: Declaration::from_set(set),
         calls: Vec::new(),
-        nullifiers: vec![nullifier()],
+        nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limit: u64::MAX,
     }
@@ -486,10 +490,7 @@ fn an_abort_between_two_committers_does_not_unspend_the_subintent() {
         "the winner's spend survives an unrelated member's rollback"
     );
     let mut store = outcome.store;
-    assert_eq!(
-        store.read(nullifier()).unwrap(),
-        Some(tx(0x01).0.0.to_vec())
-    );
+    assert_eq!(store.read(nullifier()).unwrap(), Some(spend_of(tx(0x01))));
 }
 
 #[test]
@@ -576,7 +577,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         tx: tx(0x01),
         declaration: Declaration::from_set(point(nullifier(), Mode::Read)),
         calls: Vec::new(),
-        nullifiers: vec![nullifier()],
+        nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limit: u64::MAX,
     };
@@ -682,10 +683,7 @@ fn an_aborted_transaction_spends_no_nullifier() {
         Outcome::Completed { .. }
     ));
     let mut store = outcome.store;
-    assert_eq!(
-        store.read(nullifier()).unwrap(),
-        Some(tx(0x02).0.0.to_vec())
-    );
+    assert_eq!(store.read(nullifier()).unwrap(), Some(spend_of(tx(0x02))));
 }
 
 #[test]
@@ -1108,4 +1106,26 @@ fn a_transaction_that_lost_value_aborts_beside_one_that_did_not() {
             "and nothing it credited survives"
         );
     }
+}
+
+/// The record a spend carries: the subintent, its signer's cell, and
+/// when the record stops being owed.
+const fn nullifier_record(subintent: SubintentHash, nullifier: SubstateKey) -> SubintentRecord {
+    SubintentRecord {
+        subintent,
+        signer: PrincipalAddr::new([0x99; 31]),
+        nullifier,
+        expiry_ms: TEST_EXPIRY_MS,
+    }
+}
+
+/// The value a spend of [`SUBINTENT`] writes: the subintent, the
+/// transaction that consumed it, and when the record stops being owed.
+fn spend_of(tx: TxHash) -> Vec<u8> {
+    NullifierCell {
+        subintent: SUBINTENT,
+        tx,
+        expiry_ms: TEST_EXPIRY_MS,
+    }
+    .to_bytes()
 }

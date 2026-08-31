@@ -23,9 +23,12 @@
 
 use std::sync::Arc;
 
+/// Any expiry; these tests never reach one.
+const TEST_EXPIRY_MS: u64 = 1_000_000;
+
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, SlotId, SubintentHash, TestHasher, child_key, effect_units,
-    footprint, nullifier_key,
+    Declaration, Hash32, Hasher, SlotId, SubintentHash, SubintentRecord, TestHasher, child_key,
+    effect_units, footprint, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
@@ -33,8 +36,8 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget,
-    FOOTPRINT_WEIGHT, Mode, Moves, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
-    work_units,
+    FOOTPRINT_WEIGHT, Mode, Moves, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash,
+    encode_amount, work_units,
 };
 
 /// What every cell these fixtures move value through holds.
@@ -366,6 +369,7 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
         &TestHasher,
         Address::new([PAYER_BYTE; 31], AddressClass::Component),
         subintent,
+        TEST_EXPIRY_MS,
     );
     let mut declared = transfer_declared(100);
     declared
@@ -379,7 +383,7 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
     store.write(nullifier, vec![1]);
     let batch = [
         BatchTx::new(tx(1), moving(declared.clone()), EnvInputs::unsealed(1_000))
-            .with_nullifiers(vec![nullifier]),
+            .with_nullifiers(vec![nullifier_record(subintent, nullifier)]),
     ];
     let outcome = run_batch(Arc::new(store), &batch, &transfer_guest, &Locality::All);
     let spent = &outcome.receipts[&tx(1)];
@@ -659,4 +663,15 @@ fn every_receipt_is_priced() {
         outcome.work.keys().collect::<Vec<_>>(),
     );
     assert!(outcome.work.values().all(|work| work.units > 0));
+}
+
+/// The record a spend carries: the subintent, its signer's cell, and
+/// when the record stops being owed.
+const fn nullifier_record(subintent: SubintentHash, nullifier: SubstateKey) -> SubintentRecord {
+    SubintentRecord {
+        subintent,
+        signer: PrincipalAddr::new([PAYER_BYTE; 31]),
+        nullifier,
+        expiry_ms: TEST_EXPIRY_MS,
+    }
 }

@@ -4,13 +4,18 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Hash32, ResourceKind, SlotId, TestHasher, Value, child_key};
+use hyperscale_vm_effects::{
+    Hash32, ResourceKind, SlotId, SubintentHash, SubintentRecord, TestHasher, Value, child_key,
+};
+
+/// Any expiry; these tests never reach one.
+const TEST_EXPIRY_MS: u64 = 1_000_000;
 use hyperscale_vm_kernel::{
     AmountLedger, Baseline, DeltaOp, MemoryStore, OverlayStore, Substates, SupplyLedger,
     WorkingStore, decode_amount,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 const VAULT: SlotId = SlotId(1);
@@ -299,7 +304,10 @@ mod through_the_session {
             hash,
         )
         .expect("one denominated write cell materializes")
-        .with_nullifiers(vec![key]);
+        .with_nullifiers(vec![super::nullifier_record(
+            super::SubintentHash(Hash32([9; 32])),
+            key,
+        )]);
 
         let (receipt, _) = session
             .finish(vec![], 0)
@@ -504,5 +512,16 @@ mod instances {
             Outcome::Completed { answers: vec![] },
             "the entry carries something else and the instance is where it was",
         );
+    }
+}
+
+/// The record a spend carries: the subintent, its signer's cell, and
+/// when the record stops being owed.
+const fn nullifier_record(subintent: SubintentHash, nullifier: SubstateKey) -> SubintentRecord {
+    SubintentRecord {
+        subintent,
+        signer: PrincipalAddr::new([1; 31]),
+        nullifier,
+        expiry_ms: TEST_EXPIRY_MS,
     }
 }

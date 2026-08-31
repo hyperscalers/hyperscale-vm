@@ -38,8 +38,8 @@ pub use address::{
 pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};
 pub use effect::{Effect, EffectConflict, EffectSet};
 pub use envelope::{
-    MAX_MESSAGE_LEN, MAX_SUBINTENTS, MAX_TX_BYTES_LEN, NetworkId, SubintentSig, TransactionBody,
-    TransactionEnvelope, TxHash,
+    MAX_MESSAGE_LEN, MAX_SUBINTENTS, MAX_TX_BYTES_LEN, NULLIFIER_GRACE_MS, NetworkId, SubintentSig,
+    TransactionBody, TransactionEnvelope, TxHash,
 };
 pub use execution::{
     ABSENT_REP, AbortReason, Answer, Event, MAX_ANSWER_BYTES, MAX_ERROR_CODES,

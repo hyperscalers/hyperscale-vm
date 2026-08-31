@@ -29,8 +29,8 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
-    Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr,
-    ResourceAddr, SubstateKey,
+    Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, NULLIFIER_GRACE_MS, NetworkId,
+    PrincipalAddr, ResourceAddr, SubstateKey, TxHash,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -323,14 +323,68 @@ impl EnvelopeTree {
 }
 
 /// The canonical nullifier key for a signed subintent under its signer:
-/// `signer_prefix | H(nullifier_role, subintent_hash)`.
+/// `signer_prefix | H(nullifier_role, subintent_hash, expiry)`.
+///
+/// The expiry is part of the identity rather than only of the value, so
+/// a spend cannot claim a life the declaration does not give it: the key
+/// a false expiry names is not the key the screen expects, and the
+/// declaration does not cover it. It also means a cell answers when it
+/// stops being needed from its own key, which is what a sweep of these
+/// would read.
 #[must_use]
 pub fn nullifier_key(
     hasher: &dyn Hasher,
     signer: impl Into<Address>,
     subintent: SubintentHash,
+    expiry_ms: u64,
 ) -> SubstateKey {
-    child_key(hasher, signer, NULLIFIER_SLOT, &[subintent.0.0.to_vec()])
+    child_key(
+        hasher,
+        signer,
+        NULLIFIER_SLOT,
+        &[subintent.0.0.to_vec(), expiry_ms.to_le_bytes().to_vec()],
+    )
+}
+
+/// What a nullifier cell holds: the subintent it spends, the transaction
+/// that spent it, and when the record stops being needed.
+///
+/// Self-describing, and keyed by what it says: `nullifier_key` re-derives
+/// this cell's own key from `subintent` and `expiry_ms` under the
+/// signer's prefix, so a reader holding nothing but the leaf can tell a
+/// nullifier from any other cell and can tell whether it is still owed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub struct NullifierCell {
+    /// The subintent this spend consumed.
+    pub subintent: SubintentHash,
+    /// The transaction that consumed it.
+    pub tx: TxHash,
+    /// When no chain can still be deciding a spend of the subintent:
+    /// its `validity_end_ms` plus [`NULLIFIER_GRACE_MS`].
+    pub expiry_ms: u64,
+}
+
+impl NullifierCell {
+    /// The cell's committed bytes.
+    ///
+    /// The type owns its encoding, so the kernel writing one and a
+    /// reader deciding what it is agree by construction rather than by
+    /// two call sites staying in step.
+    ///
+    /// # Panics
+    ///
+    /// Never: the value is three scalars.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        to_vec(self).expect("a nullifier cell is three scalars")
+    }
+}
+
+/// When a subintent's nullifier stops being owed: the window its signer
+/// signed, plus the grace every transaction-derived artifact gets.
+#[must_use]
+pub const fn nullifier_expiry_ms(header: &IntentHeader) -> u64 {
+    header.validity_end_ms.saturating_add(NULLIFIER_GRACE_MS)
 }
 
 /// One admitted subintent: its signed identity, its signer, and the
@@ -343,6 +397,10 @@ pub struct SubintentRecord {
     pub signer: PrincipalAddr,
     /// The canonical nullifier key under the signer.
     pub nullifier: SubstateKey,
+    /// When the nullifier stops being owed — the subintent's own window
+    /// end plus the grace. Carried beside the key because the cell's
+    /// value states it and the key derives from it.
+    pub expiry_ms: u64,
 }
 
 /// An admitted envelope tree: the flattened routing manifest with its
@@ -414,10 +472,12 @@ pub fn admit_tree(
                 index: u32::try_from(index).expect("bounded by MAX_SUBINTENTS"),
             });
         }
+        let expiry_ms = nullifier_expiry_ms(&subintent.decl.header);
         records.push(SubintentRecord {
             subintent: hash,
             signer: subintent.signer,
-            nullifier: nullifier_key(hasher, subintent.signer, hash),
+            nullifier: nullifier_key(hasher, subintent.signer, hash, expiry_ms),
+            expiry_ms,
         });
     }
 

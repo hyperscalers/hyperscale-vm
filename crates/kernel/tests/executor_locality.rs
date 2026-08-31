@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, IssuanceGrant, Issued, ResourceKind, SlotId, SubintentHash,
-    TestHasher, child_key, nullifier_key,
+    Declaration, Hash32, Hasher, IssuanceGrant, Issued, NullifierCell, ResourceKind, SlotId,
+    SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality, MemoryStore, RunResult,
@@ -18,8 +18,11 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement, Moves, Outcome,
-    ResourceAddr, SubstateKey, TxHash, encode_amount,
+    PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
+
+/// Any expiry; these tests never reach one.
+const TEST_EXPIRY_MS: u64 = 1_000_000;
 
 /// The one answer a fixture guest hands back, so a receipt depends on
 /// something the run can vary.
@@ -185,12 +188,16 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
     assert_eq!(recipient.store.held_reservation(cell(PAYER_BYTE), tx), None);
 }
 
+/// The subintent these tests commit.
+const SUBINTENT: SubintentHash = SubintentHash(Hash32([0x99; 32]));
+
 /// The subintent's nullifier, under a signer the payer's shard owns.
 fn signed_nullifier() -> SubstateKey {
     nullifier_key(
         &TestHasher,
         Address::new([PAYER_BYTE; 31], AddressClass::Component),
-        SubintentHash(Hash32([0x99; 32])),
+        SUBINTENT,
+        TEST_EXPIRY_MS,
     )
 }
 
@@ -207,7 +214,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         tx: TxHash(Hash32([id; 32])),
         declaration: moving(declared),
         calls: Vec::new(),
-        nullifiers: vec![signed_nullifier()],
+        nullifiers: vec![nullifier_record(SUBINTENT, signed_nullifier())],
         env: env(),
         gas_limit: u64::MAX,
     }
@@ -245,14 +252,28 @@ fn a_committed_nullifier_reads_the_same_on_both_shards() {
     assert_eq!(payer.receipts, recipient.receipts);
     assert_eq!(
         payer.receipts[&tx].delta.cells.get(&signed_nullifier()),
-        Some(&Some(tx.0.0.to_vec()))
+        Some(&Some(
+            NullifierCell {
+                subintent: SUBINTENT,
+                tx,
+                expiry_ms: TEST_EXPIRY_MS,
+            }
+            .to_bytes()
+        ))
     );
 
     // Only the signer's shard holds the cell.
     let mut payer_state = payer.store;
     assert_eq!(
         payer_state.read(signed_nullifier()).unwrap(),
-        Some(tx.0.0.to_vec())
+        Some(
+            NullifierCell {
+                subintent: SUBINTENT,
+                tx,
+                expiry_ms: TEST_EXPIRY_MS,
+            }
+            .to_bytes()
+        )
     );
     let mut recipient_state = recipient.store;
     assert_eq!(recipient_state.read(signed_nullifier()).unwrap(), None);
@@ -503,4 +524,15 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
         recipient.receipts[&batch[0].tx].outcome,
         Outcome::Completed { .. }
     ));
+}
+
+/// The record a spend carries: the subintent, its signer's cell, and
+/// when the record stops being owed.
+const fn nullifier_record(subintent: SubintentHash, nullifier: SubstateKey) -> SubintentRecord {
+    SubintentRecord {
+        subintent,
+        signer: PrincipalAddr::new([PAYER_BYTE; 31]),
+        nullifier,
+        expiry_ms: TEST_EXPIRY_MS,
+    }
 }

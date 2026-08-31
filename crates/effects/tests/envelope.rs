@@ -20,6 +20,9 @@ use hyperscale_vm_types::{
 };
 use proptest::prelude::{any, proptest};
 
+/// Any expiry; what these assertions turn on is that it is covered.
+const EXPIRY_MS: u64 = 1_000_000;
+
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
 
@@ -293,7 +296,7 @@ fn a_composed_tree_flattens_deterministically() {
     assert_eq!(record.signer, BOB);
     assert_eq!(
         record.nullifier,
-        nullifier_key(&TestHasher, BOB, record.subintent)
+        nullifier_key(&TestHasher, BOB, record.subintent, record.expiry_ms)
     );
     assert_eq!(record.nullifier.owner, BOB);
 }
@@ -333,13 +336,25 @@ fn identities_differ_while_subintent_hashes_agree() {
     // Same tree, different signer: a different nullifier.
     let hash = first.subintents[0].decl.hash(&TestHasher);
     assert_ne!(
-        nullifier_key(&TestHasher, ALICE, hash),
-        nullifier_key(&TestHasher, BOB, hash)
+        nullifier_key(&TestHasher, ALICE, hash, EXPIRY_MS),
+        nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS)
     );
-    // The nullifier is an ordinary child key under the reserved role.
+    // The nullifier is an ordinary child key under the reserved role,
+    // over the subintent and the moment the record stops being owed.
     assert_eq!(
-        nullifier_key(&TestHasher, BOB, hash),
-        child_key(&TestHasher, BOB, NULLIFIER_SLOT, &[hash.0.0.to_vec()])
+        nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS),
+        child_key(
+            &TestHasher,
+            BOB,
+            NULLIFIER_SLOT,
+            &[hash.0.0.to_vec(), EXPIRY_MS.to_le_bytes().to_vec()]
+        )
+    );
+    // And the expiry is part of the identity, not only of the value: a
+    // spend claiming a longer life names a cell its declaration does not.
+    assert_ne!(
+        nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS),
+        nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS + 1)
     );
 }
 
@@ -390,8 +405,8 @@ fn the_declaration_hash_covers_every_term_of_the_header() {
     let (first, second) = (decl.hash(&TestHasher), again.hash(&TestHasher));
     assert_ne!(first, second);
     assert_ne!(
-        nullifier_key(&TestHasher, BOB, first),
-        nullifier_key(&TestHasher, BOB, second)
+        nullifier_key(&TestHasher, BOB, first, EXPIRY_MS),
+        nullifier_key(&TestHasher, BOB, second, EXPIRY_MS)
     );
 }
 

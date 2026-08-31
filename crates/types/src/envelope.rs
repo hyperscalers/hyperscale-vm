@@ -35,6 +35,21 @@ pub const MAX_TX_BYTES_LEN: usize = 1024 * 1024;
 /// on [`MAX_TX_BYTES_LEN`]'s terms.
 pub const MAX_MESSAGE_LEN: usize = 1024;
 
+/// How long a subintent's nullifier outlives the window its signer
+/// offered it for, in milliseconds.
+///
+/// A subintent stops being admissible at its `validity_end_ms`, and the
+/// last transaction that could have bound it needs a further bounded
+/// stretch to terminate everywhere. Past the sum, no chain can still be
+/// deciding a spend of it, and the cell recording that spend is answering
+/// a question nobody can ask.
+///
+/// The figure is the protocol's retention horizon, which the workspace
+/// owns and asserts this against — a nullifier's life and every other
+/// transaction-derived artifact's are the same bound, and two spellings
+/// of it that could drift is one more than the protocol has.
+pub const NULLIFIER_GRACE_MS: u64 = 144_000;
+
 /// The bound on subintents one envelope may compose, and so on the
 /// signatures it carries for them.
 ///

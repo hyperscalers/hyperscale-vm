@@ -61,8 +61,8 @@ pub use dsl::{
 };
 pub use envelope::{
     AdmittedTree, Binding, EnvelopeTree, IntentDecl, IntentHeader, MAX_SUBINTENTS, NULLIFIER_SLOT,
-    Socket, Subintent, SubintentHash, SubintentRecord, admit_tree, encode_tree, nullifier_key,
-    route_tree,
+    NullifierCell, Socket, Subintent, SubintentHash, SubintentRecord, admit_tree, encode_tree,
+    nullifier_expiry_ms, nullifier_key, route_tree,
 };
 pub use explain::{
     address_text, claim_text, explain, explain_admission, explain_admission_tree, explain_method,

@@ -6,8 +6,8 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    AdmittedTree, Constraint, EnvelopeTree, Hasher, IntentHeader, PackageHash, PrefixShardResolver,
-    Records, TestHasher, admit_tree, route_tree,
+    AdmittedTree, Constraint, EnvelopeTree, Hasher, IntentHeader, NullifierCell, PackageHash,
+    PrefixShardResolver, Records, TestHasher, admit_tree, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
@@ -108,13 +108,7 @@ fn batch_entry(
     let declaration = routing.declaration().clone();
     let entry = BatchTx::new(TxHash(identity.0), declaration, env())
         .with_calls(routing.calls)
-        .with_nullifiers(
-            admitted
-                .subintents
-                .iter()
-                .map(|record| record.nullifier)
-                .collect(),
-        );
+        .with_nullifiers(admitted.subintents.clone());
     Ok((entry, admitted))
 }
 
@@ -145,7 +139,8 @@ fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     let world = world();
     let tree = composed_tree(ALICE, 100);
     let (entry, admitted) = batch_entry(&world, &tree, ALICE)?;
-    let nullifier = admitted.subintents[0].nullifier;
+    let record = admitted.subintents[0];
+    let nullifier = record.nullifier;
 
     let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&entry));
     assert!(matches!(
@@ -156,12 +151,19 @@ fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     assert_eq!(amount_of(&end, vault(ALICE, RES_Y)), 10);
     assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 20);
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
-    // The spent nullifier records the consuming transaction, receipt and
-    // state alike.
-    assert_eq!(cells(&end).get(&nullifier), Some(&entry.tx.0.0.to_vec()));
+    // The spent nullifier records the subintent it consumed, the
+    // transaction that consumed it, and when the record stops being
+    // owed — receipt and state alike.
+    let spend = NullifierCell {
+        subintent: record.subintent,
+        tx: entry.tx,
+        expiry_ms: record.expiry_ms,
+    }
+    .to_bytes();
+    assert_eq!(cells(&end).get(&nullifier), Some(&spend));
     assert_eq!(
         outcome.receipts[&entry.tx].delta.cells.get(&nullifier),
-        Some(&Some(entry.tx.0.0.to_vec()))
+        Some(&Some(spend))
     );
     Ok(())
 }
@@ -215,9 +217,17 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     // The subintent leg settled exactly once.
     assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 20);
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), pay);
+    let record = alice_admitted.subintents[0];
     assert_eq!(
-        cells(&end).get(&alice_admitted.subintents[0].nullifier),
-        Some(&winner.tx.0.0.to_vec())
+        cells(&end).get(&record.nullifier),
+        Some(
+            &NullifierCell {
+                subintent: record.subintent,
+                tx: winner.tx,
+                expiry_ms: record.expiry_ms,
+            }
+            .to_bytes()
+        )
     );
     Ok(())
 }
