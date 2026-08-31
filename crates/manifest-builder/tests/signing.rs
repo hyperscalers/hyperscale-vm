@@ -34,6 +34,7 @@ const HEADER: IntentHeader = IntentHeader {
     network: NETWORK,
     validity_start_ms: 0,
     validity_end_ms: 3_600_000,
+    discriminator: 0,
 };
 
 /// A key whose signature is a digest anyone holding the same seed can

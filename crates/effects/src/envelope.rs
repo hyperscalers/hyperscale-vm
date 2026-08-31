@@ -120,6 +120,15 @@ pub struct IntentHeader {
     /// of the nullifier that makes a subintent once-only. A signer who
     /// names no window is offering something forever.
     pub validity_end_ms: u64,
+    /// What distinguishes this intent from an identical one.
+    ///
+    /// A declaration's identity is its content, and its nullifier is
+    /// derived from that identity — so without this, one signer cannot
+    /// stand behind the same offer twice inside one window: the second
+    /// carries the first's nullifier and is refused as already spent.
+    /// A signer who means two offers picks two values, and a signer who
+    /// means one leaves it alone.
+    pub discriminator: u64,
 }
 
 /// One intent's declared form: a graph over typed sockets.

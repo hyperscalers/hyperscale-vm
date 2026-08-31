@@ -28,6 +28,7 @@ const TEST_HEADER: IntentHeader = IntentHeader {
     network: TEST_NETWORK,
     validity_start_ms: 0,
     validity_end_ms: 3_600_000,
+    discriminator: 0,
 };
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -379,6 +380,19 @@ fn the_declaration_hash_covers_every_term_of_the_header() {
     let mut longer = decl.clone();
     longer.header.validity_end_ms += 1;
     assert_ne!(decl.hash(&TestHasher), longer.hash(&TestHasher));
+
+    // And the term that exists for no other purpose: two offers alike in
+    // every other way are two declarations, two identities, and so two
+    // nullifiers — which is what lets one signer stand behind the same
+    // offer twice without the second reading as the first already spent.
+    let mut again = decl.clone();
+    again.header.discriminator += 1;
+    let (first, second) = (decl.hash(&TestHasher), again.hash(&TestHasher));
+    assert_ne!(first, second);
+    assert_ne!(
+        nullifier_key(&TestHasher, BOB, first),
+        nullifier_key(&TestHasher, BOB, second)
+    );
 }
 
 /// The same binding, naming another node of the same intent.

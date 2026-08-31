@@ -39,6 +39,7 @@ const TEST_HEADER: IntentHeader = IntentHeader {
     network: TEST_NETWORK,
     validity_start_ms: 0,
     validity_end_ms: 3_600_000,
+    discriminator: 0,
 };
 
 /// The account that holds the granting resource.
