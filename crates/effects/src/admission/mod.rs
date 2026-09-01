@@ -48,7 +48,7 @@ use crate::dsl::{
     Condition, Declaration, DeclaredAccess, EvalBudget, EvalInputs, PresentedGrants,
     evaluate_declaration, evaluate_expr,
 };
-use crate::envelope::{Binding, Socket};
+use crate::envelope::{Binding, Socket, SubintentHash};
 use crate::graph::{EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, ResolveError};
@@ -85,6 +85,26 @@ pub struct Admitted {
     injected: Vec<Vec<Injected>>,
     calls: Vec<NodeCall>,
     declaration: Declaration,
+    origins: Vec<NodeOrigin>,
+}
+
+/// Which signed intent a manifest node came from, and where in it.
+///
+/// The manifest's node order is the interleave the composition chose, so
+/// a node's index in it is a fact about the whole tree rather than about
+/// the party whose cells the node moves. This pair is the other reading:
+/// content one signer signed, and a position inside it that only that
+/// signer can move.
+///
+/// What consumes it is escrow-cell derivation. A cell keyed by the
+/// manifest index under a transaction hash would take both halves of its
+/// material from the composer, who need not be the cell's owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeOrigin {
+    /// The signed intent this node belongs to.
+    pub intent: SubintentHash,
+    /// Its index within that intent's own graph.
+    pub local: u32,
 }
 
 impl Admitted {
@@ -132,6 +152,12 @@ impl Admitted {
     #[must_use]
     pub const fn declaration(&self) -> &Declaration {
         &self.declaration
+    }
+
+    /// Which signed intent each node came from, in node order.
+    #[must_use]
+    pub fn origins(&self) -> &[NodeOrigin] {
+        &self.origins
     }
 
     /// Whether each node's frame is answered by admission alone, in node
@@ -217,6 +243,9 @@ pub fn admit_presenting(
             sockets: &[],
             bindings: &[],
             signer: Some(composer),
+            // A bare graph is signed whole by its composer, so what its
+            // signer signed is the graph itself.
+            identity: SubintentHash(identity.0),
         }],
         identity,
         chain,
@@ -245,6 +274,13 @@ pub(crate) fn admit_intents(
     check_bindings(intents)?;
 
     let (flat_of, order) = interleave(intents, total)?;
+    let origins: Vec<NodeOrigin> = order
+        .iter()
+        .map(|&(intent_index, local_index)| NodeOrigin {
+            intent: intents[intent_index].identity,
+            local: u32::try_from(local_index).unwrap_or(u32::MAX),
+        })
+        .collect();
 
     let budget = EvalBudget::default();
     let mut admission = Admission {
@@ -298,6 +334,7 @@ pub(crate) fn admit_intents(
         injected,
         calls,
         declaration,
+        origins,
     })
 }
 

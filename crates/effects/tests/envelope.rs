@@ -4,19 +4,21 @@
 
 use std::collections::BTreeSet;
 
+use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
-    AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, Constraint, EdgeContent,
-    EdgeRef, EnvelopeTree, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl,
-    IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT,
-    NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket,
-    Subintent, TestHasher, Value, admit, admit_tree, bucketed_child_key, explain_admission_tree,
-    nullifier_key, route_tree,
+    AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, ClaimCell, Constraint,
+    CrossingCell, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree, GraphArg, GraphNode,
+    Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH,
+    ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput, PackageHash, PrefixShardResolver,
+    Records, ResourceKind, ShardResolver, Socket, Subintent, SubintentHash, TestHasher, Value,
+    admit, admit_tree, bucketed_child_key, escrow_claim_key, escrow_record_key,
+    explain_admission_tree, nullifier_key, route_tree,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Moves, NetworkId,
-    PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT, SweepBucket,
+    PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
 };
 use proptest::prelude::{any, proptest};
 
@@ -386,6 +388,197 @@ fn a_nullifier_leads_with_the_bucket_its_expiry_falls_in() {
         SweepBucket::of(EXPIRY_MS)
     );
     assert_ne!(key, nudged);
+}
+
+/// A node's origin is the intent its own signer signed and its place
+/// inside it — never its place in the flattened order, which is the
+/// interleave the composition chose.
+///
+/// The two genuinely differ here: Alice's deposit and Bob's are manifest
+/// nodes 4 and 5 and are both the third node of their own intent, so a
+/// derivation reading the flattened index would give one party's cell a
+/// number the other party's composition moved.
+#[test]
+fn an_origin_names_the_intent_its_node_signed() {
+    let tree = composed_tree(100);
+    let identity = tree.hash(&TestHasher);
+    let admitted = admit_tree(&tree, ALICE, identity, &world(), &TestHasher).expect("admits");
+    let root = tree.root.hash(&TestHasher);
+    let bob = tree.subintents[0].decl.hash(&TestHasher);
+
+    let origins: Vec<(SubintentHash, u32)> = admitted
+        .admitted
+        .origins()
+        .iter()
+        .map(|origin| (origin.intent, origin.local))
+        .collect();
+    assert_eq!(
+        origins,
+        vec![
+            (root, 0),
+            (root, 1),
+            (bob, 0),
+            (bob, 1),
+            (root, 2),
+            (bob, 2),
+        ],
+    );
+}
+
+/// An escrow key is fixed by what its node's own signer signed, so a
+/// composer rearranging everything around a bound subintent cannot move
+/// the cells that subintent's nodes write.
+///
+/// This is the whole of D24 and the reason the family may take the
+/// bucketed form at all: keyed by the transaction, both halves of a
+/// collision would be material the composer chose, and the bound that
+/// matters would drop from a second preimage to a birthday.
+#[test]
+fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
+    let first = composed_tree(100);
+    let second = composed_tree(120);
+    assert_ne!(
+        first.hash(&TestHasher),
+        second.hash(&TestHasher),
+        "the composer has to have moved the transaction, or this proves nothing",
+    );
+
+    let bob = first.subintents[0].decl.hash(&TestHasher);
+    assert_eq!(bob, second.subintents[0].decl.hash(&TestHasher));
+    assert_eq!(
+        escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
+        escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
+    );
+
+    // And the origins the two trees hand Bob's nodes are the same pair,
+    // which is what makes the sentence above a fact about admission
+    // rather than about this test's arithmetic.
+    let origin_of = |tree: &EnvelopeTree| {
+        let identity = tree.hash(&TestHasher);
+        let admitted = admit_tree(tree, ALICE, identity, &world(), &TestHasher).expect("admits");
+        admitted.admitted.origins()[3]
+    };
+    assert_eq!(origin_of(&first), origin_of(&second));
+}
+
+/// The material separates every edge of every node of every intent, and
+/// the role separates a record from the claim that takes it.
+#[test]
+fn an_escrow_key_separates_what_it_names() {
+    let bob = composed_tree(100).subintents[0].decl.hash(&TestHasher);
+    let key = escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
+
+    // A record and its own claim share every part but the role, and the
+    // two shards writing them never consult each other — so aliasing
+    // here would let a claim read as the record it claims.
+    assert_ne!(
+        key,
+        escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS)
+    );
+    // The owner is what distinguishes two consumers of one output.
+    assert_ne!(
+        key,
+        escrow_record_key(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS)
+    );
+    // A different node of the same intent, and a different output of the
+    // same node.
+    assert_ne!(
+        key,
+        escrow_record_key(&TestHasher, BOB, bob, 2, 0, EXPIRY_MS)
+    );
+    assert_ne!(
+        key,
+        escrow_record_key(&TestHasher, BOB, bob, 1, 1, EXPIRY_MS)
+    );
+    // The expiry is in the identity, so a writer cannot claim a life its
+    // declaration does not name.
+    assert_ne!(
+        key,
+        escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS + 1)
+    );
+
+    assert_eq!(key.owner, BOB.address());
+    assert_eq!(
+        key,
+        bucketed_child_key(
+            &TestHasher,
+            BOB,
+            ESCROW_RECORD_SLOT,
+            SweepBucket::of(EXPIRY_MS),
+            &[
+                bob.0.0.to_vec(),
+                1u32.to_le_bytes().to_vec(),
+                0u32.to_le_bytes().to_vec(),
+                EXPIRY_MS.to_le_bytes().to_vec(),
+            ],
+        ),
+    );
+}
+
+/// Both escrow families lead with the bucket their expiry falls in, so a
+/// sweep walks one owner's cells for one bucket as a range — the same
+/// property the nullifier has, asserted here because the sweep asks the
+/// key rather than the family.
+#[test]
+fn an_escrow_key_leads_with_the_bucket_its_expiry_falls_in() {
+    let bob = composed_tree(100).subintents[0].decl.hash(&TestHasher);
+    for key in [
+        escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
+        escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
+    ] {
+        assert_eq!(
+            SweepBucket::claimed_by(key.local),
+            SweepBucket::of(EXPIRY_MS),
+        );
+    }
+
+    let later = EXPIRY_MS + (1 << SWEEP_BUCKET_SHIFT);
+    let key = escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
+    let later_key = escrow_record_key(&TestHasher, BOB, bob, 1, 0, later);
+    assert!(key.to_bytes() < later_key.to_bytes());
+}
+
+/// A crossing cell says what left and on which edge, so a reclaim reads
+/// the leaf and nothing else — a split child inherits the prefix and its
+/// cells while holding neither the transaction nor a window of them.
+#[test]
+fn a_crossing_cell_carries_what_a_reclaim_needs() {
+    let bob = composed_tree(100).subintents[0].decl.hash(&TestHasher);
+    let cell = CrossingCell {
+        resource: RES_X,
+        amount: 500,
+        intent: bob,
+        local: 1,
+        output: 0,
+        expiry_ms: EXPIRY_MS,
+    };
+    let decoded: CrossingCell = from_slice(&cell.to_bytes()).expect("a crossing cell decodes");
+    assert_eq!(decoded, cell);
+    // The value re-derives the key, which is what makes the cell
+    // self-describing and so what makes the pair sweepable.
+    assert_eq!(
+        escrow_record_key(
+            &TestHasher,
+            BOB,
+            decoded.intent,
+            decoded.local,
+            decoded.output,
+            decoded.expiry_ms,
+        ),
+        escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
+    );
+
+    // The claim beside it names the transaction that took the crossing —
+    // the edge is the key's already, so what a reader wants of a claim is
+    // who took it.
+    let claim = ClaimCell {
+        tx: TxHash(Hash32([7; 32])),
+        expiry_ms: EXPIRY_MS,
+    };
+    assert_eq!(
+        from_slice::<ClaimCell>(&claim.to_bytes()).expect("a claim cell decodes"),
+        claim,
+    );
 }
 
 #[test]

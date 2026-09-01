@@ -523,19 +523,17 @@ pub fn explain_admission_tree(
     refusal: &AdmissionError,
 ) -> String {
     let mut views = Vec::with_capacity(1 + tree.subintents.len());
-    views.push(IntentView {
-        graph: &tree.root.graph,
-        sockets: &tree.root.sockets,
-        bindings: &tree.root_bindings,
-        signer: None,
-    });
+    views.push(IntentView::for_ordering(
+        &tree.root.graph,
+        &tree.root.sockets,
+        &tree.root_bindings,
+    ));
     for subintent in &tree.subintents {
-        views.push(IntentView {
-            graph: &subintent.decl.graph,
-            sockets: &subintent.decl.sockets,
-            bindings: &subintent.bindings,
-            signer: None,
-        });
+        views.push(IntentView::for_ordering(
+            &subintent.decl.graph,
+            &subintent.decl.sockets,
+            &subintent.bindings,
+        ));
     }
     let total: usize = views.iter().map(|view| view.graph.nodes.len()).sum();
     // A tree the interleave cannot order has no flattened numbering to

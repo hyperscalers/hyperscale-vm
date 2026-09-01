@@ -56,10 +56,32 @@ use crate::types::{SlotId, bucketed_child_key};
 /// protocol vocabulary's and the middle is where packages number from.
 pub const NULLIFIER_SLOT: SlotId = SlotId(0xFFFF);
 
-// Held at compile time rather than by a test: both sides are constants,
-// so a nullifier colliding with a package's own cell is a thing the
-// build can refuse outright.
+/// The kernel-reserved role of escrow record substates under the
+/// producing node's target.
+///
+/// What the shard issuing a crossing writes: the resource and the amount
+/// that left it. The record is the memo a reclaim reads, which is why
+/// nothing has to remember a diff.
+pub const ESCROW_RECORD_SLOT: SlotId = SlotId(0xFFFD);
+
+/// The kernel-reserved role of escrow claim substates under the claiming
+/// node's target.
+///
+/// What the shard taking a crossing writes. The record says value was
+/// issued and never that it is still available; this is what says it was
+/// taken, and it is what makes exactly one of the core's claim and the
+/// producer's reclaim happen.
+pub const ESCROW_CLAIM_SLOT: SlotId = SlotId(0xFFFE);
+
+// Held at compile time rather than by a test: every side is a constant,
+// so a kernel cell colliding with a package's own — or with another
+// kernel family — is a thing the build can refuse outright.
 const _: () = assert!(NULLIFIER_SLOT.0 > PACKAGE_SLOT_BASE);
+const _: () = assert!(ESCROW_RECORD_SLOT.0 > PACKAGE_SLOT_BASE);
+const _: () = assert!(ESCROW_CLAIM_SLOT.0 > PACKAGE_SLOT_BASE);
+const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_RECORD_SLOT.0);
+const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_CLAIM_SLOT.0);
+const _: () = assert!(ESCROW_RECORD_SLOT.0 != ESCROW_CLAIM_SLOT.0);
 
 /// A shaped opening an intent declares for something it cannot supply
 /// itself, which the composition carrying it fills.
@@ -387,6 +409,176 @@ impl NullifierCell {
     }
 }
 
+/// The canonical escrow record key for one value edge, under the
+/// producing node's target.
+///
+/// Keyed by what its signer signed and by nothing the composition
+/// chose. `intent` is the declaration hash of the intent the producing
+/// node belongs to and `local` is that node's index inside it — never
+/// the transaction hash and never the flattened manifest index, both of
+/// which a composer who is not this cell's owner assembles.
+///
+/// That is what admits the bucketed form here. It spends four of the
+/// local half's sixteen bytes, so what is left is a 96-bit owner-salted
+/// body and a 48-bit birthday bound — affordable only where both halves
+/// of a collision need one signer's signature, which is exactly what
+/// keying by the signing intent restores. Two escrow cells a grinder can
+/// collide are then two whose material the grinder chose, and reaching
+/// somebody else's is a second preimage again.
+///
+/// The expiry is in the identity twice over — hashed into the body and,
+/// coarsely, leading the local half — on [`nullifier_key`]'s terms and
+/// for its reasons.
+#[must_use]
+pub fn escrow_record_key(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    intent: SubintentHash,
+    local: u32,
+    output: u32,
+    expiry_ms: u64,
+) -> SubstateKey {
+    escrow_key(
+        hasher,
+        owner,
+        ESCROW_RECORD_SLOT,
+        intent,
+        local,
+        output,
+        expiry_ms,
+    )
+}
+
+/// The canonical escrow claim key for one value edge, under the target
+/// of the node that took it.
+///
+/// The same material as [`escrow_record_key`] under a different owner
+/// and a different role, which is what lets one crossing be named by
+/// both shards without either consulting placement. The owner is what
+/// distinguishes two consumers of one output; the role is what keeps a
+/// claim from ever aliasing the record it claims.
+#[must_use]
+pub fn escrow_claim_key(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    intent: SubintentHash,
+    local: u32,
+    output: u32,
+    expiry_ms: u64,
+) -> SubstateKey {
+    escrow_key(
+        hasher,
+        owner,
+        ESCROW_CLAIM_SLOT,
+        intent,
+        local,
+        output,
+        expiry_ms,
+    )
+}
+
+fn escrow_key(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    slot: SlotId,
+    intent: SubintentHash,
+    local: u32,
+    output: u32,
+    expiry_ms: u64,
+) -> SubstateKey {
+    bucketed_child_key(
+        hasher,
+        owner,
+        slot,
+        SweepBucket::of(expiry_ms),
+        &[
+            intent.0.0.to_vec(),
+            local.to_le_bytes().to_vec(),
+            output.to_le_bytes().to_vec(),
+            expiry_ms.to_le_bytes().to_vec(),
+        ],
+    )
+}
+
+/// What an escrow record cell holds: the value that left, the edge it
+/// left on, and when the record stops being needed.
+///
+/// Self-describing on [`NullifierCell`]'s terms: the value re-derives the
+/// key, so a reader holding nothing but the leaf can tell what it is and
+/// whether it is still owed. That is also what makes the pair sweepable,
+/// since the sweep asks the cell rather than the writer.
+///
+/// The edge is named here as well as in the key because a reclaim reads
+/// this cell and nothing else — the producing shard credits the resource
+/// and the amount back from the leaf alone, holding neither the
+/// transaction nor a window of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub struct CrossingCell {
+    /// The resource that crossed.
+    pub resource: ResourceAddr,
+    /// How much of it.
+    pub amount: u128,
+    /// The signed intent the producing node belongs to.
+    pub intent: SubintentHash,
+    /// That node's index within its own intent.
+    pub local: u32,
+    /// Which of its outputs the edge carried.
+    pub output: u32,
+    /// When no chain can still be claiming the crossing: the
+    /// transaction's own window end plus the retention grace.
+    pub expiry_ms: u64,
+}
+
+impl CrossingCell {
+    /// The cell's committed bytes.
+    ///
+    /// # Panics
+    ///
+    /// Never: the value is scalars and one address.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        to_vec(self).expect("a crossing cell is scalars and an address")
+    }
+}
+
+/// What an escrow claim cell holds: which transaction took the crossing,
+/// and when the record of that stops being needed.
+///
+/// The transaction rather than the intent, because what a reader wants of
+/// a claim is *who took it* — the edge it names is already the key's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub struct ClaimCell {
+    /// The transaction that took the crossing.
+    pub tx: TxHash,
+    /// When the claim stops being owed, on the record's own terms.
+    pub expiry_ms: u64,
+}
+
+impl ClaimCell {
+    /// The cell's committed bytes.
+    ///
+    /// # Panics
+    ///
+    /// Never: the value is two scalars.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        to_vec(self).expect("a claim cell is two scalars")
+    }
+}
+
+/// When an escrow crossing stops being claimable: the window the
+/// transaction signed, plus the grace every transaction-derived artifact
+/// gets.
+///
+/// The same figure a nullifier takes, and deliberately: both are
+/// transaction-derived state the chain carries until nothing can still be
+/// deciding about them, and two spellings of one horizon is a drift
+/// waiting to happen.
+#[must_use]
+pub const fn escrow_expiry_ms(validity_end_ms: u64) -> u64 {
+    validity_end_ms.saturating_add(NULLIFIER_GRACE_MS)
+}
+
 /// When a subintent's nullifier stops being owed: the window its signer
 /// signed, plus the grace every transaction-derived artifact gets.
 #[must_use]
@@ -494,13 +686,15 @@ pub fn admit_tree(
         sockets: &tree.root.sockets,
         bindings: &tree.root_bindings,
         signer: Some(composer),
+        identity: tree.root.hash(hasher),
     });
-    for subintent in &tree.subintents {
+    for (subintent, record) in tree.subintents.iter().zip(&records) {
         views.push(IntentView {
             graph: &subintent.decl.graph,
             sockets: &subintent.decl.sockets,
             bindings: &subintent.bindings,
             signer: Some(subintent.signer),
+            identity: record.subintent,
         });
     }
     // The envelope's own records, layered behind what the chain already

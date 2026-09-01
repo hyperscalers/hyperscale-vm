@@ -10,8 +10,9 @@
 use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
 
 use super::{AdmissionError, MAX_SOCKETS};
-use crate::envelope::{Binding, Socket};
+use crate::envelope::{Binding, Socket, SubintentHash};
 use crate::graph::{Constraint, GraphArg, ManifestGraph};
+use crate::hash::Hash32;
 use crate::instance::InstanceMeta;
 use crate::manifest::{Bounds, NodeInput};
 use crate::resource::ResourceKind;
@@ -169,6 +170,37 @@ pub struct IntentView<'a> {
     /// Whose signature this intent carries, and so whose identity its
     /// proof names. A bare graph is unsigned and produces none.
     pub signer: Option<PrincipalAddr>,
+    /// What this intent's own signer signed: the declaration's hash for
+    /// an intent of a tree, and the graph's own for a bare one.
+    ///
+    /// Carried so a cell keyed by a node can be keyed by content that
+    /// node's signer chose. A transaction hash covers a whole
+    /// composition the composer assembles, which is material a party
+    /// other than the cell's owner can grind.
+    pub identity: SubintentHash,
+}
+
+impl<'a> IntentView<'a> {
+    /// A view for ordering alone: the interleave and the binding checks
+    /// read the graph, the sockets and the bindings, and nothing else.
+    ///
+    /// The signer and the identity are what admission adds, and a view
+    /// built here reaches neither — which is why they are stated once,
+    /// here, rather than as a placeholder at each call site that would
+    /// read as a fact about the intent.
+    pub(crate) const fn for_ordering(
+        graph: &'a ManifestGraph,
+        sockets: &'a [Socket],
+        bindings: &'a [Binding],
+    ) -> Self {
+        Self {
+            graph,
+            sockets,
+            bindings,
+            signer: None,
+            identity: SubintentHash(Hash32([0; 32])),
+        }
+    }
 }
 
 /// Bindings and parameter consumption, intent by intent: one binding
