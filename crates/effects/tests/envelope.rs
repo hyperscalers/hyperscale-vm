@@ -7,11 +7,11 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
     AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, ClaimCell, Constraint,
-    CrossingCell, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree, GraphArg, GraphNode,
-    Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH,
-    ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput, PackageHash, PrefixShardResolver,
-    Records, ResourceKind, ShardResolver, Socket, Subintent, SubintentHash, TestHasher, Value,
-    admit, admit_tree, bucketed_child_key, escrow_claim_key, escrow_record_key,
+    CrossingCell, CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree, GraphArg,
+    GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader, MAX_SOCKETS,
+    MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput, PackageHash,
+    PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket, Subintent, SubintentHash,
+    TestHasher, Value, admit, admit_tree, bucketed_child_key, escrow_claim_key, escrow_record_key,
     explain_admission_tree, nullifier_key, route_tree,
 };
 use hyperscale_vm_fixtures::lottery;
@@ -578,9 +578,13 @@ fn an_escrow_key_leads_with_the_bucket_its_expiry_falls_in() {
 #[test]
 fn a_crossing_cell_carries_what_a_reclaim_needs() {
     let bob = composed_tree(100).subintents[0].decl.hash(&TestHasher);
+    // Any cell: what matters is that the record carries the one the
+    // value left, so a reclaim can credit it without the transaction.
+    let origin = escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
     let cell = CrossingCell {
         resource: RES_X,
         amount: 500,
+        origin,
         intent: bob,
         local: 1,
         output: 0,
@@ -588,6 +592,14 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     };
     let decoded: CrossingCell = from_slice(&cell.to_bytes()).expect("a crossing cell decodes");
     assert_eq!(decoded, cell);
+    assert_eq!(CrossingCell::from_bytes(&cell.to_bytes()), Some(cell));
+    assert_eq!(CrossingCell::from_bytes(b"not a record"), None);
+    // A site built for this edge names the record; one built for another
+    // edge does not, which is what keeps a reclaim from crediting off a
+    // record written for a different crossing.
+    assert!(CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS).names(&decoded));
+    assert!(!CrossingSite::claim(&TestHasher, BOB, bob, 2, 0, EXPIRY_MS).names(&decoded));
+    assert!(!CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS + 1).names(&decoded));
     // The value re-derives the key, which is what makes the cell
     // self-describing and so what makes the pair sweepable.
     assert_eq!(

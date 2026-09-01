@@ -11,12 +11,14 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_vm_effects::{CrossingSite, IssuanceGrant, ResourceKind, distinct_ids};
+use hyperscale_vm_effects::{
+    CrossingCell, CrossingSite, IssuanceGrant, ResourceKind, distinct_ids,
+};
 use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::Crossed;
+use crate::escrow::{Crossed, Departure, Reclaim};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -211,17 +213,78 @@ impl KernelSession {
         node: u32,
         output: u32,
         funds: u32,
-        site: CrossingSite,
+        departure: Departure,
     ) -> Result<Crossed, SessionTrap> {
         let resource = self.buckets.resource_of(funds)?;
         let held = self.take_bucket(funds)?;
         let Held::Amount(amount) = held else {
             return Err(SessionTrap::WrongEdgeKind);
         };
+        // The record names the cell the value left so a reclaim can
+        // credit it from the cell alone, and what makes that name honest
+        // is the declaration beside it: the cell has to be reserved here,
+        // in the resource that is departing. A plan naming any other
+        // cell is naming one this value never came from.
+        let reserved = self
+            .table
+            .iter()
+            .zip(&self.cell_resources)
+            .any(|(held, holds)| {
+                matches!(held, Capability::Reserve { key, .. } if *key == departure.origin)
+                    && *holds == Some(resource)
+            });
+        if !reserved {
+            return Err(SessionTrap::EscrowOriginUndeclared(departure.origin));
+        }
         let crossed = Crossed { resource, amount };
         self.escrow.issue(node, output, crossed)?;
-        self.crossings
-            .insert(site.key(), site.crossing(resource, amount).to_bytes());
+        self.crossings.insert(
+            departure.site.key(),
+            departure
+                .site
+                .crossing(resource, amount, departure.origin)
+                .to_bytes(),
+        );
+        Ok(crossed)
+    }
+
+    /// Take a crossing this execution issued back, from its record.
+    ///
+    /// The producing node claiming its own record through the path a
+    /// consumer claims it: the claim is a loss and the credit a gain, so
+    /// the fold balances with no term of its own; the claim cell under
+    /// the producer's own target is what refuses a second reclaim, on
+    /// the machinery that refuses a second claim; and everything the
+    /// credit needs is read off the leaf, so a shard holding nothing but
+    /// its own prefix can do it. The record is left in place: it says
+    /// the value was issued, never that it is still available.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::EscrowRecordUnreadable`] for a record that is
+    /// absent, does not decode, or names another edge;
+    /// [`SessionTrap::EscrowOriginUndeclared`] where the declaration
+    /// carries no movement handle on the cell the record says to credit;
+    /// and any [`SessionTrap`] the claim or the credit raises.
+    pub(crate) fn escrow_reclaim(&mut self, reclaim: &Reclaim) -> Result<Crossed, SessionTrap> {
+        let record: CrossingCell = self
+            .store
+            .read(reclaim.record)?
+            .and_then(|bytes| CrossingCell::from_bytes(&bytes))
+            .filter(|record| reclaim.claim.names(record))
+            .ok_or(SessionTrap::EscrowRecordUnreadable(reclaim.record))?;
+        let site = self
+            .table
+            .iter()
+            .position(|held| matches!(held, Capability::Delta { key, .. } if *key == record.origin))
+            .and_then(|index| u32::try_from(index).ok())
+            .ok_or(SessionTrap::EscrowOriginUndeclared(record.origin))?;
+        let crossed = Crossed {
+            resource: record.resource,
+            amount: record.amount,
+        };
+        let funds = self.escrow_in(crossed, reclaim.claim)?;
+        self.cell_put(site, 0, funds)?;
         Ok(crossed)
     }
 
@@ -306,12 +369,16 @@ impl KernelSession {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{CrossingSite, Hash32, SubintentHash, TestHasher};
-    use hyperscale_vm_types::{Address, AddressClass, ResourceAddr};
+    use std::collections::BTreeSet;
 
-    use super::super::fixtures::{declared, session_over};
+    use hyperscale_vm_effects::{CrossingSite, Hash32, SubintentHash, TestHasher};
+    use hyperscale_vm_types::{
+        Address, AddressClass, Effect, EffectTarget, Mode, ResourceAddr, SubstateKey,
+    };
+
+    use super::super::fixtures::{declared, key, session_over};
     use super::Held;
-    use crate::escrow::Crossed;
+    use crate::escrow::{Crossed, Departure};
     use crate::session::SessionTrap;
     use crate::store::MemoryStore;
 
@@ -328,32 +395,69 @@ mod tests {
         )
     }
 
+    /// The cell a departing value is said to have left: reserved in the
+    /// departing resource, for nothing, on a cell that holds nothing —
+    /// enough for the declaration to carry it.
+    fn origin() -> SubstateKey {
+        key(0xA2)
+    }
+
+    fn departure(origin: SubstateKey) -> Departure {
+        Departure {
+            site: site(),
+            origin,
+        }
+    }
+
+    fn reserving_origin() -> Vec<Effect> {
+        vec![Effect {
+            target: EffectTarget::Point(origin()),
+            mode: Mode::Reserve { amount: 0 },
+        }]
+    }
+
     /// The escrow attestation is linear over amounts and blind to
     /// identity, so a named-instance crossing would arrive carrying a
     /// delta its producer's history supports. Refused at the issue, which
     /// is where the sender's own defect belongs.
     #[test]
     fn an_instance_bucket_is_refused_at_the_issue() {
-        let mut session = session_over(MemoryStore::new(), &declared(&[]));
-        let instances = session.open_bucket(Held::Instances([1u128, 2].into()), RESOURCE);
+        let mut session = session_over(MemoryStore::new(), &declared(&reserving_origin()));
+        let instances = session.open_bucket(Held::Instances(BTreeSet::from([7])), RESOURCE);
         assert_eq!(
-            session.escrow_out(0, 0, instances, site()),
+            session.escrow_out(0, 0, instances, departure(origin())),
             Err(SessionTrap::WrongEdgeKind),
         );
     }
 
-    /// A fungible one crosses, and what it carried is what the record
-    /// says.
+    /// A fungible bucket crosses as exactly what it carried, and the
+    /// bucket is consumed on the way out.
     #[test]
     fn a_fungible_bucket_crosses_as_what_it_carried() {
-        let mut session = session_over(MemoryStore::new(), &declared(&[]));
+        let mut session = session_over(MemoryStore::new(), &declared(&reserving_origin()));
         let funds = session.open_bucket(Held::Amount(40), RESOURCE);
         assert_eq!(
-            session.escrow_out(0, 0, funds, site()),
+            session.escrow_out(0, 0, funds, departure(origin())),
             Ok(Crossed {
                 resource: RESOURCE,
                 amount: 40,
             }),
+        );
+        assert!(session.bucket(funds).is_err(), "consumed on the way out");
+        assert_eq!(session.escrow.issued(RESOURCE), 40);
+    }
+
+    /// The record names the cell the value left, and the declaration is
+    /// what makes that name honest: an origin nothing here reserves is a
+    /// cell this value never came from.
+    #[test]
+    fn an_issue_naming_an_unreserved_origin_is_refused() {
+        let mut session = session_over(MemoryStore::new(), &declared(&reserving_origin()));
+        let funds = session.open_bucket(Held::Amount(40), RESOURCE);
+        let elsewhere = key(0xA3);
+        assert_eq!(
+            session.escrow_out(0, 0, funds, departure(elsewhere)),
+            Err(SessionTrap::EscrowOriginUndeclared(elsewhere)),
         );
     }
 }

@@ -137,6 +137,31 @@ impl EscrowDelta {
     }
 }
 
+/// One edge leaving this execution: the record cell it writes, and the
+/// cell the value left, which the record names so a reclaim can credit
+/// it from the cell alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Departure {
+    /// The record cell, under the producing node's target.
+    pub site: CrossingSite,
+    /// The cell the departing value was reserved from.
+    pub origin: SubstateKey,
+}
+
+/// One crossing this execution takes back: the record the producing
+/// shard wrote, claimed under the producer's own target.
+///
+/// Everything else a reclaim needs — the resource, the amount, the cell
+/// to credit — is read off the record itself, so a shard holding nothing
+/// but its own prefix can reclaim from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reclaim {
+    /// The record cell to read.
+    pub record: SubstateKey,
+    /// The claim cell the reclaim writes, under the producer's target.
+    pub claim: CrossingSite,
+}
+
 /// Which of a manifest's nodes this execution runs, and the cells the
 /// ones it does not run stand in for.
 ///
@@ -148,8 +173,9 @@ impl EscrowDelta {
 pub struct LegPlan {
     skipped: BTreeSet<u32>,
     inbound: BTreeMap<(u32, u32), Crossed>,
-    outbound: BTreeMap<(u32, u32), CrossingSite>,
+    outbound: BTreeMap<(u32, u32), Departure>,
     claimed: BTreeMap<(u32, u32), CrossingSite>,
+    reclaimed: BTreeMap<(u32, u32), Reclaim>,
 }
 
 impl LegPlan {
@@ -178,10 +204,20 @@ impl LegPlan {
         self.inbound.get(&(node, output)).copied()
     }
 
-    /// The record cell an edge leaving this execution writes.
+    /// The record cell an edge leaving this execution writes, and the
+    /// cell the value left.
     #[must_use]
-    pub fn departing(&self, node: u32, output: u32) -> Option<CrossingSite> {
+    pub fn departing(&self, node: u32, output: u32) -> Option<Departure> {
         self.outbound.get(&(node, output)).copied()
+    }
+
+    /// The crossings this execution takes back rather than runs, in
+    /// `(node, output)` order: the producing node claiming its own
+    /// record.
+    pub fn reclaimed(&self) -> impl Iterator<Item = ((u32, u32), Reclaim)> + '_ {
+        self.reclaimed
+            .iter()
+            .map(|(edge, reclaim)| (*edge, *reclaim))
     }
 
     /// The claim cell an arrival writes.
@@ -192,12 +228,16 @@ impl LegPlan {
 
     /// Every record cell this execution writes, in edge order.
     pub fn records(&self) -> impl Iterator<Item = SubstateKey> + '_ {
-        self.outbound.values().map(CrossingSite::key)
+        self.outbound.values().map(|departure| departure.site.key())
     }
 
-    /// Every claim cell this execution writes, in edge order.
+    /// Every claim cell this execution writes, in edge order: the
+    /// arrivals it takes, then the crossings it takes back.
     pub fn claims(&self) -> impl Iterator<Item = SubstateKey> + '_ {
-        self.claimed.values().map(CrossingSite::key)
+        self.claimed
+            .values()
+            .map(CrossingSite::key)
+            .chain(self.reclaimed.values().map(|reclaim| reclaim.claim.key()))
     }
 
     /// Mark a node as one another shard runs.
@@ -222,7 +262,8 @@ impl LegPlan {
         Self::bounded(&mut self.claimed, (node, output), claim)
     }
 
-    /// File the record cell one departing edge writes.
+    /// File the record cell one departing edge writes, and the cell the
+    /// value leaves from.
     ///
     /// # Errors
     ///
@@ -232,8 +273,30 @@ impl LegPlan {
         node: u32,
         output: u32,
         record: CrossingSite,
+        origin: SubstateKey,
     ) -> Result<(), PlanTooWide> {
-        Self::bounded(&mut self.outbound, (node, output), record)
+        Self::bounded(
+            &mut self.outbound,
+            (node, output),
+            Departure {
+                site: record,
+                origin,
+            },
+        )
+    }
+
+    /// File one crossing this execution takes back.
+    ///
+    /// # Errors
+    ///
+    /// [`PlanTooWide`] past [`MAX_CROSSINGS_PER_TX`].
+    pub fn reclaims(
+        &mut self,
+        node: u32,
+        output: u32,
+        reclaim: Reclaim,
+    ) -> Result<(), PlanTooWide> {
+        Self::bounded(&mut self.reclaimed, (node, output), reclaim)
     }
 
     fn bounded<T>(
@@ -375,14 +438,17 @@ mod tests {
         let mut plan = LegPlan::whole();
         plan.skip(1);
         plan.arrives(1, 0, crossed(1, 50), cell(9)).expect("fits");
-        plan.departs(2, 0, cell(8)).expect("fits");
+        plan.departs(2, 0, cell(8), cell(8).key()).expect("fits");
 
         assert!(!plan.is_whole());
         assert!(!plan.runs(1));
         assert!(plan.runs(2));
         assert_eq!(plan.arrival(1, 0), Some(crossed(1, 50)));
         assert_eq!(plan.claim(1, 0), Some(cell(9)));
-        assert_eq!(plan.departing(2, 0), Some(cell(8)));
+        assert_eq!(
+            plan.departing(2, 0).map(|departure| departure.site),
+            Some(cell(8))
+        );
         assert_eq!(plan.arrival(1, 1), None, "another output is another edge");
     }
 
@@ -393,10 +459,14 @@ mod tests {
         let mut plan = LegPlan::whole();
         for edge in 0..MAX_CROSSINGS_PER_TX {
             let node = u32::try_from(edge).expect("bounded");
-            plan.departs(node, 0, cell(1)).expect("inside the cap");
+            plan.departs(node, 0, cell(1), cell(1).key())
+                .expect("inside the cap");
         }
         let past = u32::try_from(MAX_CROSSINGS_PER_TX).expect("bounded");
-        assert!(plan.departs(past, 0, cell(1)).is_err());
-        assert!(plan.departs(0, 0, cell(2)).is_ok(), "not a new crossing");
+        assert!(plan.departs(past, 0, cell(1), cell(1).key()).is_err());
+        assert!(
+            plan.departs(0, 0, cell(2), cell(2).key()).is_ok(),
+            "not a new crossing"
+        );
     }
 }

@@ -18,7 +18,7 @@ use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
     Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, EnvInputs, ExecutionMode,
     GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession, LegPlan, Locality, ManifestWalk,
-    MemoryStore, Receipt, execute_batch,
+    MemoryStore, Receipt, Reclaim, Substates, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, MAX_CROSSINGS_PER_TX,
@@ -208,7 +208,7 @@ fn then(store: &MemoryStore, entry: BatchTx, again: BatchTx) -> Receipt {
 /// rather than reaching a local consumer.
 fn sending(amount: u128) -> BatchTx {
     let mut legs = LegPlan::whole();
-    legs.departs(0, 0, record_site()).unwrap();
+    legs.departs(0, 0, record_site(), cell(PAYER)).unwrap();
     BatchTx::new(
         tx(1),
         declared(&[
@@ -289,6 +289,7 @@ fn the_two_halves_of_one_crossing_reconcile() {
     assert_eq!(record.resource, RESOURCE);
     assert_eq!(record.amount, 200);
     assert_eq!(record.expiry_ms, EXPIRY_MS);
+    assert_eq!(record.origin, cell(PAYER), "and where it left from");
 
     // The receiving half claims exactly that, on its own shard, out of a
     // batch that never saw the sender's session.
@@ -501,7 +502,7 @@ fn a_whole_execution_crosses_nothing() {
 fn a_plan_past_the_crossing_cap_refuses_at_construction() {
     let mut legs = LegPlan::whole();
     for edge in 0..MAX_CROSSINGS_PER_TX {
-        legs.departs(u32::try_from(edge).unwrap(), 0, record_site())
+        legs.departs(u32::try_from(edge).unwrap(), 0, record_site(), cell(PAYER))
             .unwrap();
     }
     assert!(
@@ -509,6 +510,7 @@ fn a_plan_past_the_crossing_cap_refuses_at_construction() {
             u32::try_from(MAX_CROSSINGS_PER_TX).unwrap(),
             0,
             record_site(),
+            cell(PAYER),
         )
         .is_err()
     );
@@ -522,7 +524,7 @@ fn a_plan_past_the_crossing_cap_refuses_at_construction() {
 #[test]
 fn an_undeclared_record_cell_refuses_the_batch() {
     let mut legs = LegPlan::whole();
-    legs.departs(0, 0, record_site()).unwrap();
+    legs.departs(0, 0, record_site(), cell(PAYER)).unwrap();
     let entry = BatchTx::new(
         tx(6),
         declared(&[Effect {
@@ -729,4 +731,190 @@ fn a_second_consumer_of_one_edge_is_refused_running_whole() {
         receipt.delta.movements.is_empty(),
         "and nothing was credited"
     );
+}
+
+/// The reclaim's claim cell, under the producer's own target.
+fn reclaim_site() -> CrossingSite {
+    CrossingSite::claim(&TestHasher, owner(PAYER), intent(), 0, 0, EXPIRY_MS)
+}
+
+/// The producing node taking its own record back: reads the record,
+/// claims it under its own target, credits the cell the value left. No
+/// node runs.
+fn reclaiming(who: TxHash) -> BatchTx {
+    let mut legs = LegPlan::whole();
+    legs.reclaims(
+        0,
+        0,
+        Reclaim {
+            record: record_site().key(),
+            claim: reclaim_site(),
+        },
+    )
+    .unwrap();
+    BatchTx::new(
+        who,
+        declared(&[
+            Effect {
+                target: EffectTarget::Point(record_site().key()),
+                mode: Mode::Read,
+            },
+            crossing_cell(reclaim_site()),
+            Effect {
+                target: EffectTarget::Point(cell(PAYER)),
+                mode: Mode::Delta { moves: Moves::Both },
+            },
+        ]),
+        env(),
+    )
+    .with_legs(legs)
+}
+
+fn balance(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
+    decode_amount(&outcome.store.cell(key).expect("the cell stands")).unwrap()
+}
+
+/// Issue, then reclaim: the producing vault is back at its pre-escrow
+/// balance exactly, read off the vault rather than inferred; the claim is
+/// a loss and the credit a gain, so the fold balances with no term of
+/// its own; and the record stays, saying only that the value was issued.
+#[test]
+fn a_reclaim_restores_the_producing_vault_exactly() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[sending(200)],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    assert_eq!(
+        balance(&sent, cell(PAYER)),
+        300,
+        "the escrow debited the vault"
+    );
+
+    let reclaimed = execute(
+        Arc::new(sent.store) as Arc<dyn Baseline>,
+        &[reclaiming(tx(9))],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let receipt = &reclaimed.receipts[&tx(9)];
+    assert!(
+        matches!(receipt.outcome, Outcome::Completed { .. }),
+        "{receipt:?}"
+    );
+    assert_eq!(receipt.fuel, 0, "no node ran");
+    assert_eq!(receipt.escrow.claimed(RESOURCE), 200);
+    assert_eq!(receipt.escrow.issued(RESOURCE), 0);
+    assert_eq!(
+        receipt
+            .delta
+            .movements
+            .get(&cell(PAYER))
+            .map(|movement| movement.credit),
+        Some(200),
+    );
+    assert_eq!(balance(&reclaimed, cell(PAYER)), 500);
+    assert!(
+        reclaimed.store.cell(record_site().key()).is_some(),
+        "the record is left in place",
+    );
+    let claim: ClaimCell = from_slice(
+        reclaimed
+            .store
+            .cell(reclaim_site().key())
+            .as_deref()
+            .expect("the claim committed"),
+    )
+    .unwrap();
+    assert_eq!(claim.tx, tx(9));
+}
+
+/// A second reclaim of one crossing finds the first's claim and moves
+/// nothing — on the machinery that refuses a second claim.
+#[test]
+fn a_second_reclaim_is_refused_and_moves_nothing() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[sending(200)],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let once = execute(
+        Arc::new(sent.store) as Arc<dyn Baseline>,
+        &[reclaiming(tx(9))],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let twice = execute(
+        Arc::new(once.store) as Arc<dyn Baseline>,
+        &[reclaiming(tx(10))],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let receipt = &twice.receipts[&tx(10)];
+    assert_eq!(
+        receipt.outcome,
+        Outcome::EscrowAlreadyClaimed {
+            key: reclaim_site().key(),
+        },
+    );
+    assert!(receipt.delta.movements.is_empty());
+    assert_eq!(balance(&twice, cell(PAYER)), 500);
+}
+
+/// A reclaim reads its record and nothing else, so a record that is not
+/// there — or names another edge — is the batch's defect, not a lost
+/// race: nothing is credited on a plan's say-so.
+#[test]
+fn a_reclaim_of_a_record_that_is_not_there_is_a_defect() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+    let receipt = run(&store, reclaiming(tx(11)));
+    assert_eq!(
+        receipt.outcome,
+        Outcome::ProtocolError {
+            reason: AbortReason::EscrowRecordUnreadable,
+        },
+    );
+    assert!(receipt.delta.movements.is_empty());
+}
+
+/// The record names the cell the value left so a reclaim can credit it
+/// from the cell alone, and the declaration beside the issue is what
+/// makes that name honest: a plan naming a cell this leg never reserved
+/// is refused at the issue.
+#[test]
+fn an_issue_naming_an_unreserved_origin_is_refused() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+    let mut legs = LegPlan::whole();
+    legs.departs(0, 0, record_site(), cell(PAYEE)).unwrap();
+    let entry = BatchTx::new(
+        tx(12),
+        declared(&[
+            Effect {
+                target: EffectTarget::Point(cell(PAYER)),
+                mode: Mode::Reserve { amount: 200 },
+            },
+            crossing_cell(record_site()),
+        ]),
+        env(),
+    )
+    .with_calls(vec![call("take", 0, 1)])
+    .with_legs(legs);
+
+    let receipt = run(&store, entry);
+    assert_eq!(
+        receipt.outcome,
+        Outcome::UserError {
+            reason: AbortReason::EscrowOriginUndeclared,
+        },
+    );
+    assert!(receipt.escrow.is_empty(), "nothing was issued");
 }

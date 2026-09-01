@@ -429,11 +429,11 @@ fn departing(
     let mut kept = Vec::with_capacity(produced.len());
     for (slot, rep) in produced.into_iter().enumerate() {
         let output = u32::try_from(slot).unwrap_or(u32::MAX);
-        let Some(site) = entry.legs.departing(node, output) else {
+        let Some(departure) = entry.legs.departing(node, output) else {
             kept.push(Some(rep));
             continue;
         };
-        match session.escrow_out(node, output, rep, site) {
+        match session.escrow_out(node, output, rep, departure) {
             Ok(_) => kept.push(None),
             Err(trap) => {
                 return Err(fail(
@@ -566,6 +566,29 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
         let mut outputs: Vec<Vec<Option<u32>>> = Vec::with_capacity(entry.calls.len());
         let mut answers: Vec<Answer> = Vec::new();
         let mut fuel = 0u64;
+        // What this execution takes back rather than runs. No node is
+        // invoked for a reclaim — there is nothing to invoke — so it
+        // costs no fuel and cannot refuse for a guest reason; what it
+        // can refuse for is the record or the declaration beside it,
+        // and both are the batch's own defect.
+        for (_, reclaim) in entry.legs.reclaimed() {
+            if let Err(trap) = session.escrow_reclaim(&reclaim) {
+                let outcome = match trap {
+                    SessionTrap::EscrowRecordUnreadable(_)
+                    | SessionTrap::EscrowOriginUndeclared(_) => Outcome::ProtocolError {
+                        reason: trap.into(),
+                    },
+                    other => Outcome::UserError {
+                        reason: other.into(),
+                    },
+                };
+                return Ok(RunResult::Aborted {
+                    session,
+                    outcome,
+                    fuel,
+                });
+            }
+        }
         for (index, call) in entry.calls.iter().enumerate() {
             let node = u32::try_from(index).unwrap_or(u32::MAX);
             // One budget across the manifest: each node is metered

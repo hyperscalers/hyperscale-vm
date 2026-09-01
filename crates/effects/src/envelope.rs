@@ -26,7 +26,7 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_hbor::{Hbor, to_vec};
+use hyperscale_hbor::{Hbor, from_slice, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
     Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, NULLIFIER_GRACE_MS, NetworkId,
@@ -511,13 +511,19 @@ fn escrow_key(
 /// The edge is named here as well as in the key because a reclaim reads
 /// this cell and nothing else — the producing shard credits the resource
 /// and the amount back from the leaf alone, holding neither the
-/// transaction nor a window of them.
+/// transaction nor a window of them. So is the cell the value left: a
+/// reclaim credits it, and no rule the kernel could hold says which of
+/// an owner's cells that is — an account's vault for a resource is the
+/// account package's own layout, and a component's is another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub struct CrossingCell {
     /// The resource that crossed.
     pub resource: ResourceAddr,
     /// How much of it.
     pub amount: u128,
+    /// The cell the value was reserved from, and the one a reclaim
+    /// credits.
+    pub origin: SubstateKey,
     /// The signed intent the producing node belongs to.
     pub intent: SubintentHash,
     /// That node's index within its own intent.
@@ -539,6 +545,14 @@ impl CrossingCell {
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         to_vec(self).expect("a crossing cell is scalars and an address")
+    }
+
+    /// A record read back off the leaf, or nothing for bytes that are
+    /// not one — the type owns its decoding for the reason it owns its
+    /// encoding.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        from_slice(bytes).ok()
     }
 }
 
@@ -645,17 +659,37 @@ impl CrossingSite {
         self.expiry_ms
     }
 
-    /// The record's value, once the execution knows what crossed.
+    /// The record's value, once the execution knows what crossed and
+    /// where it left from.
     #[must_use]
-    pub const fn crossing(&self, resource: ResourceAddr, amount: u128) -> CrossingCell {
+    pub const fn crossing(
+        &self,
+        resource: ResourceAddr,
+        amount: u128,
+        origin: SubstateKey,
+    ) -> CrossingCell {
         CrossingCell {
             resource,
             amount,
+            origin,
             intent: self.intent,
             local: self.local,
             output: self.output,
             expiry_ms: self.expiry_ms,
         }
+    }
+
+    /// Whether a record names the edge this site does.
+    ///
+    /// What a reclaim checks before crediting from a cell: the record's
+    /// value re-derives its key, and a claim site built for one edge must
+    /// not take a record written for another.
+    #[must_use]
+    pub fn names(&self, record: &CrossingCell) -> bool {
+        record.intent == self.intent
+            && record.local == self.local
+            && record.output == self.output
+            && record.expiry_ms == self.expiry_ms
     }
 
     /// The claim's value: which transaction took the crossing.
