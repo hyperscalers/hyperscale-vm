@@ -534,6 +534,32 @@ pub enum Outcome {
         /// The flipped group-mate whose writes this execution could see.
         flipped: TxHash,
     },
+    /// A value crossing this execution meant to take was already taken.
+    ///
+    /// The claim cell under the consuming node's own target is committed
+    /// state, so it says the crossing is spent whoever spent it — an
+    /// earlier replay of this transaction, or the producing shard
+    /// reclaiming it. Priced with [`Outcome::Infeasible`]: no composer
+    /// could have read the cell at signing time, so this is a lost race
+    /// rather than a defect in what was signed.
+    #[hbor(discriminant = 11)]
+    EscrowAlreadyClaimed {
+        /// The claim cell whoever took it wrote.
+        key: SubstateKey,
+    },
+    /// A value crossing this execution meant to issue was already
+    /// issued.
+    ///
+    /// The record cell says this leg already debited the producing
+    /// vault; running the node again would debit it twice and rewrite
+    /// the record with identical bytes. Priced with
+    /// [`Outcome::Infeasible`] for [`Outcome::EscrowAlreadyClaimed`]'s
+    /// reason.
+    #[hbor(discriminant = 12)]
+    EscrowAlreadyIssued {
+        /// The record cell the earlier issue wrote.
+        key: SubstateKey,
+    },
 }
 
 /// Which declared condition went unmet, shaped by where each kind is
@@ -586,10 +612,10 @@ pub enum UnmetCondition {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, to_vec};
+    use hyperscale_hbor::{DecodeError, Hash32, assert_canonical, from_slice, to_vec};
 
     use super::{
-        AbortReason, Address, Answer, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey,
+        AbortReason, Address, Answer, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey, TxHash,
         UnmetCondition,
     };
     use crate::address::{AddressClass, EffectTarget, LocalKey};
@@ -667,6 +693,7 @@ mod tests {
             (63, AbortReason::SealStanding),
             (64, AbortReason::ValueNotConserved),
             (65, AbortReason::CellValueTooLarge),
+            (66, AbortReason::EscrowOverflow),
         ];
         for (byte, reason) in classes {
             assert_eq!(
@@ -715,6 +742,14 @@ mod tests {
                     condition: UnmetCondition::Satisfies { node: 0 },
                 },
             ),
+            (
+                10,
+                Outcome::BaselineDiscarded {
+                    flipped: TxHash(Hash32([4; 32])),
+                },
+            ),
+            (11, Outcome::EscrowAlreadyClaimed { key }),
+            (12, Outcome::EscrowAlreadyIssued { key }),
         ];
         for (byte, outcome) in outcomes {
             assert_eq!(

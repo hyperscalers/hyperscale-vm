@@ -16,9 +16,9 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
-    Baseline, BatchTx, Capability, Crossed, EnvInputs, ExecutionMode, GuestBackend, GuestCall,
-    InvokeResult, Invoked, KernelSession, LegPlan, Locality, ManifestWalk, MemoryStore, Receipt,
-    execute_batch,
+    Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, EnvInputs, ExecutionMode,
+    GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession, LegPlan, Locality, ManifestWalk,
+    MemoryStore, Receipt, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, MAX_CROSSINGS_PER_TX,
@@ -149,18 +149,49 @@ impl GuestBackend for Moving {
     }
 }
 
-fn run(store: &MemoryStore, entry: BatchTx) -> Receipt {
-    let batch = vec![entry];
-    let outcome = execute_batch(
-        Arc::new(store.clone()) as Arc<dyn Baseline>,
-        &batch,
+fn execute(
+    base: Arc<dyn Baseline>,
+    batch: &[BatchTx],
+    mode: ExecutionMode,
+) -> Result<BatchOutcome, BatchError> {
+    execute_batch(
+        base,
+        batch,
         &ManifestWalk { backend: &Moving },
         test_hash,
-        ExecutionMode::Serial,
+        mode,
         &Locality::All,
+    )
+}
+
+fn run(store: &MemoryStore, entry: BatchTx) -> Receipt {
+    let batch = vec![entry];
+    let outcome = execute(
+        Arc::new(store.clone()) as Arc<dyn Baseline>,
+        &batch,
+        ExecutionMode::Serial,
     )
     .unwrap();
     outcome.receipts[&batch[0].tx].clone()
+}
+
+/// Run `entry`, then run `again` against the state the first left.
+fn then(store: &MemoryStore, entry: BatchTx, again: BatchTx) -> Receipt {
+    let first = execute(
+        Arc::new(store.clone()) as Arc<dyn Baseline>,
+        &[entry],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let tx = again.tx;
+    execute(
+        Arc::new(first.store) as Arc<dyn Baseline>,
+        &[again],
+        ExecutionMode::Serial,
+    )
+    .unwrap()
+    .receipts[&tx]
+        .clone()
 }
 
 /// The sending half: one node reserves, and what it produced departs
@@ -190,11 +221,15 @@ fn sending(amount: u128) -> BatchTx {
 /// The receiving half: the producer is a node another shard ran, and
 /// what stands in for it is the value that arrived.
 fn receiving(crossed: Crossed) -> BatchTx {
+    receiving_as(tx(2), crossed)
+}
+
+fn receiving_as(who: TxHash, crossed: Crossed) -> BatchTx {
     let mut legs = LegPlan::whole();
     legs.skip(0);
     legs.arrives(0, 0, crossed, claim_site()).unwrap();
     BatchTx::new(
-        tx(2),
+        who,
         declared(&[
             Effect {
                 target: EffectTarget::Point(cell(PAYEE)),
@@ -467,4 +502,174 @@ fn a_plan_past_the_crossing_cap_refuses_at_construction() {
         )
         .is_err()
     );
+}
+
+/// The declaration is what forces racing writers of one crossing into a
+/// single conflict group, so a batch that writes a record cell without
+/// declaring it is a defect in whoever composed the batch. Undeclared,
+/// the write escapes the group and then fails the undeclared-access
+/// sweep, which halts the shard instead of refusing the transaction.
+#[test]
+fn an_undeclared_record_cell_refuses_the_batch() {
+    let mut legs = LegPlan::whole();
+    legs.departs(0, 0, record_site()).unwrap();
+    let entry = BatchTx::new(
+        tx(6),
+        declared(&[Effect {
+            target: EffectTarget::Point(cell(PAYER)),
+            mode: Mode::Reserve { amount: 200 },
+        }]),
+        env(),
+    )
+    .with_calls(vec![call("take", 0, 1)])
+    .with_legs(legs);
+
+    assert_eq!(
+        execute(
+            Arc::new(MemoryStore::new()) as Arc<dyn Baseline>,
+            &[entry],
+            ExecutionMode::Serial,
+        )
+        .err(),
+        Some(BatchError::UndeclaredCrossingCell {
+            tx: tx(6),
+            key: record_site().key(),
+        }),
+    );
+}
+
+/// The claim family is screened on the same reading, and it is the half
+/// where the group matters most: two transactions reaching for one
+/// crossing have to land in one group for either to see the other's
+/// write.
+#[test]
+fn an_undeclared_claim_cell_refuses_the_batch() {
+    let mut legs = LegPlan::whole();
+    legs.skip(0);
+    legs.arrives(
+        0,
+        0,
+        Crossed {
+            resource: RESOURCE,
+            amount: 200,
+        },
+        claim_site(),
+    )
+    .unwrap();
+    let entry = BatchTx::new(
+        tx(7),
+        declared(&[Effect {
+            target: EffectTarget::Point(cell(PAYEE)),
+            mode: Mode::Delta { moves: Moves::Both },
+        }]),
+        env(),
+    )
+    .with_calls(vec![call("take", 0, 1), call("put", 1, 0)])
+    .with_legs(legs);
+
+    assert_eq!(
+        execute(
+            Arc::new(MemoryStore::new()) as Arc<dyn Baseline>,
+            &[entry],
+            ExecutionMode::Serial,
+        )
+        .err(),
+        Some(BatchError::UndeclaredCrossingCell {
+            tx: tx(7),
+            key: claim_site().key(),
+        }),
+    );
+}
+
+/// Replaying the sending half finds its own record cell committed and
+/// refuses before the node runs — a second issue would debit the
+/// producing vault twice and rewrite the record with the bytes already
+/// in it.
+#[test]
+fn a_replayed_issue_finds_its_own_record() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+
+    let replayed = then(&store, sending(200), sending(200));
+    assert_eq!(
+        replayed.outcome,
+        Outcome::EscrowAlreadyIssued {
+            key: record_site().key(),
+        },
+    );
+    assert_eq!(replayed.fuel, 0, "the node never ran");
+    assert!(replayed.delta.cells.is_empty() && replayed.delta.movements.is_empty());
+    assert!(replayed.escrow.is_empty(), "and nothing crossed twice");
+}
+
+/// The same on the receiving side: a committed claim says the crossing
+/// is spent, whoever spent it.
+#[test]
+fn a_replayed_claim_finds_the_crossing_taken() {
+    let crossed = Crossed {
+        resource: RESOURCE,
+        amount: 200,
+    };
+    let mut arrived = MemoryStore::new();
+    arrived.write(cell(PAYEE), encode_amount(0).to_vec());
+
+    let replayed = then(
+        &arrived,
+        receiving_as(tx(2), crossed),
+        receiving_as(tx(2), crossed),
+    );
+    assert_eq!(
+        replayed.outcome,
+        Outcome::EscrowAlreadyClaimed {
+            key: claim_site().key(),
+        },
+    );
+    assert_eq!(replayed.fuel, 0, "the node never ran");
+    assert!(replayed.delta.movements.is_empty(), "and credited nothing");
+}
+
+/// Two transactions reaching for one crossing in a single batch: the
+/// declaration puts them in one conflict group, the group runs in
+/// canonical order, and the second finds the first's claim. Driven in
+/// parallel mode, because that is the arrangement where a crossing not
+/// forced into a group would be claimed twice.
+///
+/// The claim cell is the whole of what groups them — the two also
+/// declare one delta target, and deltas commute — so this is the
+/// screen's own reason, driven.
+#[test]
+fn one_crossing_is_claimed_once_across_two_claimers() {
+    let crossed = Crossed {
+        resource: RESOURCE,
+        amount: 200,
+    };
+    let mut arrived = MemoryStore::new();
+    arrived.write(cell(PAYEE), encode_amount(0).to_vec());
+
+    let batch = vec![
+        receiving_as(tx(0x21), crossed),
+        receiving_as(tx(0x22), crossed),
+    ];
+    let outcome = execute(
+        Arc::new(arrived) as Arc<dyn Baseline>,
+        &batch,
+        ExecutionMode::Parallel,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(
+            outcome.receipts[&tx(0x21)].outcome,
+            Outcome::Completed { .. }
+        ),
+        "{:?}",
+        outcome.receipts[&tx(0x21)],
+    );
+    assert_eq!(
+        outcome.receipts[&tx(0x22)].outcome,
+        Outcome::EscrowAlreadyClaimed {
+            key: claim_site().key(),
+        },
+    );
+    assert_eq!(outcome.receipts[&tx(0x22)].escrow.claimed(RESOURCE), 0);
 }

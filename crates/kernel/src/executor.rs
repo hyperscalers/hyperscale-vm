@@ -292,6 +292,21 @@ pub enum BatchError {
         /// The offending transaction.
         tx: TxHash,
     },
+    /// An escrow record or claim key the transaction's effect set does
+    /// not declare as an exclusive write.
+    ///
+    /// The nullifier's rule, for the nullifier's reason: the declaration
+    /// is what forces racing claimers of one crossing into a single
+    /// conflict group, and an undeclared key escapes that group only to
+    /// fail the undeclared-access sweep, which halts the shard rather
+    /// than refusing the transaction.
+    #[error("transaction {tx:?} writes an undeclared crossing cell {key:?}")]
+    UndeclaredCrossingCell {
+        /// The offending transaction.
+        tx: TxHash,
+        /// The crossing key missing from the declaration.
+        key: SubstateKey,
+    },
     /// A session refused to finish — an oracle violation or store failure.
     #[error("finishing {tx:?}")]
     Finish {
@@ -676,6 +691,29 @@ fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
     }
 }
 
+/// The crossing cell that says this execution's work is already done,
+/// if the store holds one.
+///
+/// Claims before records, so two committed cells name one outcome
+/// whatever else is in the batch. The claim is the reading a caller
+/// wants first: it is the cell another party can write, where a record
+/// only ever says this leg already ran.
+fn crossing_committed(
+    entry: &BatchTx,
+    store: &OverlayStore,
+    locality: &Locality,
+) -> Option<Outcome> {
+    let committed = |key: &SubstateKey| locality.is_local(key.owner) && store.cell(*key).is_some();
+    if let Some(key) = entry.legs.claims().find(|key| committed(key)) {
+        return Some(Outcome::EscrowAlreadyClaimed { key });
+    }
+    entry
+        .legs
+        .records()
+        .find(|key| committed(key))
+        .map(|key| Outcome::EscrowAlreadyIssued { key })
+}
+
 /// Execute one conflict group: members in canonical order, each threading
 /// the group's store; a non-completed transaction leaves the store as it
 /// found it.
@@ -713,6 +751,20 @@ fn run_group<R: GuestRunner>(
             .map(|record| record.nullifier);
         if let Some(key) = spent {
             receipts.push((entry.tx, abort_receipt(Outcome::NullifierSpent { key }, 0)));
+            continue;
+        }
+        // A crossing cell already committed says this execution has
+        // already run, or that somebody else took what it came for.
+        // Either way the node must not run: a second claim would credit
+        // value nobody issued, and a second issue would debit the
+        // producing vault twice and rewrite the record with the bytes
+        // already in it.
+        //
+        // Locality-filtered like the nullifier's, and for its reason —
+        // only the shard holding the cell can read it, and elsewhere the
+        // owning shard's verdict arrives through the tick combine.
+        if let Some(outcome) = crossing_committed(entry, &store, locality) {
+            receipts.push((entry.tx, abort_receipt(outcome, 0)));
             continue;
         }
         let before = store.clone();
@@ -834,18 +886,33 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
         }
 
         for record in &entry.nullifiers {
-            if !entry.declaration.set.contains(&Effect {
-                target: EffectTarget::Point(record.nullifier),
-                mode: Mode::Write { moves: Moves::Both },
-            }) {
+            if !declares_exclusively(entry, record.nullifier) {
                 return Err(BatchError::UndeclaredNullifier {
                     tx: entry.tx,
                     key: record.nullifier,
                 });
             }
         }
+
+        // Both crossing families, on the same reading: a record and a
+        // claim are cells the execution writes, and the declaration is
+        // what puts every writer of one of them in one conflict group.
+        for key in entry.legs.records().chain(entry.legs.claims()) {
+            if !declares_exclusively(entry, key) {
+                return Err(BatchError::UndeclaredCrossingCell { tx: entry.tx, key });
+            }
+        }
     }
     Ok(())
+}
+
+/// Whether a batch entry declares `key` as the exclusive write a kernel
+/// cell's once-only guarantee rests on.
+fn declares_exclusively(entry: &BatchTx, key: SubstateKey) -> bool {
+    entry.declaration.set.contains(&Effect {
+        target: EffectTarget::Point(key),
+        mode: Mode::Write { moves: Moves::Both },
+    })
 }
 
 /// Execute a batch of transactions over committed state.

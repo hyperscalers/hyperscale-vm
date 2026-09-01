@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::CrossingSite;
-use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, ResourceAddr};
+use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, ResourceAddr, SubstateKey};
 
 use crate::modes::ModeError;
 
@@ -188,6 +188,16 @@ impl LegPlan {
     #[must_use]
     pub fn claim(&self, node: u32, output: u32) -> Option<CrossingSite> {
         self.claimed.get(&(node, output)).copied()
+    }
+
+    /// Every record cell this execution writes, in edge order.
+    pub fn records(&self) -> impl Iterator<Item = SubstateKey> + '_ {
+        self.outbound.values().map(CrossingSite::key)
+    }
+
+    /// Every claim cell this execution writes, in edge order.
+    pub fn claims(&self) -> impl Iterator<Item = SubstateKey> + '_ {
+        self.claimed.values().map(CrossingSite::key)
     }
 
     /// Mark a node as one another shard runs.
