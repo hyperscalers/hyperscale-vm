@@ -133,6 +133,41 @@ impl Admitted {
     pub const fn declaration(&self) -> &Declaration {
         &self.declaration
     }
+
+    /// Whether each node's frame is answered by admission alone, in node
+    /// order.
+    ///
+    /// The lowering already split every condition by where it is judged:
+    /// one answerable from committed state joined the union declaration
+    /// under this node's number, and every other rides the call. So the
+    /// question is a read over the two halves rather than a second walk
+    /// over the injection — which has five refusal paths and a hasher,
+    /// and would have to be kept in step with admission by hand.
+    ///
+    /// What consumes it is the star classifier: an outbound leg
+    /// materializes after the core committed, so a verdict its frame
+    /// reaches at materialization lands on a caller that already
+    /// committed.
+    #[must_use]
+    pub fn answered_at_admission(&self) -> Vec<bool> {
+        let mut answered: Vec<bool> = self
+            .calls
+            .iter()
+            .map(|call| {
+                call.requires
+                    .iter()
+                    .all(|rule| rule.judged() == Judged::AtAdmission)
+            })
+            .collect();
+        for condition in &self.declaration.conditions {
+            if let Some(node) = condition.node
+                && let Some(slot) = answered.get_mut(node as usize)
+            {
+                *slot = false;
+            }
+        }
+        answered
+    }
 }
 
 /// Admit a graph: check well-formedness, linearity, and type agreement

@@ -139,6 +139,17 @@ pub enum Rule<L> {
 /// inside the declaring node's own leg, which a caller may already have
 /// committed without waiting for — which is what a
 /// [`Total`](crate::signature::Totality::Total) frame may not carry.
+///
+/// That reading holds for admission and it is where the star classifier
+/// parts company on materialization. A node the classifier peels off the
+/// core as an outbound leg materializes on its own shard *after* the
+/// core committed, so a verdict reached there does land on a caller that
+/// already committed — the halt fence and any movement entry resolving
+/// to a [`Presence`](crate::manifest::JudgedLeaf::Presence) leaf both
+/// can. So the classifier asks for [`Judged::AtAdmission`] alone rather
+/// than for this, and the two questions stay apart: this one is about
+/// what may abort a transaction, and that one is about what may be
+/// waited on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Judged {
     /// From presented evidence, which is signed content and needs no

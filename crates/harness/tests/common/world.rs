@@ -787,7 +787,12 @@ pub fn routing_fingerprint(routing: &Routing) -> String {
 /// The star the classifier reads off a graph's admitted form.
 pub fn star_of(world: &Records, graph: &ManifestGraph) -> StarShape {
     let admitted = admit_here(graph, composer(graph), world).expect("admits");
-    classify_star(admitted.manifest(), world, &PrefixShardResolver { bits: 8 })
+    classify_star(
+        admitted.manifest(),
+        world,
+        &admitted.answered_at_admission(),
+        &PrefixShardResolver { bits: 8 },
+    )
 }
 
 pub fn run_both(

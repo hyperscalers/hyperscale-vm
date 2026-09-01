@@ -26,6 +26,16 @@ pub struct Bounds {
 }
 
 impl Bounds {
+    /// Whether nothing is declared, so no amount can fail them.
+    ///
+    /// What an outbound leg needs of the edges it consumes: a declared
+    /// bound is a refusal that runs before the callee's body, so a leg
+    /// carrying one could refuse what the core was told could not.
+    #[must_use]
+    pub const fn admit_anything(&self) -> bool {
+        self.min.is_none() && self.max.is_none()
+    }
+
     /// Whether `amount` satisfies both bounds.
     #[must_use]
     pub const fn admits(&self, amount: u128) -> bool {

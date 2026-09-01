@@ -89,13 +89,22 @@ pub struct StarShape {
 }
 
 /// Classify a manifest into the star its shape implies.
+///
+/// `answered` is [`Admitted::answered_at_admission`], in node order: the
+/// outbound test is not a function of the manifest and its metadata
+/// alone, because what a frame ends up carrying is a fact about the
+/// injection. It stays fixed by the envelope forever all the same, since
+/// presented records are envelope content.
+///
+/// [`Admitted::answered_at_admission`]: crate::Admitted::answered_at_admission
 #[must_use]
 pub fn classify(
     manifest: &Manifest,
     chain: &dyn ChainRecords,
+    answered: &[bool],
     shards: &dyn ShardResolver,
 ) -> StarShape {
-    let roles = classify_roles(manifest, chain);
+    let roles = classify_roles(manifest, chain, answered);
     let (crossings, stages) = chain_depths(manifest, shards, &roles);
     let strategy = classify_strategy(manifest, &roles, crossings, stages);
     StarShape {
@@ -115,15 +124,24 @@ pub fn classify(
 ///   can be among its arguments — L3's core-independence, falling out of
 ///   the shape instead of needing its own analysis — and it is
 ///   reservation-shaped: one reserve declared, one value out.
-/// - An **outbound** leg's output feeds nothing, and its method carries
-///   the verified [`Totality::Total`] mark, so the core cannot be made to
-///   wait on a verdict it might refuse.
+/// - An **outbound** leg's output feeds nothing and nothing about it can
+///   refuse: the verified [`Totality::Total`] mark over its body, no
+///   evidence asked of its caller, no declared bound on an edge it
+///   consumes, and a frame admission alone answers. The core cannot be
+///   made to wait on a verdict it might refuse.
 ///
 /// Every other node is core, and so is every node either test is unsure
 /// about. That direction is the safe one: a node wrongly called core
 /// costs the transaction a decomposition it could have had, while a leg
 /// wrongly peeled off the core costs the atomicity the core exists for.
-fn classify_roles(manifest: &Manifest, chain: &dyn ChainRecords) -> Vec<Role> {
+///
+/// A node whose `answered` entry is missing is core on the same rule.
+#[must_use]
+pub fn classify_roles(
+    manifest: &Manifest,
+    chain: &dyn ChainRecords,
+    answered: &[bool],
+) -> Vec<Role> {
     let consumed: BTreeSet<u32> = manifest
         .nodes
         .iter()
@@ -155,9 +173,12 @@ fn classify_roles(manifest: &Manifest, chain: &dyn ChainRecords) -> Vec<Role> {
                 .all(|input| matches!(input, NodeInput::Literal(_)));
             let index = u32::try_from(index).unwrap_or(u32::MAX);
 
+            let unrefusable = answered.get(index as usize).copied().unwrap_or(false)
+                && is_unrefusable(signature, &node.inputs);
+
             if takes_no_edge && is_reservation_shaped(signature) {
                 Role::Inbound
-            } else if !consumed.contains(&index) && signature.totality == Totality::Total {
+            } else if !consumed.contains(&index) && unrefusable {
                 Role::Outbound
             } else {
                 Role::Core
@@ -166,29 +187,53 @@ fn classify_roles(manifest: &Manifest, chain: &dyn ChainRecords) -> Vec<Role> {
         .collect()
 }
 
-/// Whether a signature is the shape an inbound leg has to be: it declares
-/// a conditional decrement, and it yields exactly one value out.
+/// Whether a signature is the shape an inbound leg has to be: one
+/// conditional decrement of its own, and no other movement beside it.
 ///
 /// The reserve is what makes the leg's refusal local — the amount is
 /// judged where the funds live, and a refusal there releases rather than
-/// aborting the core — and the single output is what makes the value it
-/// yields nameable as one escrow certificate.
+/// aborting the core.
+///
+/// The reserve has to be the *whole* job, and that is what INV-LL-3 rests
+/// on. A method declaring one reserve, an exclusive write on a second
+/// cell and a delta on a third would commit those two before the core
+/// has a verdict, where a reclaim restores the escrowed amount and
+/// nothing else — nothing stores an inverse of the rest. Asking that
+/// every clause either moves nothing or is that one reserve says so
+/// directly, where an output count only stood in for it.
 fn is_reservation_shaped(signature: &MethodSignature) -> bool {
-    signature.outputs.len() == 1
-        && signature
-            .effects
-            .iter()
-            .flat_map(Clause::effects)
-            .any(|clause| {
-                matches!(
-                    clause,
-                    Clause::Effect {
-                        reach: None,
-                        mode: ModeExpr::Reserve(_),
-                        ..
-                    }
-                )
-            })
+    let mut reserves = 0;
+    for clause in signature.effects.iter().flat_map(Clause::effects) {
+        let Clause::Effect { mode, reach, .. } = clause else {
+            continue;
+        };
+        if mode.moves().is_none() {
+            continue;
+        }
+        if matches!(mode, ModeExpr::Reserve(_)) && reach.is_none() {
+            reserves += 1;
+        } else {
+            return false;
+        }
+    }
+    reserves == 1
+}
+
+/// Whether nothing about this call can refuse before its body runs.
+///
+/// [`Totality::Total`] covers the body and nothing else, and two
+/// refusals run ahead of it: the method's own authority gate, which
+/// nothing stops a total method carrying, and the signed bounds on the
+/// edges it consumes, which a producer returning too little fails
+/// whatever the callee would have done. A declared bound therefore costs
+/// the decomposition rather than the atomicity.
+fn is_unrefusable(signature: &MethodSignature, inputs: &[NodeInput]) -> bool {
+    signature.totality == Totality::Total
+        && !signature.requires_evidence()
+        && inputs.iter().all(|input| match input {
+            NodeInput::Edge { bounds, .. } => bounds.admit_anything(),
+            NodeInput::Literal(_) => true,
+        })
 }
 
 /// Decide how this transaction's participants divide its execution.
@@ -292,18 +337,55 @@ mod tests {
     use hyperscale_vm_types::Moves;
 
     use super::{MAX_STAGED_DEPTH, Role, Strategy, classify, classify_strategy};
-    use crate::dsl::{Expr, ModeExpr};
+    use crate::dsl::{Clause, Expr, ModeExpr};
     use crate::hash::TestHasher;
     use crate::manifest::{Bounds, Manifest, Node, NodeInput};
     use crate::metadata::PackageMetadata;
-    use crate::records::Records;
+    use crate::records::{ChainRecords, Records};
+    use crate::resource::{GrantsExpr, ResourceKind};
     use crate::route::ShardResolver;
+    use crate::rule::{RuleExpr, RuleLeaf};
     use crate::signature::{MethodSignature, Totality};
     use crate::test_worlds::{
         instance_of, issued_by, meta_of, method, payer_payee_world, pkg, resolver, self_point,
         star_world,
     };
     use crate::types::{EdgeContent, SlotId, Value};
+
+    /// Every frame answered by admission alone.
+    ///
+    /// The hand-built manifests here carry no injected entry and no
+    /// stored gate, so this states the fixture's own premise rather than
+    /// standing in for admission — a test about the totality half says so
+    /// where a permissive default would have hidden it.
+    fn answered(manifest: &Manifest) -> Vec<bool> {
+        vec![true; manifest.nodes.len()]
+    }
+
+    /// The star world with one method's signature replaced.
+    ///
+    /// Rebuilt rather than re-published: a package hash is a content
+    /// address, so a second publish under one hash keeps the first
+    /// record and a test that mutated in place would assert against the
+    /// package it meant to replace.
+    fn star_world_with(
+        package: &str,
+        method: &str,
+        signature: &MethodSignature,
+    ) -> (Records, Manifest) {
+        let (base, manifest) = star_world(Totality::Total);
+        let mut chain = Records::new();
+        for name in ["vault", "venue", "sink"] {
+            let mut metadata =
+                (*base.package(pkg(name)).expect("the fixture published it")).clone();
+            if name == package {
+                metadata.methods.insert(method.into(), signature.clone());
+            }
+            chain.packages.publish_unchecked(pkg(name), metadata);
+            chain.instances.create(&TestHasher, meta_of(name));
+        }
+        (chain, manifest)
+    }
 
     /// One instance calling itself: nothing to decompose.
     fn solo_world() -> (Records, Manifest) {
@@ -334,7 +416,7 @@ mod tests {
     #[test]
     fn a_single_shard_transaction_alternates_zero_times() {
         let (chain, manifest) = solo_world();
-        let star = classify(&manifest, &chain, &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
         assert_eq!(star.crossings, 0);
     }
 
@@ -350,7 +432,7 @@ mod tests {
             resolver().shard_of(instance_of("payee").into()),
             "the fixture has to straddle, or the depth below proves nothing",
         );
-        let star = classify(&manifest, &chain, &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
         assert_eq!(star.crossings, 1);
     }
 
@@ -414,7 +496,7 @@ mod tests {
             ],
         };
 
-        let star = classify(&manifest, &chain, &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
         assert_eq!(star.crossings, 1);
     }
 
@@ -424,7 +506,7 @@ mod tests {
     #[test]
     fn a_reservation_shaped_source_is_an_inbound_leg() {
         let (chain, manifest) = star_world(Totality::Fallible);
-        let star = classify(&manifest, &chain, &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
         assert_eq!(star.roles[0], Role::Inbound);
         assert_eq!(star.roles[1], Role::Core, "the venue is the core");
     }
@@ -441,7 +523,7 @@ mod tests {
             (Totality::Total, Role::Outbound),
         ] {
             let (chain, manifest) = star_world(totality);
-            let star = classify(&manifest, &chain, &resolver());
+            let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
             assert_eq!(
                 star.roles[2], expected,
                 "a {totality:?} sink should be {expected:?}",
@@ -486,7 +568,7 @@ mod tests {
             ],
         };
 
-        let star = classify(&manifest, &chain, &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
         assert_eq!(
             star.roles[1],
             Role::Core,
@@ -494,12 +576,134 @@ mod tests {
         );
     }
 
+    /// A gate on a total sink is a refusal the mark does not cover: the
+    /// checker verified the body, and the gate runs before it. A core
+    /// waiting on such a leg was told a verdict could not come from a
+    /// node that can still produce one.
+    #[test]
+    fn a_gated_total_sink_is_core() {
+        let (chain, manifest) = star_world_with(
+            "sink",
+            "deposit",
+            &MethodSignature {
+                totality: Totality::Total,
+                effects: vec![
+                    self_point(SlotId(3), ModeExpr::Delta { moves: Moves::Both }),
+                    Clause::Requires {
+                        guard: None,
+                        rule: RuleExpr::Require(RuleLeaf::Claim(Expr::SelfAddr)),
+                    },
+                ],
+                ..MethodSignature::default()
+            },
+        );
+
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
+        assert_eq!(star.roles[2], Role::Core, "a gated sink can still refuse");
+    }
+
+    /// A signed bound on the edge a sink consumes is refused by the
+    /// manifest before the callee is reached, so the mark over its body
+    /// says nothing about it. The bound costs the decomposition, never
+    /// the atomicity.
+    #[test]
+    fn a_sink_behind_a_declared_bound_is_core() {
+        let (chain, manifest) = star_world(Totality::Total);
+        let mut bounded = manifest.clone();
+        let NodeInput::Edge { bounds, .. } = &mut bounded.nodes[2].inputs[0] else {
+            panic!("the sink consumes the venue's edge");
+        };
+        bounds.min = Some(1);
+
+        assert_eq!(
+            classify(&manifest, &chain, &answered(&manifest), &resolver()).roles[2],
+            Role::Outbound,
+            "the fixture has to be outbound unbounded, or the verdict below proves nothing",
+        );
+        assert_eq!(
+            classify(&bounded, &chain, &answered(&bounded), &resolver()).roles[2],
+            Role::Core,
+        );
+    }
+
+    /// A frame carrying a verdict later than admission is one an outbound
+    /// leg may not have: it materializes on its own shard after the core
+    /// committed, so the refusal lands on a caller that already did.
+    #[test]
+    fn a_sink_judged_later_than_admission_is_core() {
+        let (chain, manifest) = star_world(Totality::Total);
+        let mut later = answered(&manifest);
+        later[2] = false;
+
+        assert_eq!(
+            classify(&manifest, &chain, &answered(&manifest), &resolver()).roles[2],
+            Role::Outbound,
+        );
+        assert_eq!(
+            classify(&manifest, &chain, &later, &resolver()).roles[2],
+            Role::Core,
+        );
+    }
+
+    /// A reserve beside another movement is not a reservation-shaped leg.
+    /// The second movement commits before the core has a verdict and no
+    /// reclaim restores it — which is INV-LL-3, and it is what the leg
+    /// test has to say rather than imply.
+    #[test]
+    fn a_reserve_beside_another_movement_is_not_inbound() {
+        let (chain, manifest) = star_world_with(
+            "vault",
+            "withdraw",
+            &MethodSignature {
+                outputs: vec![Expr::SelfResource {
+                    kind: ResourceKind::Fungible,
+                    material: vec![],
+                    grants: GrantsExpr::new(),
+                }],
+                effects: vec![
+                    self_point(SlotId(1), ModeExpr::Reserve(Expr::Arg(0))),
+                    self_point(SlotId(4), ModeExpr::Write { moves: Moves::Both }),
+                ],
+                ..MethodSignature::default()
+            },
+        );
+
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
+        assert_eq!(star.roles[0], Role::Core);
+    }
+
+    /// A clause that moves nothing sits beside the reserve without
+    /// disqualifying it — the test is about what commits, and a read
+    /// commits nothing.
+    #[test]
+    fn a_reserve_beside_a_read_is_still_inbound() {
+        let (chain, manifest) = star_world_with(
+            "vault",
+            "withdraw",
+            &MethodSignature {
+                outputs: vec![Expr::SelfResource {
+                    kind: ResourceKind::Fungible,
+                    material: vec![],
+                    grants: GrantsExpr::new(),
+                }],
+                effects: vec![
+                    self_point(SlotId(1), ModeExpr::Reserve(Expr::Arg(0))),
+                    self_point(SlotId(4), ModeExpr::Read),
+                ],
+                ..MethodSignature::default()
+            },
+        );
+
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
+        assert_eq!(star.roles[0], Role::Inbound);
+    }
+
     /// Nothing crossing means one participant, so the two strategies name
     /// the same execution and the verdict is the one claiming less.
     #[test]
     fn a_single_shard_transaction_does_not_decompose() {
         let (chain, manifest) = solo_world();
-        let star = classify(&manifest, &chain, &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
         assert_eq!(star.crossings, 0);
         assert_eq!(star.strategy, Strategy::Replicated);
     }
@@ -511,7 +715,7 @@ mod tests {
     #[test]
     fn a_crossing_within_the_budget_decomposes() {
         let (chain, manifest) = payer_payee_world();
-        let star = classify(&manifest, &chain, &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
         assert!(star.crossings <= MAX_STAGED_DEPTH);
         assert_eq!(star.strategy, Strategy::LegLocal);
     }
@@ -546,7 +750,7 @@ mod tests {
     #[test]
     fn a_leg_moving_named_instances_replicates() {
         let (chain, manifest) = star_world(Totality::Total);
-        let fungible = classify(&manifest, &chain, &resolver());
+        let fungible = classify(&manifest, &chain, &answered(&manifest), &resolver());
         assert_eq!(fungible.roles[0], Role::Inbound);
         assert_eq!(fungible.strategy, Strategy::LegLocal);
 
@@ -559,7 +763,7 @@ mod tests {
             content: EdgeContent::NonFungible { ids: vec![7] },
             bounds: Bounds::default(),
         }];
-        let star = classify(&named, &chain, &resolver());
+        let star = classify(&named, &chain, &answered(&named), &resolver());
         assert_eq!(star.strategy, Strategy::Replicated);
     }
 }
