@@ -51,13 +51,13 @@ pub const MAX_MANIFEST_NODES: usize = 4096;
 /// no participant could encode a verdict for.
 ///
 /// Sized against its neighbour in that leaf rather than derived from
-/// [`MAX_MANIFEST_NODES`]. An escrowed entry is 56 bytes, so this admits
-/// 14 KB per outcome — byte-comparable to the counterpart list beside it,
+/// [`MAX_MANIFEST_NODES`]. An escrowed entry is 104 bytes, so this admits
+/// 13 KB per outcome — byte-comparable to the counterpart list beside it,
 /// which is the right yardstick. Deriving from the node bound instead
-/// would admit 229 KB, sixteen times its neighbour, in a list that folds
+/// would admit 426 KB, thirty times its neighbour, in a list that folds
 /// into every receipt leaf of a block. So the node bound is the ceiling
 /// this must not exceed, never the derivation.
-pub const MAX_CROSSINGS_PER_TX: usize = 256;
+pub const MAX_CROSSINGS_PER_TX: usize = 128;
 
 const _: () = assert!(
     MAX_CROSSINGS_PER_TX <= MAX_MANIFEST_NODES,
