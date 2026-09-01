@@ -43,6 +43,27 @@ pub const MAX_EVENT_PAYLOAD_BYTES: usize = 4096;
 /// walk produces is what carries a charge.
 pub const MAX_MANIFEST_NODES: usize = 4096;
 
+/// The bound on value edges one transaction may send across a shard
+/// boundary.
+///
+/// Each crossing is a fixed-width entry in the receipt leaf's escrowed
+/// list, so a shape with more of them than one outcome can carry is one
+/// no participant could encode a verdict for.
+///
+/// Sized against its neighbour in that leaf rather than derived from
+/// [`MAX_MANIFEST_NODES`]. An escrowed entry is 56 bytes, so this admits
+/// 14 KB per outcome — byte-comparable to the counterpart list beside it,
+/// which is the right yardstick. Deriving from the node bound instead
+/// would admit 229 KB, sixteen times its neighbour, in a list that folds
+/// into every receipt leaf of a block. So the node bound is the ceiling
+/// this must not exceed, never the derivation.
+pub const MAX_CROSSINGS_PER_TX: usize = 256;
+
+const _: () = assert!(
+    MAX_CROSSINGS_PER_TX <= MAX_MANIFEST_NODES,
+    "a transaction cannot cross more edges than it has nodes to produce them",
+);
+
 /// The bytes one node's answer may carry.
 ///
 /// An answer is receipt payload whose size a guest chose, which is what

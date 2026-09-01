@@ -3,58 +3,31 @@
 //!
 //! Standalone from the routing fold — nothing on the execution path
 //! consumes the verdict yet, and the classification is a pure function
-//! of the manifest, the metadata, and shard placement, so it is asked
-//! where it is wanted rather than computed on every `route()` call.
+//! of the manifest, the metadata, admission's lowering and shard
+//! placement, so it is asked where it is wanted rather than computed on
+//! every `route()` call.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_types::CallTarget;
+use hyperscale_vm_types::{Address, CallTarget, MAX_CROSSINGS_PER_TX};
 
+use crate::claim::Claim;
 use crate::dsl::{Clause, ModeExpr};
 use crate::manifest::{Manifest, NodeInput};
 use crate::records::ChainRecords;
 use crate::route::ShardResolver;
 use crate::signature::{MethodSignature, Totality};
-use crate::types::EdgeContent;
-
-/// The deepest route staging is admissible for.
-///
-/// A budget rather than a capability. Staging never wins on latency —
-/// every stage past the first adds an inclusion-to-certification gap and
-/// a composition wait, where replication fetches every counterpart's
-/// committed reads in one round whatever the shape — so what it buys is
-/// the deleted replicated executions and the hot shard's decongestion,
-/// and what it costs is settlement latency. Measured against a gap of one
-/// block, a staged route runs about 1.6 times the replicated equivalent's
-/// settlement at depth two and about 2.1 at depth three; the budget is
-/// twice, so two is admitted and three is refused.
-pub const MAX_STAGED_DEPTH: u32 = 2;
-
-/// How a transaction's participants divide its execution.
-///
-/// Both are always correct and the choice is a cost decision, which is
-/// why it can be derived rather than declared: replication is never
-/// unavailable, and it is the fallback for every shape where staging
-/// costs more than it saves.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Strategy {
-    /// Every participant executes the whole manifest and computes the
-    /// same result from the same committed inputs.
-    #[default]
-    Replicated,
-    /// Each participant executes only the legs whose cells it owns and
-    /// takes every other leg's result as an attested value.
-    LegLocal,
-}
+use crate::types::{EdgeContent, ShardId};
 
 /// Where a manifest node sits in the star a decomposable transaction
 /// takes the shape of.
 ///
-/// The topology is one core with legs on either side of it, and the two
-/// leg kinds differ by which side: an inbound leg runs before the core and
-/// hands it attested value, an outbound leg runs after and cannot refuse
-/// what it is handed. Everything else is core, which is what the
-/// transaction's atomicity has to cover.
+/// The topology is one core with legs around it, and the leg kinds
+/// differ by what they do to value: an inbound leg runs before the core
+/// and hands it attested value, an outbound leg runs after and cannot
+/// refuse what it is handed, an attesting leg moves none at all.
+/// Everything else is core, which is what the transaction's atomicity has
+/// to cover.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
     /// Runs before the core, on arguments the core did not produce, and
@@ -68,6 +41,38 @@ pub enum Role {
     /// Runs after the core and offers it no veto: nothing it does can
     /// come back as a refusal the core would have to answer.
     Outbound,
+    /// Commits nothing. It reads, it proves, and the nodes presenting
+    /// what it proved run beside it on its own shard — so it bears no
+    /// part of the atomicity the core exists for, and joins the core only
+    /// where nothing else would.
+    Attesting,
+}
+
+/// One value edge, as the node consuming it sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ValueEdge {
+    /// The producing node's index.
+    pub source: u32,
+    /// Which of the producer's outputs it carries.
+    pub output: u32,
+    /// Whether the edge names instances rather than counting amounts.
+    pub non_fungible: bool,
+}
+
+/// One node's placement-free shape: where it sits, what it consumes, and
+/// whose authority it speaks on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeShape {
+    /// The instance invoked, whose owner prefix fixes the node's shard.
+    pub target: Address,
+    /// The value edges this node consumes, in argument order.
+    pub edges: Vec<ValueEdge>,
+    /// The subjects this node presents a claim on.
+    ///
+    /// The manifest resolved every evidence reference into a claim, so
+    /// the producing node is no longer named — what is left is the
+    /// subject, which is what the co-location question is about anyway.
+    pub presents: Vec<Address>,
 }
 
 /// A classified transaction: the star its shape implies.
@@ -75,17 +80,12 @@ pub enum Role {
 pub struct StarShape {
     /// Where each manifest node sits in the star, in node order.
     pub roles: Vec<Role>,
-    /// How many times the longest dependency chain changes shard. Zero
-    /// exactly when the whole structure sits on one shard, which is what
-    /// says there is nothing to decompose.
-    pub crossings: u32,
-    /// How many of those crossings something waits on — the settlement
-    /// latency staging would add, and what [`MAX_STAGED_DEPTH`] budgets.
-    /// Lower than [`Self::crossings`] by the crossings into outbound
-    /// legs, which the core commits without hearing back from.
-    pub stages: u32,
-    /// How this transaction's participants divide its execution.
-    pub strategy: Strategy,
+    /// The shards the core's nodes sit on. May be empty — see
+    /// [`Self::decomposes`], which refuses that case.
+    pub core: BTreeSet<ShardId>,
+    /// How many value edges land on a shard other than their producer's.
+    /// Each is one certificate entry, which is what bounds it.
+    pub crossing_edges: u32,
 }
 
 /// Classify a manifest into the star its shape implies.
@@ -97,51 +97,55 @@ pub struct StarShape {
 /// presented records are envelope content.
 ///
 /// [`Admitted::answered_at_admission`]: crate::Admitted::answered_at_admission
-#[must_use]
+///
+/// # Errors
+///
+/// [`UnresolvedTarget`], on [`classify_roles`]'s terms.
 pub fn classify(
     manifest: &Manifest,
     chain: &dyn ChainRecords,
     answered: &[bool],
     shards: &dyn ShardResolver,
-) -> StarShape {
-    let roles = classify_roles(manifest, chain, answered);
-    let (crossings, stages) = chain_depths(manifest, shards, &roles);
-    let strategy = classify_strategy(manifest, &roles, crossings, stages);
-    StarShape {
-        roles,
-        crossings,
-        stages,
-        strategy,
-    }
+) -> Result<StarShape, UnresolvedTarget> {
+    let roles = classify_roles(manifest, chain, answered)?;
+    Ok(star_at(&roles, &shape_of(manifest), shards))
 }
 
-/// Classify every manifest node into the star.
+/// Classify every manifest node into the star, before placement.
 ///
-/// The two leg tests are structural, and both are read off the manifest's
-/// own edges rather than off what a method is named:
+/// The leg tests are structural, and each is read off the manifest's own
+/// edges and the method's declaration rather than off what a method is
+/// named:
 ///
 /// - An **inbound** leg takes no value edge, so nothing the core produces
-///   can be among its arguments — L3's core-independence, falling out of
-///   the shape instead of needing its own analysis — and it is
-///   reservation-shaped: one reserve declared, one value out.
+///   can be among its arguments, and its only movement is one reserve.
+/// - An **attesting** leg takes no value edge and moves nothing at all.
 /// - An **outbound** leg's output feeds nothing and nothing about it can
 ///   refuse: the verified [`Totality::Total`] mark over its body, no
 ///   evidence asked of its caller, no declared bound on an edge it
-///   consumes, and a frame admission alone answers. The core cannot be
-///   made to wait on a verdict it might refuse.
+///   consumes, and a frame admission alone answers.
 ///
-/// Every other node is core, and so is every node either test is unsure
+/// Every other node is core, and so is every node the tests are unsure
 /// about. That direction is the safe one: a node wrongly called core
 /// costs the transaction a decomposition it could have had, while a leg
 /// wrongly peeled off the core costs the atomicity the core exists for.
 ///
 /// A node whose `answered` entry is missing is core on the same rule.
-#[must_use]
+///
+/// # Errors
+///
+/// [`UnresolvedTarget`] where a node names a target this chain view
+/// cannot resolve. Defaulting it to core would be the safe direction for
+/// a resolvable-but-odd method and the wrong one here: it caches a role
+/// derived from not having seen the package, and every replica derives
+/// this locally, so two of them would disagree about the legs, the
+/// crossings and therefore the kernel cells. The transaction waits for
+/// the package instead.
 pub fn classify_roles(
     manifest: &Manifest,
     chain: &dyn ChainRecords,
     answered: &[bool],
-) -> Vec<Role> {
+) -> Result<Vec<Role>, UnresolvedTarget> {
     let consumed: BTreeSet<u32> = manifest
         .nodes
         .iter()
@@ -165,26 +169,249 @@ pub fn classify_roles(
                 .as_ref()
                 .and_then(|pkg| pkg.methods.get(&node.method));
             let Some(signature) = signature else {
-                return Role::Core;
+                return Err(UnresolvedTarget { node: index });
             };
             let takes_no_edge = node
                 .inputs
                 .iter()
                 .all(|input| matches!(input, NodeInput::Literal(_)));
+            let unrefusable = answered.get(index).copied().unwrap_or(false)
+                && is_unrefusable(signature, &node.inputs);
             let index = u32::try_from(index).unwrap_or(u32::MAX);
 
-            let unrefusable = answered.get(index as usize).copied().unwrap_or(false)
-                && is_unrefusable(signature, &node.inputs);
-
-            if takes_no_edge && is_reservation_shaped(signature) {
+            Ok(if takes_no_edge && is_reservation_shaped(signature) {
                 Role::Inbound
+            } else if takes_no_edge && commits_nothing(signature) {
+                Role::Attesting
             } else if !consumed.contains(&index) && unrefusable {
                 Role::Outbound
             } else {
                 Role::Core
-            }
+            })
         })
         .collect()
+}
+
+/// A node naming a target this chain view cannot resolve.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnresolvedTarget {
+    /// Which node names it.
+    pub node: usize,
+}
+
+/// Each node's placement-free shape, in node order.
+#[must_use]
+pub fn shape_of(manifest: &Manifest) -> Vec<NodeShape> {
+    manifest
+        .nodes
+        .iter()
+        .map(|node| NodeShape {
+            target: node.target,
+            edges: node
+                .inputs
+                .iter()
+                .filter_map(|input| match input {
+                    NodeInput::Edge {
+                        source,
+                        output,
+                        content,
+                        ..
+                    } => Some(ValueEdge {
+                        source: *source,
+                        output: *output,
+                        non_fungible: matches!(content, EdgeContent::NonFungible { .. }),
+                    }),
+                    NodeInput::Literal(_) => None,
+                })
+                .collect(),
+            presents: node.evidence.iter().map(Claim::address).collect(),
+        })
+        .collect()
+}
+
+/// Anchor a classification: settle the attesting nodes, and read the core
+/// set and the crossing count off the placement.
+///
+/// The half a parent re-derives at each anchor. Everything above it is
+/// fixed by the envelope, and this is the only part a reshape can move.
+#[must_use]
+pub fn star_at(roles: &[Role], shape: &[NodeShape], shards: &dyn ShardResolver) -> StarShape {
+    let roles = settle_attesting(roles, shape, shards);
+    let core = roles
+        .iter()
+        .zip(shape)
+        .filter(|(role, _)| **role == Role::Core)
+        .map(|(_, node)| shards.shard_of(node.target))
+        .collect();
+
+    let mut crossing_edges: u32 = 0;
+    for node in shape {
+        let to = shards.shard_of(node.target);
+        for edge in &node.edges {
+            let from = shape
+                .get(edge.source as usize)
+                .map(|producer| shards.shard_of(producer.target));
+            if from.is_some_and(|from| from != to) {
+                crossing_edges = crossing_edges.saturating_add(1);
+            }
+        }
+    }
+
+    StarShape {
+        roles,
+        core,
+        crossing_edges,
+    }
+}
+
+/// Which write-free nodes stay legs, and which fall back into the core.
+///
+/// Two questions, both about placement, which is why this runs here and
+/// not in [`classify_roles`].
+///
+/// **Its proof must stay home.** A node presenting what an attesting node
+/// proved runs in a world where that node succeeded, and under
+/// decomposition it learns that by running beside it. A consumer on
+/// another shard would have to take the proof as an attested value, which
+/// is a second crossing kind and not one this design builds — so the
+/// attesting node goes back to the core, where every participant runs it.
+///
+/// **The core must have a bearer.** A core with no node in it names no
+/// shard for a refusal, a departure or an absence to be taken against, so
+/// there is nothing for a reclaim to be admitted on. Where nothing else
+/// is in the core, every write-free node is — all of them, so which one
+/// bears the verdict is never a pick.
+fn settle_attesting(roles: &[Role], shape: &[NodeShape], shards: &dyn ShardResolver) -> Vec<Role> {
+    let mut settled = roles.to_vec();
+    for (index, node) in shape.iter().enumerate() {
+        if settled.get(index) != Some(&Role::Attesting) {
+            continue;
+        }
+        let here = shards.shard_of(node.target);
+        let stays_home = shape.iter().all(|other| {
+            !other.presents.contains(&node.target) || shards.shard_of(other.target) == here
+        });
+        if !stays_home {
+            settled[index] = Role::Core;
+        }
+    }
+    if !settled.contains(&Role::Core) {
+        for role in &mut settled {
+            if *role == Role::Attesting {
+                *role = Role::Core;
+            }
+        }
+    }
+    settled
+}
+
+impl StarShape {
+    /// Whether running this transaction's legs where their state lives
+    /// differs from running the whole of it on the core's shards.
+    ///
+    /// Every conjunct refuses rather than admits —
+    /// running whole is always correct, so an unsure answer takes it.
+    /// `declared` is every owner the transaction's declaration reaches.
+    #[must_use]
+    pub fn decomposes(
+        &self,
+        shape: &[NodeShape],
+        declared: &[Address],
+        shards: &dyn ShardResolver,
+    ) -> bool {
+        self.core_bears_a_verdict()
+            && self.a_leg_sits_off_the_core(shape, shards)
+            && self.crossings_fit()
+            && Self::every_declared_owner_participates(shape, declared, shards)
+            && Self::every_edge_has_one_consumer(shape)
+            && self.no_named_instance_touches_a_leg(shape)
+    }
+
+    /// A decomposed member judges only what its own execution scope
+    /// covers, so a declaration reaching a shard that runs nothing would
+    /// leave that target judged by nobody, where a whole execution judged
+    /// it everywhere. Running whole is always correct, so a shape
+    /// reaching past its own participants takes that.
+    ///
+    /// The case that makes this real is a reaching access rather than a
+    /// deposit: a reach puts the read under the reached party's owner,
+    /// who need not be any node's target — where a movement's owner is
+    /// the moving party and usually is one, so a reader checking only
+    /// deposits concludes this cannot happen.
+    fn every_declared_owner_participates(
+        shape: &[NodeShape],
+        declared: &[Address],
+        shards: &dyn ShardResolver,
+    ) -> bool {
+        let participants: BTreeSet<ShardId> = shape
+            .iter()
+            .map(|node| shards.shard_of(node.target))
+            .collect();
+        declared
+            .iter()
+            .all(|owner| participants.contains(&shards.shard_of(*owner)))
+    }
+
+    /// A reservation-shaped source feeding a total sink has no core node
+    /// at all, and nothing then names a shard for a refusal, a departure
+    /// or an absence to be taken against. An escrow issued under such a
+    /// shape would have no reclaim path.
+    fn core_bears_a_verdict(&self) -> bool {
+        !self.core.is_empty()
+    }
+
+    /// Otherwise the whole transaction is already on the core's shards,
+    /// and dividing it names the same execution.
+    fn a_leg_sits_off_the_core(&self, shape: &[NodeShape], shards: &dyn ShardResolver) -> bool {
+        self.roles.iter().zip(shape).any(|(role, node)| {
+            *role != Role::Core && !self.core.contains(&shards.shard_of(node.target))
+        })
+    }
+
+    /// Each crossing is a fixed-width entry in the receipt leaf, so a
+    /// shape carrying more than one outcome can encode is one no
+    /// participant could state a verdict for.
+    const fn crossings_fit(&self) -> bool {
+        self.crossing_edges as usize <= MAX_CROSSINGS_PER_TX
+    }
+
+    /// A claim cell is keyed by the consuming node's target, so two sinks
+    /// consuming one output write two different claim cells and each
+    /// credits the full amount. Today one participant runs both consumers
+    /// and session bucket linearity refuses the second; decomposition puts
+    /// them in two sessions on two shards and removes the only witness,
+    /// while each side's conservation fold still balances locally.
+    ///
+    /// Running whole restores the witness, and a manifest with two
+    /// consumers of one output is a double spend that aborts there
+    /// anyway — so this costs nothing real.
+    fn every_edge_has_one_consumer(shape: &[NodeShape]) -> bool {
+        let mut consumers: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+        for node in shape {
+            for edge in &node.edges {
+                *consumers.entry((edge.source, edge.output)).or_default() += 1;
+            }
+        }
+        consumers.values().all(|count| *count <= 1)
+    }
+
+    /// The escrow attestation is linear over amounts and blind to
+    /// identity, so a fabricated non-fungible credit would arrive with a
+    /// delta its producer's history supports. The test is over legs
+    /// alone: a core's participants agree by unanimity rather than by
+    /// attested value, so nothing inside one is exposed to it.
+    fn no_named_instance_touches_a_leg(&self, shape: &[NodeShape]) -> bool {
+        let is_leg = |index: usize| {
+            self.roles
+                .get(index)
+                .is_some_and(|role| *role != Role::Core)
+        };
+        shape.iter().enumerate().all(|(index, node)| {
+            node.edges
+                .iter()
+                .all(|edge| !edge.non_fungible || !(is_leg(index) || is_leg(edge.source as usize)))
+        })
+    }
 }
 
 /// Whether a signature is the shape an inbound leg has to be: one
@@ -219,6 +446,25 @@ fn is_reservation_shaped(signature: &MethodSignature) -> bool {
     reserves == 1
 }
 
+/// Whether this method commits nothing at all.
+///
+/// Every declared access is a read and no value edge leaves — which is
+/// what makes such a node free of the atomicity the core covers, and so
+/// free to run in its own shard's leg. `moves()` is `None` for exactly
+/// [`ModeExpr::Read`], so this reads as no writes rather than only as no
+/// value movement, which is what INV-LL-3 needs of it.
+fn commits_nothing(signature: &MethodSignature) -> bool {
+    signature.outputs.is_empty()
+        && signature
+            .effects
+            .iter()
+            .flat_map(Clause::effects)
+            .all(|clause| match clause {
+                Clause::Effect { mode, .. } => mode.moves().is_none(),
+                _ => true,
+            })
+}
+
 /// Whether nothing about this call can refuse before its body runs.
 ///
 /// [`Totality::Total`] covers the body and nothing else, and two
@@ -236,107 +482,14 @@ fn is_unrefusable(signature: &MethodSignature, inputs: &[NodeInput]) -> bool {
         })
 }
 
-/// Decide how this transaction's participants divide its execution.
-///
-/// Three things refuse staging, and each for its own reason:
-///
-/// - **Nothing crosses.** A transaction whose dependency structure sits
-///   on one shard has one participant, so the two strategies name the
-///   same execution and the honest verdict is the one that claims less.
-/// - **It crosses too often.** Past [`MAX_STAGED_DEPTH`] the settlement
-///   latency staging adds outruns the replicated work it deletes.
-/// - **A leg moves a named instance.** The supply-delta attestation an
-///   escrow certificate carries is linear over amounts and blind to
-///   identity, so a fabricated non-fungible credit would arrive with a
-///   delta its producer's history supports. Fungible legs are bounded by
-///   that attestation; non-fungible ones are not, so they wait for one
-///   that knows about ids. The test is over legs alone: a core's
-///   participants reach agreement by unanimity rather than by attested
-///   value, so nothing inside one is exposed to it.
-fn classify_strategy(manifest: &Manifest, roles: &[Role], crossings: u32, stages: u32) -> Strategy {
-    if crossings == 0 || stages > MAX_STAGED_DEPTH {
-        return Strategy::Replicated;
-    }
-    let is_leg = |index: usize| matches!(roles.get(index), Some(Role::Inbound | Role::Outbound));
-    for (index, node) in manifest.nodes.iter().enumerate() {
-        for input in &node.inputs {
-            let NodeInput::Edge {
-                source, content, ..
-            } = input
-            else {
-                continue;
-            };
-            if matches!(content, EdgeContent::NonFungible { .. })
-                && (is_leg(index) || is_leg(*source as usize))
-            {
-                return Strategy::Replicated;
-            }
-        }
-    }
-    Strategy::LegLocal
-}
-
-/// How far the longest dependency chain reaches, counted two ways.
-///
-/// Returns `(crossings, stages)`. Both walk the same graph and differ
-/// only in what a step costs, because the two questions they answer are
-/// different: whether a transaction reaches beyond one shard at all, and
-/// how much settlement latency staging it would add.
-///
-/// **Crossings** counts every shard change along the chain. It is the
-/// structural fact — a chain returning to a shard it already visited has
-/// crossed twice — and what says whether there is anything to decompose.
-///
-/// **Stages** counts only the crossings something waits on. A crossing
-/// into an outbound leg costs nothing: the leg cannot refuse, so the core
-/// commits without hearing back and no latency accrues on the far side of
-/// it. This is the quantity [`MAX_STAGED_DEPTH`] budgets, and the two
-/// diverge by exactly the outbound crossings — a single-venue swap
-/// crosses twice to reach the venue and return, and stages once.
-///
-/// One forward pass in node-index order: a value edge runs from a lower
-/// node index to a higher one — admission refuses anything else — so by
-/// the time a consumer is visited every producer's depth is final. An
-/// edge that violates the order could only appear in a hand-built
-/// manifest, and it contributes nothing rather than being searched.
-fn chain_depths(manifest: &Manifest, shards: &dyn ShardResolver, roles: &[Role]) -> (u32, u32) {
-    // A crossing whose destination is an outbound leg costs no stage:
-    // the leg cannot refuse, so nothing on the far side of it is waited
-    // on and the chain ends there as far as latency is concerned. Every
-    // other crossing is a stage, including one into a call the roles do
-    // not describe, which is the conservative reading.
-    let waited_on = |node: usize| -> bool { !matches!(roles.get(node), Some(Role::Outbound)) };
-
-    let mut crossings = vec![0u32; manifest.nodes.len()];
-    let mut stages = vec![0u32; manifest.nodes.len()];
-    for (index, node) in manifest.nodes.iter().enumerate() {
-        let to = shards.shard_of(node.target);
-        for input in &node.inputs {
-            let NodeInput::Edge { source, .. } = *input else {
-                continue;
-            };
-            let source = source as usize;
-            if source >= index {
-                continue;
-            }
-            let crossed = shards.shard_of(manifest.nodes[source].target) != to;
-            let crossed_here = crossings[source].saturating_add(u32::from(crossed));
-            crossings[index] = crossings[index].max(crossed_here);
-            let staged_here = stages[source].saturating_add(u32::from(crossed && waited_on(index)));
-            stages[index] = stages[index].max(staged_here);
-        }
-    }
-    (
-        crossings.iter().copied().max().unwrap_or(0),
-        stages.iter().copied().max().unwrap_or(0),
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_types::Moves;
+    use std::collections::BTreeSet;
 
-    use super::{MAX_STAGED_DEPTH, Role, Strategy, classify, classify_strategy};
+    use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, Moves};
+
+    use super::{Address, Role, StarShape, classify, classify_roles, shape_of, star_at};
+    use crate::claim::Claim;
     use crate::dsl::{Clause, Expr, ModeExpr};
     use crate::hash::TestHasher;
     use crate::manifest::{Bounds, Manifest, Node, NodeInput};
@@ -360,6 +513,23 @@ mod tests {
     /// where a permissive default would have hidden it.
     fn answered(manifest: &Manifest) -> Vec<bool> {
         vec![true; manifest.nodes.len()]
+    }
+
+    /// The star and the shape it was read off, since the predicate needs
+    /// both and no test wants to spell the pair twice.
+    fn star_and_shape(manifest: &Manifest, chain: &Records) -> (StarShape, Vec<super::NodeShape>) {
+        let roles = classify_roles(manifest, chain, &answered(manifest)).expect("targets resolve");
+        let shape = shape_of(manifest);
+        (star_at(&roles, &shape, &resolver()), shape)
+    }
+
+    /// Whether the shape decomposes, over a declaration reaching exactly
+    /// its own nodes — the ordinary case, so a test about anything else
+    /// states its own declaration instead.
+    fn decomposes(manifest: &Manifest, chain: &Records) -> bool {
+        let (star, shape) = star_and_shape(manifest, chain);
+        let declared: Vec<Address> = shape.iter().map(|node| node.target).collect();
+        star.decomposes(&shape, &declared, &resolver())
     }
 
     /// The star world with one method's signature replaced.
@@ -416,8 +586,9 @@ mod tests {
     #[test]
     fn a_single_shard_transaction_alternates_zero_times() {
         let (chain, manifest) = solo_world();
-        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
-        assert_eq!(star.crossings, 0);
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver())
+            .expect("targets resolve");
+        assert_eq!(star.crossing_edges, 0);
     }
 
     /// A call reaching one instance on another shard crosses once. The
@@ -432,8 +603,9 @@ mod tests {
             resolver().shard_of(instance_of("payee").into()),
             "the fixture has to straddle, or the depth below proves nothing",
         );
-        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
-        assert_eq!(star.crossings, 1);
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver())
+            .expect("targets resolve");
+        assert_eq!(star.crossing_edges, 1);
     }
 
     /// A value edge is a dependency like a call is: the consumer cannot
@@ -496,8 +668,9 @@ mod tests {
             ],
         };
 
-        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
-        assert_eq!(star.crossings, 1);
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver())
+            .expect("targets resolve");
+        assert_eq!(star.crossing_edges, 1);
     }
 
     /// The reservation-shaped source is the inbound leg: nothing the core
@@ -506,7 +679,8 @@ mod tests {
     #[test]
     fn a_reservation_shaped_source_is_an_inbound_leg() {
         let (chain, manifest) = star_world(Totality::Fallible);
-        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver())
+            .expect("targets resolve");
         assert_eq!(star.roles[0], Role::Inbound);
         assert_eq!(star.roles[1], Role::Core, "the venue is the core");
     }
@@ -523,7 +697,8 @@ mod tests {
             (Totality::Total, Role::Outbound),
         ] {
             let (chain, manifest) = star_world(totality);
-            let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
+            let star = classify(&manifest, &chain, &answered(&manifest), &resolver())
+                .expect("targets resolve");
             assert_eq!(
                 star.roles[2], expected,
                 "a {totality:?} sink should be {expected:?}",
@@ -568,7 +743,8 @@ mod tests {
             ],
         };
 
-        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver())
+            .expect("targets resolve");
         assert_eq!(
             star.roles[1],
             Role::Core,
@@ -598,7 +774,8 @@ mod tests {
             },
         );
 
-        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver())
+            .expect("targets resolve");
         assert_eq!(star.roles[2], Role::Core, "a gated sink can still refuse");
     }
 
@@ -616,12 +793,16 @@ mod tests {
         bounds.min = Some(1);
 
         assert_eq!(
-            classify(&manifest, &chain, &answered(&manifest), &resolver()).roles[2],
+            classify(&manifest, &chain, &answered(&manifest), &resolver())
+                .expect("targets resolve")
+                .roles[2],
             Role::Outbound,
             "the fixture has to be outbound unbounded, or the verdict below proves nothing",
         );
         assert_eq!(
-            classify(&bounded, &chain, &answered(&bounded), &resolver()).roles[2],
+            classify(&bounded, &chain, &answered(&bounded), &resolver())
+                .expect("targets resolve")
+                .roles[2],
             Role::Core,
         );
     }
@@ -636,11 +817,15 @@ mod tests {
         later[2] = false;
 
         assert_eq!(
-            classify(&manifest, &chain, &answered(&manifest), &resolver()).roles[2],
+            classify(&manifest, &chain, &answered(&manifest), &resolver())
+                .expect("targets resolve")
+                .roles[2],
             Role::Outbound,
         );
         assert_eq!(
-            classify(&manifest, &chain, &later, &resolver()).roles[2],
+            classify(&manifest, &chain, &later, &resolver())
+                .expect("targets resolve")
+                .roles[2],
             Role::Core,
         );
     }
@@ -668,7 +853,8 @@ mod tests {
             },
         );
 
-        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver())
+            .expect("targets resolve");
         assert_eq!(star.roles[0], Role::Core);
     }
 
@@ -694,65 +880,227 @@ mod tests {
             },
         );
 
-        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
+        let star = classify(&manifest, &chain, &answered(&manifest), &resolver())
+            .expect("targets resolve");
         assert_eq!(star.roles[0], Role::Inbound);
     }
 
-    /// Nothing crossing means one participant, so the two strategies name
-    /// the same execution and the verdict is the one claiming less.
+    /// The world the write-free tests share: an account that proves its
+    /// own identity and withdraws under it, and a total sink elsewhere.
+    ///
+    /// One instance for both nodes, which is what an account is — a
+    /// sign-in reads the authority cell the withdrawal is gated on, and
+    /// they are the same party's cells by construction.
+    fn signed_world() -> (Records, Manifest) {
+        let (base, _) = star_world(Totality::Total);
+        let mut chain = Records::new();
+        for name in ["venue", "sink"] {
+            let metadata = (*base.package(pkg(name)).expect("the fixture published it")).clone();
+            chain.packages.publish_unchecked(pkg(name), metadata);
+            chain.instances.create(&TestHasher, meta_of(name));
+        }
+        let mut account = (*base.package(pkg("vault")).expect("published")).clone();
+        account.methods.insert(
+            "authorize".into(),
+            MethodSignature {
+                effects: vec![self_point(SlotId(9), ModeExpr::Read)],
+                ..MethodSignature::default()
+            },
+        );
+        chain.packages.publish_unchecked(pkg("vault"), account);
+        chain.instances.create(&TestHasher, meta_of("vault"));
+
+        let account: Address = instance_of("vault").into();
+        let manifest = Manifest {
+            nodes: vec![
+                Node {
+                    target: account,
+                    method: "authorize".into(),
+                    inputs: vec![],
+                    evidence: Vec::new(),
+                },
+                Node {
+                    target: account,
+                    method: "withdraw".into(),
+                    inputs: vec![NodeInput::Literal(Value::U128(5))],
+                    evidence: vec![Claim::of_subject(account)],
+                },
+                Node {
+                    target: instance_of("sink").into(),
+                    method: "deposit".into(),
+                    inputs: vec![NodeInput::Edge {
+                        source: 1,
+                        output: 0,
+                        resource: issued_by("vault"),
+                        content: EdgeContent::Fungible,
+                        bounds: Bounds::default(),
+                    }],
+                    evidence: Vec::new(),
+                },
+            ],
+        };
+        (chain, manifest)
+    }
+
+    /// The same world with the venue between the withdrawal and the sink,
+    /// so the core has a node of its own.
+    fn signed_world_with_a_venue() -> (Records, Manifest) {
+        let (chain, mut manifest) = signed_world();
+        manifest.nodes.insert(
+            2,
+            Node {
+                target: instance_of("venue").into(),
+                method: "swap".into(),
+                inputs: vec![NodeInput::Edge {
+                    source: 1,
+                    output: 0,
+                    resource: issued_by("vault"),
+                    content: EdgeContent::Fungible,
+                    bounds: Bounds::default(),
+                }],
+                evidence: Vec::new(),
+            },
+        );
+        manifest.nodes[3].inputs = vec![NodeInput::Edge {
+            source: 2,
+            output: 0,
+            resource: issued_by("venue"),
+            content: EdgeContent::Fungible,
+            bounds: Bounds::default(),
+        }];
+        (chain, manifest)
+    }
+
+    /// A node that only reads and proves commits nothing, so it bears no
+    /// part of the atomicity the core covers and runs in its own shard's
+    /// leg.
+    #[test]
+    fn a_write_free_source_is_attesting() {
+        let (chain, manifest) = signed_world();
+        let roles = classify_roles(&manifest, &chain, &answered(&manifest)).expect("resolve");
+        assert_eq!(roles[0], Role::Attesting);
+        assert_eq!(roles[1], Role::Inbound);
+        assert_eq!(roles[2], Role::Outbound);
+    }
+
+    /// The core has to have somebody in it, and where the write-free node
+    /// is the only candidate it is the one — so the shape below is core
+    /// after the anchoring even though the role before it was not.
+    #[test]
+    fn a_write_free_source_bears_the_verdict_where_nothing_else_does() {
+        let (chain, manifest) = signed_world();
+        let (star, _) = star_and_shape(&manifest, &chain);
+        assert_eq!(
+            star.roles[0],
+            Role::Core,
+            "nothing else is in the core, so the sign-in is",
+        );
+        assert_eq!(star.core.len(), 1);
+        assert!(decomposes(&manifest, &chain), "the sink is off the core");
+    }
+
+    /// With a real core beside it, the write-free node is a leg and the
+    /// core is the core alone — which is what keeps a venue's shard from
+    /// dragging every payer's shard in with it.
+    #[test]
+    fn a_write_free_source_leaves_a_core_that_has_one() {
+        let (chain, manifest) = signed_world_with_a_venue();
+        let (star, _) = star_and_shape(&manifest, &chain);
+        assert_eq!(
+            star.roles[0],
+            Role::Attesting,
+            "the venue bears the verdict"
+        );
+        assert_eq!(
+            star.core,
+            BTreeSet::from([resolver().shard_of(instance_of("venue").into())]),
+            "and the core is the venue's shard alone",
+        );
+        assert!(decomposes(&manifest, &chain));
+    }
+
+    /// A proof consumed off its prover's shard would have to arrive as an
+    /// attested value, which is a crossing kind this design does not
+    /// build — so the prover goes back into the core, where every
+    /// participant runs it.
+    #[test]
+    fn a_write_free_source_whose_proof_travels_is_core() {
+        let (chain, mut manifest) = signed_world_with_a_venue();
+        let account: Address = instance_of("vault").into();
+        assert_ne!(
+            resolver().shard_of(account),
+            resolver().shard_of(instance_of("venue").into()),
+            "the fixture has to straddle, or the verdict below proves nothing",
+        );
+        assert_eq!(
+            star_and_shape(&manifest, &chain).0.roles[0],
+            Role::Attesting,
+            "and it has to start as a leg, or the verdict below proves nothing",
+        );
+
+        // The venue now speaks on the account's claim, from another shard.
+        manifest.nodes[2].evidence = vec![Claim::of_subject(account)];
+
+        let (star, _) = star_and_shape(&manifest, &chain);
+        assert_eq!(star.roles[0], Role::Core);
+    }
+
+    /// A declaration reaching a party that runs nothing would leave that
+    /// target judged by nobody, where a whole execution judged it
+    /// everywhere.
+    #[test]
+    fn a_declaration_reaching_a_non_participant_does_not_decompose() {
+        let (chain, manifest) = star_world(Totality::Total);
+        let (star, shape) = star_and_shape(&manifest, &chain);
+        let mut declared: Vec<Address> = shape.iter().map(|node| node.target).collect();
+        assert!(star.decomposes(&shape, &declared, &resolver()));
+
+        declared.push(instance_of("stranger").into());
+        assert!(!star.decomposes(&shape, &declared, &resolver()));
+    }
+
+    /// A target this chain view cannot resolve fails derivation rather
+    /// than defaulting to core: every replica derives this locally, so a
+    /// role read off not having seen the package is a divergence waiting
+    /// for the package to arrive.
+    #[test]
+    fn an_unresolvable_target_fails_derivation() {
+        let (chain, mut manifest) = solo_world();
+        manifest.nodes[0].method = "absent".into();
+        assert_eq!(
+            classify_roles(&manifest, &chain, &answered(&manifest)),
+            Err(super::UnresolvedTarget { node: 0 }),
+        );
+    }
+
+    /// Everything on one shard means one participant, so the two
+    /// executions name the same thing and the verdict is the one claiming
+    /// less.
     #[test]
     fn a_single_shard_transaction_does_not_decompose() {
         let (chain, manifest) = solo_world();
-        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
-        assert_eq!(star.crossings, 0);
-        assert_eq!(star.strategy, Strategy::Replicated);
+        let (star, _) = star_and_shape(&manifest, &chain);
+        assert_eq!(star.core.len(), 1);
+        assert!(!decomposes(&manifest, &chain));
     }
 
-    /// A crossing inside the budget stages. The fixture's own depth is
-    /// asserted beside the verdict, so a placement change that moved it
-    /// past the budget would show up as the depth changing rather than as
-    /// a verdict quietly meaning something else.
+    /// A leg off the core's shard is the whole of what decomposition
+    /// buys, so a shape with one takes it.
     #[test]
-    fn a_crossing_within_the_budget_decomposes() {
-        let (chain, manifest) = payer_payee_world();
-        let star = classify(&manifest, &chain, &answered(&manifest), &resolver());
-        assert!(star.crossings <= MAX_STAGED_DEPTH);
-        assert_eq!(star.strategy, Strategy::LegLocal);
-    }
-
-    /// The budget is a refusal, not a preference: past it the settlement
-    /// latency staging adds outruns the replicated work it deletes, so
-    /// the deeper route runs replicated however well shaped it is.
-    #[test]
-    fn a_route_past_the_budget_replicates() {
-        let empty = Manifest { nodes: vec![] };
-        assert_eq!(
-            classify_strategy(&empty, &[], MAX_STAGED_DEPTH + 1, MAX_STAGED_DEPTH + 1),
-            Strategy::Replicated,
-        );
-        assert_eq!(
-            classify_strategy(&empty, &[], MAX_STAGED_DEPTH, MAX_STAGED_DEPTH),
-            Strategy::LegLocal,
-            "the budget's own depth is admitted, not refused",
-        );
-        // The budget reads stages, not crossings: a chain that crosses
-        // past the budget but only stages within it still decomposes,
-        // which is exactly the single-venue swap's shape.
-        assert_eq!(
-            classify_strategy(&empty, &[], MAX_STAGED_DEPTH + 4, MAX_STAGED_DEPTH),
-            Strategy::LegLocal,
-        );
-    }
-
-    /// A leg carrying named instances replicates: the supply delta an
-    /// escrow certificate attests counts amounts and cannot see which id
-    /// moved, so nothing bounds a fabricated one.
-    #[test]
-    fn a_leg_moving_named_instances_replicates() {
+    fn a_leg_off_the_core_decomposes() {
         let (chain, manifest) = star_world(Totality::Total);
-        let fungible = classify(&manifest, &chain, &answered(&manifest), &resolver());
-        assert_eq!(fungible.roles[0], Role::Inbound);
-        assert_eq!(fungible.strategy, Strategy::LegLocal);
+        let (star, _) = star_and_shape(&manifest, &chain);
+        assert_eq!(star.core.len(), 1, "the venue is the whole core");
+        assert!(decomposes(&manifest, &chain));
+    }
+
+    /// A leg carrying named instances runs whole: the escrow attestation
+    /// counts amounts and cannot see which id moved, so nothing bounds a
+    /// fabricated one.
+    #[test]
+    fn a_leg_moving_named_instances_does_not_decompose() {
+        let (chain, manifest) = star_world(Totality::Total);
+        assert!(decomposes(&manifest, &chain));
 
         // The identical shape, with the inbound leg's value now named.
         let mut named = manifest;
@@ -763,7 +1111,43 @@ mod tests {
             content: EdgeContent::NonFungible { ids: vec![7] },
             bounds: Bounds::default(),
         }];
-        let star = classify(&named, &chain, &answered(&named), &resolver());
-        assert_eq!(star.strategy, Strategy::Replicated);
+        assert!(!decomposes(&named, &chain));
+    }
+
+    /// Two sinks reading one output write two claim cells on two shards,
+    /// each crediting the whole amount, and the session that catches the
+    /// double take is exactly what decomposition removes. Running whole
+    /// restores it — where the manifest is a double spend that aborts
+    /// anyway.
+    #[test]
+    fn a_value_edge_with_two_consumers_does_not_decompose() {
+        let (chain, manifest) = star_world(Totality::Total);
+        assert!(decomposes(&manifest, &chain));
+
+        let mut shared = manifest;
+        shared.nodes[2].inputs = vec![NodeInput::Edge {
+            source: 0,
+            output: 0,
+            resource: issued_by("vault"),
+            content: EdgeContent::Fungible,
+            bounds: Bounds::default(),
+        }];
+        assert!(
+            !decomposes(&shared, &chain),
+            "the vault's one output now feeds the venue and the sink",
+        );
+    }
+
+    /// Past the cap a shape carries more crossings than one outcome can
+    /// state a verdict for, so no participant could encode one.
+    #[test]
+    fn a_shape_past_the_crossing_cap_does_not_decompose() {
+        let (chain, manifest) = star_world(Totality::Total);
+        let (mut star, shape) = star_and_shape(&manifest, &chain);
+        let declared: Vec<Address> = shape.iter().map(|node| node.target).collect();
+        assert!(star.decomposes(&shape, &declared, &resolver()));
+
+        star.crossing_edges = u32::try_from(MAX_CROSSINGS_PER_TX).unwrap() + 1;
+        assert!(!star.decomposes(&shape, &declared, &resolver()));
     }
 }

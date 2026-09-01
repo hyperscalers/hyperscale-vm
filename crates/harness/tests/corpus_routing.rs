@@ -2,8 +2,8 @@
 //! vectors pinning routing as consensus content, the star each pattern's shape implies, and
 //! the sweeps that hold across every guest.
 
-use hyperscale_vm_effects::{MAX_STAGED_DEPTH, ManifestGraph, Role, Strategy};
-use hyperscale_vm_fixtures::nf;
+use hyperscale_vm_effects::{ManifestGraph, PrefixShardResolver, Role};
+use hyperscale_vm_fixtures::{lottery, nf};
 use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_stdlib::account;
 use wasmtime::Result;
@@ -165,128 +165,216 @@ struct Shape {
     graph: ManifestGraph,
     /// Where each node sits, in node order.
     roles: Vec<Role>,
-    /// Every shard change along the longest chain.
-    crossings: u32,
-    /// Only the crossings something waits on.
-    stages: u32,
-    strategy: Strategy,
+    /// How many shards the core's nodes sit on.
+    core: usize,
+    /// Value edges landing on a shard other than their producer's.
+    crossing_edges: u32,
+    decomposes: bool,
 }
 
 /// Every catalogue shape, and the decomposition it implies.
 ///
 /// One table rather than an assertion bolted onto each behavioural test,
 /// because what earns its place here is the *contrast* between the rows:
-/// the same classifier has to call a transfer a degenerate star, a venue
-/// call a one-stage star, a self-governing account nothing at all, and a
-/// named-instance move back to replication. A row on its own would say
-/// little; the set is the falsifier.
+/// the same classifier has to call a transfer a star with a leg either
+/// side, a venue call a star whose core is the venue alone, a
+/// self-governing account nothing at all, and a restricted deposit a core
+/// of its own. A row on its own would say little; the set is the
+/// falsifier.
+///
+/// Every row's core is size one, and the sign-in node is why that is not
+/// automatic: it commits nothing, so it is a leg wherever a venue or a
+/// gated deposit bears the verdict, and the core itself wherever nothing
+/// else would. A regression that dropped the write-free role shows up
+/// here as swap and fill going to core size two.
 #[test]
 fn every_pattern_takes_the_star_its_shape_implies() {
     let world = world();
     let shapes = vec![
         // A core with a leg either side and no venue between them. The
-        // one crossing is into the recipient's deposit, which cannot
-        // refuse, so nothing waits and no stage is owed.
+        // sign-in is the only node that commits nothing *and* has nothing
+        // beside it in the core, so it bears the verdict.
         Shape {
             name: "transfer",
             graph: transfer_graph(),
             roles: vec![Role::Core, Role::Inbound, Role::Outbound],
-            crossings: 1,
-            stages: 0,
-            strategy: Strategy::LegLocal,
+            core: 1,
+            crossing_edges: 1,
+            decomposes: true,
         },
-        // The venue star: the withdrawal inbound, the pool a single-shard
-        // core, the delivery outbound. Two crossings to reach the venue
-        // and return, and only the outbound one is free.
+        // The venue star: the sign-in and the withdrawal on the caller's
+        // shard, the pool the whole core, the delivery outbound.
         Shape {
             name: "swap",
             graph: swap_graph(300),
-            roles: vec![Role::Core, Role::Inbound, Role::Core, Role::Outbound],
-            crossings: 2,
-            stages: 1,
-            strategy: Strategy::LegLocal,
+            roles: vec![Role::Attesting, Role::Inbound, Role::Core, Role::Outbound],
+            core: 1,
+            crossing_edges: 2,
+            decomposes: true,
         },
         // The same star over a range rather than points — an interval's
-        // width prices provisioning and never depth — and the first
-        // shape with more than one outbound leg, which is what L2's "N
-        // outbound legs" was written for: a fill pays out on two edges
+        // width prices provisioning and never depth — and the first shape
+        // with more than one outbound leg: a fill pays out on two edges
         // and the core waits on neither.
         Shape {
             name: "fill",
             graph: fill_graph(),
             roles: vec![
-                Role::Core,
+                Role::Attesting,
                 Role::Inbound,
                 Role::Core,
                 Role::Outbound,
                 Role::Outbound,
             ],
-            crossings: 2,
-            stages: 1,
-            strategy: Strategy::LegLocal,
+            core: 1,
+            crossing_edges: 3,
+            decomposes: true,
         },
         // An account governing itself reaches no further than itself, so
-        // there is no star to take and the two strategies name the same
-        // execution.
+        // there is no leg off the core and nothing to divide.
         Shape {
             name: "propose",
             graph: propose_graph(),
             roles: vec![Role::Core],
-            crossings: 0,
-            stages: 0,
-            strategy: Strategy::Replicated,
+            core: 1,
+            crossing_edges: 0,
+            decomposes: false,
         },
     ];
 
     for shape in shapes {
-        let star = star_of(&world, &shape.graph);
+        let (star, node_shape, declared) = star_and_shape(&world, &shape.graph);
         let name = shape.name;
         assert_eq!(star.roles, shape.roles, "{name}: star");
-        assert_eq!(star.crossings, shape.crossings, "{name}: crossings");
-        assert_eq!(star.stages, shape.stages, "{name}: stages");
-        assert_eq!(star.strategy, shape.strategy, "{name}: strategy");
-        // The budget is what the verdict is for, so nothing may decompose
-        // past it. Read across the table rather than per row: the claim
-        // is about the classifier, not about any one shape's depth.
-        assert!(
-            shape.strategy != Strategy::LegLocal || star.stages <= MAX_STAGED_DEPTH,
-            "{name}: decomposed at {} stages, past a budget of {MAX_STAGED_DEPTH}",
-            star.stages,
+        assert_eq!(star.core.len(), shape.core, "{name}: core size");
+        assert_eq!(
+            star.crossing_edges, shape.crossing_edges,
+            "{name}: crossing edges",
+        );
+        assert_eq!(
+            star.decomposes(&node_shape, &declared, &PrefixShardResolver { bits: 8 }),
+            shape.decomposes,
+            "{name}: decomposes",
         );
     }
 }
 
-/// Named instances moving inside a core do not force replication.
+/// A deposit of a resource whose issuer declares one carries a movement
+/// rule judged at materialization, so it can still refuse after the core
+/// committed and it is not an outbound leg.
 ///
-/// L11 excludes non-fungible value from *staging*, because the supply
-/// delta an escrow certificate attests counts amounts and cannot see
-/// which id moved. A core is not staged: its participants agree by
-/// unanimity rather than by taking each other's attested values, so
-/// nothing inside one is exposed to that gap and the exclusion has no
-/// business firing.
+/// It does not cost the decomposition, and that is the point: the demoted
+/// deposit *becomes* the core, the withdrawal is the leg that escrows to
+/// it, and the recipient's own halt fence is what bears the verdict. The
+/// grant-free transfer beside it is the contrast — same shape, same
+/// nodes, and a role that moves because of what the resource declares.
+#[test]
+fn a_grant_declaring_deposit_bears_the_verdict() {
+    let world = world();
+    let plain = star_of(&world, &transfer_graph());
+    assert_eq!(plain.roles[2], Role::Outbound, "RES_X grants nothing");
+
+    let restricted = graph(|b| {
+        let funds = account::withdraw(b, ALICE, share(), 100)?;
+        account::deposit(b, BOB, funds)
+    });
+    let (star, shape, declared) = star_and_shape(&world, &restricted);
+    assert_eq!(
+        star.roles,
+        vec![Role::Attesting, Role::Inbound, Role::Core],
+        "the deposit is the only node that can still refuse",
+    );
+    assert_eq!(star.core.len(), 1, "and it is the whole core");
+    assert!(star.decomposes(&shape, &declared, &PrefixShardResolver { bits: 8 }));
+}
+
+/// A declared access reaching a party no node targets leaves that target
+/// judged by nobody once execution divides, where a whole execution
+/// judged it everywhere.
+///
+/// A recall is what reaches one: the registrar names the holder's own
+/// vault, and the holder targets no node. A deposit's owner is the moving
+/// party and usually does, so a reader checking only deposits concludes
+/// this cannot happen.
+#[test]
+fn a_declaration_reaching_a_non_participant_does_not_decompose() {
+    let world = world();
+    let recall = graph_signed(REGISTRAR, |b| {
+        let proof = account::sign_in(b)?;
+        let taken = b.presenting(proof, |b| {
+            issuer().recall_shares(b, ALICE.address(), 1, 100)
+        })?;
+        account::deposit(b, REGISTRAR, taken)
+    });
+    let (star, shape, declared) = star_and_shape(&world, &recall);
+    assert!(
+        !shape
+            .iter()
+            .any(|node| shard_of(node.target) == shard_of(ALICE)),
+        "the reached holder has to target no node, or the verdict below proves nothing",
+    );
+    assert!(!star.decomposes(&shape, &declared, &PrefixShardResolver { bits: 8 }));
+}
+
+/// Package metadata is content-addressed, so a resolved package cannot
+/// differ between frontiers — and every replica derives its own roles, so
+/// a disagreement here would be different legs, different crossings and
+/// different kernel cells rather than a slow path.
+#[test]
+fn two_chain_frontiers_give_one_classification() {
+    let ahead = world();
+    let mut behind = world();
+    behind
+        .packages
+        .publish_unchecked(pkg("lottery"), lottery::metadata());
+
+    for (name, graph) in [
+        ("transfer", transfer_graph()),
+        ("swap", swap_graph(300)),
+        ("fill", fill_graph()),
+        ("propose", propose_graph()),
+    ] {
+        assert_eq!(
+            star_of(&ahead, &graph),
+            star_of(&behind, &graph),
+            "{name}: the frontier moved the classification",
+        );
+    }
+}
+
+/// A named instance moving inside a core is not what stops a shape
+/// dividing.
+///
+/// The non-fungible exclusion is over legs, because the escrow
+/// attestation counts amounts and cannot see which id moved. A core is
+/// not escrowed: its participants agree by unanimity rather than by
+/// taking each other's attested values, so nothing inside one is exposed
+/// to that gap and the exclusion has no business firing.
 ///
 /// Minting an instance and filing it into an account is exactly that
 /// shape — neither node is a leg, since a mint declares no reservation
 /// and `deposit-nf` cannot carry the total mark while filing each id is
-/// a loop — so the two sit on either side of a multi-shard core and the
-/// route still decomposes.
+/// a loop. What decides it is that the core spans two shards, which
+/// replicates; the contrast below is what says so, because the same
+/// shape over a fungible edge reaches the same verdict.
 ///
 /// The reachable-today consequence, worth stating: no catalogue pattern
 /// can put a named instance across a *leg*, because no non-fungible
-/// method is reservation-shaped or total. L11 guards a shape the
-/// vocabulary cannot currently express, which is where a unit test
+/// method is reservation-shaped or total. The exclusion guards a shape
+/// the vocabulary cannot currently express, which is where a unit test
 /// belongs and a catalogue case cannot go.
 #[test]
-fn named_instances_inside_a_core_still_decompose() {
+fn a_named_instance_inside_a_core_is_not_what_refuses_it() {
     let world = world();
     let seat = graph(|b| {
         let minted = nf::mint(b, nf_issuer())?;
         account::deposit_nf(b, ALICE, minted)
     });
-    let star = star_of(&world, &seat);
+    let (star, shape, declared) = star_and_shape(&world, &seat);
+    let shards = PrefixShardResolver { bits: 8 };
 
     assert!(
-        star.crossings > 0,
+        star.crossing_edges > 0,
         "the fixture has to cross, or the verdict below proves nothing",
     );
     assert!(
@@ -294,7 +382,21 @@ fn named_instances_inside_a_core_still_decompose() {
         "neither end is a leg: {:?}",
         star.roles,
     );
-    assert_eq!(star.strategy, Strategy::LegLocal);
+    assert_eq!(
+        star.core.len(),
+        2,
+        "the core spans the issuer and the account"
+    );
+    assert!(!star.decomposes(&shape, &declared, &shards));
+
+    // Which conjunct refused it, stated rather than assumed: with every
+    // node in the core there is no leg off it, and the non-fungible
+    // exclusion is over legs — so a shape with none cannot be the one it
+    // fires on. The classifier's own tests pin it firing where there is.
+    assert!(
+        star.roles.iter().all(|slot| *slot == Role::Core),
+        "no leg means no edge for the exclusion to touch",
+    );
 }
 
 /// One kernel WIT, and no package holds a copy of it.

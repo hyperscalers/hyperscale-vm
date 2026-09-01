@@ -7,10 +7,10 @@ use std::sync::{Arc, LazyLock};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Claim, EnvelopeTree, EvidenceRef, Hash32, Hasher, InstanceMeta,
-    ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants, Records,
-    Routing, RuleBytes, ShardId, ShardResolver, SlotId, StarShape, StoredRule, TestHasher, Value,
-    admit_presenting, admit_tree, child_key, classify as classify_star, collection_id,
-    holdings_collection, package_slot, route, route_tree,
+    ManifestGraph, NodeShape, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants,
+    Records, Routing, RuleBytes, ShardId, ShardResolver, SlotId, StarShape, StoredRule, TestHasher,
+    Value, admit_presenting, admit_tree, child_key, classify_roles, collection_id,
+    holdings_collection, package_slot, route, route_tree, shape_of, star_at,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
 use hyperscale_vm_harness::driver::{Lanes, declared_vault, run_lanes, test_hash, vault};
@@ -786,13 +786,40 @@ pub fn routing_fingerprint(routing: &Routing) -> String {
 
 /// The star the classifier reads off a graph's admitted form.
 pub fn star_of(world: &Records, graph: &ManifestGraph) -> StarShape {
+    star_and_shape(world, graph).0
+}
+
+/// The star and the shape it was read off, plus the owners the
+/// declaration reaches — everything [`StarShape::decomposes`] asks for.
+pub fn star_and_shape(
+    world: &Records,
+    graph: &ManifestGraph,
+) -> (StarShape, Vec<NodeShape>, Vec<Address>) {
     let admitted = admit_here(graph, composer(graph), world).expect("admits");
-    classify_star(
+    let roles = classify_roles(
         admitted.manifest(),
         world,
         &admitted.answered_at_admission(),
-        &PrefixShardResolver { bits: 8 },
     )
+    .expect("the corpus resolves every target");
+    let shape = shape_of(admitted.manifest());
+    let declared = admitted
+        .declaration()
+        .set
+        .iter()
+        .map(|effect| effect.target.owner())
+        .collect();
+    (
+        star_at(&roles, &shape, &PrefixShardResolver { bits: 8 }),
+        shape,
+        declared,
+    )
+}
+
+/// Whether the corpus shape `graph` decomposes.
+pub fn decomposes(world: &Records, graph: &ManifestGraph) -> bool {
+    let (star, shape, declared) = star_and_shape(world, graph);
+    star.decomposes(&shape, &declared, &PrefixShardResolver { bits: 8 })
 }
 
 pub fn run_both(
@@ -901,6 +928,16 @@ pub fn graph_in(
     write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
 ) -> ManifestGraph {
     TypedBuilder::compose(world, &TestHasher, ALICE, write)
+        .expect("every call types and every output is consumed")
+}
+
+/// As [`graph`], signed by somebody other than Alice — the registrar's
+/// own compositions, where the signer is what the recall's entry names.
+pub fn graph_signed(
+    signer: PrincipalAddr,
+    write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
+) -> ManifestGraph {
+    TypedBuilder::compose(&world(), &TestHasher, signer, write)
         .expect("every call types and every output is consumed")
 }
 

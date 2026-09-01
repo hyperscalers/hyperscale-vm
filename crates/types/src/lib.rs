@@ -42,9 +42,9 @@ pub use envelope::{
     TransactionBody, TransactionEnvelope, TxHash,
 };
 pub use execution::{
-    ABSENT_REP, AbortReason, Answer, Event, MAX_ANSWER_BYTES, MAX_ERROR_CODES,
-    MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MAX_MANIFEST_NODES, Outcome,
-    UnmetCondition,
+    ABSENT_REP, AbortReason, Answer, Event, MAX_ANSWER_BYTES, MAX_CROSSINGS_PER_TX,
+    MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
+    MAX_MANIFEST_NODES, Outcome, UnmetCondition,
 };
 pub use hashing::ProtocolHasher;
 pub use mode::{ConflictClass, Mode, ModeKind, Moves, Presence, compatible};
