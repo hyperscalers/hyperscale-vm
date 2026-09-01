@@ -524,8 +524,9 @@ pub struct CrossingCell {
     pub local: u32,
     /// Which of its outputs the edge carried.
     pub output: u32,
-    /// When no chain can still be claiming the crossing: the
-    /// transaction's own window end plus the retention grace.
+    /// When no chain can still be claiming the crossing: the producing
+    /// intent's own window end plus the retention grace — the intent's,
+    /// not the transaction's, so the composer chooses no part of it.
     pub expiry_ms: u64,
 }
 
@@ -667,23 +668,18 @@ impl CrossingSite {
     }
 }
 
-/// When an escrow crossing stops being claimable: the window the
-/// transaction signed, plus the grace every transaction-derived artifact
-/// gets.
+/// When everything an intent's signature brought into being stops being
+/// owed: the window its signer signed, plus the grace every
+/// transaction-derived artifact gets.
 ///
-/// The same figure a nullifier takes, and deliberately: both are
-/// transaction-derived state the chain carries until nothing can still be
-/// deciding about them, and two spellings of one horizon is a drift
-/// waiting to happen.
+/// One horizon for the nullifier and for the escrow cells of every node
+/// the intent holds. The intent's own window rather than the
+/// transaction's, for two reasons that are one: the transaction's window
+/// is the intersection of every intent's, so this is never earlier than
+/// it; and the transaction's window is the composer's to choose, where
+/// an escrow key has to be made of nothing the composer chose.
 #[must_use]
-pub const fn escrow_expiry_ms(validity_end_ms: u64) -> u64 {
-    validity_end_ms.saturating_add(NULLIFIER_GRACE_MS)
-}
-
-/// When a subintent's nullifier stops being owed: the window its signer
-/// signed, plus the grace every transaction-derived artifact gets.
-#[must_use]
-pub const fn nullifier_expiry_ms(header: &IntentHeader) -> u64 {
+pub const fn intent_expiry_ms(header: &IntentHeader) -> u64 {
     header.validity_end_ms.saturating_add(NULLIFIER_GRACE_MS)
 }
 
@@ -772,7 +768,7 @@ pub fn admit_tree(
                 index: u32::try_from(index).expect("bounded by MAX_SUBINTENTS"),
             });
         }
-        let expiry_ms = nullifier_expiry_ms(&subintent.decl.header);
+        let expiry_ms = intent_expiry_ms(&subintent.decl.header);
         records.push(SubintentRecord {
             subintent: hash,
             signer: subintent.signer,
@@ -788,6 +784,7 @@ pub fn admit_tree(
         bindings: &tree.root_bindings,
         signer: Some(composer),
         identity: tree.root.hash(hasher),
+        expiry_ms: intent_expiry_ms(&tree.root.header),
     });
     for (subintent, record) in tree.subintents.iter().zip(&records) {
         views.push(IntentView {
@@ -796,6 +793,7 @@ pub fn admit_tree(
             bindings: &subintent.bindings,
             signer: Some(subintent.signer),
             identity: record.subintent,
+            expiry_ms: record.expiry_ms,
         });
     }
     // The envelope's own records, layered behind what the chain already

@@ -17,8 +17,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Moves, NetworkId,
-    PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
+    Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Moves, NULLIFIER_GRACE_MS,
+    NetworkId, PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
 };
 use proptest::prelude::{any, proptest};
 
@@ -423,6 +423,15 @@ fn an_origin_names_the_intent_its_node_signed() {
             (bob, 2),
         ],
     );
+    // And each carries its own intent's horizon: the window that
+    // intent's signer signed plus the grace, which is the nullifier's
+    // own figure.
+    for origin in admitted.admitted.origins() {
+        assert_eq!(
+            origin.expiry_ms,
+            TEST_HEADER.validity_end_ms + NULLIFIER_GRACE_MS,
+        );
+    }
 }
 
 /// An escrow key is fixed by what its node's own signer signed, so a
@@ -435,8 +444,13 @@ fn an_origin_names_the_intent_its_node_signed() {
 /// matters would drop from a second preimage to a birthday.
 #[test]
 fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
+    // Two compositions of one subintent, and the composer moved
+    // everything it controls: what the root pays, and the root's own
+    // window — which is the transaction's window, since every intent's
+    // intersects into it.
     let first = composed_tree(100);
-    let second = composed_tree(120);
+    let mut second = composed_tree(120);
+    second.root.header.validity_end_ms += 60_000;
     assert_ne!(
         first.hash(&TestHasher),
         second.hash(&TestHasher),
@@ -445,20 +459,40 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
 
     let bob = first.subintents[0].decl.hash(&TestHasher);
     assert_eq!(bob, second.subintents[0].decl.hash(&TestHasher));
-    assert_eq!(
-        escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
-        escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
-    );
 
-    // And the origins the two trees hand Bob's nodes are the same pair,
-    // which is what makes the sentence above a fact about admission
-    // rather than about this test's arithmetic.
+    // The material an escrow key is made of is what admission hands the
+    // node, so the keys are derived from that and not from a figure this
+    // test picked — a fixed expiry here would pass whatever the
+    // derivation sourced it from.
     let origin_of = |tree: &EnvelopeTree| {
         let identity = tree.hash(&TestHasher);
         let admitted = admit_tree(tree, ALICE, identity, &world(), &TestHasher).expect("admits");
         admitted.admitted.origins()[3]
     };
-    assert_eq!(origin_of(&first), origin_of(&second));
+    let (one, other) = (origin_of(&first), origin_of(&second));
+    assert_eq!(one, other);
+    assert_eq!(one.intent, bob);
+    assert_eq!(
+        escrow_record_key(&TestHasher, BOB, one.intent, one.local, 0, one.expiry_ms),
+        escrow_record_key(
+            &TestHasher,
+            BOB,
+            other.intent,
+            other.local,
+            0,
+            other.expiry_ms
+        ),
+    );
+
+    // The root's own nodes moved with the root's window, which is the
+    // same rule read from the other side: the party whose signature
+    // fixes the window is the party whose cells it keys.
+    let root_of = |tree: &EnvelopeTree| {
+        let identity = tree.hash(&TestHasher);
+        let admitted = admit_tree(tree, ALICE, identity, &world(), &TestHasher).expect("admits");
+        admitted.admitted.origins()[1]
+    };
+    assert_ne!(root_of(&first).expiry_ms, root_of(&second).expiry_ms);
 }
 
 /// The material separates every edge of every node of every intent, and

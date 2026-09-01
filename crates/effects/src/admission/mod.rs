@@ -105,6 +105,14 @@ pub struct NodeOrigin {
     pub intent: SubintentHash,
     /// Its index within that intent's own graph.
     pub local: u32,
+    /// When the cells this node's crossings write stop being owed: its
+    /// intent's own window end plus the retention grace.
+    ///
+    /// The intent's window and never the transaction's. A transaction's
+    /// window is the intersection of every intent's, so this is never
+    /// the earlier of the two — and it is signed by the party whose
+    /// cells it keys, where the transaction's is the composer's.
+    pub expiry_ms: u64,
 }
 
 impl Admitted {
@@ -246,6 +254,9 @@ pub fn admit_presenting(
             // A bare graph is signed whole by its composer, so what its
             // signer signed is the graph itself.
             identity: SubintentHash(identity.0),
+            // And it names no window, which is the offer that stands
+            // forever — the same figure a header with no end derives.
+            expiry_ms: u64::MAX,
         }],
         identity,
         chain,
@@ -279,6 +290,7 @@ pub(crate) fn admit_intents(
         .map(|&(intent_index, local_index)| NodeOrigin {
             intent: intents[intent_index].identity,
             local: u32::try_from(local_index).unwrap_or(u32::MAX),
+            expiry_ms: intents[intent_index].expiry_ms,
         })
         .collect();
 
