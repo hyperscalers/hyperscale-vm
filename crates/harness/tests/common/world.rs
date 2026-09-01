@@ -567,7 +567,10 @@ pub static LANES: LazyLock<Lanes> = LazyLock::new(|| {
 /// How one transaction ended on a lane.
 #[derive(Debug, PartialEq, Eq)]
 pub enum TxResult {
-    Completed(Receipt),
+    /// Boxed: a receipt carries every delta a transaction produced, so
+    /// it dwarfs the refusal variants beside it and every one of them
+    /// would pay for its size.
+    Completed(Box<Receipt>),
     /// The guest trapped, with the class both runtimes classified it as.
     /// Compared whole: the vocabulary is closed, so the two lanes
     /// disagreeing here is a divergence rather than a wording difference.
@@ -696,7 +699,10 @@ pub fn execute_manifest(
             let (receipt, threaded) = session
                 .finish(vec![], fuel)
                 .expect("the oracle stands on every corpus receipt");
-            Ok((TxResult::Completed(receipt), threaded.collapse_onto(before)))
+            Ok((
+                TxResult::Completed(Box::new(receipt)),
+                threaded.collapse_onto(before),
+            ))
         }
         RunResult::Aborted { outcome, .. } => match outcome {
             Outcome::UserError { reason } => Ok((TxResult::Trapped(reason), before)),

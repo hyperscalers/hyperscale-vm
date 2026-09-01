@@ -107,6 +107,24 @@ enum NodeFailure {
 /// whatever it answered with, and the fuel it consumed.
 type NodeSuccess = (KernelSession, Vec<u32>, Option<Vec<u8>>, u64);
 
+impl NodeFailure {
+    /// The walk's own answer to this failure, charged against what the
+    /// transaction had already spent.
+    fn into_result(self, spent: u64) -> Result<RunResult, Unavailable> {
+        match self {
+            Self::Abort(failure) => {
+                let (session, outcome, consumed) = *failure;
+                Ok(RunResult::Aborted {
+                    session,
+                    outcome,
+                    fuel: spent.saturating_add(consumed),
+                })
+            }
+            Self::Unavailable(reason) => Err(Unavailable(reason)),
+        }
+    }
+}
+
 fn fail(session: KernelSession, outcome: Outcome, fuel: u64) -> NodeFailure {
     NodeFailure::Abort(Box::new((session, outcome, fuel)))
 }
@@ -123,7 +141,7 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
         &self,
         node: u32,
         call: &NodeCall,
-        outputs: &[Vec<u32>],
+        outputs: &[Vec<Option<u32>>],
         fuel_budget: u64,
         mut session: KernelSession,
     ) -> Result<NodeSuccess, NodeFailure> {
@@ -167,7 +185,7 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
                             AbortReason::MissingProducerEdge,
                         ));
                     };
-                    args.push(GuestArg::Bucket(*produced));
+                    args.push(GuestArg::Bucket(produced));
                 }
                 CallArg::Bool(taken) => args.push(GuestArg::Bool(*taken)),
                 CallArg::U64(scalar) => args.push(GuestArg::U64(*scalar)),
@@ -321,7 +339,7 @@ fn settled(
 fn edge_bounds_hold(
     call: &NodeCall,
     node: u32,
-    outputs: &[Vec<u32>],
+    outputs: &[Vec<Option<u32>>],
     session: KernelSession,
 ) -> Result<KernelSession, NodeFailure> {
     for edge in &call.edges {
@@ -331,7 +349,7 @@ fn edge_bounds_hold(
                 AbortReason::MissingProducerEdge,
             ));
         };
-        let Some(amount) = session.bucket(*carried).ok().map(|held| held.quantity()) else {
+        let Some(amount) = session.bucket(carried).ok().map(|held| held.quantity()) else {
             return Err(composition_defect(
                 session,
                 AbortReason::MissingProducerEdge,
@@ -352,12 +370,98 @@ fn edge_bounds_hold(
     Ok(session)
 }
 
+/// Stand in for a producer this shard does not run.
+///
+/// The output table is sized from the node's **own** declared outputs and
+/// never from the plan: a plan naming an out-of-range output is a
+/// composition defect, where sizing to the plan would let the plan pick
+/// the width and so let a smaller one pass as a correct answer. Slots
+/// nothing crossed on stay unset and meet the ordinary missing-edge
+/// refusal at whoever reaches for them.
+///
+/// Nothing else of the node happens here. The gate, the signed edge
+/// bounds, the issuance grants and the fuel all belong to the shard that
+/// ran it, and every downstream reader asks the output table rather than
+/// asking about locality.
+fn claimed_outputs(
+    node: u32,
+    call: &NodeCall,
+    entry: &BatchTx,
+    mut session: KernelSession,
+) -> Result<(KernelSession, Vec<Option<u32>>), NodeFailure> {
+    let mut produced = vec![None; call.outputs.len()];
+    for (slot, taken) in produced.iter_mut().enumerate() {
+        let output = u32::try_from(slot).unwrap_or(u32::MAX);
+        let (Some(crossed), Some(site)) = (
+            entry.legs.arrival(node, output),
+            entry.legs.claim(node, output),
+        ) else {
+            continue;
+        };
+        match session.escrow_in(crossed, site) {
+            Ok(rep) => *taken = Some(rep),
+            Err(trap) => {
+                return Err(fail(
+                    session,
+                    Outcome::UserError {
+                        reason: trap.into(),
+                    },
+                    0,
+                ));
+            }
+        }
+    }
+    Ok((session, produced))
+}
+
+/// Issue what leaves this execution, after the node that produced it
+/// returned.
+///
+/// The bucket is consumed here, so an edge that departs is not also an
+/// edge a local consumer could take — which is what keeps one output
+/// from being both crossed and spent.
+fn departing(
+    node: u32,
+    entry: &BatchTx,
+    produced: Vec<u32>,
+    mut session: KernelSession,
+) -> Result<(KernelSession, Vec<Option<u32>>), NodeFailure> {
+    let mut kept = Vec::with_capacity(produced.len());
+    for (slot, rep) in produced.into_iter().enumerate() {
+        let output = u32::try_from(slot).unwrap_or(u32::MAX);
+        let Some(site) = entry.legs.departing(node, output) else {
+            kept.push(Some(rep));
+            continue;
+        };
+        match session.escrow_out(node, output, rep, site) {
+            Ok(_) => kept.push(None),
+            Err(trap) => {
+                return Err(fail(
+                    session,
+                    Outcome::UserError {
+                        reason: trap.into(),
+                    },
+                    0,
+                ));
+            }
+        }
+    }
+    Ok((session, kept))
+}
+
 /// The edge a producer left on one of its outputs.
-fn edge_at(outputs: &[Vec<u32>], source: u32, output: u32) -> Option<&u32> {
+///
+/// Absent two ways and one of them is new: a slot the producer never
+/// declared, and a slot a producer another shard ran left empty because
+/// nothing crossed on it. Both are a consumer reaching for value nobody
+/// produced, so both meet the same refusal.
+fn edge_at(outputs: &[Vec<Option<u32>>], source: u32, output: u32) -> Option<u32> {
     let produced = usize::try_from(source).ok().and_then(|i| outputs.get(i))?;
     usize::try_from(output)
         .ok()
         .and_then(|slot| produced.get(slot))
+        .copied()
+        .flatten()
 }
 
 /// Judge a call's gate, returning the session to whichever path owns it
@@ -459,7 +563,7 @@ fn satisfies(
 
 impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
     fn run(&self, entry: &BatchTx, mut session: KernelSession) -> Result<RunResult, Unavailable> {
-        let mut outputs: Vec<Vec<u32>> = Vec::with_capacity(entry.calls.len());
+        let mut outputs: Vec<Vec<Option<u32>>> = Vec::with_capacity(entry.calls.len());
         let mut answers: Vec<Answer> = Vec::new();
         let mut fuel = 0u64;
         for (index, call) in entry.calls.iter().enumerate() {
@@ -467,12 +571,33 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
             // One budget across the manifest: each node is metered
             // against what its predecessors left.
             let remaining = entry.gas_limit.saturating_sub(fuel);
+            // A node another shard runs is not invoked here. What stands
+            // in for it is the value that arrived, which costs no fuel,
+            // reaches no gate, judges no signed bound and takes no
+            // issuance grant — every one of those belongs to the shard
+            // that ran it.
+            if !entry.legs.runs(node) {
+                match claimed_outputs(node, call, entry, session) {
+                    Ok((returned, produced)) => {
+                        session = returned;
+                        outputs.push(produced);
+                        continue;
+                    }
+                    Err(failure) => return failure.into_result(fuel),
+                }
+            }
             match self.invoke_node(node, call, &outputs, remaining, session) {
                 Ok((returned, produced, answered, consumed)) => {
                     session = returned;
                     session.leave_invocation();
                     fuel = fuel.saturating_add(consumed);
-                    outputs.push(produced);
+                    match departing(node, entry, produced, session) {
+                        Ok((returned, produced)) => {
+                            session = returned;
+                            outputs.push(produced);
+                        }
+                        Err(failure) => return failure.into_result(fuel),
+                    }
                     if let Some(value) = answered {
                         answers.push(Answer { node, value });
                     }

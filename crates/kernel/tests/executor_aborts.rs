@@ -10,7 +10,7 @@ use hyperscale_vm_effects::{
     ResourceKind, SlotId, SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
+    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession, LegPlan,
     Locality, MemoryStore, OverlayStore, RunResult, Unavailable, WorkingStore, decode_amount,
     execute_batch,
 };
@@ -340,6 +340,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
         tx: tx(id),
         declaration: Declaration::from_set(point(nullifier(), Mode::Write { moves: Moves::Both })),
         calls: Vec::new(),
+        legs: LegPlan::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limit: u64::MAX,
@@ -408,6 +409,7 @@ fn sharing_tx(id: u8) -> BatchTx {
         declaration: Declaration::from_set(set),
         calls: Vec::new(),
         nullifiers: Vec::new(),
+        legs: LegPlan::whole(),
         env: env(),
         gas_limit: u64::MAX,
     }
@@ -431,6 +433,7 @@ fn nullifier_and_shared_tx(id: u8) -> BatchTx {
         tx: tx(id),
         declaration: Declaration::from_set(set),
         calls: Vec::new(),
+        legs: LegPlan::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limit: u64::MAX,
@@ -577,6 +580,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         tx: tx(0x01),
         declaration: Declaration::from_set(point(nullifier(), Mode::Read)),
         calls: Vec::new(),
+        legs: LegPlan::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limit: u64::MAX,
@@ -629,6 +633,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
             ..Declaration::default()
         },
         calls: Vec::new(),
+        legs: LegPlan::whole(),
         nullifiers: vec![],
         env: env(),
         gas_limit: u64::MAX,

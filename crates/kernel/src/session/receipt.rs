@@ -15,6 +15,7 @@ use hyperscale_vm_types::{
 };
 
 use super::{Capability, KernelSession};
+use crate::escrow::EscrowDelta;
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, total_movement};
 use crate::oracle::undeclared_accesses;
@@ -159,6 +160,13 @@ pub struct Receipt {
     /// own accumulator, which is the whole of how the accumulator moves
     /// on this path.
     pub supply: SupplyDelta,
+    /// What this execution escrowed out and claimed in.
+    ///
+    /// Empty for every execution that runs a whole manifest, which is
+    /// what a transaction does until it decomposes. What a consumer does
+    /// with the issued half is attest it, so the shard taking a crossing
+    /// claims its own argument rather than a share of a sum.
+    pub escrow: EscrowDelta,
     /// Total fuel consumed: engine schedule plus boundary supplement.
     ///
     /// Exact on a completed execution and engine-defined at a core trap,
@@ -299,6 +307,10 @@ impl KernelSession {
     /// what they lost, once a mint counts as a loss and a burn as a gain
     /// — value entering the world from a mint has to land somewhere, and
     /// value leaving it through a burn has to have come from somewhere.
+    /// An escrow is the same pair across a shard boundary rather than
+    /// across existence: what this execution issued is a gain and what it
+    /// claimed is a loss, so a divided transaction's halves each balance
+    /// where they run.
     /// Stated as two unsigned totals rather than a signed net, because
     /// the quantities are `u128` and the net would need a wider
     /// accumulator to hold a sum neither side can overflow.
@@ -359,6 +371,21 @@ impl KernelSession {
                 resource,
                 self.supply.burned(resource),
                 self.supply.minted(resource),
+            );
+        }
+        // An issued escrow is a gain for the reason a burn is — value
+        // leaving this execution had to come from somewhere — and a
+        // claimed one is a loss for the reason a mint is.
+        //
+        // Unfiltered by locality, like every other term: a set of legs
+        // has to fold to zero without the legs it did not run, and a
+        // locality-scoped fold would make two replicas of one execution
+        // reach different verdicts.
+        for resource in self.escrow.resources() {
+            weigh(
+                resource,
+                self.escrow.issued(resource),
+                self.escrow.claimed(resource),
             );
         }
         sides.into_iter().find_map(|(resource, side)| {
@@ -624,6 +651,19 @@ impl KernelSession {
                     .write(record.nullifier, self.spend_record(&record))?;
             }
         }
+        // The escrow cells this execution owes, into the same layer and
+        // for the same reason: an abort discards the claim and leaves the
+        // crossing claimable, so once-only falls out of the layering
+        // rather than needing a guard of its own.
+        //
+        // Locality-filtered like the nullifier's, and here it is the
+        // whole of what keeps a record under the producer's prefix from
+        // being written by every participant that ran the node.
+        for (key, value) in self.crossings.clone() {
+            if self.locality.is_local(key.owner) {
+                self.store.write(key, value)?;
+            }
+        }
         let escaped = undeclared_accesses(self.store.access_log(), &self.declared);
         if !escaped.is_empty() {
             return Err(FinishError::Undeclared(escaped));
@@ -635,14 +675,19 @@ impl KernelSession {
             .retain(|key, _| !movements.contains_key(key) && !settles.contains_key(key));
         delta.movements = movements.into();
         delta.settles = settles.into();
-        for record in &self.nullifiers {
-            // A nullifier cell records a spend as its own encoding, never
-            // a well-formed amount. A key that also materialized as a
-            // denominated value cell would take this write and, at apply,
-            // decode it back as an amount and fail the whole batch. State
-            // the invariant here, as a per-transaction abort: a nullifier
-            // cell is not a value cell.
-            if denominations.cell(record.nullifier).is_some() {
+        // A kernel cell records its own encoding, never a well-formed
+        // amount. A key that also materialized as a denominated value
+        // cell would take this write and, at apply, decode it back as an
+        // amount and fail the whole batch. State the invariant here, as a
+        // per-transaction abort: a kernel cell is not a value cell.
+        let kernel_cells: Vec<(SubstateKey, Vec<u8>)> = self
+            .nullifiers
+            .iter()
+            .map(|record| (record.nullifier, self.spend_record(record)))
+            .chain(self.crossings.clone())
+            .collect();
+        for (key, value) in kernel_cells {
+            if denominations.cell(key).is_some() {
                 return Ok(abort_with(
                     self.store,
                     Outcome::ProtocolError {
@@ -651,9 +696,7 @@ impl KernelSession {
                     fuel,
                 ));
             }
-            delta
-                .cells
-                .insert(record.nullifier, Some(self.spend_record(record)));
+            delta.cells.insert(key, Some(value));
         }
         if self.unconserved(&delta, &denominations).is_some() {
             return Ok(abort_with(
@@ -674,6 +717,7 @@ impl KernelSession {
                 // every flip above discarded its claims — supply and
                 // events alike — with its effects.
                 supply: self.supply,
+                escrow: self.escrow,
                 fuel,
             },
             self.store,
@@ -694,6 +738,10 @@ fn abort_with(mut store: OverlayStore, outcome: Outcome, fuel: u64) -> (Receipt,
             // out of existence, which never happened either.
             events: Vec::new(),
             supply: SupplyDelta::default(),
+            // The crossing it issued is discarded with everything else,
+            // which is what leaves the value claimable: nothing committed
+            // says it left.
+            escrow: EscrowDelta::default(),
             fuel,
         },
         store,

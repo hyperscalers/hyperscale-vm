@@ -9,7 +9,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, ResourceAddr, SubstateKey};
+use hyperscale_vm_effects::CrossingSite;
+use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, ResourceAddr};
 
 use crate::modes::ModeError;
 
@@ -147,8 +148,8 @@ impl EscrowDelta {
 pub struct LegPlan {
     skipped: BTreeSet<u32>,
     inbound: BTreeMap<(u32, u32), Crossed>,
-    outbound: BTreeMap<(u32, u32), SubstateKey>,
-    claimed: BTreeMap<(u32, u32), SubstateKey>,
+    outbound: BTreeMap<(u32, u32), CrossingSite>,
+    claimed: BTreeMap<(u32, u32), CrossingSite>,
 }
 
 impl LegPlan {
@@ -179,13 +180,13 @@ impl LegPlan {
 
     /// The record cell an edge leaving this execution writes.
     #[must_use]
-    pub fn departing(&self, node: u32, output: u32) -> Option<SubstateKey> {
+    pub fn departing(&self, node: u32, output: u32) -> Option<CrossingSite> {
         self.outbound.get(&(node, output)).copied()
     }
 
     /// The claim cell an arrival writes.
     #[must_use]
-    pub fn claim(&self, node: u32, output: u32) -> Option<SubstateKey> {
+    pub fn claim(&self, node: u32, output: u32) -> Option<CrossingSite> {
         self.claimed.get(&(node, output)).copied()
     }
 
@@ -205,7 +206,7 @@ impl LegPlan {
         node: u32,
         output: u32,
         crossed: Crossed,
-        claim: SubstateKey,
+        claim: CrossingSite,
     ) -> Result<(), PlanTooWide> {
         Self::bounded(&mut self.inbound, (node, output), crossed)?;
         Self::bounded(&mut self.claimed, (node, output), claim)
@@ -220,7 +221,7 @@ impl LegPlan {
         &mut self,
         node: u32,
         output: u32,
-        record: SubstateKey,
+        record: CrossingSite,
     ) -> Result<(), PlanTooWide> {
         Self::bounded(&mut self.outbound, (node, output), record)
     }
@@ -249,19 +250,24 @@ pub struct PlanTooWide;
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_types::{Address, LocalKey, ResourceAddr};
+    use hyperscale_vm_effects::{Hash32, SubintentHash, TestHasher};
+    use hyperscale_vm_types::ResourceAddr;
 
-    use super::{Crossed, EscrowDelta, LegPlan, MAX_CROSSINGS_PER_TX, ModeError, SubstateKey};
+    use super::{Crossed, CrossingSite, EscrowDelta, LegPlan, MAX_CROSSINGS_PER_TX, ModeError};
 
     fn resource(tag: u8) -> ResourceAddr {
         ResourceAddr::new([tag; 31])
     }
 
-    fn cell(tag: u8) -> SubstateKey {
-        SubstateKey {
-            owner: Address::from(resource(tag)),
-            local: LocalKey([tag; 16]),
-        }
+    fn cell(tag: u8) -> CrossingSite {
+        CrossingSite::record(
+            &TestHasher,
+            resource(tag),
+            SubintentHash(Hash32([tag; 32])),
+            0,
+            0,
+            1_000,
+        )
     }
 
     fn crossed(tag: u8, amount: u128) -> Crossed {

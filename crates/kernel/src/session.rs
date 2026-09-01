@@ -38,7 +38,7 @@ mod seal;
 mod trap;
 mod value;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use buckets::Buckets;
 pub use buckets::Held;
@@ -60,6 +60,7 @@ pub use receipt::{DeltaMap, FinishError, Receipt, StateDelta};
 pub use seal::DOMAIN_SEALED_DRAW;
 pub use trap::SessionTrap;
 
+use crate::escrow::EscrowDelta;
 use crate::locality::Locality;
 #[cfg(any(test, feature = "testing"))]
 use crate::modes::DeltaOp;
@@ -143,6 +144,24 @@ pub struct KernelSession {
     /// end, because the grant that authorised each one is gone by then:
     /// entering the next node takes it away, and the resource with it.
     supply: SupplyDelta,
+    /// What this execution escrowed out and claimed in, by resource and
+    /// by edge.
+    ///
+    /// Beside the supply delta rather than inside it: an escrow moves
+    /// value between shards and creates none, so a crossing folded into
+    /// supply would record a mint that never happened. What the two share
+    /// is the fold in `finish`, where an issue weighs as a gain for the
+    /// reason a burn does — value leaving this execution had to come from
+    /// somewhere.
+    escrow: EscrowDelta,
+    /// The escrow cells this execution owes, by key.
+    ///
+    /// Held until `finish` rather than written where they happen, so they
+    /// land in the same overlay layer as everything else — an abort
+    /// discards the claim and leaves the crossing claimable, which is
+    /// what makes once-only fall out of the layering rather than need a
+    /// guard.
+    crossings: BTreeMap<SubstateKey, Vec<u8>>,
     /// Whether the executing invocation may create value.
     ///
     /// One entry per issuance the running method declares, in the order

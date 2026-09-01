@@ -566,6 +566,107 @@ impl ClaimCell {
     }
 }
 
+/// One escrow cell: where it sits, and what identifies it.
+///
+/// The key and the fields that derive it, built together so the two
+/// cannot disagree. That matters because a sweepable cell answers *when
+/// do I stop being needed* from its own value — the sweep re-derives the
+/// key from what the leaf holds — so a cell whose value does not
+/// reproduce its key is one no sweep ever reaches, which is a leak
+/// nothing announces.
+///
+/// The kernel is handed these rather than deriving them. Its hashing
+/// seam takes bytes and not a domain, so it could not derive a child key
+/// if it wanted to; and deriving one is the parent's job anyway, since
+/// two shards divide one manifest separately and have to reach the same
+/// cell without consulting each other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CrossingSite {
+    key: SubstateKey,
+    intent: SubintentHash,
+    local: u32,
+    output: u32,
+    expiry_ms: u64,
+}
+
+impl CrossingSite {
+    /// The record cell of the edge `local` produces, under the producing
+    /// node's target.
+    #[must_use]
+    pub fn record(
+        hasher: &dyn Hasher,
+        owner: impl Into<Address>,
+        intent: SubintentHash,
+        local: u32,
+        output: u32,
+        expiry_ms: u64,
+    ) -> Self {
+        let owner = owner.into();
+        Self {
+            key: escrow_record_key(hasher, owner, intent, local, output, expiry_ms),
+            intent,
+            local,
+            output,
+            expiry_ms,
+        }
+    }
+
+    /// The claim cell for that edge, under the target of whatever takes
+    /// it.
+    #[must_use]
+    pub fn claim(
+        hasher: &dyn Hasher,
+        owner: impl Into<Address>,
+        intent: SubintentHash,
+        local: u32,
+        output: u32,
+        expiry_ms: u64,
+    ) -> Self {
+        let owner = owner.into();
+        Self {
+            key: escrow_claim_key(hasher, owner, intent, local, output, expiry_ms),
+            intent,
+            local,
+            output,
+            expiry_ms,
+        }
+    }
+
+    /// Where the cell sits.
+    #[must_use]
+    pub const fn key(&self) -> SubstateKey {
+        self.key
+    }
+
+    /// When it stops being owed.
+    #[must_use]
+    pub const fn expiry_ms(&self) -> u64 {
+        self.expiry_ms
+    }
+
+    /// The record's value, once the execution knows what crossed.
+    #[must_use]
+    pub const fn crossing(&self, resource: ResourceAddr, amount: u128) -> CrossingCell {
+        CrossingCell {
+            resource,
+            amount,
+            intent: self.intent,
+            local: self.local,
+            output: self.output,
+            expiry_ms: self.expiry_ms,
+        }
+    }
+
+    /// The claim's value: which transaction took the crossing.
+    #[must_use]
+    pub const fn claimed_by(&self, tx: TxHash) -> ClaimCell {
+        ClaimCell {
+            tx,
+            expiry_ms: self.expiry_ms,
+        }
+    }
+}
+
 /// When an escrow crossing stops being claimable: the window the
 /// transaction signed, plus the grace every transaction-derived artifact
 /// gets.

@@ -19,6 +19,9 @@ hyperscale-vm-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# The encoding a kernel cell's value carries, so a test can read one back
+# the way a consumer would.
+hyperscale-hbor.workspace = true
 # The crate's own testing feature, for the integration tests that stand
 # in for a kernel defect.
 hyperscale-vm-kernel = { path = ".", features = ["testing"] }

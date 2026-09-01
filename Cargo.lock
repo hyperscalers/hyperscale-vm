@@ -766,6 +766,7 @@ dependencies = [
 name = "hyperscale-vm-kernel"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-hbor",
  "hyperscale-vm-effects",
  "hyperscale-vm-embed",
  "hyperscale-vm-kernel",

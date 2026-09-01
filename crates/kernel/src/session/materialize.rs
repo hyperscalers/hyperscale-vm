@@ -17,6 +17,7 @@ use hyperscale_vm_types::{
 use super::buckets::Buckets;
 use super::ranges::Ranges;
 use super::{EnvInputs, KernelSession};
+use crate::escrow::EscrowDelta;
 use crate::ledger::AmountLedger;
 use crate::locality::Locality;
 use crate::modes::decode_amount;
@@ -560,6 +561,8 @@ impl KernelSession {
             invocation: None,
             events: Vec::new(),
             supply: SupplyDelta::default(),
+            escrow: EscrowDelta::default(),
+            crossings: BTreeMap::new(),
             cell_resources: ordered.iter().map(|access| access.holds).collect(),
             buckets: Buckets::default(),
             issuance: Vec::new(),

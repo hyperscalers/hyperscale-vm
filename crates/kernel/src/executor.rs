@@ -39,6 +39,7 @@ use hyperscale_vm_types::{
     Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
+use crate::escrow::{EscrowDelta, LegPlan};
 use crate::ledger::AmountLedger;
 use crate::locality::Locality;
 use crate::overlay::OverlayStore;
@@ -91,6 +92,18 @@ pub struct BatchTx {
     /// at any of them aborts the transaction before it runs; completing
     /// writes them all — once-only by creation conflict.
     pub nullifiers: Vec<SubintentRecord>,
+    /// Which of the manifest's nodes this execution runs, and the cells
+    /// the ones it does not run stand in for.
+    ///
+    /// [`LegPlan::whole`] until a transaction decomposes, which is what
+    /// every execution ran before there was anything else to run — so the
+    /// whole-shape path is the default rather than a case.
+    ///
+    /// Unlike the declaration and the calls beside it, this is **not**
+    /// shard-invariant: it is the one thing about a batch entry that
+    /// differs per participant, because it is exactly the statement of
+    /// which participant this is.
+    pub legs: LegPlan,
     /// The deterministic environment: the transaction clock, the epoch
     /// it falls in, and the seeds a matured seal opens against. Per
     /// transaction, not per batch — every replica executing this
@@ -126,9 +139,17 @@ impl BatchTx {
             declaration: declaration.into(),
             calls: Vec::new(),
             nullifiers: Vec::new(),
+            legs: LegPlan::whole(),
             env,
             gas_limit: u64::MAX,
         }
+    }
+
+    /// Bind which of the manifest's nodes this execution runs.
+    #[must_use]
+    pub fn with_legs(mut self, legs: LegPlan) -> Self {
+        self.legs = legs;
+        self
     }
 
     /// Bind the signed execution ceiling. Unset means unbounded, which is
@@ -650,6 +671,7 @@ fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
         delta: StateDelta::default(),
         events: Vec::new(),
         supply: SupplyDelta::default(),
+        escrow: EscrowDelta::default(),
         fuel,
     }
 }

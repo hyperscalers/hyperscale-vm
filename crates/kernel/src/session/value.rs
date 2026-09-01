@@ -11,11 +11,12 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_vm_effects::{IssuanceGrant, ResourceKind, distinct_ids};
+use hyperscale_vm_effects::{CrossingSite, IssuanceGrant, ResourceKind, distinct_ids};
 use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
+use crate::escrow::Crossed;
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -188,6 +189,63 @@ impl KernelSession {
         self.take_bucket(funds).map(|_| ())
     }
 
+    /// Send what a bucket carries out of this execution as escrow.
+    ///
+    /// Not a destruction and not a mint: the value exists after this and
+    /// exists somewhere else, so it moves the escrow term rather than the
+    /// supply one. Folding a crossing into supply would record a mint
+    /// that never happened.
+    ///
+    /// The bucket is consumed, which is what makes this the shape a
+    /// producing node's output takes on the way out. A non-fungible
+    /// bucket is refused: the attestation is linear over amounts and
+    /// blind to identity, so what an id-bearing crossing would arrive
+    /// with is a delta its producer's history supports.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`], and [`SessionTrap::WrongEdgeKind`] for an
+    /// instance-bearing bucket — the sender's own defect.
+    pub(crate) fn escrow_out(
+        &mut self,
+        node: u32,
+        output: u32,
+        funds: u32,
+        site: CrossingSite,
+    ) -> Result<Crossed, SessionTrap> {
+        let resource = self.buckets.resource_of(funds)?;
+        let held = self.take_bucket(funds)?;
+        let Held::Amount(amount) = held else {
+            return Err(SessionTrap::WrongEdgeKind);
+        };
+        let crossed = Crossed { resource, amount };
+        self.escrow.issue(node, output, crossed)?;
+        self.crossings
+            .insert(site.key(), site.crossing(resource, amount).to_bytes());
+        Ok(crossed)
+    }
+
+    /// Take an attested arrival in as a bucket.
+    ///
+    /// What stands in for a producer another shard ran. No grant is
+    /// consulted, and none could be: the authority that let the value
+    /// exist was exercised where it was produced, and what reaches here
+    /// is a certificate saying so.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap`] on an overflowing escrow total.
+    pub(crate) fn escrow_in(
+        &mut self,
+        crossed: Crossed,
+        site: CrossingSite,
+    ) -> Result<u32, SessionTrap> {
+        self.escrow.claim(crossed)?;
+        self.crossings
+            .insert(site.key(), site.claimed_by(self.tx).to_bytes());
+        Ok(self.open_bucket(Held::Amount(crossed.amount), crossed.resource))
+    }
+
     /// Grant the executing invocation the issuances its declaration
     /// claimed, in the order it declares them.
     ///
@@ -243,5 +301,59 @@ impl KernelSession {
             return Err(SessionTrap::ReservationTaken);
         }
         Ok(self.open_bucket(Held::Amount(amount), resource))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hyperscale_vm_effects::{CrossingSite, Hash32, SubintentHash, TestHasher};
+    use hyperscale_vm_types::{Address, AddressClass, ResourceAddr};
+
+    use super::super::fixtures::{declared, session_over};
+    use super::Held;
+    use crate::escrow::Crossed;
+    use crate::session::SessionTrap;
+    use crate::store::MemoryStore;
+
+    const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+
+    fn site() -> CrossingSite {
+        CrossingSite::record(
+            &TestHasher,
+            Address::new([0xA1; 31], AddressClass::Component),
+            SubintentHash(Hash32([0x5A; 32])),
+            0,
+            0,
+            1_000,
+        )
+    }
+
+    /// The escrow attestation is linear over amounts and blind to
+    /// identity, so a named-instance crossing would arrive carrying a
+    /// delta its producer's history supports. Refused at the issue, which
+    /// is where the sender's own defect belongs.
+    #[test]
+    fn an_instance_bucket_is_refused_at_the_issue() {
+        let mut session = session_over(MemoryStore::new(), &declared(&[]));
+        let instances = session.open_bucket(Held::Instances([1u128, 2].into()), RESOURCE);
+        assert_eq!(
+            session.escrow_out(0, 0, instances, site()),
+            Err(SessionTrap::WrongEdgeKind),
+        );
+    }
+
+    /// A fungible one crosses, and what it carried is what the record
+    /// says.
+    #[test]
+    fn a_fungible_bucket_crosses_as_what_it_carried() {
+        let mut session = session_over(MemoryStore::new(), &declared(&[]));
+        let funds = session.open_bucket(Held::Amount(40), RESOURCE);
+        assert_eq!(
+            session.escrow_out(0, 0, funds, site()),
+            Ok(Crossed {
+                resource: RESOURCE,
+                amount: 40,
+            }),
+        );
     }
 }
