@@ -1,38 +1,33 @@
-//! Per-shard supply accumulators: the linearity substrate.
+//! What a transaction did to supply: the two operations that move it.
 //!
-//! Aggregates are never global cells — each shard accumulates, per
-//! resource, the total amount its cells hold. The accumulator changes only
-//! on mint, burn, and cross-shard movement; same-shard transfers conserve
-//! it by construction. Composition is per-resource addition, so splitting
-//! and merging shards composes accumulators exactly — the reshape-clean
-//! property the design demands of every stdlib accumulator.
+//! Supply is not a cell. No key holds it, and what changes it is the
+//! authority a grant conferred rather than any write — so what a receipt
+//! records is the pair of totals its transaction moved, and chain-wide
+//! supply is a fold over receipts rather than a number anybody keeps.
 //!
-//! Supply is per-shard for auditability first and throughput second. A
-//! global supply cell would not even contend — supply updates are
-//! commutative, and the delta mode exists — but it would constrain
-//! nothing: a shard fabricating balances for a resource homed elsewhere
-//! never touches it, and the discrepancy is invisible without a global
-//! scan. A per-shard accumulator's trajectory is bounded by public facts
-//! — genesis, the shard's own authority-evidenced mints and burns, and
-//! the attested supply delta on every cross-shard leg — so an external
-//! verifier can audit how much value a shard is supposed to hold from
-//! certificates alone. Fabricated value is loud instead of silent, and
-//! the total is a fold that reshape preserves rather than a number
-//! nobody can check.
+//! No accumulator stands behind it, and that is a decision. A sum does
+//! not live at a prefix: maintaining one across a split costs a re-fold
+//! over every cell the child inherits, and the result is unverifiable
+//! anyway, since two children's totals adding to their parent's pins
+//! nothing about which resource went to which side. What replaces it is
+//! the conservation fold in
+//! [`finish`](crate::KernelSession::finish), which judges each execution
+//! whole: a mint is a loss and a burn is a gain, so value entering the
+//! world has to land somewhere and value leaving it has to have come
+//! from somewhere.
 //!
 //! Two operations move it, and both carry a resource address because a
 //! grant does: minting brings value into existence under the authority
-//! over one resource, and burning takes it out under the same. A receipt
-//! records what its transaction did as a [`SupplyDelta`], and a
-//! committing transaction's delta is what a shard applies. An aborting
-//! one has none.
+//! over one resource, and burning takes it out under the same. An
+//! aborting transaction records neither, on the same terms its events do
+//! not survive.
 //!
 //! Nothing else moves it, and nothing else needs to. A transfer is a
 //! debit and a credit on two cells holding the same resource, which sums
-//! to zero however many cells it crosses — so same-shard movement
-//! conserves the accumulator by construction rather than by counting.
-//! What a cross-shard leg does to it is the settlement attestation's
-//! answer, carried with the leg rather than derived here.
+//! to zero however many cells it crosses. Value crossing a shard
+//! boundary moves no supply either — it exists on both sides of the
+//! crossing — which is why an escrow is its own term in that fold and
+//! not a term here.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -125,130 +120,13 @@ impl SupplyDelta {
             .ok_or(ModeError::SupplyOutOfBounds)?;
         Ok(())
     }
-
-    /// Move a shard's accumulator by what this transaction did.
-    ///
-    /// Everything fallible lands before anything mutable, so a refused
-    /// delta leaves the accumulator exactly as it found it.
-    ///
-    /// # Errors
-    ///
-    /// [`ModeError::SupplyOutOfBounds`] on overflow, or on a burn past
-    /// what the shard accumulated — which is a shard destroying value it
-    /// never held, and so a defect rather than a business condition.
-    pub fn apply(&self, ledger: &mut SupplyLedger) -> Result<(), ModeError> {
-        let mut totals: BTreeMap<ResourceAddr, u128> = BTreeMap::new();
-        for (resource, amount) in &self.minted {
-            let total = ledger
-                .amount(*resource)
-                .checked_add(*amount)
-                .ok_or(ModeError::SupplyOutOfBounds)?;
-            totals.insert(*resource, total);
-        }
-        for (resource, amount) in &self.burned {
-            let total = totals
-                .get(resource)
-                .copied()
-                .unwrap_or_else(|| ledger.amount(*resource))
-                .checked_sub(*amount)
-                .ok_or(ModeError::SupplyOutOfBounds)?;
-            totals.insert(*resource, total);
-        }
-        for (resource, total) in totals {
-            ledger.set(resource, total);
-        }
-        Ok(())
-    }
-}
-
-/// A shard's per-resource supply accumulator.
-///
-/// Keyed by the type its writers carry: supply moves only under a grant,
-/// and a grant names a minter, which the protocol resource does not have
-/// — so a ledger keyed any wider would hold keys nothing can produce.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SupplyLedger {
-    by_resource: BTreeMap<ResourceAddr, u128>,
-}
-
-impl SupplyLedger {
-    /// An empty ledger.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            by_resource: BTreeMap::new(),
-        }
-    }
-
-    /// The accumulated amount for a resource; zero when untracked.
-    #[must_use]
-    pub fn amount(&self, resource: ResourceAddr) -> u128 {
-        self.by_resource.get(&resource).copied().unwrap_or(0)
-    }
-
-    /// Credit a resource: mint or inbound cross-shard movement.
-    ///
-    /// # Errors
-    ///
-    /// [`ModeError::SupplyOutOfBounds`] on overflow.
-    pub fn credit(&mut self, resource: ResourceAddr, amount: u128) -> Result<(), ModeError> {
-        let total = self
-            .amount(resource)
-            .checked_add(amount)
-            .ok_or(ModeError::SupplyOutOfBounds)?;
-        self.set(resource, total);
-        Ok(())
-    }
-
-    /// Debit a resource: burn or outbound cross-shard movement.
-    ///
-    /// # Errors
-    ///
-    /// [`ModeError::SupplyOutOfBounds`] if the debit exceeds the
-    /// accumulated amount.
-    pub fn debit(&mut self, resource: ResourceAddr, amount: u128) -> Result<(), ModeError> {
-        let total = self
-            .amount(resource)
-            .checked_sub(amount)
-            .ok_or(ModeError::SupplyOutOfBounds)?;
-        self.set(resource, total);
-        Ok(())
-    }
-
-    /// Records a resource's total in canonical form: a resource this shard
-    /// holds none of is absent, never present at zero. Equality is over the
-    /// map, and it is the reshape-clean property — two shards holding the
-    /// same supply must compare equal however they arrived there, including
-    /// through a zero-amount cross-shard leg.
-    fn set(&mut self, resource: ResourceAddr, total: u128) {
-        if total == 0 {
-            self.by_resource.remove(&resource);
-        } else {
-            self.by_resource.insert(resource, total);
-        }
-    }
-
-    /// Compose two ledgers by per-resource addition — the split/merge
-    /// composition: composing two children yields exactly the parent.
-    ///
-    /// # Errors
-    ///
-    /// [`ModeError::SupplyOutOfBounds`] on overflow.
-    pub fn compose(&self, other: &Self) -> Result<Self, ModeError> {
-        let mut composed = self.clone();
-        for (resource, amount) in &other.by_resource {
-            composed.credit(*resource, *amount)?;
-        }
-        Ok(composed)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_types::ResourceAddr;
 
-    use super::{SupplyDelta, SupplyLedger};
-    use crate::modes::ModeError;
+    use super::SupplyDelta;
 
     const fn resource(byte: u8) -> ResourceAddr {
         ResourceAddr::new([byte; 31])
@@ -268,77 +146,5 @@ mod tests {
         delta.burn(unit, 300).expect("within bounds");
 
         assert_eq!(delta.resources().collect::<Vec<_>>(), vec![unit]);
-    }
-
-    #[test]
-    fn credits_and_debits_are_checked() {
-        let mut ledger = SupplyLedger::new();
-        ledger.credit(resource(1), 100).unwrap();
-        ledger.debit(resource(1), 40).unwrap();
-        assert_eq!(ledger.amount(resource(1)), 60);
-        assert_eq!(
-            ledger.debit(resource(1), 61),
-            Err(ModeError::SupplyOutOfBounds)
-        );
-        ledger.credit(resource(1), u128::MAX - 60).unwrap();
-        assert_eq!(
-            ledger.credit(resource(1), 1),
-            Err(ModeError::SupplyOutOfBounds)
-        );
-    }
-
-    /// A refused delta is refused whole: the burn that cannot land keeps
-    /// the mints beside it from landing either.
-    #[test]
-    fn a_refused_delta_leaves_the_accumulator_untouched() {
-        let mut ledger = SupplyLedger::new();
-        ledger.credit(resource(1), 3).unwrap();
-        let before = ledger.clone();
-
-        let mut delta = SupplyDelta::default();
-        delta.mint(resource(1), 10).expect("within bounds");
-        delta.burn(resource(2), 5).expect("within bounds");
-        assert_eq!(delta.apply(&mut ledger), Err(ModeError::SupplyOutOfBounds));
-        assert_eq!(ledger, before);
-    }
-
-    #[test]
-    fn composition_reassembles_the_parent_exactly() {
-        let mut parent = SupplyLedger::new();
-        parent.credit(resource(1), 1_000).unwrap();
-        parent.credit(resource(2), 250).unwrap();
-
-        // An arbitrary split of the parent's holdings across two children.
-        let mut left = SupplyLedger::new();
-        left.credit(resource(1), 731).unwrap();
-        left.credit(resource(2), 250).unwrap();
-        let mut right = SupplyLedger::new();
-        right.credit(resource(1), 269).unwrap();
-
-        assert_eq!(left.compose(&right).unwrap(), parent);
-        // Composition commutes.
-        assert_eq!(right.compose(&left).unwrap(), parent);
-    }
-
-    #[test]
-    fn a_fully_debited_resource_leaves_no_residue() {
-        let mut ledger = SupplyLedger::new();
-        ledger.credit(resource(3), 10).unwrap();
-        ledger.debit(resource(3), 10).unwrap();
-        assert_eq!(ledger, SupplyLedger::new());
-    }
-
-    #[test]
-    fn a_zero_credit_leaves_no_residue() {
-        let mut ledger = SupplyLedger::new();
-        ledger.credit(resource(4), 0).unwrap();
-        assert_eq!(ledger.amount(resource(4)), 0);
-        assert_eq!(ledger, SupplyLedger::new());
-
-        // And composing a zero-amount leg is the identity, not a ledger
-        // that merely reads as zero.
-        let mut held = SupplyLedger::new();
-        held.credit(resource(4), 9).unwrap();
-        assert_eq!(held.compose(&ledger).unwrap(), held);
     }
 }

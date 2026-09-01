@@ -573,10 +573,10 @@ impl KernelSession {
     /// over the untouched store. An abort that happened *before*
     /// completion never reaches here; it goes to [`Self::discard`].
     ///
-    /// Supply accumulators do not move here, and cannot: a movement lands
-    /// on a hashed key, so the resource it moved is unknowable at this
-    /// layer — see [`SupplyLedger`](crate::SupplyLedger) for where the
-    /// accumulator does move.
+    /// What a mint or a burn moved is reported rather than accumulated:
+    /// a movement lands on a hashed key, so what it moved is the
+    /// declaration's answer and not this layer's, and chain-wide supply
+    /// is a fold over receipts. See [`SupplyDelta`](crate::SupplyDelta).
     ///
     /// # Errors
     ///
