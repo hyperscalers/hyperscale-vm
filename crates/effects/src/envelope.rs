@@ -73,15 +73,29 @@ pub const ESCROW_RECORD_SLOT: SlotId = SlotId(0xFFFD);
 /// producer's reclaim happen.
 pub const ESCROW_CLAIM_SLOT: SlotId = SlotId(0xFFFE);
 
+/// The reserved role of committed-transaction substates under a shard's
+/// own owner.
+///
+/// What a shard writes at block commit for every transaction the block
+/// carries: the fact that it committed it, provable and refutable
+/// against the state root every header carries. No kernel writes one;
+/// the chain does, and a reader holding nothing but the leaf can tell
+/// it from any other cell and tell when it stops being needed.
+pub const COMMITTED_TX_SLOT: SlotId = SlotId(0xFFFC);
+
 // Held at compile time rather than by a test: every side is a constant,
 // so a kernel cell colliding with a package's own — or with another
 // kernel family — is a thing the build can refuse outright.
 const _: () = assert!(NULLIFIER_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(ESCROW_RECORD_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(ESCROW_CLAIM_SLOT.0 > PACKAGE_SLOT_BASE);
+const _: () = assert!(COMMITTED_TX_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_CLAIM_SLOT.0);
 const _: () = assert!(ESCROW_RECORD_SLOT.0 != ESCROW_CLAIM_SLOT.0);
+const _: () = assert!(COMMITTED_TX_SLOT.0 != NULLIFIER_SLOT.0);
+const _: () = assert!(COMMITTED_TX_SLOT.0 != ESCROW_RECORD_SLOT.0);
+const _: () = assert!(COMMITTED_TX_SLOT.0 != ESCROW_CLAIM_SLOT.0);
 
 /// A shaped opening an intent declares for something it cannot supply
 /// itself, which the composition carrying it fills.
@@ -401,6 +415,71 @@ impl NullifierCell {
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         to_vec(self).expect("a nullifier cell is three scalars")
+    }
+}
+
+/// The canonical committed-transaction key for `tx` under the committing
+/// shard's own owner: `shard_prefix | expiry_bucket | H(committed_tx_role,
+/// tx, expiry)`.
+///
+/// Bucketed like the nullifier, so a shard's committed set for one
+/// bucket is a contiguous range a sweep walks, and self-describing like
+/// it, so a leaf answers when it stops being needed on its own. The
+/// expiry is the transaction's own validity end plus the grace, which a
+/// reader derives from signed content: a prober asking whether a shard
+/// committed a transaction needs nothing but the transaction and the
+/// shard to name the cell.
+///
+/// The material here is chosen by a composer and not by the owner,
+/// which [`bucketed_child_key`] warns against on its 48-bit birthday
+/// bound. It is admissible for this family and for this family alone,
+/// because a collision can only make the cell present, never absent: a
+/// second transaction landing on the key overwrites a value with one
+/// that still derives the key, both share the bucket the sweep retires
+/// together, and presence is never what the cell is asked to prove.
+/// What it proves is absence, and nothing a composer can grind produces
+/// a missing leaf.
+#[must_use]
+pub fn committed_tx_key(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    tx: TxHash,
+    expiry_ms: u64,
+) -> SubstateKey {
+    bucketed_child_key(
+        hasher,
+        owner,
+        COMMITTED_TX_SLOT,
+        SweepBucket::of(expiry_ms),
+        &[tx.0.0.to_vec(), expiry_ms.to_le_bytes().to_vec()],
+    )
+}
+
+/// What a committed-transaction cell holds: the transaction, and when
+/// the record stops being needed.
+///
+/// Self-describing, and keyed by what it says: [`committed_tx_key`]
+/// re-derives this cell's own key from `tx` and `expiry_ms` under the
+/// shard's owner, so a reader holding nothing but the leaf can tell it
+/// from any other cell and can tell whether it is still owed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub struct CommittedTxCell {
+    /// The transaction the shard committed.
+    pub tx: TxHash,
+    /// When no chain can still be asking whether it was committed: its
+    /// `validity_end_ms` plus [`NULLIFIER_GRACE_MS`].
+    pub expiry_ms: u64,
+}
+
+impl CommittedTxCell {
+    /// The cell's committed bytes.
+    ///
+    /// # Panics
+    ///
+    /// Never: the value is two scalars.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        to_vec(self).expect("a committed-transaction cell is two scalars")
     }
 }
 

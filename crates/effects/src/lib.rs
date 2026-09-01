@@ -61,10 +61,11 @@ pub use dsl::{
     self_child, supports,
 };
 pub use envelope::{
-    AdmittedTree, Binding, ClaimCell, CrossingCell, CrossingSite, ESCROW_CLAIM_SLOT,
-    ESCROW_RECORD_SLOT, EnvelopeTree, IntentDecl, IntentHeader, MAX_SUBINTENTS, NULLIFIER_SLOT,
-    NullifierCell, Socket, Subintent, SubintentRecord, admit_tree, encode_tree, escrow_claim_key,
-    escrow_record_key, intent_expiry_ms, nullifier_key, route_tree,
+    AdmittedTree, Binding, COMMITTED_TX_SLOT, ClaimCell, CommittedTxCell, CrossingCell,
+    CrossingSite, ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, EnvelopeTree, IntentDecl, IntentHeader,
+    MAX_SUBINTENTS, NULLIFIER_SLOT, NullifierCell, Socket, Subintent, SubintentRecord, admit_tree,
+    committed_tx_key, encode_tree, escrow_claim_key, escrow_record_key, intent_expiry_ms,
+    nullifier_key, route_tree,
 };
 pub use explain::{
     address_text, claim_text, explain, explain_admission, explain_admission_tree, explain_method,
