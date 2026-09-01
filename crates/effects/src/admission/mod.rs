@@ -36,7 +36,7 @@ use compose::{bind_edge, check_bindings};
 pub use error::{AdmissionError, Placed};
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Presence, PrincipalAddr,
-    ResourceAddr,
+    ResourceAddr, SubintentHash,
 };
 pub use inject::{Asks, Injected};
 use inject::{
@@ -48,7 +48,7 @@ use crate::dsl::{
     Condition, Declaration, DeclaredAccess, EvalBudget, EvalInputs, PresentedGrants,
     evaluate_declaration, evaluate_expr,
 };
-use crate::envelope::{Binding, Socket, SubintentHash};
+use crate::envelope::{Binding, Socket};
 use crate::graph::{EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::{InstanceMeta, ResolveError};

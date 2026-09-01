@@ -7,10 +7,10 @@
 //! names, and the bounds an envelope's own inputs have to clear before
 //! any of it runs.
 
-use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{PrincipalAddr, ResourceAddr, SubintentHash};
 
 use super::{AdmissionError, MAX_SOCKETS};
-use crate::envelope::{Binding, Socket, SubintentHash};
+use crate::envelope::{Binding, Socket};
 use crate::graph::{Constraint, GraphArg, ManifestGraph};
 use crate::hash::Hash32;
 use crate::instance::InstanceMeta;

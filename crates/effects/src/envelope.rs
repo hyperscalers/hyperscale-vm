@@ -30,7 +30,7 @@ use hyperscale_hbor::{Hbor, from_slice, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
     Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, NULLIFIER_GRACE_MS, NetworkId,
-    PrincipalAddr, ResourceAddr, SubstateKey, SweepBucket, TxHash,
+    PrincipalAddr, ResourceAddr, SubintentHash, SubstateKey, SweepBucket, TxHash,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -41,7 +41,7 @@ use crate::admission::{
 use crate::claim::Claim;
 use crate::dsl::PresentedGrants;
 use crate::graph::{Constraint, EdgeRef, ManifestGraph};
-use crate::hash::{Hash32, Hasher};
+use crate::hash::Hasher;
 use crate::instance::InstanceMeta;
 use crate::manifest::ManifestHash;
 use crate::records::{ChainRecords, Composed};
@@ -178,11 +178,6 @@ pub struct IntentDecl {
     #[hbor(max = MAX_SOCKETS)]
     pub sockets: Vec<Socket>,
 }
-
-/// A signed subintent's identity: the hash of its declaration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
-#[hbor(transparent)]
-pub struct SubintentHash(pub Hash32);
 
 const DOMAIN_SUBINTENT: &[u8] = b"hyperscale-vm/subintent";
 const DOMAIN_ENVELOPE_TREE: &[u8] = b"hyperscale-vm/envelope-tree";

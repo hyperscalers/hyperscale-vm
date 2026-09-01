@@ -63,8 +63,8 @@ pub use dsl::{
 pub use envelope::{
     AdmittedTree, Binding, ClaimCell, CrossingCell, CrossingSite, ESCROW_CLAIM_SLOT,
     ESCROW_RECORD_SLOT, EnvelopeTree, IntentDecl, IntentHeader, MAX_SUBINTENTS, NULLIFIER_SLOT,
-    NullifierCell, Socket, Subintent, SubintentHash, SubintentRecord, admit_tree, encode_tree,
-    escrow_claim_key, escrow_record_key, intent_expiry_ms, nullifier_key, route_tree,
+    NullifierCell, Socket, Subintent, SubintentRecord, admit_tree, encode_tree, escrow_claim_key,
+    escrow_record_key, intent_expiry_ms, nullifier_key, route_tree,
 };
 pub use explain::{
     address_text, claim_text, explain, explain_admission, explain_admission_tree, explain_method,
@@ -80,10 +80,11 @@ pub use graph::{
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
     ABSENT_REP, ADDRESS_WORDS, AUTH_BYTE_WEIGHT, AbortReason, Address, AddressClass, Answer,
-    EntryKey, EntryLeaf, Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT, MAX_ANSWER_BYTES,
-    MAX_CELL_VALUE_LEN, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
-    MAX_EVENTS_PER_TX, MAX_MANIFEST_NODES, Outcome, ProtocolHasher, SettledWrites, StateWrites,
-    TX_UNITS, TxHash, VERIFY_WEIGHT, declared_work, entry_leaf_key, signature_work, work_units,
+    Crossing, EntryKey, EntryLeaf, Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT, LegRole, LegShape,
+    MAX_ANSWER_BYTES, MAX_CELL_VALUE_LEN, MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES,
+    MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MAX_MANIFEST_NODES, Outcome, ProtocolHasher, SettledWrites,
+    StateWrites, SubintentHash, TX_UNITS, TxHash, VERIFY_WEIGHT, ValueEdge, declared_work,
+    entry_leaf_key, signature_work, work_units,
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};
@@ -116,9 +117,7 @@ pub use signature::{
     AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MAX_PROVEN_PER_SIGNATURE,
     MethodSignature, ParamType, Totality,
 };
-pub use star::{
-    NodeShape, Role, StarShape, ValueEdge, classify, classify_roles, shape_of, star_at,
-};
+pub use star::{StarShape, UnresolvedTarget, classify, classify_roles, legs_of, star_at};
 pub use types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, PACKAGE_SLOT_BASE, ShardId,
     SlotId, Value, bucketed_child_key, child_key, collection_id, component_address, config_hash,

@@ -64,6 +64,16 @@ pub const MAX_SUBINTENTS: usize = 32;
 /// success may burn.
 const ABORT_FLOOR_DIVISOR: u128 = 10;
 
+/// A signed subintent's identity: the hash of its declaration.
+///
+/// What a nullifier spends and what an escrow cell is keyed by. Defined
+/// beside [`TxHash`] because the two are the protocol's two signed
+/// identities, and the one this names is the one a composer who is not
+/// the signer cannot move.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(transparent)]
+pub struct SubintentHash(pub Hash32);
+
 /// A transaction's identity: the protocol hash of its envelope's signing
 /// bytes.
 ///

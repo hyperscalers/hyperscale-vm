@@ -7,10 +7,10 @@ use std::sync::{Arc, LazyLock};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Claim, EnvelopeTree, EvidenceRef, Hash32, Hasher, InstanceMeta,
-    ManifestGraph, NodeShape, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants,
+    LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants,
     Records, Routing, RuleBytes, ShardId, ShardResolver, SlotId, StarShape, StoredRule, TestHasher,
-    Value, admit_presenting, admit_tree, child_key, classify_roles, collection_id,
-    holdings_collection, package_slot, route, route_tree, shape_of, star_at,
+    Value, admit_presenting, admit_tree, child_key, collection_id, holdings_collection, legs_of,
+    package_slot, route, route_tree, star_at,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
 use hyperscale_vm_harness::driver::{Lanes, declared_vault, run_lanes, test_hash, vault};
@@ -795,32 +795,18 @@ pub fn star_of(world: &Records, graph: &ManifestGraph) -> StarShape {
     star_and_shape(world, graph).0
 }
 
-/// The star and the shape it was read off, plus the owners the
-/// declaration reaches — everything [`StarShape::decomposes`] asks for.
-pub fn star_and_shape(
-    world: &Records,
-    graph: &ManifestGraph,
-) -> (StarShape, Vec<NodeShape>, Vec<Vec<Address>>) {
+/// The star and the legs it was read off — everything
+/// [`StarShape::decomposes`] asks for.
+pub fn star_and_shape(world: &Records, graph: &ManifestGraph) -> (StarShape, Vec<LegShape>) {
     let admitted = admit_here(graph, composer(graph), world).expect("admits");
-    let roles = classify_roles(
-        admitted.manifest(),
-        world,
-        &admitted.answered_at_admission(),
-    )
-    .expect("the corpus resolves every target");
-    let shape = shape_of(admitted.manifest());
-    let declared = admitted.declares();
-    (
-        star_at(&roles, &shape, &PrefixShardResolver { bits: 8 }),
-        shape,
-        declared,
-    )
+    let legs = legs_of(&admitted, world).expect("the corpus resolves every target");
+    (star_at(&legs, &PrefixShardResolver { bits: 8 }), legs)
 }
 
 /// Whether the corpus shape `graph` decomposes.
 pub fn decomposes(world: &Records, graph: &ManifestGraph) -> bool {
-    let (star, shape, declared) = star_and_shape(world, graph);
-    star.decomposes(&shape, &declared, &PrefixShardResolver { bits: 8 })
+    let (star, legs) = star_and_shape(world, graph);
+    star.decomposes(&legs, &PrefixShardResolver { bits: 8 })
 }
 
 pub fn run_both(

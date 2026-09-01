@@ -22,6 +22,7 @@ pub mod effect;
 pub mod envelope;
 pub mod execution;
 pub mod hashing;
+pub mod legs;
 pub mod math;
 pub mod mode;
 pub mod scheme;
@@ -38,8 +39,8 @@ pub use address::{
 pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};
 pub use effect::{Effect, EffectConflict, EffectSet};
 pub use envelope::{
-    MAX_MESSAGE_LEN, MAX_SUBINTENTS, MAX_TX_BYTES_LEN, NULLIFIER_GRACE_MS, NetworkId, SubintentSig,
-    TransactionBody, TransactionEnvelope, TxHash,
+    MAX_MESSAGE_LEN, MAX_SUBINTENTS, MAX_TX_BYTES_LEN, NULLIFIER_GRACE_MS, NetworkId,
+    SubintentHash, SubintentSig, TransactionBody, TransactionEnvelope, TxHash,
 };
 pub use execution::{
     ABSENT_REP, AbortReason, Answer, Event, MAX_ANSWER_BYTES, MAX_CROSSINGS_PER_TX,
@@ -47,6 +48,7 @@ pub use execution::{
     MAX_MANIFEST_NODES, Outcome, UnmetCondition,
 };
 pub use hashing::ProtocolHasher;
+pub use legs::{Crossing, LegRole, LegShape, ValueEdge};
 pub use mode::{ConflictClass, Mode, ModeKind, Moves, Presence, compatible};
 pub use scheme::{
     AccountSigner, MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId, SchemeSpec, SchemeVerifier,
