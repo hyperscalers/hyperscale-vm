@@ -33,6 +33,9 @@ pub enum ModeError {
     /// A supply accumulator update past its bounds.
     #[error("supply accumulator out of bounds")]
     SupplyOutOfBounds,
+    /// Summing what an execution escrowed out or claimed in overflowed.
+    #[error("escrow totals overflow")]
+    EscrowOverflow,
 }
 
 impl From<ModeError> for AbortReason {
@@ -43,6 +46,7 @@ impl From<ModeError> for AbortReason {
             ModeError::CellOverflow => Self::CellOverflow,
             ModeError::CellUnderflow => Self::CellUnderflow,
             ModeError::SupplyOutOfBounds => Self::SupplyOutOfBounds,
+            ModeError::EscrowOverflow => Self::EscrowOverflow,
         }
     }
 }

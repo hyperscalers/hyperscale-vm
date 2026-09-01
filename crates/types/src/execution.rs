@@ -395,6 +395,13 @@ pub enum AbortReason {
     /// wherever it travels.
     #[hbor(discriminant = 65)]
     CellValueTooLarge,
+    /// Summing what one execution escrowed out or claimed in overflowed.
+    ///
+    /// Its own reason rather than the supply accumulator's: an escrow
+    /// moves no supply, so a refusal named after the ledger would blame
+    /// one the operation never touched.
+    #[hbor(discriminant = 66)]
+    EscrowOverflow,
 }
 
 /// What one node answered with: the value its method handed back, in the

@@ -21,6 +21,7 @@
 // tested against it.
 #[cfg(test)]
 mod conflict;
+pub mod escrow;
 pub mod executor;
 pub mod host;
 pub mod ledger;
@@ -34,6 +35,7 @@ pub mod supply;
 pub mod walk;
 pub mod work;
 
+pub use escrow::{Crossed, EscrowDelta, LegPlan, PlanTooWide};
 pub use executor::{
     BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, Unavailable,
     execute_batch,
