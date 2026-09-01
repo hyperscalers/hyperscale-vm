@@ -422,6 +422,12 @@ impl KernelSession {
             if !seen.insert(key) {
                 continue;
             }
+            // A reservation outside the scope was never judged and never
+            // held, so there is nothing here to settle or release — and
+            // asking would read the absence as a missing hold.
+            if !self.scope.covers(key.owner) {
+                continue;
+            }
             let Some(resource) = denominations.cell(key) else {
                 return Err(FinishError::UndenominatedMovement(key));
             };

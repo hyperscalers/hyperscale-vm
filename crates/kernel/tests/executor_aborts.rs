@@ -10,9 +10,9 @@ use hyperscale_vm_effects::{
     ResourceKind, SlotId, SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession, LegPlan,
-    Locality, MemoryStore, OverlayStore, RunResult, Unavailable, WorkingStore, decode_amount,
-    execute_batch,
+    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, ExecutionScope, GuestRunner,
+    KernelSession, LegPlan, Locality, MemoryStore, OverlayStore, RunResult, Unavailable,
+    WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome,
@@ -341,6 +341,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
         declaration: Declaration::from_set(point(nullifier(), Mode::Write { moves: Moves::Both })),
         calls: Vec::new(),
         legs: LegPlan::whole(),
+        scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limit: u64::MAX,
@@ -410,6 +411,7 @@ fn sharing_tx(id: u8) -> BatchTx {
         calls: Vec::new(),
         nullifiers: Vec::new(),
         legs: LegPlan::whole(),
+        scope: ExecutionScope::whole(),
         env: env(),
         gas_limit: u64::MAX,
     }
@@ -434,6 +436,7 @@ fn nullifier_and_shared_tx(id: u8) -> BatchTx {
         declaration: Declaration::from_set(set),
         calls: Vec::new(),
         legs: LegPlan::whole(),
+        scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limit: u64::MAX,
@@ -581,6 +584,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         declaration: Declaration::from_set(point(nullifier(), Mode::Read)),
         calls: Vec::new(),
         legs: LegPlan::whole(),
+        scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limit: u64::MAX,
@@ -634,6 +638,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
         },
         calls: Vec::new(),
         legs: LegPlan::whole(),
+        scope: ExecutionScope::whole(),
         nullifiers: vec![],
         env: env(),
         gas_limit: u64::MAX,

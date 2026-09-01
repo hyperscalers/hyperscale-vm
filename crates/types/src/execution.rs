@@ -402,6 +402,16 @@ pub enum AbortReason {
     /// one the operation never touched.
     #[hbor(discriminant = 66)]
     EscrowOverflow,
+    /// A declared condition with leaves both inside and outside the
+    /// scope this member's execution spans.
+    ///
+    /// No member can judge such a rule whole, and judging the half in
+    /// reach would be a verdict on a rule this judge only partly saw. A
+    /// shape carrying one is refused decomposition and runs whole, where
+    /// every leaf is provisioned everywhere — so reaching this is the
+    /// classifier's defect, never the sender's.
+    #[hbor(discriminant = 67)]
+    ConditionStraddlesScope,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -694,6 +704,7 @@ mod tests {
             (64, AbortReason::ValueNotConserved),
             (65, AbortReason::CellValueTooLarge),
             (66, AbortReason::EscrowOverflow),
+            (67, AbortReason::ConditionStraddlesScope),
         ];
         for (byte, reason) in classes {
             assert_eq!(

@@ -132,7 +132,17 @@ impl GuestBackend for Moving {
                     Some(GuestArg::Bucket(rep)) => *rep,
                     _ => panic!("the consumer takes one bucket"),
                 };
-                session.cell_put(delta, 0, funds).unwrap();
+                // A trap is the guest's abort, not the fixture's panic:
+                // a consumer handed a bucket somebody already took is a
+                // verdict these tests read off the receipt.
+                if let Err(trap) = session.cell_put(delta, 0, funds) {
+                    return InvokeResult {
+                        session,
+                        fuel: 0,
+                        result: Invoked::Aborted(AbortReason::from(trap)),
+                        exhausted: false,
+                    };
+                }
                 Vec::new()
             }
             other => panic!("no fixture for {other}"),
@@ -672,4 +682,51 @@ fn one_crossing_is_claimed_once_across_two_claimers() {
         },
     );
     assert_eq!(outcome.receipts[&tx(0x22)].escrow.claimed(RESOURCE), 0);
+}
+
+/// Two consumers of one output is a double spend, and running whole is
+/// what refuses it: one session hands both consumers the same bucket
+/// handle and the second take finds it gone. Admission refuses the
+/// shape before a manifest ever reaches here, so this is the line behind
+/// that one — and it is the line decomposition would remove, since two
+/// consumers on two shards would be two sessions, each taking once. That
+/// is why such a shape never decomposes at all.
+#[test]
+fn a_second_consumer_of_one_edge_is_refused_running_whole() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+    store.write(cell(PAYEE), encode_amount(0).to_vec());
+
+    let entry = BatchTx::new(
+        tx(8),
+        declared(&[
+            Effect {
+                target: EffectTarget::Point(cell(PAYER)),
+                mode: Mode::Reserve { amount: 200 },
+            },
+            Effect {
+                target: EffectTarget::Point(cell(PAYEE)),
+                mode: Mode::Delta { moves: Moves::Both },
+            },
+        ]),
+        env(),
+    )
+    // Both consumers name the producer's output 0.
+    .with_calls(vec![
+        call("take", 0, 1),
+        call("put", 1, 0),
+        call("put", 1, 0),
+    ]);
+
+    let receipt = run(&store, entry);
+    assert_eq!(
+        receipt.outcome,
+        Outcome::UserError {
+            reason: AbortReason::HandleUnknown,
+        },
+    );
+    assert!(
+        receipt.delta.movements.is_empty(),
+        "and nothing was credited"
+    );
 }

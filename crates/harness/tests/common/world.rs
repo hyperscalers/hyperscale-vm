@@ -800,7 +800,7 @@ pub fn star_of(world: &Records, graph: &ManifestGraph) -> StarShape {
 pub fn star_and_shape(
     world: &Records,
     graph: &ManifestGraph,
-) -> (StarShape, Vec<NodeShape>, Vec<Address>) {
+) -> (StarShape, Vec<NodeShape>, Vec<Vec<Address>>) {
     let admitted = admit_here(graph, composer(graph), world).expect("admits");
     let roles = classify_roles(
         admitted.manifest(),
@@ -809,12 +809,7 @@ pub fn star_and_shape(
     )
     .expect("the corpus resolves every target");
     let shape = shape_of(admitted.manifest());
-    let declared = admitted
-        .declaration()
-        .set
-        .iter()
-        .map(|effect| effect.target.owner())
-        .collect();
+    let declared = admitted.declares();
     (
         star_at(&roles, &shape, &PrefixShardResolver { bits: 8 }),
         shape,

@@ -85,6 +85,72 @@ impl std::fmt::Debug for Locality {
     }
 }
 
+/// The shards a member's execution spans, as the one question the
+/// kernel asks of it: whether a key's owner sits inside.
+///
+/// Not this shard's ownership, which is [`Locality`]'s question. A leg
+/// member spans exactly its own shard and the two coincide; a member of
+/// a core that spans several shards runs every core node on every one
+/// of them, so its scope is the whole core set while its locality is
+/// still the one shard it applies to. What the scope decides is what
+/// gets *judged and held* before a body runs — a reservation is held by
+/// the shard holding the cell and a condition answered where its leaf
+/// lives, so judging one outside the scope was never this member's
+/// question, and the state to answer it was never provisioned here.
+/// What the locality decides is what gets *applied* afterwards.
+///
+/// A predicate over owners rather than a set of shards, for
+/// [`Locality`]'s reason: the kernel holds no walk from an address to a
+/// shard, and the embedder that does builds the predicate from the core
+/// set it froze at commit.
+#[derive(Clone)]
+pub struct ExecutionScope(Span);
+
+#[derive(Clone)]
+enum Span {
+    Whole,
+    Spanning(Arc<dyn Fn(Address) -> bool + Send + Sync>),
+}
+
+impl ExecutionScope {
+    /// Every owner is inside: the whole-shape execution every transaction
+    /// runs until it decomposes.
+    #[must_use]
+    pub const fn whole() -> Self {
+        Self(Span::Whole)
+    }
+
+    /// Inside exactly where `covers` holds for a key's owner.
+    #[must_use]
+    pub fn spanning(covers: impl Fn(Address) -> bool + Send + Sync + 'static) -> Self {
+        Self(Span::Spanning(Arc::new(covers)))
+    }
+
+    /// Whether keys under `owner` are this execution's to judge.
+    #[must_use]
+    pub fn covers(&self, owner: impl Into<Address>) -> bool {
+        match &self.0 {
+            Span::Whole => true,
+            Span::Spanning(covers) => covers(owner.into()),
+        }
+    }
+
+    /// Whether the scope spans everything.
+    #[must_use]
+    pub const fn is_whole(&self) -> bool {
+        matches!(self.0, Span::Whole)
+    }
+}
+
+impl std::fmt::Debug for ExecutionScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Span::Whole => f.write_str("ExecutionScope::whole()"),
+            Span::Spanning(_) => f.write_str("ExecutionScope::spanning(..)"),
+        }
+    }
+}
+
 impl StateDelta {
     /// The part of this delta the shard owns.
     ///

@@ -61,7 +61,7 @@ pub use seal::DOMAIN_SEALED_DRAW;
 pub use trap::SessionTrap;
 
 use crate::escrow::EscrowDelta;
-use crate::locality::Locality;
+use crate::locality::{ExecutionScope, Locality};
 #[cfg(any(test, feature = "testing"))]
 use crate::modes::DeltaOp;
 use crate::overlay::OverlayStore;
@@ -109,6 +109,9 @@ pub struct KernelSession {
     env: EnvInputs,
     hash_fn: fn(&[u8]) -> [u8; 32],
     locality: Locality,
+    /// The shards this execution spans — what it judged before any body
+    /// ran, and so what it may settle after. See [`ExecutionScope`].
+    scope: ExecutionScope,
     /// The subintent cells committing spends, from the batch entry.
     ///
     /// Held here rather than written by the caller because spending is

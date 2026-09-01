@@ -168,6 +168,26 @@ impl Admitted {
         &self.origins
     }
 
+    /// The owners each node's frame declares, in node order.
+    ///
+    /// What the decomposition predicate reads: whether a node's
+    /// declaration sits inside the scope of the member that runs it is a
+    /// per-node question, and the union declaration has already forgotten
+    /// which node asked for what.
+    #[must_use]
+    pub fn declares(&self) -> Vec<Vec<Address>> {
+        self.frames
+            .iter()
+            .map(|frame| {
+                frame
+                    .ordered
+                    .iter()
+                    .map(|access| access.effect.target.owner())
+                    .collect()
+            })
+            .collect()
+    }
+
     /// Whether each node's frame is answered by admission alone, in node
     /// order.
     ///

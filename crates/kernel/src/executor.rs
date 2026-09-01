@@ -41,7 +41,7 @@ use hyperscale_vm_types::{
 
 use crate::escrow::{EscrowDelta, LegPlan};
 use crate::ledger::AmountLedger;
-use crate::locality::Locality;
+use crate::locality::{ExecutionScope, Locality};
 use crate::overlay::OverlayStore;
 use crate::session::{
     EnvInputs, FinishError, KernelSession, MaterializeError, Receipt, StateDelta,
@@ -104,6 +104,15 @@ pub struct BatchTx {
     /// differs per participant, because it is exactly the statement of
     /// which participant this is.
     pub legs: LegPlan,
+    /// The shards this execution spans: what it judges and holds before
+    /// a body runs, and so what it settles after.
+    ///
+    /// Whole until a transaction decomposes, and then the other per
+    /// participant fact beside `legs`: `{self}` for a leg member, the
+    /// core set for a core member. Distinct from the batch's locality,
+    /// which says what this shard *applies* and coincides with the scope
+    /// only for a single-shard core.
+    pub scope: ExecutionScope,
     /// The deterministic environment: the transaction clock, the epoch
     /// it falls in, and the seeds a matured seal opens against. Per
     /// transaction, not per batch — every replica executing this
@@ -140,6 +149,7 @@ impl BatchTx {
             calls: Vec::new(),
             nullifiers: Vec::new(),
             legs: LegPlan::whole(),
+            scope: ExecutionScope::whole(),
             env,
             gas_limit: u64::MAX,
         }
@@ -149,6 +159,13 @@ impl BatchTx {
     #[must_use]
     pub fn with_legs(mut self, legs: LegPlan) -> Self {
         self.legs = legs;
+        self
+    }
+
+    /// Bind the shards this execution spans.
+    #[must_use]
+    pub fn with_scope(mut self, scope: ExecutionScope) -> Self {
+        self.scope = scope;
         self
     }
 
@@ -676,6 +693,9 @@ impl From<MaterializeError> for Outcome {
             MaterializeError::ConditionUnanswerable { node } => Self::ConditionUnmet {
                 condition: UnmetCondition::Unanswerable { node },
             },
+            MaterializeError::ConditionStraddlesScope { .. } => Self::ProtocolError {
+                reason: AbortReason::ConditionStraddlesScope,
+            },
         }
     }
 }
@@ -768,12 +788,13 @@ fn run_group<R: GuestRunner>(
             continue;
         }
         let before = store.clone();
-        let session = match KernelSession::materialize(
+        let session = match KernelSession::materialize_within(
             store,
             &entry.declaration,
             entry.tx,
             entry.env.clone(),
             hash_fn,
+            &entry.scope,
         ) {
             Ok(session) => {
                 // The rollback clone must drop here: it keeps the threaded
@@ -964,11 +985,19 @@ pub fn execute_batch<R: GuestRunner>(
     let sound = screen_reserve_targets(&judged, ordered, locality, &mut receipts);
 
     // Judge every locally owned reservation in canonical order; hold the
-    // feasible, abort the infeasible. Remote reservations are held at
-    // their declared amounts without judging — the owning shard judges.
+    // feasible, abort the infeasible. A reservation inside the scope but
+    // owned elsewhere is held at its declared amount without judging —
+    // the owning shard judges, and the combine carries its verdict. One
+    // outside the scope is nothing here at all: no hold, because the
+    // member that judges it is the one that settles it, and a hold on a
+    // cell this execution never reads would be one nothing releases on
+    // the right terms.
     let mut requests = Vec::new();
     for entry in &sound {
         for (key, amount) in declared_reservations(&entry.declaration.set) {
+            if !entry.scope.covers(key.owner) {
+                continue;
+            }
             if locality.is_local(key.owner) {
                 requests.push((entry.tx, key, amount));
             } else {

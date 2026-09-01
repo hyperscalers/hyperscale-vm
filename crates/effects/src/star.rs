@@ -316,13 +316,14 @@ impl StarShape {
     pub fn decomposes(
         &self,
         shape: &[NodeShape],
-        declared: &[Address],
+        declared: &[Vec<Address>],
         shards: &dyn ShardResolver,
     ) -> bool {
         self.core_bears_a_verdict()
             && self.a_leg_sits_off_the_core(shape, shards)
             && self.crossings_fit()
             && Self::every_declared_owner_participates(shape, declared, shards)
+            && self.every_node_declares_inside_its_scope(shape, declared, shards)
             && Self::every_edge_has_one_consumer(shape)
             && self.no_named_instance_touches_a_leg(shape)
     }
@@ -340,7 +341,7 @@ impl StarShape {
     /// deposits concludes this cannot happen.
     fn every_declared_owner_participates(
         shape: &[NodeShape],
-        declared: &[Address],
+        declared: &[Vec<Address>],
         shards: &dyn ShardResolver,
     ) -> bool {
         let participants: BTreeSet<ShardId> = shape
@@ -349,7 +350,40 @@ impl StarShape {
             .collect();
         declared
             .iter()
+            .flatten()
             .all(|owner| participants.contains(&shards.shard_of(*owner)))
+    }
+
+    /// Every target a node declares sits inside the scope of the member
+    /// that runs it: its own shard for a leg, the core set for a core
+    /// node.
+    ///
+    /// Participation is not enough. A target owned by *some* participant
+    /// is judged by that participant, but the node that declared it runs
+    /// elsewhere, against a store that never held the cell — a read there
+    /// answers absent, a reservation there is one nobody held for it, and
+    /// neither says anything. Running whole provisions everything to
+    /// everyone, which is what makes such a shape correct undivided.
+    fn every_node_declares_inside_its_scope(
+        &self,
+        shape: &[NodeShape],
+        declared: &[Vec<Address>],
+        shards: &dyn ShardResolver,
+    ) -> bool {
+        self.roles
+            .iter()
+            .zip(shape)
+            .zip(declared)
+            .all(|((role, node), owners)| {
+                let home = shards.shard_of(node.target);
+                owners.iter().all(|owner| {
+                    let at = shards.shard_of(*owner);
+                    match role {
+                        Role::Core => self.core.contains(&at),
+                        Role::Inbound | Role::Outbound | Role::Attesting => at == home,
+                    }
+                })
+            })
     }
 
     /// A reservation-shaped source feeding a total sink has no core node
@@ -528,8 +562,13 @@ mod tests {
     /// states its own declaration instead.
     fn decomposes(manifest: &Manifest, chain: &Records) -> bool {
         let (star, shape) = star_and_shape(manifest, chain);
-        let declared: Vec<Address> = shape.iter().map(|node| node.target).collect();
-        star.decomposes(&shape, &declared, &resolver())
+        star.decomposes(&shape, &own_targets(&shape), &resolver())
+    }
+
+    /// Each node declaring exactly its own target: the ordinary case,
+    /// per node, for the predicate to read.
+    fn own_targets(shape: &[super::NodeShape]) -> Vec<Vec<Address>> {
+        shape.iter().map(|node| vec![node.target]).collect()
     }
 
     /// The star world with one method's signature replaced.
@@ -1052,10 +1091,42 @@ mod tests {
     fn a_declaration_reaching_a_non_participant_does_not_decompose() {
         let (chain, manifest) = star_world(Totality::Total);
         let (star, shape) = star_and_shape(&manifest, &chain);
-        let mut declared: Vec<Address> = shape.iter().map(|node| node.target).collect();
+        let mut declared = own_targets(&shape);
         assert!(star.decomposes(&shape, &declared, &resolver()));
 
-        declared.push(instance_of("stranger").into());
+        declared[0].push(instance_of("stranger").into());
+        assert!(!star.decomposes(&shape, &declared, &resolver()));
+    }
+
+    /// A target owned by a participant is judged there — and if the node
+    /// that declared it runs somewhere else, it runs against a store that
+    /// never held the cell. So a node's declaration has to sit inside the
+    /// scope of the member running it, which is stricter than every owner
+    /// being some participant.
+    #[test]
+    fn a_node_declaring_past_its_own_scope_does_not_decompose() {
+        let (chain, manifest) = star_world(Totality::Total);
+        let (star, shape) = star_and_shape(&manifest, &chain);
+        let mut declared = own_targets(&shape);
+        assert!(star.decomposes(&shape, &declared, &resolver()));
+
+        let (leg, core) = star.roles.iter().enumerate().fold(
+            (None, None),
+            |(leg, core), (index, role)| match role {
+                Role::Core => (leg, core.or(Some(index))),
+                _ => (leg.or(Some(index)), core),
+            },
+        );
+        let (leg, core) = (leg.expect("a leg"), core.expect("a core"));
+        assert_ne!(
+            resolver().shard_of(shape[leg].target),
+            resolver().shard_of(shape[core].target),
+            "the leg has to sit off the core, or the verdict below proves nothing",
+        );
+
+        // Every owner is still a participant's; only the attribution
+        // moved, and that is what refuses it.
+        declared[leg].push(shape[core].target);
         assert!(!star.decomposes(&shape, &declared, &resolver()));
     }
 
@@ -1144,7 +1215,7 @@ mod tests {
     fn a_shape_past_the_crossing_cap_does_not_decompose() {
         let (chain, manifest) = star_world(Totality::Total);
         let (mut star, shape) = star_and_shape(&manifest, &chain);
-        let declared: Vec<Address> = shape.iter().map(|node| node.target).collect();
+        let declared = own_targets(&shape);
         assert!(star.decomposes(&shape, &declared, &resolver()));
 
         star.crossing_edges = u32::try_from(MAX_CROSSINGS_PER_TX).unwrap() + 1;

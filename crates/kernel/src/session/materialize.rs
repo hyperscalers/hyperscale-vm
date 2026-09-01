@@ -19,7 +19,7 @@ use super::ranges::Ranges;
 use super::{EnvInputs, KernelSession};
 use crate::escrow::EscrowDelta;
 use crate::ledger::AmountLedger;
-use crate::locality::Locality;
+use crate::locality::{ExecutionScope, Locality};
 use crate::modes::decode_amount;
 use crate::overlay::OverlayStore;
 use crate::store::{StoreError, WorkingStore};
@@ -436,6 +436,20 @@ pub enum MaterializeError {
     /// one — a batch bookkeeping defect, surfaced rather than adopted.
     #[error("held reservation on {0:?} does not match the declaration")]
     HeldMismatch(SubstateKey),
+    /// A declared condition with leaves both inside and outside the
+    /// scope this execution spans.
+    ///
+    /// A rule wholly outside is another member's question and is skipped;
+    /// one wholly inside is judged. One that straddles has no member able
+    /// to judge it whole, and a verdict on the half in reach would be a
+    /// verdict on a rule this judge only partly saw — so it refuses, as a
+    /// shape the classifier should have kept whole.
+    #[error("a condition on node {node:?} has leaves both inside and outside this scope")]
+    ConditionStraddlesScope {
+        /// The manifest node whose frame asked, where the declaration
+        /// says.
+        node: Option<u32>,
+    },
     /// A store failure while judging reservations.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -462,11 +476,45 @@ impl KernelSession {
     ///
     /// Any [`MaterializeError`]; all are pre-execution aborts.
     pub fn materialize(
+        store: OverlayStore,
+        declaration: &Declaration,
+        tx: TxHash,
+        env: EnvInputs,
+        hash_fn: fn(&[u8]) -> [u8; 32],
+    ) -> Result<Self, MaterializeError> {
+        Self::materialize_within(
+            store,
+            declaration,
+            tx,
+            env,
+            hash_fn,
+            &ExecutionScope::whole(),
+        )
+    }
+
+    /// [`materialize`](Self::materialize), judging only what `scope`
+    /// covers.
+    ///
+    /// The capability table is the whole declaration whatever the scope:
+    /// a handle's rep is its index there, and a guest's parameters are
+    /// positional, so dropping an entry would shift every rep above it
+    /// onto a different cell — one the body was never handed, reached
+    /// through a receipt that still forms. What the scope narrows is what
+    /// touches the store before a body runs: which reservations are
+    /// judged and held, and which conditions are answered. An access
+    /// outside it keeps its position and resolves to a capability nothing
+    /// in this execution can exercise.
+    ///
+    /// # Errors
+    ///
+    /// Any [`MaterializeError`]; all are pre-execution aborts.
+    pub fn materialize_within(
         mut store: OverlayStore,
         declaration: &Declaration,
         tx: TxHash,
         env: EnvInputs,
         hash_fn: fn(&[u8]) -> [u8; 32],
+        scope: &ExecutionScope,
     ) -> Result<Self, MaterializeError> {
         let Declaration {
             set: declared,
@@ -480,10 +528,16 @@ impl KernelSession {
         // Judging the clause list instead would judge each amount
         // separately against the same balance, so a signature reserving
         // `n` twice over a cell holding `n` would pass both.
+        //
+        // And only inside the scope: a cell's reservation is held by the
+        // shard holding the cell, and one outside was never this
+        // member's to judge — the state it would be judged against is not
+        // here, and absence would read as an empty balance.
         let mut reservations = Vec::new();
         for effect in declared.iter() {
             if let (EffectTarget::Point(key), Mode::Reserve { amount }) =
                 (effect.target, effect.mode)
+                && scope.covers(key.owner)
             {
                 match store.held_reservation(key, tx) {
                     Some(held) if held == amount => {}
@@ -532,7 +586,7 @@ impl KernelSession {
             return Err(MaterializeError::SelfConflicting(key));
         }
 
-        judge_conditions(&mut store, &declaration.conditions)?;
+        judge_conditions(&mut store, &declaration.conditions, scope)?;
 
         let verdicts = store.judge_and_hold(&reservations)?;
         for ((verdict_tx, key), feasibility) in verdicts {
@@ -556,6 +610,7 @@ impl KernelSession {
             env,
             hash_fn,
             locality: Locality::All,
+            scope: scope.clone(),
             nullifiers: Vec::new(),
             ranges: Ranges::default(),
             invocation: None,
@@ -586,22 +641,37 @@ impl KernelSession {
 /// is judged, so a create that cannot create aborts rather than trapping
 /// inside a guest.
 ///
-/// Every participant judges every condition rather than only the shard
-/// owning the leaf. A condition's target is also a declared read, which
-/// is what provisions the state wherever the transaction runs, so each
-/// participant reaches the verdict the owner reaches.
+/// Every member of the scope judges every condition inside it, rather
+/// than only the shard owning the leaf: a condition's target is also a
+/// declared read, which is what provisions the state across the scope,
+/// so each member reaches the verdict the owner reaches. A condition
+/// wholly outside the scope is another member's question and is skipped;
+/// one straddling it is refused, since no member can judge it whole.
 ///
 /// # Errors
 ///
 /// [`MaterializeError::ConditionUnmet`] for a target whose state does not
-/// hold what the condition requires, or
+/// hold what the condition requires,
 /// [`MaterializeError::ConditionUnanswerable`] for a condition with no
-/// such target to name.
+/// such target to name, or [`MaterializeError::ConditionStraddlesScope`]
+/// for one with leaves on both sides of the scope.
 fn judge_conditions(
     store: &mut OverlayStore,
     conditions: &[Condition],
+    scope: &ExecutionScope,
 ) -> Result<(), MaterializeError> {
     for condition in conditions {
+        let mut owners = Vec::new();
+        presence_owners(&condition.rule, &mut owners);
+        let inside = owners.iter().filter(|owner| scope.covers(**owner)).count();
+        if inside == 0 && !owners.is_empty() {
+            continue;
+        }
+        if inside != owners.len() {
+            return Err(MaterializeError::ConditionStraddlesScope {
+                node: condition.node,
+            });
+        }
         // The verdict and the reason are one walk. What a receipt names
         // is the first leaf the rule holds that was not met: for the
         // one-leaf rule injection builds that is exact, and for a
@@ -626,6 +696,23 @@ fn judge_conditions(
         }
     }
     Ok(())
+}
+
+/// The owners of every leaf of `rule` that committed state answers.
+///
+/// Only presence leaves: a claim or a stored rule is not a question about
+/// state, so it belongs to no scope and the judge refuses it on its own
+/// terms whatever the scope says.
+fn presence_owners(rule: &Rule<JudgedLeaf>, into: &mut Vec<Address>) {
+    match rule {
+        Rule::Require(JudgedLeaf::Presence { target, .. }) => into.push(target.owner()),
+        Rule::Require(_) => {}
+        Rule::CountOf { rules, .. } => {
+            for branch in rules {
+                presence_owners(branch, into);
+            }
+        }
+    }
 }
 
 /// What committed state says about a rule.
