@@ -118,6 +118,19 @@ pub enum DeclarationError {
         /// The behaviour the reach was declared under.
         behaviour: GrantedBehaviour,
     },
+    /// A reach of a holding in a mode that does not take from it.
+    ///
+    /// A recall entry says who may take a holder's value away, and that
+    /// is all it says. A reaching access earns none of the movement
+    /// entries an ordinary access does, so a reach that credited would
+    /// deposit past the resource's own deposit entry and past a halt on
+    /// the holder, and one that only read would look at a balance the
+    /// entry never opened.
+    #[error("clause {clause} reaches a holding in a mode that does not take from it")]
+    ReachDoesNotTake {
+        /// The clause's index in the signature's preorder.
+        clause: u32,
+    },
     /// A reach over a mark this package issues and does not grant the
     /// reaching behaviour on.
     ///
@@ -333,7 +346,7 @@ pub enum DeclarationError {
 /// Judge a clause that reaches a prefix that is not the declaring
 /// instance's own.
 ///
-/// Three things make the reach safe, and all three are shape rather
+/// Four things make the reach safe, and all four are shape rather
 /// than review. **The owner is not this instance**, because a reach into
 /// one's own prefix is an ordinary access wearing an authority it does
 /// not need — and admitting it would put an injected entry where the
@@ -341,10 +354,13 @@ pub enum DeclarationError {
 /// resource**, which is the resource whose entry admits the reach: the
 /// key is derived from it, so naming a slot cannot name a cell holding
 /// something else, and the entry judged is always the entry of the thing
-/// actually reached. And **the cell is the one the behaviour is about**,
+/// actually reached. **The cell is the one the behaviour is about**,
 /// because an entry admits a reach for what that entry governs — a
 /// halt entry says who may raise the holder's flag, not who may write
-/// anything at all under their prefix.
+/// anything at all under their prefix. And **a reached holding is only
+/// taken from**, because a reaching access earns no movement entry and
+/// no halt fence: a recall that could credit would deposit past both,
+/// and one that only read would see a balance the entry never opened.
 ///
 /// Which cell that is is the behaviour's answer. A halt flag is one
 /// slot the vocabulary fixes, so it is named by its slot; a holding is
@@ -359,6 +375,7 @@ pub enum DeclarationError {
 fn judge_reach(
     clause: u32,
     target: &TargetExpr,
+    mode: &ModeExpr,
     denomination: Option<&Expr>,
     behaviour: GrantedBehaviour,
 ) -> Result<(), DeclarationError> {
@@ -396,6 +413,9 @@ fn judge_reach(
     };
     if !names_its_cell {
         return Err(DeclarationError::ReachesAnotherCell { clause, behaviour });
+    }
+    if reached == ReachedCell::Value && mode.moves() != Some(Moves::Out) {
+        return Err(DeclarationError::ReachDoesNotTake { clause });
     }
     Ok(())
 }
@@ -764,7 +784,7 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
     // resolves against and what makes naming a slot unable to name a
     // cell holding something else.
     if let Some(behaviour) = reach {
-        judge_reach(clause, target, denomination, *behaviour)?;
+        judge_reach(clause, target, mode, denomination, *behaviour)?;
     } else {
         if !targets_own_prefix(target) {
             return Err(DeclarationError::ForeignPrefix { clause });
@@ -3299,7 +3319,7 @@ mod tests {
                     hi: Expr::Literal(Value::U128(u128::MAX)),
                     cap: Expr::Literal(Value::U64(4)),
                 },
-                ModeExpr::Write { moves: Moves::Both },
+                ModeExpr::Write { moves: Moves::Out },
                 Some(a_resource()),
             )),
             Ok(())
@@ -3332,6 +3352,70 @@ mod tests {
                 clause: 0,
                 behaviour: GrantedBehaviour::Recall
             })
+        );
+    }
+
+    /// A recall entry says who may take a holder's value away, and a
+    /// reach of a holding takes and does nothing else.
+    ///
+    /// A reaching access earns no movement entry and no halt fence, so
+    /// a reach that credited would deposit past the resource's own
+    /// deposit entry and past a halt on the holder, and one that only
+    /// read would see a balance the entry never opened. Refused by
+    /// direction, whatever the mode: a reserve and an out-only delta or
+    /// write take, and everything else does not.
+    #[test]
+    fn a_reach_of_a_holding_only_takes() {
+        let holder = || Expr::Arg(0);
+        let recall = |mode: ModeExpr| {
+            check_declarations(&one_reach(
+                GrantedBehaviour::Recall,
+                point_under(holder(), SlotRef::Fixed(VAULT), vec![a_resource()]),
+                mode,
+                Some(a_resource()),
+            ))
+        };
+        for takes in [
+            ModeExpr::Reserve(Expr::Arg(1)),
+            ModeExpr::Delta { moves: Moves::Out },
+            ModeExpr::Write { moves: Moves::Out },
+        ] {
+            assert_eq!(recall(takes.clone()), Ok(()), "{takes:?}");
+        }
+        for other in [
+            ModeExpr::Read,
+            ModeExpr::Delta { moves: Moves::In },
+            ModeExpr::Delta { moves: Moves::Both },
+            ModeExpr::Write { moves: Moves::In },
+            ModeExpr::Write { moves: Moves::Both },
+        ] {
+            assert_eq!(
+                recall(other.clone()),
+                Err(DeclarationError::ReachDoesNotTake { clause: 0 }),
+                "{other:?}"
+            );
+        }
+
+        // An interval of instances on the same terms.
+        let instances = |moves: Moves| {
+            check_declarations(&one_reach(
+                GrantedBehaviour::Recall,
+                TargetExpr::Range {
+                    owner: holder(),
+                    collection: told(),
+                    material: vec![a_resource()],
+                    lo: Expr::Literal(Value::U128(0)),
+                    hi: Expr::Literal(Value::U128(u128::MAX)),
+                    cap: Expr::Literal(Value::U64(4)),
+                },
+                ModeExpr::Write { moves },
+                Some(a_resource()),
+            ))
+        };
+        assert_eq!(instances(Moves::Out), Ok(()));
+        assert_eq!(
+            instances(Moves::Both),
+            Err(DeclarationError::ReachDoesNotTake { clause: 0 })
         );
     }
 
