@@ -59,6 +59,6 @@ pub use work::{
     declared_work, price_attos, signature_work, work_units,
 };
 pub use writes::{
-    EntryKey, EntryLeaf, MAX_CELL_VALUE_LEN, Movement, SettledCells, SettledEntries, SettledWrites,
-    StateWrites, entry_leaf_key,
+    Compose, EntryKey, EntryLeaf, MAX_CELL_VALUE_LEN, Movement, OverDebit, SettledCells,
+    SettledEntries, SettledWrites, StateWrites, entry_leaf_key,
 };
