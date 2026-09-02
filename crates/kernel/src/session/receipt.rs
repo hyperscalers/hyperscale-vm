@@ -17,7 +17,7 @@ use hyperscale_vm_types::{
 use super::{Capability, KernelSession};
 use crate::escrow::EscrowDelta;
 use crate::ledger::AmountLedger;
-use crate::modes::{DeltaOp, total_movement};
+use crate::modes::{DeltaOp, ModeError, total_movement};
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
 use crate::store::{Access, Fault, StoreError, WorkingStore};
@@ -567,6 +567,49 @@ impl KernelSession {
         Ok(Phase::Produced(movements))
     }
 
+    /// Fold the fee into the movements and the supply record, for a
+    /// session the executing shard stated one to and whose vault it
+    /// holds. A fee of nothing records nothing.
+    fn burn_fee(
+        &mut self,
+        mut movements: BTreeMap<SubstateKey, Movement>,
+    ) -> Result<Phase<BTreeMap<SubstateKey, Movement>>, FinishError> {
+        let Some(fee) = self.fee.filter(|fee| fee.amount > 0) else {
+            return Ok(Phase::Produced(movements));
+        };
+        if !self.locality.is_local(fee.vault.owner) {
+            return Ok(Phase::Produced(movements));
+        }
+        if let Err(defect) = self.store.judge_movement(fee.vault, 0, fee.amount) {
+            return match defect.fault() {
+                Fault::Floor => Ok(Phase::Aborted(Outcome::Infeasible {
+                    key: fee.vault,
+                    amount: fee.amount,
+                })),
+                Fault::Declaration(error) => Ok(Phase::Aborted(Outcome::UserError {
+                    reason: error.into(),
+                })),
+                Fault::Defect => Err(defect.into()),
+            };
+        }
+        let burned = Movement::debit(fee.resource, fee.amount);
+        let Some(composed) = movements
+            .get(&fee.vault)
+            .map_or(Some(burned), |standing| standing.then(burned))
+        else {
+            return Ok(Phase::Aborted(Outcome::UserError {
+                reason: ModeError::SupplyOutOfBounds.into(),
+            }));
+        };
+        movements.insert(fee.vault, composed);
+        if let Err(error) = self.supply.burn(fee.resource, fee.amount) {
+            return Ok(Phase::Aborted(Outcome::UserError {
+                reason: error.into(),
+            }));
+        }
+        Ok(Phase::Produced(movements))
+    }
+
     /// Close the session for a guest that completed: fold queued deltas,
     /// settle this transaction's reservations, run the trace-subset
     /// oracle, and produce the receipt together with the threaded store
@@ -638,6 +681,18 @@ impl KernelSession {
         };
         let settles = match self.settle_reservations(&denominations)? {
             Phase::Produced(settles) => settles,
+            Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
+        };
+        // The fee, as the debit and the burn it is: a movement on the
+        // payer's vault composing with whatever else reached it, and the
+        // supply it takes out of the world. Recorded here rather than by
+        // the shard after the fold, so the fold weighs it — a debit with
+        // no burn against it would be value leaving the world for
+        // nowhere. Judged against the vault as it stands once every
+        // declared movement has folded, so a payer that cannot cover the
+        // price loses the transaction rather than a balance.
+        let movements = match self.burn_fee(movements)? {
+            Phase::Produced(movements) => movements,
             Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
         };
         // Committing spends every subintent: the nullifier cell records

@@ -47,7 +47,7 @@ pub use modes::{DeltaOp, Feasibility, ModeError, decode_amount, fold_deltas, jud
 pub use oracle::{covered, multiply_held_ids, permits, target_covers, undeclared_accesses};
 pub use overlay::OverlayStore;
 pub use session::{
-    Capability, DOMAIN_SEALED_DRAW, DeltaMap, EnvInputs, FinishError, Held, Interval,
+    Capability, DOMAIN_SEALED_DRAW, DeltaMap, EnvInputs, FeeBurn, FinishError, Held, Interval,
     KernelSession, MaterializeError, Receipt, SessionTrap, StateDelta,
 };
 pub use store::{

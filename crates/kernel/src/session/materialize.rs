@@ -612,6 +612,7 @@ impl KernelSession {
             locality: Locality::All,
             scope: scope.clone(),
             nullifiers: Vec::new(),
+            fee: None,
             ranges: Ranges::default(),
             invocation: None,
             events: Vec::new(),

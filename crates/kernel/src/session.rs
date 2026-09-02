@@ -99,6 +99,26 @@ impl EnvInputs {
     }
 }
 
+/// The price a completed execution pays: a debit on the payer's vault
+/// and the same amount leaving the world.
+///
+/// A fee is the one movement no capability declares — the payer's
+/// vault is a cell the transaction certainly touches and its
+/// declaration need not name — so the shard states it to the session
+/// and the session records it as what it is: a movement composing with
+/// whatever else reached the vault, and a burn the conservation fold
+/// weighs against it. Recorded only by the shard holding the vault,
+/// which is the one that settles it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FeeBurn {
+    /// The payer's vault.
+    pub vault: SubstateKey,
+    /// What the vault holds: the protocol's own resource.
+    pub resource: ResourceAddr,
+    /// What is burned, already held to the signed ceiling.
+    pub amount: u128,
+}
+
 /// The per-transaction kernel session.
 #[derive(Debug)]
 pub struct KernelSession {
@@ -118,6 +138,10 @@ pub struct KernelSession {
     /// part of committing: the write belongs in the layer the rest of
     /// the transaction wrote into, so it merges or discards with it.
     nullifiers: Vec<SubintentRecord>,
+    /// The price this execution burns from its payer's vault, where the
+    /// executing shard holds that vault. `None` where it does not, or
+    /// where another execution of this shard's already charged it.
+    fee: Option<FeeBurn>,
     /// The interval machinery: materialized scans, scan debt, write caps.
     ranges: Ranges,
     /// The instance whose method is executing, set by the runner as it
@@ -213,6 +237,14 @@ impl KernelSession {
     #[must_use]
     pub fn with_nullifiers(mut self, nullifiers: Vec<SubintentRecord>) -> Self {
         self.nullifiers = nullifiers;
+        self
+    }
+
+    /// The fee a completed execution burns, recorded inside the receipt
+    /// so the conservation fold judges it.
+    #[must_use]
+    pub const fn with_fee(mut self, fee: Option<FeeBurn>) -> Self {
+        self.fee = fee;
         self
     }
 

@@ -217,6 +217,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         legs: LegPlan::whole(),
         scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, signed_nullifier())],
+        fee: None,
         env: env(),
         gas_limit: u64::MAX,
     }

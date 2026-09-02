@@ -39,7 +39,7 @@ mod through_the_session {
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{Declaration, Hasher, IssuanceGrant, Issued};
-    use hyperscale_vm_kernel::{EnvInputs, KernelSession, OverlayStore, SupplyDelta};
+    use hyperscale_vm_kernel::{EnvInputs, FeeBurn, KernelSession, OverlayStore, SupplyDelta};
     use hyperscale_vm_types::{
         AbortReason, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome, ResourceAddr,
     };
@@ -126,6 +126,56 @@ mod through_the_session {
     /// A burn reports what it destroyed, and the round trip nets to
     /// nothing — which is the whole of what a kept accumulator would
     /// have said, read off the two receipts instead.
+    /// The fee the shard states is a debit on the payer's vault and a
+    /// burn of the same amount: the receipt reports both, the vault's
+    /// movement carries the debit beside whatever else moved it, and
+    /// the fold balances them.
+    #[test]
+    fn a_fee_is_a_burn_the_fold_sees() {
+        let payer = vault(2, UNIT.address());
+        let mut held = MemoryStore::new();
+        held.write(vault(1, UNIT.address()), encode_amount(500).to_vec());
+        held.write(payer, encode_amount(100).to_vec());
+        let session = session_over(held).with_fee(Some(FeeBurn {
+            vault: payer,
+            resource: UNIT,
+            amount: 21,
+        }));
+        let (receipt, _) = session.finish(vec![], 0).expect("the oracle stands");
+        assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
+        assert_eq!(receipt.supply.burned(UNIT), 21);
+        assert_eq!(receipt.supply.minted(UNIT), 0);
+        let movement = receipt
+            .delta
+            .movements
+            .get(&payer)
+            .expect("the fee is a movement on the payer's vault");
+        assert_eq!((movement.credit, movement.debit), (0, 21));
+    }
+
+    /// A payer that cannot cover the price loses the transaction, not a
+    /// balance: the fee is judged against the vault like any debit.
+    #[test]
+    fn a_fee_the_payer_cannot_cover_refuses_the_transaction() {
+        let payer = vault(2, UNIT.address());
+        let mut held = MemoryStore::new();
+        held.write(payer, encode_amount(20).to_vec());
+        let session = session_over(held).with_fee(Some(FeeBurn {
+            vault: payer,
+            resource: UNIT,
+            amount: 21,
+        }));
+        let (receipt, _) = session.finish(vec![], 0).expect("the oracle stands");
+        assert_eq!(
+            receipt.outcome,
+            Outcome::Infeasible {
+                key: payer,
+                amount: 21
+            }
+        );
+        assert_eq!(receipt.supply, SupplyDelta::default());
+    }
+
     #[test]
     fn a_burn_returns_what_a_mint_added() {
         let mut minting = session();

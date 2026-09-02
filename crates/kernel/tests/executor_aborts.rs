@@ -338,6 +338,7 @@ fn nullifier() -> SubstateKey {
 fn nullifier_tx(id: u8) -> BatchTx {
     BatchTx {
         tx: tx(id),
+        fee: None,
         declaration: Declaration::from_set(point(nullifier(), Mode::Write { moves: Moves::Both })),
         calls: Vec::new(),
         legs: LegPlan::whole(),
@@ -410,6 +411,7 @@ fn sharing_tx(id: u8) -> BatchTx {
         declaration: Declaration::from_set(set),
         calls: Vec::new(),
         nullifiers: Vec::new(),
+        fee: None,
         legs: LegPlan::whole(),
         scope: ExecutionScope::whole(),
         env: env(),
@@ -438,6 +440,7 @@ fn nullifier_and_shared_tx(id: u8) -> BatchTx {
         legs: LegPlan::whole(),
         scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
+        fee: None,
         env: env(),
         gas_limit: u64::MAX,
     }
@@ -586,6 +589,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         legs: LegPlan::whole(),
         scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
+        fee: None,
         env: env(),
         gas_limit: u64::MAX,
     };
@@ -621,6 +625,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
     };
     let mismatched = BatchTx {
         tx: tx(0x01),
+        fee: None,
         declaration: Declaration {
             set: point(cell(0xA), Mode::Write { moves: Moves::Both }),
             // A different cell entirely: folding this does not reproduce

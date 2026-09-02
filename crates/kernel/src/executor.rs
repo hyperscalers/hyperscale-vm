@@ -44,7 +44,7 @@ use crate::ledger::AmountLedger;
 use crate::locality::{ExecutionScope, Locality};
 use crate::overlay::OverlayStore;
 use crate::session::{
-    EnvInputs, FinishError, KernelSession, MaterializeError, Receipt, StateDelta,
+    EnvInputs, FeeBurn, FinishError, KernelSession, MaterializeError, Receipt, StateDelta,
 };
 use crate::store::{Baseline, Fault, StoreError, Substates, WorkingStore};
 use crate::supply::SupplyDelta;
@@ -92,6 +92,10 @@ pub struct BatchTx {
     /// at any of them aborts the transaction before it runs; completing
     /// writes them all — once-only by creation conflict.
     pub nullifiers: Vec<SubintentRecord>,
+    /// The price this execution burns from its payer's vault, stated by
+    /// the shard holding that vault; `None` elsewhere, and where this
+    /// shard already charged it.
+    pub fee: Option<FeeBurn>,
     /// Which of the manifest's nodes this execution runs, and the cells
     /// the ones it does not run stand in for.
     ///
@@ -148,6 +152,7 @@ impl BatchTx {
             declaration: declaration.into(),
             calls: Vec::new(),
             nullifiers: Vec::new(),
+            fee: None,
             legs: LegPlan::whole(),
             scope: ExecutionScope::whole(),
             env,
@@ -190,6 +195,13 @@ impl BatchTx {
     #[must_use]
     pub fn with_nullifiers(mut self, nullifiers: Vec<SubintentRecord>) -> Self {
         self.nullifiers = nullifiers;
+        self
+    }
+
+    /// The fee this execution burns, where this shard holds the vault.
+    #[must_use]
+    pub const fn with_fee(mut self, fee: Option<FeeBurn>) -> Self {
+        self.fee = fee;
         self
     }
 }
@@ -803,6 +815,7 @@ fn run_group<R: GuestRunner>(
                 session
                     .with_locality(locality.clone())
                     .with_nullifiers(entry.nullifiers.clone())
+                    .with_fee(entry.fee)
             }
             Err(defect) => {
                 receipts.push((entry.tx, abort_receipt(defect.into(), 0)));
