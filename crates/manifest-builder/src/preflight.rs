@@ -29,7 +29,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_types::{
     Address, CallTarget, EffectTarget, NetworkWord, Presence, PrincipalAddr, ResourceAddr,
-    SchemeId, SubstateKey, TextError, declared_work, signature_work,
+    SchemeId, SubstateKey, TextError, declared_work, price_attos, signature_work,
 };
 
 /// Why a transaction could not be preflighted.
@@ -344,6 +344,15 @@ impl Report {
             total.saturating_add(signature_work(*scheme))
         });
         declared_work(self.footprint(), gas_limit, signatures)
+    }
+
+    /// What this transaction will be charged, in attos, at `gas_limit`
+    /// under `schemes`: [`Self::declared_work`] at the protocol's rate.
+    /// The figure a signed ceiling has to cover, or admission refuses
+    /// the envelope.
+    #[must_use]
+    pub fn price(&self, gas_limit: u64, schemes: &[SchemeId]) -> u128 {
+        price_attos(self.declared_work(gas_limit, schemes))
     }
 
     /// Every signature the transaction certainly needs: what its nodes'

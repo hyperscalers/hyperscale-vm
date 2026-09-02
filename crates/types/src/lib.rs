@@ -55,8 +55,8 @@ pub use scheme::{
 };
 pub use seeds::{Drawn, SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded};
 pub use work::{
-    AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, VERIFY_WEIGHT, declared_work,
-    signature_work, work_units,
+    AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, VERIFY_WEIGHT, WORK_PER_ATTO,
+    declared_work, price_attos, signature_work, work_units,
 };
 pub use writes::{
     EntryKey, EntryLeaf, MAX_CELL_VALUE_LEN, Movement, SettledCells, SettledEntries, SettledWrites,
