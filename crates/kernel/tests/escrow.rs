@@ -208,7 +208,8 @@ fn then(store: &MemoryStore, entry: BatchTx, again: BatchTx) -> Receipt {
 /// rather than reaching a local consumer.
 fn sending(amount: u128) -> BatchTx {
     let mut legs = LegPlan::whole();
-    legs.departs(0, 0, record_site(), cell(PAYER)).unwrap();
+    legs.departs(0, 0, record_site(), Some(cell(PAYER)))
+        .unwrap();
     BatchTx::new(
         tx(1),
         declared(&[
@@ -289,7 +290,7 @@ fn the_two_halves_of_one_crossing_reconcile() {
     assert_eq!(record.resource, RESOURCE);
     assert_eq!(record.amount, 200);
     assert_eq!(record.expiry_ms, EXPIRY_MS);
-    assert_eq!(record.origin, cell(PAYER), "and where it left from");
+    assert_eq!(record.origin, Some(cell(PAYER)), "and where it left from");
 
     // The receiving half claims exactly that, on its own shard, out of a
     // batch that never saw the sender's session.
@@ -502,15 +503,20 @@ fn a_whole_execution_crosses_nothing() {
 fn a_plan_past_the_crossing_cap_refuses_at_construction() {
     let mut legs = LegPlan::whole();
     for edge in 0..MAX_CROSSINGS_PER_TX {
-        legs.departs(u32::try_from(edge).unwrap(), 0, record_site(), cell(PAYER))
-            .unwrap();
+        legs.departs(
+            u32::try_from(edge).unwrap(),
+            0,
+            record_site(),
+            Some(cell(PAYER)),
+        )
+        .unwrap();
     }
     assert!(
         legs.departs(
             u32::try_from(MAX_CROSSINGS_PER_TX).unwrap(),
             0,
             record_site(),
-            cell(PAYER),
+            Some(cell(PAYER)),
         )
         .is_err()
     );
@@ -524,7 +530,8 @@ fn a_plan_past_the_crossing_cap_refuses_at_construction() {
 #[test]
 fn an_undeclared_record_cell_refuses_the_batch() {
     let mut legs = LegPlan::whole();
-    legs.departs(0, 0, record_site(), cell(PAYER)).unwrap();
+    legs.departs(0, 0, record_site(), Some(cell(PAYER)))
+        .unwrap();
     let entry = BatchTx::new(
         tx(6),
         declared(&[Effect {
@@ -894,7 +901,8 @@ fn an_issue_naming_an_unreserved_origin_is_refused() {
     let mut store = MemoryStore::new();
     store.write(cell(PAYER), encode_amount(500).to_vec());
     let mut legs = LegPlan::whole();
-    legs.departs(0, 0, record_site(), cell(PAYEE)).unwrap();
+    legs.departs(0, 0, record_site(), Some(cell(PAYEE)))
+        .unwrap();
     let entry = BatchTx::new(
         tx(12),
         declared(&[

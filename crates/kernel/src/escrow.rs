@@ -144,8 +144,11 @@ impl EscrowDelta {
 pub struct Departure {
     /// The record cell, under the producing node's target.
     pub site: CrossingSite,
-    /// The cell the departing value was reserved from.
-    pub origin: SubstateKey,
+    /// The cell the departing value was reserved from, where the edge is
+    /// one a reclaim may take back — an inbound leg's. A core's edge
+    /// names none: what it sends was minted or drawn from several cells,
+    /// and a core that committed is never reclaimed from.
+    pub origin: Option<SubstateKey>,
 }
 
 /// One crossing this execution takes back: the record the producing
@@ -273,7 +276,7 @@ impl LegPlan {
         node: u32,
         output: u32,
         record: CrossingSite,
-        origin: SubstateKey,
+        origin: Option<SubstateKey>,
     ) -> Result<(), PlanTooWide> {
         Self::bounded(
             &mut self.outbound,
@@ -438,7 +441,8 @@ mod tests {
         let mut plan = LegPlan::whole();
         plan.skip(1);
         plan.arrives(1, 0, crossed(1, 50), cell(9)).expect("fits");
-        plan.departs(2, 0, cell(8), cell(8).key()).expect("fits");
+        plan.departs(2, 0, cell(8), Some(cell(8).key()))
+            .expect("fits");
 
         assert!(!plan.is_whole());
         assert!(!plan.runs(1));
@@ -459,13 +463,13 @@ mod tests {
         let mut plan = LegPlan::whole();
         for edge in 0..MAX_CROSSINGS_PER_TX {
             let node = u32::try_from(edge).expect("bounded");
-            plan.departs(node, 0, cell(1), cell(1).key())
+            plan.departs(node, 0, cell(1), Some(cell(1).key()))
                 .expect("inside the cap");
         }
         let past = u32::try_from(MAX_CROSSINGS_PER_TX).expect("bounded");
-        assert!(plan.departs(past, 0, cell(1), cell(1).key()).is_err());
+        assert!(plan.departs(past, 0, cell(1), Some(cell(1).key())).is_err());
         assert!(
-            plan.departs(0, 0, cell(2), cell(2).key()).is_ok(),
+            plan.departs(0, 0, cell(2), Some(cell(2).key())).is_ok(),
             "not a new crossing"
         );
     }

@@ -224,17 +224,21 @@ impl KernelSession {
         // credit it from the cell alone, and what makes that name honest
         // is the declaration beside it: the cell has to be reserved here,
         // in the resource that is departing. A plan naming any other
-        // cell is naming one this value never came from.
-        let reserved = self
-            .table
-            .iter()
-            .zip(&self.cell_resources)
-            .any(|(held, holds)| {
-                matches!(held, Capability::Reserve { key, .. } if *key == departure.origin)
-                    && *holds == Some(resource)
-            });
-        if !reserved {
-            return Err(SessionTrap::EscrowOriginUndeclared(departure.origin));
+        // cell is naming one this value never came from. An edge naming
+        // no cell is a core's, which is never reclaimed, and answers for
+        // nothing here.
+        if let Some(origin) = departure.origin {
+            let reserved = self
+                .table
+                .iter()
+                .zip(&self.cell_resources)
+                .any(|(held, holds)| {
+                    matches!(held, Capability::Reserve { key, .. } if *key == origin)
+                        && *holds == Some(resource)
+                });
+            if !reserved {
+                return Err(SessionTrap::EscrowOriginUndeclared(origin));
+            }
         }
         let crossed = Crossed { resource, amount };
         self.escrow.issue(node, output, crossed)?;
@@ -262,7 +266,8 @@ impl KernelSession {
     /// # Errors
     ///
     /// [`SessionTrap::EscrowRecordUnreadable`] for a record that is
-    /// absent, does not decode, or names another edge;
+    /// absent, does not decode, names another edge, or names no cell to
+    /// credit — a core's record, which is not a reclaim's to take;
     /// [`SessionTrap::EscrowOriginUndeclared`] where the declaration
     /// carries no movement handle on the cell the record says to credit;
     /// and any [`SessionTrap`] the claim or the credit raises.
@@ -273,12 +278,15 @@ impl KernelSession {
             .and_then(|bytes| CrossingCell::from_bytes(&bytes))
             .filter(|record| reclaim.claim.names(record))
             .ok_or(SessionTrap::EscrowRecordUnreadable(reclaim.record))?;
+        let origin = record
+            .origin
+            .ok_or(SessionTrap::EscrowRecordUnreadable(reclaim.record))?;
         let site = self
             .table
             .iter()
-            .position(|held| matches!(held, Capability::Delta { key, .. } if *key == record.origin))
+            .position(|held| matches!(held, Capability::Delta { key, .. } if *key == origin))
             .and_then(|index| u32::try_from(index).ok())
-            .ok_or(SessionTrap::EscrowOriginUndeclared(record.origin))?;
+            .ok_or(SessionTrap::EscrowOriginUndeclared(origin))?;
         let crossed = Crossed {
             resource: record.resource,
             amount: record.amount,
@@ -405,7 +413,7 @@ mod tests {
     fn departure(origin: SubstateKey) -> Departure {
         Departure {
             site: site(),
-            origin,
+            origin: Some(origin),
         }
     }
 

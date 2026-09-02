@@ -596,8 +596,10 @@ pub struct CrossingCell {
     /// How much of it.
     pub amount: u128,
     /// The cell the value was reserved from, and the one a reclaim
-    /// credits.
-    pub origin: SubstateKey,
+    /// credits. Named by an inbound leg's crossing, which is the only
+    /// kind ever reclaimed; a core's crossing — minted, or drawn from
+    /// several cells — names none, since nobody takes it back.
+    pub origin: Option<SubstateKey>,
     /// The signed intent the producing node belongs to.
     pub intent: SubintentHash,
     /// That node's index within its own intent.
@@ -740,7 +742,7 @@ impl CrossingSite {
         &self,
         resource: ResourceAddr,
         amount: u128,
-        origin: SubstateKey,
+        origin: Option<SubstateKey>,
     ) -> CrossingCell {
         CrossingCell {
             resource,

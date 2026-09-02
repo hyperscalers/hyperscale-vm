@@ -584,7 +584,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     let cell = CrossingCell {
         resource: RES_X,
         amount: 500,
-        origin,
+        origin: Some(origin),
         intent: bob,
         local: 1,
         output: 0,
