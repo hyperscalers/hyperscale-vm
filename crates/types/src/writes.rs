@@ -173,21 +173,30 @@ impl Movement {
     /// movement no kernel produced — a malformed receipt for the caller
     /// to refuse whole, not a total to pin at the ceiling and settle on.
     ///
-    /// # Panics
+    /// This movement followed by `next` on one cell.
     ///
-    /// Debug-only, if the two name different resources: one cell holds
-    /// one resource, so composing across two is the kernel disagreeing
-    /// with itself rather than anything a caller can cause.
-    #[must_use]
-    pub fn then(self, next: Self) -> Option<Self> {
-        debug_assert_eq!(
-            self.resource, next.resource,
-            "composing movements of different resources on one cell",
-        );
-        Some(Self {
+    /// # Errors
+    ///
+    /// [`Compose::Denomination`] if the two name different resources —
+    /// one cell holds one resource, so a second denomination reaching
+    /// it is a receipt disagreeing with the state it lands on, and
+    /// netting across the two would spend one resource out of the
+    /// other's balance. [`Compose::Overflow`] if a gross total leaves
+    /// `u128`.
+    pub fn then(self, next: Self) -> Result<Self, Compose> {
+        if self.resource != next.resource {
+            return Err(Compose::Denomination);
+        }
+        Ok(Self {
             resource: self.resource,
-            credit: self.credit.checked_add(next.credit)?,
-            debit: self.debit.checked_add(next.debit)?,
+            credit: self
+                .credit
+                .checked_add(next.credit)
+                .ok_or(Compose::Overflow)?,
+            debit: self
+                .debit
+                .checked_add(next.debit)
+                .ok_or(Compose::Overflow)?,
         })
     }
 
@@ -209,6 +218,33 @@ impl Movement {
     }
 }
 
+/// Why two movements on one cell do not compose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Compose {
+    /// The two name different resources: one cell holds one resource,
+    /// so this is a receipt disagreeing with the state it lands on.
+    Denomination,
+    /// A gross total past `u128`.
+    Overflow,
+}
+
+/// A debit past what its cell holds, met at settlement.
+///
+/// The kernel judges every movement against committed balance less
+/// outstanding holds before recording it, so a certified receipt
+/// arriving here with a debit the cell cannot cover is one disagreeing
+/// with the state it lands on — never something to settle on a balance
+/// nothing produced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverDebit {
+    /// The cell.
+    pub key: SubstateKey,
+    /// What it held when the movement applied.
+    pub held: u128,
+    /// What the movement debited net of what it credited.
+    pub debit: u128,
+}
+
 impl StateWrites {
     /// Fold the movements onto the cells, against whatever each moved
     /// cell holds at the point the change applies.
@@ -221,12 +257,17 @@ impl StateWrites {
     /// cell stands in for `prior` where there is one; an absent cell
     /// reads as zero, and a drained one resolves to a removal.
     ///
-    /// A debit past what the cell holds cannot arise — the kernel judged
-    /// it against committed balance less outstanding holds before
-    /// recording the movement — so it saturates rather than raising an
-    /// error no caller could act on at settlement time.
-    #[must_use]
-    pub fn resolve(&self, prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>) -> SettledWrites {
+    /// # Errors
+    ///
+    /// [`OverDebit`] where a debit runs past what its cell holds. The
+    /// kernel judged every movement against committed balance less
+    /// outstanding holds before recording it, so this is a certified
+    /// receipt disagreeing with the state it lands on, refused rather
+    /// than settled on a balance nothing produced.
+    pub fn resolve(
+        &self,
+        prior: &mut dyn FnMut(SubstateKey) -> Option<Vec<u8>>,
+    ) -> Result<SettledWrites, OverDebit> {
         let mut cells = self.cells.clone();
         for (key, movement) in &self.movements {
             let before = cells
@@ -234,13 +275,17 @@ impl StateWrites {
                 .map_or_else(|| prior(*key), Clone::clone)
                 .and_then(|bytes| read_amount(&bytes))
                 .unwrap_or(0);
-            let after = movement.apply(before).unwrap_or(0);
+            let after = movement.apply(before).ok_or_else(|| OverDebit {
+                key: *key,
+                held: before,
+                debit: movement.debit.saturating_sub(movement.credit),
+            })?;
             cells.insert(*key, amount_cell(after).map(|cell| cell.to_vec()));
         }
-        SettledWrites {
+        Ok(SettledWrites {
             cells,
             entries: self.entries.clone(),
-        }
+        })
     }
 
     /// Whether nothing changed.
@@ -379,6 +424,7 @@ mod tests {
     /// What every cell these fixtures move holds.
     const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
     use crate::amount::{amount_cell, read_amount};
+    use crate::writes::{Compose, OverDebit};
 
     fn key(owner: u8, local: u8) -> SubstateKey {
         SubstateKey {
@@ -485,7 +531,9 @@ mod tests {
         let mut writes = StateWrites::default();
         writes.entries.insert(entry(1, 4, 7), Some(vec![9]));
         writes.entries.insert(entry(1, 4, 8), None);
-        let settled = writes.resolve(&mut |_| panic!("no cell is read"));
+        let settled = writes
+            .resolve(&mut |_| panic!("no cell is read"))
+            .expect("the debit fits");
         assert_eq!(settled.entries(), &writes.entries);
         assert!(!settled.is_empty());
 
@@ -534,16 +582,22 @@ mod tests {
         // Whichever settles first, the second resolves against what the
         // first left, and the pair lands on the same value.
         let first_then_second = {
-            let after_first = debit(300).resolve(&mut |_| start.clone());
+            let after_first = debit(300)
+                .resolve(&mut |_| start.clone())
+                .expect("the debit fits");
             debit(400)
                 .resolve(&mut |k| after_first.cells().get(&k).cloned().flatten())
+                .expect("the debit fits")
                 .cells()[&vault]
                 .clone()
         };
         let second_then_first = {
-            let after_second = debit(400).resolve(&mut |_| start.clone());
+            let after_second = debit(400)
+                .resolve(&mut |_| start.clone())
+                .expect("the debit fits");
             debit(300)
                 .resolve(&mut |k| after_second.cells().get(&k).cloned().flatten())
+                .expect("the debit fits")
                 .cells()[&vault]
                 .clone()
         };
@@ -553,6 +607,55 @@ mod tests {
 
     /// A resolved movement is an absolute like any other, and a drained
     /// cell goes rather than encoding zero.
+    /// A debit past the balance is refused at settlement, naming the
+    /// cell, what it held and the movement that ran past it.
+    #[test]
+    fn a_debit_past_the_balance_is_refused_at_settlement() {
+        let mut writes = StateWrites::default();
+        writes
+            .movements
+            .insert(key(1, 1), Movement::debit(RESOURCE, 600));
+        let refused = writes
+            .resolve(&mut |_| amount_cell(500).map(|cell| cell.to_vec()))
+            .expect_err("a debit past the balance does not settle");
+        assert_eq!(
+            refused,
+            OverDebit {
+                key: key(1, 1),
+                held: 500,
+                debit: 600,
+            }
+        );
+    }
+
+    /// Two movements naming different resources never compose: one cell
+    /// holds one resource, and netting across two would spend one out of
+    /// the other's balance.
+    #[test]
+    fn movements_of_two_resources_do_not_compose() {
+        let other = ResourceAddr::new([0xE2; 31]);
+        assert_eq!(
+            Movement::debit(RESOURCE, 1).then(Movement::debit(other, 1)),
+            Err(Compose::Denomination)
+        );
+        assert_eq!(
+            Movement::debit(RESOURCE, u128::MAX).then(Movement::debit(RESOURCE, 1)),
+            Err(Compose::Overflow)
+        );
+        assert_eq!(
+            Movement::debit(RESOURCE, 1).then(Movement {
+                resource: RESOURCE,
+                credit: 2,
+                debit: 0,
+            }),
+            Ok(Movement {
+                resource: RESOURCE,
+                credit: 2,
+                debit: 1
+            })
+        );
+    }
+
     #[test]
     fn resolving_a_drain_removes_the_cell() {
         let vault = key(2, 2);
@@ -565,7 +668,9 @@ mod tests {
                 debit: 500,
             },
         );
-        let resolved = writes.resolve(&mut |_| amount_cell(500).map(|cell| cell.to_vec()));
+        let resolved = writes
+            .resolve(&mut |_| amount_cell(500).map(|cell| cell.to_vec()))
+            .expect("the debit fits");
         assert_eq!(resolved.cells()[&vault], None, "a drained cell is absent");
     }
 
@@ -586,7 +691,9 @@ mod tests {
                 debit: 0,
             },
         );
-        let resolved = writes.resolve(&mut |_| panic!("the receipt's own write is the prior"));
+        let resolved = writes
+            .resolve(&mut |_| panic!("the receipt's own write is the prior"))
+            .expect("the debit fits");
         assert_eq!(
             read_amount(&resolved.cells[&vault].clone().unwrap()),
             Some(150)
@@ -619,7 +726,9 @@ mod tests {
         let vault = key(4, 4);
         let mut writes = StateWrites::default();
         writes.movements.insert(vault, pass_through);
-        let resolved = writes.resolve(&mut |_| amount_cell(near_max).map(|cell| cell.to_vec()));
+        let resolved = writes
+            .resolve(&mut |_| amount_cell(near_max).map(|cell| cell.to_vec()))
+            .expect("the debit fits");
         assert_eq!(
             read_amount(&resolved.cells[&vault].clone().unwrap()),
             Some(near_max)

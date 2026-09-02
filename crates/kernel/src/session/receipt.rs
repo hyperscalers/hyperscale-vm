@@ -17,7 +17,7 @@ use hyperscale_vm_types::{
 use super::{Capability, KernelSession};
 use crate::escrow::EscrowDelta;
 use crate::ledger::AmountLedger;
-use crate::modes::{DeltaOp, ModeError, total_movement};
+use crate::modes::{DeltaOp, total_movement};
 use crate::oracle::undeclared_accesses;
 use crate::overlay::OverlayStore;
 use crate::store::{Access, Fault, StoreError, WorkingStore};
@@ -194,6 +194,12 @@ pub enum FinishError {
     /// so reaching this is the kernel disagreeing with itself.
     #[error("movement on undenominated cell {0:?}")]
     UndenominatedMovement(SubstateKey),
+    /// Two movements on one cell that do not compose — two resources on
+    /// one cell, or a gross total past `u128`. Neither is a declaration's
+    /// to reach: the fee names the vault's own resource, and the kernel
+    /// refused the declared movements' totals already.
+    #[error("movements on {0:?} do not compose")]
+    Composition(SubstateKey),
 }
 
 /// How one phase of finishing ended: what it produced for the receipt,
@@ -593,13 +599,11 @@ impl KernelSession {
             };
         }
         let burned = Movement::debit(fee.resource, fee.amount);
-        let Some(composed) = movements
-            .get(&fee.vault)
-            .map_or(Some(burned), |standing| standing.then(burned))
-        else {
-            return Ok(Phase::Aborted(Outcome::UserError {
-                reason: ModeError::SupplyOutOfBounds.into(),
-            }));
+        let composed = match movements.get(&fee.vault) {
+            Some(standing) => standing
+                .then(burned)
+                .map_err(|_| FinishError::Composition(fee.vault))?,
+            None => burned,
         };
         movements.insert(fee.vault, composed);
         if let Err(error) = self.supply.burn(fee.resource, fee.amount) {

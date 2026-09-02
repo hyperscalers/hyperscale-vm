@@ -185,9 +185,10 @@ impl StateDelta {
     /// collection, so an entry has no movement form and nothing about it
     /// resolves later.
     ///
-    /// Returns `None` where two composed movements on one cell leave
-    /// `u128` — a delta no kernel produced, for the caller to refuse
-    /// whole rather than settle on a pinned total.
+    /// Returns `None` where two movements on one cell do not compose —
+    /// two denominations, or a gross total past `u128` — a delta no
+    /// kernel produced, for the caller to refuse whole rather than settle
+    /// on a pinned total.
     #[must_use]
     pub fn project(&self, locality: &Locality) -> Option<StateWrites> {
         let owned = self.owned(locality);
@@ -200,7 +201,7 @@ impl StateDelta {
         }
         for (key, movement) in owned.movements().chain(owned.settles()) {
             let standing = match writes.movements.remove(&key) {
-                Some(standing) => standing.then(movement)?,
+                Some(standing) => standing.then(movement).ok()?,
                 None => movement,
             };
             writes.movements.insert(key, standing);
@@ -359,7 +360,8 @@ mod tests {
         let writes = delta
             .project(&Locality::All)
             .expect("kernel-produced movements compose")
-            .resolve(&mut |cell| base.cells.get(&cell).cloned());
+            .resolve(&mut |cell| base.cells.get(&cell).cloned())
+            .expect("the debit fits");
         let mut folded: BTreeMap<_, _> = base.cells.clone();
         for (cell, change) in writes.cells() {
             match change {
@@ -404,7 +406,9 @@ mod tests {
 
         // The same receipt, landing on two different priors, debits both.
         for (before, after) in [(100u128, 70u128), (60, 30)] {
-            let resolved = projected.resolve(&mut |_| Some(encode_amount(before).to_vec()));
+            let resolved = projected
+                .resolve(&mut |_| Some(encode_amount(before).to_vec()))
+                .expect("the debit fits");
             assert_eq!(
                 decode_amount(resolved.cells()[&vault].as_ref().unwrap()).unwrap(),
                 after,
@@ -449,7 +453,8 @@ mod tests {
         let writes = delta
             .project(&Locality::All)
             .expect("kernel-produced movements compose")
-            .resolve(&mut |_| panic!("the receipt's own write answers this read"));
+            .resolve(&mut |_| panic!("the receipt's own write answers this read"))
+            .expect("the debit fits");
         assert_eq!(writes.cells()[&cell], Some(encode_amount(30).to_vec()));
     }
 
@@ -483,7 +488,7 @@ mod tests {
             ])
         );
 
-        let settled = projected.resolve(&mut |_| None);
+        let settled = projected.resolve(&mut |_| None).expect("the debit fits");
         assert_eq!(settled.entries(), &projected.entries);
     }
 
@@ -510,7 +515,8 @@ mod tests {
         let writes = delta
             .project(&locality)
             .expect("kernel-produced movements compose")
-            .resolve(&mut |_| None);
+            .resolve(&mut |_| None)
+            .expect("the debit fits");
         assert_eq!(writes.cells().len(), 1);
         assert_eq!(writes.cells()[&local], Some(encode_amount(5).to_vec()));
     }
