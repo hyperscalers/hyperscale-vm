@@ -271,6 +271,15 @@ pub fn star_at(legs: &[LegShape], shards: &dyn ShardResolver) -> StarShape {
 /// is a second crossing kind and not one this design builds — so the
 /// attesting node goes back to the core, where every participant runs it.
 ///
+/// Which node proved a claim is not on the shape — the manifest resolved
+/// the evidence into its subject — so the match is by subject. A subject
+/// that is some node's own target names that node; a badge or any other
+/// subject no node is names whichever attesting node proved it, which is
+/// not known, so it is taken to name every one of them. Over-flagging
+/// sends a proof to the core that could have stayed home, which costs a
+/// replication; under-flagging would run a gate against a proof its
+/// prover never made.
+///
 /// **The core must have a bearer.** A core with no node in it names no
 /// shard for a refusal, a departure or an absence to be taken against, so
 /// there is nothing for a reclaim to be admitted on. Where nothing else
@@ -283,8 +292,11 @@ fn settle_attesting(legs: &[LegShape], shards: &dyn ShardResolver) -> Vec<LegRol
             continue;
         }
         let here = shards.shard_of(node.target);
+        let names_me = |subject: &Address| {
+            *subject == node.target || !legs.iter().any(|other| other.target == *subject)
+        };
         let stays_home = legs.iter().all(|other| {
-            !other.presents.contains(&node.target) || shards.shard_of(other.target) == here
+            shards.shard_of(other.target) == here || !other.presents.iter().any(names_me)
         });
         if !stays_home {
             settled[index] = LegRole::Core;
@@ -500,7 +512,7 @@ fn is_unrefusable(signature: &MethodSignature, inputs: &[NodeInput]) -> bool {
 mod tests {
     use std::collections::BTreeSet;
 
-    use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, Moves};
+    use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, Moves, ResourceAddr};
 
     use super::{Address, LegRole, LegShape, StarShape, assemble, classify_roles, star_at};
     use crate::claim::Claim;
@@ -1055,6 +1067,37 @@ mod tests {
 
         let (star, _) = star_and_shape(&manifest, &chain);
         assert_eq!(star.roles[0], LegRole::Core);
+    }
+
+    /// A claim about a badge names no node's target, so which attesting
+    /// node proved it is not on the shape. Presented from another shard,
+    /// it sends every attesting node to the core — the over-flagging
+    /// direction — rather than running a gate against a proof its prover
+    /// never made.
+    #[test]
+    fn a_badge_claim_presented_elsewhere_sends_its_prover_to_the_core() {
+        let (chain, mut manifest) = signed_world_with_a_venue();
+        assert_eq!(
+            star_and_shape(&manifest, &chain).0.roles[0],
+            LegRole::Attesting,
+            "the fixture has to start as a leg, or the verdict below proves nothing",
+        );
+
+        // A badge: a subject no node of the manifest is.
+        let badge: Address = ResourceAddr::new([0xB4; 31]).into();
+        assert!(
+            !manifest.nodes.iter().any(|node| node.target == badge),
+            "the badge has to be nobody's target, or the verdict below proves nothing",
+        );
+        manifest.nodes[2].evidence = vec![Claim::of_subject(badge)];
+        let (star, _) = star_and_shape(&manifest, &chain);
+        assert_eq!(star.roles[0], LegRole::Core);
+
+        // Presented beside the prover, it stays home.
+        manifest.nodes[2].evidence = Vec::new();
+        manifest.nodes[1].evidence = vec![Claim::of_subject(badge)];
+        let (star, _) = star_and_shape(&manifest, &chain);
+        assert_eq!(star.roles[0], LegRole::Attesting);
     }
 
     /// A declaration reaching a party that runs nothing would leave that
