@@ -137,32 +137,30 @@ impl EscrowDelta {
     }
 }
 
-/// One edge leaving this execution: the record cell it writes, and the
-/// cell the value left, which the record names so a reclaim can credit
-/// it from the cell alone.
+/// One edge leaving this execution: the record cell it writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Departure {
     /// The record cell, under the producing node's target.
     pub site: CrossingSite,
-    /// The cell the departing value was reserved from, where the edge is
-    /// one a reclaim may take back — an inbound leg's. A core's edge
-    /// names none: what it sends was minted or drawn from several cells,
-    /// and a core that committed is never reclaimed from.
-    pub origin: Option<SubstateKey>,
 }
 
 /// One crossing this execution takes back: the record the producing
-/// shard wrote, claimed under the producer's own target.
+/// shard wrote, claimed under the producer's own target, and credited to
+/// the cell the value left.
 ///
-/// Everything else a reclaim needs — the resource, the amount, the cell
-/// to credit — is read off the record itself, so a shard holding nothing
-/// but its own prefix can reclaim from it.
+/// The resource and the amount are read off the record; the cell to
+/// credit is the plan's, derived from the transaction as the one cell
+/// the producing frame reserved in the departing resource. A reclaim is
+/// composed from the transaction, so nothing is read off the leaf that
+/// the transaction states better.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reclaim {
     /// The record cell to read.
     pub record: SubstateKey,
     /// The claim cell the reclaim writes, under the producer's target.
     pub claim: CrossingSite,
+    /// The cell the value left, which the credit lands on.
+    pub origin: SubstateKey,
 }
 
 /// Which of a manifest's nodes this execution runs, and the cells the
@@ -265,8 +263,7 @@ impl LegPlan {
         Self::bounded(&mut self.claimed, (node, output), claim)
     }
 
-    /// File the record cell one departing edge writes, and the cell the
-    /// value leaves from.
+    /// File the record cell one departing edge writes.
     ///
     /// # Errors
     ///
@@ -276,15 +273,11 @@ impl LegPlan {
         node: u32,
         output: u32,
         record: CrossingSite,
-        origin: Option<SubstateKey>,
     ) -> Result<(), PlanTooWide> {
         Self::bounded(
             &mut self.outbound,
             (node, output),
-            Departure {
-                site: record,
-                origin,
-            },
+            Departure { site: record },
         )
     }
 
@@ -441,8 +434,7 @@ mod tests {
         let mut plan = LegPlan::whole();
         plan.skip(1);
         plan.arrives(1, 0, crossed(1, 50), cell(9)).expect("fits");
-        plan.departs(2, 0, cell(8), Some(cell(8).key()))
-            .expect("fits");
+        plan.departs(2, 0, cell(8)).expect("fits");
 
         assert!(!plan.is_whole());
         assert!(!plan.runs(1));
@@ -463,14 +455,10 @@ mod tests {
         let mut plan = LegPlan::whole();
         for edge in 0..MAX_CROSSINGS_PER_TX {
             let node = u32::try_from(edge).expect("bounded");
-            plan.departs(node, 0, cell(1), Some(cell(1).key()))
-                .expect("inside the cap");
+            plan.departs(node, 0, cell(1)).expect("inside the cap");
         }
         let past = u32::try_from(MAX_CROSSINGS_PER_TX).expect("bounded");
-        assert!(plan.departs(past, 0, cell(1), Some(cell(1).key())).is_err());
-        assert!(
-            plan.departs(0, 0, cell(2), Some(cell(2).key())).is_ok(),
-            "not a new crossing"
-        );
+        assert!(plan.departs(past, 0, cell(1)).is_err());
+        assert!(plan.departs(0, 0, cell(2)).is_ok(), "not a new crossing");
     }
 }

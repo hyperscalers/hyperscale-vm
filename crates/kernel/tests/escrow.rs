@@ -208,8 +208,7 @@ fn then(store: &MemoryStore, entry: BatchTx, again: BatchTx) -> Receipt {
 /// rather than reaching a local consumer.
 fn sending(amount: u128) -> BatchTx {
     let mut legs = LegPlan::whole();
-    legs.departs(0, 0, record_site(), Some(cell(PAYER)))
-        .unwrap();
+    legs.departs(0, 0, record_site()).unwrap();
     BatchTx::new(
         tx(1),
         declared(&[
@@ -290,7 +289,6 @@ fn the_two_halves_of_one_crossing_reconcile() {
     assert_eq!(record.resource, RESOURCE);
     assert_eq!(record.amount, 200);
     assert_eq!(record.expiry_ms, EXPIRY_MS);
-    assert_eq!(record.origin, Some(cell(PAYER)), "and where it left from");
 
     // The receiving half claims exactly that, on its own shard, out of a
     // batch that never saw the sender's session.
@@ -503,20 +501,14 @@ fn a_whole_execution_crosses_nothing() {
 fn a_plan_past_the_crossing_cap_refuses_at_construction() {
     let mut legs = LegPlan::whole();
     for edge in 0..MAX_CROSSINGS_PER_TX {
-        legs.departs(
-            u32::try_from(edge).unwrap(),
-            0,
-            record_site(),
-            Some(cell(PAYER)),
-        )
-        .unwrap();
+        legs.departs(u32::try_from(edge).unwrap(), 0, record_site())
+            .unwrap();
     }
     assert!(
         legs.departs(
             u32::try_from(MAX_CROSSINGS_PER_TX).unwrap(),
             0,
             record_site(),
-            Some(cell(PAYER)),
         )
         .is_err()
     );
@@ -530,8 +522,7 @@ fn a_plan_past_the_crossing_cap_refuses_at_construction() {
 #[test]
 fn an_undeclared_record_cell_refuses_the_batch() {
     let mut legs = LegPlan::whole();
-    legs.departs(0, 0, record_site(), Some(cell(PAYER)))
-        .unwrap();
+    legs.departs(0, 0, record_site()).unwrap();
     let entry = BatchTx::new(
         tx(6),
         declared(&[Effect {
@@ -756,6 +747,7 @@ fn reclaiming(who: TxHash) -> BatchTx {
         Reclaim {
             record: record_site().key(),
             claim: reclaim_site(),
+            origin: cell(PAYER),
         },
     )
     .unwrap();
@@ -890,39 +882,4 @@ fn a_reclaim_of_a_record_that_is_not_there_is_a_defect() {
         },
     );
     assert!(receipt.delta.movements.is_empty());
-}
-
-/// The record names the cell the value left so a reclaim can credit it
-/// from the cell alone, and the declaration beside the issue is what
-/// makes that name honest: a plan naming a cell this leg never reserved
-/// is refused at the issue.
-#[test]
-fn an_issue_naming_an_unreserved_origin_is_refused() {
-    let mut store = MemoryStore::new();
-    store.write(cell(PAYER), encode_amount(500).to_vec());
-    let mut legs = LegPlan::whole();
-    legs.departs(0, 0, record_site(), Some(cell(PAYEE)))
-        .unwrap();
-    let entry = BatchTx::new(
-        tx(12),
-        declared(&[
-            Effect {
-                target: EffectTarget::Point(cell(PAYER)),
-                mode: Mode::Reserve { amount: 200 },
-            },
-            crossing_cell(record_site()),
-        ]),
-        env(),
-    )
-    .with_calls(vec![call("take", 0, 1)])
-    .with_legs(legs);
-
-    let receipt = run(&store, entry);
-    assert_eq!(
-        receipt.outcome,
-        Outcome::UserError {
-            reason: AbortReason::EscrowOriginUndeclared,
-        },
-    );
-    assert!(receipt.escrow.is_empty(), "nothing was issued");
 }

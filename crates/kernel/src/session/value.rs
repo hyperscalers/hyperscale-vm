@@ -220,34 +220,11 @@ impl KernelSession {
         let Held::Amount(amount) = held else {
             return Err(SessionTrap::WrongEdgeKind);
         };
-        // The record names the cell the value left so a reclaim can
-        // credit it from the cell alone, and what makes that name honest
-        // is the declaration beside it: the cell has to be reserved here,
-        // in the resource that is departing. A plan naming any other
-        // cell is naming one this value never came from. An edge naming
-        // no cell is a core's, which is never reclaimed, and answers for
-        // nothing here.
-        if let Some(origin) = departure.origin {
-            let reserved = self
-                .table
-                .iter()
-                .zip(&self.cell_resources)
-                .any(|(held, holds)| {
-                    matches!(held, Capability::Reserve { key, .. } if *key == origin)
-                        && *holds == Some(resource)
-                });
-            if !reserved {
-                return Err(SessionTrap::EscrowOriginUndeclared(origin));
-            }
-        }
         let crossed = Crossed { resource, amount };
         self.escrow.issue(node, output, crossed)?;
         self.crossings.insert(
             departure.site.key(),
-            departure
-                .site
-                .crossing(resource, amount, departure.origin)
-                .to_bytes(),
+            departure.site.crossing(resource, amount).to_bytes(),
         );
         Ok(crossed)
     }
@@ -256,20 +233,19 @@ impl KernelSession {
     ///
     /// The producing node claiming its own record through the path a
     /// consumer claims it: the claim is a loss and the credit a gain, so
-    /// the fold balances with no term of its own; the claim cell under
-    /// the producer's own target is what refuses a second reclaim, on
-    /// the machinery that refuses a second claim; and everything the
-    /// credit needs is read off the leaf, so a shard holding nothing but
-    /// its own prefix can do it. The record is left in place: it says
-    /// the value was issued, never that it is still available.
+    /// the fold balances with no term of its own, and the claim cell
+    /// under the producer's own target is what refuses a second reclaim,
+    /// on the machinery that refuses a second claim. The resource and the
+    /// amount are the record's; the cell credited is the plan's. The
+    /// record is left in place: it says the value was issued, never that
+    /// it is still available.
     ///
     /// # Errors
     ///
     /// [`SessionTrap::EscrowRecordUnreadable`] for a record that is
-    /// absent, does not decode, names another edge, or names no cell to
-    /// credit — a core's record, which is not a reclaim's to take;
+    /// absent, does not decode, or names another edge;
     /// [`SessionTrap::EscrowOriginUndeclared`] where the declaration
-    /// carries no movement handle on the cell the record says to credit;
+    /// carries no movement handle on the cell the plan says to credit;
     /// and any [`SessionTrap`] the claim or the credit raises.
     pub(crate) fn escrow_reclaim(&mut self, reclaim: &Reclaim) -> Result<Crossed, SessionTrap> {
         let record: CrossingCell = self
@@ -278,15 +254,14 @@ impl KernelSession {
             .and_then(|bytes| CrossingCell::from_bytes(&bytes))
             .filter(|record| reclaim.claim.names(record))
             .ok_or(SessionTrap::EscrowRecordUnreadable(reclaim.record))?;
-        let origin = record
-            .origin
-            .ok_or(SessionTrap::EscrowRecordUnreadable(reclaim.record))?;
         let site = self
             .table
             .iter()
-            .position(|held| matches!(held, Capability::Delta { key, .. } if *key == origin))
+            .position(
+                |held| matches!(held, Capability::Delta { key, .. } if *key == reclaim.origin),
+            )
             .and_then(|index| u32::try_from(index).ok())
-            .ok_or(SessionTrap::EscrowOriginUndeclared(origin))?;
+            .ok_or(SessionTrap::EscrowOriginUndeclared(reclaim.origin))?;
         let crossed = Crossed {
             resource: record.resource,
             amount: record.amount,
@@ -380,11 +355,9 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_effects::{CrossingSite, Hash32, SubintentHash, TestHasher};
-    use hyperscale_vm_types::{
-        Address, AddressClass, Effect, EffectTarget, Mode, ResourceAddr, SubstateKey,
-    };
+    use hyperscale_vm_types::{Address, AddressClass, ResourceAddr};
 
-    use super::super::fixtures::{declared, key, session_over};
+    use super::super::fixtures::{declared, session_over};
     use super::Held;
     use crate::escrow::{Crossed, Departure};
     use crate::session::SessionTrap;
@@ -403,25 +376,8 @@ mod tests {
         )
     }
 
-    /// The cell a departing value is said to have left: reserved in the
-    /// departing resource, for nothing, on a cell that holds nothing —
-    /// enough for the declaration to carry it.
-    fn origin() -> SubstateKey {
-        key(0xA2)
-    }
-
-    fn departure(origin: SubstateKey) -> Departure {
-        Departure {
-            site: site(),
-            origin: Some(origin),
-        }
-    }
-
-    fn reserving_origin() -> Vec<Effect> {
-        vec![Effect {
-            target: EffectTarget::Point(origin()),
-            mode: Mode::Reserve { amount: 0 },
-        }]
+    fn departure() -> Departure {
+        Departure { site: site() }
     }
 
     /// The escrow attestation is linear over amounts and blind to
@@ -430,10 +386,10 @@ mod tests {
     /// is where the sender's own defect belongs.
     #[test]
     fn an_instance_bucket_is_refused_at_the_issue() {
-        let mut session = session_over(MemoryStore::new(), &declared(&reserving_origin()));
+        let mut session = session_over(MemoryStore::new(), &declared(&[]));
         let instances = session.open_bucket(Held::Instances(BTreeSet::from([7])), RESOURCE);
         assert_eq!(
-            session.escrow_out(0, 0, instances, departure(origin())),
+            session.escrow_out(0, 0, instances, departure()),
             Err(SessionTrap::WrongEdgeKind),
         );
     }
@@ -442,10 +398,10 @@ mod tests {
     /// bucket is consumed on the way out.
     #[test]
     fn a_fungible_bucket_crosses_as_what_it_carried() {
-        let mut session = session_over(MemoryStore::new(), &declared(&reserving_origin()));
+        let mut session = session_over(MemoryStore::new(), &declared(&[]));
         let funds = session.open_bucket(Held::Amount(40), RESOURCE);
         assert_eq!(
-            session.escrow_out(0, 0, funds, departure(origin())),
+            session.escrow_out(0, 0, funds, departure()),
             Ok(Crossed {
                 resource: RESOURCE,
                 amount: 40,
@@ -453,19 +409,5 @@ mod tests {
         );
         assert!(session.bucket(funds).is_err(), "consumed on the way out");
         assert_eq!(session.escrow.issued(RESOURCE), 40);
-    }
-
-    /// The record names the cell the value left, and the declaration is
-    /// what makes that name honest: an origin nothing here reserves is a
-    /// cell this value never came from.
-    #[test]
-    fn an_issue_naming_an_unreserved_origin_is_refused() {
-        let mut session = session_over(MemoryStore::new(), &declared(&reserving_origin()));
-        let funds = session.open_bucket(Held::Amount(40), RESOURCE);
-        let elsewhere = key(0xA3);
-        assert_eq!(
-            session.escrow_out(0, 0, funds, departure(elsewhere)),
-            Err(SessionTrap::EscrowOriginUndeclared(elsewhere)),
-        );
     }
 }

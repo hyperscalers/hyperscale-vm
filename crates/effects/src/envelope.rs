@@ -595,11 +595,6 @@ pub struct CrossingCell {
     pub resource: ResourceAddr,
     /// How much of it.
     pub amount: u128,
-    /// The cell the value was reserved from, and the one a reclaim
-    /// credits. Named by an inbound leg's crossing, which is the only
-    /// kind ever reclaimed; a core's crossing — minted, or drawn from
-    /// several cells — names none, since nobody takes it back.
-    pub origin: Option<SubstateKey>,
     /// The signed intent the producing node belongs to.
     pub intent: SubintentHash,
     /// That node's index within its own intent.
@@ -735,19 +730,12 @@ impl CrossingSite {
         self.expiry_ms
     }
 
-    /// The record's value, once the execution knows what crossed and
-    /// where it left from.
+    /// The record's value, once the execution knows what crossed.
     #[must_use]
-    pub const fn crossing(
-        &self,
-        resource: ResourceAddr,
-        amount: u128,
-        origin: Option<SubstateKey>,
-    ) -> CrossingCell {
+    pub const fn crossing(&self, resource: ResourceAddr, amount: u128) -> CrossingCell {
         CrossingCell {
             resource,
             amount,
-            origin,
             intent: self.intent,
             local: self.local,
             output: self.output,
