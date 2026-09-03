@@ -18,7 +18,7 @@ use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
     Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, EnvInputs, ExecutionMode,
     GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession, LegPlan, Locality, ManifestWalk,
-    MemoryStore, Receipt, Reclaim, Substates, decode_amount, execute_batch,
+    MemoryStore, Receipt, Reclaim, Retire, Substates, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, MAX_CROSSINGS_PER_TX,
@@ -823,10 +823,7 @@ fn reclaiming(who: TxHash) -> BatchTx {
     BatchTx::new(
         who,
         declared(&[
-            Effect {
-                target: EffectTarget::Point(record_site().key()),
-                mode: Mode::Read,
-            },
+            crossing_cell(record_site()),
             crossing_cell(reclaim_site()),
             Effect {
                 target: EffectTarget::Point(cell(PAYER)),
@@ -845,7 +842,7 @@ fn balance(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
 /// Issue, then reclaim: the producing vault is back at its pre-escrow
 /// balance exactly, read off the vault rather than inferred; the claim is
 /// a loss and the credit a gain, so the fold balances with no term of
-/// its own; and the record stays, saying only that the value was issued.
+/// its own; and the record goes, since the value it held is back.
 #[test]
 fn a_reclaim_restores_the_producing_vault_exactly() {
     let mut store = MemoryStore::new();
@@ -887,8 +884,8 @@ fn a_reclaim_restores_the_producing_vault_exactly() {
     );
     assert_eq!(balance(&reclaimed, cell(PAYER)), 500);
     assert!(
-        reclaimed.store.cell(record_site().key()).is_some(),
-        "the record is left in place",
+        reclaimed.store.cell(record_site().key()).is_none(),
+        "the record goes with the value it held",
     );
     let claim: ClaimCell = from_slice(
         reclaimed
@@ -934,6 +931,98 @@ fn a_second_reclaim_is_refused_and_moves_nothing() {
     );
     assert!(receipt.delta.movements.is_empty());
     assert_eq!(balance(&twice, cell(PAYER)), 500);
+}
+
+/// The producing node retiring a record whose claim committed: reads
+/// the record, deletes it, moves nothing. No node runs.
+fn retiring(who: TxHash) -> BatchTx {
+    let mut legs = LegPlan::whole();
+    legs.retires(
+        0,
+        0,
+        Retire {
+            record: record_site(),
+        },
+    )
+    .unwrap();
+    BatchTx::new(who, declared(&[crossing_cell(record_site())]), env()).with_legs(legs)
+}
+
+/// Issue, then retire: the record is gone, nothing moved, no fold term
+/// entered, and the vault stands where the escrow left it.
+#[test]
+fn a_retire_deletes_the_record_and_moves_nothing() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[sending(200)],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    assert!(sent.store.cell(record_site().key()).is_some());
+
+    let retired = execute(
+        Arc::new(sent.store) as Arc<dyn Baseline>,
+        &[retiring(tx(12))],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let receipt = &retired.receipts[&tx(12)];
+    assert!(
+        matches!(receipt.outcome, Outcome::Completed { .. }),
+        "{receipt:?}"
+    );
+    assert_eq!(receipt.fuel, 0, "no node ran");
+    assert!(receipt.delta.movements.is_empty());
+    assert_eq!(receipt.escrow.claimed(RESOURCE), 0);
+    assert_eq!(receipt.escrow.issued(RESOURCE), 0);
+    assert_eq!(
+        receipt.delta.cells.get(&record_site().key()),
+        Some(&None),
+        "the receipt deletes the record"
+    );
+    assert!(retired.store.cell(record_site().key()).is_none());
+    assert_eq!(
+        balance(&retired, cell(PAYER)),
+        300,
+        "the value stays claimed"
+    );
+}
+
+/// A second retire finds no record: the batch's defect, refused, and
+/// nothing changes.
+#[test]
+fn a_second_retire_is_refused() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[sending(200)],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let once = execute(
+        Arc::new(sent.store) as Arc<dyn Baseline>,
+        &[retiring(tx(12))],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let twice = execute(
+        Arc::new(once.store) as Arc<dyn Baseline>,
+        &[retiring(tx(13))],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let receipt = &twice.receipts[&tx(13)];
+    assert_eq!(
+        receipt.outcome,
+        Outcome::ProtocolError {
+            reason: AbortReason::EscrowRecordUnreadable,
+        },
+    );
+    assert!(receipt.delta.cells.is_empty());
+    assert_eq!(balance(&twice, cell(PAYER)), 300);
 }
 
 /// A reclaim reads its record and nothing else, so a record that is not

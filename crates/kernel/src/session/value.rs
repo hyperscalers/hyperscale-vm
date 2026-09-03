@@ -18,7 +18,7 @@ use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::{Crossed, Departure, Reclaim};
+use crate::escrow::{Crossed, Departure, Reclaim, Retire};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -263,9 +263,9 @@ impl KernelSession {
     /// the fold balances with no term of its own, and the claim cell
     /// under the producer's own target is what refuses a second reclaim,
     /// on the machinery that refuses a second claim. The resource, the
-    /// amount and the cell credited are all the record's. The record is
-    /// left in place: it says the value was issued, never that it is
-    /// still available.
+    /// amount and the cell credited are all the record's. The record
+    /// goes with it: it is a balance held for a claim, and the value it
+    /// held is back where it left.
     ///
     /// # Errors
     ///
@@ -296,7 +296,33 @@ impl KernelSession {
         };
         let funds = self.escrow_in(crossed, reclaim.claim)?;
         self.cell_put(site, 0, funds)?;
+        self.store.remove(reclaim.record)?;
         Ok(crossed)
+    }
+
+    /// Retire a record this execution issued, once its claim committed.
+    ///
+    /// The record is a balance held for the consumer's claim, and the
+    /// claim moved the value where it ran; what is left is a cell
+    /// saying so, and this deletes it. Nothing moves and no fold term
+    /// enters. The record has to be there and name the edge: one that
+    /// is not was retired or taken back already, and a second retire is
+    /// the batch's defect rather than a lost race.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::EscrowRecordUnreadable`] for a record that is
+    /// absent, does not decode or names another edge, and any
+    /// [`SessionTrap`] the store raises.
+    pub(crate) fn escrow_retire(&mut self, retire: &Retire) -> Result<(), SessionTrap> {
+        let key = retire.record.key();
+        self.store
+            .read(key)?
+            .and_then(|bytes| CrossingCell::from_bytes(&bytes))
+            .filter(|record| retire.record.names(record))
+            .ok_or(SessionTrap::EscrowRecordUnreadable(key))?;
+        self.store.remove(key)?;
+        Ok(())
     }
 
     /// Take an attested arrival in as a bucket.

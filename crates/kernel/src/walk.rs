@@ -617,6 +617,26 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                 });
             }
         }
+        // What this execution retires: records whose claims committed,
+        // on the same terms — no node, no fuel, and a refusal is the
+        // batch's own defect.
+        for (_, retire) in entry.legs.retired() {
+            if let Err(trap) = session.escrow_retire(&retire) {
+                let outcome = match trap {
+                    SessionTrap::EscrowRecordUnreadable(_) => Outcome::ProtocolError {
+                        reason: trap.into(),
+                    },
+                    other => Outcome::UserError {
+                        reason: other.into(),
+                    },
+                };
+                return Ok(RunResult::Aborted {
+                    session,
+                    outcome,
+                    fuel,
+                });
+            }
+        }
         for (index, call) in entry.calls.iter().enumerate() {
             let node = u32::try_from(index).unwrap_or(u32::MAX);
             // One budget across the manifest: each node is metered

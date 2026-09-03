@@ -164,6 +164,19 @@ pub struct Reclaim {
     pub claim: CrossingSite,
 }
 
+/// One record this execution retires: a crossing it issued that the
+/// consumer's committed claim has settled, so the record — a balance
+/// held for that claim — has nothing left to hold.
+///
+/// Evidence of the claim is the parent's to establish; what the kernel
+/// checks is that the record is there and names the edge, and what it
+/// does is delete it. No value moves: the claim moved it where it ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retire {
+    /// The record cell, under the producing node's target.
+    pub record: CrossingSite,
+}
+
 /// Which of a manifest's nodes this execution runs, and the cells the
 /// ones it does not run stand in for.
 ///
@@ -178,6 +191,7 @@ pub struct LegPlan {
     outbound: BTreeMap<(u32, u32), Departure>,
     claimed: BTreeMap<(u32, u32), CrossingSite>,
     reclaimed: BTreeMap<(u32, u32), Reclaim>,
+    retired: BTreeMap<(u32, u32), Retire>,
 }
 
 impl LegPlan {
@@ -220,6 +234,12 @@ impl LegPlan {
         self.reclaimed
             .iter()
             .map(|(edge, reclaim)| (*edge, *reclaim))
+    }
+
+    /// The records this execution retires rather than runs, in
+    /// `(node, output)` order: crossings it issued whose claims committed.
+    pub fn retired(&self) -> impl Iterator<Item = ((u32, u32), Retire)> + '_ {
+        self.retired.iter().map(|(edge, retire)| (*edge, *retire))
     }
 
     /// The claim cell an arrival writes.
@@ -294,6 +314,15 @@ impl LegPlan {
         reclaim: Reclaim,
     ) -> Result<(), PlanTooWide> {
         Self::bounded(&mut self.reclaimed, (node, output), reclaim)
+    }
+
+    /// File one record this execution retires.
+    ///
+    /// # Errors
+    ///
+    /// [`PlanTooWide`] past [`MAX_CROSSINGS_PER_TX`].
+    pub fn retires(&mut self, node: u32, output: u32, retire: Retire) -> Result<(), PlanTooWide> {
+        Self::bounded(&mut self.retired, (node, output), retire)
     }
 
     fn bounded<T>(
