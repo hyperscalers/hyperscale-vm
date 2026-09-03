@@ -432,6 +432,17 @@ pub enum AbortReason {
     /// places, and folding it twice would count value that crossed once.
     #[hbor(discriminant = 70)]
     EscrowRepeated,
+    /// A body acted through a capability on a cell outside its member's
+    /// execution scope.
+    ///
+    /// The table is the whole declaration whatever the scope, so the
+    /// handle exists; what it names is a cell another member of the same
+    /// transaction judges, and an access there would answer absent or
+    /// land in an overlay nobody settles. A classification that let a
+    /// member reach it is the defect, so the kernel refuses rather than
+    /// drops.
+    #[hbor(discriminant = 71)]
+    OutsideScope,
 }
 
 /// What one node answered with: the value its method handed back, in the

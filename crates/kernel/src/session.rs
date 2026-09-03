@@ -331,9 +331,18 @@ impl KernelSession {
     /// The one place permission is decided. Every operation reaches its
     /// capability through here, so an operation added later cannot act
     /// through a mode that never granted it — there is no other way to
-    /// resolve a rep into something to act on.
+    /// resolve a rep into something to act on. The scope is decided
+    /// here too: a capability on a cell another member judges is one
+    /// this execution holds a handle to and may not exercise.
     fn acting(&self, site: u32, element: u32, attempted: Op) -> Result<Capability, SessionTrap> {
         let held = self.at(site, element)?;
+        if !self.scope.covers(held.owner()) {
+            return Err(SessionTrap::OutsideScope {
+                site,
+                element,
+                held,
+            });
+        }
         if grants(&held, attempted) {
             Ok(held)
         } else {

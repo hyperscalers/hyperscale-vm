@@ -14,7 +14,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     Baseline, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, ExecutionScope, KernelSession,
-    Locality, MemoryStore, OverlayStore, Receipt, RunResult, execute_batch,
+    Locality, MemoryStore, OverlayStore, Receipt, RunResult, SessionTrap, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome,
@@ -208,6 +208,68 @@ fn capability_reps_are_identical_whole_and_decomposed() {
 
     assert_eq!(whole.capabilities().len(), declaration.ordered.len());
     assert_eq!(whole.capabilities(), leg.capabilities());
+}
+
+/// The table hands a member every handle, and a handle on a cell
+/// another member judges may not be exercised: reading through it,
+/// like writing, is refused as outside the scope, where the same handle
+/// in a whole execution answers.
+#[test]
+fn a_handle_outside_the_scope_cannot_be_exercised() {
+    let mut store = MemoryStore::new();
+    store.write(cell(HERE), vec![1]);
+    store.write(cell(THERE), vec![2]);
+    let declaration = declared(&[write(THERE), write(HERE)], vec![]);
+    let rep_of = |session: &KernelSession, key: SubstateKey| -> u32 {
+        let rep = session
+            .capabilities()
+            .iter()
+            .position(|capability| capability.key() == Some(key))
+            .expect("the table holds the whole declaration");
+        u32::try_from(rep).unwrap()
+    };
+
+    let mut whole = KernelSession::materialize(
+        OverlayStore::new(Arc::new(store.clone())),
+        &declaration,
+        tx(1),
+        env(),
+        test_hash,
+    )
+    .expect("everything is provisioned");
+    let there = rep_of(&whole, cell(THERE));
+    assert_eq!(whole.cell_get(there, 0).unwrap(), vec![2]);
+
+    let mut leg = KernelSession::materialize_within(
+        OverlayStore::new(Arc::new(store)),
+        &declaration,
+        tx(1),
+        env(),
+        test_hash,
+        &ExecutionScope::spanning(only(&[HERE])),
+    )
+    .expect("the leg judges only its own");
+    let here = rep_of(&leg, cell(HERE));
+    assert_eq!(
+        leg.cell_get(here, 0).unwrap(),
+        vec![1],
+        "its own cell answers"
+    );
+    let there = rep_of(&leg, cell(THERE));
+    assert!(
+        matches!(
+            leg.cell_get(there, 0),
+            Err(SessionTrap::OutsideScope { site, element: 0, .. }) if site == there
+        ),
+        "a read of another member's cell is refused"
+    );
+    assert!(
+        matches!(
+            leg.write_cell_clear(there, 0),
+            Err(SessionTrap::OutsideScope { .. })
+        ),
+        "and so is a write"
+    );
 }
 
 /// A condition on a leaf outside the scope is another member's

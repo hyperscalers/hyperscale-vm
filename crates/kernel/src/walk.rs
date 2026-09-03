@@ -320,6 +320,17 @@ fn settled(
             },
             invoked.fuel,
         )),
+        // A body reaching a cell outside its member's scope is not the
+        // guest's defect but the classification's, which let a divided
+        // member hold a handle on another member's cell: the protocol's
+        // to answer for, like a record it cannot read.
+        Invoked::Aborted(AbortReason::OutsideScope) => Err(fail(
+            session,
+            Outcome::ProtocolError {
+                reason: AbortReason::OutsideScope,
+            },
+            invoked.fuel,
+        )),
         Invoked::Aborted(reason) => {
             let (outcome, spent) = trapped(invoked.exhausted, reason, fuel_budget, invoked.fuel);
             Err(fail(session, outcome, spent))

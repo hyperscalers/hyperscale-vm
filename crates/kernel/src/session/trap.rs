@@ -47,6 +47,27 @@ pub enum SessionTrap {
         /// What the body tried to do through it.
         attempted: Op,
     },
+    /// An element whose capability reaches a cell outside this member's
+    /// execution scope.
+    ///
+    /// The table is the whole declaration whatever the scope, so the
+    /// handle resolves; what it names is another member's to judge, and
+    /// an access here would read a store that never held the cell or
+    /// write an overlay nobody settles. Refused rather than dropped,
+    /// since a classification that let a body reach it is the defect.
+    #[error(
+        "the handle at site {site} element {element} holds {}, on a cell outside this \
+         execution's scope",
+        held.described()
+    )]
+    OutsideScope {
+        /// The site the operation named.
+        site: u32,
+        /// Which element of it.
+        element: u32,
+        /// What the declaration materialized there.
+        held: Capability,
+    },
     /// A cell resealed while its standing seal can still open.
     ///
     /// A seed is public the moment it rolls, and so is the word derived
@@ -220,6 +241,7 @@ impl From<SessionTrap> for AbortReason {
         match trap {
             SessionTrap::UnknownHandle(_) => Self::HandleUnknown,
             SessionTrap::Ungranted { .. } => Self::HandleWrongMode,
+            SessionTrap::OutsideScope { .. } => Self::OutsideScope,
             SessionTrap::NotASeal(_) => Self::MalformedSeal,
             SessionTrap::SealStanding(_) => Self::SealStanding,
             SessionTrap::UndeclaredBranch => Self::UndeclaredBranch,

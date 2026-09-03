@@ -170,6 +170,23 @@ impl Capability {
         }
     }
 
+    /// The owner of what this capability reaches: the cell's, or the
+    /// collection's — what an execution scope is asked about.
+    #[must_use]
+    pub const fn owner(&self) -> Address {
+        match *self {
+            Self::Read(key)
+            | Self::Write(key)
+            | Self::Amount { key, .. }
+            | Self::AmountRead(key)
+            | Self::Delta { key, .. }
+            | Self::Reserve { key, .. } => key.owner,
+            Self::RangeRead(interval)
+            | Self::RangeWrite(interval)
+            | Self::Instances { interval, .. } => interval.owner,
+        }
+    }
+
     /// The interval this capability holds, where it holds one.
     #[must_use]
     pub const fn interval(&self) -> Option<Interval> {
@@ -503,7 +520,8 @@ impl KernelSession {
     /// touches the store before a body runs: which reservations are
     /// judged and held, and which conditions are answered. An access
     /// outside it keeps its position and resolves to a capability nothing
-    /// in this execution can exercise.
+    /// in this execution may exercise: acting through it is refused as
+    /// [`SessionTrap::OutsideScope`](crate::session::SessionTrap::OutsideScope).
     ///
     /// # Errors
     ///
