@@ -48,7 +48,7 @@ use crate::manifest::ManifestHash;
 use crate::records::{ChainRecords, Composed};
 use crate::resource::ResourceMeta;
 use crate::route::{Routing, ShardResolver, route};
-use crate::types::{SlotId, bucketed_child_key};
+use crate::types::{SlotId, bucketed_child_key, child_key};
 
 /// The kernel-reserved role of subintent nullifier substates under a
 /// signer's prefix.
@@ -516,16 +516,16 @@ pub fn escrow_record_key(
     intent: SubintentHash,
     local: u32,
     output: u32,
-    expiry_ms: u64,
 ) -> SubstateKey {
-    escrow_key(
+    child_key(
         hasher,
         owner,
         ESCROW_RECORD_SLOT,
-        intent,
-        local,
-        output,
-        expiry_ms,
+        &[
+            intent.0.0.to_vec(),
+            local.to_le_bytes().to_vec(),
+            output.to_le_bytes().to_vec(),
+        ],
     )
 }
 
@@ -607,11 +607,6 @@ pub struct CrossingCell {
     pub local: u32,
     /// Which of its outputs the edge carried.
     pub output: u32,
-    /// When no chain can still be claiming or reclaiming the crossing:
-    /// the producing intent's own window end plus [`ESCROW_GRACE_MS`] —
-    /// the intent's, not the transaction's, so the composer chooses no
-    /// part of it.
-    pub expiry_ms: u64,
     /// The cell the value left, which a reclaim credits: the one cell of
     /// the producing frame denominated in the resource that crossed,
     /// resolved by the kernel at the issue. `None` where the frame holds
@@ -711,7 +706,7 @@ impl CrossingSite {
     ) -> Self {
         let owner = owner.into();
         Self {
-            key: escrow_record_key(hasher, owner, intent, local, output, expiry_ms),
+            key: escrow_record_key(hasher, owner, intent, local, output),
             intent,
             local,
             output,
@@ -766,7 +761,6 @@ impl CrossingSite {
             intent: self.intent,
             local: self.local,
             output: self.output,
-            expiry_ms: self.expiry_ms,
             origin,
         }
     }
@@ -778,10 +772,7 @@ impl CrossingSite {
     /// not take a record written for another.
     #[must_use]
     pub fn names(&self, record: &CrossingCell) -> bool {
-        record.intent == self.intent
-            && record.local == self.local
-            && record.output == self.output
-            && record.expiry_ms == self.expiry_ms
+        record.intent == self.intent && record.local == self.local && record.output == self.output
     }
 
     /// The claim's value: which transaction took the crossing, on this

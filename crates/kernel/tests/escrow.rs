@@ -299,7 +299,6 @@ fn the_two_halves_of_one_crossing_reconcile() {
     .expect("a record cell decodes");
     assert_eq!(record.resource, RESOURCE);
     assert_eq!(record.amount, 200);
-    assert_eq!(record.expiry_ms, EXPIRY_MS);
 
     // The receiving half claims exactly that, on its own shard, out of a
     // batch that never saw the sender's session.

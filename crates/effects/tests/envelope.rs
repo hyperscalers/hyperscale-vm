@@ -11,8 +11,8 @@ use hyperscale_vm_effects::{
     GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader, MAX_SOCKETS,
     MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput, PackageHash,
     PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket, Subintent, SubintentHash,
-    TestHasher, Value, admit, admit_tree, bucketed_child_key, escrow_claim_key, escrow_record_key,
-    explain_admission_tree, nullifier_key, route_tree,
+    TestHasher, Value, admit, admit_tree, bucketed_child_key, child_key, escrow_claim_key,
+    escrow_record_key, explain_admission_tree, nullifier_key, route_tree,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -473,15 +473,8 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
     assert_eq!(one, other);
     assert_eq!(one.intent, bob);
     assert_eq!(
-        escrow_record_key(&TestHasher, BOB, one.intent, one.local, 0, one.expiry_ms),
-        escrow_record_key(
-            &TestHasher,
-            BOB,
-            other.intent,
-            other.local,
-            0,
-            other.expiry_ms
-        ),
+        escrow_record_key(&TestHasher, BOB, one.intent, one.local, 0),
+        escrow_record_key(&TestHasher, BOB, other.intent, other.local, 0),
     );
 
     // The root's own nodes moved with the root's window, which is the
@@ -500,7 +493,7 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
 #[test]
 fn an_escrow_key_separates_what_it_names() {
     let bob = composed_tree(100).subintents[0].decl.hash(&TestHasher);
-    let key = escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
+    let key = escrow_record_key(&TestHasher, BOB, bob, 1, 0);
 
     // A record and its own claim share every part but the role, and the
     // two shards writing them never consult each other — so aliasing
@@ -510,66 +503,54 @@ fn an_escrow_key_separates_what_it_names() {
         escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS)
     );
     // The owner is what distinguishes two consumers of one output.
-    assert_ne!(
-        key,
-        escrow_record_key(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS)
-    );
+    assert_ne!(key, escrow_record_key(&TestHasher, ALICE, bob, 1, 0));
     // A different node of the same intent, and a different output of the
     // same node.
-    assert_ne!(
-        key,
-        escrow_record_key(&TestHasher, BOB, bob, 2, 0, EXPIRY_MS)
-    );
-    assert_ne!(
-        key,
-        escrow_record_key(&TestHasher, BOB, bob, 1, 1, EXPIRY_MS)
-    );
-    // The expiry is in the identity, so a writer cannot claim a life its
-    // declaration does not name.
-    assert_ne!(
-        key,
-        escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS + 1)
-    );
-
+    assert_ne!(key, escrow_record_key(&TestHasher, BOB, bob, 2, 0));
+    assert_ne!(key, escrow_record_key(&TestHasher, BOB, bob, 1, 1));
     assert_eq!(key.owner, BOB.address());
     assert_eq!(
         key,
-        bucketed_child_key(
+        child_key(
             &TestHasher,
             BOB,
             ESCROW_RECORD_SLOT,
-            SweepBucket::of(EXPIRY_MS),
             &[
                 bob.0.0.to_vec(),
                 1u32.to_le_bytes().to_vec(),
                 0u32.to_le_bytes().to_vec(),
-                EXPIRY_MS.to_le_bytes().to_vec(),
             ],
         ),
     );
 }
 
-/// Both escrow families lead with the bucket their expiry falls in, so a
-/// sweep walks one owner's cells for one bucket as a range — the same
-/// property the nullifier has, asserted here because the sweep asks the
-/// key rather than the family.
+/// A claim leads with the bucket its expiry falls in, so a sweep walks
+/// one owner's cells for one bucket as a range — the property the
+/// nullifier has, asserted here because the sweep asks the key rather
+/// than the family.
+///
+/// A record does not, and that is the point: it is a balance, retired
+/// by whoever consumes it, and a key that led with a bucket would be a
+/// key a sweep could find.
 #[test]
-fn an_escrow_key_leads_with_the_bucket_its_expiry_falls_in() {
+fn a_claim_leads_with_its_bucket_and_a_record_does_not() {
     let bob = composed_tree(100).subintents[0].decl.hash(&TestHasher);
-    for key in [
-        escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
-        escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
-    ] {
-        assert_eq!(
-            SweepBucket::claimed_by(key.local),
-            SweepBucket::of(EXPIRY_MS),
-        );
-    }
+    let claim = escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
+    assert_eq!(
+        SweepBucket::claimed_by(claim.local),
+        SweepBucket::of(EXPIRY_MS),
+    );
 
     let later = EXPIRY_MS + (1 << SWEEP_BUCKET_SHIFT);
-    let key = escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
-    let later_key = escrow_record_key(&TestHasher, BOB, bob, 1, 0, later);
-    assert!(key.to_bytes() < later_key.to_bytes());
+    let later_claim = escrow_claim_key(&TestHasher, BOB, bob, 1, 0, later);
+    assert!(claim.to_bytes() < later_claim.to_bytes());
+
+    // A record's key does not move with the expiry at all: it names the
+    // edge and nothing about when the edge stops being owed.
+    assert_eq!(
+        escrow_record_key(&TestHasher, BOB, bob, 1, 0),
+        escrow_record_key(&TestHasher, BOB, bob, 1, 0),
+    );
 }
 
 /// A crossing cell says what left and on which edge, so a reclaim reads
@@ -584,7 +565,6 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
         intent: bob,
         local: 1,
         output: 0,
-        expiry_ms: EXPIRY_MS,
         origin: None,
     };
     let decoded: CrossingCell = from_slice(&cell.to_bytes()).expect("a crossing cell decodes");
@@ -596,7 +576,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     // record written for a different crossing.
     assert!(CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS).names(&decoded));
     assert!(!CrossingSite::claim(&TestHasher, BOB, bob, 2, 0, EXPIRY_MS).names(&decoded));
-    assert!(!CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS + 1).names(&decoded));
+    assert!(CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS + 1).names(&decoded));
     // The value re-derives the key, which is what makes the cell
     // self-describing and so what makes the pair sweepable.
     assert_eq!(
@@ -605,10 +585,9 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
             BOB,
             decoded.intent,
             decoded.local,
-            decoded.output,
-            decoded.expiry_ms,
+            decoded.output
         ),
-        escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
+        escrow_record_key(&TestHasher, BOB, bob, 1, 0),
     );
 
     // The claim beside it names the transaction that took the crossing
