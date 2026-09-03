@@ -425,6 +425,13 @@ pub enum AbortReason {
     /// names an edge other than the one the reclaim claims.
     #[hbor(discriminant = 69)]
     EscrowRecordUnreadable,
+    /// An execution issued one edge twice.
+    ///
+    /// The plan's defect: a producer departs each output once, so a
+    /// second issue of the same edge is a walk naming one edge from two
+    /// places, and folding it twice would count value that crossed once.
+    #[hbor(discriminant = 70)]
+    EscrowRepeated,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -720,6 +727,7 @@ mod tests {
             (67, AbortReason::ConditionStraddlesScope),
             (68, AbortReason::EscrowOriginUndeclared),
             (69, AbortReason::EscrowRecordUnreadable),
+            (70, AbortReason::EscrowRepeated),
         ];
         for (byte, reason) in classes {
             assert_eq!(

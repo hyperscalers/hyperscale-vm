@@ -36,6 +36,9 @@ pub enum ModeError {
     /// Summing what an execution escrowed out or claimed in overflowed.
     #[error("escrow totals overflow")]
     EscrowOverflow,
+    /// An execution issued one edge twice.
+    #[error("escrow edge issued twice")]
+    EscrowRepeated,
 }
 
 impl From<ModeError> for AbortReason {
@@ -47,6 +50,7 @@ impl From<ModeError> for AbortReason {
             ModeError::CellUnderflow => Self::CellUnderflow,
             ModeError::SupplyOutOfBounds => Self::SupplyOutOfBounds,
             ModeError::EscrowOverflow => Self::EscrowOverflow,
+            ModeError::EscrowRepeated => Self::EscrowRepeated,
         }
     }
 }

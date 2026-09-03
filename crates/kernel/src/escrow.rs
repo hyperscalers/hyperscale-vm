@@ -99,11 +99,15 @@ impl EscrowDelta {
     /// [`ModeError::EscrowOverflow`] on overflow, or past
     /// [`MAX_CROSSINGS_PER_TX`] — the bound is the kernel's own and not
     /// only the classifier's, because a plan reaching here has crossed a
-    /// crate boundary since anything checked it.
+    /// crate boundary since anything checked it — and
+    /// [`ModeError::EscrowRepeated`] for an edge already issued, since a
+    /// second record of one edge would add to the total what crossed
+    /// once.
     pub fn issue(&mut self, node: u32, output: u32, crossed: Crossed) -> Result<(), ModeError> {
-        if self.issued_at.len() >= MAX_CROSSINGS_PER_TX
-            && !self.issued_at.contains_key(&(node, output))
-        {
+        if self.issued_at.contains_key(&(node, output)) {
+            return Err(ModeError::EscrowRepeated);
+        }
+        if self.issued_at.len() >= MAX_CROSSINGS_PER_TX {
             return Err(ModeError::EscrowOverflow);
         }
         self.issued_at.insert((node, output), crossed);
@@ -397,8 +401,12 @@ mod tests {
             escrow.issue(past, 0, crossed(1, 1)),
             Err(ModeError::EscrowOverflow),
         );
-        // Re-recording an edge already named is not a new crossing.
-        assert!(escrow.issue(0, 0, crossed(1, 2)).is_ok());
+        // An edge already named is refused rather than counted again.
+        assert_eq!(
+            escrow.issue(0, 0, crossed(1, 2)),
+            Err(ModeError::EscrowRepeated),
+        );
+        assert_eq!(escrow.issued(resource(1)), MAX_CROSSINGS_PER_TX as u128);
     }
 
     /// Summing what left is the fold's own arithmetic, and a failed sum

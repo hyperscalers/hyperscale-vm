@@ -164,7 +164,12 @@ pub struct IntentHeader {
     /// stand behind the same offer twice inside one window: the second
     /// carries the first's nullifier and is refused as already spent.
     /// A signer who means two offers picks two values, and a signer who
-    /// means one leaves it alone.
+    /// means one leaves it alone. The root intent, which carries no
+    /// nullifier, is held to the same rule by its escrow cells: a root
+    /// node's record and claim are keyed by the root declaration's hash,
+    /// so two envelopes composed over one root declaration inside one
+    /// window derive one record, and the second is refused as already
+    /// issued.
     pub discriminator: u64,
 }
 

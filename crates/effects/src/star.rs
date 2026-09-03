@@ -453,8 +453,19 @@ impl StarShape {
 /// has a verdict, where a reclaim restores the escrowed amount and
 /// nothing else — nothing stores an inverse of the rest. Asking that
 /// every clause either moves nothing or is that one reserve says so
-/// directly, where an output count only stood in for it.
+/// directly for the clauses; an issuance or a destruction is a movement
+/// no clause names, and a second output is one an issuance produced, so
+/// the signature is held to none of either and to the one output the
+/// reserve yields. A reserve beside a mint would cross two values one
+/// origin cannot take both of back, and a reserve beside a burn commits
+/// the burn before any verdict.
 fn is_reservation_shaped(signature: &MethodSignature) -> bool {
+    if !signature.issues.is_empty()
+        || !signature.destroys.is_empty()
+        || signature.outputs.len() != 1
+    {
+        return false;
+    }
     let mut reserves = 0;
     for clause in signature.effects.iter().flat_map(Clause::effects) {
         let Clause::Effect { mode, reach, .. } = clause else {
@@ -474,13 +485,16 @@ fn is_reservation_shaped(signature: &MethodSignature) -> bool {
 
 /// Whether this method commits nothing at all.
 ///
-/// Every declared access is a read and no value edge leaves — which is
-/// what makes such a node free of the atomicity the core covers, and so
-/// free to run in its own shard's leg. `moves()` is `None` for exactly
-/// [`ModeExpr::Read`], so this reads as no writes rather than only as no
-/// value movement, which is what INV-LL-3 needs of it.
+/// Every declared access is a read, no value edge leaves, and nothing
+/// is issued or destroyed — which is what makes such a node free of the
+/// atomicity the core covers, and so free to run in its own shard's leg.
+/// `moves()` is `None` for exactly [`ModeExpr::Read`], so this reads as
+/// no writes rather than only as no value movement, which is what
+/// INV-LL-3 needs of it.
 fn commits_nothing(signature: &MethodSignature) -> bool {
     signature.outputs.is_empty()
+        && signature.issues.is_empty()
+        && signature.destroys.is_empty()
         && signature
             .effects
             .iter()
@@ -524,7 +538,7 @@ mod tests {
     use crate::resource::{GrantsExpr, ResourceKind};
     use crate::route::ShardResolver;
     use crate::rule::{RuleExpr, RuleLeaf};
-    use crate::signature::{MethodSignature, Totality};
+    use crate::signature::{Issuance, Issued, MethodSignature, Totality};
     use crate::test_worlds::{
         instance_of, issued_by, meta_of, method, payer_payee_world, pkg, resolver, self_point,
         star_world,
@@ -881,6 +895,41 @@ mod tests {
 
         let star = star_at(&legs(&manifest, &chain), &resolver());
         assert_eq!(star.roles[0], LegRole::Core);
+    }
+
+    /// An issuance is a movement no clause names, so a reserve beside a
+    /// mint — two values crossing, one origin — or beside a burn, which
+    /// commits before any verdict, is not inbound either.
+    #[test]
+    fn a_reserve_beside_an_issuance_is_not_inbound() {
+        let output = || Expr::SelfResource {
+            kind: ResourceKind::Fungible,
+            material: vec![],
+            grants: GrantsExpr::new(),
+        };
+        for signature in [
+            MethodSignature {
+                outputs: vec![output(), output()],
+                effects: vec![self_point(SlotId(1), ModeExpr::Reserve(Expr::Arg(0)))],
+                issues: vec![Issuance {
+                    mark: vec![],
+                    kind: ResourceKind::Fungible,
+                    direction: Issued::Minted,
+                    grants: GrantsExpr::new(),
+                }],
+                ..MethodSignature::default()
+            },
+            MethodSignature {
+                outputs: vec![output()],
+                effects: vec![self_point(SlotId(1), ModeExpr::Reserve(Expr::Arg(0)))],
+                destroys: vec![0],
+                ..MethodSignature::default()
+            },
+        ] {
+            let (chain, manifest) = star_world_with("vault", "withdraw", &signature);
+            let star = star_at(&legs(&manifest, &chain), &resolver());
+            assert_eq!(star.roles[0], LegRole::Core);
+        }
     }
 
     /// A clause that moves nothing sits beside the reserve without
