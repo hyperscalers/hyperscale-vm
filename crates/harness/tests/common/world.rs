@@ -803,10 +803,20 @@ pub fn star_and_shape(world: &Records, graph: &ManifestGraph) -> (StarShape, Vec
     (star_at(&legs, &PrefixShardResolver { bits: 8 }), legs)
 }
 
+/// The parties `graph`'s routing declares beyond any node: its composer,
+/// who signs and pays for it.
+pub fn route_owners(graph: &ManifestGraph) -> Vec<Address> {
+    vec![composer(graph).address()]
+}
+
 /// Whether the corpus shape `graph` decomposes.
 pub fn decomposes(world: &Records, graph: &ManifestGraph) -> bool {
     let (star, legs) = star_and_shape(world, graph);
-    star.decomposes(&legs, &PrefixShardResolver { bits: 8 })
+    star.decomposes(
+        &legs,
+        &route_owners(graph),
+        &PrefixShardResolver { bits: 8 },
+    )
 }
 
 pub fn run_both(

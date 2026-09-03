@@ -318,13 +318,21 @@ impl StarShape {
     ///
     /// Every conjunct refuses rather than admits —
     /// running whole is always correct, so an unsure answer takes it.
-    /// `legs` is the shape this star was read off.
+    /// `legs` is the shape this star was read off, and `owners` the
+    /// parties the transaction's routing declares beyond any node's
+    /// frame: the fee payer and every signer.
     #[must_use]
-    pub fn decomposes(&self, legs: &[LegShape], shards: &dyn ShardResolver) -> bool {
+    pub fn decomposes(
+        &self,
+        legs: &[LegShape],
+        owners: &[Address],
+        shards: &dyn ShardResolver,
+    ) -> bool {
         self.core_bears_a_verdict()
             && self.a_leg_sits_off_the_core(legs, shards)
             && self.crossings_fit()
             && Self::every_declared_owner_participates(legs, shards)
+            && Self::every_route_owner_participates(legs, owners, shards)
             && self.every_node_declares_inside_its_scope(legs, shards)
             && Self::every_edge_has_one_consumer(legs)
             && self.no_named_instance_touches_a_leg(legs)
@@ -348,6 +356,33 @@ impl StarShape {
             .collect();
         legs.iter()
             .flat_map(|node| &node.declares)
+            .all(|owner| participants.contains(&shards.shard_of(*owner)))
+    }
+
+    /// Every party the routing declares beyond any node's frame — the
+    /// fee payer, whose vault the reservation and the burn reach, and
+    /// every signer, whose nullifier a bound subintent writes — sits on
+    /// a shard that runs a member, so some member's scope covers it.
+    ///
+    /// A payer whose account no node targets is a routing participant
+    /// that runs nothing: its shard would freeze divided, compose a
+    /// member and find no plan for it, and attest a refusal with the
+    /// price apart while the core committed. A signer with no node on
+    /// their shard would have their nullifier written by whichever
+    /// member happened to run there, after the core committed or never.
+    /// Running whole provisions the vault and writes the nullifier where
+    /// a whole execution always did.
+    fn every_route_owner_participates(
+        legs: &[LegShape],
+        owners: &[Address],
+        shards: &dyn ShardResolver,
+    ) -> bool {
+        let participants: BTreeSet<ShardId> = legs
+            .iter()
+            .map(|node| shards.shard_of(node.target))
+            .collect();
+        owners
+            .iter()
             .all(|owner| participants.contains(&shards.shard_of(*owner)))
     }
 
@@ -577,10 +612,10 @@ mod tests {
     }
 
     /// Whether the shape decomposes, over a declaration reaching exactly
-    /// its own nodes.
+    /// its own nodes and a routing declaring nobody beyond them.
     fn decomposes(manifest: &Manifest, chain: &Records) -> bool {
         let (star, legs) = star_and_shape(manifest, chain);
-        star.decomposes(&legs, &resolver())
+        star.decomposes(&legs, &[], &resolver())
     }
 
     /// The star world with one method's signature replaced.
@@ -1156,10 +1191,27 @@ mod tests {
     fn a_declaration_reaching_a_non_participant_does_not_decompose() {
         let (chain, manifest) = star_world(Totality::Total);
         let (star, mut legs) = star_and_shape(&manifest, &chain);
-        assert!(star.decomposes(&legs, &resolver()));
+        assert!(star.decomposes(&legs, &[], &resolver()));
 
         legs[0].declares.push(instance_of("stranger").into());
-        assert!(!star.decomposes(&legs, &resolver()));
+        assert!(!star.decomposes(&legs, &[], &resolver()));
+    }
+
+    /// A party the routing declares beyond any node — a sponsored payer,
+    /// a signer with no node of their own — has to sit on a shard some
+    /// member runs on, or the shape runs whole: divided, that shard would
+    /// compose a member with nothing to run and refuse while the core
+    /// committed.
+    #[test]
+    fn a_route_owner_off_every_participant_does_not_decompose() {
+        let (chain, manifest) = star_world(Totality::Total);
+        let (star, legs) = star_and_shape(&manifest, &chain);
+        let participant = legs[0].target;
+        assert!(star.decomposes(&legs, &[participant], &resolver()));
+
+        let stranger: Address = instance_of("stranger").into();
+        assert!(!star.decomposes(&legs, &[stranger], &resolver()));
+        assert!(!star.decomposes(&legs, &[participant, stranger], &resolver()));
     }
 
     /// A target owned by a participant is judged there — and if the node
@@ -1171,7 +1223,7 @@ mod tests {
     fn a_node_declaring_past_its_own_scope_does_not_decompose() {
         let (chain, manifest) = star_world(Totality::Total);
         let (star, mut legs) = star_and_shape(&manifest, &chain);
-        assert!(star.decomposes(&legs, &resolver()));
+        assert!(star.decomposes(&legs, &[], &resolver()));
 
         let (leg, core) = star.roles.iter().enumerate().fold(
             (None, None),
@@ -1191,7 +1243,7 @@ mod tests {
         // moved, and that is what refuses it.
         let reached = legs[core].target;
         legs[leg].declares.push(reached);
-        assert!(!star.decomposes(&legs, &resolver()));
+        assert!(!star.decomposes(&legs, &[], &resolver()));
     }
 
     /// A target this chain view cannot resolve fails derivation rather
@@ -1279,9 +1331,9 @@ mod tests {
     fn a_shape_past_the_crossing_cap_does_not_decompose() {
         let (chain, manifest) = star_world(Totality::Total);
         let (mut star, legs) = star_and_shape(&manifest, &chain);
-        assert!(star.decomposes(&legs, &resolver()));
+        assert!(star.decomposes(&legs, &[], &resolver()));
 
         star.crossing_edges = u32::try_from(MAX_CROSSINGS_PER_TX).unwrap() + 1;
-        assert!(!star.decomposes(&legs, &resolver()));
+        assert!(!star.decomposes(&legs, &[], &resolver()));
     }
 }

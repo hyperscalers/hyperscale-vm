@@ -257,7 +257,11 @@ fn every_pattern_takes_the_star_its_shape_implies() {
             "{name}: crossing edges",
         );
         assert_eq!(
-            star.decomposes(&legs, &PrefixShardResolver { bits: 8 }),
+            star.decomposes(
+                &legs,
+                &route_owners(&shape.graph),
+                &PrefixShardResolver { bits: 8 }
+            ),
             shape.decomposes,
             "{name}: decomposes",
         );
@@ -290,7 +294,11 @@ fn a_grant_declaring_deposit_bears_the_verdict() {
         "the deposit is the only node that can still refuse",
     );
     assert_eq!(star.core.len(), 1, "and it is the whole core");
-    assert!(star.decomposes(&legs, &PrefixShardResolver { bits: 8 }));
+    assert!(star.decomposes(
+        &legs,
+        &route_owners(&restricted),
+        &PrefixShardResolver { bits: 8 }
+    ));
 }
 
 /// A declared access reaching a party no node targets leaves that target
@@ -318,7 +326,11 @@ fn a_declaration_reaching_a_non_participant_does_not_decompose() {
             .any(|node| shard_of(node.target) == shard_of(ALICE)),
         "the reached holder has to target no node, or the verdict below proves nothing",
     );
-    assert!(!star.decomposes(&legs, &PrefixShardResolver { bits: 8 }));
+    assert!(!star.decomposes(
+        &legs,
+        &route_owners(&recall),
+        &PrefixShardResolver { bits: 8 }
+    ));
 }
 
 /// Package metadata is content-addressed, so a resolved package cannot
@@ -392,7 +404,7 @@ fn a_named_instance_inside_a_core_is_not_what_refuses_it() {
         2,
         "the core spans the issuer and the account"
     );
-    assert!(!star.decomposes(&legs, &shards));
+    assert!(!star.decomposes(&legs, &route_owners(&seat), &shards));
 
     // Which conjunct refused it, stated rather than assumed: with every
     // node in the core there is no leg off it, and the non-fungible
