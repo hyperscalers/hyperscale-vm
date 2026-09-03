@@ -630,14 +630,23 @@ impl CrossingCell {
 }
 
 /// What an escrow claim cell holds: which transaction took the crossing,
-/// and when the record of that stops being needed.
+/// the edge it took, and when the record of that stops being needed.
 ///
-/// The transaction rather than the intent, because what a reader wants of
-/// a claim is *who took it* — the edge it names is already the key's.
+/// The transaction is what a reader wants of a claim — *who took it*.
+/// The edge is the key's already, and is named here again on
+/// [`CrossingCell`]'s terms: a sweep judges a cell off its value alone,
+/// re-deriving the key under the family's own role, so a claim that did
+/// not carry its edge would be one no sweep ever reaches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub struct ClaimCell {
     /// The transaction that took the crossing.
     pub tx: TxHash,
+    /// The signed intent the producing node belongs to.
+    pub intent: SubintentHash,
+    /// That node's index within its own intent.
+    pub local: u32,
+    /// Which of its outputs the edge carried.
+    pub output: u32,
     /// When the claim stops being owed, on the record's own terms.
     pub expiry_ms: u64,
 }
@@ -647,10 +656,10 @@ impl ClaimCell {
     ///
     /// # Panics
     ///
-    /// Never: the value is two scalars.
+    /// Never: the value is scalars.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        to_vec(self).expect("a claim cell is two scalars")
+        to_vec(self).expect("a claim cell is scalars")
     }
 }
 
@@ -758,11 +767,15 @@ impl CrossingSite {
             && record.expiry_ms == self.expiry_ms
     }
 
-    /// The claim's value: which transaction took the crossing.
+    /// The claim's value: which transaction took the crossing, on this
+    /// edge.
     #[must_use]
     pub const fn claimed_by(&self, tx: TxHash) -> ClaimCell {
         ClaimCell {
             tx,
+            intent: self.intent,
+            local: self.local,
+            output: self.output,
             expiry_ms: self.expiry_ms,
         }
     }

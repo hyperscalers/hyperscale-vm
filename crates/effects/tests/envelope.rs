@@ -610,16 +610,25 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
         escrow_record_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
     );
 
-    // The claim beside it names the transaction that took the crossing —
-    // the edge is the key's already, so what a reader wants of a claim is
-    // who took it.
-    let claim = ClaimCell {
-        tx: TxHash(Hash32([7; 32])),
-        expiry_ms: EXPIRY_MS,
-    };
+    // The claim beside it names the transaction that took the crossing
+    // and the edge it took, so it re-derives its own key as the record
+    // does — which is what makes the pair sweepable, not the record
+    // alone.
+    let claim = CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS)
+        .claimed_by(TxHash(Hash32([7; 32])));
+    let decoded: ClaimCell = from_slice(&claim.to_bytes()).expect("a claim cell decodes");
+    assert_eq!(decoded, claim);
+    assert_eq!(decoded.tx, TxHash(Hash32([7; 32])));
     assert_eq!(
-        from_slice::<ClaimCell>(&claim.to_bytes()).expect("a claim cell decodes"),
-        claim,
+        escrow_claim_key(
+            &TestHasher,
+            BOB,
+            decoded.intent,
+            decoded.local,
+            decoded.output,
+            decoded.expiry_ms,
+        ),
+        CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS).key(),
     );
 }
 
