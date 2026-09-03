@@ -102,13 +102,15 @@ impl EnvInputs {
 /// The price a completed execution pays: a debit on the payer's vault
 /// and the same amount leaving the world.
 ///
-/// A fee is the one movement no capability declares — the payer's
-/// vault is a cell the transaction certainly touches and its
-/// declaration need not name — so the shard states it to the session
-/// and the session records it as what it is: a movement composing with
-/// whatever else reached the vault, and a burn the conservation fold
-/// weighs against it. Recorded only by the shard holding the vault,
-/// which is the one that settles it.
+/// A fee is the one movement no guest issues: the routing declares the
+/// payer's vault as a cell the transaction touches, but no frame holds
+/// a capability on it, so the shard states the burn to the session and
+/// the session records it as what it is — a movement composing with
+/// whatever else reached the vault, judged against the vault's floor
+/// like every other debit and read straight off the ledger rather than
+/// through a capability, and a burn the conservation fold weighs
+/// against it. Recorded only by the shard holding the vault, which is
+/// the one that settles it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FeeBurn {
     /// The payer's vault.
