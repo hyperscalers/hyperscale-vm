@@ -585,6 +585,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
         local: 1,
         output: 0,
         expiry_ms: EXPIRY_MS,
+        origin: None,
     };
     let decoded: CrossingCell = from_slice(&cell.to_bytes()).expect("a crossing cell decodes");
     assert_eq!(decoded, cell);

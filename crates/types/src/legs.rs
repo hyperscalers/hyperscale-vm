@@ -91,11 +91,13 @@ pub struct LegShape {
     pub expiry_ms: u64,
 }
 
-/// One value edge's record cell, and the cell the value would leave.
+/// One value edge's record cell.
 ///
 /// Derived for every value edge, not only the ones that turn out to
 /// cross: which cross is a placement fact read at an anchor, while the
-/// declaration is fixed when the envelope is composed.
+/// declaration is fixed when the envelope is composed. The cell the
+/// value leaves from is not here: the kernel names it on the record at
+/// the issue, so a reclaim reads it off the leaf alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crossing {
     /// The producing node.
@@ -104,12 +106,4 @@ pub struct Crossing {
     pub output: u32,
     /// The record cell, under the producing node's target.
     pub record: SubstateKey,
-    /// The cell the value leaves from, which the record names so a
-    /// reclaim can credit it from the leaf alone.
-    ///
-    /// The producing frame's one reserved cell, where it has exactly
-    /// one — the shape an inbound leg takes, and the only producer whose
-    /// record is ever reclaimed. A producer reserving nothing or several
-    /// cells names no origin, and a plan cannot issue its edge.
-    pub origin: Option<SubstateKey>,
 }

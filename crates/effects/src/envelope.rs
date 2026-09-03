@@ -607,6 +607,12 @@ pub struct CrossingCell {
     /// the intent's, not the transaction's, so the composer chooses no
     /// part of it.
     pub expiry_ms: u64,
+    /// The cell the value left, which a reclaim credits: the one cell of
+    /// the producing frame denominated in the resource that crossed,
+    /// resolved by the kernel at the issue. `None` where the frame holds
+    /// no such cell or several, and the crossing is then nobody's to
+    /// take back.
+    pub origin: Option<SubstateKey>,
 }
 
 impl CrossingCell {
@@ -743,7 +749,12 @@ impl CrossingSite {
 
     /// The record's value, once the execution knows what crossed.
     #[must_use]
-    pub const fn crossing(&self, resource: ResourceAddr, amount: u128) -> CrossingCell {
+    pub const fn crossing(
+        &self,
+        resource: ResourceAddr,
+        amount: u128,
+        origin: Option<SubstateKey>,
+    ) -> CrossingCell {
         CrossingCell {
             resource,
             amount,
@@ -751,6 +762,7 @@ impl CrossingSite {
             local: self.local,
             output: self.output,
             expiry_ms: self.expiry_ms,
+            origin,
         }
     }
 

@@ -87,6 +87,17 @@ fn declared(effects: &[Effect]) -> Declaration {
     moving(set)
 }
 
+/// The sending node's call: its handles are the frame's two cells, the
+/// reserve it takes from and the record it writes, and the reserve is
+/// what names the cell a departing crossing left.
+fn taking() -> NodeCall {
+    let mut taking = call("take", 0, 1);
+    taking.args.push(CallArg::Site {
+        entries: vec![Some(0), Some(1)],
+    });
+    taking
+}
+
 /// One lowered call: what it produces, and what it consumes.
 fn call(export: &str, edges: usize, outputs: usize) -> NodeCall {
     NodeCall {
@@ -224,7 +235,7 @@ fn sending(amount: u128) -> BatchTx {
         ]),
         env(),
     )
-    .with_calls(vec![call("take", 0, 1)])
+    .with_calls(vec![taking()])
     .with_legs(legs)
 }
 
@@ -249,7 +260,7 @@ fn receiving_as(who: TxHash, crossed: Crossed) -> BatchTx {
         ]),
         env(),
     )
-    .with_calls(vec![call("take", 0, 1), call("put", 1, 0)])
+    .with_calls(vec![taking(), call("put", 1, 0)])
     .with_legs(legs)
 }
 
@@ -390,7 +401,7 @@ fn an_arrival_that_never_came_is_a_missing_edge() {
         }]),
         env(),
     )
-    .with_calls(vec![call("take", 0, 1), call("put", 1, 0)])
+    .with_calls(vec![taking(), call("put", 1, 0)])
     .with_legs(legs);
 
     assert_eq!(
@@ -438,7 +449,7 @@ fn an_aborted_claim_leaves_the_crossing_claimable() {
     )
     // The producer is skipped and nothing consumes what arrived, so the
     // bucket is still in hand when the transaction ends.
-    .with_calls(vec![call("take", 0, 1)])
+    .with_calls(vec![taking()])
     .with_legs(legs);
 
     let receipt = run(&arrived, entry);
@@ -476,7 +487,7 @@ fn a_whole_execution_crosses_nothing() {
         ]),
         env(),
     )
-    .with_calls(vec![call("take", 0, 1), call("put", 1, 0)]);
+    .with_calls(vec![taking(), call("put", 1, 0)]);
 
     let receipt = run(&store, entry);
     assert!(
@@ -531,7 +542,7 @@ fn an_undeclared_record_cell_refuses_the_batch() {
         }]),
         env(),
     )
-    .with_calls(vec![call("take", 0, 1)])
+    .with_calls(vec![taking()])
     .with_legs(legs);
 
     assert_eq!(
@@ -574,7 +585,7 @@ fn an_undeclared_claim_cell_refuses_the_batch() {
         }]),
         env(),
     )
-    .with_calls(vec![call("take", 0, 1), call("put", 1, 0)])
+    .with_calls(vec![taking(), call("put", 1, 0)])
     .with_legs(legs);
 
     assert_eq!(
@@ -712,11 +723,7 @@ fn a_second_consumer_of_one_edge_is_refused_running_whole() {
         env(),
     )
     // Both consumers name the producer's output 0.
-    .with_calls(vec![
-        call("take", 0, 1),
-        call("put", 1, 0),
-        call("put", 1, 0),
-    ]);
+    .with_calls(vec![taking(), call("put", 1, 0), call("put", 1, 0)]);
 
     let receipt = run(&store, entry);
     assert_eq!(
@@ -728,6 +735,69 @@ fn a_second_consumer_of_one_edge_is_refused_running_whole() {
     assert!(
         receipt.delta.movements.is_empty(),
         "and nothing was credited"
+    );
+}
+
+/// The record names the cell the value left — the producing frame's one
+/// cell denominated in the crossing's resource — so a reclaim needs
+/// nothing but the leaf. A frame holding two such cells names none, and
+/// its crossing is nobody's to take back.
+#[test]
+fn a_record_names_the_cell_its_value_left() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(1_000).to_vec());
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[sending(200)],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
+    assert_eq!(record.origin, Some(cell(PAYER)));
+
+    let mut ambiguous = sending(200);
+    ambiguous.declaration = declared(&[
+        Effect {
+            target: EffectTarget::Point(cell(PAYER)),
+            mode: Mode::Reserve { amount: 200 },
+        },
+        Effect {
+            target: EffectTarget::Point(cell(0x77)),
+            mode: Mode::Delta { moves: Moves::Both },
+        },
+        crossing_cell(record_site()),
+    ]);
+    ambiguous.calls = vec![{
+        let mut taking = call("take", 0, 1);
+        taking.args.push(CallArg::Site {
+            entries: vec![Some(0), Some(1), Some(2)],
+        });
+        taking
+    }];
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(1_000).to_vec());
+    store.write(cell(0x77), encode_amount(0).to_vec());
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[ambiguous],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
+    assert_eq!(record.origin, None, "two cells in the resource name none");
+    let reclaimed = execute(
+        Arc::new(sent.store) as Arc<dyn Baseline>,
+        &[reclaiming(tx(9))],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            reclaimed.receipts[&tx(9)].outcome,
+            Outcome::ProtocolError { .. }
+        ),
+        "a record naming no origin cannot be taken back: {:?}",
+        reclaimed.receipts[&tx(9)]
     );
 }
 
@@ -747,7 +817,6 @@ fn reclaiming(who: TxHash) -> BatchTx {
         Reclaim {
             record: record_site().key(),
             claim: reclaim_site(),
-            origin: cell(PAYER),
         },
     )
     .unwrap();

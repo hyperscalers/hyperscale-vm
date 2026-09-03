@@ -427,13 +427,30 @@ fn departing(
     mut session: KernelSession,
 ) -> Result<(KernelSession, Vec<Option<u32>>), NodeFailure> {
     let mut kept = Vec::with_capacity(produced.len());
+    // The producing frame's handles, which is where the cell a crossing
+    // left is looked for: one site per handle parameter, each covering
+    // the table entries the declaration resolved for it.
+    let frame: Vec<u32> = entry
+        .calls
+        .get(usize::try_from(node).unwrap_or(usize::MAX))
+        .map(|call| {
+            call.args
+                .iter()
+                .filter_map(|arg| match arg {
+                    CallArg::Site { entries } => Some(entries.iter().flatten().copied()),
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        })
+        .unwrap_or_default();
     for (slot, rep) in produced.into_iter().enumerate() {
         let output = u32::try_from(slot).unwrap_or(u32::MAX);
         let Some(departure) = entry.legs.departing(node, output) else {
             kept.push(Some(rep));
             continue;
         };
-        match session.escrow_out(node, output, rep, departure) {
+        match session.escrow_out(node, output, rep, departure, &frame) {
             Ok(_) => kept.push(None),
             Err(trap) => {
                 return Err(fail(

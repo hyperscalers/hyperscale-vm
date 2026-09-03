@@ -214,6 +214,7 @@ impl KernelSession {
         output: u32,
         funds: u32,
         departure: Departure,
+        frame: &[u32],
     ) -> Result<Crossed, SessionTrap> {
         let resource = self.buckets.resource_of(funds)?;
         let held = self.take_bucket(funds)?;
@@ -222,11 +223,37 @@ impl KernelSession {
         };
         let crossed = Crossed { resource, amount };
         self.escrow.issue(node, output, crossed)?;
+        let origin = self.origin_among(frame, resource);
         self.crossings.insert(
             departure.site.key(),
-            departure.site.crossing(resource, amount).to_bytes(),
+            departure.site.crossing(resource, amount, origin).to_bytes(),
         );
         Ok(crossed)
+    }
+
+    /// The cell a crossing in `resource` left, among the capabilities
+    /// `frame` — the producing frame's handles — holds: its one value
+    /// cell denominated in that resource. None where the frame holds no
+    /// such cell or several, since a credit to either would be a guess.
+    fn origin_among(&self, frame: &[u32], resource: ResourceAddr) -> Option<SubstateKey> {
+        let mut cells = frame
+            .iter()
+            .filter(|&&rep| self.resource_at(rep) == Some(resource))
+            .filter_map(|&rep| match self.table.get(usize::try_from(rep).ok()?)? {
+                Capability::Amount { key, .. }
+                | Capability::Delta { key, .. }
+                | Capability::Reserve { key, .. } => Some(*key),
+                Capability::Read(_)
+                | Capability::Write(_)
+                | Capability::AmountRead(_)
+                | Capability::RangeRead(_)
+                | Capability::RangeWrite(_)
+                | Capability::Instances { .. } => None,
+            });
+        match (cells.next(), cells.next()) {
+            (Some(only), None) => Some(only),
+            _ => None,
+        }
     }
 
     /// Take a crossing this execution issued back, from its record.
@@ -235,17 +262,17 @@ impl KernelSession {
     /// consumer claims it: the claim is a loss and the credit a gain, so
     /// the fold balances with no term of its own, and the claim cell
     /// under the producer's own target is what refuses a second reclaim,
-    /// on the machinery that refuses a second claim. The resource and the
-    /// amount are the record's; the cell credited is the plan's. The
-    /// record is left in place: it says the value was issued, never that
-    /// it is still available.
+    /// on the machinery that refuses a second claim. The resource, the
+    /// amount and the cell credited are all the record's. The record is
+    /// left in place: it says the value was issued, never that it is
+    /// still available.
     ///
     /// # Errors
     ///
     /// [`SessionTrap::EscrowRecordUnreadable`] for a record that is
-    /// absent, does not decode, or names another edge;
+    /// absent, does not decode, names another edge, or names no origin;
     /// [`SessionTrap::EscrowOriginUndeclared`] where the declaration
-    /// carries no movement handle on the cell the plan says to credit;
+    /// carries no movement handle on the cell the record says to credit;
     /// and any [`SessionTrap`] the claim or the credit raises.
     pub(crate) fn escrow_reclaim(&mut self, reclaim: &Reclaim) -> Result<Crossed, SessionTrap> {
         let record: CrossingCell = self
@@ -254,14 +281,15 @@ impl KernelSession {
             .and_then(|bytes| CrossingCell::from_bytes(&bytes))
             .filter(|record| reclaim.claim.names(record))
             .ok_or(SessionTrap::EscrowRecordUnreadable(reclaim.record))?;
+        let origin = record
+            .origin
+            .ok_or(SessionTrap::EscrowRecordUnreadable(reclaim.record))?;
         let site = self
             .table
             .iter()
-            .position(
-                |held| matches!(held, Capability::Delta { key, .. } if *key == reclaim.origin),
-            )
+            .position(|held| matches!(held, Capability::Delta { key, .. } if *key == origin))
             .and_then(|index| u32::try_from(index).ok())
-            .ok_or(SessionTrap::EscrowOriginUndeclared(reclaim.origin))?;
+            .ok_or(SessionTrap::EscrowOriginUndeclared(origin))?;
         let crossed = Crossed {
             resource: record.resource,
             amount: record.amount,
@@ -389,7 +417,7 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
         let instances = session.open_bucket(Held::Instances(BTreeSet::from([7])), RESOURCE);
         assert_eq!(
-            session.escrow_out(0, 0, instances, departure()),
+            session.escrow_out(0, 0, instances, departure(), &[]),
             Err(SessionTrap::WrongEdgeKind),
         );
     }
@@ -401,7 +429,7 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
         let funds = session.open_bucket(Held::Amount(40), RESOURCE);
         assert_eq!(
-            session.escrow_out(0, 0, funds, departure()),
+            session.escrow_out(0, 0, funds, departure(), &[]),
             Ok(Crossed {
                 resource: RESOURCE,
                 amount: 40,

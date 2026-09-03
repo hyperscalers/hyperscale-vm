@@ -148,19 +148,16 @@ pub struct Departure {
 /// shard wrote, claimed under the producer's own target, and credited to
 /// the cell the value left.
 ///
-/// The resource and the amount are read off the record; the cell to
-/// credit is the plan's, derived from the transaction as the one cell
-/// the producing frame reserved in the departing resource. A reclaim is
-/// composed from the transaction, so nothing is read off the leaf that
-/// the transaction states better.
+/// The resource, the amount and the cell to credit are all read off the
+/// record: the kernel named the origin when it issued the crossing, so a
+/// reclaim derives from the leaf alone and a replica holding the prefix
+/// and nothing else — a split child — composes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reclaim {
     /// The record cell to read.
     pub record: SubstateKey,
     /// The claim cell the reclaim writes, under the producer's target.
     pub claim: CrossingSite,
-    /// The cell the value left, which the credit lands on.
-    pub origin: SubstateKey,
 }
 
 /// Which of a manifest's nodes this execution runs, and the cells the
