@@ -17,7 +17,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Moves, NULLIFIER_GRACE_MS,
+    Address, CallTarget, ESCROW_GRACE_MS, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Moves,
     NetworkId, PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
 };
 use proptest::prelude::{any, proptest};
@@ -424,12 +424,12 @@ fn an_origin_names_the_intent_its_node_signed() {
         ],
     );
     // And each carries its own intent's horizon: the window that
-    // intent's signer signed plus the grace, which is the nullifier's
-    // own figure.
+    // intent's signer signed plus the escrow grace, which outlives the
+    // nullifier's by the room a lapsed crossing's reclaim needs.
     for origin in admitted.admitted.origins() {
         assert_eq!(
             origin.expiry_ms,
-            TEST_HEADER.validity_end_ms + NULLIFIER_GRACE_MS,
+            TEST_HEADER.validity_end_ms + ESCROW_GRACE_MS,
         );
     }
 }

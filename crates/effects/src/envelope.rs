@@ -29,8 +29,9 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, from_slice, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
-    Address, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, NULLIFIER_GRACE_MS, NetworkId,
-    PrincipalAddr, ResourceAddr, SubintentHash, SubstateKey, SweepBucket, TxHash,
+    Address, ESCROW_GRACE_MS, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves,
+    NULLIFIER_GRACE_MS, NetworkId, PrincipalAddr, ResourceAddr, SubintentHash, SubstateKey,
+    SweepBucket, TxHash,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -601,9 +602,10 @@ pub struct CrossingCell {
     pub local: u32,
     /// Which of its outputs the edge carried.
     pub output: u32,
-    /// When no chain can still be claiming the crossing: the producing
-    /// intent's own window end plus the retention grace — the intent's,
-    /// not the transaction's, so the composer chooses no part of it.
+    /// When no chain can still be claiming or reclaiming the crossing:
+    /// the producing intent's own window end plus [`ESCROW_GRACE_MS`] —
+    /// the intent's, not the transaction's, so the composer chooses no
+    /// part of it.
     pub expiry_ms: u64,
 }
 
@@ -770,15 +772,24 @@ impl CrossingSite {
 /// owed: the window its signer signed, plus the grace every
 /// transaction-derived artifact gets.
 ///
-/// One horizon for the nullifier and for the escrow cells of every node
-/// the intent holds. The intent's own window rather than the
-/// transaction's, for two reasons that are one: the transaction's window
-/// is the intersection of every intent's, so this is never earlier than
-/// it; and the transaction's window is the composer's to choose, where
-/// an escrow key has to be made of nothing the composer chose.
+/// The intent's own window rather than the transaction's, for two
+/// reasons that are one: the transaction's window is the intersection
+/// of every intent's, so this is never earlier than it; and the
+/// transaction's window is the composer's to choose, where a key has to
+/// be made of nothing the composer chose.
 #[must_use]
 pub const fn intent_expiry_ms(header: &IntentHeader) -> u64 {
     header.validity_end_ms.saturating_add(NULLIFIER_GRACE_MS)
+}
+
+/// When the escrow cells of every node an intent holds stop being owed.
+///
+/// The window its signer signed plus [`ESCROW_GRACE_MS`], which outlives
+/// the nullifier's by the room a lapsed crossing's reclaim needs. The
+/// intent's own window, for the reasons [`intent_expiry_ms`] gives.
+#[must_use]
+pub const fn escrow_expiry_ms(header: &IntentHeader) -> u64 {
+    header.validity_end_ms.saturating_add(ESCROW_GRACE_MS)
 }
 
 /// One admitted subintent: its signed identity, its signer, and the
@@ -882,7 +893,7 @@ pub fn admit_tree(
         bindings: &tree.root_bindings,
         signer: Some(composer),
         identity: tree.root.hash(hasher),
-        expiry_ms: intent_expiry_ms(&tree.root.header),
+        expiry_ms: escrow_expiry_ms(&tree.root.header),
     });
     for (subintent, record) in tree.subintents.iter().zip(&records) {
         views.push(IntentView {
@@ -891,7 +902,7 @@ pub fn admit_tree(
             bindings: &subintent.bindings,
             signer: Some(subintent.signer),
             identity: record.subintent,
-            expiry_ms: record.expiry_ms,
+            expiry_ms: escrow_expiry_ms(&subintent.decl.header),
         });
     }
     // The envelope's own records, layered behind what the chain already

@@ -50,6 +50,21 @@ pub const MAX_MESSAGE_LEN: usize = 1024;
 /// of it that could drift is one more than the protocol has.
 pub const NULLIFIER_GRACE_MS: u64 = 144_000;
 
+/// How long an escrow record or claim outlives the window its intent's
+/// signer offered it for, in milliseconds: the nullifier's grace plus
+/// one validity range.
+///
+/// A crossing's delivery is admissible to the delivery window's close,
+/// and one admitted at the last moment has claimed by the nullifier's
+/// grace or never will — which is the earliest instant the record's
+/// issuer can prove the crossing lapsed and reclaim it. The reclaim is
+/// then composed, admitted and committed like any other abandonment, in
+/// the room a validity range gives every abandonment; the record has to
+/// stand for that long past the lapse, or the proof would license a
+/// reclaim of a cell already swept. The workspace asserts this figure
+/// against the two constants it is the sum of.
+pub const ESCROW_GRACE_MS: u64 = NULLIFIER_GRACE_MS + 120_000;
+
 /// The bound on subintents one envelope may compose, and so on the
 /// signatures it carries for them.
 ///
