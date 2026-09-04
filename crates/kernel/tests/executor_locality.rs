@@ -214,7 +214,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         tx: TxHash(Hash32([id; 32])),
         declaration: moving(declared),
         calls: Vec::new(),
-        legs: LegPlan::whole(),
+        legs: LegPlan::whole(0),
         scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, signed_nullifier())],
         fee: None,

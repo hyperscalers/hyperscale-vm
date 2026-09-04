@@ -218,7 +218,7 @@ fn then(store: &MemoryStore, entry: BatchTx, again: BatchTx) -> Receipt {
 /// The sending half: one node reserves, and what it produced departs
 /// rather than reaching a local consumer.
 fn sending(amount: u128) -> BatchTx {
-    let mut legs = LegPlan::whole();
+    let mut legs = LegPlan::whole(1);
     legs.departs(0, 0, record_site()).unwrap();
     BatchTx::new(
         tx(1),
@@ -246,8 +246,8 @@ fn receiving(crossed: Crossed) -> BatchTx {
 }
 
 fn receiving_as(who: TxHash, crossed: Crossed) -> BatchTx {
-    let mut legs = LegPlan::whole();
-    legs.skip(0);
+    let mut legs = LegPlan::whole(2);
+    legs.skip(0).unwrap();
     legs.arrives(0, 0, crossed, claim_site()).unwrap();
     BatchTx::new(
         who,
@@ -390,8 +390,8 @@ fn an_arrival_that_never_came_is_a_missing_edge() {
     let mut arrived = MemoryStore::new();
     arrived.write(cell(PAYEE), encode_amount(0).to_vec());
 
-    let mut legs = LegPlan::whole();
-    legs.skip(0);
+    let mut legs = LegPlan::whole(2);
+    legs.skip(0).unwrap();
     let entry = BatchTx::new(
         tx(3),
         declared(&[Effect {
@@ -423,8 +423,8 @@ fn an_aborted_claim_leaves_the_crossing_claimable() {
     let mut arrived = MemoryStore::new();
     arrived.write(cell(PAYEE), encode_amount(0).to_vec());
 
-    let mut legs = LegPlan::whole();
-    legs.skip(0);
+    let mut legs = LegPlan::whole(1);
+    legs.skip(0).unwrap();
     legs.arrives(
         0,
         0,
@@ -509,7 +509,7 @@ fn a_whole_execution_crosses_nothing() {
 /// crate boundary since anything checked it.
 #[test]
 fn a_plan_past_the_crossing_cap_refuses_at_construction() {
-    let mut legs = LegPlan::whole();
+    let mut legs = LegPlan::whole(MAX_CROSSINGS_PER_TX + 1);
     for edge in 0..MAX_CROSSINGS_PER_TX {
         legs.departs(u32::try_from(edge).unwrap(), 0, record_site())
             .unwrap();
@@ -531,7 +531,7 @@ fn a_plan_past_the_crossing_cap_refuses_at_construction() {
 /// sweep, which halts the shard instead of refusing the transaction.
 #[test]
 fn an_undeclared_record_cell_refuses_the_batch() {
-    let mut legs = LegPlan::whole();
+    let mut legs = LegPlan::whole(1);
     legs.departs(0, 0, record_site()).unwrap();
     let entry = BatchTx::new(
         tx(6),
@@ -564,8 +564,8 @@ fn an_undeclared_record_cell_refuses_the_batch() {
 /// write.
 #[test]
 fn an_undeclared_claim_cell_refuses_the_batch() {
-    let mut legs = LegPlan::whole();
-    legs.skip(0);
+    let mut legs = LegPlan::whole(2);
+    legs.skip(0).unwrap();
     legs.arrives(
         0,
         0,
@@ -809,7 +809,7 @@ fn reclaim_site() -> CrossingSite {
 /// claims it under its own target, credits the cell the value left. No
 /// node runs.
 fn reclaiming(who: TxHash) -> BatchTx {
-    let mut legs = LegPlan::whole();
+    let mut legs = LegPlan::whole(1);
     legs.reclaims(
         0,
         0,
@@ -935,7 +935,7 @@ fn a_second_reclaim_is_refused_and_moves_nothing() {
 /// The producing node retiring a record whose claim committed: reads
 /// the record, deletes it, moves nothing. No node runs.
 fn retiring(who: TxHash) -> BatchTx {
-    let mut legs = LegPlan::whole();
+    let mut legs = LegPlan::whole(1);
     legs.retires(
         0,
         0,

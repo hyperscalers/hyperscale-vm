@@ -35,7 +35,10 @@ pub mod supply;
 pub mod walk;
 pub mod work;
 
-pub use escrow::{Crossed, Departure, EscrowDelta, LegPlan, PlanTooWide, Reclaim, Retire};
+pub use escrow::{
+    Arrival, Crossed, Departure, EdgeAction, EscrowDelta, LegPlan, NodeAction, PlanFault, Reclaim,
+    Retire,
+};
 pub use executor::{
     BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, Unavailable,
     execute_batch,

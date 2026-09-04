@@ -99,9 +99,11 @@ pub struct BatchTx {
     /// Which of the manifest's nodes this execution runs, and the cells
     /// the ones it does not run stand in for.
     ///
-    /// [`LegPlan::whole`] until a transaction decomposes, which is what
-    /// every execution ran before there was anything else to run — so the
-    /// whole-shape path is the default rather than a case.
+    /// Whole until a transaction decomposes, which is what every
+    /// execution ran before there was anything else to run — so the
+    /// whole-shape path is the default rather than a case. A plan
+    /// naming no node runs every node the entry has, which is what the
+    /// default is.
     ///
     /// Unlike the declaration and the calls beside it, this is **not**
     /// shard-invariant: it is the one thing about a batch entry that
@@ -153,7 +155,7 @@ impl BatchTx {
             calls: Vec::new(),
             nullifiers: Vec::new(),
             fee: None,
-            legs: LegPlan::whole(),
+            legs: LegPlan::whole(0),
             scope: ExecutionScope::whole(),
             env,
             gas_limit: u64::MAX,

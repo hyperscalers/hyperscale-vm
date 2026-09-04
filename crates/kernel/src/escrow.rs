@@ -177,94 +177,159 @@ pub struct Retire {
     pub record: CrossingSite,
 }
 
-/// Which of a manifest's nodes this execution runs, and the cells the
-/// ones it does not run stand in for.
+/// What arrived for the edge a node this execution does not run would
+/// have made: what crossed, and the claim cell taking it writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Arrival {
+    /// What the producing shard escrowed on this edge.
+    pub crossed: Crossed,
+    /// The claim cell the execution taking it writes.
+    pub claim: CrossingSite,
+}
+
+/// What this execution does with one of a manifest's nodes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NodeAction {
+    /// Invoked here.
+    #[default]
+    Run,
+    /// Another shard runs it. What stands in for it is whatever crossed
+    /// on its outputs — nothing at all in a plan that invokes no node
+    /// and only settles records.
+    Elsewhere,
+}
+
+/// What this execution does at one value edge.
+///
+/// One action per edge, so the four are exclusive because there is one
+/// slot to hold them rather than because four collections agree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgeAction {
+    /// The producer ran here and its consumer runs elsewhere: the value
+    /// leaves, into the record cell named.
+    Departs(Departure),
+    /// The producer runs elsewhere: what crossed to stand in for it.
+    Arrives(Arrival),
+    /// A crossing this execution takes back, its consumer having never
+    /// claimed it.
+    Reclaims(Reclaim),
+    /// A record this execution retires, its consumer's claim having
+    /// committed.
+    Retires(Retire),
+}
+
+/// Which of a manifest's nodes this execution runs, and what happens at
+/// each of the edges between them.
+///
+/// One entry per node and one per edge: "runs here" is a position in the
+/// node vector and "arrives here" is one action in the edge map, so
+/// neither can be stated twice and no two collections have to agree.
 ///
 /// Built by the parent from the frozen classification and the arrivals it
 /// holds, never derived here: two shards divide one manifest separately
 /// and their answers have to agree, or a crossing is issued that nobody
 /// claims.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegPlan {
-    skipped: BTreeSet<u32>,
-    inbound: BTreeMap<(u32, u32), Crossed>,
-    outbound: BTreeMap<(u32, u32), Departure>,
-    claimed: BTreeMap<(u32, u32), CrossingSite>,
-    reclaimed: BTreeMap<(u32, u32), Reclaim>,
-    retired: BTreeMap<(u32, u32), Retire>,
+    /// One action per manifest node, in index order. A node past the
+    /// end runs: a plan shorter than the manifest divides nothing of
+    /// what it does not name, which is what an entry that never filed
+    /// one is.
+    nodes: Vec<NodeAction>,
+    edges: BTreeMap<(u32, u32), EdgeAction>,
 }
 
 impl LegPlan {
     /// The plan every execution runs until a transaction decomposes:
-    /// nothing skipped, nothing crossing.
+    /// every one of `nodes` invoked here, nothing crossing.
+    ///
+    /// The arity is the manifest's, and it is what makes a node past the
+    /// manifest a refusal where the plan is built rather than a silent
+    /// entry nothing reads.
     #[must_use]
-    pub fn whole() -> Self {
-        Self::default()
+    pub fn whole(nodes: usize) -> Self {
+        Self {
+            nodes: vec![NodeAction::Run; nodes],
+            edges: BTreeMap::new(),
+        }
     }
 
     /// Whether this execution invokes `node` itself.
     #[must_use]
     pub fn runs(&self, node: u32) -> bool {
-        !self.skipped.contains(&node)
+        self.action(node) == NodeAction::Run
     }
 
     /// Whether this plan divides the manifest at all.
     #[must_use]
     pub fn is_whole(&self) -> bool {
-        self.skipped.is_empty()
+        self.nodes.iter().all(|action| *action == NodeAction::Run)
     }
 
-    /// What arrived for the edge a skipped producer would have made.
+    /// What arrived for the edge a node another shard runs would have
+    /// made.
     #[must_use]
-    pub fn arrival(&self, node: u32, output: u32) -> Option<Crossed> {
-        self.inbound.get(&(node, output)).copied()
+    pub fn arrival(&self, node: u32, output: u32) -> Option<Arrival> {
+        match self.edges.get(&(node, output)) {
+            Some(EdgeAction::Arrives(arrival)) => Some(*arrival),
+            _ => None,
+        }
     }
 
-    /// The record cell an edge leaving this execution writes, and the
-    /// cell the value left.
+    /// The record cell an edge leaving this execution writes.
     #[must_use]
-    pub fn departing(&self, node: u32, output: u32) -> Option<Departure> {
-        self.outbound.get(&(node, output)).copied()
+    pub fn departure(&self, node: u32, output: u32) -> Option<Departure> {
+        match self.edges.get(&(node, output)) {
+            Some(EdgeAction::Departs(departure)) => Some(*departure),
+            _ => None,
+        }
     }
 
     /// The crossings this execution takes back rather than runs, in
     /// `(node, output)` order: the producing node claiming its own
     /// record.
     pub fn reclaimed(&self) -> impl Iterator<Item = ((u32, u32), Reclaim)> + '_ {
-        self.reclaimed
-            .iter()
-            .map(|(edge, reclaim)| (*edge, *reclaim))
+        self.edges.iter().filter_map(|(edge, action)| match action {
+            EdgeAction::Reclaims(reclaim) => Some((*edge, *reclaim)),
+            _ => None,
+        })
     }
 
     /// The records this execution retires rather than runs, in
     /// `(node, output)` order: crossings it issued whose claims committed.
     pub fn retired(&self) -> impl Iterator<Item = ((u32, u32), Retire)> + '_ {
-        self.retired.iter().map(|(edge, retire)| (*edge, *retire))
-    }
-
-    /// The claim cell an arrival writes.
-    #[must_use]
-    pub fn claim(&self, node: u32, output: u32) -> Option<CrossingSite> {
-        self.claimed.get(&(node, output)).copied()
+        self.edges.iter().filter_map(|(edge, action)| match action {
+            EdgeAction::Retires(retire) => Some((*edge, *retire)),
+            _ => None,
+        })
     }
 
     /// Every record cell this execution writes, in edge order.
     pub fn records(&self) -> impl Iterator<Item = SubstateKey> + '_ {
-        self.outbound.values().map(|departure| departure.site.key())
+        self.edges.values().filter_map(|action| match action {
+            EdgeAction::Departs(departure) => Some(departure.site.key()),
+            _ => None,
+        })
     }
 
     /// Every claim cell this execution writes, in edge order: the
-    /// arrivals it takes, then the crossings it takes back.
+    /// arrivals it takes, and the crossings it takes back.
     pub fn claims(&self) -> impl Iterator<Item = SubstateKey> + '_ {
-        self.claimed
-            .values()
-            .map(CrossingSite::key)
-            .chain(self.reclaimed.values().map(|reclaim| reclaim.claim.key()))
+        self.edges.values().filter_map(|action| match action {
+            EdgeAction::Arrives(arrival) => Some(arrival.claim.key()),
+            EdgeAction::Reclaims(reclaim) => Some(reclaim.claim.key()),
+            _ => None,
+        })
     }
 
     /// Mark a node as one another shard runs.
-    pub fn skip(&mut self, node: u32) {
-        self.skipped.insert(node);
+    ///
+    /// # Errors
+    ///
+    /// [`PlanFault::NoSuchNode`] past the manifest the plan was sized to.
+    pub fn skip(&mut self, node: u32) -> Result<(), PlanFault> {
+        *self.slot(node)? = NodeAction::Elsewhere;
+        Ok(())
     }
 
     /// File what arrives for one edge, and the claim cell taking it
@@ -272,33 +337,46 @@ impl LegPlan {
     ///
     /// # Errors
     ///
-    /// [`PlanTooWide`] past [`MAX_CROSSINGS_PER_TX`].
+    /// [`PlanFault`]: a node past the manifest, an edge already acted on,
+    /// an arrival for a node this execution runs itself, or a plan past
+    /// [`MAX_CROSSINGS_PER_TX`].
     pub fn arrives(
         &mut self,
         node: u32,
         output: u32,
         crossed: Crossed,
         claim: CrossingSite,
-    ) -> Result<(), PlanTooWide> {
-        Self::bounded(&mut self.inbound, (node, output), crossed)?;
-        Self::bounded(&mut self.claimed, (node, output), claim)
+    ) -> Result<(), PlanFault> {
+        if self.action(node) == NodeAction::Run {
+            return Err(PlanFault::ArrivesHere { node, output });
+        }
+        self.act(
+            node,
+            output,
+            EdgeAction::Arrives(Arrival { crossed, claim }),
+        )
     }
 
     /// File the record cell one departing edge writes.
     ///
     /// # Errors
     ///
-    /// [`PlanTooWide`] past [`MAX_CROSSINGS_PER_TX`].
+    /// [`PlanFault`]: a node past the manifest, an edge already acted on,
+    /// a departure from a node this execution does not run, or a plan
+    /// past [`MAX_CROSSINGS_PER_TX`].
     pub fn departs(
         &mut self,
         node: u32,
         output: u32,
         record: CrossingSite,
-    ) -> Result<(), PlanTooWide> {
-        Self::bounded(
-            &mut self.outbound,
-            (node, output),
-            Departure { site: record },
+    ) -> Result<(), PlanFault> {
+        if self.action(node) == NodeAction::Elsewhere {
+            return Err(PlanFault::DepartsElsewhere { node, output });
+        }
+        self.act(
+            node,
+            output,
+            EdgeAction::Departs(Departure { site: record }),
         )
     }
 
@@ -306,53 +384,107 @@ impl LegPlan {
     ///
     /// # Errors
     ///
-    /// [`PlanTooWide`] past [`MAX_CROSSINGS_PER_TX`].
-    pub fn reclaims(
-        &mut self,
-        node: u32,
-        output: u32,
-        reclaim: Reclaim,
-    ) -> Result<(), PlanTooWide> {
-        Self::bounded(&mut self.reclaimed, (node, output), reclaim)
+    /// [`PlanFault`]: a node past the manifest, an edge already acted on,
+    /// or a plan past [`MAX_CROSSINGS_PER_TX`].
+    pub fn reclaims(&mut self, node: u32, output: u32, reclaim: Reclaim) -> Result<(), PlanFault> {
+        self.act(node, output, EdgeAction::Reclaims(reclaim))
     }
 
     /// File one record this execution retires.
     ///
     /// # Errors
     ///
-    /// [`PlanTooWide`] past [`MAX_CROSSINGS_PER_TX`].
-    pub fn retires(&mut self, node: u32, output: u32, retire: Retire) -> Result<(), PlanTooWide> {
-        Self::bounded(&mut self.retired, (node, output), retire)
+    /// [`PlanFault`]: a node past the manifest, an edge already acted on,
+    /// or a plan past [`MAX_CROSSINGS_PER_TX`].
+    pub fn retires(&mut self, node: u32, output: u32, retire: Retire) -> Result<(), PlanFault> {
+        self.act(node, output, EdgeAction::Retires(retire))
     }
 
-    fn bounded<T>(
-        into: &mut BTreeMap<(u32, u32), T>,
-        edge: (u32, u32),
-        value: T,
-    ) -> Result<(), PlanTooWide> {
-        if into.len() >= MAX_CROSSINGS_PER_TX && !into.contains_key(&edge) {
-            return Err(PlanTooWide);
+    /// The node's action. A node past the manifest runs, which is what
+    /// an unnamed one has always been.
+    fn action(&self, node: u32) -> NodeAction {
+        self.nodes
+            .get(node as usize)
+            .copied()
+            .unwrap_or(NodeAction::Run)
+    }
+
+    fn slot(&mut self, node: u32) -> Result<&mut NodeAction, PlanFault> {
+        self.nodes
+            .get_mut(node as usize)
+            .ok_or(PlanFault::NoSuchNode { node })
+    }
+
+    /// File `action` at one edge, which must be free: a second action on
+    /// one edge is two answers to what happens to one value.
+    fn act(&mut self, node: u32, output: u32, action: EdgeAction) -> Result<(), PlanFault> {
+        if self.nodes.get(node as usize).is_none() {
+            return Err(PlanFault::NoSuchNode { node });
         }
-        into.insert(edge, value);
+        if self.edges.contains_key(&(node, output)) {
+            return Err(PlanFault::EdgeTwice { node, output });
+        }
+        if self.edges.len() >= MAX_CROSSINGS_PER_TX {
+            return Err(PlanFault::TooWide);
+        }
+        self.edges.insert((node, output), action);
         Ok(())
     }
 }
 
-/// A plan naming more crossings than one outcome can state a verdict for.
+/// What a plan cannot say about itself.
 ///
-/// Bounded here and not only where the classifier refuses the shape,
+/// Checked here and not only where the classifier refuses the shape,
 /// because the plan reaches the kernel across a crate boundary and
 /// nothing between them re-asks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("a leg plan may name at most {MAX_CROSSINGS_PER_TX} crossings")]
-pub struct PlanTooWide;
+pub enum PlanFault {
+    /// A node the manifest the plan was sized to does not have.
+    #[error("node {node} is past the manifest")]
+    NoSuchNode {
+        /// The index named.
+        node: u32,
+    },
+    /// Two actions at one edge.
+    #[error("edge ({node}, {output}) already has an action")]
+    EdgeTwice {
+        /// The producing node.
+        node: u32,
+        /// Which of its outputs.
+        output: u32,
+    },
+    /// An arrival for a node this execution invokes itself: what the
+    /// node produces is what it returns, and nothing crosses to it.
+    #[error("edge ({node}, {output}) arrives for a node this execution runs")]
+    ArrivesHere {
+        /// The producing node.
+        node: u32,
+        /// Which of its outputs.
+        output: u32,
+    },
+    /// A departure from a node this execution does not run: value can
+    /// only leave an execution that produced it.
+    #[error("edge ({node}, {output}) departs a node this execution does not run")]
+    DepartsElsewhere {
+        /// The producing node.
+        node: u32,
+        /// Which of its outputs.
+        output: u32,
+    },
+    /// More crossings than one outcome can state a verdict for.
+    #[error("a leg plan may name at most {MAX_CROSSINGS_PER_TX} crossings")]
+    TooWide,
+}
 
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_effects::{Hash32, SubintentHash, TestHasher};
     use hyperscale_vm_types::ResourceAddr;
 
-    use super::{Crossed, CrossingSite, EscrowDelta, LegPlan, MAX_CROSSINGS_PER_TX, ModeError};
+    use super::{
+        Arrival, Crossed, CrossingSite, EscrowDelta, LegPlan, MAX_CROSSINGS_PER_TX, ModeError,
+        PlanFault, Reclaim,
+    };
 
     fn resource(tag: u8) -> ResourceAddr {
         ResourceAddr::new([tag; 31])
@@ -454,45 +586,102 @@ mod tests {
     /// The plan every execution runs until a transaction decomposes.
     #[test]
     fn a_whole_plan_runs_every_node_and_crosses_nothing() {
-        let plan = LegPlan::whole();
+        let plan = LegPlan::whole(3);
         assert!(plan.is_whole());
-        assert!(plan.runs(0) && plan.runs(4_095));
+        assert!(plan.runs(0) && plan.runs(2));
         assert_eq!(plan.arrival(0, 0), None);
-        assert_eq!(plan.departing(0, 0), None);
+        assert_eq!(plan.departure(0, 0), None);
     }
 
     /// A skipped node is one another shard runs, and what stands in for
     /// it is the arrival filed against its own edge.
     #[test]
     fn a_divided_plan_names_what_it_does_not_run() {
-        let mut plan = LegPlan::whole();
-        plan.skip(1);
+        let mut plan = LegPlan::whole(3);
+        plan.skip(1).expect("inside the manifest");
         plan.arrives(1, 0, crossed(1, 50), cell(9)).expect("fits");
         plan.departs(2, 0, cell(8)).expect("fits");
 
         assert!(!plan.is_whole());
         assert!(!plan.runs(1));
         assert!(plan.runs(2));
-        assert_eq!(plan.arrival(1, 0), Some(crossed(1, 50)));
-        assert_eq!(plan.claim(1, 0), Some(cell(9)));
         assert_eq!(
-            plan.departing(2, 0).map(|departure| departure.site),
+            plan.arrival(1, 0),
+            Some(Arrival {
+                crossed: crossed(1, 50),
+                claim: cell(9),
+            }),
+        );
+        assert_eq!(
+            plan.departure(2, 0).map(|departure| departure.site),
             Some(cell(8))
         );
         assert_eq!(plan.arrival(1, 1), None, "another output is another edge");
+    }
+
+    /// One edge, one action: a second answer to what happens to one
+    /// value is refused rather than overwriting the first.
+    #[test]
+    fn an_edge_takes_one_action() {
+        let mut plan = LegPlan::whole(2);
+        plan.departs(0, 0, cell(1)).expect("fits");
+        assert_eq!(
+            plan.departs(0, 0, cell(2)),
+            Err(PlanFault::EdgeTwice { node: 0, output: 0 }),
+        );
+        plan.skip(1).expect("inside the manifest");
+        plan.arrives(1, 0, crossed(1, 5), cell(3)).expect("fits");
+        assert_eq!(
+            plan.reclaims(
+                1,
+                0,
+                Reclaim {
+                    record: cell(3).key(),
+                    claim: cell(4),
+                },
+            ),
+            Err(PlanFault::EdgeTwice { node: 1, output: 0 }),
+        );
+    }
+
+    /// Value leaves the execution that produced it and arrives for one
+    /// that did not, so neither can be filed against the other's node.
+    #[test]
+    fn an_edge_agrees_with_the_node_it_hangs_off() {
+        let mut plan = LegPlan::whole(2);
+        assert_eq!(
+            plan.arrives(0, 0, crossed(1, 5), cell(9)),
+            Err(PlanFault::ArrivesHere { node: 0, output: 0 }),
+        );
+        plan.skip(1).expect("inside the manifest");
+        assert_eq!(
+            plan.departs(1, 0, cell(8)),
+            Err(PlanFault::DepartsElsewhere { node: 1, output: 0 }),
+        );
+    }
+
+    /// A plan is sized to its manifest, so a node past it is refused
+    /// where the plan is built rather than filed where nothing reads it.
+    #[test]
+    fn a_node_past_the_manifest_refuses() {
+        let mut plan = LegPlan::whole(2);
+        assert_eq!(plan.skip(2), Err(PlanFault::NoSuchNode { node: 2 }));
+        assert_eq!(
+            plan.departs(2, 0, cell(1)),
+            Err(PlanFault::NoSuchNode { node: 2 }),
+        );
     }
 
     /// The plan is bounded where it is built, not only where it is
     /// classified.
     #[test]
     fn a_plan_past_the_cap_refuses() {
-        let mut plan = LegPlan::whole();
+        let mut plan = LegPlan::whole(MAX_CROSSINGS_PER_TX + 1);
         for edge in 0..MAX_CROSSINGS_PER_TX {
             let node = u32::try_from(edge).expect("bounded");
             plan.departs(node, 0, cell(1)).expect("inside the cap");
         }
         let past = u32::try_from(MAX_CROSSINGS_PER_TX).expect("bounded");
-        assert!(plan.departs(past, 0, cell(1)).is_err());
-        assert!(plan.departs(0, 0, cell(2)).is_ok(), "not a new crossing");
+        assert_eq!(plan.departs(past, 0, cell(1)), Err(PlanFault::TooWide));
     }
 }

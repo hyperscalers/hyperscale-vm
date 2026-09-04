@@ -403,13 +403,10 @@ fn claimed_outputs(
     let mut produced = vec![None; call.outputs.len()];
     for (slot, taken) in produced.iter_mut().enumerate() {
         let output = u32::try_from(slot).unwrap_or(u32::MAX);
-        let (Some(crossed), Some(site)) = (
-            entry.legs.arrival(node, output),
-            entry.legs.claim(node, output),
-        ) else {
+        let Some(arrival) = entry.legs.arrival(node, output) else {
             continue;
         };
-        match session.escrow_in(crossed, site) {
+        match session.escrow_in(arrival.crossed, arrival.claim) {
             Ok(rep) => *taken = Some(rep),
             Err(trap) => {
                 return Err(fail(
@@ -457,7 +454,7 @@ fn departing(
         .unwrap_or_default();
     for (slot, rep) in produced.into_iter().enumerate() {
         let output = u32::try_from(slot).unwrap_or(u32::MAX);
-        let Some(departure) = entry.legs.departing(node, output) else {
+        let Some(departure) = entry.legs.departure(node, output) else {
             kept.push(Some(rep));
             continue;
         };
