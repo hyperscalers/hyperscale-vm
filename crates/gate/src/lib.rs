@@ -539,10 +539,7 @@ mod tests {
             assert_eq!(extract_metadata(&plain).expect("walks"), None);
 
             let artifact = attach_metadata(&plain, &metadata).expect("attaches");
-            assert_eq!(
-                extract_metadata(&artifact).expect("walks"),
-                Some(metadata.clone())
-            );
+            assert_eq!(extract_metadata(&artifact).expect("walks"), Some(metadata));
             // The code is untouched and the artifact is a different one.
             assert!(artifact.starts_with(&plain));
             assert_ne!(artifact, plain);
