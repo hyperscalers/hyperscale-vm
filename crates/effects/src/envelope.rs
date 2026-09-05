@@ -581,20 +581,29 @@ fn escrow_key(
 }
 
 /// What an escrow record cell holds: the value that left, the edge it
-/// left on, and when the record stops being needed.
+/// left on, when it stops being claimable, and who issued it.
 ///
 /// Self-describing on [`NullifierCell`]'s terms: the value re-derives the
-/// key, so a reader holding nothing but the leaf can tell what it is and
-/// whether it is still owed. That is also what makes the pair sweepable,
-/// since the sweep asks the cell rather than the writer.
+/// key, so a reader holding nothing but the leaf can tell what it is.
+/// Unlike the sweepable families the key carries no bucket, so re-deriving
+/// it is all a reader gets — a record is not sweepable and no expiry in
+/// the key could make it so.
 ///
 /// The edge is named here as well as in the key because a reclaim reads
 /// this cell and nothing else — the producing shard credits the resource
-/// and the amount back from the leaf alone, holding neither the
-/// transaction nor a window of them. So is the cell the value left: a
-/// reclaim credits it, and no rule the kernel could hold says which of
-/// an owner's cells that is — an account's vault for a resource is the
-/// account package's own layout, and a component's is another.
+/// and the amount back from the leaf alone, holding no transaction body
+/// and no window of them. So is the cell the value left: a reclaim
+/// credits it, and no rule the kernel could hold says which of an owner's
+/// cells that is — an account's vault for a resource is the account
+/// package's own layout, and a component's is another.
+///
+/// The expiry and the issuing transaction are terms of the reclaim
+/// rather than the record's identity, which stays the edge
+/// ([`CrossingSite::names`]). The expiry names the claim cell that would
+/// prove the crossing taken, since that key is bucketed by it; the
+/// transaction is what a successor's reclaim is admitted under, the tick
+/// and its receipt being keyed by transaction and a record naming none
+/// being unadmittable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub struct CrossingCell {
     /// The resource that crossed.
@@ -607,6 +616,12 @@ pub struct CrossingCell {
     pub local: u32,
     /// Which of its outputs the edge carried.
     pub output: u32,
+    /// When no chain can still be claiming the crossing: the producing
+    /// intent's own window end plus [`ESCROW_GRACE_MS`] — the intent's,
+    /// not the transaction's, so the composer chooses no part of it.
+    pub expiry_ms: u64,
+    /// The transaction whose execution issued the crossing.
+    pub tx: TxHash,
     /// The cell the value left, which a reclaim credits: the one cell of
     /// the producing frame denominated in the resource that crossed,
     /// resolved by the kernel at the issue. `None` where the frame holds
@@ -747,10 +762,12 @@ impl CrossingSite {
         self.expiry_ms
     }
 
-    /// The record's value, once the execution knows what crossed.
+    /// The record's value, once the execution knows what crossed and
+    /// which transaction issued it.
     #[must_use]
     pub const fn crossing(
         &self,
+        tx: TxHash,
         resource: ResourceAddr,
         amount: u128,
         origin: Option<SubstateKey>,
@@ -761,6 +778,8 @@ impl CrossingSite {
             intent: self.intent,
             local: self.local,
             output: self.output,
+            expiry_ms: self.expiry_ms,
+            tx,
             origin,
         }
     }

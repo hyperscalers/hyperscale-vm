@@ -226,7 +226,10 @@ impl KernelSession {
         let origin = self.origin_among(frame, resource);
         self.crossings.insert(
             departure.site.key(),
-            departure.site.crossing(resource, amount, origin).to_bytes(),
+            departure
+                .site
+                .crossing(self.tx, resource, amount, origin)
+                .to_bytes(),
         );
         Ok(crossed)
     }

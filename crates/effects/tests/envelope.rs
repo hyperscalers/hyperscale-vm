@@ -553,9 +553,10 @@ fn a_claim_leads_with_its_bucket_and_a_record_does_not() {
     );
 }
 
-/// A crossing cell says what left and on which edge, so a reclaim reads
-/// the leaf and nothing else — a split child inherits the prefix and its
-/// cells while holding neither the transaction nor a window of them.
+/// A crossing cell says what left, on which edge, when it stops being
+/// claimable and which transaction issued it — so a reclaim reads the
+/// leaf and nothing else, holding no transaction body and no window of
+/// them. A successor inherits the prefix and its cells and has all of it.
 #[test]
 fn a_crossing_cell_carries_what_a_reclaim_needs() {
     let bob = composed_tree(100).subintents[0].decl.hash(&TestHasher);
@@ -565,6 +566,8 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
         intent: bob,
         local: 1,
         output: 0,
+        expiry_ms: EXPIRY_MS,
+        tx: TxHash(Hash32([9; 32])),
         origin: None,
     };
     let decoded: CrossingCell = from_slice(&cell.to_bytes()).expect("a crossing cell decodes");
@@ -577,8 +580,10 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     assert!(CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS).names(&decoded));
     assert!(!CrossingSite::claim(&TestHasher, BOB, bob, 2, 0, EXPIRY_MS).names(&decoded));
     assert!(CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS + 1).names(&decoded));
-    // The value re-derives the key, which is what makes the cell
-    // self-describing and so what makes the pair sweepable.
+    // The value re-derives the key, which is what lets a reader holding
+    // the leaf tell that it is a record — and it re-derives the claim
+    // key beside it, which is what a reclaim checks the crossing was
+    // never taken against.
     assert_eq!(
         escrow_record_key(
             &TestHasher,
@@ -588,6 +593,17 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
             decoded.output
         ),
         escrow_record_key(&TestHasher, BOB, bob, 1, 0),
+    );
+    assert_eq!(
+        escrow_claim_key(
+            &TestHasher,
+            BOB,
+            decoded.intent,
+            decoded.local,
+            decoded.output,
+            decoded.expiry_ms
+        ),
+        escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
     );
 
     // The claim beside it names the transaction that took the crossing
