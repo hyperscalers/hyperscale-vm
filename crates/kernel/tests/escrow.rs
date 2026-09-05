@@ -16,9 +16,10 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
-    Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, EnvInputs, ExecutionMode,
-    GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession, LegPlan, Locality, ManifestWalk,
-    MemoryStore, Receipt, Reclaim, Retire, Substates, decode_amount, execute_batch,
+    Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, EnvInputs,
+    ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession, LegPlan,
+    Locality, ManifestWalk, MemoryStore, Receipt, Reclaim, Retire, Substates, decode_amount,
+    execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, MAX_CROSSINGS_PER_TX,
@@ -62,6 +63,15 @@ fn record_site() -> CrossingSite {
 
 fn claim_site() -> CrossingSite {
     CrossingSite::claim(&TestHasher, owner(PAYEE), intent(), 0, 0, EXPIRY_MS)
+}
+
+/// The edge as a producer files it: the record it writes, and the claim
+/// its consumer would write for the same edge.
+fn record_departure() -> Departure {
+    Departure {
+        site: record_site(),
+        consumer_claim: claim_site().key(),
+    }
 }
 
 /// A crossing's cell, as the declaration has to name it.
@@ -219,7 +229,7 @@ fn then(store: &MemoryStore, entry: BatchTx, again: BatchTx) -> Receipt {
 /// rather than reaching a local consumer.
 fn sending(amount: u128) -> BatchTx {
     let mut legs = LegPlan::whole(1);
-    legs.departs(0, 0, record_site()).unwrap();
+    legs.departs(0, 0, record_departure()).unwrap();
     BatchTx::new(
         tx(1),
         declared(&[
@@ -511,14 +521,14 @@ fn a_whole_execution_crosses_nothing() {
 fn a_plan_past_the_crossing_cap_refuses_at_construction() {
     let mut legs = LegPlan::whole(MAX_CROSSINGS_PER_TX + 1);
     for edge in 0..MAX_CROSSINGS_PER_TX {
-        legs.departs(u32::try_from(edge).unwrap(), 0, record_site())
+        legs.departs(u32::try_from(edge).unwrap(), 0, record_departure())
             .unwrap();
     }
     assert!(
         legs.departs(
             u32::try_from(MAX_CROSSINGS_PER_TX).unwrap(),
             0,
-            record_site(),
+            record_departure(),
         )
         .is_err()
     );
@@ -532,7 +542,7 @@ fn a_plan_past_the_crossing_cap_refuses_at_construction() {
 #[test]
 fn an_undeclared_record_cell_refuses_the_batch() {
     let mut legs = LegPlan::whole(1);
-    legs.departs(0, 0, record_site()).unwrap();
+    legs.departs(0, 0, record_departure()).unwrap();
     let entry = BatchTx::new(
         tx(6),
         declared(&[Effect {

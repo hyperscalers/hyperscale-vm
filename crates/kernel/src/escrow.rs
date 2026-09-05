@@ -141,11 +141,20 @@ impl EscrowDelta {
     }
 }
 
-/// One edge leaving this execution: the record cell it writes.
+/// One edge leaving this execution: the record cell it writes, and the
+/// claim cell that would say the crossing was taken.
+///
+/// Both are the parent's to name. The record sits under the producing
+/// node's target and the claim under the consuming node's, so only a
+/// reader of the manifest can pair them — and the record carries the
+/// pairing forward, since what outlives the manifest is the leaf.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Departure {
     /// The record cell, under the producing node's target.
     pub site: CrossingSite,
+    /// The claim cell the consumer writes when it takes the crossing,
+    /// under the consuming node's target.
+    pub consumer_claim: SubstateKey,
 }
 
 /// One crossing this execution takes back: the record the producing
@@ -368,16 +377,12 @@ impl LegPlan {
         &mut self,
         node: u32,
         output: u32,
-        record: CrossingSite,
+        departure: Departure,
     ) -> Result<(), PlanFault> {
         if self.action(node) == NodeAction::Elsewhere {
             return Err(PlanFault::DepartsElsewhere { node, output });
         }
-        self.act(
-            node,
-            output,
-            EdgeAction::Departs(Departure { site: record }),
-        )
+        self.act(node, output, EdgeAction::Departs(departure))
     }
 
     /// File one crossing this execution takes back.
@@ -482,8 +487,8 @@ mod tests {
     use hyperscale_vm_types::ResourceAddr;
 
     use super::{
-        Arrival, Crossed, CrossingSite, EscrowDelta, LegPlan, MAX_CROSSINGS_PER_TX, ModeError,
-        PlanFault, Reclaim,
+        Arrival, Crossed, CrossingSite, Departure, EscrowDelta, LegPlan, MAX_CROSSINGS_PER_TX,
+        ModeError, PlanFault, Reclaim,
     };
 
     fn resource(tag: u8) -> ResourceAddr {
@@ -499,6 +504,13 @@ mod tests {
             0,
             1_000,
         )
+    }
+
+    fn departing(tag: u8) -> Departure {
+        Departure {
+            site: cell(tag),
+            consumer_claim: cell(tag.wrapping_add(1)).key(),
+        }
     }
 
     fn crossed(tag: u8, amount: u128) -> Crossed {
@@ -600,7 +612,7 @@ mod tests {
         let mut plan = LegPlan::whole(3);
         plan.skip(1).expect("inside the manifest");
         plan.arrives(1, 0, crossed(1, 50), cell(9)).expect("fits");
-        plan.departs(2, 0, cell(8)).expect("fits");
+        plan.departs(2, 0, departing(8)).expect("fits");
 
         assert!(!plan.is_whole());
         assert!(!plan.runs(1));
@@ -612,10 +624,7 @@ mod tests {
                 claim: cell(9),
             }),
         );
-        assert_eq!(
-            plan.departure(2, 0).map(|departure| departure.site),
-            Some(cell(8))
-        );
+        assert_eq!(plan.departure(2, 0), Some(departing(8)));
         assert_eq!(plan.arrival(1, 1), None, "another output is another edge");
     }
 
@@ -624,9 +633,9 @@ mod tests {
     #[test]
     fn an_edge_takes_one_action() {
         let mut plan = LegPlan::whole(2);
-        plan.departs(0, 0, cell(1)).expect("fits");
+        plan.departs(0, 0, departing(1)).expect("fits");
         assert_eq!(
-            plan.departs(0, 0, cell(2)),
+            plan.departs(0, 0, departing(2)),
             Err(PlanFault::EdgeTwice { node: 0, output: 0 }),
         );
         plan.skip(1).expect("inside the manifest");
@@ -655,7 +664,7 @@ mod tests {
         );
         plan.skip(1).expect("inside the manifest");
         assert_eq!(
-            plan.departs(1, 0, cell(8)),
+            plan.departs(1, 0, departing(8)),
             Err(PlanFault::DepartsElsewhere { node: 1, output: 0 }),
         );
     }
@@ -667,7 +676,7 @@ mod tests {
         let mut plan = LegPlan::whole(2);
         assert_eq!(plan.skip(2), Err(PlanFault::NoSuchNode { node: 2 }));
         assert_eq!(
-            plan.departs(2, 0, cell(1)),
+            plan.departs(2, 0, departing(1)),
             Err(PlanFault::NoSuchNode { node: 2 }),
         );
     }
@@ -679,9 +688,9 @@ mod tests {
         let mut plan = LegPlan::whole(MAX_CROSSINGS_PER_TX + 1);
         for edge in 0..MAX_CROSSINGS_PER_TX {
             let node = u32::try_from(edge).expect("bounded");
-            plan.departs(node, 0, cell(1)).expect("inside the cap");
+            plan.departs(node, 0, departing(1)).expect("inside the cap");
         }
         let past = u32::try_from(MAX_CROSSINGS_PER_TX).expect("bounded");
-        assert_eq!(plan.departs(past, 0, cell(1)), Err(PlanFault::TooWide));
+        assert_eq!(plan.departs(past, 0, departing(1)), Err(PlanFault::TooWide));
     }
 }

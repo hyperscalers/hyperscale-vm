@@ -554,12 +554,14 @@ fn a_claim_leads_with_its_bucket_and_a_record_does_not() {
 }
 
 /// A crossing cell says what left, on which edge, when it stops being
-/// claimable and which transaction issued it — so a reclaim reads the
-/// leaf and nothing else, holding no transaction body and no window of
-/// them. A successor inherits the prefix and its cells and has all of it.
+/// claimable, which transaction issued it and which cell would say it
+/// was taken — so a reclaim reads the leaf and nothing else, holding no
+/// transaction body and no window of them. A successor inherits the
+/// prefix and its cells and has all of it.
 #[test]
 fn a_crossing_cell_carries_what_a_reclaim_needs() {
     let bob = composed_tree(100).subintents[0].decl.hash(&TestHasher);
+    let consumer_claim = escrow_claim_key(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS);
     let cell = CrossingCell {
         resource: RES_X,
         amount: 500,
@@ -568,6 +570,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
         output: 0,
         expiry_ms: EXPIRY_MS,
         tx: TxHash(Hash32([9; 32])),
+        consumer_claim,
         origin: None,
     };
     let decoded: CrossingCell = from_slice(&cell.to_bytes()).expect("a crossing cell decodes");
@@ -604,6 +607,18 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
             decoded.expiry_ms
         ),
         escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
+    );
+
+    // What the leaf cannot re-derive is the consumer's claim, whose
+    // owner is the consuming node's target and lives in the manifest.
+    // That is why the record carries it: absent past the lapse it says
+    // the crossing was never taken, and no reader of the leaf alone
+    // could name the cell to ask.
+    assert_eq!(decoded.consumer_claim, consumer_claim);
+    assert_ne!(
+        decoded.consumer_claim,
+        escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
+        "the consumer's claim sits under its own target, not the producer's",
     );
 
     // The claim beside it names the transaction that took the crossing

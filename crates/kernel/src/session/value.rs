@@ -228,7 +228,7 @@ impl KernelSession {
             departure.site.key(),
             departure
                 .site
-                .crossing(self.tx, resource, amount, origin)
+                .crossing(self.tx, resource, amount, departure.consumer_claim, origin)
                 .to_bytes(),
         );
         Ok(crossed)
@@ -434,7 +434,18 @@ mod tests {
     }
 
     fn departure() -> Departure {
-        Departure { site: site() }
+        Departure {
+            site: site(),
+            consumer_claim: CrossingSite::claim(
+                &TestHasher,
+                Address::new([0xB2; 31], AddressClass::Component),
+                SubintentHash(Hash32([0x5A; 32])),
+                0,
+                0,
+                1_000,
+            )
+            .key(),
+        }
     }
 
     /// The escrow attestation is linear over amounts and blind to

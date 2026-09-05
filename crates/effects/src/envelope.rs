@@ -597,13 +597,18 @@ fn escrow_key(
 /// cells that is — an account's vault for a resource is the account
 /// package's own layout, and a component's is another.
 ///
-/// The expiry and the issuing transaction are terms of the reclaim
-/// rather than the record's identity, which stays the edge
-/// ([`CrossingSite::names`]). The expiry names the claim cell that would
-/// prove the crossing taken, since that key is bucketed by it; the
-/// transaction is what a successor's reclaim is admitted under, the tick
-/// and its receipt being keyed by transaction and a record naming none
-/// being unadmittable.
+/// The expiry, the issuing transaction and the consumer's claim are
+/// terms of the reclaim rather than the record's identity, which stays
+/// the edge ([`CrossingSite::names`]). The transaction is what a
+/// successor's reclaim is admitted under, the tick and its receipt being
+/// keyed by transaction and a record naming none being unadmittable. The
+/// consumer's claim is the cell that decides between the two housekeeping
+/// members a record ends in: present says the crossing was taken and the
+/// record is the retirement's, absent past the lapse says it was not and
+/// the value is the producer's to credit back. Nothing else names it —
+/// its owner is the consuming node's target, which lives in the manifest
+/// and not in the leaf — so a holder of the record and no body could not
+/// derive it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub struct CrossingCell {
     /// The resource that crossed.
@@ -622,6 +627,11 @@ pub struct CrossingCell {
     pub expiry_ms: u64,
     /// The transaction whose execution issued the crossing.
     pub tx: TxHash,
+    /// The claim cell the consumer writes when it takes the crossing,
+    /// under the consuming node's target. Retained by the shard holding
+    /// that prefix until this record's `expiry_ms`, which is where a
+    /// reader's window to judge it absent closes.
+    pub consumer_claim: SubstateKey,
     /// The cell the value left, which a reclaim credits: the one cell of
     /// the producing frame denominated in the resource that crossed,
     /// resolved by the kernel at the issue. `None` where the frame holds
@@ -770,6 +780,7 @@ impl CrossingSite {
         tx: TxHash,
         resource: ResourceAddr,
         amount: u128,
+        consumer_claim: SubstateKey,
         origin: Option<SubstateKey>,
     ) -> CrossingCell {
         CrossingCell {
@@ -780,6 +791,7 @@ impl CrossingSite {
             output: self.output,
             expiry_ms: self.expiry_ms,
             tx,
+            consumer_claim,
             origin,
         }
     }
