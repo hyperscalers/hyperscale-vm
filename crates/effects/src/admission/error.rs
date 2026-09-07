@@ -124,8 +124,13 @@ pub enum AdmissionError {
     /// More subintents than an envelope may bind.
     #[error("envelope binds more subintents than admission accepts")]
     TooManySubintents,
-    /// The same signed subintent bound twice into one envelope.
-    #[error("subintent {index} duplicates an earlier one")]
+    /// Two intents of one envelope declaring the same thing.
+    ///
+    /// The declaration hash is what names every escrow record and claim
+    /// the tree derives, and it carries no signer — so two intents that
+    /// hash alike name one key for two edges, and the second crossing's
+    /// value is nobody's to take back.
+    #[error("intent {index} declares what an earlier one already did")]
     DuplicateSubintent {
         /// The offending subintent's index.
         index: u32,

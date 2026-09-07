@@ -949,10 +949,15 @@ pub fn admit_tree(
     }
     check_instance_value_depth(&tree.instances)?;
     let mut records = Vec::with_capacity(tree.subintents.len());
-    let mut seen = BTreeSet::new();
+    // The declaration hash alone, and the root among them. It is what
+    // names every escrow record and claim the tree derives, and it
+    // carries no signer — so two intents that hash alike derive one key
+    // for two edges, the receipt attests both crossings against it, and
+    // the second disposal reads a cell the first deleted.
+    let mut seen = BTreeSet::from([tree.root.hash(hasher)]);
     for (index, subintent) in tree.subintents.iter().enumerate() {
         let hash = subintent.decl.hash(hasher);
-        if !seen.insert((subintent.signer, hash)) {
+        if !seen.insert(hash) {
             return Err(AdmissionError::DuplicateSubintent {
                 index: u32::try_from(index).expect("bounded by MAX_SUBINTENTS"),
             });

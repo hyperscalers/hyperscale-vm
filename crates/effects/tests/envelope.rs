@@ -919,6 +919,33 @@ fn duplicate_subintents_reject() {
     );
 }
 
+/// Two intents of one tree that declare the same thing are refused
+/// however they are signed, and the root counts among them.
+///
+/// The declaration hash names every escrow record and claim the tree
+/// derives and carries no signer, so two intents that hash alike derive
+/// one key for two edges: the receipt attests both crossings against it,
+/// the second disposal reads a cell the first deleted, and on a refusal
+/// neither crossing's value returns.
+#[test]
+fn two_intents_cannot_declare_one_thing() {
+    let mut by_two_signers = composed_tree(100);
+    let mut copy = by_two_signers.subintents[0].clone();
+    copy.signer = PrincipalAddr::new([0x21; 31]);
+    by_two_signers.subintents.push(copy);
+    assert_eq!(
+        admit_composed(&by_two_signers),
+        Err(AdmissionError::DuplicateSubintent { index: 1 })
+    );
+
+    let mut as_the_root = composed_tree(100);
+    as_the_root.subintents[0].decl = as_the_root.root.clone();
+    assert_eq!(
+        admit_composed(&as_the_root),
+        Err(AdmissionError::DuplicateSubintent { index: 0 })
+    );
+}
+
 #[test]
 fn an_intent_cannot_declare_unbounded_sockets() {
     // The socket count bounds the binding vector, and both index by
