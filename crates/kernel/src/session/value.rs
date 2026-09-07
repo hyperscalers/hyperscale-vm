@@ -238,6 +238,15 @@ impl KernelSession {
     /// `frame` — the producing frame's handles — holds: its one value
     /// cell denominated in that resource. None where the frame holds no
     /// such cell or several, since a credit to either would be a guess.
+    ///
+    /// None too where the one cell is not this shard's to write. A
+    /// reclaim credits the origin on the shard the record sits on, so a
+    /// cell some other member of the core applies could never be
+    /// credited there — naming it would leave the reclaim trapping out
+    /// of scope rather than taking the crossing back. A core node may
+    /// hold such a cell: its scope is the core set, wider than what it
+    /// applies. Nameless, the crossing is nobody's to take back, which
+    /// is what it already is where the frame holds several.
     fn origin_among(&self, frame: &[u32], resource: ResourceAddr) -> Option<SubstateKey> {
         let mut cells = frame
             .iter()
@@ -252,7 +261,8 @@ impl KernelSession {
                 | Capability::RangeRead(_)
                 | Capability::RangeWrite(_)
                 | Capability::Instances { .. } => None,
-            });
+            })
+            .filter(|key| self.applies.covers(key.owner));
         match (cells.next(), cells.next()) {
             (Some(only), None) => Some(only),
             _ => None,
