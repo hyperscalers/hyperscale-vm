@@ -50,7 +50,7 @@ use crate::dsl::{
 };
 use crate::envelope::{Binding, Socket};
 use crate::graph::{EvidenceRef, GraphArg, GraphNode, ManifestGraph};
-use crate::hash::Hasher;
+use crate::hash::{Hash32, Hasher};
 use crate::instance::{InstanceMeta, ResolveError};
 use crate::invoke::{IssuanceGrant, NodeCall};
 use crate::manifest::{JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
@@ -88,17 +88,23 @@ pub struct Admitted {
     origins: Vec<NodeOrigin>,
 }
 
-/// Which signed intent a manifest node came from, and where in it.
+/// Which signed intent a manifest node came from, where in it, and what
+/// the signature its call resolved to says about the node's shape.
 ///
 /// The manifest's node order is the interleave the composition chose, so
 /// a node's index in it is a fact about the whole tree rather than about
-/// the party whose cells the node moves. This pair is the other reading:
-/// content one signer signed, and a position inside it that only that
-/// signer can move.
+/// the party whose cells the node moves. The intent and the local index
+/// are the other reading: content one signer signed, and a position
+/// inside it that only that signer can move. What consumes them is
+/// escrow-cell derivation: a cell keyed by the manifest index under a
+/// transaction hash would take both halves of its material from the
+/// composer, who need not be the cell's owner.
 ///
-/// What consumes it is escrow-cell derivation. A cell keyed by the
-/// manifest index under a transaction hash would take both halves of its
-/// material from the composer, who need not be the cell's owner.
+/// The three signature facts are what the star classifier reads. They
+/// are recorded here, where admission holds the resolved signature,
+/// rather than re-resolved by the classifier: every replica classifies
+/// locally, and a role derived from a chain view that has not yet seen
+/// the package would be a divergence waiting for the record to land.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodeOrigin {
     /// The signed intent this node belongs to.
@@ -113,6 +119,50 @@ pub struct NodeOrigin {
     /// the earlier of the two — and it is signed by the party whose
     /// cells it keys, where the transaction's is the composer's.
     pub expiry_ms: u64,
+    /// Whether the method's only movement is one reserve of its own
+    /// ([`MethodSignature::is_reservation_shaped`]).
+    pub reservation_shaped: bool,
+    /// Whether the method commits nothing at all
+    /// ([`MethodSignature::commits_nothing`]).
+    pub commits_nothing: bool,
+    /// Whether nothing about a call can refuse ahead of its body, edge
+    /// bounds aside ([`MethodSignature::is_unrefusable`]).
+    pub unrefusable: bool,
+}
+
+impl NodeOrigin {
+    /// The origin of a node at `local` in `intent`, calling `signature`.
+    #[must_use]
+    pub fn of(
+        intent: SubintentHash,
+        local: u32,
+        expiry_ms: u64,
+        signature: &MethodSignature,
+    ) -> Self {
+        Self {
+            intent,
+            local,
+            expiry_ms,
+            reservation_shaped: signature.is_reservation_shaped(),
+            commits_nothing: signature.commits_nothing(),
+            unrefusable: signature.is_unrefusable(),
+        }
+    }
+
+    /// The origin of a node in a manifest built by hand rather than
+    /// admitted: unsigned, and calling a method nothing is known about,
+    /// which the classifier reads as core — the safe direction.
+    #[must_use]
+    pub const fn unsigned(local: u32) -> Self {
+        Self {
+            intent: SubintentHash(Hash32([0; 32])),
+            local,
+            expiry_ms: 0,
+            reservation_shaped: false,
+            commits_nothing: false,
+            unrefusable: false,
+        }
+    }
 }
 
 impl Admitted {
@@ -305,14 +355,6 @@ pub(crate) fn admit_intents(
     check_bindings(intents)?;
 
     let (flat_of, order) = interleave(intents, total)?;
-    let origins: Vec<NodeOrigin> = order
-        .iter()
-        .map(|&(intent_index, local_index)| NodeOrigin {
-            intent: intents[intent_index].identity,
-            local: u32::try_from(local_index).unwrap_or(u32::MAX),
-            expiry_ms: intents[intent_index].expiry_ms,
-        })
-        .collect();
 
     let budget = EvalBudget::default();
     let mut admission = Admission {
@@ -331,6 +373,7 @@ pub(crate) fn admit_intents(
         frames: Vec::with_capacity(total),
         injected: Vec::with_capacity(total),
         calls: Vec::with_capacity(total),
+        origins: Vec::with_capacity(total),
         declaration: Declaration::default(),
         table_len: 0,
     };
@@ -343,6 +386,7 @@ pub(crate) fn admit_intents(
         frames,
         injected,
         calls,
+        origins,
         declaration,
         ..
     } = admission;
@@ -432,6 +476,9 @@ struct Admission<'a> {
     /// What the protocol put on each frame, beside it.
     injected: Vec<Vec<Injected>>,
     calls: Vec<NodeCall>,
+    /// Which signed intent each node came from, with what its signature
+    /// says of its shape.
+    origins: Vec<NodeOrigin>,
     /// The transaction's whole declaration, folded frame by frame.
     declaration: Declaration,
     /// Effects logged so far across every frame: the offset the next
@@ -488,6 +535,12 @@ impl Admission<'_> {
         let resolved = self.resolve_records(node)?;
         let signature = self.resolve_signature(&resolved, node, node_index)?;
         let meta = resolved.instance.as_ref();
+        self.origins.push(NodeOrigin::of(
+            intent.identity,
+            local,
+            intent.expiry_ms,
+            signature,
+        ));
 
         let (bound, inputs) = self.bind_args(intent_index, local, node, signature, node_index)?;
 

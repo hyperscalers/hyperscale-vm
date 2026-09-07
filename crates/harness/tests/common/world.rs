@@ -799,7 +799,7 @@ pub fn star_of(world: &Records, graph: &ManifestGraph) -> StarShape {
 /// [`StarShape::decomposes`] asks for.
 pub fn star_and_shape(world: &Records, graph: &ManifestGraph) -> (StarShape, Vec<LegShape>) {
     let admitted = admit_here(graph, composer(graph), world).expect("admits");
-    let legs = legs_of(&admitted, world).expect("the corpus resolves every target");
+    let legs = legs_of(&admitted);
     (star_at(&legs, &PrefixShardResolver { bits: 8 }), legs)
 }
 

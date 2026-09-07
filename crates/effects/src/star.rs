@@ -13,18 +13,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_types::{
-    Address, CallTarget, LegRole, LegShape, MAX_CROSSINGS_PER_TX, SubintentHash, ValueEdge,
-};
+use hyperscale_vm_types::{Address, LegRole, LegShape, MAX_CROSSINGS_PER_TX, ValueEdge};
 
 use crate::admission::{Admitted, NodeOrigin};
 use crate::claim::Claim;
-use crate::dsl::{Clause, ModeExpr};
-use crate::hash::Hash32;
 use crate::manifest::{Manifest, NodeInput};
-use crate::records::ChainRecords;
 use crate::route::ShardResolver;
-use crate::signature::{MethodSignature, Totality};
 use crate::types::{EdgeContent, ShardId};
 
 /// A classified transaction: the star its shape implies.
@@ -41,56 +35,36 @@ pub struct StarShape {
     pub crossing_edges: u32,
 }
 
-/// Classify an admitted transaction into the star its shape implies.
-///
-/// # Errors
-///
-/// [`UnresolvedTarget`], on [`classify_roles`]'s terms.
-pub fn classify(
-    admitted: &Admitted,
-    chain: &dyn ChainRecords,
-    shards: &dyn ShardResolver,
-) -> Result<StarShape, UnresolvedTarget> {
-    Ok(star_at(&legs_of(admitted, chain)?, shards))
-}
-
 /// Each admitted node's placement-free shape, in node order.
 ///
 /// Everything the envelope fixes about a node: its role, the edges it
 /// consumes, the claims it presents, the owners it declares, and the
 /// signed intent it came from. What placement adds is read off a
 /// resolver at [`star_at`], and nothing here.
-///
-/// # Errors
-///
-/// [`UnresolvedTarget`], on [`classify_roles`]'s terms.
-pub fn legs_of(
-    admitted: &Admitted,
-    chain: &dyn ChainRecords,
-) -> Result<Vec<LegShape>, UnresolvedTarget> {
+#[must_use]
+pub fn legs_of(admitted: &Admitted) -> Vec<LegShape> {
     let manifest = admitted.manifest();
-    let roles = classify_roles(manifest, chain, &admitted.answered_at_admission())?;
-    Ok(assemble(
+    let roles = classify_roles(
         manifest,
-        &roles,
         admitted.origins(),
-        admitted.declares(),
-    ))
+        &admitted.answered_at_admission(),
+    );
+    assemble(manifest, &roles, admitted.origins(), admitted.declares())
 }
 
 /// Classify every manifest node into the star, before placement.
 ///
 /// The leg tests are structural, and each is read off the manifest's own
-/// edges and the method's declaration rather than off what a method is
-/// named:
+/// edges and the facts admission recorded of the method's signature
+/// rather than off what a method is named:
 ///
 /// - An **inbound** leg takes no value edge, so nothing the core produces
 ///   can be among its arguments, and its only movement is one reserve.
 /// - An **attesting** leg takes no value edge and moves nothing at all.
 /// - An **outbound** leg's output feeds nothing and nothing about it can
-///   refuse: the verified [`Totality::Total`] mark over its body, no
-///   evidence asked of its caller, no declared bound on an edge it
-///   consumes, and a frame admission alone answers.
+///   refuse: the verified total mark over its body, no evidence asked of
+///   its caller, no declared bound on an edge it consumes, and a frame
+///   admission alone answers.
 ///
 /// Every other node is core, and so is every node the tests are unsure
 /// about. That direction is the safe one: a node wrongly called core
@@ -102,22 +76,8 @@ pub fn legs_of(
 /// alone, because what a frame ends up carrying is a fact about the
 /// injection. It stays fixed by the envelope forever all the same, since
 /// presented records are envelope content. A node whose `answered` entry
-/// is missing is core on the same rule.
-///
-/// # Errors
-///
-/// [`UnresolvedTarget`] where a node names a target this chain view
-/// cannot resolve. Defaulting it to core would be the safe direction for
-/// a resolvable-but-odd method and the wrong one here: it caches a role
-/// derived from not having seen the package, and every replica derives
-/// this locally, so two of them would disagree about the legs, the
-/// crossings and therefore the kernel cells. The transaction waits for
-/// the package instead.
-pub fn classify_roles(
-    manifest: &Manifest,
-    chain: &dyn ChainRecords,
-    answered: &[bool],
-) -> Result<Vec<LegRole>, UnresolvedTarget> {
+/// or whose origin is missing is core on the same rule.
+fn classify_roles(manifest: &Manifest, origins: &[NodeOrigin], answered: &[bool]) -> Vec<LegRole> {
     let consumed: BTreeSet<u32> = manifest
         .nodes
         .iter()
@@ -128,47 +88,35 @@ pub fn classify_roles(
         })
         .collect();
 
-    manifest
-        .nodes
-        .iter()
-        .enumerate()
+    (0u32..)
+        .zip(&manifest.nodes)
         .map(|(index, node)| {
-            let resolved = CallTarget::try_from(node.target)
-                .ok()
-                .and_then(|target| chain.instance(target))
-                .and_then(|meta| chain.package(meta.package));
-            let signature = resolved
-                .as_ref()
-                .and_then(|pkg| pkg.methods.get(&node.method));
-            let Some(signature) = signature else {
-                return Err(UnresolvedTarget { node: index });
-            };
+            let origin = origins
+                .get(index as usize)
+                .copied()
+                .unwrap_or_else(|| NodeOrigin::unsigned(index));
             let takes_no_edge = node
                 .inputs
                 .iter()
                 .all(|input| matches!(input, NodeInput::Literal(_)));
-            let unrefusable = answered.get(index).copied().unwrap_or(false)
-                && is_unrefusable(signature, &node.inputs);
-            let index = u32::try_from(index).unwrap_or(u32::MAX);
+            let unrefusable = origin.unrefusable
+                && answered.get(index as usize).copied().unwrap_or(false)
+                && node.inputs.iter().all(|input| match input {
+                    NodeInput::Edge { bounds, .. } => bounds.admit_anything(),
+                    NodeInput::Literal(_) => true,
+                });
 
-            Ok(if takes_no_edge && is_reservation_shaped(signature) {
+            if takes_no_edge && origin.reservation_shaped {
                 LegRole::Inbound
-            } else if takes_no_edge && commits_nothing(signature) {
+            } else if takes_no_edge && origin.commits_nothing {
                 LegRole::Attesting
             } else if !consumed.contains(&index) && unrefusable {
                 LegRole::Outbound
             } else {
                 LegRole::Core
-            })
+            }
         })
         .collect()
-}
-
-/// A node naming a target this chain view cannot resolve.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct UnresolvedTarget {
-    /// Which node names it.
-    pub node: usize,
 }
 
 /// Put one node's shape together from the pieces admission fixes.
@@ -184,19 +132,16 @@ fn assemble(
     declares: Vec<Vec<Address>>,
 ) -> Vec<LegShape> {
     let mut declares = declares.into_iter();
-    manifest
-        .nodes
-        .iter()
-        .enumerate()
+    (0u32..)
+        .zip(&manifest.nodes)
         .map(|(index, node)| {
-            let origin = origins.get(index).copied().unwrap_or_else(|| NodeOrigin {
-                intent: SubintentHash(Hash32([0; 32])),
-                local: u32::try_from(index).unwrap_or(u32::MAX),
-                expiry_ms: 0,
-            });
+            let origin = origins
+                .get(index as usize)
+                .copied()
+                .unwrap_or_else(|| NodeOrigin::unsigned(index));
             LegShape {
                 target: node.target,
-                role: roles.get(index).copied().unwrap_or_default(),
+                role: roles.get(index as usize).copied().unwrap_or_default(),
                 edges: node
                     .inputs
                     .iter()
@@ -475,95 +420,15 @@ impl StarShape {
     }
 }
 
-/// Whether a signature is the shape an inbound leg has to be: one
-/// conditional decrement of its own, and no other movement beside it.
-///
-/// The reserve is what makes the leg's refusal local — the amount is
-/// judged where the funds live, and a refusal there releases rather than
-/// aborting the core.
-///
-/// The reserve has to be the *whole* job, and that is what INV-LL-3 rests
-/// on. A method declaring one reserve, an exclusive write on a second
-/// cell and a delta on a third would commit those two before the core
-/// has a verdict, where a reclaim restores the escrowed amount and
-/// nothing else — nothing stores an inverse of the rest. Asking that
-/// every clause either moves nothing or is that one reserve says so
-/// directly for the clauses; an issuance or a destruction is a movement
-/// no clause names, and a second output is one an issuance produced, so
-/// the signature is held to none of either and to the one output the
-/// reserve yields. A reserve beside a mint would cross two values one
-/// origin cannot take both of back, and a reserve beside a burn commits
-/// the burn before any verdict.
-fn is_reservation_shaped(signature: &MethodSignature) -> bool {
-    if !signature.issues.is_empty()
-        || !signature.destroys.is_empty()
-        || signature.outputs.len() != 1
-    {
-        return false;
-    }
-    let mut reserves = 0;
-    for clause in signature.effects.iter().flat_map(Clause::effects) {
-        let Clause::Effect { mode, reach, .. } = clause else {
-            continue;
-        };
-        if mode.moves().is_none() {
-            continue;
-        }
-        if matches!(mode, ModeExpr::Reserve(_)) && reach.is_none() {
-            reserves += 1;
-        } else {
-            return false;
-        }
-    }
-    reserves == 1
-}
-
-/// Whether this method commits nothing at all.
-///
-/// Every declared access is a read, no value edge leaves, and nothing
-/// is issued or destroyed — which is what makes such a node free of the
-/// atomicity the core covers, and so free to run in its own shard's leg.
-/// `moves()` is `None` for exactly [`ModeExpr::Read`], so this reads as
-/// no writes rather than only as no value movement, which is what
-/// INV-LL-3 needs of it.
-fn commits_nothing(signature: &MethodSignature) -> bool {
-    signature.outputs.is_empty()
-        && signature.issues.is_empty()
-        && signature.destroys.is_empty()
-        && signature
-            .effects
-            .iter()
-            .flat_map(Clause::effects)
-            .all(|clause| match clause {
-                Clause::Effect { mode, .. } => mode.moves().is_none(),
-                _ => true,
-            })
-}
-
-/// Whether nothing about this call can refuse before its body runs.
-///
-/// [`Totality::Total`] covers the body and nothing else, and two
-/// refusals run ahead of it: the method's own authority gate, which
-/// nothing stops a total method carrying, and the signed bounds on the
-/// edges it consumes, which a producer returning too little fails
-/// whatever the callee would have done. A declared bound therefore costs
-/// the decomposition rather than the atomicity.
-fn is_unrefusable(signature: &MethodSignature, inputs: &[NodeInput]) -> bool {
-    signature.totality == Totality::Total
-        && !signature.requires_evidence()
-        && inputs.iter().all(|input| match input {
-            NodeInput::Edge { bounds, .. } => bounds.admit_anything(),
-            NodeInput::Literal(_) => true,
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
 
-    use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, Moves, ResourceAddr};
+    use hyperscale_vm_types::{CallTarget, MAX_CROSSINGS_PER_TX, Moves, ResourceAddr};
 
-    use super::{Address, LegRole, LegShape, StarShape, assemble, classify_roles, star_at};
+    use super::{
+        Address, LegRole, LegShape, NodeOrigin, StarShape, assemble, classify_roles, star_at,
+    };
     use crate::claim::Claim;
     use crate::dsl::{Clause, Expr, ModeExpr};
     use crate::hash::TestHasher;
@@ -590,12 +455,31 @@ mod tests {
         vec![true; manifest.nodes.len()]
     }
 
+    /// Each node's origin as admission records it: unsigned, and carrying
+    /// what the signature its call resolves to on `chain` says of it.
+    fn origins_of(manifest: &Manifest, chain: &Records) -> Vec<NodeOrigin> {
+        (0u32..)
+            .zip(&manifest.nodes)
+            .map(|(index, node)| {
+                let signature = CallTarget::try_from(node.target)
+                    .ok()
+                    .and_then(|target| chain.instance(target))
+                    .and_then(|meta| chain.package(meta.package))
+                    .and_then(|package| package.methods.get(&node.method).cloned())
+                    .expect("the fixture resolves every target");
+                let unsigned = NodeOrigin::unsigned(index);
+                NodeOrigin::of(unsigned.intent, index, unsigned.expiry_ms, &signature)
+            })
+            .collect()
+    }
+
     /// The legs a hand-built manifest implies under `answered`, each
     /// declaring exactly its own target — the ordinary case, so a test
     /// about anything else states its own declaration instead.
     fn legs_under(manifest: &Manifest, chain: &Records, answered: &[bool]) -> Vec<LegShape> {
-        let roles = classify_roles(manifest, chain, answered).expect("targets resolve");
-        assemble(manifest, &roles, &[], Vec::new())
+        let origins = origins_of(manifest, chain);
+        let roles = classify_roles(manifest, &origins, answered);
+        assemble(manifest, &roles, &origins, Vec::new())
     }
 
     /// The legs a hand-built manifest implies, every frame answered by
@@ -1085,7 +969,11 @@ mod tests {
     #[test]
     fn a_write_free_source_is_attesting() {
         let (chain, manifest) = signed_world();
-        let roles = classify_roles(&manifest, &chain, &answered(&manifest)).expect("resolve");
+        let roles = classify_roles(
+            &manifest,
+            &origins_of(&manifest, &chain),
+            &answered(&manifest),
+        );
         assert_eq!(roles[0], LegRole::Attesting);
         assert_eq!(roles[1], LegRole::Inbound);
         assert_eq!(roles[2], LegRole::Outbound);
@@ -1244,20 +1132,6 @@ mod tests {
         let reached = legs[core].target;
         legs[leg].declares.push(reached);
         assert!(!star.decomposes(&legs, &[], &resolver()));
-    }
-
-    /// A target this chain view cannot resolve fails derivation rather
-    /// than defaulting to core: every replica derives this locally, so a
-    /// role read off not having seen the package is a divergence waiting
-    /// for the package to arrive.
-    #[test]
-    fn an_unresolvable_target_fails_derivation() {
-        let (chain, mut manifest) = solo_world();
-        manifest.nodes[0].method = "absent".into();
-        assert_eq!(
-            classify_roles(&manifest, &chain, &answered(&manifest)),
-            Err(super::UnresolvedTarget { node: 0 }),
-        );
     }
 
     /// Everything on one shard means one participant, so the two

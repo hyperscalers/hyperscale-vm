@@ -118,7 +118,7 @@ pub use signature::{
     AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MAX_PROVEN_PER_SIGNATURE,
     MethodSignature, ParamType, Totality,
 };
-pub use star::{StarShape, UnresolvedTarget, classify, classify_roles, legs_of, star_at};
+pub use star::{StarShape, legs_of, star_at};
 pub use types::{
     EdgeContent, KERNEL_SLOT_BASE, MAX_IDS_PER_EDGE, MAX_VALUE_DEPTH, PACKAGE_SLOT_BASE, ShardId,
     SlotId, Value, bucketed_child_key, child_key, collection_id, component_address, config_hash,

@@ -4,7 +4,7 @@
 use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr};
 
-use crate::dsl::{Clause, Expr};
+use crate::dsl::{Clause, Expr, ModeExpr};
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
 use crate::rule::{RuleExpr, RuleLeaf, StoredRule};
 use crate::types::{MAX_IDS_PER_EDGE, Value};
@@ -455,6 +455,83 @@ impl MethodSignature {
     #[must_use]
     pub fn requires_evidence(&self) -> bool {
         self.required_rules().next().is_some()
+    }
+
+    /// Whether this signature is the shape an inbound leg has to be: one
+    /// conditional decrement of its own, and no other movement beside it.
+    ///
+    /// The reserve is what makes the leg's refusal local — the amount is
+    /// judged where the funds live, and a refusal there releases rather
+    /// than aborting the core.
+    ///
+    /// The reserve has to be the *whole* job. A method declaring one
+    /// reserve, an exclusive write on a second cell and a delta on a
+    /// third would commit those two before the core has a verdict,
+    /// where a reclaim restores the escrowed amount and nothing else —
+    /// nothing stores an inverse of the rest. Asking that every clause
+    /// either moves nothing or is that one reserve says so directly for
+    /// the clauses; an issuance or a destruction is a movement no clause
+    /// names, and a second output is one an issuance produced, so the
+    /// signature is held to none of either and to the one output the
+    /// reserve yields. A reserve beside a mint would cross two values one
+    /// origin cannot take both of back, and a reserve beside a burn
+    /// commits the burn before any verdict.
+    #[must_use]
+    pub fn is_reservation_shaped(&self) -> bool {
+        if !self.issues.is_empty() || !self.destroys.is_empty() || self.outputs.len() != 1 {
+            return false;
+        }
+        let mut reserves = 0;
+        for clause in self.effects.iter().flat_map(Clause::effects) {
+            let Clause::Effect { mode, reach, .. } = clause else {
+                continue;
+            };
+            if mode.moves().is_none() {
+                continue;
+            }
+            if matches!(mode, ModeExpr::Reserve(_)) && reach.is_none() {
+                reserves += 1;
+            } else {
+                return false;
+            }
+        }
+        reserves == 1
+    }
+
+    /// Whether this method commits nothing at all.
+    ///
+    /// Every declared access is a read, no value edge leaves, and nothing
+    /// is issued or destroyed — which is what makes such a node free of
+    /// the atomicity a transaction's core covers, and so free to run in
+    /// its own shard's leg. `moves()` is `None` for exactly
+    /// [`ModeExpr::Read`], so this reads as no writes rather than only as
+    /// no value movement.
+    #[must_use]
+    pub fn commits_nothing(&self) -> bool {
+        self.outputs.is_empty()
+            && self.issues.is_empty()
+            && self.destroys.is_empty()
+            && self
+                .effects
+                .iter()
+                .flat_map(Clause::effects)
+                .all(|clause| match clause {
+                    Clause::Effect { mode, .. } => mode.moves().is_none(),
+                    _ => true,
+                })
+    }
+
+    /// Whether nothing about a call to this method can refuse before its
+    /// body runs, edge bounds aside.
+    ///
+    /// [`Totality::Total`] covers the body and nothing else, and the
+    /// method's own authority gate runs ahead of it, which nothing stops
+    /// a total method carrying. The signed bounds on the edges a call
+    /// consumes are the other refusal ahead of the body, and they are the
+    /// manifest's rather than the signature's.
+    #[must_use]
+    pub fn is_unrefusable(&self) -> bool {
+        self.totality.is_total() && !self.requires_evidence()
     }
 
     /// Whether admission may inject an authority requirement onto this
