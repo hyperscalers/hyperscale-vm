@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, IssuanceGrant, Issued, NullifierCell, ResourceKind, SlotId,
+    Declaration, Hash32, Hasher, IssuanceGrant, Issued, Marked, Marker, ResourceKind, SlotId,
     SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
@@ -264,10 +264,10 @@ fn a_committed_nullifier_reads_the_same_on_both_shards() {
     assert_eq!(
         payer.receipts[&tx].delta.cells.get(&signed_nullifier()),
         Some(&Some(
-            NullifierCell {
-                subintent: SUBINTENT,
+            Marker {
                 tx,
                 expiry_ms: TEST_EXPIRY_MS,
+                marks: Marked::Spent(SUBINTENT),
             }
             .to_bytes()
         ))
@@ -278,10 +278,10 @@ fn a_committed_nullifier_reads_the_same_on_both_shards() {
     assert_eq!(
         payer_state.read(signed_nullifier()).unwrap(),
         Some(
-            NullifierCell {
-                subintent: SUBINTENT,
+            Marker {
                 tx,
                 expiry_ms: TEST_EXPIRY_MS,
+                marks: Marked::Spent(SUBINTENT),
             }
             .to_bytes()
         )

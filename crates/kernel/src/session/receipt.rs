@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{NullifierCell, SubintentRecord};
+use hyperscale_vm_effects::{Marked, Marker, SubintentRecord};
 use hyperscale_vm_types::{
     AbortReason, Address, Answer, CollectionId, EntryKey, Event, Movement, Outcome, ResourceAddr,
     SubstateKey,
@@ -486,10 +486,10 @@ impl KernelSession {
     /// owed. Self-describing, and keyed by what it says — the cell's own
     /// key re-derives from the subintent and the expiry.
     fn spend_record(&self, record: &SubintentRecord) -> Vec<u8> {
-        NullifierCell {
-            subintent: record.subintent,
+        Marker {
             tx: self.tx,
             expiry_ms: record.expiry_ms,
+            marks: Marked::Spent(record.subintent),
         }
         .to_bytes()
     }

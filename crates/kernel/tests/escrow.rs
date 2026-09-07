@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
-    CallArg, ClaimCell, CrossingCell, CrossingSite, Declaration, EdgeContent, Hash32, Hasher,
+    CallArg, CrossingCell, CrossingSite, Declaration, EdgeContent, Hash32, Hasher, Marker,
     NodeCall, PackageHash, SlotId, SubintentHash, TestHasher, child_key,
 };
 use hyperscale_vm_embed::GuestArg;
@@ -326,7 +326,7 @@ fn the_two_halves_of_one_crossing_reconcile() {
     );
     assert_eq!(taken.escrow.claimed(RESOURCE), sent.escrow.issued(RESOURCE));
 
-    let claim: ClaimCell = from_slice(
+    let claim: Marker = from_slice(
         taken.delta.cells[&claim_site().key()]
             .as_deref()
             .expect("the claim committed"),
@@ -889,7 +889,7 @@ fn a_reclaim_restores_the_producing_vault_exactly() {
         reclaimed.store.cell(record_site().key()).is_none(),
         "the record goes with the value it held",
     );
-    let claim: ClaimCell = from_slice(
+    let claim: Marker = from_slice(
         reclaimed
             .store
             .cell(reclaim_site().key())

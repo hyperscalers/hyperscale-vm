@@ -6,7 +6,7 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    AdmittedTree, Constraint, EnvelopeTree, Hasher, IntentHeader, NullifierCell, PackageHash,
+    AdmittedTree, Constraint, EnvelopeTree, Hasher, IntentHeader, Marked, Marker, PackageHash,
     PrefixShardResolver, Records, TestHasher, admit_tree, route_tree,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
@@ -154,10 +154,10 @@ fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     // The spent nullifier records the subintent it consumed, the
     // transaction that consumed it, and when the record stops being
     // owed — receipt and state alike.
-    let spend = NullifierCell {
-        subintent: record.subintent,
+    let spend = Marker {
         tx: entry.tx,
         expiry_ms: record.expiry_ms,
+        marks: Marked::Spent(record.subintent),
     }
     .to_bytes();
     assert_eq!(cells(&end).get(&nullifier), Some(&spend));
@@ -221,10 +221,10 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     assert_eq!(
         cells(&end).get(&record.nullifier),
         Some(
-            &NullifierCell {
-                subintent: record.subintent,
+            &Marker {
                 tx: winner.tx,
                 expiry_ms: record.expiry_ms,
+                marks: Marked::Spent(record.subintent),
             }
             .to_bytes()
         )

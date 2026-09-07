@@ -389,40 +389,6 @@ pub fn nullifier_key(
     )
 }
 
-/// What a nullifier cell holds: the subintent it spends, the transaction
-/// that spent it, and when the record stops being needed.
-///
-/// Self-describing, and keyed by what it says: `nullifier_key` re-derives
-/// this cell's own key from `subintent` and `expiry_ms` under the
-/// signer's prefix, so a reader holding nothing but the leaf can tell a
-/// nullifier from any other cell and can tell whether it is still owed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub struct NullifierCell {
-    /// The subintent this spend consumed.
-    pub subintent: SubintentHash,
-    /// The transaction that consumed it.
-    pub tx: TxHash,
-    /// When no chain can still be deciding a spend of the subintent:
-    /// its `validity_end_ms` plus [`ARTIFACT_GRACE_MS`].
-    pub expiry_ms: u64,
-}
-
-impl NullifierCell {
-    /// The cell's committed bytes.
-    ///
-    /// The type owns its encoding, so the kernel writing one and a
-    /// reader deciding what it is agree by construction rather than by
-    /// two call sites staying in step.
-    ///
-    /// # Panics
-    ///
-    /// Never: the value is three scalars.
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        to_vec(self).expect("a nullifier cell is three scalars")
-    }
-}
-
 /// The canonical committed-transaction key for `tx` under the committing
 /// shard's own owner: `shard_prefix | expiry_bucket | H(committed_tx_role,
 /// tx, expiry)`.
@@ -458,34 +424,6 @@ pub fn committed_tx_key(
         SweepBucket::of(expiry_ms),
         &[tx.0.0.to_vec(), expiry_ms.to_le_bytes().to_vec()],
     )
-}
-
-/// What a committed-transaction cell holds: the transaction, and when
-/// the record stops being needed.
-///
-/// Self-describing, and keyed by what it says: [`committed_tx_key`]
-/// re-derives this cell's own key from `tx` and `expiry_ms` under the
-/// shard's owner, so a reader holding nothing but the leaf can tell it
-/// from any other cell and can tell whether it is still owed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub struct CommittedTxCell {
-    /// The transaction the shard committed.
-    pub tx: TxHash,
-    /// When no chain can still be asking whether it was committed: its
-    /// `validity_end_ms` plus [`ARTIFACT_GRACE_MS`].
-    pub expiry_ms: u64,
-}
-
-impl CommittedTxCell {
-    /// The cell's committed bytes.
-    ///
-    /// # Panics
-    ///
-    /// Never: the value is two scalars.
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        to_vec(self).expect("a committed-transaction cell is two scalars")
-    }
 }
 
 /// The canonical escrow record key for one value edge, under the
@@ -582,7 +520,7 @@ fn escrow_key(
 /// What an escrow record cell holds: the value that left, the edge it
 /// left on, when it stops being claimable, and who issued it.
 ///
-/// Self-describing on [`NullifierCell`]'s terms: the value re-derives the
+/// Self-describing on [`Marker`]'s terms: the value re-derives the
 /// key, so a reader holding nothing but the leaf can tell what it is.
 /// Unlike the sweepable families the key carries no bucket, so re-deriving
 /// it is all a reader gets — a record is not sweepable and no expiry in
@@ -659,37 +597,87 @@ impl CrossingCell {
     }
 }
 
-/// What an escrow claim cell holds: which transaction took the crossing,
-/// the edge it took, and when the record of that stops being needed.
+/// What a marker cell holds: which transaction wrote it, when it stops
+/// being needed, and which family it belongs to.
 ///
-/// The transaction is what a reader wants of a claim — *who took it*.
-/// The edge is the key's already, and is named here again on
-/// [`CrossingCell`]'s terms: a sweep judges a cell off its value alone,
-/// re-deriving the key under the family's own role, so a claim that did
-/// not carry its edge would be one no sweep ever reaches.
+/// Three families share this one value, and each is self-describing on
+/// the same terms: the value re-derives the cell's own key under the
+/// family's role, so a reader holding nothing but the leaf can tell a
+/// marker from any other cell, tell which family it is, and tell whether
+/// it is still owed. The key leads with the expiry's bucket, so a shard's
+/// markers for one bucket are a contiguous range a sweep walks, and
+/// [`Marker::key`] is the one derivation every writer and every reader
+/// agree by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub struct ClaimCell {
-    /// The transaction that took the crossing.
+pub struct Marker {
+    /// The transaction that wrote it.
     pub tx: TxHash,
-    /// The signed intent the producing node belongs to.
-    pub intent: SubintentHash,
-    /// That node's index within its own intent.
-    pub local: u32,
-    /// Which of its outputs the edge carried.
-    pub output: u32,
-    /// When the claim stops being owed, on the record's own terms.
+    /// When the marker stops being owed: its intent's validity end plus
+    /// [`ARTIFACT_GRACE_MS`], on the family's own terms.
     pub expiry_ms: u64,
+    /// The fact the marker records.
+    pub marks: Marked,
 }
 
-impl ClaimCell {
+/// The fact a marker records, and so the family it belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub enum Marked {
+    /// A subintent was spent, under its signer's prefix
+    /// ([`nullifier_key`]): what makes a committed subintent once-only,
+    /// and what a signer writes to cancel one.
+    Spent(SubintentHash),
+    /// The shard committed the transaction, under the shard's own owner
+    /// ([`committed_tx_key`]): what a leg proves absent to show its core
+    /// never included the transaction.
+    Committed,
+    /// A crossing was taken, under the target of the node that took it
+    /// ([`escrow_claim_key`]): what makes exactly one of the consumer's
+    /// claim and the producer's reclaim happen.
+    Claimed {
+        /// The signed intent the producing node belongs to.
+        intent: SubintentHash,
+        /// That node's index within its own intent.
+        local: u32,
+        /// Which of its outputs the edge carried.
+        output: u32,
+    },
+}
+
+impl Marker {
+    /// The cell this marker sits at under `owner`: the family's own key,
+    /// re-derived from what the value says.
+    #[must_use]
+    pub fn key(&self, hasher: &dyn Hasher, owner: impl Into<Address>) -> SubstateKey {
+        match self.marks {
+            Marked::Spent(subintent) => nullifier_key(hasher, owner, subintent, self.expiry_ms),
+            Marked::Committed => committed_tx_key(hasher, owner, self.tx, self.expiry_ms),
+            Marked::Claimed {
+                intent,
+                local,
+                output,
+            } => escrow_claim_key(hasher, owner, intent, local, output, self.expiry_ms),
+        }
+    }
+
     /// The cell's committed bytes.
+    ///
+    /// The type owns its encoding, so the writer of one and a reader
+    /// deciding what it is agree by construction rather than by two
+    /// call sites staying in step.
     ///
     /// # Panics
     ///
     /// Never: the value is scalars.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        to_vec(self).expect("a claim cell is scalars")
+        to_vec(self).expect("a marker is scalars")
+    }
+
+    /// A marker read back off the leaf, or nothing for bytes that are
+    /// not one.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        from_slice(bytes).ok()
     }
 }
 
@@ -857,13 +845,15 @@ impl CrossingSite {
     /// The claim's value: which transaction took the crossing, on this
     /// edge.
     #[must_use]
-    pub const fn claimed_by(&self, tx: TxHash) -> ClaimCell {
-        ClaimCell {
+    pub const fn claimed_by(&self, tx: TxHash) -> Marker {
+        Marker {
             tx,
-            intent: self.intent,
-            local: self.local,
-            output: self.output,
             expiry_ms: self.expiry_ms,
+            marks: Marked::Claimed {
+                intent: self.intent,
+                local: self.local,
+                output: self.output,
+            },
         }
     }
 }

@@ -825,24 +825,35 @@ fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
     }
 }
 
-/// The crossing cell that says this execution's work is already done,
-/// if the store holds one.
+/// Every marker cell this execution creates, each with the outcome its
+/// presence beforehand means: the nullifier of each subintent it
+/// commits, the claims it takes, the records it writes.
 ///
-/// Claims before records, so two committed cells name one outcome
-/// whatever else is in the batch. The claim is the reading a caller
-/// wants first: it is the cell another party can write, where a record
-/// only ever says this leg already ran.
-fn crossing_committed(entry: &BatchTx, store: &OverlayStore) -> Option<Outcome> {
-    let committed =
-        |key: &SubstateKey| entry.applies.covers(key.owner) && store.cell(*key).is_some();
-    if let Some(key) = entry.claim_cells().into_iter().find(committed) {
-        return Some(Outcome::EscrowAlreadyClaimed { key });
-    }
+/// One list for the three families, in the order a caller wants them
+/// read: a spent nullifier says the subintent was already committed —
+/// by this group, an earlier batch, or the signer's own cancellation; a
+/// claim is the cell another party can write; a record only ever says
+/// this leg already ran. Whichever is found first names the outcome, so
+/// two committed cells name one outcome whatever else is in the batch.
+fn created_cells(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
     entry
-        .record_cells()
-        .into_iter()
-        .find(committed)
-        .map(|key| Outcome::EscrowAlreadyIssued { key })
+        .nullifiers
+        .iter()
+        .map(|record| record.nullifier)
+        .map(|key| (key, Outcome::NullifierSpent { key }))
+        .chain(
+            entry
+                .claim_cells()
+                .into_iter()
+                .map(|key| (key, Outcome::EscrowAlreadyClaimed { key })),
+        )
+        .chain(
+            entry
+                .record_cells()
+                .into_iter()
+                .map(|key| (key, Outcome::EscrowAlreadyIssued { key })),
+        )
+        .collect()
 }
 
 /// Execute one conflict group: members in canonical order, each threading
@@ -860,41 +871,29 @@ fn run_group<R: GuestRunner>(
     let mut store = OverlayStore::new(shared);
     for &index in group {
         let entry = batch[index];
-        // A spent nullifier aborts before execution: some earlier
-        // transaction — this group, an earlier batch, or the signer's
-        // own cancellation — already committed the subintent. Only the
-        // signer's shard holds the cell; elsewhere the owning shard's
-        // verdict arrives through the tick combine.
-        // Presence, not presence-and-unexpired. A nullifier past its
-        // expiry is unreachable rather than ignorable: the subintent it
-        // records stopped being admissible a full grace earlier, so no
-        // spend can arrive to read it. Reading it as absent would only
-        // matter where one did arrive — a chain whose committed clock
-        // lags far enough to admit a lapsed subintent — and there the
-        // cell is the last thing refusing the replay.
-        let spent = entry
-            .nullifiers
-            .iter()
-            .find(|record| {
-                entry.applies.covers(record.nullifier.owner)
-                    && store.cell(record.nullifier).is_some()
-            })
-            .map(|record| record.nullifier);
-        if let Some(key) = spent {
-            receipts.push((entry.tx, abort_receipt(Outcome::NullifierSpent { key }, 0)));
-            continue;
-        }
-        // A crossing cell already committed says this execution has
-        // already run, or that somebody else took what it came for.
+        // A marker already committed aborts before execution: a spent
+        // nullifier says some earlier transaction — this group, an
+        // earlier batch, or the signer's own cancellation — already
+        // committed the subintent; a crossing cell says this execution
+        // has already run, or that somebody else took what it came for.
         // Either way the node must not run: a second claim would credit
         // value nobody issued, and a second issue would debit the
         // producing vault twice and rewrite the record with the bytes
         // already in it.
         //
-        // Filtered by what this shard applies like the nullifier's, and for its reason —
-        // only the shard holding the cell can read it, and elsewhere the
+        // Only the shard holding the cell can read it; elsewhere the
         // owning shard's verdict arrives through the tick combine.
-        if let Some(outcome) = crossing_committed(entry, &store) {
+        // Presence, not presence-and-unexpired. A marker past its
+        // expiry is unreachable rather than ignorable: the subintent a
+        // nullifier records stopped being admissible a full grace
+        // earlier, so no spend can arrive to read it. Reading it as
+        // absent would only matter where one did arrive — a chain whose
+        // committed clock lags far enough to admit a lapsed subintent —
+        // and there the cell is the last thing refusing the replay.
+        let marked = created_cells(entry)
+            .into_iter()
+            .find(|(key, _)| entry.applies.covers(key.owner) && store.cell(*key).is_some());
+        if let Some((_, outcome)) = marked {
             receipts.push((entry.tx, abort_receipt(outcome, 0)));
             continue;
         }
@@ -1017,22 +1016,19 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
             return Err(BatchError::InconsistentDeclaration { tx: entry.tx });
         }
 
-        for record in &entry.nullifiers {
-            if !declares_exclusively(entry, record.nullifier) {
-                return Err(BatchError::UndeclaredNullifier {
-                    tx: entry.tx,
-                    key: record.nullifier,
-                });
-            }
-        }
-
-        // Both crossing families, on the same reading: a record and a
-        // claim are cells the execution writes, and the declaration is
+        // Every marker family on one reading: a nullifier, a record and
+        // a claim are cells the execution creates, and the declaration is
         // what puts every writer of one of them in one conflict group.
-        for key in entry.record_cells().into_iter().chain(entry.claim_cells()) {
-            if !declares_exclusively(entry, key) {
-                return Err(BatchError::UndeclaredCrossingCell { tx: entry.tx, key });
+        for (key, outcome) in created_cells(entry) {
+            if declares_exclusively(entry, key) {
+                continue;
             }
+            return Err(match outcome {
+                Outcome::NullifierSpent { .. } => {
+                    BatchError::UndeclaredNullifier { tx: entry.tx, key }
+                }
+                _ => BatchError::UndeclaredCrossingCell { tx: entry.tx, key },
+            });
         }
     }
     Ok(())

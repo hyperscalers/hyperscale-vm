@@ -6,10 +6,10 @@ use std::collections::BTreeSet;
 
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
-    AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, ClaimCell, Constraint,
-    CrossingCell, CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree, GraphArg,
-    GraphNode, Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader, MAX_SOCKETS,
-    MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, NULLIFIER_SLOT, NodeInput, PackageHash,
+    AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, Constraint, CrossingCell,
+    CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree, GraphArg, GraphNode,
+    Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH,
+    ManifestGraph, ManifestHash, Marker, NULLIFIER_SLOT, NodeInput, PackageHash,
     PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket, Subintent, SubintentHash,
     TestHasher, Value, admit, admit_tree, bucketed_child_key, child_key, escrow_claim_key,
     escrow_record_key, explain_admission_tree, nullifier_key, route_tree,
@@ -627,18 +627,11 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     // alone.
     let claim = CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS)
         .claimed_by(TxHash(Hash32([7; 32])));
-    let decoded: ClaimCell = from_slice(&claim.to_bytes()).expect("a claim cell decodes");
+    let decoded = Marker::from_bytes(&claim.to_bytes()).expect("a claim cell decodes");
     assert_eq!(decoded, claim);
     assert_eq!(decoded.tx, TxHash(Hash32([7; 32])));
     assert_eq!(
-        escrow_claim_key(
-            &TestHasher,
-            BOB,
-            decoded.intent,
-            decoded.local,
-            decoded.output,
-            decoded.expiry_ms,
-        ),
+        decoded.key(&TestHasher, BOB),
         CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS).key(),
     );
 }

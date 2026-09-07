@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, DeclaredAccess, Hash32, Hasher, IssuanceGrant, Issued, NullifierCell,
+    Declaration, DeclaredAccess, Hash32, Hasher, IssuanceGrant, Issued, Marked, Marker,
     ResourceKind, SlotId, SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
@@ -1128,10 +1128,10 @@ const fn nullifier_record(subintent: SubintentHash, nullifier: SubstateKey) -> S
 /// The value a spend of [`SUBINTENT`] writes: the subintent, the
 /// transaction that consumed it, and when the record stops being owed.
 fn spend_of(tx: TxHash) -> Vec<u8> {
-    NullifierCell {
-        subintent: SUBINTENT,
+    Marker {
         tx,
         expiry_ms: TEST_EXPIRY_MS,
+        marks: Marked::Spent(SUBINTENT),
     }
     .to_bytes()
 }
