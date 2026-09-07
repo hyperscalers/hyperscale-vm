@@ -32,9 +32,10 @@ pub struct Crossed {
 /// an issue is a gain there for the reason a burn is.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EscrowDelta {
-    issued: BTreeMap<ResourceAddr, u128>,
-    claimed: BTreeMap<ResourceAddr, u128>,
+    /// What each departing edge carried. The per-resource total is a
+    /// fold over this, never a second figure that could disagree.
     issued_at: BTreeMap<(u32, u32), Crossed>,
+    claimed: BTreeMap<ResourceAddr, u128>,
 }
 
 impl EscrowDelta {
@@ -49,10 +50,15 @@ impl EscrowDelta {
         self.issued_at.is_empty() && self.claimed.is_empty()
     }
 
-    /// What this execution escrowed out of a resource.
+    /// What this execution escrowed out of a resource: the fold over
+    /// every edge that carried it. Each issue checked the fold as it
+    /// entered, so the sum fits.
     #[must_use]
     pub fn issued(&self, resource: ResourceAddr) -> u128 {
-        self.issued.get(&resource).copied().unwrap_or(0)
+        self.issued_at
+            .values()
+            .filter(|crossed| crossed.resource == resource)
+            .fold(0u128, |total, crossed| total.saturating_add(crossed.amount))
     }
 
     /// What this execution claimed in of a resource.
@@ -70,7 +76,12 @@ impl EscrowDelta {
     ///
     /// [`SupplyDelta::resources`]: crate::SupplyDelta::resources
     pub fn resources(&self) -> impl Iterator<Item = ResourceAddr> + '_ {
-        let mut crossed: BTreeSet<ResourceAddr> = self.issued.keys().copied().collect();
+        let mut crossed: BTreeSet<ResourceAddr> = self
+            .issued_at
+            .values()
+            .filter(|crossed| crossed.amount > 0)
+            .map(|crossed| crossed.resource)
+            .collect();
         crossed.extend(self.claimed.keys().copied());
         crossed.into_iter()
     }
@@ -94,24 +105,21 @@ impl EscrowDelta {
     /// consumer waiting on a bundle whose target set the certificate
     /// never named.
     ///
+    /// One issue per edge and at most [`MAX_CROSSINGS_PER_TX`] of them
+    /// are the plan's to hold: a [`LegPlan`] files one action per edge
+    /// and refuses a plan past the cap, and the walk issues exactly what
+    /// the plan departs.
+    ///
     /// # Errors
     ///
-    /// [`ModeError::EscrowOverflow`] on overflow, or past
-    /// [`MAX_CROSSINGS_PER_TX`] — the bound is the kernel's own and not
-    /// only the classifier's, because a plan reaching here has crossed a
-    /// crate boundary since anything checked it — and
-    /// [`ModeError::EscrowRepeated`] for an edge already issued, since a
-    /// second record of one edge would add to the total what crossed
-    /// once.
+    /// [`ModeError::EscrowOverflow`] where the resource's total would
+    /// leave `u128`.
     pub fn issue(&mut self, node: u32, output: u32, crossed: Crossed) -> Result<(), ModeError> {
-        if self.issued_at.contains_key(&(node, output)) {
-            return Err(ModeError::EscrowRepeated);
-        }
-        if self.issued_at.len() >= MAX_CROSSINGS_PER_TX {
-            return Err(ModeError::EscrowOverflow);
-        }
+        self.issued(crossed.resource)
+            .checked_add(crossed.amount)
+            .ok_or(ModeError::EscrowOverflow)?;
         self.issued_at.insert((node, output), crossed);
-        Self::add(&mut self.issued, crossed.resource, crossed.amount)
+        Ok(())
     }
 
     /// Record what this execution took in.
@@ -157,33 +165,41 @@ pub struct Departure {
     pub consumer_claim: SubstateKey,
 }
 
-/// One crossing this execution takes back: the record the producing
-/// shard wrote, claimed under the producer's own target, and credited to
-/// the cell the value left.
+/// One record this execution settles rather than runs a node for: a
+/// crossing the producing shard issued, either taken back or retired.
 ///
-/// The resource, the amount and the cell to credit are all read off the
-/// record: the kernel named the origin when it issued the crossing, so a
-/// reclaim derives from the leaf alone and a replica holding the prefix
-/// and nothing else — a split child — composes it.
+/// The record is read and deleted either way. Taken back, its resource
+/// and amount are credited to the cell the value left and a claim is
+/// written under the producer's own target, on the machinery a consumer
+/// claims with; retired, nothing moves, since the consumer's committed
+/// claim moved the value where it ran. Every term is the leaf's, so a
+/// replica holding the prefix and nothing else — a split child —
+/// composes a settlement from the record alone.
+///
+/// Evidence for either is the parent's to establish. What the kernel
+/// checks is that the record is there and names the edge the claim site
+/// names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Reclaim {
+pub struct Disposal {
     /// The record cell to read.
     pub record: SubstateKey,
-    /// The claim cell the reclaim writes, under the producer's target.
+    /// The claim cell for the record's edge, under the producer's own
+    /// target: written by a reclaim, and the site that says which edge a
+    /// retirement holds the record to.
     pub claim: CrossingSite,
+    /// What the settlement does with the record.
+    pub disposition: Disposition,
 }
 
-/// One record this execution retires: a crossing it issued that the
-/// consumer's committed claim has settled, so the record — a balance
-/// held for that claim — has nothing left to hold.
-///
-/// Evidence of the claim is the parent's to establish; what the kernel
-/// checks is that the record is there and names the edge, and what it
-/// does is delete it. No value moves: the claim moved it where it ran.
+/// What a settlement does with a record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Retire {
-    /// The record cell, under the producing node's target.
-    pub record: CrossingSite,
+pub enum Disposition {
+    /// No consumer claimed: credit the value back and claim the edge
+    /// under the producer's own target.
+    Reclaim,
+    /// The consumer's claim committed: delete the record and move
+    /// nothing.
+    Retire,
 }
 
 /// What arrived for the edge a node this execution does not run would
@@ -203,15 +219,14 @@ pub enum NodeAction {
     #[default]
     Run,
     /// Another shard runs it. What stands in for it is whatever crossed
-    /// on its outputs — nothing at all in a plan that invokes no node
-    /// and only settles records.
+    /// on its outputs.
     Elsewhere,
 }
 
 /// What this execution does at one value edge.
 ///
-/// One action per edge, so the four are exclusive because there is one
-/// slot to hold them rather than because four collections agree.
+/// One action per edge, so the two are exclusive because there is one
+/// slot to hold them rather than because two collections agree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EdgeAction {
     /// The producer ran here and its consumer runs elsewhere: the value
@@ -219,12 +234,6 @@ pub enum EdgeAction {
     Departs(Departure),
     /// The producer runs elsewhere: what crossed to stand in for it.
     Arrives(Arrival),
-    /// A crossing this execution takes back, its consumer having never
-    /// claimed it.
-    Reclaims(Reclaim),
-    /// A record this execution retires, its consumer's claim having
-    /// committed.
-    Retires(Retire),
 }
 
 /// Which of a manifest's nodes this execution runs, and what happens at
@@ -294,40 +303,20 @@ impl LegPlan {
         }
     }
 
-    /// The crossings this execution takes back rather than runs, in
-    /// `(node, output)` order: the producing node claiming its own
-    /// record.
-    pub fn reclaimed(&self) -> impl Iterator<Item = ((u32, u32), Reclaim)> + '_ {
-        self.edges.iter().filter_map(|(edge, action)| match action {
-            EdgeAction::Reclaims(reclaim) => Some((*edge, *reclaim)),
-            _ => None,
-        })
-    }
-
-    /// The records this execution retires rather than runs, in
-    /// `(node, output)` order: crossings it issued whose claims committed.
-    pub fn retired(&self) -> impl Iterator<Item = ((u32, u32), Retire)> + '_ {
-        self.edges.iter().filter_map(|(edge, action)| match action {
-            EdgeAction::Retires(retire) => Some((*edge, *retire)),
-            _ => None,
-        })
-    }
-
     /// Every record cell this execution writes, in edge order.
     pub fn records(&self) -> impl Iterator<Item = SubstateKey> + '_ {
         self.edges.values().filter_map(|action| match action {
             EdgeAction::Departs(departure) => Some(departure.site.key()),
-            _ => None,
+            EdgeAction::Arrives(_) => None,
         })
     }
 
     /// Every claim cell this execution writes, in edge order: the
-    /// arrivals it takes, and the crossings it takes back.
+    /// arrivals it takes.
     pub fn claims(&self) -> impl Iterator<Item = SubstateKey> + '_ {
         self.edges.values().filter_map(|action| match action {
             EdgeAction::Arrives(arrival) => Some(arrival.claim.key()),
-            EdgeAction::Reclaims(reclaim) => Some(reclaim.claim.key()),
-            _ => None,
+            EdgeAction::Departs(_) => None,
         })
     }
 
@@ -383,26 +372,6 @@ impl LegPlan {
             return Err(PlanFault::DepartsElsewhere { node, output });
         }
         self.act(node, output, EdgeAction::Departs(departure))
-    }
-
-    /// File one crossing this execution takes back.
-    ///
-    /// # Errors
-    ///
-    /// [`PlanFault`]: a node past the manifest, an edge already acted on,
-    /// or a plan past [`MAX_CROSSINGS_PER_TX`].
-    pub fn reclaims(&mut self, node: u32, output: u32, reclaim: Reclaim) -> Result<(), PlanFault> {
-        self.act(node, output, EdgeAction::Reclaims(reclaim))
-    }
-
-    /// File one record this execution retires.
-    ///
-    /// # Errors
-    ///
-    /// [`PlanFault`]: a node past the manifest, an edge already acted on,
-    /// or a plan past [`MAX_CROSSINGS_PER_TX`].
-    pub fn retires(&mut self, node: u32, output: u32, retire: Retire) -> Result<(), PlanFault> {
-        self.act(node, output, EdgeAction::Retires(retire))
     }
 
     /// The node's action. A node past the manifest runs, which is what
@@ -488,7 +457,7 @@ mod tests {
 
     use super::{
         Arrival, Crossed, CrossingSite, Departure, EscrowDelta, LegPlan, MAX_CROSSINGS_PER_TX,
-        ModeError, PlanFault, Reclaim,
+        ModeError, PlanFault,
     };
 
     fn resource(tag: u8) -> ResourceAddr {
@@ -557,31 +526,6 @@ mod tests {
         assert_eq!(escrow.resources().count(), 0, "a zero moves no resource");
     }
 
-    /// Past the cap the fold refuses rather than growing, because a plan
-    /// reaching the kernel crossed a crate boundary since anything
-    /// checked its width.
-    #[test]
-    fn the_crossing_cap_binds_the_fold() {
-        let mut escrow = EscrowDelta::default();
-        for edge in 0..MAX_CROSSINGS_PER_TX {
-            let node = u32::try_from(edge).expect("bounded");
-            escrow
-                .issue(node, 0, crossed(1, 1))
-                .expect("inside the cap");
-        }
-        let past = u32::try_from(MAX_CROSSINGS_PER_TX).expect("bounded");
-        assert_eq!(
-            escrow.issue(past, 0, crossed(1, 1)),
-            Err(ModeError::EscrowOverflow),
-        );
-        // An edge already named is refused rather than counted again.
-        assert_eq!(
-            escrow.issue(0, 0, crossed(1, 2)),
-            Err(ModeError::EscrowRepeated),
-        );
-        assert_eq!(escrow.issued(resource(1)), MAX_CROSSINGS_PER_TX as u128);
-    }
-
     /// Summing what left is the fold's own arithmetic, and a failed sum
     /// is a refusal rather than a saturation that would read as
     /// agreement.
@@ -641,14 +585,7 @@ mod tests {
         plan.skip(1).expect("inside the manifest");
         plan.arrives(1, 0, crossed(1, 5), cell(3)).expect("fits");
         assert_eq!(
-            plan.reclaims(
-                1,
-                0,
-                Reclaim {
-                    record: cell(3).key(),
-                    claim: cell(4),
-                },
-            ),
+            plan.arrives(1, 0, crossed(1, 6), cell(4)),
             Err(PlanFault::EdgeTwice { node: 1, output: 0 }),
         );
     }

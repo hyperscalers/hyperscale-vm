@@ -773,6 +773,21 @@ impl CrossingSite {
         )
     }
 
+    /// The claim cell for the edge `record` holds, under `owner`: the
+    /// producer's own target for a settlement composed from the leaf,
+    /// which holds no manifest to read the edge off.
+    #[must_use]
+    pub fn claim_on(hasher: &dyn Hasher, owner: impl Into<Address>, record: &CrossingCell) -> Self {
+        Self::claim(
+            hasher,
+            owner,
+            record.intent,
+            record.local,
+            record.output,
+            record.expiry_ms,
+        )
+    }
+
     /// The claim cell for that edge, under the target of whatever takes
     /// it.
     #[must_use]

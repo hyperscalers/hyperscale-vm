@@ -16,9 +16,9 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
-    Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, EnvInputs,
-    ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession, LegPlan,
-    Locality, ManifestWalk, MemoryStore, Receipt, Reclaim, Retire, Substates, decode_amount,
+    Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, Disposal,
+    Disposition, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
+    KernelSession, LegPlan, Locality, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount,
     execute_batch,
 };
 use hyperscale_vm_types::{
@@ -776,13 +776,13 @@ fn a_record_names_the_cell_its_value_left() {
         },
         crossing_cell(record_site()),
     ]);
-    ambiguous.calls = vec![{
+    let ambiguous = ambiguous.with_calls(vec![{
         let mut taking = call("take", 0, 1);
         taking.args.push(CallArg::Site {
             entries: vec![Some(0), Some(1), Some(2)],
         });
         taking
-    }];
+    }]);
     let mut store = MemoryStore::new();
     store.write(cell(PAYER), encode_amount(1_000).to_vec());
     store.write(cell(0x77), encode_amount(0).to_vec());
@@ -819,16 +819,6 @@ fn reclaim_site() -> CrossingSite {
 /// claims it under its own target, credits the cell the value left. No
 /// node runs.
 fn reclaiming(who: TxHash) -> BatchTx {
-    let mut legs = LegPlan::whole(1);
-    legs.reclaims(
-        0,
-        0,
-        Reclaim {
-            record: record_site().key(),
-            claim: reclaim_site(),
-        },
-    )
-    .unwrap();
     BatchTx::new(
         who,
         declared(&[
@@ -841,7 +831,11 @@ fn reclaiming(who: TxHash) -> BatchTx {
         ]),
         env(),
     )
-    .with_legs(legs)
+    .with_disposals(vec![Disposal {
+        record: record_site().key(),
+        claim: reclaim_site(),
+        disposition: Disposition::Reclaim,
+    }])
 }
 
 fn balance(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
@@ -945,16 +939,13 @@ fn a_second_reclaim_is_refused_and_moves_nothing() {
 /// The producing node retiring a record whose claim committed: reads
 /// the record, deletes it, moves nothing. No node runs.
 fn retiring(who: TxHash) -> BatchTx {
-    let mut legs = LegPlan::whole(1);
-    legs.retires(
-        0,
-        0,
-        Retire {
-            record: record_site(),
+    BatchTx::new(who, declared(&[crossing_cell(record_site())]), env()).with_disposals(vec![
+        Disposal {
+            record: record_site().key(),
+            claim: reclaim_site(),
+            disposition: Disposition::Retire,
         },
-    )
-    .unwrap();
-    BatchTx::new(who, declared(&[crossing_cell(record_site())]), env()).with_legs(legs)
+    ])
 }
 
 /// Issue, then retire: the record is gone, nothing moved, no fold term

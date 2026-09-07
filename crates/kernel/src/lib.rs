@@ -36,11 +36,11 @@ pub mod walk;
 pub mod work;
 
 pub use escrow::{
-    Arrival, Crossed, Departure, EdgeAction, EscrowDelta, LegPlan, NodeAction, PlanFault, Reclaim,
-    Retire,
+    Arrival, Crossed, Departure, Disposal, Disposition, EdgeAction, EscrowDelta, LegPlan,
+    NodeAction, PlanFault,
 };
 pub use executor::{
-    BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, RunResult, Unavailable,
+    BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, Job, RunResult, Unavailable,
     execute_batch,
 };
 pub use hyperscale_vm_embed::{GuestArg, Invoked, KernelHost};

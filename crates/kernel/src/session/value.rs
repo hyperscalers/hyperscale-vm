@@ -18,7 +18,7 @@ use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::{Crossed, Departure, Reclaim, Retire};
+use crate::escrow::{Crossed, Departure, Disposal, Disposition};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -259,72 +259,57 @@ impl KernelSession {
         }
     }
 
-    /// Take a crossing this execution issued back, from its record.
+    /// Settle one record this execution issued: take the crossing back,
+    /// or retire the record once its claim committed.
     ///
-    /// The producing node claiming its own record through the path a
-    /// consumer claims it: the claim is a loss and the credit a gain, so
-    /// the fold balances with no term of its own, and the claim cell
-    /// under the producer's own target is what refuses a second reclaim,
-    /// on the machinery that refuses a second claim. The resource, the
-    /// amount and the cell credited are all the record's. The record
-    /// goes with it: it is a balance held for a claim, and the value it
-    /// held is back where it left.
+    /// Taking it back is the producing node claiming its own record
+    /// through the path a consumer claims it: the claim is a loss and
+    /// the credit a gain, so the fold balances with no term of its own,
+    /// and the claim cell under the producer's own target is what
+    /// refuses a second reclaim, on the machinery that refuses a second
+    /// claim. The resource, the amount and the cell credited are all
+    /// the record's. Retiring moves nothing and enters no fold term: the
+    /// consumer's claim moved the value where it ran, and what is left
+    /// is a cell saying so.
+    ///
+    /// Either way the record goes: it is a balance held for a claim,
+    /// and the claim has happened or never will. It has to be there and
+    /// name the edge — one that is not was settled already, and a second
+    /// settlement is the batch's defect rather than a lost race.
     ///
     /// # Errors
     ///
     /// [`SessionTrap::EscrowRecordUnreadable`] for a record that is
-    /// absent, does not decode, names another edge, or names no origin;
-    /// [`SessionTrap::EscrowOriginUndeclared`] where the declaration
-    /// carries no movement handle on the cell the record says to credit;
-    /// and any [`SessionTrap`] the claim or the credit raises.
-    pub(crate) fn escrow_reclaim(&mut self, reclaim: &Reclaim) -> Result<Crossed, SessionTrap> {
+    /// absent, does not decode, names another edge, or — for a reclaim
+    /// — names no origin; [`SessionTrap::EscrowOriginUndeclared`] where
+    /// the declaration carries no movement handle on the cell the record
+    /// says to credit; and any [`SessionTrap`] the claim, the credit or
+    /// the store raises.
+    pub(crate) fn escrow_settle(&mut self, disposal: &Disposal) -> Result<(), SessionTrap> {
         let record: CrossingCell = self
             .store
-            .read(reclaim.record)?
+            .read(disposal.record)?
             .and_then(|bytes| CrossingCell::from_bytes(&bytes))
-            .filter(|record| reclaim.claim.names(record))
-            .ok_or(SessionTrap::EscrowRecordUnreadable(reclaim.record))?;
-        let origin = record
-            .origin
-            .ok_or(SessionTrap::EscrowRecordUnreadable(reclaim.record))?;
-        let site = self
-            .table
-            .iter()
-            .position(|held| matches!(held, Capability::Delta { key, .. } if *key == origin))
-            .and_then(|index| u32::try_from(index).ok())
-            .ok_or(SessionTrap::EscrowOriginUndeclared(origin))?;
-        let crossed = Crossed {
-            resource: record.resource,
-            amount: record.amount,
-        };
-        let funds = self.escrow_in(crossed, reclaim.claim)?;
-        self.cell_put(site, 0, funds)?;
-        self.store.remove(reclaim.record)?;
-        Ok(crossed)
-    }
-
-    /// Retire a record this execution issued, once its claim committed.
-    ///
-    /// The record is a balance held for the consumer's claim, and the
-    /// claim moved the value where it ran; what is left is a cell
-    /// saying so, and this deletes it. Nothing moves and no fold term
-    /// enters. The record has to be there and name the edge: one that
-    /// is not was retired or taken back already, and a second retire is
-    /// the batch's defect rather than a lost race.
-    ///
-    /// # Errors
-    ///
-    /// [`SessionTrap::EscrowRecordUnreadable`] for a record that is
-    /// absent, does not decode or names another edge, and any
-    /// [`SessionTrap`] the store raises.
-    pub(crate) fn escrow_retire(&mut self, retire: &Retire) -> Result<(), SessionTrap> {
-        let key = retire.record.key();
-        self.store
-            .read(key)?
-            .and_then(|bytes| CrossingCell::from_bytes(&bytes))
-            .filter(|record| retire.record.names(record))
-            .ok_or(SessionTrap::EscrowRecordUnreadable(key))?;
-        self.store.remove(key)?;
+            .filter(|record| disposal.claim.names(record))
+            .ok_or(SessionTrap::EscrowRecordUnreadable(disposal.record))?;
+        if disposal.disposition == Disposition::Reclaim {
+            let origin = record
+                .origin
+                .ok_or(SessionTrap::EscrowRecordUnreadable(disposal.record))?;
+            let site = self
+                .table
+                .iter()
+                .position(|held| matches!(held, Capability::Delta { key, .. } if *key == origin))
+                .and_then(|index| u32::try_from(index).ok())
+                .ok_or(SessionTrap::EscrowOriginUndeclared(origin))?;
+            let crossed = Crossed {
+                resource: record.resource,
+                amount: record.amount,
+            };
+            let funds = self.escrow_in(crossed, disposal.claim)?;
+            self.cell_put(site, 0, funds)?;
+        }
+        self.store.remove(disposal.record)?;
         Ok(())
     }
 

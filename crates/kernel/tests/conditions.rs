@@ -191,7 +191,7 @@ fn a_required_claim_is_judged_with_the_calls_own_evidence() {
 
     let judged = |evidence: Vec<Claim>| {
         let mut entry = BatchTx::new(tx(3), declaring(key, Vec::new()), env());
-        entry.calls = vec![call(target, evidence, requires.clone())];
+        entry = entry.with_calls(vec![call(target, evidence, requires.clone())]);
         run(&MemoryStore::new(), &[entry])
     };
 
@@ -220,7 +220,7 @@ fn a_stored_leaf_judges_what_is_stored_and_nothing_else() {
 
     let judged = |store: &MemoryStore, evidence: Vec<Claim>| {
         let mut entry = BatchTx::new(tx(4), declaring(key, Vec::new()), env());
-        entry.calls = vec![call(target, evidence, requires.clone())];
+        entry = entry.with_calls(vec![call(target, evidence, requires.clone())]);
         run(store, &[entry])
     };
     let unmet = Outcome::ConditionUnmet {
@@ -255,7 +255,7 @@ fn an_absent_component_table_denies_whatever_is_presented() {
     let component = Address::new([7; 31], AddressClass::Component);
     let key = cell_of(component);
     let mut entry = BatchTx::new(tx(5), declaring(key, Vec::new()), env());
-    entry.calls = vec![call(
+    entry = entry.with_calls(vec![call(
         component,
         vec![
             identity(1),
@@ -263,7 +263,7 @@ fn an_absent_component_table_denies_whatever_is_presented() {
             Claim::of_subject(ResourceAddr::new([3; 31])),
         ],
         vec![Rule::Require(JudgedLeaf::Stored { cell: key })],
-    )];
+    )]);
     assert_eq!(
         run(&MemoryStore::new(), &[entry]),
         Outcome::ConditionUnmet {
@@ -288,7 +288,7 @@ fn a_rule_mixes_claim_and_stored_leaves() {
     }];
     let judged = |evidence: Vec<Claim>| {
         let mut entry = BatchTx::new(tx(6), declaring(key, Vec::new()), env());
-        entry.calls = vec![call(target, evidence, requires.clone())];
+        entry = entry.with_calls(vec![call(target, evidence, requires.clone())]);
         run(&MemoryStore::new(), &[entry])
     };
 
@@ -386,7 +386,7 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
     let judged = |evidence: Vec<Claim>| {
         let store = Arc::new(Counting::over(securified.clone()));
         let mut entry = BatchTx::new(tx(7), declaring(key, Vec::new()), env());
-        entry.calls = vec![call(target, evidence, vec![widest.clone()])];
+        entry = entry.with_calls(vec![call(target, evidence, vec![widest.clone()])]);
         let outcome = execute_batch(
             store.clone(),
             &[entry],
@@ -448,7 +448,7 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
 
     let judged = |store: &MemoryStore, locality: &Locality, evidence: Vec<Claim>| {
         let mut entry = BatchTx::new(tx(8), declaring(key, conditions.clone()), env());
-        entry.calls = vec![call(owner, evidence, requires.clone())];
+        entry = entry.with_calls(vec![call(owner, evidence, requires.clone())]);
         run_at(store, &[entry], locality)
     };
 

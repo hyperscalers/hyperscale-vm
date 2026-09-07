@@ -22,7 +22,8 @@ use hyperscale_vm_types::{
     SubstateKey, UnmetCondition,
 };
 
-use crate::executor::{BatchTx, GuestRunner, RunResult, Unavailable};
+use crate::escrow::LegPlan;
+use crate::executor::{BatchTx, GuestRunner, Job, RunResult, Unavailable};
 use crate::session::{Held, KernelSession, SessionTrap};
 
 /// One export invocation, fully assembled.
@@ -397,13 +398,13 @@ fn edge_bounds_hold(
 fn claimed_outputs(
     node: u32,
     call: &NodeCall,
-    entry: &BatchTx,
+    legs: &LegPlan,
     mut session: KernelSession,
 ) -> Result<(KernelSession, Vec<Option<u32>>), NodeFailure> {
     let mut produced = vec![None; call.outputs.len()];
     for (slot, taken) in produced.iter_mut().enumerate() {
         let output = u32::try_from(slot).unwrap_or(u32::MAX);
-        let Some(arrival) = entry.legs.arrival(node, output) else {
+        let Some(arrival) = legs.arrival(node, output) else {
             continue;
         };
         match session.escrow_in(arrival.crossed, arrival.claim) {
@@ -430,7 +431,8 @@ fn claimed_outputs(
 /// from being both crossed and spent.
 fn departing(
     node: u32,
-    entry: &BatchTx,
+    calls: &[NodeCall],
+    legs: &LegPlan,
     produced: Vec<u32>,
     mut session: KernelSession,
 ) -> Result<(KernelSession, Vec<Option<u32>>), NodeFailure> {
@@ -438,8 +440,7 @@ fn departing(
     // The producing frame's handles, which is where the cell a crossing
     // left is looked for: one site per handle parameter, each covering
     // the table entries the declaration resolved for it.
-    let frame: Vec<u32> = entry
-        .calls
+    let frame: Vec<u32> = calls
         .get(usize::try_from(node).unwrap_or(usize::MAX))
         .map(|call| {
             call.args
@@ -454,7 +455,7 @@ fn departing(
         .unwrap_or_default();
     for (slot, rep) in produced.into_iter().enumerate() {
         let output = u32::try_from(slot).unwrap_or(u32::MAX);
-        let Some(departure) = entry.legs.departure(node, output) else {
+        let Some(departure) = legs.departure(node, output) else {
             kept.push(Some(rep));
             continue;
         };
@@ -588,53 +589,43 @@ fn satisfies(
 
 impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
     fn run(&self, entry: &BatchTx, mut session: KernelSession) -> Result<RunResult, Unavailable> {
-        let mut outputs: Vec<Vec<Option<u32>>> = Vec::with_capacity(entry.calls.len());
+        let (calls, legs) = match &entry.job {
+            // A settlement invokes no node — there is nothing to invoke
+            // — so it costs no fuel and cannot refuse for a guest
+            // reason; what it can refuse for is the record or the
+            // declaration beside it, and both are the batch's own
+            // defect.
+            Job::Records(disposals) => {
+                for disposal in disposals {
+                    if let Err(trap) = session.escrow_settle(disposal) {
+                        let outcome = match trap {
+                            SessionTrap::EscrowRecordUnreadable(_)
+                            | SessionTrap::EscrowOriginUndeclared(_) => Outcome::ProtocolError {
+                                reason: trap.into(),
+                            },
+                            other => Outcome::UserError {
+                                reason: other.into(),
+                            },
+                        };
+                        return Ok(RunResult::Aborted {
+                            session,
+                            outcome,
+                            fuel: 0,
+                        });
+                    }
+                }
+                return Ok(RunResult::Completed {
+                    session,
+                    answers: Vec::new(),
+                    fuel: 0,
+                });
+            }
+            Job::Manifest { calls, legs } => (calls, legs),
+        };
+        let mut outputs: Vec<Vec<Option<u32>>> = Vec::with_capacity(calls.len());
         let mut answers: Vec<Answer> = Vec::new();
         let mut fuel = 0u64;
-        // What this execution takes back rather than runs. No node is
-        // invoked for a reclaim — there is nothing to invoke — so it
-        // costs no fuel and cannot refuse for a guest reason; what it
-        // can refuse for is the record or the declaration beside it,
-        // and both are the batch's own defect.
-        for (_, reclaim) in entry.legs.reclaimed() {
-            if let Err(trap) = session.escrow_reclaim(&reclaim) {
-                let outcome = match trap {
-                    SessionTrap::EscrowRecordUnreadable(_)
-                    | SessionTrap::EscrowOriginUndeclared(_) => Outcome::ProtocolError {
-                        reason: trap.into(),
-                    },
-                    other => Outcome::UserError {
-                        reason: other.into(),
-                    },
-                };
-                return Ok(RunResult::Aborted {
-                    session,
-                    outcome,
-                    fuel,
-                });
-            }
-        }
-        // What this execution retires: records whose claims committed,
-        // on the same terms — no node, no fuel, and a refusal is the
-        // batch's own defect.
-        for (_, retire) in entry.legs.retired() {
-            if let Err(trap) = session.escrow_retire(&retire) {
-                let outcome = match trap {
-                    SessionTrap::EscrowRecordUnreadable(_) => Outcome::ProtocolError {
-                        reason: trap.into(),
-                    },
-                    other => Outcome::UserError {
-                        reason: other.into(),
-                    },
-                };
-                return Ok(RunResult::Aborted {
-                    session,
-                    outcome,
-                    fuel,
-                });
-            }
-        }
-        for (index, call) in entry.calls.iter().enumerate() {
+        for (index, call) in calls.iter().enumerate() {
             let node = u32::try_from(index).unwrap_or(u32::MAX);
             // One budget across the manifest: each node is metered
             // against what its predecessors left.
@@ -644,8 +635,8 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
             // reaches no gate, judges no signed bound and takes no
             // issuance grant — every one of those belongs to the shard
             // that ran it.
-            if !entry.legs.runs(node) {
-                match claimed_outputs(node, call, entry, session) {
+            if !legs.runs(node) {
+                match claimed_outputs(node, call, legs, session) {
                     Ok((returned, produced)) => {
                         session = returned;
                         outputs.push(produced);
@@ -659,7 +650,7 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                     session = returned;
                     session.leave_invocation();
                     fuel = fuel.saturating_add(consumed);
-                    match departing(node, entry, produced, session) {
+                    match departing(node, calls, legs, produced, session) {
                         Ok((returned, produced)) => {
                             session = returned;
                             outputs.push(produced);

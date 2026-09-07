@@ -13,7 +13,7 @@ use hyperscale_vm_effects::{
     SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, Capability, EnvInputs, ExecutionMode, ExecutionScope, KernelSession, LegPlan,
+    BatchTx, Capability, EnvInputs, ExecutionMode, ExecutionScope, Job, KernelSession, LegPlan,
     Locality, MemoryStore, RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
@@ -213,8 +213,10 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
     BatchTx {
         tx: TxHash(Hash32([id; 32])),
         declaration: moving(declared),
-        calls: Vec::new(),
-        legs: LegPlan::whole(0),
+        job: Job::Manifest {
+            calls: Vec::new(),
+            legs: LegPlan::whole(0),
+        },
         scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, signed_nullifier())],
         fee: None,

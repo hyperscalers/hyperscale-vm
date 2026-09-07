@@ -10,7 +10,7 @@ use hyperscale_vm_effects::{
     ResourceKind, SlotId, SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, ExecutionScope, GuestRunner,
+    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, ExecutionScope, GuestRunner, Job,
     KernelSession, LegPlan, Locality, MemoryStore, OverlayStore, RunResult, Unavailable,
     WorkingStore, decode_amount, execute_batch,
 };
@@ -340,8 +340,10 @@ fn nullifier_tx(id: u8) -> BatchTx {
         tx: tx(id),
         fee: None,
         declaration: Declaration::from_set(point(nullifier(), Mode::Write { moves: Moves::Both })),
-        calls: Vec::new(),
-        legs: LegPlan::whole(0),
+        job: Job::Manifest {
+            calls: Vec::new(),
+            legs: LegPlan::whole(0),
+        },
         scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
@@ -409,10 +411,12 @@ fn sharing_tx(id: u8) -> BatchTx {
     BatchTx {
         tx: tx(id),
         declaration: Declaration::from_set(set),
-        calls: Vec::new(),
+        job: Job::Manifest {
+            calls: Vec::new(),
+            legs: LegPlan::whole(0),
+        },
         nullifiers: Vec::new(),
         fee: None,
-        legs: LegPlan::whole(0),
         scope: ExecutionScope::whole(),
         env: env(),
         gas_limit: u64::MAX,
@@ -436,8 +440,10 @@ fn nullifier_and_shared_tx(id: u8) -> BatchTx {
     BatchTx {
         tx: tx(id),
         declaration: Declaration::from_set(set),
-        calls: Vec::new(),
-        legs: LegPlan::whole(0),
+        job: Job::Manifest {
+            calls: Vec::new(),
+            legs: LegPlan::whole(0),
+        },
         scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         fee: None,
@@ -585,8 +591,10 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
     let undeclared = BatchTx {
         tx: tx(0x01),
         declaration: Declaration::from_set(point(nullifier(), Mode::Read)),
-        calls: Vec::new(),
-        legs: LegPlan::whole(0),
+        job: Job::Manifest {
+            calls: Vec::new(),
+            legs: LegPlan::whole(0),
+        },
         scope: ExecutionScope::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         fee: None,
@@ -641,8 +649,10 @@ fn declaration_views_that_disagree_refuse_the_batch() {
                 .collect(),
             ..Declaration::default()
         },
-        calls: Vec::new(),
-        legs: LegPlan::whole(0),
+        job: Job::Manifest {
+            calls: Vec::new(),
+            legs: LegPlan::whole(0),
+        },
         scope: ExecutionScope::whole(),
         nullifiers: vec![],
         env: env(),

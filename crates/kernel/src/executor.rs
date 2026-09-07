@@ -39,7 +39,7 @@ use hyperscale_vm_types::{
     Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
-use crate::escrow::{EscrowDelta, LegPlan};
+use crate::escrow::{Departure, Disposal, Disposition, EscrowDelta, LegPlan};
 use crate::ledger::AmountLedger;
 use crate::locality::{ExecutionScope, Locality};
 use crate::overlay::OverlayStore;
@@ -76,14 +76,9 @@ pub struct BatchTx {
     /// read index for index and only ever come from one evaluation. The
     /// ordered view must fold to the set; [`execute_batch`] checks it.
     pub declaration: Declaration,
-    /// The transaction's lowered invocations, in manifest node order:
-    /// what [`crate::walk::ManifestWalk`] performs.
-    ///
-    /// Shard-invariant, exactly like the declaration and for the
-    /// same reason — every participant of a cross-shard transaction runs
-    /// the identical calls against the identical table, and locality
-    /// scopes what is applied rather than what is invoked.
-    pub calls: Vec<NodeCall>,
+    /// What this execution does: walk the transaction's manifest, or
+    /// settle records without invoking a node.
+    pub job: Job,
     /// The nullifier keys of every subintent the transaction commits.
     /// Each must also be declared as an exclusive write,
     /// which [`execute_batch`] enforces: the declaration is what puts
@@ -96,28 +91,14 @@ pub struct BatchTx {
     /// the shard holding that vault; `None` elsewhere, and where this
     /// shard already charged it.
     pub fee: Option<FeeBurn>,
-    /// Which of the manifest's nodes this execution runs, and the cells
-    /// the ones it does not run stand in for.
-    ///
-    /// Whole until a transaction decomposes, which is what every
-    /// execution ran before there was anything else to run — so the
-    /// whole-shape path is the default rather than a case. A plan
-    /// naming no node runs every node the entry has, which is what the
-    /// default is.
-    ///
-    /// Unlike the declaration and the calls beside it, this is **not**
-    /// shard-invariant: it is the one thing about a batch entry that
-    /// differs per participant, because it is exactly the statement of
-    /// which participant this is.
-    pub legs: LegPlan,
     /// The shards this execution spans: what it judges and holds before
     /// a body runs, and so what it settles after.
     ///
     /// Whole until a transaction decomposes, and then the other per
-    /// participant fact beside `legs`: `{self}` for a leg member, the
-    /// core set for a core member. Distinct from the batch's locality,
-    /// which says what this shard *applies* and coincides with the scope
-    /// only for a single-shard core.
+    /// participant fact beside the job's plan: `{self}` for a leg
+    /// member, the core set for a core member. Distinct from the batch's
+    /// locality, which says what this shard *applies* and coincides with
+    /// the scope only for a single-shard core.
     pub scope: ExecutionScope,
     /// The deterministic environment: the transaction clock, the epoch
     /// it falls in, and the seeds a matured seal opens against. Per
@@ -152,20 +133,42 @@ impl BatchTx {
         Self {
             tx,
             declaration: declaration.into(),
-            calls: Vec::new(),
+            job: Job::Manifest {
+                calls: Vec::new(),
+                legs: LegPlan::whole(0),
+            },
             nullifiers: Vec::new(),
             fee: None,
-            legs: LegPlan::whole(0),
             scope: ExecutionScope::whole(),
             env,
             gas_limit: u64::MAX,
         }
     }
 
-    /// Bind which of the manifest's nodes this execution runs.
+    /// Bind what this execution does.
+    #[must_use]
+    pub fn with_job(mut self, job: Job) -> Self {
+        self.job = job;
+        self
+    }
+
+    /// Bind which of the manifest's nodes this execution runs. An entry
+    /// settling records walks no manifest; binding legs makes it one.
     #[must_use]
     pub fn with_legs(mut self, legs: LegPlan) -> Self {
-        self.legs = legs;
+        let calls = match self.job {
+            Job::Manifest { calls, .. } => calls,
+            Job::Records(_) => Vec::new(),
+        };
+        self.job = Job::Manifest { calls, legs };
+        self
+    }
+
+    /// Bind the records this execution settles instead of walking a
+    /// manifest.
+    #[must_use]
+    pub fn with_disposals(mut self, disposals: Vec<Disposal>) -> Self {
+        self.job = Job::Records(disposals);
         self
     }
 
@@ -185,11 +188,50 @@ impl BatchTx {
         self
     }
 
-    /// Bind the invocations the manifest walk performs.
+    /// Bind the invocations the manifest walk performs. An entry
+    /// settling records walks no manifest; binding calls makes it one.
     #[must_use]
     pub fn with_calls(mut self, calls: Vec<NodeCall>) -> Self {
-        self.calls = calls;
+        let legs = match self.job {
+            Job::Manifest { legs, .. } => legs,
+            Job::Records(_) => LegPlan::whole(0),
+        };
+        self.job = Job::Manifest { calls, legs };
         self
+    }
+
+    /// The invocations this execution walks; none for a settlement.
+    #[must_use]
+    pub fn calls(&self) -> &[NodeCall] {
+        match &self.job {
+            Job::Manifest { calls, .. } => calls,
+            Job::Records(_) => &[],
+        }
+    }
+
+    /// Every record cell this execution creates: what its departing
+    /// edges write. A settlement creates none — it reads records and
+    /// deletes them.
+    #[must_use]
+    pub fn record_cells(&self) -> Vec<SubstateKey> {
+        match &self.job {
+            Job::Manifest { legs, .. } => legs.records().collect(),
+            Job::Records(_) => Vec::new(),
+        }
+    }
+
+    /// Every claim cell this execution creates: the arrivals it takes,
+    /// and the crossings a settlement takes back.
+    #[must_use]
+    pub fn claim_cells(&self) -> Vec<SubstateKey> {
+        match &self.job {
+            Job::Manifest { legs, .. } => legs.claims().collect(),
+            Job::Records(disposals) => disposals
+                .iter()
+                .filter(|disposal| disposal.disposition == Disposition::Reclaim)
+                .map(|disposal| disposal.claim.key())
+                .collect(),
+        }
     }
 
     /// Bind the subintents this transaction commits. Each key must also be
@@ -205,6 +247,57 @@ impl BatchTx {
     pub const fn with_fee(mut self, fee: Option<FeeBurn>) -> Self {
         self.fee = fee;
         self
+    }
+}
+
+/// What a batch entry does.
+///
+/// A manifest is walked: its lowered invocations run in node order, under
+/// a plan saying which of them this participant runs and what crosses at
+/// the edges between them. Records are settled: no node is invoked, and
+/// each record named is read and taken back or retired. A settlement
+/// names cells and not a manifest, which is what lets a shard holding
+/// the record and no body — a reshape successor — compose one.
+#[derive(Clone, Debug)]
+pub enum Job {
+    /// Walk the transaction's manifest.
+    Manifest {
+        /// The transaction's lowered invocations, in manifest node
+        /// order: what [`crate::walk::ManifestWalk`] performs.
+        ///
+        /// Shard-invariant, exactly like the declaration and for the
+        /// same reason — every participant of a cross-shard transaction
+        /// runs the identical calls against the identical table, and
+        /// locality scopes what is applied rather than what is invoked.
+        calls: Vec<NodeCall>,
+        /// Which of the manifest's nodes this execution runs, and the
+        /// cells the ones it does not run stand in for.
+        ///
+        /// Whole until a transaction decomposes, which is what every
+        /// execution ran before there was anything else to run — so the
+        /// whole-shape path is the default rather than a case. A plan
+        /// naming no node runs every node the entry has, which is what
+        /// the default is.
+        ///
+        /// Unlike the declaration and the calls beside it, this is
+        /// **not** shard-invariant: it is the one thing about a manifest
+        /// entry that differs per participant, because it is exactly the
+        /// statement of which participant this is.
+        legs: LegPlan,
+    },
+    /// Settle the records named, in order, invoking nothing.
+    Records(Vec<Disposal>),
+}
+
+impl Job {
+    /// The record cell an edge leaving a walked manifest writes; nothing
+    /// for a settlement, which issues nothing.
+    #[must_use]
+    pub fn departure(&self, node: u32, output: u32) -> Option<Departure> {
+        match self {
+            Self::Manifest { legs, .. } => legs.departure(node, output),
+            Self::Records(_) => None,
+        }
     }
 }
 
@@ -738,13 +831,13 @@ fn crossing_committed(
     locality: &Locality,
 ) -> Option<Outcome> {
     let committed = |key: &SubstateKey| locality.is_local(key.owner) && store.cell(*key).is_some();
-    if let Some(key) = entry.legs.claims().find(|key| committed(key)) {
+    if let Some(key) = entry.claim_cells().into_iter().find(committed) {
         return Some(Outcome::EscrowAlreadyClaimed { key });
     }
     entry
-        .legs
-        .records()
-        .find(|key| committed(key))
+        .record_cells()
+        .into_iter()
+        .find(committed)
         .map(|key| Outcome::EscrowAlreadyIssued { key })
 }
 
@@ -933,7 +1026,7 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
         // Both crossing families, on the same reading: a record and a
         // claim are cells the execution writes, and the declaration is
         // what puts every writer of one of them in one conflict group.
-        for key in entry.legs.records().chain(entry.legs.claims()) {
+        for key in entry.record_cells().into_iter().chain(entry.claim_cells()) {
             if !declares_exclusively(entry, key) {
                 return Err(BatchError::UndeclaredCrossingCell { tx: entry.tx, key });
             }

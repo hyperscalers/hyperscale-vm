@@ -726,7 +726,7 @@ impl Chain {
         // the code indexes is that node's own.
         let errors = match receipt.outcome {
             Outcome::Declined { node, .. } => entry
-                .calls
+                .calls()
                 .get(node as usize)
                 .and_then(|call| self.records.packages.get(call.package))
                 .map(|metadata| metadata.errors.clone())
@@ -747,7 +747,7 @@ impl Chain {
                 *node,
                 *code,
                 entry
-                    .calls
+                    .calls()
                     .get(*node as usize)
                     .map(|call| (call.export.as_str(), call.target)),
                 &errors,
@@ -757,7 +757,7 @@ impl Chain {
             Outcome::Infeasible { key, amount } => Some(explain_infeasible(
                 *key,
                 *amount,
-                &entry.calls,
+                entry.calls(),
                 signer,
                 &self.records,
             )),
