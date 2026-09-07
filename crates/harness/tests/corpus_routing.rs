@@ -2,7 +2,7 @@
 //! vectors pinning routing as consensus content, the star each pattern's shape implies, and
 //! the sweeps that hold across every guest.
 
-use hyperscale_vm_effects::{LegRole, ManifestGraph, PrefixShardResolver};
+use hyperscale_vm_effects::{LegRole, ManifestGraph};
 use hyperscale_vm_fixtures::{lottery, nf};
 use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_stdlib::account;
@@ -168,7 +168,7 @@ struct Shape {
     /// How many shards the core's nodes sit on.
     core: usize,
     /// Value edges landing on a shard other than their producer's.
-    crossing_edges: u32,
+    edges: usize,
     decomposes: bool,
 }
 
@@ -199,7 +199,7 @@ fn every_pattern_takes_the_star_its_shape_implies() {
             graph: transfer_graph(),
             roles: vec![LegRole::Core, LegRole::Inbound, LegRole::Outbound],
             core: 1,
-            crossing_edges: 1,
+            edges: 1,
             decomposes: true,
         },
         // The venue star: the sign-in and the withdrawal on the caller's
@@ -214,7 +214,7 @@ fn every_pattern_takes_the_star_its_shape_implies() {
                 LegRole::Outbound,
             ],
             core: 1,
-            crossing_edges: 2,
+            edges: 2,
             decomposes: true,
         },
         // The same star over a range rather than points — an interval's
@@ -232,7 +232,7 @@ fn every_pattern_takes_the_star_its_shape_implies() {
                 LegRole::Outbound,
             ],
             core: 1,
-            crossing_edges: 3,
+            edges: 3,
             decomposes: true,
         },
         // An account governing itself reaches no further than itself, so
@@ -242,29 +242,18 @@ fn every_pattern_takes_the_star_its_shape_implies() {
             graph: propose_graph(),
             roles: vec![LegRole::Core],
             core: 1,
-            crossing_edges: 0,
+            edges: 0,
             decomposes: false,
         },
     ];
 
     for shape in shapes {
-        let (star, legs) = star_and_shape(&world, &shape.graph);
+        let star = star_of(&world, &shape.graph);
         let name = shape.name;
         assert_eq!(star.roles, shape.roles, "{name}: star");
         assert_eq!(star.core.len(), shape.core, "{name}: core size");
-        assert_eq!(
-            star.crossing_edges, shape.crossing_edges,
-            "{name}: crossing edges",
-        );
-        assert_eq!(
-            star.decomposes(
-                &legs,
-                &route_owners(&shape.graph),
-                &PrefixShardResolver { bits: 8 }
-            ),
-            shape.decomposes,
-            "{name}: decomposes",
-        );
+        assert_eq!(star.edges.len(), shape.edges, "{name}: crossing edges");
+        assert_eq!(star.decomposes, shape.decomposes, "{name}: decomposes");
     }
 }
 
@@ -287,18 +276,14 @@ fn a_grant_declaring_deposit_bears_the_verdict() {
         let funds = account::withdraw(b, ALICE, share(), 100)?;
         account::deposit(b, BOB, funds)
     });
-    let (star, legs) = star_and_shape(&world, &restricted);
+    let star = star_of(&world, &restricted);
     assert_eq!(
         star.roles,
         vec![LegRole::Attesting, LegRole::Inbound, LegRole::Core],
         "the deposit is the only node that can still refuse",
     );
     assert_eq!(star.core.len(), 1, "and it is the whole core");
-    assert!(star.decomposes(
-        &legs,
-        &route_owners(&restricted),
-        &PrefixShardResolver { bits: 8 }
-    ));
+    assert!(star.decomposes);
 }
 
 /// A declared access reaching a party no node targets leaves that target
@@ -326,11 +311,7 @@ fn a_declaration_reaching_a_non_participant_does_not_decompose() {
             .any(|node| shard_of(node.target) == shard_of(ALICE)),
         "the reached holder has to target no node, or the verdict below proves nothing",
     );
-    assert!(!star.decomposes(
-        &legs,
-        &route_owners(&recall),
-        &PrefixShardResolver { bits: 8 }
-    ));
+    assert!(!star.decomposes);
 }
 
 /// Package metadata is content-addressed, so a resolved package cannot
@@ -387,12 +368,11 @@ fn a_named_instance_inside_a_core_is_not_what_refuses_it() {
         let minted = nf::mint(b, nf_issuer())?;
         account::deposit_nf(b, ALICE, minted)
     });
-    let (star, legs) = star_and_shape(&world, &seat);
-    let shards = PrefixShardResolver { bits: 8 };
+    let star = star_of(&world, &seat);
 
     assert!(
-        star.crossing_edges > 0,
-        "the fixture has to cross, or the verdict below proves nothing",
+        star.edges.is_empty(),
+        "nothing crosses inside a core: every core shard runs both ends",
     );
     assert!(
         star.roles.iter().all(|slot| *slot == LegRole::Core),
@@ -404,7 +384,7 @@ fn a_named_instance_inside_a_core_is_not_what_refuses_it() {
         2,
         "the core spans the issuer and the account"
     );
-    assert!(!star.decomposes(&legs, &route_owners(&seat), &shards));
+    assert!(!star.decomposes);
 
     // Which conjunct refused it, stated rather than assumed: with every
     // node in the core there is no leg off it, and the non-fungible

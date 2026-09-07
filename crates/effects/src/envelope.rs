@@ -29,7 +29,7 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, from_slice, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
-    Address, ESCROW_GRACE_MS, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves,
+    Address, ESCROW_GRACE_MS, Effect, EffectTarget, LegShape, MAX_MANIFEST_NODES, Mode, Moves,
     NULLIFIER_GRACE_MS, NetworkId, PrincipalAddr, ResourceAddr, SubintentHash, SubstateKey,
     SweepBucket, TxHash,
 };
@@ -737,6 +737,40 @@ impl CrossingSite {
             output,
             expiry_ms,
         }
+    }
+
+    /// The record cell of the edge `producer` leaves on `output`: under
+    /// its target, keyed by what its own signer signed.
+    #[must_use]
+    pub fn record_of(hasher: &dyn Hasher, producer: &LegShape, output: u32) -> Self {
+        Self::record(
+            hasher,
+            producer.target,
+            producer.intent,
+            producer.local,
+            output,
+            producer.expiry_ms,
+        )
+    }
+
+    /// The claim cell for the edge `producer` leaves on `output`, under
+    /// `owner`: the consuming node's target for a consumer's claim, the
+    /// producer's own for a reclaim's.
+    #[must_use]
+    pub fn claim_of(
+        hasher: &dyn Hasher,
+        owner: impl Into<Address>,
+        producer: &LegShape,
+        output: u32,
+    ) -> Self {
+        Self::claim(
+            hasher,
+            owner,
+            producer.intent,
+            producer.local,
+            output,
+            producer.expiry_ms,
+        )
     }
 
     /// The claim cell for that edge, under the target of whatever takes

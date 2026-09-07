@@ -8,7 +8,7 @@ use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Claim, EnvelopeTree, EvidenceRef, Hash32, Hasher, InstanceMeta,
     LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants,
-    Records, Routing, RuleBytes, ShardId, ShardResolver, SlotId, StarShape, StoredRule, TestHasher,
+    Records, Routing, RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule, TestHasher,
     Value, admit_presenting, admit_tree, child_key, collection_id, holdings_collection, legs_of,
     package_slot, route, route_tree, star_at,
 };
@@ -790,17 +790,23 @@ pub fn routing_fingerprint(routing: &Routing) -> String {
     })
 }
 
-/// The star the classifier reads off a graph's admitted form.
-pub fn star_of(world: &Records, graph: &ManifestGraph) -> StarShape {
+/// The star the classifier reads off a graph's admitted form, under the
+/// corpus placement and the parties its routing declares.
+pub fn star_of(world: &Records, graph: &ManifestGraph) -> Star {
     star_and_shape(world, graph).0
 }
 
-/// The star and the legs it was read off — everything
-/// [`StarShape::decomposes`] asks for.
-pub fn star_and_shape(world: &Records, graph: &ManifestGraph) -> (StarShape, Vec<LegShape>) {
+/// The star and the legs it was read off.
+pub fn star_and_shape(world: &Records, graph: &ManifestGraph) -> (Star, Vec<LegShape>) {
     let admitted = admit_here(graph, composer(graph), world).expect("admits");
     let legs = legs_of(&admitted);
-    (star_at(&legs, &PrefixShardResolver { bits: 8 }), legs)
+    let star = star_at(
+        &legs,
+        &route_owners(graph),
+        &PrefixShardResolver { bits: 8 },
+        &TestHasher,
+    );
+    (star, legs)
 }
 
 /// The parties `graph`'s routing declares beyond any node: its composer,
@@ -811,12 +817,7 @@ pub fn route_owners(graph: &ManifestGraph) -> Vec<Address> {
 
 /// Whether the corpus shape `graph` decomposes.
 pub fn decomposes(world: &Records, graph: &ManifestGraph) -> bool {
-    let (star, legs) = star_and_shape(world, graph);
-    star.decomposes(
-        &legs,
-        &route_owners(graph),
-        &PrefixShardResolver { bits: 8 },
-    )
+    star_of(world, graph).decomposes
 }
 
 pub fn run_both(
