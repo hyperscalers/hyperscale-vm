@@ -8,7 +8,7 @@
 
 use hyperscale_hbor::Hbor;
 
-use crate::address::{Address, SubstateKey};
+use crate::address::Address;
 use crate::envelope::SubintentHash;
 
 /// Where a manifest node sits in the star.
@@ -89,21 +89,4 @@ pub struct LegShape {
     /// intent's own window end plus the escrow grace — never the
     /// transaction's, which is the composer's to choose.
     pub expiry_ms: u64,
-}
-
-/// One value edge's record cell.
-///
-/// Derived for every value edge, not only the ones that turn out to
-/// cross: which cross is a placement fact read at an anchor, while the
-/// declaration is fixed when the envelope is composed. The cell the
-/// value leaves from is not here: the kernel names it on the record at
-/// the issue, so a reclaim reads it off the leaf alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Crossing {
-    /// The producing node.
-    pub node: u32,
-    /// Which of its outputs the edge carries.
-    pub output: u32,
-    /// The record cell, under the producing node's target.
-    pub record: SubstateKey,
 }
