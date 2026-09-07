@@ -179,7 +179,7 @@ pub struct IntentView<'a> {
     /// other than the cell's owner can grind.
     pub identity: SubintentHash,
     /// When what this intent's signature brought into being stops being
-    /// owed: the window its own signer signed plus the retention grace,
+    /// owed: the window its own signer signed plus the artifact grace,
     /// on [`intent_expiry_ms`](crate::intent_expiry_ms)'s terms. The
     /// other half of the material a node's cells are keyed by, and
     /// carried here for the reason the identity is.

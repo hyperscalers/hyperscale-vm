@@ -35,35 +35,25 @@ pub const MAX_TX_BYTES_LEN: usize = 1024 * 1024;
 /// on [`MAX_TX_BYTES_LEN`]'s terms.
 pub const MAX_MESSAGE_LEN: usize = 1024;
 
-/// How long a subintent's nullifier outlives the window its signer
-/// offered it for, in milliseconds.
+/// How long every transaction-derived artifact outlives its intent's
+/// signed window, in milliseconds.
 ///
-/// A subintent stops being admissible at its `validity_end_ms`, and the
-/// last transaction that could have bound it needs a further bounded
-/// stretch to terminate everywhere. Past the sum, no chain can still be
-/// deciding a spend of it, and the cell recording that spend is answering
-/// a question nobody can ask.
-///
-/// The figure is the protocol's retention horizon, which the workspace
-/// owns and asserts this against — a nullifier's life and every other
-/// transaction-derived artifact's are the same bound, and two spellings
-/// of it that could drift is one more than the protocol has.
-pub const NULLIFIER_GRACE_MS: u64 = 144_000;
-
-/// How long an escrow record or claim outlives the window its intent's
-/// signer offered it for, in milliseconds: the nullifier's grace plus
-/// one validity range.
-///
-/// A crossing's delivery is admissible to the delivery window's close,
-/// and one admitted at the last moment has claimed by the nullifier's
-/// grace or never will — which is the earliest instant the record's
-/// issuer can prove the crossing lapsed and reclaim it. The reclaim is
-/// then composed, admitted and committed like any other abandonment, in
-/// the room a validity range gives every abandonment; the record has to
-/// stand for that long past the lapse, or the proof would license a
-/// reclaim of a cell already swept. The workspace asserts this figure
-/// against the two constants it is the sum of.
-pub const ESCROW_GRACE_MS: u64 = NULLIFIER_GRACE_MS + 120_000;
+/// One grace for a nullifier, a committed-transaction cell, an escrow
+/// record and an escrow claim alike. A subintent stops being admissible at its `validity_end_ms`, and the
+/// last transaction that could have bound it needs a bounded stretch to
+/// terminate everywhere; a crossing's delivery is admissible to the
+/// delivery window's close, and one admitted at the last moment has
+/// claimed by then or never will — which is the earliest instant the
+/// record's issuer can prove the crossing lapsed and reclaim it. The
+/// reclaim is then composed, admitted and committed like any other
+/// abandonment, in the room a validity range gives every abandonment, so
+/// the cells have to stand for that long past the lapse, or the proof
+/// would license a reclaim of a cell already swept. That is the longest
+/// life any artifact needs, and every artifact gets it: one grace, so a
+/// reader holding a leaf reads its window back the same way whatever
+/// family it belongs to. The workspace asserts this figure against the
+/// constants it is the sum of.
+pub const ARTIFACT_GRACE_MS: u64 = 264_000;
 
 /// The bound on subintents one envelope may compose, and so on the
 /// signatures it carries for them.
