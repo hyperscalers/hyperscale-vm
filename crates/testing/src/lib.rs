@@ -64,8 +64,8 @@ use hyperscale_vm_effects::{
     collection_id, declaration_hash, explain_refusal, holdings_collection, issued_record, route,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, EnvInputs, ExecutionMode, Locality, ManifestWalk, MemoryStore, Substates,
-    decode_amount, execute_batch,
+    BatchTx, EnvInputs, ExecutionMode, ManifestWalk, MemoryStore, Substates, decode_amount,
+    execute_batch,
 };
 pub use hyperscale_vm_manifest_builder::TypedError;
 use hyperscale_vm_manifest_builder::{TypedBuilder, graph_records};
@@ -703,7 +703,6 @@ impl Chain {
                 &ManifestWalk { backend },
                 hash,
                 ExecutionMode::Serial,
-                &Locality::All,
             ),
             Engine::Native(backend) => execute_batch(
                 base,
@@ -711,7 +710,6 @@ impl Chain {
                 &ManifestWalk { backend },
                 hash,
                 ExecutionMode::Serial,
-                &Locality::All,
             ),
         }
         .expect("the batch is well formed");

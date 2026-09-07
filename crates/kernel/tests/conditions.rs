@@ -11,12 +11,21 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
-    KernelSession, Locality, ManifestWalk, MemoryStore, Substates, execute_batch,
+    KernelSession, ManifestWalk, MemoryStore, OwnerSet, Substates, execute_batch,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Outcome, Presence,
     ResourceAddr, SubstateKey, TxHash, UnmetCondition,
 };
+
+/// `batch` with every entry applying `applies`.
+fn applied(batch: &[BatchTx], applies: &OwnerSet) -> Vec<BatchTx> {
+    batch
+        .iter()
+        .cloned()
+        .map(|entry| entry.with_applies(applies.clone()))
+        .collect()
+}
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -59,25 +68,24 @@ fn declaring(key: SubstateKey, conditions: Vec<Rule<JudgedLeaf>>) -> Declaration
 }
 
 fn run(store: &MemoryStore, batch: &[BatchTx]) -> Outcome {
-    run_at(store, batch, &Locality::All)
+    run_at(store, batch, &OwnerSet::whole())
 }
 
-fn run_at(store: &MemoryStore, batch: &[BatchTx], locality: &Locality) -> Outcome {
+fn run_at(store: &MemoryStore, batch: &[BatchTx], locality: &OwnerSet) -> Outcome {
     let outcome = execute_batch(
         Arc::new(store.clone()),
-        batch,
+        &applied(batch, locality),
         &ManifestWalk { backend: &Inert },
         test_hash,
         ExecutionMode::Serial,
-        locality,
     )
     .unwrap();
     outcome.receipts[&batch[0].tx].outcome.clone()
 }
 
 /// A shard owning exactly the keys whose owner starts with `byte`.
-fn owned_by(byte: u8) -> Locality {
-    Locality::Owned(Arc::new(move |owner: Address| owner.to_bytes()[0] == byte))
+fn owned_by(byte: u8) -> OwnerSet {
+    OwnerSet::of(move |owner: Address| owner.to_bytes()[0] == byte)
 }
 
 /// A backend whose every invocation succeeds and produces nothing: the
@@ -393,7 +401,6 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
             &ManifestWalk { backend: &Inert },
             test_hash,
             ExecutionMode::Serial,
-            &Locality::All,
         )
         .unwrap();
         (
@@ -434,7 +441,7 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
     // The materializing shard owns nothing under this owner; the cell
     // reaches it as a provision.
     let elsewhere = owned_by(2);
-    assert!(!elsewhere.is_local(owner));
+    assert!(!elsewhere.covers(owner));
 
     let conditions = vec![Rule::Require(JudgedLeaf::Presence {
         target: EffectTarget::Point(key),
@@ -446,7 +453,7 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
     let stored = RuleBytes::try_from(&StoredRule::claim(identity(2))).unwrap();
     securified.write(key, stored.in_cell());
 
-    let judged = |store: &MemoryStore, locality: &Locality, evidence: Vec<Claim>| {
+    let judged = |store: &MemoryStore, locality: &OwnerSet, evidence: Vec<Claim>| {
         let mut entry = BatchTx::new(tx(8), declaring(key, conditions.clone()), env());
         entry = entry.with_calls(vec![call(owner, evidence, requires.clone())]);
         run_at(store, &[entry], locality)
@@ -454,7 +461,7 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
 
     // Both conditions met, both localities: the presence at
     // materialization and the stored rule at the call.
-    for locality in [&Locality::All, &elsewhere] {
+    for locality in [&OwnerSet::whole(), &elsewhere] {
         assert!(matches!(
             judged(&securified, locality, vec![identity(2)]),
             Outcome::Completed { .. }
@@ -463,7 +470,7 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
 
     // The presence, unmet on both — the shard that owns no part of the
     // cell refuses exactly where the owner does.
-    for locality in [&Locality::All, &elsewhere] {
+    for locality in [&OwnerSet::whole(), &elsewhere] {
         assert_eq!(
             judged(&MemoryStore::new(), locality, vec![identity(2)]),
             Outcome::ConditionUnmet {
@@ -477,7 +484,7 @@ fn a_condition_over_a_remote_cell_is_judged_where_the_call_runs() {
     }
 
     // And the stored rule, on the same terms.
-    for locality in [&Locality::All, &elsewhere] {
+    for locality in [&OwnerSet::whole(), &elsewhere] {
         assert_eq!(
             judged(&securified, locality, vec![identity(9)]),
             Outcome::ConditionUnmet {

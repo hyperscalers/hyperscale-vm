@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use hyperscale_vm_effects::{Declaration, Hash32, Hasher, SlotId, TestHasher, child_key};
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
-    MemoryStore, RunResult, WorkingStore, decode_amount, execute_batch,
+    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, MemoryStore,
+    RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement,
@@ -240,7 +240,6 @@ fn the_batch_semantics_are_exact() {
         &scripted,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
 
@@ -294,7 +293,6 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         &scripted,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
     let parallel = execute_batch(
@@ -303,7 +301,6 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         &scripted,
         test_hash,
         ExecutionMode::Parallel,
-        &Locality::All,
     )
     .unwrap();
     // Adversarial worker timing: later hashes run eagerly, earlier ones
@@ -321,7 +318,6 @@ fn serial_parallel_and_permuted_timing_agree_byte_for_byte() {
         &stalled,
         test_hash,
         ExecutionMode::Parallel,
-        &Locality::All,
     )
     .unwrap();
 
@@ -347,7 +343,6 @@ fn input_order_cannot_influence_any_receipt() {
         &scripted,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
 
@@ -364,7 +359,6 @@ fn input_order_cannot_influence_any_receipt() {
                 &scripted,
                 test_hash,
                 mode,
-                &Locality::All,
             )
             .unwrap();
             assert_eq!(baseline.receipts, outcome.receipts);
@@ -407,7 +401,6 @@ fn each_transaction_sees_its_own_clock() {
         &observe,
         test_hash,
         ExecutionMode::Parallel,
-        &Locality::All,
     )
     .unwrap();
 
@@ -461,7 +454,6 @@ fn each_transaction_sees_its_own_epoch() {
         &observe,
         test_hash,
         ExecutionMode::Parallel,
-        &Locality::All,
     )
     .unwrap();
 

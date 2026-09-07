@@ -61,7 +61,7 @@ pub use seal::DOMAIN_SEALED_DRAW;
 pub use trap::SessionTrap;
 
 use crate::escrow::EscrowDelta;
-use crate::locality::{ExecutionScope, Locality};
+use crate::locality::OwnerSet;
 #[cfg(any(test, feature = "testing"))]
 use crate::modes::DeltaOp;
 use crate::overlay::OverlayStore;
@@ -130,10 +130,11 @@ pub struct KernelSession {
     tx: TxHash,
     env: EnvInputs,
     hash_fn: fn(&[u8]) -> [u8; 32],
-    locality: Locality,
-    /// The shards this execution spans — what it judged before any body
-    /// ran, and so what it may settle after. See [`ExecutionScope`].
-    scope: ExecutionScope,
+    /// The owners whose keys this shard applies. See [`OwnerSet`].
+    applies: OwnerSet,
+    /// The owners this execution judges — what it judged before any body
+    /// ran, and so what it may settle after. See [`OwnerSet`].
+    judges: OwnerSet,
     /// The subintent cells committing spends, from the batch entry.
     ///
     /// Held here rather than written by the caller because spending is
@@ -228,10 +229,10 @@ pub struct KernelSession {
 }
 
 impl KernelSession {
-    /// Scope the session to the executing shard's keys; see [`Locality`].
+    /// Scope the session to the executing shard's keys; see [`OwnerSet`].
     #[must_use]
-    pub fn with_locality(mut self, locality: Locality) -> Self {
-        self.locality = locality;
+    pub fn with_applies(mut self, applies: OwnerSet) -> Self {
+        self.applies = applies;
         self
     }
 
@@ -336,7 +337,7 @@ impl KernelSession {
     /// this execution holds a handle to and may not exercise.
     fn acting(&self, site: u32, element: u32, attempted: Op) -> Result<Capability, SessionTrap> {
         let held = self.at(site, element)?;
-        if !self.scope.covers(held.owner()) {
+        if !self.judges.covers(held.owner()) {
             return Err(SessionTrap::OutsideScope {
                 site,
                 element,

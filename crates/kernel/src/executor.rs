@@ -41,7 +41,7 @@ use hyperscale_vm_types::{
 
 use crate::escrow::{Departure, Disposal, Disposition, EscrowDelta, LegPlan};
 use crate::ledger::AmountLedger;
-use crate::locality::{ExecutionScope, Locality};
+use crate::locality::OwnerSet;
 use crate::overlay::OverlayStore;
 use crate::session::{
     EnvInputs, FeeBurn, FinishError, KernelSession, MaterializeError, Receipt, StateDelta,
@@ -91,15 +91,19 @@ pub struct BatchTx {
     /// the shard holding that vault; `None` elsewhere, and where this
     /// shard already charged it.
     pub fee: Option<FeeBurn>,
-    /// The shards this execution spans: what it judges and holds before
-    /// a body runs, and so what it settles after.
+    /// The owners whose keys this shard applies: its own share of the
+    /// key space, or every owner for a batch that reaches no other
+    /// shard. Every participant of a cross-shard transaction runs the
+    /// same entry and applies a different part of the one receipt.
+    pub applies: OwnerSet,
+    /// The owners this execution judges: what it holds and answers
+    /// before a body runs, and so what it settles after.
     ///
     /// Whole until a transaction decomposes, and then the other per
     /// participant fact beside the job's plan: `{self}` for a leg
-    /// member, the core set for a core member. Distinct from the batch's
-    /// locality, which says what this shard *applies* and coincides with
-    /// the scope only for a single-shard core.
-    pub scope: ExecutionScope,
+    /// member, the core set for a core member. Coincides with `applies`
+    /// for everything but a member of a multi-shard core.
+    pub judges: OwnerSet,
     /// The deterministic environment: the transaction clock, the epoch
     /// it falls in, and the seeds a matured seal opens against. Per
     /// transaction, not per batch — every replica executing this
@@ -139,7 +143,8 @@ impl BatchTx {
             },
             nullifiers: Vec::new(),
             fee: None,
-            scope: ExecutionScope::whole(),
+            applies: OwnerSet::whole(),
+            judges: OwnerSet::whole(),
             env,
             gas_limit: u64::MAX,
         }
@@ -172,10 +177,17 @@ impl BatchTx {
         self
     }
 
-    /// Bind the shards this execution spans.
+    /// Bind the owners whose keys this shard applies.
     #[must_use]
-    pub fn with_scope(mut self, scope: ExecutionScope) -> Self {
-        self.scope = scope;
+    pub fn with_applies(mut self, applies: OwnerSet) -> Self {
+        self.applies = applies;
+        self
+    }
+
+    /// Bind the owners this execution judges.
+    #[must_use]
+    pub fn with_judges(mut self, judges: OwnerSet) -> Self {
+        self.judges = judges;
         self
     }
 
@@ -480,22 +492,17 @@ pub struct BatchOutcome {
 /// Running after `apply_receipts` is what makes the flip free: a completed
 /// transaction that lost its floor is already infeasible here, so it drops
 /// its fuel term without anything having to notice that it changed.
-fn attest_work(
-    batch: &[BatchTx],
-    receipts: &BTreeMap<TxHash, Receipt>,
-    locality: &Locality,
-) -> BTreeMap<TxHash, Work> {
-    let declared: BTreeMap<TxHash, &EffectSet> = batch
-        .iter()
-        .map(|entry| (entry.tx, &entry.declaration.set))
-        .collect();
+fn attest_work(batch: &[BatchTx], receipts: &BTreeMap<TxHash, Receipt>) -> BTreeMap<TxHash, Work> {
+    let entries: BTreeMap<TxHash, &BatchTx> = batch.iter().map(|entry| (entry.tx, entry)).collect();
     receipts
         .iter()
         .map(|(tx, receipt)| {
             // Every receipt came from a batch entry, so the lookup holds;
             // a declaration that vanished would be a kernel defect, and
             // pricing it at zero states that rather than guessing.
-            let footprint = declared.get(tx).map_or(0, |set| locality.footprint(set));
+            let footprint = entries
+                .get(tx)
+                .map_or(0, |entry| entry.applies.footprint(&entry.declaration.set));
             (
                 *tx,
                 Work::attest(
@@ -825,12 +832,9 @@ fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
 /// whatever else is in the batch. The claim is the reading a caller
 /// wants first: it is the cell another party can write, where a record
 /// only ever says this leg already ran.
-fn crossing_committed(
-    entry: &BatchTx,
-    store: &OverlayStore,
-    locality: &Locality,
-) -> Option<Outcome> {
-    let committed = |key: &SubstateKey| locality.is_local(key.owner) && store.cell(*key).is_some();
+fn crossing_committed(entry: &BatchTx, store: &OverlayStore) -> Option<Outcome> {
+    let committed =
+        |key: &SubstateKey| entry.applies.covers(key.owner) && store.cell(*key).is_some();
     if let Some(key) = entry.claim_cells().into_iter().find(committed) {
         return Some(Outcome::EscrowAlreadyClaimed { key });
     }
@@ -850,7 +854,6 @@ fn run_group<R: GuestRunner>(
     group: &[usize],
     runner: &R,
     hash_fn: fn(&[u8]) -> [u8; 32],
-    locality: &Locality,
 ) -> Result<Vec<(TxHash, Receipt)>, BatchError> {
     let mut receipts = Vec::with_capacity(group.len());
     let shared: Arc<dyn Baseline> = Arc::<OverlayStore>::clone(judged);
@@ -873,7 +876,8 @@ fn run_group<R: GuestRunner>(
             .nullifiers
             .iter()
             .find(|record| {
-                locality.is_local(record.nullifier.owner) && store.cell(record.nullifier).is_some()
+                entry.applies.covers(record.nullifier.owner)
+                    && store.cell(record.nullifier).is_some()
             })
             .map(|record| record.nullifier);
         if let Some(key) = spent {
@@ -887,10 +891,10 @@ fn run_group<R: GuestRunner>(
         // producing vault twice and rewrite the record with the bytes
         // already in it.
         //
-        // Locality-filtered like the nullifier's, and for its reason —
+        // Filtered by what this shard applies like the nullifier's, and for its reason —
         // only the shard holding the cell can read it, and elsewhere the
         // owning shard's verdict arrives through the tick combine.
-        if let Some(outcome) = crossing_committed(entry, &store, locality) {
+        if let Some(outcome) = crossing_committed(entry, &store) {
             receipts.push((entry.tx, abort_receipt(outcome, 0)));
             continue;
         }
@@ -901,14 +905,14 @@ fn run_group<R: GuestRunner>(
             entry.tx,
             entry.env.clone(),
             hash_fn,
-            &entry.scope,
+            &entry.judges,
         ) {
             Ok(session) => {
                 // The rollback clone must drop here: it keeps the threaded
                 // layer's Arc unshared, so finish merges it in place.
                 drop(before);
                 session
-                    .with_locality(locality.clone())
+                    .with_applies(entry.applies.clone())
                     .with_nullifiers(entry.nullifiers.clone())
                     .with_fee(entry.fee)
             }
@@ -962,14 +966,13 @@ fn run_group<R: GuestRunner>(
 fn screen_reserve_targets<'batch>(
     judged: &OverlayStore,
     ordered: Vec<&'batch BatchTx>,
-    locality: &Locality,
     receipts: &mut BTreeMap<TxHash, Receipt>,
 ) -> Vec<&'batch BatchTx> {
     let mut sound: Vec<&BatchTx> = Vec::with_capacity(ordered.len());
     for entry in ordered {
         let defect = declared_reservations(&entry.declaration.set)
             .into_iter()
-            .filter(|(key, _)| locality.is_local(key.owner))
+            .filter(|(key, _)| entry.applies.covers(key.owner))
             .find_map(|(key, _)| judged.check_reserve_target(key).err());
         if let Some(error) = defect {
             receipts.insert(
@@ -1082,7 +1085,6 @@ pub fn execute_batch<R: GuestRunner>(
     runner: &R,
     hash_fn: fn(&[u8]) -> [u8; 32],
     mode: ExecutionMode,
-    locality: &Locality,
 ) -> Result<BatchOutcome, BatchError> {
     screen_batch(batch)?;
     let mut ordered: Vec<&BatchTx> = batch.iter().collect();
@@ -1090,7 +1092,7 @@ pub fn execute_batch<R: GuestRunner>(
     let mut receipts: BTreeMap<TxHash, Receipt> = BTreeMap::new();
 
     let mut judged = OverlayStore::new(base);
-    let sound = screen_reserve_targets(&judged, ordered, locality, &mut receipts);
+    let sound = screen_reserve_targets(&judged, ordered, &mut receipts);
 
     // Judge every locally owned reservation in canonical order; hold the
     // feasible, abort the infeasible. A reservation inside the scope but
@@ -1103,10 +1105,10 @@ pub fn execute_batch<R: GuestRunner>(
     let mut requests = Vec::new();
     for entry in &sound {
         for (key, amount) in declared_reservations(&entry.declaration.set) {
-            if !entry.scope.covers(key.owner) {
+            if !entry.judges.covers(key.owner) {
                 continue;
             }
-            if locality.is_local(key.owner) {
+            if entry.applies.covers(key.owner) {
                 requests.push((entry.tx, key, amount));
             } else {
                 judged.hold_unjudged(key, entry.tx, amount);
@@ -1147,7 +1149,7 @@ pub fn execute_batch<R: GuestRunner>(
     let executed: Vec<Result<Vec<(TxHash, Receipt)>, BatchError>> = match mode {
         ExecutionMode::Serial => groups
             .iter()
-            .map(|group| run_group(&judged, &runnable, group, runner, hash_fn, locality))
+            .map(|group| run_group(&judged, &runnable, group, runner, hash_fn))
             .collect(),
         ExecutionMode::Parallel => thread::scope(|scope| {
             #[allow(clippy::needless_collect)] // spawn every worker before joining any
@@ -1156,9 +1158,7 @@ pub fn execute_batch<R: GuestRunner>(
                 .map(|group| {
                     let judged = &judged;
                     let runnable = &runnable;
-                    scope.spawn(move || {
-                        run_group(judged, runnable, group, runner, hash_fn, locality)
-                    })
+                    scope.spawn(move || run_group(judged, runnable, group, runner, hash_fn))
                 })
                 .collect();
             handles
@@ -1179,23 +1179,20 @@ pub fn execute_batch<R: GuestRunner>(
     }
 
     let mut store = Arc::try_unwrap(judged).expect("no group overlay outlives its group");
-    apply_receipts(
-        &mut store,
-        batch,
-        &groups,
-        &runnable,
-        &mut receipts,
-        locality,
-    )?;
+    apply_receipts(&mut store, batch, &groups, &runnable, &mut receipts)?;
     store.merge_active();
 
-    let work = attest_work(batch, &receipts, locality);
+    let work = attest_work(batch, &receipts);
     Ok(BatchOutcome {
         receipts,
         work,
         store,
     })
 }
+
+/// Every owner: what a receipt no entry stands behind would apply,
+/// which never happens, since every receipt came from an entry.
+static WHOLE: OwnerSet = OwnerSet::whole();
 
 /// Canonical-order application, one transaction at a time: each completed
 /// transaction applies into the active layer, which merges when it lands
@@ -1263,7 +1260,6 @@ fn apply_receipts(
     groups: &[Vec<usize>],
     runnable: &[&BatchTx],
     receipts: &mut BTreeMap<TxHash, Receipt>,
-    locality: &Locality,
 ) -> Result<(), BatchError> {
     let entries: BTreeMap<TxHash, &BatchTx> = batch.iter().map(|entry| (entry.tx, entry)).collect();
     let mut group_of: BTreeMap<TxHash, usize> = BTreeMap::new();
@@ -1304,7 +1300,8 @@ fn apply_receipts(
         let flip = if let Some(flipped) = observed {
             Some(Outcome::BaselineDiscarded { flipped })
         } else if completed {
-            apply_completed(store, receipt, tx, locality)?.map(|(key, amount)| {
+            let applies = entries.get(&tx).map_or(&WHOLE, |entry| &entry.applies);
+            apply_completed(store, receipt, tx, applies)?.map(|(key, amount)| {
                 store.discard_active();
                 Outcome::Infeasible { key, amount }
             })
@@ -1356,9 +1353,9 @@ fn apply_completed(
     store: &mut OverlayStore,
     receipt: &Receipt,
     tx: TxHash,
-    locality: &Locality,
+    applies: &OwnerSet,
 ) -> Result<Option<(SubstateKey, u128)>, BatchError> {
-    let owned = receipt.delta.owned(locality);
+    let owned = receipt.delta.owned(applies);
     for (key, change) in owned.cells() {
         match change {
             Some(value) => store.write(key, value.clone())?,

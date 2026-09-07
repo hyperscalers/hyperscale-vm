@@ -431,7 +431,7 @@ impl KernelSession {
             // A reservation outside the scope was never judged and never
             // held, so there is nothing here to settle or release — and
             // asking would read the absence as a missing hold.
-            if !self.scope.covers(key.owner) {
+            if !self.judges.covers(key.owner) {
                 continue;
             }
             let Some(resource) = denominations.cell(key) else {
@@ -444,7 +444,7 @@ impl KernelSession {
             };
             let settled = if taken == 0 {
                 self.store.release(key, self.tx).map(|_| None)
-            } else if self.locality.is_local(key.owner) {
+            } else if self.applies.covers(key.owner) {
                 self.store.reduce_hold(key, self.tx, taken);
                 self.store.settle(key, self.tx).map(Some)
             } else {
@@ -523,7 +523,7 @@ impl KernelSession {
             }
         }
         for (key, movement) in &movements {
-            if !self.locality.is_local(key.owner) {
+            if !self.applies.covers(key.owner) {
                 // The owning shard judges its own cells; here the
                 // movement is the outbound record.
                 continue;
@@ -555,9 +555,9 @@ impl KernelSession {
         // shard, never here: the receipt already carries it as the
         // outbound record, and folding it locally would fabricate a
         // balance for a cell this shard holds none of.
-        let locality = self.locality.clone();
+        let applies = self.applies.clone();
         self.store
-            .retain_pending_deltas(&|key: SubstateKey| locality.is_local(key.owner));
+            .retain_pending_deltas(&|key: SubstateKey| applies.covers(key.owner));
         if let Err(defect) = self.store.commit_deltas() {
             // Every remaining fold is on an owned cell the movement judge
             // just cleared, so a floor here — like anything else that is
@@ -583,7 +583,7 @@ impl KernelSession {
         let Some(fee) = self.fee.filter(|fee| fee.amount > 0) else {
             return Ok(Phase::Produced(movements));
         };
-        if !self.locality.is_local(fee.vault.owner) {
+        if !self.applies.covers(fee.vault.owner) {
             return Ok(Phase::Produced(movements));
         }
         if let Err(defect) = self.store.judge_movement(fee.vault, 0, fee.amount) {
@@ -711,7 +711,7 @@ impl KernelSession {
         // transaction ran, as the outbound effect record every other
         // operation reaches other shards through.
         for record in self.nullifiers.clone() {
-            if self.locality.is_local(record.nullifier.owner) {
+            if self.applies.covers(record.nullifier.owner) {
                 self.store
                     .write(record.nullifier, self.spend_record(&record))?;
             }
@@ -721,11 +721,11 @@ impl KernelSession {
         // crossing claimable, so once-only falls out of the layering
         // rather than needing a guard of its own.
         //
-        // Locality-filtered like the nullifier's, and here it is the
+        // Filtered by what this shard applies like the nullifier's, and here it is the
         // whole of what keeps a record under the producer's prefix from
         // being written by every participant that ran the node.
         for (key, value) in self.crossings.clone() {
-            if self.locality.is_local(key.owner) {
+            if self.applies.covers(key.owner) {
                 self.store.write(key, value)?;
             }
         }

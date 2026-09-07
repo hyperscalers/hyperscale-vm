@@ -13,13 +13,22 @@ use hyperscale_vm_effects::{
     Condition, Declaration, Hash32, Hasher, JudgedLeaf, Rule, SlotId, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    Baseline, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, ExecutionScope, KernelSession,
-    Locality, MemoryStore, OverlayStore, Receipt, RunResult, SessionTrap, execute_batch,
+    Baseline, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, KernelSession, MemoryStore,
+    OverlayStore, OwnerSet, Receipt, RunResult, SessionTrap, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome,
     Presence, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
+
+/// `batch` with every entry applying `applies`.
+fn applied(batch: &[BatchTx], applies: &OwnerSet) -> Vec<BatchTx> {
+    batch
+        .iter()
+        .cloned()
+        .map(|entry| entry.with_applies(applies.clone()))
+        .collect()
+}
 
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const HERE: u8 = 0xA1;
@@ -109,19 +118,18 @@ const fn idle(_entry: &BatchTx, session: KernelSession) -> RunResult {
     }
 }
 
-fn run_batch(store: &MemoryStore, entry: BatchTx, locality: &Locality) -> BatchOutcome {
+fn run_batch(store: &MemoryStore, entry: BatchTx, locality: &OwnerSet) -> BatchOutcome {
     execute_batch(
         Arc::new(store.clone()) as Arc<dyn Baseline>,
-        &[entry],
+        &applied(&[entry], locality),
         &idle,
         test_hash,
         ExecutionMode::Serial,
-        locality,
     )
     .unwrap()
 }
 
-fn run(store: &MemoryStore, entry: BatchTx, locality: &Locality) -> Receipt {
+fn run(store: &MemoryStore, entry: BatchTx, locality: &OwnerSet) -> Receipt {
     let tx = entry.tx;
     run_batch(store, entry, locality).receipts[&tx].clone()
 }
@@ -142,7 +150,7 @@ fn a_reservation_outside_the_scope_is_neither_judged_nor_settled() {
         )
     };
 
-    let whole = run(&store, entry(), &Locality::All);
+    let whole = run(&store, entry(), &OwnerSet::whole());
     assert_eq!(
         whole.outcome,
         Outcome::Infeasible {
@@ -154,8 +162,8 @@ fn a_reservation_outside_the_scope_is_neither_judged_nor_settled() {
 
     let batch = run_batch(
         &store,
-        entry().with_scope(ExecutionScope::spanning(only(&[HERE]))),
-        &Locality::Owned(Arc::new(only(&[HERE]))),
+        entry().with_judges(OwnerSet::of(only(&[HERE]))),
+        &OwnerSet::of(only(&[HERE])),
     );
     let leg = &batch.receipts[&tx(1)];
     assert!(matches!(leg.outcome, Outcome::Completed { .. }), "{leg:?}");
@@ -202,7 +210,7 @@ fn capability_reps_are_identical_whole_and_decomposed() {
         tx(1),
         env(),
         test_hash,
-        &ExecutionScope::spanning(only(&[HERE])),
+        &OwnerSet::of(only(&[HERE])),
     )
     .expect("the leg judges only its own");
 
@@ -246,7 +254,7 @@ fn a_handle_outside_the_scope_cannot_be_exercised() {
         tx(1),
         env(),
         test_hash,
-        &ExecutionScope::spanning(only(&[HERE])),
+        &OwnerSet::of(only(&[HERE])),
     )
     .expect("the leg judges only its own");
     let here = rep_of(&leg, cell(HERE));
@@ -291,7 +299,7 @@ fn a_condition_outside_the_scope_is_not_this_members_question() {
 
     assert!(
         matches!(
-            run(&store, remote(), &Locality::All).outcome,
+            run(&store, remote(), &OwnerSet::whole()).outcome,
             Outcome::ConditionUnmet { .. }
         ),
         "run whole, the absent leaf refuses it",
@@ -299,8 +307,8 @@ fn a_condition_outside_the_scope_is_not_this_members_question() {
     assert!(matches!(
         run(
             &store,
-            remote().with_scope(ExecutionScope::spanning(only(&[HERE]))),
-            &Locality::All,
+            remote().with_judges(OwnerSet::of(only(&[HERE]))),
+            &OwnerSet::whole(),
         )
         .outcome,
         Outcome::Completed { .. }
@@ -309,8 +317,8 @@ fn a_condition_outside_the_scope_is_not_this_members_question() {
     assert!(matches!(
         run(
             &store,
-            remote().with_scope(ExecutionScope::spanning(only(&[HERE, THERE]))),
-            &Locality::All,
+            remote().with_judges(OwnerSet::of(only(&[HERE, THERE]))),
+            &OwnerSet::whole(),
         )
         .outcome,
         Outcome::ConditionUnmet { .. }
@@ -341,14 +349,14 @@ fn a_condition_straddling_the_scope_refuses() {
 
     // Met on the local branch alone, run whole.
     assert!(matches!(
-        run(&store, entry(), &Locality::All).outcome,
+        run(&store, entry(), &OwnerSet::whole()).outcome,
         Outcome::Completed { .. }
     ));
     assert_eq!(
         run(
             &store,
-            entry().with_scope(ExecutionScope::spanning(only(&[HERE]))),
-            &Locality::All,
+            entry().with_judges(OwnerSet::of(only(&[HERE]))),
+            &OwnerSet::whole(),
         )
         .outcome,
         Outcome::ProtocolError {
@@ -368,16 +376,16 @@ fn a_two_shard_core_judges_both_shards_and_agrees() {
     let mut store = MemoryStore::new();
     store.write(vault(HERE), encode_amount(500).to_vec());
     store.write(vault(THERE), encode_amount(50).to_vec());
-    let core = || ExecutionScope::spanning(only(&[HERE, THERE]));
-    let here = Locality::Owned(Arc::new(only(&[HERE])));
-    let there = Locality::Owned(Arc::new(only(&[THERE])));
+    let core = || OwnerSet::of(only(&[HERE, THERE]));
+    let here = OwnerSet::of(only(&[HERE]));
+    let there = OwnerSet::of(only(&[THERE]));
     let entry = |amount: u128| {
         BatchTx::new(
             tx(5),
             declared(&[reserve(HERE, 100), reserve(THERE, amount)], vec![]),
             env(),
         )
-        .with_scope(core())
+        .with_judges(core())
     };
 
     let near = run(&store, entry(10), &here);
@@ -418,13 +426,13 @@ fn a_two_shard_core_judges_both_shards_and_agrees() {
         )
     };
     assert!(matches!(
-        run(&store, absent().with_scope(core()), &here).outcome,
+        run(&store, absent().with_judges(core()), &here).outcome,
         Outcome::ConditionUnmet { .. }
     ));
     assert!(matches!(
         run(
             &store,
-            absent().with_scope(ExecutionScope::spanning(only(&[HERE]))),
+            absent().with_judges(OwnerSet::of(only(&[HERE]))),
             &here,
         )
         .outcome,

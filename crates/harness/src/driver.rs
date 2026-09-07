@@ -17,7 +17,7 @@ use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{Hasher, PackageHash, SlotId, TestHasher, Value, child_key};
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, ExecutionMode, GuestBackend, GuestCall, InvokeResult, KernelSession,
-    Locality, ManifestWalk, MemoryStore, Receipt, decode_amount, execute_batch,
+    ManifestWalk, MemoryStore, Receipt, decode_amount, execute_batch,
 };
 use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance};
 use hyperscale_vm_testing::{Blessed, Dispatch, FUEL_CEILING, Native};
@@ -151,7 +151,6 @@ pub fn run_lanes(
         },
         test_hash,
         ExecutionMode::Parallel,
-        &Locality::All,
     )
     .unwrap();
     let ref_outcome = execute_batch(
@@ -162,7 +161,6 @@ pub fn run_lanes(
         },
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
     assert_eq!(
@@ -178,7 +176,6 @@ pub fn run_lanes(
             },
             test_hash,
             ExecutionMode::Serial,
-            &Locality::All,
         )
         .unwrap();
         assert_eq!(

@@ -10,9 +10,9 @@ use hyperscale_vm_effects::{
     ResourceKind, SlotId, SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, ExecutionScope, GuestRunner, Job,
-    KernelSession, LegPlan, Locality, MemoryStore, OverlayStore, RunResult, Unavailable,
-    WorkingStore, decode_amount, execute_batch,
+    BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, Job, KernelSession,
+    LegPlan, MemoryStore, OverlayStore, OwnerSet, RunResult, Unavailable, WorkingStore,
+    decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome,
@@ -168,7 +168,6 @@ fn a_debit_below_a_held_reservation_aborts_only_its_transaction() {
             &scripted(10),
             test_hash,
             mode,
-            &Locality::All,
         )
         .unwrap();
         assert!(matches!(
@@ -215,7 +214,6 @@ fn a_covered_debit_completes_beside_a_reservation() {
         &scripted(10),
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
     assert!(matches!(
@@ -260,7 +258,6 @@ fn racing_debits_lose_deterministically_in_canonical_order() {
                 &scripted(15),
                 test_hash,
                 mode,
-                &Locality::All,
             )
             .unwrap();
             assert!(matches!(
@@ -310,7 +307,6 @@ fn a_reserve_on_a_malformed_cell_aborts_only_its_transaction() {
         &scripted(0),
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
     let reason = |id: u8| match &outcome.receipts[&tx(id)].outcome {
@@ -344,7 +340,8 @@ fn nullifier_tx(id: u8) -> BatchTx {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },
-        scope: ExecutionScope::whole(),
+        applies: OwnerSet::whole(),
+        judges: OwnerSet::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limit: u64::MAX,
@@ -368,7 +365,6 @@ fn racing_nullifier_writers_commit_exactly_once() {
         &noop,
         test_hash,
         ExecutionMode::Parallel,
-        &Locality::All,
     )
     .unwrap();
     assert!(matches!(
@@ -390,7 +386,6 @@ fn racing_nullifier_writers_commit_exactly_once() {
         &noop,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
     assert_eq!(
@@ -417,7 +412,8 @@ fn sharing_tx(id: u8) -> BatchTx {
         },
         nullifiers: Vec::new(),
         fee: None,
-        scope: ExecutionScope::whole(),
+        applies: OwnerSet::whole(),
+        judges: OwnerSet::whole(),
         env: env(),
         gas_limit: u64::MAX,
     }
@@ -444,7 +440,8 @@ fn nullifier_and_shared_tx(id: u8) -> BatchTx {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },
-        scope: ExecutionScope::whole(),
+        applies: OwnerSet::whole(),
+        judges: OwnerSet::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         fee: None,
         env: env(),
@@ -487,7 +484,6 @@ fn an_abort_between_two_committers_does_not_unspend_the_subintent() {
         &scripted,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
 
@@ -539,7 +535,6 @@ fn a_drained_vault_leaves_no_cell() {
         &scripted(0),
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
 
@@ -569,7 +564,6 @@ fn a_drained_vault_leaves_no_cell() {
         &scripted(0),
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
     assert_eq!(amount_at(&refilled.store, cell(0xA)), 20);
@@ -595,7 +589,8 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },
-        scope: ExecutionScope::whole(),
+        applies: OwnerSet::whole(),
+        judges: OwnerSet::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         fee: None,
         env: env(),
@@ -607,7 +602,6 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         &noop,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     );
     assert_eq!(
         refused.err(),
@@ -653,7 +647,8 @@ fn declaration_views_that_disagree_refuse_the_batch() {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },
-        scope: ExecutionScope::whole(),
+        applies: OwnerSet::whole(),
+        judges: OwnerSet::whole(),
         nullifiers: vec![],
         env: env(),
         gas_limit: u64::MAX,
@@ -664,7 +659,6 @@ fn declaration_views_that_disagree_refuse_the_batch() {
         &noop,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     );
     assert_eq!(
         refused.err(),
@@ -700,7 +694,6 @@ fn an_aborted_transaction_spends_no_nullifier() {
         &scripted,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .unwrap();
     assert!(matches!(
@@ -764,7 +757,6 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
         &writer,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .expect("one bad cell must not fail the batch");
 
@@ -857,7 +849,6 @@ fn an_exclusive_debit_past_a_hold_loses_to_the_reserver() {
         &scripted,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .expect("a crossed floor is one transaction's loss, not the batch's");
 
@@ -941,7 +932,6 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
         &scripted,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .expect("an unbacked reservation must not fail the batch");
 
@@ -999,7 +989,6 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
         &overflowing,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .expect("one guest's arithmetic must not fail the batch");
 
@@ -1046,7 +1035,6 @@ fn an_unavailable_engine_refuses_the_batch() {
         &Downed,
         test_hash,
         ExecutionMode::Serial,
-        &Locality::All,
     )
     .expect_err("a machine-local failure is not an outcome");
     assert!(matches!(
@@ -1103,15 +1091,8 @@ fn a_transaction_that_lost_value_aborts_beside_one_that_did_not() {
     };
 
     for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
-        let outcome = execute_batch(
-            Arc::new(MemoryStore::new()),
-            &batch,
-            &run,
-            test_hash,
-            mode,
-            &Locality::All,
-        )
-        .expect("one transaction's loss is not the batch's failure");
+        let outcome = execute_batch(Arc::new(MemoryStore::new()), &batch, &run, test_hash, mode)
+            .expect("one transaction's loss is not the batch's failure");
 
         assert!(matches!(
             outcome.receipts[&tx(0x01)].outcome,

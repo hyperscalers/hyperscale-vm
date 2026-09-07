@@ -10,9 +10,9 @@
 //! two disagree on a structure whose whole value is that they agree.
 //!
 //! So the executor derives it alongside the receipts, from the same
-//! declaration and the same [`Locality`] the receipts were applied under.
+//! declaration and the same [`OwnerSet`] the receipts were applied under.
 //!
-//! [`Locality`]: crate::locality::Locality
+//! [`OwnerSet`]: crate::locality::OwnerSet
 
 use hyperscale_vm_types::work_units;
 

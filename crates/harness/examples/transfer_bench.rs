@@ -19,8 +19,8 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, GuestRunner,
-    InvokeResult, Invoked, KernelSession, Locality, ManifestWalk, MemoryStore, OverlayStore,
-    RunResult, execute_batch,
+    InvokeResult, Invoked, KernelSession, ManifestWalk, MemoryStore, OverlayStore, RunResult,
+    execute_batch,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::{
@@ -258,7 +258,6 @@ fn main() -> Result<()> {
             &walk,
             test_hash,
             ExecutionMode::Serial,
-            &Locality::All,
         )
         .expect("batch");
         let elapsed = start.elapsed();

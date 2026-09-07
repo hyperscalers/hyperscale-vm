@@ -8,8 +8,8 @@
 //! ends. Comparing cells alone would miss exactly the seams where ordering
 //! and locality decisions live.
 //!
-//! Locality is generated beside the batch rather than pinned at
-//! `Locality::All`. A shard owning an arbitrary subset of the key space
+//! The applied owner set is generated beside the batch rather than pinned at
+//! `OwnerSet::whole()`. A shard owning an arbitrary subset of the key space
 //! judges, folds, settles, and applies only its own keys, and every
 //! property here holds for it too. Two of them are about locality itself:
 //! a receipt carries its own transaction's movements and no predecessor's,
@@ -23,8 +23,8 @@ use hyperscale_vm_effects::{
     Declaration, Hash32, Hasher, IssuanceGrant, Issued, ResourceKind, SlotId, TestHasher, child_key,
 };
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
-    MemoryStore, RunResult, WorkingStore, decode_amount, execute_batch,
+    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, MemoryStore,
+    OwnerSet, RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
@@ -57,6 +57,15 @@ fn moving(set: EffectSet) -> Declaration {
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::{Strategy, any, prop_oneof, proptest};
 
+/// `batch` with every entry applying `applies`.
+fn applied(batch: &[BatchTx], applies: &OwnerSet) -> Vec<BatchTx> {
+    batch
+        .iter()
+        .cloned()
+        .map(|entry| entry.with_applies(applies.clone()))
+        .collect()
+}
+
 /// A small key space, so generated transactions actually collide.
 const CELLS: u8 = 5;
 /// The first byte of a cell's owner; `cell(index)` sits at `CELL_BASE + index`.
@@ -88,15 +97,15 @@ fn cell(index: u8) -> SubstateKey {
 
 /// A shard owning exactly the cells `owned` flags, and the order book when
 /// `book` is set.
-fn shard_owning(owned: &[bool], book: bool) -> Locality {
+fn shard_owning(owned: &[bool], book: bool) -> OwnerSet {
     let owned = owned.to_vec();
-    Locality::Owned(Arc::new(move |owner: Address| {
+    OwnerSet::of(move |owner: Address| {
         if owner == BOOK {
             return book;
         }
         let index = owner.to_bytes()[0].wrapping_sub(CELL_BASE);
         owned.get(index as usize).copied().unwrap_or(false)
-    }))
+    })
 }
 
 /// One declared access, as generated.
@@ -421,15 +430,14 @@ fn run(
     batch: &[BatchTx],
     mode: ExecutionMode,
     aborting: &BTreeSet<TxHash>,
-    locality: &Locality,
+    locality: &OwnerSet,
 ) -> BatchOutcome {
     execute_batch(
         Arc::new(funded()),
-        batch,
+        &applied(batch, locality),
         &runner(aborting.clone()),
         test_hash,
         mode,
-        locality,
     )
     .expect("a well-formed batch never fails as a batch")
 }
@@ -611,11 +619,10 @@ proptest! {
 
         let outcome = execute_batch(
             Arc::new(funded()),
-            &batch,
+        &applied(&batch, &shard_owning(&[false; CELLS as usize], false)),
             &outbound_runner(moved.clone()),
             test_hash,
             ExecutionMode::Serial,
-            &shard_owning(&[false; CELLS as usize], false),
         )
         .expect("an outbound-only batch never fails as a batch");
 
@@ -670,7 +677,7 @@ proptest! {
         // all belong to the owner.
         let mut store = serial.store;
         for index in 0..CELLS {
-            if locality.is_local(Address::new([CELL_BASE + index; 31], AddressClass::Component)) {
+            if locality.covers(Address::new([CELL_BASE + index; 31], AddressClass::Component)) {
                 continue;
             }
             assert_eq!(
@@ -737,14 +744,13 @@ proptest! {
             .collect();
         let complement: Vec<bool> = split.iter().map(|owned| !owned).collect();
 
-        let derive = |locality: &Locality| {
+        let derive = |locality: &OwnerSet| {
             execute_batch(
                 Arc::new(funded()),
-                &batch,
+        &applied(&batch, locality),
                 &portable_runner(),
                 test_hash,
                 ExecutionMode::Parallel,
-                locality,
             )
             .expect("a portable batch never fails as a batch")
         };

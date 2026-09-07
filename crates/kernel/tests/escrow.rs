@@ -18,7 +18,7 @@ use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
     Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, Disposal,
     Disposition, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
-    KernelSession, LegPlan, Locality, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount,
+    KernelSession, LegPlan, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount,
     execute_batch,
 };
 use hyperscale_vm_types::{
@@ -191,7 +191,6 @@ fn execute(
         &ManifestWalk { backend: &Moving },
         test_hash,
         mode,
-        &Locality::All,
     )
 }
 

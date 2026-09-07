@@ -1,5 +1,4 @@
-//! Which keys a shard owns, the part of a receipt it may apply, and the
-//! part of a declaration it is charged for.
+//! Which owners an execution reaches, and the two sets that bound one.
 //!
 //! A cross-shard transaction runs at every shard its effects reach, and
 //! each one applies only the part it owns: the rest stays in the receipt as
@@ -22,33 +21,66 @@ use hyperscale_vm_types::{Address, EffectSet, EntryKey, Movement, StateWrites, S
 
 use crate::session::StateDelta;
 
-/// Which keys the executing shard owns.
+/// A set of owners, as the one question the kernel asks of it: whether
+/// a key's owner sits inside.
 ///
-/// A single-shard batch owns everything. A cross-shard participant
-/// settles and judges only the keys it owns: a remote reservation is
-/// held at its declared amount without judging (the owning shard
-/// judges, and the tick combine carries its verdict), its settle
-/// releases the hold and keeps the amount in the receipt as the
-/// outbound record, and remote movements skip the local floor check.
+/// Two of these bound every execution, and a batch entry carries both.
+/// What it **applies** is the executing shard's share of the key space:
+/// a single-shard batch owns everything, and a cross-shard participant
+/// settles and judges only the keys it owns — a remote reservation is
+/// held at its declared amount without judging (the owning shard judges,
+/// and the tick combine carries its verdict), its settle releases the
+/// hold and keeps the amount in the receipt as the outbound record, and
+/// remote movements skip the local floor check. What it **judges** is
+/// the shards the member's execution spans: what gets judged and held
+/// before a body runs, and so what it settles after. A leg member spans
+/// exactly its own shard and the two coincide; a member of a core that
+/// spans several shards runs every core node on every one of them, so
+/// it judges the whole core set while it still applies only the one
+/// shard's keys.
+///
+/// A predicate over owners rather than a set of shards: the kernel holds
+/// no walk from an address to a shard, and the embedder that does builds
+/// the predicate from the placement it froze at commit.
 #[derive(Clone)]
-pub enum Locality {
-    /// Every key is local.
-    All,
-    /// Local exactly where the predicate holds for a key's owner.
-    Owned(Arc<dyn Fn(Address) -> bool + Send + Sync>),
+pub struct OwnerSet(Span);
+
+#[derive(Clone)]
+enum Span {
+    Whole,
+    Spanning(Arc<dyn Fn(Address) -> bool + Send + Sync>),
 }
 
-impl Locality {
-    /// Whether this shard owns keys under `owner`.
+impl OwnerSet {
+    /// Every owner: the whole-shape execution every transaction runs
+    /// until it decomposes, and the share of a single-shard batch.
     #[must_use]
-    pub fn is_local(&self, owner: impl Into<Address>) -> bool {
-        match self {
-            Self::All => true,
-            Self::Owned(predicate) => predicate(owner.into()),
+    pub const fn whole() -> Self {
+        Self(Span::Whole)
+    }
+
+    /// Exactly the owners `covers` holds for.
+    #[must_use]
+    pub fn of(covers: impl Fn(Address) -> bool + Send + Sync + 'static) -> Self {
+        Self(Span::Spanning(Arc::new(covers)))
+    }
+
+    /// Whether keys under `owner` are inside.
+    #[must_use]
+    pub fn covers(&self, owner: impl Into<Address>) -> bool {
+        match &self.0 {
+            Span::Whole => true,
+            Span::Spanning(covers) => covers(owner.into()),
         }
     }
 
-    /// The declared footprint of the part of `declared` this shard owns.
+    /// Whether the set is every owner.
+    #[must_use]
+    pub const fn is_whole(&self) -> bool {
+        matches!(self.0, Span::Whole)
+    }
+
+    /// The declared footprint of the part of `declared` inside this set.
     ///
     /// The same filter the delta walks apply, over the declaration rather
     /// than the outcome — and the reason the work a shard attests can be
@@ -69,84 +101,18 @@ impl Locality {
     pub fn footprint(&self, declared: &EffectSet) -> u64 {
         declared
             .iter()
-            .filter(|effect| self.is_local(effect.target.owner()))
+            .filter(|effect| self.covers(effect.target.owner()))
             .fold(0, |total, effect| {
                 total.saturating_add(effect_units(effect))
             })
     }
 }
 
-impl std::fmt::Debug for Locality {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::All => f.write_str("Locality::All"),
-            Self::Owned(_) => f.write_str("Locality::Owned(..)"),
-        }
-    }
-}
-
-/// The shards a member's execution spans, as the one question the
-/// kernel asks of it: whether a key's owner sits inside.
-///
-/// Not this shard's ownership, which is [`Locality`]'s question. A leg
-/// member spans exactly its own shard and the two coincide; a member of
-/// a core that spans several shards runs every core node on every one
-/// of them, so its scope is the whole core set while its locality is
-/// still the one shard it applies to. What the scope decides is what
-/// gets *judged and held* before a body runs — a reservation is held by
-/// the shard holding the cell and a condition answered where its leaf
-/// lives, so judging one outside the scope was never this member's
-/// question, and the state to answer it was never provisioned here.
-/// What the locality decides is what gets *applied* afterwards.
-///
-/// A predicate over owners rather than a set of shards, for
-/// [`Locality`]'s reason: the kernel holds no walk from an address to a
-/// shard, and the embedder that does builds the predicate from the core
-/// set it froze at commit.
-#[derive(Clone)]
-pub struct ExecutionScope(Span);
-
-#[derive(Clone)]
-enum Span {
-    Whole,
-    Spanning(Arc<dyn Fn(Address) -> bool + Send + Sync>),
-}
-
-impl ExecutionScope {
-    /// Every owner is inside: the whole-shape execution every transaction
-    /// runs until it decomposes.
-    #[must_use]
-    pub const fn whole() -> Self {
-        Self(Span::Whole)
-    }
-
-    /// Inside exactly where `covers` holds for a key's owner.
-    #[must_use]
-    pub fn spanning(covers: impl Fn(Address) -> bool + Send + Sync + 'static) -> Self {
-        Self(Span::Spanning(Arc::new(covers)))
-    }
-
-    /// Whether keys under `owner` are this execution's to judge.
-    #[must_use]
-    pub fn covers(&self, owner: impl Into<Address>) -> bool {
-        match &self.0 {
-            Span::Whole => true,
-            Span::Spanning(covers) => covers(owner.into()),
-        }
-    }
-
-    /// Whether the scope spans everything.
-    #[must_use]
-    pub const fn is_whole(&self) -> bool {
-        matches!(self.0, Span::Whole)
-    }
-}
-
-impl std::fmt::Debug for ExecutionScope {
+impl std::fmt::Debug for OwnerSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.0 {
-            Span::Whole => f.write_str("ExecutionScope::whole()"),
-            Span::Spanning(_) => f.write_str("ExecutionScope::spanning(..)"),
+            Span::Whole => f.write_str("OwnerSet::whole()"),
+            Span::Spanning(_) => f.write_str("OwnerSet::of(..)"),
         }
     }
 }
@@ -158,10 +124,10 @@ impl StateDelta {
     /// effects, and every shard derives the same one — but only the owning
     /// shard applies any given entry.
     #[must_use]
-    pub const fn owned<'a>(&'a self, locality: &'a Locality) -> OwnedDelta<'a> {
+    pub const fn owned<'a>(&'a self, applies: &'a OwnerSet) -> OwnedDelta<'a> {
         OwnedDelta {
             delta: self,
-            locality,
+            applies,
         }
     }
 
@@ -190,8 +156,8 @@ impl StateDelta {
     /// kernel produced, for the caller to refuse whole rather than settle
     /// on a pinned total.
     #[must_use]
-    pub fn project(&self, locality: &Locality) -> Option<StateWrites> {
-        let owned = self.owned(locality);
+    pub fn project(&self, applies: &OwnerSet) -> Option<StateWrites> {
+        let owned = self.owned(applies);
         let mut writes = StateWrites::default();
         for (key, change) in owned.cells() {
             writes.cells.insert(key, change.clone());
@@ -213,7 +179,7 @@ impl StateDelta {
 /// One delta as one shard sees it: four walks, each already filtered.
 pub struct OwnedDelta<'a> {
     delta: &'a StateDelta,
-    locality: &'a Locality,
+    applies: &'a OwnerSet,
 }
 
 impl<'a> OwnedDelta<'a> {
@@ -222,7 +188,7 @@ impl<'a> OwnedDelta<'a> {
         self.delta
             .cells
             .iter()
-            .filter(|(key, _)| self.locality.is_local(key.owner))
+            .filter(|(key, _)| self.applies.covers(key.owner))
             .map(|(key, change)| (*key, change))
     }
 
@@ -231,7 +197,7 @@ impl<'a> OwnedDelta<'a> {
         self.delta
             .entries
             .iter()
-            .filter(|(key, _)| self.locality.is_local(key.owner))
+            .filter(|(key, _)| self.applies.covers(key.owner))
             .map(|(key, change)| (*key, change))
     }
 
@@ -241,7 +207,7 @@ impl<'a> OwnedDelta<'a> {
         self.delta
             .movements
             .iter()
-            .filter(|(key, _)| self.locality.is_local(key.owner))
+            .filter(|(key, _)| self.applies.covers(key.owner))
             .map(|(key, movement)| (*key, *movement))
     }
 
@@ -252,7 +218,7 @@ impl<'a> OwnedDelta<'a> {
         self.delta
             .settles
             .iter()
-            .filter(|(key, _)| self.locality.is_local(key.owner))
+            .filter(|(key, _)| self.applies.covers(key.owner))
             .map(|(key, movement)| (*key, *movement))
     }
 }
@@ -268,7 +234,7 @@ mod tests {
         SubstateKey, TxHash, encode_amount,
     };
 
-    use super::Locality;
+    use super::OwnerSet;
     use crate::ledger::AmountLedger;
     use crate::modes::decode_amount;
     use crate::overlay::OverlayStore;
@@ -358,7 +324,7 @@ mod tests {
         let expected = overlay.collapse_onto(base.clone());
 
         let writes = delta
-            .project(&Locality::All)
+            .project(&OwnerSet::whole())
             .expect("kernel-produced movements compose")
             .resolve(&mut |cell| base.cells.get(&cell).cloned())
             .expect("the debit fits");
@@ -397,7 +363,7 @@ mod tests {
             },
         );
         let projected = delta
-            .project(&Locality::All)
+            .project(&OwnerSet::whole())
             .expect("kernel-produced movements compose");
         assert!(
             projected.cells.is_empty(),
@@ -432,7 +398,7 @@ mod tests {
             },
         );
         delta.settles.insert(vault, Movement::debit(RESOURCE, 1));
-        assert!(delta.project(&Locality::All).is_none());
+        assert!(delta.project(&OwnerSet::whole()).is_none());
     }
 
     /// A movement folds over this receipt's own exclusive write before it
@@ -451,7 +417,7 @@ mod tests {
             },
         );
         let writes = delta
-            .project(&Locality::All)
+            .project(&OwnerSet::whole())
             .expect("kernel-produced movements compose")
             .resolve(&mut |_| panic!("the receipt's own write answers this read"))
             .expect("the debit fits");
@@ -476,9 +442,9 @@ mod tests {
         delta.entries.insert(entry(local_book, 8), None);
         delta.entries.insert(entry(remote_book, 7), Some(vec![5]));
 
-        let locality = Locality::Owned(Arc::new(move |owner: Address| owner == local_book));
+        let applies = OwnerSet::of(move |owner: Address| owner == local_book);
         let projected = delta
-            .project(&locality)
+            .project(&applies)
             .expect("kernel-produced movements compose");
         assert_eq!(
             projected.entries,
@@ -509,11 +475,10 @@ mod tests {
                 },
             );
         }
-        let locality = Locality::Owned(Arc::new(|owner: Address| {
-            owner == Address::new([1; 31], AddressClass::Component)
-        }));
+        let applies =
+            OwnerSet::of(|owner: Address| owner == Address::new([1; 31], AddressClass::Component));
         let writes = delta
-            .project(&locality)
+            .project(&applies)
             .expect("kernel-produced movements compose")
             .resolve(&mut |_| None)
             .expect("the debit fits");

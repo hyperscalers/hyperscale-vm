@@ -19,7 +19,7 @@ use super::ranges::Ranges;
 use super::{EnvInputs, KernelSession};
 use crate::escrow::EscrowDelta;
 use crate::ledger::AmountLedger;
-use crate::locality::{ExecutionScope, Locality};
+use crate::locality::OwnerSet;
 use crate::modes::decode_amount;
 use crate::overlay::OverlayStore;
 use crate::store::{StoreError, WorkingStore};
@@ -499,14 +499,7 @@ impl KernelSession {
         env: EnvInputs,
         hash_fn: fn(&[u8]) -> [u8; 32],
     ) -> Result<Self, MaterializeError> {
-        Self::materialize_within(
-            store,
-            declaration,
-            tx,
-            env,
-            hash_fn,
-            &ExecutionScope::whole(),
-        )
+        Self::materialize_within(store, declaration, tx, env, hash_fn, &OwnerSet::whole())
     }
 
     /// [`materialize`](Self::materialize), judging only what `scope`
@@ -532,7 +525,7 @@ impl KernelSession {
         tx: TxHash,
         env: EnvInputs,
         hash_fn: fn(&[u8]) -> [u8; 32],
-        scope: &ExecutionScope,
+        judges: &OwnerSet,
     ) -> Result<Self, MaterializeError> {
         let Declaration {
             set: declared,
@@ -555,7 +548,7 @@ impl KernelSession {
         for effect in declared.iter() {
             if let (EffectTarget::Point(key), Mode::Reserve { amount }) =
                 (effect.target, effect.mode)
-                && scope.covers(key.owner)
+                && judges.covers(key.owner)
             {
                 match store.held_reservation(key, tx) {
                     Some(held) if held == amount => {}
@@ -604,7 +597,7 @@ impl KernelSession {
             return Err(MaterializeError::SelfConflicting(key));
         }
 
-        judge_conditions(&mut store, &declaration.conditions, scope)?;
+        judge_conditions(&mut store, &declaration.conditions, judges)?;
 
         let verdicts = store.judge_and_hold(&reservations)?;
         for ((verdict_tx, key), feasibility) in verdicts {
@@ -627,8 +620,8 @@ impl KernelSession {
             tx,
             env,
             hash_fn,
-            locality: Locality::All,
-            scope: scope.clone(),
+            applies: OwnerSet::whole(),
+            judges: judges.clone(),
             nullifiers: Vec::new(),
             fee: None,
             ranges: Ranges::default(),
@@ -677,12 +670,12 @@ impl KernelSession {
 fn judge_conditions(
     store: &mut OverlayStore,
     conditions: &[Condition],
-    scope: &ExecutionScope,
+    judges: &OwnerSet,
 ) -> Result<(), MaterializeError> {
     for condition in conditions {
         let mut owners = Vec::new();
         presence_owners(&condition.rule, &mut owners);
-        let inside = owners.iter().filter(|owner| scope.covers(**owner)).count();
+        let inside = owners.iter().filter(|owner| judges.covers(**owner)).count();
         if inside == 0 && !owners.is_empty() {
             continue;
         }

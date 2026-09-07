@@ -31,14 +31,23 @@ use hyperscale_vm_effects::{
     effect_units, footprint, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, Locality,
-    MemoryStore, Receipt, RunResult, Work, execute_batch,
+    BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, MemoryStore,
+    OwnerSet, Receipt, RunResult, Work, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget,
     FOOTPRINT_WEIGHT, Mode, Moves, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash,
     encode_amount, work_units,
 };
+
+/// `batch` with every entry applying `applies`.
+fn applied(batch: &[BatchTx], applies: &OwnerSet) -> Vec<BatchTx> {
+    batch
+        .iter()
+        .cloned()
+        .map(|entry| entry.with_applies(applies.clone()))
+        .collect()
+}
 
 /// What every cell these fixtures move value through holds.
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
@@ -75,8 +84,8 @@ fn cell(byte: u8) -> SubstateKey {
     )
 }
 
-fn owned_by(byte: u8) -> Locality {
-    Locality::Owned(Arc::new(move |owner: Address| owner.to_bytes()[0] == byte))
+fn owned_by(byte: u8) -> OwnerSet {
+    OwnerSet::of(move |owner: Address| owner.to_bytes()[0] == byte)
 }
 
 /// A declaration whose footprint is unmistakably nonzero and unevenly
@@ -162,24 +171,23 @@ fn run_batch<R>(
     store: Arc<MemoryStore>,
     batch: &[BatchTx],
     runner: &R,
-    locality: &Locality,
+    locality: &OwnerSet,
 ) -> BatchOutcome
 where
     R: Fn(&BatchTx, KernelSession) -> RunResult + Sync,
 {
     execute_batch(
         store,
-        batch,
+        &applied(batch, locality),
         runner,
         test_hash,
         ExecutionMode::Serial,
-        locality,
     )
     .expect("batch executes")
 }
 
 /// Runs one transaction and returns its receipt and its attested work.
-fn run_one<R>(declared: EffectSet, runner: &R, locality: &Locality) -> (Receipt, Work)
+fn run_one<R>(declared: EffectSet, runner: &R, locality: &OwnerSet) -> (Receipt, Work)
 where
     R: Fn(&BatchTx, KernelSession) -> RunResult + Sync,
 {
@@ -202,8 +210,8 @@ fn a_trapped_transactions_work_survives_the_engines_disagreement() {
     // wasmtime's unflushed zero, and the spec's honest count. The attested
     // scalar must be blind to the difference.
     let declared = transfer_declared(100);
-    let (_, unflushed) = run_one(declared.clone(), &trapping_guest(0), &Locality::All);
-    let (_, counted) = run_one(declared, &trapping_guest(5_000), &Locality::All);
+    let (_, unflushed) = run_one(declared.clone(), &trapping_guest(0), &OwnerSet::whole());
+    let (_, counted) = run_one(declared, &trapping_guest(5_000), &OwnerSet::whole());
 
     assert_eq!(
         unflushed.units, counted.units,
@@ -226,7 +234,7 @@ fn an_aborts_work_is_its_local_footprint_and_is_not_zero() {
     // collapse to nothing exactly when the sender's leg failed.
     let declared = transfer_declared(100);
     let expected = footprint(&declared);
-    let (_, work) = run_one(declared, &trapping_guest(0), &Locality::All);
+    let (_, work) = run_one(declared, &trapping_guest(0), &OwnerSet::whole());
 
     assert_eq!(work.footprint, expected);
     assert_eq!(work.units, work_units(0, expected));
@@ -246,7 +254,7 @@ fn a_completed_transaction_attests_both_halves() {
     let declared = transfer_declared(100);
     let expected = footprint(&declared);
 
-    let (receipt, completed) = run_one(declared.clone(), &transfer_guest, &Locality::All);
+    let (receipt, completed) = run_one(declared.clone(), &transfer_guest, &OwnerSet::whole());
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
     assert_eq!(
         completed.units,
@@ -254,7 +262,11 @@ fn a_completed_transaction_attests_both_halves() {
         "a completed execution prices its fuel"
     );
 
-    let (_, aborted) = run_one(declared, &trapping_guest(completed.fuel), &Locality::All);
+    let (_, aborted) = run_one(
+        declared,
+        &trapping_guest(completed.fuel),
+        &OwnerSet::whole(),
+    );
     assert!(
         completed.units > aborted.units,
         "completing consumed fuel an abort did not attest"
@@ -350,7 +362,11 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
 
     // A reserve past the committed balance: refused by the batch judge,
     // before any group runs.
-    let (receipt, starved) = run_one(transfer_declared(10_000), &transfer_guest, &Locality::All);
+    let (receipt, starved) = run_one(
+        transfer_declared(10_000),
+        &transfer_guest,
+        &OwnerSet::whole(),
+    );
     assert!(matches!(receipt.outcome, Outcome::Infeasible { .. }));
     assert!(starved.units > 0, "a lost race still declared");
 
@@ -358,7 +374,11 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
     // check is what keeps this case honest — a declaration that failed to
     // materialize would also land as a `UserError`, from a different exit
     // and with no guest run at all, and would test nothing here.
-    let (receipt, trapped) = run_one(transfer_declared(100), &trapping_guest(11), &Locality::All);
+    let (receipt, trapped) = run_one(
+        transfer_declared(100),
+        &trapping_guest(11),
+        &OwnerSet::whole(),
+    );
     assert!(matches!(receipt.outcome, Outcome::UserError { .. }));
     assert_eq!(trapped.fuel, 11, "the guest must actually have run");
     assert!(trapped.units > 0);
@@ -385,7 +405,7 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
         BatchTx::new(tx(1), moving(declared.clone()), EnvInputs::unsealed(1_000))
             .with_nullifiers(vec![nullifier_record(subintent, nullifier)]),
     ];
-    let outcome = run_batch(Arc::new(store), &batch, &transfer_guest, &Locality::All);
+    let outcome = run_batch(Arc::new(store), &batch, &transfer_guest, &OwnerSet::whole());
     let spent = &outcome.receipts[&tx(1)];
     let spent_work = outcome.work[&tx(1)];
     assert!(matches!(spent.outcome, Outcome::NullifierSpent { .. }));
@@ -412,7 +432,7 @@ fn a_completion_flipped_at_apply_drops_its_fuel_but_keeps_its_declaration() {
     ];
     let mut store = MemoryStore::default();
     store.write(cell(PAYER_BYTE), encode_amount(1_000).to_vec());
-    let outcome = run_batch(Arc::new(store), &batch, &transfer_guest, &Locality::All);
+    let outcome = run_batch(Arc::new(store), &batch, &transfer_guest, &OwnerSet::whole());
 
     let loser = outcome
         .receipts
@@ -518,7 +538,7 @@ fn a_dependent_of_a_flipped_completion_flips_with_it() {
         funded_store(1_000),
         &batch,
         &delta_transfer_guest,
-        &Locality::All,
+        &OwnerSet::whole(),
     );
 
     assert!(matches!(
@@ -589,7 +609,7 @@ fn a_group_mate_out_of_the_flipped_ones_reach_survives() {
         funded_store(1_000),
         &batch,
         &delta_transfer_guest,
-        &Locality::All,
+        &OwnerSet::whole(),
     );
 
     assert!(matches!(
@@ -627,7 +647,6 @@ fn work_is_a_function_of_the_batch_alone() {
             &quiet_guest(13),
             test_hash,
             mode,
-            &Locality::All,
         )
         .expect("batch executes")
         .work
@@ -657,7 +676,12 @@ fn every_receipt_is_priced() {
             EnvInputs::unsealed(1_000),
         ),
     ];
-    let outcome = run_batch(funded_store(1_000), &batch, &transfer_guest, &Locality::All);
+    let outcome = run_batch(
+        funded_store(1_000),
+        &batch,
+        &transfer_guest,
+        &OwnerSet::whole(),
+    );
     assert_eq!(
         outcome.receipts.keys().collect::<Vec<_>>(),
         outcome.work.keys().collect::<Vec<_>>(),

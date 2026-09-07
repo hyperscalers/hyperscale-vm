@@ -45,7 +45,7 @@ pub use executor::{
 };
 pub use hyperscale_vm_embed::{GuestArg, Invoked, KernelHost};
 pub use ledger::AmountLedger;
-pub use locality::{ExecutionScope, Locality, OwnedDelta};
+pub use locality::{OwnedDelta, OwnerSet};
 pub use modes::{DeltaOp, Feasibility, ModeError, decode_amount, fold_deltas, judge};
 pub use oracle::{covered, multiply_held_ids, permits, target_covers, undeclared_accesses};
 pub use overlay::OverlayStore;

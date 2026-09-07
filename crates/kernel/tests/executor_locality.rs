@@ -13,13 +13,22 @@ use hyperscale_vm_effects::{
     SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
-    BatchTx, Capability, EnvInputs, ExecutionMode, ExecutionScope, Job, KernelSession, LegPlan,
-    Locality, MemoryStore, RunResult, WorkingStore, decode_amount, execute_batch,
+    BatchTx, Capability, EnvInputs, ExecutionMode, Job, KernelSession, LegPlan, MemoryStore,
+    OwnerSet, RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement, Moves, Outcome,
     PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
+
+/// `batch` with every entry applying `applies`.
+fn applied(batch: &[BatchTx], applies: &OwnerSet) -> Vec<BatchTx> {
+    batch
+        .iter()
+        .cloned()
+        .map(|entry| entry.with_applies(applies.clone()))
+        .collect()
+}
 
 /// Any expiry; these tests never reach one.
 const TEST_EXPIRY_MS: u64 = 1_000_000;
@@ -106,8 +115,8 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
     }
 }
 
-fn owned_by(byte: u8) -> Locality {
-    Locality::Owned(Arc::new(move |owner: Address| owner.to_bytes()[0] == byte))
+fn owned_by(byte: u8) -> OwnerSet {
+    OwnerSet::of(move |owner: Address| owner.to_bytes()[0] == byte)
 }
 
 #[test]
@@ -124,11 +133,10 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
     payer_store.write(cell(PAYER_BYTE), encode_amount(100).to_vec());
     let payer = execute_batch(
         Arc::new(payer_store),
-        &batch,
+        &applied(&batch, &owned_by(PAYER_BYTE)),
         &transfer_guest,
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(PAYER_BYTE),
     )
     .unwrap();
 
@@ -137,11 +145,10 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
     // only the local credit applies.
     let recipient = execute_batch(
         Arc::new(MemoryStore::new()),
-        &batch,
+        &applied(&batch, &owned_by(RECIPIENT_BYTE)),
         &transfer_guest,
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(RECIPIENT_BYTE),
     )
     .unwrap();
 
@@ -217,7 +224,8 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },
-        scope: ExecutionScope::whole(),
+        applies: OwnerSet::whole(),
+        judges: OwnerSet::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, signed_nullifier())],
         fee: None,
         env: env(),
@@ -234,21 +242,19 @@ fn a_committed_nullifier_reads_the_same_on_both_shards() {
     payer_store.write(cell(PAYER_BYTE), encode_amount(100).to_vec());
     let payer = execute_batch(
         Arc::new(payer_store),
-        &batch,
+        &applied(&batch, &owned_by(PAYER_BYTE)),
         &transfer_guest,
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(PAYER_BYTE),
     )
     .unwrap();
 
     let recipient = execute_batch(
         Arc::new(MemoryStore::new()),
-        &batch,
+        &applied(&batch, &owned_by(RECIPIENT_BYTE)),
         &transfer_guest,
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(RECIPIENT_BYTE),
     )
     .unwrap();
 
@@ -309,20 +315,18 @@ fn an_environment_reading_guest_derives_one_receipt_on_both_shards() {
     payer_store.write(cell(PAYER_BYTE), encode_amount(100).to_vec());
     let payer = execute_batch(
         Arc::new(payer_store),
-        &batch,
+        &applied(&batch, &owned_by(PAYER_BYTE)),
         &reading_guest,
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(PAYER_BYTE),
     )
     .unwrap();
     let recipient = execute_batch(
         Arc::new(MemoryStore::new()),
-        &batch,
+        &applied(&batch, &owned_by(RECIPIENT_BYTE)),
         &reading_guest,
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(RECIPIENT_BYTE),
     )
     .unwrap();
 
@@ -344,11 +348,10 @@ fn an_environment_reading_guest_derives_one_receipt_on_both_shards() {
     )];
     let elsewhere = execute_batch(
         Arc::new(MemoryStore::new()),
-        &divergent,
+        &applied(&divergent, &owned_by(RECIPIENT_BYTE)),
         &reading_guest,
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(RECIPIENT_BYTE),
     )
     .unwrap();
     assert_ne!(payer.receipts, elsewhere.receipts);
@@ -434,11 +437,10 @@ fn a_remote_debit_never_reaches_the_next_receipt() {
     let batch = remote_movement_batch();
     let outcome = execute_batch(
         Arc::new(MemoryStore::new()),
-        &batch,
+        &applied(&batch, &owned_by(RECIPIENT_BYTE)),
         &moving_guest(0, 100),
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(RECIPIENT_BYTE),
     )
     .unwrap();
 
@@ -471,11 +473,10 @@ fn a_remote_credit_never_becomes_a_local_balance() {
     let batch = remote_movement_batch();
     let outcome = execute_batch(
         Arc::new(MemoryStore::new()),
-        &batch,
+        &applied(&batch, &owned_by(RECIPIENT_BYTE)),
         &moving_guest(50, 0),
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(RECIPIENT_BYTE),
     )
     .unwrap();
 
@@ -502,11 +503,10 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
     payer_store.write(cell(PAYER_BYTE), encode_amount(10).to_vec());
     let payer = execute_batch(
         Arc::new(payer_store),
-        &batch,
+        &applied(&batch, &owned_by(PAYER_BYTE)),
         &transfer_guest,
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(PAYER_BYTE),
     )
     .unwrap();
     assert!(matches!(
@@ -518,11 +518,10 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
     // verdict reaches it through the tick combine, not this batch.
     let recipient = execute_batch(
         Arc::new(MemoryStore::new()),
-        &batch,
+        &applied(&batch, &owned_by(RECIPIENT_BYTE)),
         &transfer_guest,
         test_hash,
         ExecutionMode::Serial,
-        &owned_by(RECIPIENT_BYTE),
     )
     .unwrap();
     assert!(matches!(

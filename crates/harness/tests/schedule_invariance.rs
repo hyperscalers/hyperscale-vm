@@ -12,8 +12,7 @@ use hyperscale_vm_effects::{Declaration, Hash32, Hasher, SlotId, TestHasher, chi
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
-    Locality, MemoryStore, OverlayStore, RunResult, Unavailable, WorkingStore, decode_amount,
-    execute_batch,
+    MemoryStore, OverlayStore, RunResult, Unavailable, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_ref::{CVal, HandleKind, RefComponent, RefComponentInstance};
 use hyperscale_vm_runtime::{Site, add_kernel_to_linker, blessed_engine};
@@ -359,27 +358,12 @@ fn six_schedules_one_outcome() -> Result<()> {
             }
             outcomes.push((
                 format!("blessed/{mode:?}/delay={delay}"),
-                execute_batch(
-                    Arc::new(store.clone()),
-                    &batch,
-                    &blessed,
-                    test_hash,
-                    mode,
-                    &Locality::All,
-                )
-                .unwrap(),
+                execute_batch(Arc::new(store.clone()), &batch, &blessed, test_hash, mode).unwrap(),
             ));
             outcomes.push((
                 format!("ref/{mode:?}/delay={delay}"),
-                execute_batch(
-                    Arc::new(store.clone()),
-                    &batch,
-                    &reference,
-                    test_hash,
-                    mode,
-                    &Locality::All,
-                )
-                .unwrap(),
+                execute_batch(Arc::new(store.clone()), &batch, &reference, test_hash, mode)
+                    .unwrap(),
             ));
         }
     }
