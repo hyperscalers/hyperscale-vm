@@ -90,7 +90,54 @@ pub struct Star<S = ShardId> {
     pub decomposes: bool,
 }
 
-impl<S: Ord> Star<S> {
+impl<S: Ord + Copy> Star<S> {
+    /// How many nodes the classified manifest has.
+    ///
+    /// # Panics
+    ///
+    /// Never: admission caps a manifest at
+    /// [`MAX_MANIFEST_NODES`](hyperscale_vm_types::MAX_MANIFEST_NODES),
+    /// far inside `u32`.
+    #[must_use]
+    pub fn nodes(&self) -> u32 {
+        u32::try_from(self.homes.len()).expect("a manifest has fewer than u32 nodes")
+    }
+
+    /// The node's settled role. A node past the manifest is core, the
+    /// direction every unsure answer takes.
+    #[must_use]
+    pub fn role(&self, node: u32) -> LegRole {
+        role_at(&self.roles, node)
+    }
+
+    /// The shards that run `node`: every core shard for a core node, its
+    /// home for a leg.
+    ///
+    /// The one reading of who runs what. An embedder dividing the same
+    /// manifest reads it from here rather than from the fields, because
+    /// two shards divide one manifest separately and a second copy of
+    /// this answer is a crossing issued that nobody claims.
+    #[must_use]
+    pub fn running(&self, node: u32) -> BTreeSet<S> {
+        running_at(&self.roles, &self.homes, &self.core, node)
+    }
+
+    /// Whether `shard` runs `node` as a delivery: it consumes a crossing
+    /// that lands there, so the member running it waits on an arrival
+    /// rather than producing what it consumes.
+    ///
+    /// Off the edges rather than off the role alone, and `delivers` is
+    /// already the edge's word for "its consumer is an outbound leg", so
+    /// this asks the one further question: does the value cross to
+    /// `shard`. An outbound leg fed from beside itself crosses no
+    /// boundary and answers `false`, which is right — its member issues.
+    #[must_use]
+    pub fn delivers_at(&self, node: u32, shard: S) -> bool {
+        self.edges
+            .iter()
+            .any(|edge| edge.delivers && edge.consumer == node && edge.to.contains(&shard))
+    }
+
     /// The whole shape on every participant: no placement read, nothing
     /// dividing.
     #[must_use]
@@ -415,7 +462,34 @@ fn consumers_of(legs: &[LegShape]) -> BTreeMap<(u32, u32), u32> {
         .collect()
 }
 
+/// The node's settled role. A node past the manifest is core, the
+/// direction every unsure answer takes.
+fn role_at(roles: &[LegRole], node: u32) -> LegRole {
+    roles.get(node as usize).copied().unwrap_or_default()
+}
+
+/// The shards that run `node`: every core shard for a core node, its
+/// home for a leg.
+fn running_at<S: Ord + Copy>(
+    roles: &[LegRole],
+    homes: &[S],
+    core: &BTreeSet<S>,
+    node: u32,
+) -> BTreeSet<S> {
+    match role_at(roles, node) {
+        LegRole::Core => core.clone(),
+        LegRole::Inbound | LegRole::Outbound | LegRole::Attesting => {
+            homes.get(node as usize).copied().into_iter().collect()
+        }
+    }
+}
+
 /// The shape at its placement: what every question below reads.
+///
+/// Half a [`Star`] — everything but the edges and the verdict, which is
+/// what the questions here are asked in order to produce — plus the legs
+/// they are asked against. So the two derivations both sides need read
+/// through [`role_at`] and [`running_at`] rather than either owning them.
 struct Placed<'a> {
     legs: &'a [LegShape],
     roles: &'a [LegRole],
@@ -424,21 +498,12 @@ struct Placed<'a> {
 }
 
 impl Placed<'_> {
-    /// The node's settled role. A node past the manifest is core, the
-    /// direction every unsure answer takes.
     fn role(&self, node: u32) -> LegRole {
-        self.roles.get(node as usize).copied().unwrap_or_default()
+        role_at(self.roles, node)
     }
 
-    /// The shards that run `node`: every core shard for a core node, its
-    /// home for a leg.
     fn running(&self, node: u32) -> BTreeSet<ShardId> {
-        match self.role(node) {
-            LegRole::Core => self.core.clone(),
-            LegRole::Inbound | LegRole::Outbound | LegRole::Attesting => {
-                self.homes.get(node as usize).copied().into_iter().collect()
-            }
-        }
+        running_at(self.roles, self.homes, self.core, node)
     }
 
     /// Every value edge whose producer and consumer do not run together,
@@ -802,6 +867,54 @@ mod tests {
             }],
         };
         (chain, manifest)
+    }
+
+    /// The readings an embedder divides a manifest by, which is the
+    /// reason they are on [`Star`] rather than derived beside it: a
+    /// second copy of "who runs this node" is a crossing issued that
+    /// nobody claims.
+    #[test]
+    fn the_star_answers_who_runs_each_node() {
+        let (chain, manifest) = star_world(Totality::Total);
+        let star = placed(&legs(&manifest, &chain));
+        assert!(
+            star.decomposes,
+            "the fixture divides, or this proves little"
+        );
+
+        assert_eq!(star.nodes(), 3);
+        assert_eq!(star.role(0), LegRole::Inbound);
+        assert_eq!(star.role(1), LegRole::Core);
+        assert_eq!(star.role(2), LegRole::Outbound);
+        assert_eq!(
+            star.role(3),
+            LegRole::Core,
+            "a node past the manifest takes the direction every unsure answer takes",
+        );
+
+        assert_eq!(
+            star.running(1),
+            star.core,
+            "a core node runs on every core shard"
+        );
+        assert_eq!(
+            star.running(0),
+            BTreeSet::from([star.homes[0]]),
+            "a leg runs on its own home",
+        );
+
+        assert!(
+            star.delivers_at(2, star.homes[2]),
+            "the sink consumes what crossed to it",
+        );
+        assert!(
+            !star.delivers_at(2, star.homes[1]),
+            "and issues nowhere the value did not cross to",
+        );
+        assert!(
+            !star.delivers_at(0, star.homes[0]),
+            "a source delivers nothing: it consumes no edge at all",
+        );
     }
 
     /// A call that stays on one shard crosses nothing, so a staged
