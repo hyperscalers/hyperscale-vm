@@ -531,14 +531,20 @@ impl Placed<'_> {
     /// every signer, whose nullifier a bound subintent writes — sits on
     /// a shard that runs a member, so some member's scope covers it.
     ///
-    /// A payer whose account no node targets is a routing participant
-    /// that runs nothing: its shard would freeze divided, compose a
-    /// member and find no plan for it, and attest a refusal with the
-    /// price apart while the core committed. A signer with no node on
-    /// their shard would have their nullifier written by whichever
+    /// What is excluded is a shard that runs nothing. A payer on such a
+    /// shard is a routing participant with no member: the shard would
+    /// freeze divided, compose a member and find no plan for it, and
+    /// attest a refusal with the price apart while the core committed. A
+    /// signer likewise would have their nullifier written by whichever
     /// member happened to run there, after the core committed or never.
     /// Running whole provisions the vault and writes the nullifier where
     /// a whole execution always did.
+    ///
+    /// The test is per shard and not per node, which is what it means to
+    /// say some member's scope covers the owner: a payer whose shard
+    /// runs only a delivery passes, and should. What provisions the
+    /// vault and takes the reservation is that the shard runs a member
+    /// at all, not which role that member plays.
     fn every_route_owner_participates(
         participants: &BTreeSet<ShardId>,
         owners: &[Address],
