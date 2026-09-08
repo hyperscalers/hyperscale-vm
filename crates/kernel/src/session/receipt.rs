@@ -629,7 +629,7 @@ impl KernelSession {
     /// What a mint or a burn moved is reported rather than accumulated:
     /// a movement lands on a hashed key, so what it moved is the
     /// declaration's answer and not this layer's, and chain-wide supply
-    /// is a fold over receipts. See [`SupplyDelta`](crate::SupplyDelta).
+    /// is a fold over receipts. See [`SupplyDelta`].
     ///
     /// # Errors
     ///
