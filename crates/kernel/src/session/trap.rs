@@ -234,6 +234,13 @@ pub enum SessionTrap {
     /// another edge.
     #[error("escrow record {0:?} is not readable as the edge reclaimed")]
     EscrowRecordUnreadable(SubstateKey),
+    /// Two crossings of one execution at one cell.
+    ///
+    /// The key names the edge, so two edges deriving one key leave a
+    /// single record for two crossings the receipt attests separately.
+    /// Refused here whatever admitted the shape.
+    #[error("crossing cell {0:?} is written twice in one execution")]
+    CrossingKeyRepeated(SubstateKey),
 }
 
 impl From<SessionTrap> for AbortReason {
@@ -274,6 +281,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::Store(store) => store.into(),
             SessionTrap::EscrowOriginUndeclared(_) => Self::EscrowOriginUndeclared,
             SessionTrap::EscrowRecordUnreadable(_) => Self::EscrowRecordUnreadable,
+            SessionTrap::CrossingKeyRepeated(_) => Self::CrossingKeyRepeated,
         }
     }
 }

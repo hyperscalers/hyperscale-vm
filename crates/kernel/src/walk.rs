@@ -462,13 +462,20 @@ fn departing(
         match session.escrow_out(node, output, rep, departure, &frame) {
             Ok(_) => kept.push(None),
             Err(trap) => {
-                return Err(fail(
-                    session,
-                    Outcome::UserError {
+                // A departure refused for the plan's shape is the batch's
+                // defect wherever it is raised, which is the class the
+                // settlement path already gives these two. What the guest
+                // did with its bucket is its own.
+                let outcome = match trap {
+                    SessionTrap::EscrowOriginUndeclared(_)
+                    | SessionTrap::CrossingKeyRepeated(_) => Outcome::ProtocolError {
                         reason: trap.into(),
                     },
-                    0,
-                ));
+                    other => Outcome::UserError {
+                        reason: other.into(),
+                    },
+                };
+                return Err(fail(session, outcome, 0));
             }
         }
     }

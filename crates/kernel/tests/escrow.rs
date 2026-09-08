@@ -29,6 +29,8 @@ use hyperscale_vm_types::{
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const PAYER: u8 = 0xA1;
 const PAYEE: u8 = 0xC1;
+/// A second cell to reserve from, for the node that departs twice.
+const OTHER: u8 = 0xB1;
 
 /// Any expiry; nothing here reaches one.
 const EXPIRY_MS: u64 = 1_000_000;
@@ -146,6 +148,20 @@ impl GuestBackend for Moving {
                     .expect("the fixture declares one");
                 vec![session.reserve_take(reserve, 0).unwrap()]
             }
+            "take_twice" => {
+                let reserves: Vec<u32> = caps
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, cap)| matches!(cap, Capability::Reserve { .. }))
+                    .map(|(rep, _)| u32::try_from(rep).unwrap())
+                    .collect();
+                assert_eq!(reserves.len(), 2, "the fixture declares two");
+                let mut taken = Vec::new();
+                for reserve in reserves {
+                    taken.push(session.reserve_take(reserve, 0).unwrap());
+                }
+                taken
+            }
             "put" => {
                 let delta = find(|cap| matches!(cap, Capability::Delta { .. }))
                     .expect("the fixture declares one");
@@ -245,6 +261,41 @@ fn sending(amount: u128) -> BatchTx {
         env(),
     )
     .with_calls(vec![taking()])
+    .with_legs(legs)
+}
+
+/// The node's call when it departs twice: two outputs, one per reserve.
+fn taking_twice() -> NodeCall {
+    let mut taking = call("take_twice", 0, 2);
+    taking.args.push(CallArg::Site {
+        entries: vec![Some(0), Some(1), Some(2)],
+    });
+    taking
+}
+
+/// Two edges of one node departing at one crossing cell — the shape two
+/// intents of a tree with equal declaration hashes derive, where the
+/// same `(intent, local)` names both edges.
+fn sending_twice(amount: u128) -> BatchTx {
+    let mut legs = LegPlan::whole(1);
+    legs.departs(0, 0, record_departure()).unwrap();
+    legs.departs(0, 1, record_departure()).unwrap();
+    BatchTx::new(
+        tx(3),
+        declared(&[
+            Effect {
+                target: EffectTarget::Point(cell(PAYER)),
+                mode: Mode::Reserve { amount },
+            },
+            Effect {
+                target: EffectTarget::Point(cell(OTHER)),
+                mode: Mode::Reserve { amount },
+            },
+            crossing_cell(record_site()),
+        ]),
+        env(),
+    )
+    .with_calls(vec![taking_twice()])
     .with_legs(legs)
 }
 
@@ -1063,6 +1114,33 @@ fn a_second_retire_is_refused() {
     );
     assert!(receipt.delta.cells.is_empty());
     assert_eq!(balance(&twice, cell(PAYER)), 300);
+}
+
+/// Two crossings at one cell are refused inside the execution, whatever
+/// let the shape through.
+///
+/// The record cell would hold one of them while the receipt attested
+/// both, so the consumer is credited twice against a single claim and
+/// the producer's reclaim finds one record for two edges. Admission
+/// refuses the intent shapes that derive one key; this is the kernel
+/// refusing to write the state either way.
+#[test]
+fn two_crossings_at_one_cell_are_refused() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+    store.write(cell(OTHER), encode_amount(500).to_vec());
+    let receipt = run(&store, sending_twice(200));
+    assert_eq!(
+        receipt.outcome,
+        Outcome::ProtocolError {
+            reason: AbortReason::CrossingKeyRepeated,
+        },
+    );
+    assert!(
+        receipt.delta.cells.is_empty(),
+        "a refused execution writes no crossing"
+    );
+    assert!(receipt.delta.movements.is_empty(), "and moves no value");
 }
 
 /// A reclaim reads its record and nothing else, so a record that is not

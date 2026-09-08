@@ -224,13 +224,13 @@ impl KernelSession {
         let crossed = Crossed { resource, amount };
         self.escrow.issue(node, output, crossed)?;
         let origin = self.origin_among(frame, resource);
-        self.crossings.insert(
+        self.record_crossing(
             departure.site.key(),
             departure
                 .site
                 .crossing(self.tx, resource, amount, departure.consumer_claim, origin)
                 .to_bytes(),
-        );
+        )?;
         Ok(crossed)
     }
 
@@ -323,6 +323,27 @@ impl KernelSession {
         Ok(())
     }
 
+    /// Write the crossing `value` at `key`, where nothing has written
+    /// one already.
+    ///
+    /// The key names the edge, so a second crossing at one key is two
+    /// edges the chain cannot tell apart: the record cell holds one of
+    /// them, the receipt attests both by manifest index, and the
+    /// consumer is credited twice against a single claim. Refusing the
+    /// write is the defence in depth beneath admission's rule that no
+    /// two intents of one tree may derive one key.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::CrossingKeyRepeated`] where `key` already holds a
+    /// crossing.
+    fn record_crossing(&mut self, key: SubstateKey, value: Vec<u8>) -> Result<(), SessionTrap> {
+        if self.crossings.insert(key, value).is_some() {
+            return Err(SessionTrap::CrossingKeyRepeated(key));
+        }
+        Ok(())
+    }
+
     /// Take an attested arrival in as a bucket.
     ///
     /// What stands in for a producer another shard ran. No grant is
@@ -339,8 +360,7 @@ impl KernelSession {
         site: CrossingSite,
     ) -> Result<u32, SessionTrap> {
         self.escrow.claim(crossed)?;
-        self.crossings
-            .insert(site.key(), site.claimed_by(self.tx).to_bytes());
+        self.record_crossing(site.key(), site.claimed_by(self.tx).to_bytes())?;
         Ok(self.open_bucket(Held::Amount(crossed.amount), crossed.resource))
     }
 

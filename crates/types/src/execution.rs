@@ -436,6 +436,16 @@ pub enum AbortReason {
     /// drops.
     #[hbor(discriminant = 71)]
     OutsideScope,
+    /// One execution wrote two crossings at one cell.
+    ///
+    /// A crossing's key names the edge that produced it, so two edges
+    /// deriving one key are two crossings the chain cannot tell apart:
+    /// the record is written once, the receipt attests both, and the
+    /// consumer is credited twice against a single claim. Admission
+    /// refuses the shapes that reach it; this is the kernel refusing to
+    /// write the state either way.
+    #[hbor(discriminant = 72)]
+    CrossingKeyRepeated,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -731,6 +741,8 @@ mod tests {
             (67, AbortReason::ConditionStraddlesScope),
             (68, AbortReason::EscrowOriginUndeclared),
             (69, AbortReason::EscrowRecordUnreadable),
+            (71, AbortReason::OutsideScope),
+            (72, AbortReason::CrossingKeyRepeated),
         ];
         for (byte, reason) in classes {
             assert_eq!(
