@@ -35,25 +35,38 @@ pub const MAX_TX_BYTES_LEN: usize = 1024 * 1024;
 /// on [`MAX_TX_BYTES_LEN`]'s terms.
 pub const MAX_MESSAGE_LEN: usize = 1024;
 
-/// How long every transaction-derived artifact outlives its intent's
-/// signed window, in milliseconds.
+/// How long a transaction-derived artifact outlives the signed window it
+/// was derived from, in milliseconds.
 ///
-/// One grace for a nullifier, a committed-transaction cell, an escrow
-/// record and an escrow claim alike. A subintent stops being admissible at its `validity_end_ms`, and the
-/// last transaction that could have bound it needs a bounded stretch to
-/// terminate everywhere; a crossing's delivery is admissible to the
-/// delivery window's close, and one admitted at the last moment has
-/// claimed by then or never will — which is the earliest instant the
-/// record's issuer can prove the crossing lapsed and reclaim it. The
-/// reclaim is then composed, admitted and committed like any other
-/// abandonment, in the room a validity range gives every abandonment, so
-/// the cells have to stand for that long past the lapse, or the proof
-/// would license a reclaim of a cell already swept. That is the longest
-/// life any artifact needs, and every artifact gets it: one grace, so a
-/// reader holding a leaf reads its window back the same way whatever
-/// family it belongs to. The workspace asserts this figure against the
-/// constants it is the sum of.
-pub const ARTIFACT_GRACE_MS: u64 = 264_000;
+/// The default every family takes but one. A subintent stops being
+/// admissible at its `validity_end_ms`, so the last transaction that
+/// could have bound it is admitted before then and has terminated
+/// everywhere a bounded stretch later; a shard's committed cell answers
+/// one question whose window closes on the same terms. Past that the
+/// cell answers nobody, and no reshape reads either across a cut — both
+/// are state, and state migrates with its owner's prefix at every split
+/// and merge. The workspace asserts this figure against the bound every
+/// other transaction-derived artifact is retained by.
+pub const ARTIFACT_GRACE_MS: u64 = 144_000;
+
+/// How long an escrow record and the claim it is decided against outlive
+/// the producing intent's signed window, in milliseconds.
+///
+/// The one exception to [`ARTIFACT_GRACE_MS`], and the reason is that
+/// this is the one family a reshape reads across a cut. A record written
+/// near a cut is inherited by a successor that must decide it against a
+/// claim cell now sitting on some other chain, and every other bound on
+/// reshape evidence is one span — so a claim window shorter than that
+/// leaves a record nobody can dispose of, its value stranded where
+/// presence and absence are both unprovable.
+///
+/// The floor is far below the figure and is a different argument: a
+/// crossing's delivery is admissible to the delivery window's close, one
+/// admitted at the last moment has claimed by the finalization delay or
+/// never will, and the reclaim that proves it needs the room every
+/// abandonment gets to commit. The workspace asserts the figure against
+/// the reshape span and the floor against the sum.
+pub const CROSSING_GRACE_MS: u64 = 1_500_000;
 
 /// The bound on subintents one envelope may compose, and so on the
 /// signatures it carries for them.

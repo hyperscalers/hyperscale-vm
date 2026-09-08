@@ -29,8 +29,9 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, from_slice, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
-    ARTIFACT_GRACE_MS, Address, Effect, EffectTarget, LegShape, MAX_MANIFEST_NODES, Mode, Moves,
-    NetworkId, PrincipalAddr, ResourceAddr, SubintentHash, SubstateKey, SweepBucket, TxHash,
+    ARTIFACT_GRACE_MS, Address, CROSSING_GRACE_MS, Effect, EffectTarget, LegShape,
+    MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr, SubintentHash,
+    SubstateKey, SweepBucket, TxHash,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -559,7 +560,7 @@ pub struct CrossingCell {
     /// Which of its outputs the edge carried.
     pub output: u32,
     /// When no chain can still be claiming the crossing: the producing
-    /// intent's own window end plus [`ARTIFACT_GRACE_MS`] — the intent's,
+    /// intent's own window end plus [`CROSSING_GRACE_MS`] — the intent's,
     /// not the transaction's, so the composer chooses no part of it.
     pub expiry_ms: u64,
     /// The transaction whose execution issued the crossing.
@@ -613,7 +614,7 @@ pub struct Marker {
     /// The transaction that wrote it.
     pub tx: TxHash,
     /// When the marker stops being owed: its intent's validity end plus
-    /// [`ARTIFACT_GRACE_MS`], on the family's own terms.
+    /// its family's own grace, on that family's own terms.
     pub expiry_ms: u64,
     /// The fact the marker records.
     pub marks: Marked,
@@ -643,7 +644,39 @@ pub enum Marked {
     },
 }
 
+impl Marked {
+    /// When a cell of this family stops being owed, for one derived from
+    /// a signed window ending at `validity_end_ms`.
+    ///
+    /// The one place the families' lives are stated, so a writer cannot
+    /// give a cell a life its family does not have — the same discipline
+    /// [`Marker::key`] enforces on the key, one level up. One family is
+    /// the exception and it says so here rather than at each site that
+    /// writes it.
+    #[must_use]
+    pub const fn expiry_ms(self, validity_end_ms: u64) -> u64 {
+        validity_end_ms.saturating_add(match self {
+            Self::Spent(_) | Self::Committed => ARTIFACT_GRACE_MS,
+            Self::Claimed { .. } => CROSSING_GRACE_MS,
+        })
+    }
+}
+
 impl Marker {
+    /// The marker `marks` for `tx`, owed until its own family's grace
+    /// past the signed window it was derived from.
+    ///
+    /// The expiry is derived rather than taken, so the family and the
+    /// life it is written with cannot come apart.
+    #[must_use]
+    pub const fn of(tx: TxHash, validity_end_ms: u64, marks: Marked) -> Self {
+        Self {
+            tx,
+            expiry_ms: marks.expiry_ms(validity_end_ms),
+            marks,
+        }
+    }
+
     /// The cell this marker sits at under `owner`: the family's own key,
     /// re-derived from what the value says.
     #[must_use]
@@ -858,9 +891,8 @@ impl CrossingSite {
     }
 }
 
-/// When everything an intent's signature brought into being stops being
-/// owed — its nullifier, and the escrow cells of every node it holds:
-/// the window its signer signed, plus [`ARTIFACT_GRACE_MS`].
+/// When an intent's nullifier stops being owed: the window its signer
+/// signed, plus the grace [`Marked::Spent`] takes.
 ///
 /// The intent's own window rather than the transaction's, for two
 /// reasons that are one: the transaction's window is the intersection
@@ -868,8 +900,21 @@ impl CrossingSite {
 /// transaction's window is the composer's to choose, where a key has to
 /// be made of nothing the composer chose.
 #[must_use]
-pub const fn intent_expiry_ms(header: &IntentHeader) -> u64 {
+pub const fn nullifier_expiry_ms(header: &IntentHeader) -> u64 {
     header.validity_end_ms.saturating_add(ARTIFACT_GRACE_MS)
+}
+
+/// When the escrow cells of every node an intent holds stop being owed:
+/// the window its signer signed, plus the grace [`Marked::Claimed`]
+/// takes.
+///
+/// The intent's own window, on [`nullifier_expiry_ms`]'s terms and for
+/// the same two reasons. The grace differs because the families do: a
+/// nullifier is answered on its own chain, and a crossing is decided
+/// across a reshape cut.
+#[must_use]
+pub const fn crossing_expiry_ms(header: &IntentHeader) -> u64 {
+    header.validity_end_ms.saturating_add(CROSSING_GRACE_MS)
 }
 
 /// One admitted subintent: its signed identity, its signer, and the
@@ -962,7 +1007,7 @@ pub fn admit_tree(
                 index: u32::try_from(index).expect("bounded by MAX_SUBINTENTS"),
             });
         }
-        let expiry_ms = intent_expiry_ms(&subintent.decl.header);
+        let expiry_ms = nullifier_expiry_ms(&subintent.decl.header);
         records.push(SubintentRecord {
             subintent: hash,
             signer: subintent.signer,
@@ -978,7 +1023,7 @@ pub fn admit_tree(
         bindings: &tree.root_bindings,
         signer: Some(composer),
         identity: tree.root.hash(hasher),
-        expiry_ms: intent_expiry_ms(&tree.root.header),
+        expiry_ms: crossing_expiry_ms(&tree.root.header),
     });
     for (subintent, record) in tree.subintents.iter().zip(&records) {
         views.push(IntentView {
@@ -987,7 +1032,7 @@ pub fn admit_tree(
             bindings: &subintent.bindings,
             signer: Some(subintent.signer),
             identity: record.subintent,
-            expiry_ms: intent_expiry_ms(&subintent.decl.header),
+            expiry_ms: crossing_expiry_ms(&subintent.decl.header),
         });
     }
     // The envelope's own records, layered behind what the chain already

@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
     AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, Constraint, CrossingCell,
     CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree, GraphArg, GraphNode,
     Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH,
-    ManifestGraph, ManifestHash, Marker, NULLIFIER_SLOT, NodeInput, PackageHash,
+    ManifestGraph, ManifestHash, Marked, Marker, NULLIFIER_SLOT, NodeInput, PackageHash,
     PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket, Subintent, SubintentHash,
     TestHasher, Value, admit, admit_tree, bucketed_child_key, child_key, escrow_claim_key,
     escrow_record_key, explain_admission_tree, nullifier_key, route_tree,
@@ -17,8 +17,9 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    ARTIFACT_GRACE_MS, Address, CallTarget, Effect, EffectTarget, MAX_SUBINTENTS, Mode, Moves,
-    NetworkId, PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
+    ARTIFACT_GRACE_MS, Address, CROSSING_GRACE_MS, CallTarget, Effect, EffectTarget,
+    MAX_SUBINTENTS, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT,
+    SweepBucket, TxHash,
 };
 use proptest::prelude::{any, proptest};
 
@@ -424,12 +425,20 @@ fn an_origin_names_the_intent_its_node_signed() {
         ],
     );
     // And each carries its own intent's horizon: the window that
-    // intent's signer signed plus the escrow grace, which outlives the
-    // nullifier's by the room a lapsed crossing's reclaim needs.
+    // intent's signer signed plus the crossing grace, which outlives the
+    // nullifier's by the span a successor needs to decide an inherited
+    // record across a reshape cut.
     for origin in admitted.admitted.origins() {
         assert_eq!(
             origin.expiry_ms,
+            TEST_HEADER.validity_end_ms + CROSSING_GRACE_MS,
+        );
+    }
+    for record in &admitted.subintents {
+        assert_eq!(
+            record.expiry_ms,
             TEST_HEADER.validity_end_ms + ARTIFACT_GRACE_MS,
+            "a nullifier is answered on its own chain and takes the default grace",
         );
     }
 }
@@ -634,6 +643,54 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
         decoded.key(&TestHasher, BOB),
         CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS).key(),
     );
+}
+
+/// A cell's life is its family's, and a writer does not get to choose
+/// it: one grace serves every family but the crossing, which is the one
+/// a reshape reads across a cut and so the one that has to stay readable
+/// for the whole terminal evidence span.
+///
+/// The two graces are far apart, so a family written with the other's
+/// would be a cell swept long before or long after anything can ask
+/// about it — and `sweepable_cell` could not catch it, since a key
+/// re-derives from whatever expiry the value states.
+#[test]
+fn a_marker_takes_the_life_its_family_has_and_no_other() {
+    const VALIDITY_END_MS: u64 = 600_000;
+    let tx = TxHash(Hash32([3; 32]));
+    let subintent = SubintentHash(Hash32([4; 32]));
+
+    let spent = Marker::of(tx, VALIDITY_END_MS, Marked::Spent(subintent));
+    let committed = Marker::of(tx, VALIDITY_END_MS, Marked::Committed);
+    let claimed = Marker::of(
+        tx,
+        VALIDITY_END_MS,
+        Marked::Claimed {
+            intent: subintent,
+            local: 1,
+            output: 0,
+        },
+    );
+
+    assert_eq!(spent.expiry_ms, VALIDITY_END_MS + ARTIFACT_GRACE_MS);
+    assert_eq!(
+        committed.expiry_ms, spent.expiry_ms,
+        "a nullifier and a committed cell answer on their own chain and take one grace",
+    );
+    assert_eq!(claimed.expiry_ms, VALIDITY_END_MS + CROSSING_GRACE_MS);
+    assert!(
+        claimed.expiry_ms > spent.expiry_ms,
+        "and the crossing outlives them, being the one family decided across a cut",
+    );
+
+    // Each still re-derives its own key from what it states, which is
+    // what a sweep reads it back by.
+    for marker in [spent, committed, claimed] {
+        assert_eq!(
+            SweepBucket::claimed_by(marker.key(&TestHasher, BOB).local),
+            SweepBucket::of(marker.expiry_ms),
+        );
+    }
 }
 
 #[test]
