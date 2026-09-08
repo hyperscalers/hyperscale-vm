@@ -165,15 +165,12 @@ impl Movement {
         }
     }
 
-    /// This movement followed by `next` on the same cell, or `None`
-    /// where a composed total leaves `u128`.
+    /// This movement followed by `next` on the same cell.
     ///
     /// Checked rather than saturating: the totals a kernel records are
     /// bounded by the balances that fed them, so a sum past `u128` is a
     /// movement no kernel produced — a malformed receipt for the caller
     /// to refuse whole, not a total to pin at the ceiling and settle on.
-    ///
-    /// This movement followed by `next` on one cell.
     ///
     /// # Errors
     ///
@@ -605,8 +602,6 @@ mod tests {
         assert_eq!(read_amount(&first_then_second.unwrap()), Some(300));
     }
 
-    /// A resolved movement is an absolute like any other, and a drained
-    /// cell goes rather than encoding zero.
     /// A debit past the balance is refused at settlement, naming the
     /// cell, what it held and the movement that ran past it.
     #[test]
@@ -656,6 +651,8 @@ mod tests {
         );
     }
 
+    /// A resolved movement is an absolute like any other, and a drained
+    /// cell goes rather than encoding zero.
     #[test]
     fn resolving_a_drain_removes_the_cell() {
         let vault = key(2, 2);
