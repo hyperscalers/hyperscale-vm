@@ -232,6 +232,17 @@ impl BatchTx {
         }
     }
 
+    /// Every record cell this execution disposes of: what a settlement
+    /// deletes, whether it retires the record or takes it back. A
+    /// manifest disposes of none — it issues them.
+    #[must_use]
+    pub fn disposed_records(&self) -> Vec<SubstateKey> {
+        match &self.job {
+            Job::Manifest { .. } => Vec::new(),
+            Job::Records(disposals) => disposals.iter().map(|disposal| disposal.record).collect(),
+        }
+    }
+
     /// Every claim cell this execution creates: the arrivals it takes,
     /// and the crossings a settlement takes back.
     #[must_use]
@@ -835,6 +846,11 @@ fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
 /// claim is the cell another party can write; a record only ever says
 /// this leg already ran. Whichever is found first names the outcome, so
 /// two committed cells name one outcome whatever else is in the batch.
+///
+/// Creations, so a cell found already there means the work is done. A
+/// settlement's own record is there by construction — it is what the
+/// settlement disposes of — which is why the screen reads a wider set
+/// than this one does ([`marker_writes`]).
 fn created_cells(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
     entry
         .nullifiers
@@ -850,6 +866,29 @@ fn created_cells(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
         .chain(
             entry
                 .record_cells()
+                .into_iter()
+                .map(|key| (key, Outcome::EscrowAlreadyIssued { key })),
+        )
+        .collect()
+}
+
+/// Every marker cell this execution *writes*, which is what the batch
+/// screen holds to an exclusive declaration.
+///
+/// Wider than [`created_cells`] by exactly the records a settlement
+/// disposes of. A settlement creates no record — it deletes one — and a
+/// deletion is a write on the same cell, belonging in the same conflict
+/// group and wanting the same exclusive declaration. Screening
+/// creations alone let a settlement whose declaration omitted a record
+/// it deletes through, to surface later as an undeclared access: a
+/// kernel defect, and a halt, where a batch that cannot be run should
+/// simply refuse.
+fn marker_writes(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
+    created_cells(entry)
+        .into_iter()
+        .chain(
+            entry
+                .disposed_records()
                 .into_iter()
                 .map(|key| (key, Outcome::EscrowAlreadyIssued { key })),
         )
@@ -1019,7 +1058,7 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
         // Every marker family on one reading: a nullifier, a record and
         // a claim are cells the execution creates, and the declaration is
         // what puts every writer of one of them in one conflict group.
-        for (key, outcome) in created_cells(entry) {
+        for (key, outcome) in marker_writes(entry) {
             if declares_exclusively(entry, key) {
                 continue;
             }

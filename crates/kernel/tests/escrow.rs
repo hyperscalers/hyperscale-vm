@@ -1039,6 +1039,36 @@ fn retiring(who: TxHash) -> BatchTx {
     ])
 }
 
+/// A settlement that does not declare the record it deletes refuses the
+/// batch, rather than running and surfacing as an undeclared access.
+///
+/// A settlement creates no cell, so a screen over creations alone never
+/// looked at it — and the write it makes is a deletion of the very cell
+/// two settlements would race for. The kernel treats an undeclared
+/// access as its own defect, so the omission has to be caught here,
+/// where it is merely a malformed batch.
+#[test]
+fn a_settlement_that_hides_the_record_it_deletes_refuses_the_batch() {
+    let undeclared = BatchTx::new(tx(31), declared(&[]), env()).with_disposals(vec![Disposal {
+        record: record_site().key(),
+        claim: reclaim_site(),
+        disposition: Disposition::Retire,
+    }]);
+
+    assert_eq!(
+        execute(
+            Arc::new(MemoryStore::new()) as Arc<dyn Baseline>,
+            &[undeclared],
+            ExecutionMode::Serial,
+        )
+        .err(),
+        Some(BatchError::UndeclaredCrossingCell {
+            tx: tx(31),
+            key: record_site().key(),
+        }),
+    );
+}
+
 /// Issue, then retire: the record is gone, nothing moved, no fold term
 /// entered, and the vault stands where the escrow left it.
 #[test]
