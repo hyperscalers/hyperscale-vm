@@ -44,7 +44,7 @@ fn pay(chain: &mut Chain, amount: u128) {
 /// confiscation: the value is still the holder's, still spendable, and
 /// what it takes to spend it is the gate a withdrawal already carries.
 #[hyperscale_vm_testing::test]
-fn a_quarantined_deposit_is_the_holder_s_to_spend(chain: &mut Chain) {
+fn a_quarantined_deposit_is_for_the_holder_to_spend(chain: &mut Chain) {
     chain.credit(SENDER, ASSET, 100);
     refuse(chain);
     pay(chain, 100);

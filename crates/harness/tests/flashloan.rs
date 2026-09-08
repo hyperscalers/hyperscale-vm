@@ -289,7 +289,7 @@ fn the_obligation_cannot_be_routed_into_a_vault() {
 /// declines rather than trapping — the pool keeps its float and the
 /// borrower keeps theirs.
 #[test]
-fn a_repayment_that_falls_short_declines_on_the_method_s_own_arm() -> Result<()> {
+fn a_repayment_that_falls_short_declines_on_an_arm_of_the_method() -> Result<()> {
     let world = world();
     let short = graph(|b| {
         let [loan, debt] = pool().draw(b, 100)?;

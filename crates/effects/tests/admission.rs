@@ -1809,7 +1809,7 @@ fn bailiff_world() -> (Records, ComponentAddr) {
 /// owner by argument, so the publish gate sees an expression and only
 /// this can see an address.
 #[test]
-fn a_reach_may_not_name_the_reaching_instance_s_own_prefix() {
+fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
     let record = seizable_meta();
     let seized = record.address(&TestHasher);
     let (chain, issuer) = bailiff_world();
