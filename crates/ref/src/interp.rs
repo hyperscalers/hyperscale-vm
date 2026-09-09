@@ -1,11 +1,9 @@
 //! The execution engine: a plain stack interpreter over decoded modules.
 //!
-//! Execution operates on a [`Store`] holding the mutable state of one or more
-//! core instances — the component layer instantiates several modules sharing
-//! memories and canon-defined functions; the bare-module path wraps a single
-//! module. Calls to canon-defined functions leave the interpreter through the
-//! [`CanonDispatch`] trait, whose implementor may recursively call back in
-//! (guest realloc during lowering).
+//! Execution operates on a [`Store`] holding the mutable state of an
+//! instance. Calls to imported functions leave the interpreter through
+//! the [`ImportDispatch`] trait, whose implementor answers without calling
+//! back in.
 
 use hyperscale_vm_types::AbortReason;
 
@@ -31,52 +29,15 @@ pub(crate) const PAGE: usize = 64 * 1024;
 /// to the runtime would cost the independence the comparison rests on.
 pub const MAX_CALL_DEPTH: usize = 512;
 
-/// An execution failure: a wasm trap, or a canonical-ABI violation at the
-/// component boundary.
+/// An execution failure: a wasm trap, or a refusal at the boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecError {
     /// A wasm trap.
     Trap(Trap),
-    /// A canonical-ABI violation (unknown handle, undropped borrows).
-    Canon(CanonError),
-}
-
-/// Canonical-ABI violations, mirroring the blessed engine's error classes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CanonError {
-    /// A handle index with no live table entry.
-    UnknownHandle,
-    /// A live handle of the wrong resource type — the mode-escape trap.
-    WrongHandleType,
-    /// Borrow handles still live when the export returned.
-    BorrowsRemain,
-    /// An owned argument lifted out of a handle the same call is already
-    /// borrowing. Transferring a handle takes it out of the guest's
-    /// table, and taking it out from under a borrow the same call holds
-    /// would leave that borrow naming nothing — so the ABI refuses the
-    /// lift rather than resolving the order.
-    TransferOfLentHandle,
-    /// A lowered import called from a canonical-ABI callback — guest code
-    /// the ABI runs while it is mid-lowering, where the component instance
-    /// is not free to be left.
-    CannotLeave,
-    /// A guest pointer at an offset the canonical ABI does not admit for
-    /// what sits there.
-    Misaligned,
-    /// A guest pointer naming memory that is not there, or a length that
-    /// runs past the end of it.
-    ///
-    /// Not a memory trap: the guest executed no load, and what refused is
-    /// the ABI declining to read through the pointer it was handed. The
-    /// blessed engine says the same, so the two abort under one name.
-    PointerOutOfBounds,
-    /// An enum discriminant past the declared cases — the lift refuses it
-    /// rather than resolving it to a case, as the engine's lift does.
-    InvalidDiscriminant,
     /// A deterministic kernel refusal, carrying the host's own class.
     Host(AbortReason),
-    /// An unresolved canon definition — a decoder or instantiation defect,
-    /// never guest-reachable.
+    /// An unresolved import — a decoder or instantiation defect, never
+    /// guest-reachable.
     Internal(&'static str),
 }
 
@@ -98,12 +59,8 @@ impl ExecError {
             Self::Trap(trap) => trap.abort_reason(),
             // A kernel refusal already carries its own class; the host
             // classified it and the boundary only transports it.
-            Self::Canon(CanonError::Host(reason)) => *reason,
-            // Everything else collapses. The blessed engine surfaces most
-            // canonical-ABI violations as an error that resolves to no
-            // trap kind, so subdividing here would build a distinction the
-            // two runtimes could not make identically.
-            Self::Canon(_) => AbortReason::AbiViolation,
+            Self::Host(reason) => *reason,
+            Self::Internal(_) => AbortReason::AbiViolation,
         }
     }
 }
@@ -118,8 +75,8 @@ pub(crate) enum FuncAddr {
         /// Function index in that instance's index space.
         func: u32,
     },
-    /// A canon-defined function, dispatched through [`CanonDispatch`].
-    Canon(u32),
+    /// An imported function, dispatched through [`ImportDispatch`].
+    Import(u32),
 }
 
 /// One linear memory.
@@ -187,12 +144,12 @@ impl Store {
     }
 }
 
-/// Dispatch for canon-defined functions.
-pub(crate) trait CanonDispatch {
-    /// Core-level parameter count of the canon function.
+/// Dispatch for imported functions.
+pub(crate) trait ImportDispatch {
+    /// Core-level parameter count of the import.
     fn param_count(&self, id: u32) -> usize;
 
-    /// Executes the canon function; may recursively call [`call`].
+    /// Executes the import.
     fn dispatch(
         &mut self,
         modules: &[&RefModule],
@@ -202,12 +159,12 @@ pub(crate) trait CanonDispatch {
     ) -> Result<Vec<Value>, ExecError>;
 }
 
-/// A dispatcher for stores with no canon functions.
-pub(crate) struct NoCanon;
+/// A dispatcher for stores with no imports.
+pub(crate) struct Unimported;
 
-impl CanonDispatch for NoCanon {
+impl ImportDispatch for Unimported {
     fn param_count(&self, _id: u32) -> usize {
-        unreachable!("bare modules define no canon functions")
+        unreachable!("bare modules import nothing")
     }
 
     fn dispatch(
@@ -217,26 +174,26 @@ impl CanonDispatch for NoCanon {
         _id: u32,
         _args: Vec<Value>,
     ) -> Result<Vec<Value>, ExecError> {
-        unreachable!("bare modules define no canon functions")
+        unreachable!("bare modules import nothing")
     }
 }
 
 /// Calls a function by address.
 pub(crate) fn call(
     modules: &[&RefModule],
-    canon: &mut dyn CanonDispatch,
+    imports: &mut dyn ImportDispatch,
     store: &mut Store,
     addr: FuncAddr,
     args: Vec<Value>,
 ) -> Result<Vec<Value>, ExecError> {
     match addr {
-        FuncAddr::Canon(id) => canon.dispatch(modules, store, id, args),
+        FuncAddr::Import(id) => imports.dispatch(modules, store, id, args),
         FuncAddr::Wasm { instance, func } => {
             if store.depth >= MAX_CALL_DEPTH {
                 return Err(Trap::CallDepthExhausted.into());
             }
             store.depth += 1;
-            let result = run(modules, canon, store, instance, func, args);
+            let result = run(modules, imports, store, instance, func, args);
             store.depth -= 1;
             result
         }
@@ -254,7 +211,7 @@ struct Label {
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // wasm narrowing semantics
 fn run(
     modules: &[&RefModule],
-    canon: &mut dyn CanonDispatch,
+    imports: &mut dyn ImportDispatch,
     store: &mut Store,
     instance: u32,
     func_idx: u32,
@@ -373,7 +330,7 @@ fn run(
             Op::Return => return Ok(split_top(&mut stack, result_arity)),
             Op::Call(idx) => {
                 let addr = store.instances[instance as usize].funcs[*idx as usize];
-                dispatch_call(modules, canon, store, addr, &mut stack)?;
+                dispatch_call(modules, imports, store, addr, &mut stack)?;
             }
             Op::CallIndirect { ty } => {
                 let slot = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
@@ -389,7 +346,7 @@ fn run(
                 if expected != actual {
                     return Err(Trap::BadSignature.into());
                 }
-                dispatch_call(modules, canon, store, entry.addr, &mut stack)?;
+                dispatch_call(modules, imports, store, entry.addr, &mut stack)?;
             }
             Op::Drop => {
                 stack.pop();
@@ -491,25 +448,25 @@ fn run(
 
 fn dispatch_call(
     modules: &[&RefModule],
-    canon: &mut dyn CanonDispatch,
+    imports: &mut dyn ImportDispatch,
     store: &mut Store,
     addr: FuncAddr,
     stack: &mut Vec<Value>,
 ) -> Result<(), ExecError> {
     let param_count = match addr {
-        FuncAddr::Canon(id) => canon.param_count(id),
+        FuncAddr::Import(id) => imports.param_count(id),
         FuncAddr::Wasm { instance, func } => {
             let module = modules[store.instances[instance as usize].module as usize];
             module.func_type(func).params.len()
         }
     };
     if stack.len() < param_count {
-        return Err(ExecError::Canon(CanonError::Internal(
+        return Err(ExecError::Internal(
             "a call reached its arity with fewer values than the stack holds",
-        )));
+        ));
     }
     let args = split_top(stack, param_count);
-    let results = call(modules, canon, store, addr, args)?;
+    let results = call(modules, imports, store, addr, args)?;
     stack.extend(results);
     Ok(())
 }
@@ -732,7 +689,7 @@ pub(crate) fn instantiate_module(
     Ok(instance_idx)
 }
 
-/// A bare-module instance: no imports, no canon functions.
+/// A bare-module instance: no imports.
 pub struct RefInstance<'m> {
     module: &'m RefModule,
     store: Store,
@@ -835,14 +792,16 @@ impl<'m> RefInstance<'m> {
         };
         match call(
             &[self.module],
-            &mut NoCanon,
+            &mut Unimported,
             &mut self.store,
             addr,
             args.to_vec(),
         ) {
             Ok(values) => Ok(Ok(values)),
             Err(ExecError::Trap(t)) => Ok(Err(t)),
-            Err(ExecError::Canon(_)) => unreachable!("bare modules have no canon boundary"),
+            Err(ExecError::Host(_) | ExecError::Internal(_)) => {
+                unreachable!("bare modules import nothing")
+            }
         }
     }
 }

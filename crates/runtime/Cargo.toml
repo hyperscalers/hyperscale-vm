@@ -3,14 +3,14 @@ name = "hyperscale-vm-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Component Model host: blessed engine embedding, profile validator, kernel world, metering"
+description = "Core module host: blessed engine embedding, profile validator, kernel imports, metering"
 
 [features]
 default = ["engine"]
-# The wasmtime embedding: the blessed engine, the kernel world, and the
+# The wasmtime embedding: the blessed engine, the kernel imports, and the
 # metering layer. Off, the crate is the profile validator alone — bytes in,
 # a deploy verdict out — which is all an embedder needs when its runtime
-# interprets components rather than compiling them.
+# interprets modules rather than compiling them.
 engine = ["dep:wasmtime"]
 
 [dependencies]

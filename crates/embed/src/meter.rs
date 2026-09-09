@@ -1,8 +1,8 @@
 //! The boundary cost model, stated once.
 //!
 //! Engine fuel meters guest instructions but is blind to boundary copies —
-//! a value crossing the canonical ABI moves bytes the instruction schedule
-//! never sees. Every kernel-world function therefore carries a supplement:
+//! a value crossing the boundary moves bytes the instruction schedule
+//! never sees. Every kernel function therefore carries a supplement:
 //! argument bytes before the host operation, result bytes after it
 //! succeeds, and for the interval functions a second supplement for what a
 //! scan lifted out of the store — bytes that never cross the ABI and so
@@ -30,7 +30,7 @@ use hyperscale_vm_types::{AbortReason, Drawn, SEED_BYTES};
 
 use crate::KernelHost;
 
-/// Fuel charged per byte crossing the canonical ABI boundary.
+/// Fuel charged per byte crossing the boundary.
 pub const FUEL_PER_BOUNDARY_BYTE: u64 = 1;
 
 /// What an amount costs at the boundary.

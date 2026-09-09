@@ -1,6 +1,6 @@
 //! The blessed engine's failures as the protocol's abort classes.
 //!
-//! An invocation can fail four ways: the guest traps, the canonical ABI
+//! An invocation can fail four ways: the guest traps, the boundary
 //! refuses, a host operation returns its own refusal, or the call itself
 //! does not fit the export convention. Each arrives as a
 //! [`wasmtime::Error`], and [`classify`] is the one place they become an
@@ -40,12 +40,12 @@ pub(crate) fn fault(error: MeterError) -> Error {
 
 /// An invocation the export convention does not admit.
 ///
-/// Not a guest trap: the component answered, and what came back is not
+/// Not a guest trap: the module answered, and what came back is not
 /// what a package's own ABI binding says its exports produce.
 #[derive(Debug, thiserror::Error)]
 pub enum CallError {
-    /// The component exports no function of the invoked name.
-    #[error("component exports no function `{0}`")]
+    /// The module exports no function of the invoked name.
+    #[error("module exports no function `{0}`")]
     ExportMissing(String),
     /// A result outside the call convention: a method ends with the
     /// edges it produced, a declined code, or nothing.
@@ -87,7 +87,6 @@ pub const fn trap_reason(trap: Trap) -> AbortReason {
         Trap::BadSignature => AbortReason::IndirectCallSignature,
         Trap::StackOverflow => AbortReason::StackExhausted,
         Trap::OutOfFuel => AbortReason::OutOfGas,
-        Trap::CannotEnterComponent => AbortReason::AbiViolation,
         _ => AbortReason::TrapOutsideProfile,
     }
 }
@@ -96,10 +95,9 @@ pub const fn trap_reason(trap: Trap) -> AbortReason {
 ///
 /// A host refusal carries its own class and keeps it. A trap maps through
 /// [`trap_reason`]. A convention failure maps through [`CallError`].
-/// What is left is the canonical ABI refusing at the component boundary
-/// without resolving to a trap kind, which the interpreter reports the
-/// same way and which is why [`AbortReason::AbiViolation`] is one variant
-/// rather than four.
+/// What is left is the engine refusing a call outside the boundary —
+/// an argument list the export's type does not take — which the
+/// interpreter reports the same way.
 #[must_use]
 pub fn classify(error: &Error) -> AbortReason {
     if let Some(refusal) = error.downcast_ref::<HostRefusal>() {

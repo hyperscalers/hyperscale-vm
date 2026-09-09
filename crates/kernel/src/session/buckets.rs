@@ -394,7 +394,7 @@ impl KernelSession {
 
     /// A bucket handle the guest let go of.
     ///
-    /// The canonical ABI delivers the drop, and what the kernel does with
+    /// The boundary delivers the drop, and what the kernel does with
     /// it is release the slot. It judges nothing: whether value was
     /// forgotten is a question about the whole transaction, and a body
     /// that keeps a full bucket to the end delivers no drop at all — so
@@ -552,10 +552,9 @@ mod tests {
     /// A merge of a bucket into itself is one bucket, and the table says
     /// so rather than adding a quantity to itself.
     ///
-    /// Both engines' canonical ABIs refuse the call before it reaches
-    /// here — an owned argument cannot be lifted out of a handle the same
-    /// call is borrowing — so this is the kernel holding the invariant on
-    /// its own account, where it does not depend on either of them.
+    /// The boundary passes the call through — a bucket index is a number,
+    /// and two equal numbers are nothing for it to refuse — so this is
+    /// the kernel holding the invariant on its own account.
     #[test]
     fn a_merge_of_a_bucket_into_itself_is_not_two_buckets() {
         let mut buckets = Buckets::default();

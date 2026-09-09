@@ -19,39 +19,21 @@
 //! it — so an artifact that passes cannot exhaust the stack in either
 //! runtime, and the divergence has no reachable witness.
 //!
-//! Both budgets bound *one* chain, and both are sized on at most one more
-//! standing at the same time: the canonical ABI calls the guest's realloc
-//! while the chain that entered it is still live. That is why a callback
-//! the ABI runs — a `realloc` or a `post-return` — may not reach a canon
-//! builtin: a lowered import closes a call cycle whose closing edge is a
-//! host frame, which this walk terminates on by design, so the graph stays
-//! acyclic and the heaviest chain measures two frames while the recursion
-//! is unbounded, and every other builtin equally leaves the instance,
-//! which the ABI forbids mid-callback. Refusing the set is what makes the
-//! budgets bound anything at all.
-//!
-//! The graph spans the whole component, not one core module at a time. A
-//! module's imports are wired to other modules' exports by the component's
-//! core instantiations, and an element segment in one module populates a
-//! table another module calls through — the shim-and-fixups shape
-//! `wit-bindgen` emits. Judging modules separately would weigh every edge
-//! across those seams at zero and, worse, would not see a call cycle that
-//! crosses one: core instantiation is acyclic, but a fixups module filling
-//! an earlier instance's table with a later instance's export closes a
-//! cycle at run time that no single module contains.
+//! One chain stands at a time. Every import is a host function that
+//! returns to the frame that called it without re-entering the guest, so
+//! the walk terminates on imports and the reserve covers the host frames
+//! at either end of the chain.
 //!
 //! `call_indirect` resolves to the table entries whose signature matches
 //! the call site — an over-approximation, but a type-directed one: ignoring
 //! types inflates the account guest's back edges from 15 to 47 and rejects
-//! artifacts that are perfectly sound. Signatures are compared
-//! structurally, because two modules number their types independently.
+//! artifacts that are perfectly sound.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use wasmparser::{
-    CanonicalFunction, CanonicalOption, ComponentAlias, CompositeInnerType, ElementItems,
-    ExternalKind, FuncValidatorAllocations, Instance as InstanceReader, InstantiationArgKind,
-    Operator, Parser, Payload, TypeRef, ValType, ValidPayload, Validator,
+    CompositeInnerType, ElementItems, FuncValidatorAllocations, Operator, Parser, Payload, TypeRef,
+    ValType, ValidPayload, Validator,
 };
 
 use crate::profile;
@@ -59,46 +41,6 @@ use crate::validator::{ProfileError, profile_features};
 
 /// A core function signature, compared structurally.
 type FuncSig = (Vec<ValType>, Vec<ValType>);
-
-/// A table in the linked graph. An instance that imports a table shares the
-/// identity of the one that declared it, which is how an element segment in
-/// one module reaches another module's call sites.
-type TableId = usize;
-
-/// One node of the linked call graph: a core instance, and a function among
-/// the functions its module defines.
-type Node = (usize, usize);
-
-/// Where a call lands.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum FuncRef {
-    /// A host frame that cannot continue anywhere: an import the wiring
-    /// does not satisfy, covered by the reserve rather than by this walk.
-    Host,
-    /// A canon builtin — a lowered import, `resource.drop`, or any other
-    /// canon-defined core function. Calling one leaves the instance, which
-    /// the canonical ABI forbids from inside a callback, so the walk treats
-    /// the whole set alike rather than enumerating its members.
-    Canon,
-    /// A wasm function, by instance and index among its module's own.
-    Wasm(usize, usize),
-}
-
-/// What an import asks for. Globals and tags are refused by the structural
-/// pass, so nothing here has to model them.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ImportKind {
-    Func,
-    Table,
-    Other,
-}
-
-/// One import, as the linker resolves it.
-struct ImportRef {
-    module: String,
-    name: String,
-    kind: ImportKind,
-}
 
 /// What the bound needs to know about one local function.
 #[derive(Default)]
@@ -111,22 +53,18 @@ struct FuncFacts {
     indirect: BTreeSet<u32>,
 }
 
-/// Everything the two passes collect about a core module.
+/// Everything the two passes collect about a module.
 #[derive(Default)]
 struct ModuleFacts {
     /// Signature per type index.
     types: Vec<FuncSig>,
     /// Type index per function, imports first.
     func_types: Vec<u32>,
-    /// Imports in declaration order.
-    imports: Vec<ImportRef>,
+    /// How many functions the module imports: the low indices, each a
+    /// host frame the walk terminates on.
     imported_funcs: usize,
-    /// Whether the module declares its own table rather than importing one.
-    declares_table: bool,
     /// Element segments, as the function indices they place.
     elements: Vec<Vec<u32>>,
-    /// Exports, in declaration order.
-    exports: Vec<(String, ExternalKind, u32)>,
     /// One entry per local function, in code-section order.
     funcs: Vec<FuncFacts>,
 }
@@ -139,70 +77,14 @@ impl ModuleFacts {
             .get(func as usize)
             .and_then(|ty| self.types.get(*ty as usize))
     }
+
+    /// A function index as a local one, or `None` for an import.
+    const fn local(&self, func: u32) -> Option<usize> {
+        (func as usize).checked_sub(self.imported_funcs)
+    }
 }
 
-/// A core function as the component's index space names it.
-enum CoreFuncSlot {
-    /// Canon-defined: a host frame that leaves the instance when called.
-    Canon,
-    /// An alias of an earlier core instance's export.
-    Alias { instance: u32, name: String },
-}
-
-/// A canonical-ABI callback: guest code the ABI runs itself.
-struct Callback {
-    /// The core function index the canon option names.
-    func: u32,
-    /// What to call it in a refusal.
-    kind: &'static str,
-}
-
-/// A core instance before its imports are resolved.
-pub(crate) enum InstanceDef {
-    Instantiate {
-        module: u32,
-        args: Vec<(String, u32)>,
-    },
-    Exports(Vec<(String, ExternalKind, u32)>),
-}
-
-/// A resolved core-instance export. Memories carry no call edges.
-#[derive(Clone, Copy)]
-enum Export {
-    Func(FuncRef),
-    Table(TableId),
-}
-
-/// One resolved core instance.
-#[derive(Default)]
-struct CoreInstance {
-    /// The module it instantiates; `None` for a synthetic export bag.
-    module: Option<usize>,
-    /// The full function index space: imports resolved, then local functions.
-    funcs: Vec<FuncRef>,
-    /// The table it calls through, declared or imported.
-    table: Option<TableId>,
-    exports: BTreeMap<String, Export>,
-}
-
-/// A component's core modules, the instances that link them, and the
-/// canonical-ABI callbacks its canon definitions name.
-struct Linked {
-    modules: Vec<ModuleFacts>,
-    instances: Vec<CoreInstance>,
-    callbacks: Vec<(FuncRef, &'static str)>,
-}
-
-/// The modelled native frame of a function with `slots` value slots.
-const fn frame_bytes(slots: usize) -> usize {
-    profile::STACK_FRAME_OVERHEAD_BYTES + profile::STACK_BYTES_PER_SLOT * slots
-}
-
-/// Proves a bare core module cannot exhaust the native stack.
-///
-/// A module judged on its own is the one-instance case of the linked graph:
-/// every import is a host frame, because there is no other module for one
-/// to resolve to.
+/// Proves a module cannot exhaust the native stack.
 ///
 /// # Errors
 ///
@@ -210,93 +92,24 @@ const fn frame_bytes(slots: usize) -> usize {
 /// cyclic call graph, or a chain that does not fit either budget.
 pub fn check_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
     let facts = collect(bytes)?;
-    let instance = bare_instance(0, &facts, 0, &mut 0);
-    check_linked(&[facts], &[instance], &[], profile::MAX_CALL_CHAIN_BYTES)
-}
-
-/// Proves a core module the kernel calls directly cannot exhaust the
-/// native stack.
-///
-/// The bare-module walk under the budget one chain has when nothing the
-/// host does re-enters the guest: every import returns to the frame that
-/// called it, so the heaviest chain is the whole of what stands at once.
-///
-/// # Errors
-///
-/// Exactly [`check_stack_bounds`]'s.
-pub fn check_module_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
-    let facts = collect(bytes)?;
-    let instance = bare_instance(0, &facts, 0, &mut 0);
-    check_linked(&[facts], &[instance], &[], profile::MAX_MODULE_CHAIN_BYTES)
-}
-
-/// A module judged on its own: every import is a host frame, because there
-/// is no wiring for one to resolve to, and its element segments land in a
-/// table nothing else can see.
-fn bare_instance(
-    module: usize,
-    facts: &ModuleFacts,
-    instance: usize,
-    next_table: &mut TableId,
-) -> CoreInstance {
-    let mut funcs = vec![FuncRef::Host; facts.imported_funcs];
-    funcs.extend((0..facts.funcs.len()).map(|local| FuncRef::Wasm(instance, local)));
-    *next_table += 1;
-    CoreInstance {
-        module: Some(module),
-        funcs,
-        table: Some(*next_table - 1),
-        exports: BTreeMap::new(),
-    }
-}
-
-/// Proves a component cannot exhaust the native stack, over the graph its
-/// core instantiations link together.
-///
-/// # Errors
-///
-/// Exactly [`check_stack_bounds`]'s, plus a core instantiation outside the
-/// contract shape and a canonical-ABI callback that leaves the component.
-pub fn check_component_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
-    let linked = link(bytes)?;
-    check_linked(
-        &linked.modules,
-        &linked.instances,
-        &linked.callbacks,
-        profile::MAX_CALL_CHAIN_BYTES,
-    )
-}
-
-/// The stack bound over a linked instance graph, against the byte budget
-/// one chain may consume.
-fn check_linked(
-    modules: &[ModuleFacts],
-    instances: &[CoreInstance],
-    callbacks: &[(FuncRef, &'static str)],
-    chain_bytes: usize,
-) -> Result<(), ProfileError> {
-    for facts in modules {
-        for (local, func) in facts.funcs.iter().enumerate() {
-            if func.slots > profile::MAX_SLOTS_PER_FRAME {
-                return Err(ProfileError::Structural(format!(
-                    "function {local} needs {} value slots, over the {} the frame bound allows",
-                    func.slots,
-                    profile::MAX_SLOTS_PER_FRAME
-                )));
-            }
+    for (local, func) in facts.funcs.iter().enumerate() {
+        if func.slots > profile::MAX_SLOTS_PER_FRAME {
+            return Err(ProfileError::Structural(format!(
+                "function {local} needs {} value slots, over the {} the frame bound allows",
+                func.slots,
+                profile::MAX_SLOTS_PER_FRAME
+            )));
         }
     }
 
-    let tables = populate_tables(modules, instances);
-    let graph = call_graph(modules, instances, &tables);
-    check_callbacks(&graph, callbacks)?;
-
-    let heaviest = heaviest_path(&graph.edges, &graph.cost)?;
-    if heaviest.bytes > chain_bytes {
+    let (edges, cost) = call_graph(&facts);
+    let heaviest = heaviest_path(&edges, &cost)?;
+    if heaviest.bytes > profile::MAX_CALL_CHAIN_BYTES {
         return Err(ProfileError::Structural(format!(
-            "the heaviest call chain needs {} stack bytes, over the {chain_bytes} the profile \
+            "the heaviest call chain needs {} stack bytes, over the {} the profile \
              reserves for one chain",
             heaviest.bytes,
+            profile::MAX_CALL_CHAIN_BYTES
         )));
     }
     if heaviest.frames > profile::MAX_CALL_CHAIN_FRAMES {
@@ -309,163 +122,66 @@ fn check_linked(
     Ok(())
 }
 
-/// What every table holds once every instance's element segments have been
-/// applied. A segment resolves its function indices in the index space of
-/// the instance that carries it, and writes into whichever table that
-/// instance uses — its own, or one it imported from an earlier instance.
+/// The native bytes one frame of `slots` value slots costs under the
+/// profile's model.
+const fn frame_bytes(slots: usize) -> usize {
+    profile::STACK_FRAME_OVERHEAD_BYTES + slots * profile::STACK_BYTES_PER_SLOT
+}
+
+/// What the module's table holds once every element segment has been
+/// applied, indexed by signature alone.
 ///
 /// Offsets are dropped: a table holds the union of every segment written
-/// into it, indexed by signature alone. That widens the edge set — a call
-/// site reaches entries no offset would put under it — so it can only
-/// refuse an artifact a precise walk admits, never the reverse, and
-/// resolving offsets would mean modelling every index a `call_indirect`
-/// can compute at run time anyway.
-fn populate_tables(
-    modules: &[ModuleFacts],
-    instances: &[CoreInstance],
-) -> BTreeMap<TableId, Vec<(FuncSig, FuncRef)>> {
-    let mut tables: BTreeMap<TableId, Vec<(FuncSig, FuncRef)>> = BTreeMap::new();
-    for instance in instances {
-        let (Some(module), Some(table)) = (instance.module, instance.table) else {
-            continue;
-        };
-        let Some(facts) = modules.get(module) else {
-            continue;
-        };
-        for segment in &facts.elements {
-            for func in segment {
-                let (Some(target), Some(signature)) =
-                    (instance.funcs.get(*func as usize), facts.signature(*func))
-                else {
-                    continue;
-                };
-                tables
-                    .entry(table)
-                    .or_default()
-                    .push((signature.clone(), *target));
-            }
-        }
-    }
-    tables
+/// into it. That widens the edge set — a call site reaches entries no
+/// offset would put under it — so it can only refuse an artifact a
+/// precise walk admits, never the reverse, and resolving offsets would
+/// mean modelling every index a `call_indirect` can compute at run time
+/// anyway.
+fn table(facts: &ModuleFacts) -> Vec<(FuncSig, u32)> {
+    facts
+        .elements
+        .iter()
+        .flatten()
+        .filter_map(|func| facts.signature(*func).map(|sig| (sig.clone(), *func)))
+        .collect()
 }
 
-/// The linked call graph: the edges, each node's cost, and the nodes that
-/// leave the instance through a canon builtin.
-struct CallGraph {
-    edges: BTreeMap<Node, BTreeSet<Node>>,
-    cost: BTreeMap<Node, Cost>,
-    leaving: BTreeSet<Node>,
-}
-
-/// The linked call graph over every instance's local functions.
-fn call_graph(
-    modules: &[ModuleFacts],
-    instances: &[CoreInstance],
-    tables: &BTreeMap<TableId, Vec<(FuncSig, FuncRef)>>,
-) -> CallGraph {
-    let mut graph: BTreeMap<Node, BTreeSet<Node>> = BTreeMap::new();
-    let mut cost: BTreeMap<Node, Cost> = BTreeMap::new();
-    let mut leaving: BTreeSet<Node> = BTreeSet::new();
-    for (index, instance) in instances.iter().enumerate() {
-        let Some(facts) = instance.module.and_then(|module| modules.get(module)) else {
-            continue;
-        };
-        for (local, func) in facts.funcs.iter().enumerate() {
-            let node = (index, local);
-            cost.insert(
-                node,
-                Cost {
-                    bytes: frame_bytes(func.slots),
-                    frames: 1,
-                },
-            );
-            let edges = graph.entry(node).or_default();
-            for callee in &func.callees {
-                match instance.funcs.get(*callee as usize) {
-                    Some(FuncRef::Wasm(target, local)) => {
-                        edges.insert((*target, *local));
-                    }
-                    Some(FuncRef::Canon) => {
-                        leaving.insert(node);
-                    }
-                    _ => {}
-                }
-            }
-            for ty in &func.indirect {
-                let (Some(signature), Some(table)) =
-                    (facts.types.get(*ty as usize), instance.table)
-                else {
-                    continue;
-                };
-                for (entry, target) in tables.get(&table).into_iter().flatten() {
-                    if entry != signature {
-                        continue;
-                    }
-                    match target {
-                        FuncRef::Wasm(target, local) => {
-                            edges.insert((*target, *local));
-                        }
-                        FuncRef::Canon => {
-                            leaving.insert(node);
-                        }
-                        FuncRef::Host => {}
-                    }
-                }
-            }
-        }
-    }
-    CallGraph {
-        edges: graph,
-        cost,
-        leaving,
-    }
-}
-
-/// Refuses a canonical-ABI callback that can reach a canon builtin.
-///
-/// `realloc` and `post-return` are guest code the ABI runs as its own
-/// callbacks, and neither may leave the instance — through a lowered
-/// import, a `resource.drop`, or any other canon builtin: the blessed
-/// engine traps, and the profile's byte budget is sized on one level of
-/// re-entry being the whole of it. Neither fact is visible to the chain
-/// bound. The cycle a lowered import closes runs through a host frame,
-/// which the walk terminates on by design, so the graph stays acyclic and
-/// the heaviest chain measures two frames while the recursion is
-/// unbounded.
-fn check_callbacks(
-    graph: &CallGraph,
-    callbacks: &[(FuncRef, &'static str)],
-) -> Result<(), ProfileError> {
-    for (target, kind) in callbacks {
-        let (instance, local) = match target {
-            FuncRef::Wasm(instance, local) => (instance, local),
-            // A canon builtin *as* the callback is the degenerate case of
-            // reaching one: the first use traps in both runtimes, so the
-            // artifact is refused where the equivalent one-hop shape is.
-            FuncRef::Canon => {
-                return Err(ProfileError::Structural(format!(
-                    "a {kind} callback is itself a canon builtin, which may not be \
-                     called from inside the canonical ABI"
-                )));
-            }
-            FuncRef::Host => continue,
-        };
-        let mut seen = BTreeSet::new();
-        let mut stack = vec![(*instance, *local)];
-        while let Some(node) = stack.pop() {
-            if !seen.insert(node) {
+/// The call graph over the module's local functions: the edges, and each
+/// node's cost.
+#[allow(clippy::type_complexity)] // two maps over one node type, read once
+fn call_graph(facts: &ModuleFacts) -> (BTreeMap<usize, BTreeSet<usize>>, BTreeMap<usize, Cost>) {
+    let table = table(facts);
+    let mut edges: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    let mut cost: BTreeMap<usize, Cost> = BTreeMap::new();
+    for (local, func) in facts.funcs.iter().enumerate() {
+        cost.insert(
+            local,
+            Cost {
+                bytes: frame_bytes(func.slots),
+                frames: 1,
+            },
+        );
+        let targets = edges.entry(local).or_default();
+        // An import is a host frame the chain ends on, so only a local
+        // callee is an edge.
+        targets.extend(
+            func.callees
+                .iter()
+                .filter_map(|callee| facts.local(*callee)),
+        );
+        for ty in &func.indirect {
+            let Some(signature) = facts.types.get(*ty as usize) else {
                 continue;
-            }
-            if graph.leaving.contains(&node) {
-                return Err(ProfileError::Structural(format!(
-                    "a {kind} callback reaches a canon builtin, which may not be called \
-                     from inside the canonical ABI"
-                )));
-            }
-            stack.extend(graph.edges.get(&node).into_iter().flatten().copied());
+            };
+            targets.extend(
+                table
+                    .iter()
+                    .filter(|(entry, _)| entry == signature)
+                    .filter_map(|(_, target)| facts.local(*target)),
+            );
         }
     }
-    Ok(())
+    (edges, cost)
 }
 
 /// What one call chain costs, in the two currencies the profile budgets.
@@ -497,8 +213,8 @@ impl Cost {
 
 /// The heaviest root-to-leaf path, rejecting cycles.
 fn heaviest_path(
-    graph: &BTreeMap<Node, BTreeSet<Node>>,
-    cost: &BTreeMap<Node, Cost>,
+    graph: &BTreeMap<usize, BTreeSet<usize>>,
+    cost: &BTreeMap<usize, Cost>,
 ) -> Result<Cost, ProfileError> {
     /// Visit state: on the current path, or finished.
     enum Mark {
@@ -511,7 +227,7 @@ fn heaviest_path(
             "the call graph is cyclic, so no static stack bound exists".to_string(),
         )
     };
-    let mut marks: BTreeMap<Node, Mark> = BTreeMap::new();
+    let mut marks: BTreeMap<usize, Mark> = BTreeMap::new();
     let mut heaviest = Cost::default();
     // Iterative post-order so a deep graph cannot exhaust our own stack.
     for &root in graph.keys() {
@@ -554,278 +270,6 @@ fn heaviest_path(
     Ok(heaviest)
 }
 
-/// Reads the component's core modules and the instantiations that wire
-/// them, resolving each instance's imports against the ones before it.
-fn link(bytes: &[u8]) -> Result<Linked, ProfileError> {
-    let mut modules: Vec<ModuleFacts> = Vec::new();
-    let mut core_funcs: Vec<CoreFuncSlot> = Vec::new();
-    let mut core_tables: Vec<(u32, String)> = Vec::new();
-    let mut defs: Vec<InstanceDef> = Vec::new();
-    let mut callbacks: Vec<Callback> = Vec::new();
-
-    for payload in Parser::new(0).parse_all(bytes) {
-        let payload = payload.map_err(|e| ProfileError::Feature(e.to_string()))?;
-        match payload {
-            Payload::ModuleSection {
-                unchecked_range, ..
-            } => modules.push(collect(&bytes[unchecked_range])?),
-            Payload::ComponentCanonicalSection(reader) => {
-                for canon in reader {
-                    // Every canon form but `lift` defines a core function,
-                    // and `lift` defines a component one. Matching the
-                    // exclusion rather than the inclusions keeps the index
-                    // space aligned even for a form this profile does not
-                    // admit — a miscount here would silently misresolve
-                    // every alias after it.
-                    let canon = canon.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    if !matches!(canon, CanonicalFunction::Lift { .. }) {
-                        core_funcs.push(CoreFuncSlot::Canon);
-                    }
-                    callbacks.extend(canon_callbacks(&canon));
-                }
-            }
-            Payload::ComponentAliasSection(reader) => {
-                for alias in reader {
-                    let alias = alias.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    if let ComponentAlias::CoreInstanceExport {
-                        kind,
-                        instance_index,
-                        name,
-                    } = alias
-                    {
-                        match kind {
-                            ExternalKind::Func => core_funcs.push(CoreFuncSlot::Alias {
-                                instance: instance_index,
-                                name: name.to_string(),
-                            }),
-                            ExternalKind::Table => {
-                                core_tables.push((instance_index, name.to_string()));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            Payload::InstanceSection(reader) => {
-                for instance in reader {
-                    let instance = instance.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    defs.push(instance_def(&instance)?);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut resolved: Vec<CoreInstance> = Vec::new();
-    let mut next_table: TableId = 0;
-    let mut instantiated: BTreeSet<usize> = BTreeSet::new();
-    for def in &defs {
-        let instance = match def {
-            InstanceDef::Exports(list) => export_bag(list, &core_funcs, &core_tables, &resolved),
-            InstanceDef::Instantiate { module, args } => {
-                instantiated.insert(*module as usize);
-                instantiate(*module, args, &modules, &resolved, &mut next_table)?
-            }
-        };
-        resolved.push(instance);
-    }
-
-    // A module the component never instantiates cannot run, so nothing
-    // requires bounding it — but it is bounded anyway, as a bare module.
-    // The alternative is a check that silently covers the wired-up part of
-    // an artifact and calls that the artifact.
-    for (module, facts) in modules.iter().enumerate() {
-        if !instantiated.contains(&module) {
-            let instance = bare_instance(module, facts, resolved.len(), &mut next_table);
-            resolved.push(instance);
-        }
-    }
-
-    // Callbacks resolve last: a canon option names a core function that may
-    // be aliased out of any instance, including one defined after it.
-    // Component validation should leave nothing unresolvable here, but an
-    // unresolvable callback is one the walk cannot judge, so it fails the
-    // artifact rather than falling out of the callback set.
-    let mut entries = Vec::with_capacity(callbacks.len());
-    for callback in &callbacks {
-        let Some(target) = core_func(&core_funcs, &resolved, callback.func) else {
-            return Err(ProfileError::Structural(format!(
-                "a {} callback names a core function the linked graph cannot resolve",
-                callback.kind
-            )));
-        };
-        entries.push((target, callback.kind));
-    }
-
-    Ok(Linked {
-        modules,
-        instances: resolved,
-        callbacks: entries,
-    })
-}
-
-/// The canonical-ABI callbacks a canon definition names.
-fn canon_callbacks(canon: &CanonicalFunction) -> Vec<Callback> {
-    let options = match canon {
-        CanonicalFunction::Lower { options, .. } | CanonicalFunction::Lift { options, .. } => {
-            &**options
-        }
-        _ => &[][..],
-    };
-    options
-        .iter()
-        .filter_map(|option| match option {
-            CanonicalOption::Realloc(func) => Some(Callback {
-                func: *func,
-                kind: "realloc",
-            }),
-            CanonicalOption::PostReturn(func) => Some(Callback {
-                func: *func,
-                kind: "post-return",
-            }),
-            _ => None,
-        })
-        .collect()
-}
-
-pub(crate) fn instance_def(instance: &InstanceReader<'_>) -> Result<InstanceDef, ProfileError> {
-    match instance {
-        InstanceReader::Instantiate { module_index, args } => {
-            let mut resolved = Vec::with_capacity(args.len());
-            for arg in &**args {
-                if arg.kind != InstantiationArgKind::Instance {
-                    return Err(ProfileError::Structural(
-                        "only instance arguments instantiate a core module".to_string(),
-                    ));
-                }
-                resolved.push((arg.name.to_string(), arg.index));
-            }
-            Ok(InstanceDef::Instantiate {
-                module: *module_index,
-                args: resolved,
-            })
-        }
-        InstanceReader::FromExports(exports) => Ok(InstanceDef::Exports(
-            exports
-                .iter()
-                .map(|export| (export.name.to_string(), export.kind, export.index))
-                .collect(),
-        )),
-    }
-}
-
-/// A synthetic instance that only names items defined elsewhere.
-fn export_bag(
-    list: &[(String, ExternalKind, u32)],
-    core_funcs: &[CoreFuncSlot],
-    core_tables: &[(u32, String)],
-    resolved: &[CoreInstance],
-) -> CoreInstance {
-    let mut exports = BTreeMap::new();
-    for (name, kind, index) in list {
-        let item = match kind {
-            ExternalKind::Func => core_func(core_funcs, resolved, *index).map(Export::Func),
-            ExternalKind::Table => {
-                core_tables
-                    .get(*index as usize)
-                    .and_then(|(instance, export)| {
-                        match resolved.get(*instance as usize)?.exports.get(export)? {
-                            Export::Table(table) => Some(Export::Table(*table)),
-                            Export::Func(_) => None,
-                        }
-                    })
-            }
-            _ => None,
-        };
-        if let Some(item) = item {
-            exports.insert(name.clone(), item);
-        }
-    }
-    CoreInstance {
-        exports,
-        ..CoreInstance::default()
-    }
-}
-
-/// One core function of the component's index space.
-fn core_func(
-    core_funcs: &[CoreFuncSlot],
-    resolved: &[CoreInstance],
-    index: u32,
-) -> Option<FuncRef> {
-    match core_funcs.get(index as usize)? {
-        CoreFuncSlot::Canon => Some(FuncRef::Canon),
-        CoreFuncSlot::Alias { instance, name } => {
-            match resolved.get(*instance as usize)?.exports.get(name)? {
-                Export::Func(target) => Some(*target),
-                Export::Table(_) => None,
-            }
-        }
-    }
-}
-
-/// Instantiates a core module: imports resolve against earlier instances,
-/// local functions take fresh nodes, and the table is the declared one or
-/// the imported one.
-fn instantiate(
-    module: u32,
-    args: &[(String, u32)],
-    modules: &[ModuleFacts],
-    resolved: &[CoreInstance],
-    next_table: &mut TableId,
-) -> Result<CoreInstance, ProfileError> {
-    let facts = modules.get(module as usize).ok_or_else(|| {
-        ProfileError::Structural("core instance names an undefined module".to_string())
-    })?;
-    let index = resolved.len();
-    let mut funcs = Vec::with_capacity(facts.func_types.len());
-    let mut imported_table = None;
-    for import in &facts.imports {
-        let supplied = args
-            .iter()
-            .find(|(name, _)| *name == import.module)
-            .and_then(|(_, instance)| resolved.get(*instance as usize))
-            .and_then(|instance| instance.exports.get(&import.name));
-        match (import.kind, supplied) {
-            (ImportKind::Func, Some(Export::Func(target))) => funcs.push(*target),
-            // An import the wiring does not satisfy is a host frame rather
-            // than a refusal: component validation has already rejected a
-            // genuinely missing one, and treating it as unresolved would
-            // weigh a real edge at zero.
-            (ImportKind::Func, _) => funcs.push(FuncRef::Host),
-            (ImportKind::Table, Some(Export::Table(table))) => imported_table = Some(*table),
-            _ => {}
-        }
-    }
-    funcs.extend((0..facts.funcs.len()).map(|local| FuncRef::Wasm(index, local)));
-
-    let table = if facts.declares_table {
-        *next_table += 1;
-        Some(*next_table - 1)
-    } else {
-        imported_table
-    };
-
-    let mut exports = BTreeMap::new();
-    for (name, kind, item) in &facts.exports {
-        let export = match kind {
-            ExternalKind::Func => funcs.get(*item as usize).copied().map(Export::Func),
-            ExternalKind::Table => table.map(Export::Table),
-            _ => None,
-        };
-        if let Some(export) = export {
-            exports.insert(name.clone(), export);
-        }
-    }
-
-    Ok(CoreInstance {
-        module: Some(module as usize),
-        funcs,
-        table,
-        exports,
-    })
-}
-
 /// Two passes: the structural one for types, imports, and edges, then a
 /// validator-driven one for the deepest operand stack per function.
 fn collect(bytes: &[u8]) -> Result<ModuleFacts, ProfileError> {
@@ -834,7 +278,7 @@ fn collect(bytes: &[u8]) -> Result<ModuleFacts, ProfileError> {
     Ok(facts)
 }
 
-/// Types, imports, exports, and the table's element segments.
+/// Types, imports, and the table's element segments.
 fn collect_structure(bytes: &[u8]) -> Result<ModuleFacts, ProfileError> {
     let mut facts = ModuleFacts::default();
     let mut local_types: Vec<u32> = Vec::new();
@@ -858,39 +302,15 @@ fn collect_structure(bytes: &[u8]) -> Result<ModuleFacts, ProfileError> {
             Payload::ImportSection(reader) => {
                 for import in reader.into_imports() {
                     let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    let kind = match import.ty {
-                        TypeRef::Func(ty) => {
-                            facts.imported_funcs += 1;
-                            facts.func_types.push(ty);
-                            ImportKind::Func
-                        }
-                        TypeRef::Table(_) => ImportKind::Table,
-                        _ => ImportKind::Other,
-                    };
-                    facts.imports.push(ImportRef {
-                        module: import.module.to_string(),
-                        name: import.name.to_string(),
-                        kind,
-                    });
+                    if let TypeRef::Func(ty) | TypeRef::FuncExact(ty) = import.ty {
+                        facts.imported_funcs += 1;
+                        facts.func_types.push(ty);
+                    }
                 }
             }
             Payload::FunctionSection(reader) => {
                 for ty in reader {
                     local_types.push(ty.map_err(|e| ProfileError::Feature(e.to_string()))?);
-                }
-            }
-            Payload::TableSection(reader) => {
-                for table in reader {
-                    table.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    facts.declares_table = true;
-                }
-            }
-            Payload::ExportSection(reader) => {
-                for export in reader {
-                    let export = export.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    facts
-                        .exports
-                        .push((export.name.to_string(), export.kind, export.index));
                 }
             }
             Payload::ElementSection(reader) => {
@@ -957,7 +377,7 @@ fn collect_frames(bytes: &[u8], facts: &mut ModuleFacts) -> Result<(), ProfileEr
                     }
                     // The table a call site names is dropped along with the
                     // index it computes: every indirect call is weighed
-                    // against the instance's table, which the profile's
+                    // against the module's table, which the profile's
                     // one-table limit makes exact today and an
                     // over-approximation if that limit ever rises.
                     Operator::CallIndirect { type_index, .. } => {

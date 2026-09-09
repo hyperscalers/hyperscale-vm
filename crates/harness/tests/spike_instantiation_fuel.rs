@@ -18,8 +18,8 @@
 //! every platform.
 
 use hyperscale_vm_fixtures::artifacts;
-use hyperscale_vm_runtime::{blessed_engine, module_instantiation_charges};
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
+use hyperscale_vm_runtime::{blessed_engine, instantiation_charges};
+use hyperscale_vm_stdlib::{ACCOUNT_MODULE, STAKING_MODULE};
 use wasmtime::{Instance, Linker, Module, Ref, RefType, Result, Store, Table, TableType};
 use wat::parse_str;
 
@@ -30,7 +30,7 @@ fn instantiation_fuel(wat: &str) -> Result<u64> {
     store.set_fuel(1_000_000)?;
     Instance::new(&mut store, &module, &[])?;
     let observed = 1_000_000 - store.get_fuel()?;
-    let derived = module_instantiation_charges(&parse_str(wat)?)?.total();
+    let derived = instantiation_charges(&parse_str(wat)?)?.total();
     assert_eq!(derived, observed, "derived charge diverges from the engine");
     Ok(observed)
 }
@@ -90,7 +90,7 @@ fn imported_table_elements_charge_the_init_entry_only() -> Result<()> {
         let table = Table::new(&mut store, ty, Ref::Func(None))?;
         Instance::new(&mut store, &module, &[table.into()])?;
         assert_eq!(1_000_000 - store.get_fuel()?, 1, "element count {elems}");
-        let derived = module_instantiation_charges(&parse_str(&wat)?)?.total();
+        let derived = instantiation_charges(&parse_str(&wat)?)?.total();
         assert_eq!(derived, 1, "element count {elems}");
     }
     Ok(())
@@ -103,10 +103,10 @@ fn committed_artifacts_charge_what_the_derivation_says() -> Result<()> {
     // nothing beyond them. Instantiation calls no import, so trapping
     // stubs stand in for the kernel.
     let engine = blessed_engine()?;
-    let mut corpus: Vec<&[u8]> = vec![ACCOUNT_COMPONENT, STAKING_COMPONENT];
+    let mut corpus: Vec<&[u8]> = vec![ACCOUNT_MODULE, STAKING_MODULE];
     corpus.extend(artifacts());
     for bytes in corpus {
-        let derived = module_instantiation_charges(bytes)?.total();
+        let derived = instantiation_charges(bytes)?.total();
         let module = Module::new(&engine, bytes)?;
         let mut linker: Linker<()> = Linker::new(&engine);
         linker.define_unknown_imports_as_traps(&module)?;

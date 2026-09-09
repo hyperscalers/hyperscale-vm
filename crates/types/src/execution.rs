@@ -230,8 +230,8 @@ pub enum AbortReason {
     /// transaction ends is the loss the linear model exists to exclude.
     ///
     /// Both ways of losing it, because they are one loss and one
-    /// judgment. Letting a handle go delivers a discard through the
-    /// canonical ABI and keeping one delivers nothing at all, and neither
+    /// judgment. Letting a bucket go delivers a drop through the
+    /// boundary and keeping one delivers nothing at all, and neither
     /// decides anything: the bucket stays in the table either way and the
     /// kernel finds it holding value when the transaction closes.
     #[hbor(discriminant = 26)]

@@ -29,7 +29,7 @@
 //!
 //! # What the fast lane does not answer
 //!
-//! Fuel, the canonical ABI's copy accounting, the deploy-time profile
+//! Fuel, the boundary's copy accounting, the deploy-time profile
 //! and the totality scan are all the artifact's, and the native lane has
 //! none of them. What it does answer is whether the bodies are right,
 //! and the harness holds that answer to the artifact's.
@@ -69,7 +69,7 @@ use hyperscale_vm_kernel::{
 };
 pub use hyperscale_vm_manifest_builder::TypedError;
 use hyperscale_vm_manifest_builder::{TypedBuilder, graph_records};
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, instantiate};
+use hyperscale_vm_stdlib::{ACCOUNT_MODULE, instantiate};
 pub use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_types::{CallTarget, SubstateKey, TxHash, encode_amount};
 
@@ -157,14 +157,14 @@ impl Chain {
     /// A chain that builds each package to its artifact and runs it
     /// under the blessed engine.
     ///
-    /// The slow lane, and the faithful one: fuel, the canonical ABI and
+    /// The slow lane, and the faithful one: fuel, the boundary and
     /// the deploy-time profile all stand here, and a test that passes on
     /// both has been held to what a network would do as well as to what
     /// its author meant.
     #[must_use]
     pub fn wasm() -> Self {
         let mut blessed = Blessed::new();
-        blessed.seed(account_package(), ACCOUNT_COMPONENT);
+        blessed.seed(account_package(), ACCOUNT_MODULE);
         Self::new(Engine::Blessed(blessed))
     }
 

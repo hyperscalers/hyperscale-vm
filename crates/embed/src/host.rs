@@ -291,10 +291,10 @@ pub trait KernelHost: Send {
 
     /// A bucket handle the guest let go of.
     ///
-    /// The canonical ABI routes a discarded owned handle here and the
-    /// host decides what it means. Delivery is the property an owned
-    /// handle has and a value type cannot be given: a record can carry an
-    /// amount, and it cannot notice being forgotten.
+    /// The boundary routes a dropped bucket here and the host decides
+    /// what it means. Delivery is the property a bucket has and a value
+    /// type cannot be given: a record can carry an amount, and it cannot
+    /// notice being forgotten.
     ///
     /// # Errors
     ///

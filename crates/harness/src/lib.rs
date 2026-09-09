@@ -215,8 +215,7 @@ pub mod fixtures {
             .to_path_buf()
     }
 
-    /// Builds a `guests/<name>` crate and returns the componentized
-    /// artifact.
+    /// Builds a `guests/<name>` crate and returns the artifact.
     ///
     /// One implementation of the guest build, and it is the command's:
     /// what a test compiles and what `cargo hyperscale` compiles are the
@@ -224,103 +223,65 @@ pub mod fixtures {
     ///
     /// # Errors
     ///
-    /// Fails if the guest build, the componentization, or the
-    /// deterministic profile refuses.
+    /// Fails if the guest build or the deterministic profile refuses.
     pub fn build_guest(name: &str) -> Result<Vec<u8>> {
         compile(&repo_root().join("guests").join(name))
             .map_err(|error| format_err!("{name}: {error}"))
     }
 
-    /// The kernel-world component guest, exercising the world's handle
-    /// surface.
+    /// The kernel guest: a core module exercising the state, env and
+    /// crypto imports through every register path.
     ///
     /// Written as WAT so its memory representation is readable in this
     /// source, and so it can reach shapes no compiled guest expresses: a
-    /// forged handle, a mode escape, a borrow it never drops.
+    /// forged site index, a mode escape, a register collected twice.
+    /// Every export answers a `u64` as eight little-endian bytes.
     ///
     /// `transfer` takes a reservation and moves the value it grants into
-    /// a delta cell; `hash-tag` folds
-    /// the host hash of four scratch bytes, which is the one kernel
-    /// interface a guest cannot check for itself; `peek` reads a cell
-    /// and folds the clock in; `rmw` bumps a write cell's first byte;
-    /// `scan-sum`
-    /// folds a read interval's entry and order bytes; `fill` rewrites entry
-    /// zero and removes the last entry of a write interval; `place` inserts
-    /// order 42; `escape` reads bytes through a handle the declaration lent
-    /// as a commutative movement, which the capability refuses; `forge`
-    /// passes a handle index the host never lowered; `read-value` reads whatever read cell it is handed, which
-    /// is how a test reaches the rep a clause nobody declared would have
-    /// occupied; `leak` never drops its borrow; `no-such-entry` removes
-    /// past the interval's last entry (a deterministic kernel refusal).
+    /// a delta cell; `hash-tag` folds the host hash of four scratch
+    /// bytes, which is the one kernel interface a guest cannot check for
+    /// itself; `peek` reads a cell and folds the clock in; `rmw` bumps a
+    /// write cell's first byte; `scan-sum` folds a read interval's entry
+    /// and order bytes; `fill` rewrites entry zero and removes the last
+    /// entry of a write interval; `place` inserts order 42; `escape`
+    /// reads bytes through a site the declaration lent as a commutative
+    /// movement, which the capability refuses; `forge` names a site index
+    /// the session never seated; `handle-value` answers the index it was
+    /// handed; `read-value` reads whatever read cell it is handed, which
+    /// is how a test reaches the site a clause nobody declared would have
+    /// occupied; `retake` collects the answer register twice, the
+    /// register rule's own violation; `no-such-entry` removes past the
+    /// interval's last entry (a deterministic kernel refusal).
     pub const KERNEL_GUEST_WAT: &str = include_str!("fixtures/kernel_guest.wat");
 
-    /// The bucket guest: a component that takes value out of the cells it
-    /// was lent, keeps it, gives it back, and throws some away.
+    /// The bucket guest: a core module that takes value out of the cells
+    /// it was lent, keeps it, gives it back, and throws some away.
     ///
-    /// `hold` takes an `own<bucket>` and stashes the handle in a global,
-    /// so the handle outlives the call that delivered it; `release`
-    /// returns the stashed handle, which is where ownership crosses back
-    /// out; `discard` takes one and drops it, which is where the host's
-    /// own destructor runs. `peek` reads a cell through a borrow and
-    /// exists to interleave the two: owned and borrowed handles share one
-    /// table, so what a borrow is numbered depends on what an own is
-    /// still holding.
+    /// `hold` takes a bucket and stashes its index in a global, so the
+    /// index outlives the call that delivered it; `release` replies with
+    /// the stashed bucket as its edge, which is where the value crosses
+    /// back to the kernel's table; `discard` takes one and drops it.
+    /// `peek` reads a cell and exists to interleave the two: buckets and
+    /// sites are two tables, and `read-held` reads a bucket's index as a
+    /// site to show the kernel judging which.
     ///
     /// `take-delta`, `take-write` and `take-reserve` are the debits, each
     /// handing back the bucket it produced rather than a number; and
     /// `take-reserve-twice` asks one grant the same question twice, which
     /// is the one thing a take can refuse that the read beside it could
     /// not. `issue` is the one bucket with no cell behind it: it takes a
-    /// grant index rather than a handle, because what admits a mint is
-    /// the declaration's own issuance and not anything lent to the body. `put-write` and `put-delta` are the credits, each
-    /// consuming the bucket it was handed; `put-write-then-drop` reaches
-    /// for the handle afterwards, which is the one thing a put makes
-    /// impossible. `take-two` debits two cells and hands both back at
-    /// once, which is what a method with more than one edge does.
-    /// `weigh` reads what a bucket carries and hands it back, which is
-    /// the one question about value that moves none. `halve` splits a
-    /// bucket and merges the halves straight back, and `split` keeps only
-    /// what came off. `self-merge` names one bucket as both sides of a
-    /// merge, which the canonical ABI refuses: an owned argument cannot
-    /// come out of a slot the same call is borrowing.
-    ///
-    /// The three handle-returning exports return the handle index they
-    /// were given, because that index is a core `i32` a body can read and
-    /// therefore something the two engines must agree on to the number.
+    /// grant index rather than a site, because what admits a mint is the
+    /// declaration's own issuance and not anything lent to the body.
+    /// `put-write` and `put-delta` are the credits, each consuming the
+    /// bucket it was handed; `put-write-then-drop` reaches for the bucket
+    /// afterwards, which is the one thing a put makes impossible.
+    /// `take-two` debits two cells and hands both back at once, which is
+    /// what a method with more than one edge does. `weigh` reads what a
+    /// bucket carries and hands it back, which is the one question about
+    /// value that moves none. `halve` splits a bucket and merges the
+    /// halves straight back, and `split` keeps only what came off.
+    /// `self-merge` names one bucket as both sides of a merge, which the
+    /// kernel judges. `lift` and `relift` move instances out of an
+    /// interval by the id list their register carries.
     pub const BUCKET_GUEST_WAT: &str = include_str!("fixtures/bucket_guest.wat");
-
-    /// A component whose `realloc` calls a lowered import, closing a call
-    /// cycle through the canonical-ABI boundary.
-    ///
-    /// `draw` calls `hash`, whose lowering calls the guest's realloc to
-    /// allocate the result — and that realloc calls `hash` again,
-    /// through a trampoline a third module's element segment filled. Every
-    /// edge is ordinary: core instantiation is acyclic, and the only cycle
-    /// runs through a host frame, so the deploy-time call graph is acyclic
-    /// and the heaviest chain it sees is two frames deep.
-    ///
-    /// The canonical ABI's re-entrance rule is what actually stops it: a
-    /// lowered import called from inside a lowering leaves an instance that
-    /// is not free to be left.
-    pub const REENTRANT_REALLOC_WAT: &str = include_str!("fixtures/reentrant_realloc.wat");
-
-    /// A component whose `realloc` calls `canon resource.drop`.
-    ///
-    /// No call cycle closes — a drop leaves the instance without
-    /// re-entering it — so only the may-leave rule stands between the
-    /// callback and the host. The rule covers every canon builtin, not
-    /// just the lowered import the realloc-cycle fixture uses; a runtime
-    /// that checks it on one dispatch arm and not another diverges from
-    /// the blessed engine exactly here.
-    pub const REENTRANT_DROP_WAT: &str = include_str!("fixtures/reentrant_drop.wat");
-
-    /// A component defining its own resource, whose destructor drops
-    /// another handle of the same one.
-    ///
-    /// The cycle the call-graph bound cannot see: the edge from a
-    /// `resource.drop` call site into the destructor is the canonical
-    /// ABI's, not the module's, so no walk over the artifact's calls
-    /// carries it. Under the blessed engine the chain runs until the
-    /// stack is gone, on an artifact the stack bound judged finite.
-    pub const RECURSIVE_DTOR_WAT: &str = include_str!("fixtures/recursive_dtor.wat");
 }

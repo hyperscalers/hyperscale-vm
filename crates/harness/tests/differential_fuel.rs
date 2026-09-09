@@ -10,22 +10,23 @@
 //! boundary the two runtimes must agree on whether the call completes, and
 //! the budget at which each flips is the operator each stopped on.
 //!
-//! The component sweep extends the claim to the boundary supplement: bytes
-//! a host call moves across the canonical ABI are charged into the same
-//! counter the instruction schedule draws on, so code that runs *after*
-//! the call exhausts at the same budget on both sides.
+//! The host-call sweep extends the claim to the boundary supplement: the
+//! bytes a host call moves through guest memory are charged into the
+//! same counter the instruction schedule draws on, so code that runs
+//! *after* the call exhausts at the same budget on both sides.
 
+use hyperscale_vm_embed::abi::{ABI, CRYPTO, MEMORY};
+use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
 use hyperscale_vm_harness::fixtures::NoHost;
 use hyperscale_vm_ref::{
-    CVal, ExecError, InstantiateError, RefComponent, RefComponentInstance, RefInstance, RefModule,
-    Trap as RefTrap, Value,
+    InstantiateError, RefInstance, RefModule, RefModuleInstance, Trap as RefTrap, Value,
 };
 use hyperscale_vm_runtime::{
-    InstantiationCharges, add_kernel_to_linker, blessed_engine, instantiate_charged,
-    instantiation_charges,
+    InstantiationCharges, Invoking, add_kernel_imports, blessed_engine, instantiate_charged,
+    instantiation_charges, invoke_export, validate_module,
 };
-use wasmtime::component::{Component, Linker as ComponentLinker};
-use wasmtime::{Engine, Instance, Module, Result, Store, Trap};
+use hyperscale_vm_types::AbortReason;
+use wasmtime::{Engine, Instance, Linker, Module, Result, Store, Trap};
 use wat::parse_str;
 
 /// A counted loop: the loop header is the engine's per-iteration fuel
@@ -142,113 +143,112 @@ fn a_bulk_copy_exhausts_at_the_same_budget() -> Result<()> {
 /// A host call, then a counted loop: the call's boundary bytes (8 of data
 /// in, 32 of digest out) are debt the loop's own headers must see, so the
 /// exhaustion point after the call walks with the budget on both sides.
-const HOST_CALL_FIXTURE: &str = r#"(component
-  (import "hyperscale:kernel/crypto" (instance $crypto
-    (export "hash" (func (param "data" (list u8)) (result (list u8))))))
-  (alias export $crypto "hash" (func $hash))
-  (core module $alloc
-    (memory (export "mem") 1 1)
-    (global $next (mut i32) (i32.const 1024))
-    (func (export "realloc") (param i32 i32 i32 i32) (result i32)
-      (local $ret i32)
-      global.get $next
-      local.set $ret
-      global.get $next
-      local.get 3
-      i32.add
-      global.set $next
-      local.get $ret))
-  (core instance $a (instantiate $alloc))
-  (core func $hash_l (canon lower (func $hash)
-    (memory $a "mem") (realloc (func $a "realloc"))))
-  (core module $m
-    (import "env" "mem" (memory 1 1))
-    (import "k" "hash" (func $hash (param i32 i32 i32)))
-    (func (export "burn") (param $n i32) (result i64)
-      (local $i i32)
-      (call $hash (i32.const 0) (i32.const 8) (i32.const 16))
-      (block
-        (loop
-          local.get $i
-          local.get $n
-          i32.ge_u
-          br_if 1
-          local.get $i
-          i32.const 1
-          i32.add
-          local.set $i
-          br 0))
-      local.get $i
-      i64.extend_i32_u))
-  (core instance $g (instantiate $m
-    (with "env" (instance (export "mem" (memory $a "mem"))))
-    (with "k" (instance (export "hash" (func $hash_l))))))
-  (func (export "burn") (param "n" u32) (result u64)
-    (canon lift (core func $g "burn"))))"#;
-
-fn blessed_component_verdict(
-    engine: &Engine,
-    component: &Component,
-    charges: &InstantiationCharges,
-    arg: u32,
-    fuel: u64,
-) -> Result<Verdict> {
-    let mut linker = ComponentLinker::<NoHost>::new(engine);
-    add_kernel_to_linker(&mut linker)?;
-    let mut store = Store::new(engine, NoHost);
-    let instance = match instantiate_charged(&mut store, fuel, charges, |s| {
-        linker.instantiate(s, component)
-    }) {
-        Ok(instance) => instance,
-        Err(e) => {
-            return Ok(match e.downcast_ref::<Trap>() {
-                Some(Trap::OutOfFuel) => Verdict::OutOfFuel,
-                other => Verdict::Other(format!("{other:?}")),
-            });
-        }
-    };
-    let func = instance.get_typed_func::<(u32,), (u64,)>(&mut store, "burn")?;
-    Ok(match func.call(&mut store, (arg,)) {
-        Ok((v,)) => Verdict::Completed(i32::try_from(v).expect("the fixture counts low")),
-        Err(e) => match e.downcast_ref::<Trap>() {
-            Some(Trap::OutOfFuel) => Verdict::OutOfFuel,
-            other => Verdict::Other(format!("{other:?}")),
-        },
-    })
+/// The count is answered as a `u64` at 48.
+fn host_call_fixture() -> String {
+    format!(
+        r#"(module
+  (import "{CRYPTO}" "hash" (func $hash (param i32 i32 i32)))
+  (import "{ABI}" "answer" (func $answer (param i32 i32)))
+  (import "{ABI}" "reply" (func $reply (param i32 i32)))
+  (memory (export "{MEMORY}") 1 1)
+  (func (export "burn") (param $n i64)
+    (local $i i32)
+    (call $hash (i32.const 0) (i32.const 8) (i32.const 16))
+    (block
+      (loop
+        local.get $i
+        local.get $n
+        i32.wrap_i64
+        i32.ge_u
+        br_if 1
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br 0))
+    (i64.store (i32.const 48) (i64.extend_i32_u (local.get $i)))
+    (call $answer (i32.const 48) (i32.const 8))
+    (call $reply (i32.const 0) (i32.const 0))))"#
+    )
 }
 
-fn ref_component_verdict(comp: &RefComponent, arg: u32, fuel: u64) -> Result<Verdict> {
-    let mut instance = match RefComponentInstance::instantiate(comp, NoHost, fuel) {
+/// The verdict an invocation of the host-call fixture is, on either
+/// engine: the count it answered, or the exhaustion it ended in.
+fn verdict(ended: Invocation) -> Verdict {
+    match ended.result {
+        Invoked::Produced {
+            answer: Some(answer),
+            ..
+        } => {
+            let bytes: [u8; 8] = answer
+                .as_slice()
+                .try_into()
+                .expect("the fixture answers eight bytes");
+            Verdict::Completed(
+                i32::try_from(u64::from_le_bytes(bytes)).expect("the fixture counts low"),
+            )
+        }
+        Invoked::Aborted(AbortReason::OutOfGas) => {
+            assert!(ended.exhausted, "exhaustion carries its flag");
+            Verdict::OutOfFuel
+        }
+        other => Verdict::Other(format!("{other:?}")),
+    }
+}
+
+fn blessed_host_call_verdict(
+    engine: &Engine,
+    module: &Module,
+    charges: &InstantiationCharges,
+    arg: u64,
+    fuel: u64,
+) -> Result<Verdict> {
+    let mut linker = Linker::<Invoking<NoHost>>::new(engine);
+    add_kernel_imports(&mut linker)?;
+    let mut store = Store::new(engine, Invoking::new(NoHost));
+    let instance =
+        match instantiate_charged(&mut store, fuel, charges, |s| linker.instantiate(s, module)) {
+            Ok(instance) => instance,
+            Err(e) => {
+                return Ok(match e.downcast_ref::<Trap>() {
+                    Some(Trap::OutOfFuel) => Verdict::OutOfFuel,
+                    other => Verdict::Other(format!("{other:?}")),
+                });
+            }
+        };
+    Ok(verdict(invoke_export(
+        &mut store,
+        &instance,
+        "burn",
+        &[GuestArg::U64(arg)],
+        fuel,
+    )))
+}
+
+fn ref_host_call_verdict(module: &RefModule, arg: u64, fuel: u64) -> Result<Verdict> {
+    let mut instance = match RefModuleInstance::instantiate(module, NoHost, fuel) {
         Ok(instance) => instance,
         Err((_, InstantiateError::Trap(RefTrap::OutOfFuel))) => return Ok(Verdict::OutOfFuel),
         Err((_, error)) => return Err(error.into()),
     };
-    Ok(match instance.invoke("burn", &[CVal::U32(arg)])? {
-        Ok(values) => match values.as_slice() {
-            [CVal::U64(v)] => {
-                Verdict::Completed(i32::try_from(*v).expect("the fixture counts low"))
-            }
-            other => Verdict::Other(format!("{other:?}")),
-        },
-        Err(ExecError::Trap(RefTrap::OutOfFuel)) => Verdict::OutOfFuel,
-        Err(e) => Verdict::Other(format!("{e:?}")),
-    })
+    Ok(verdict(instance.invoke("burn", &[GuestArg::U64(arg)])))
 }
 
-/// As [`sweep`], for the component fixture: same verdict-agreement claim,
+/// As [`sweep`], for the host-call fixture: same verdict-agreement claim,
 /// with the boundary supplement inside the budget.
-fn component_sweep(fixture: &str, arg: u32, range: std::ops::Range<u64>) -> Result<u64> {
-    let bytes = parse_str(fixture)?;
+fn host_call_sweep(arg: u64, range: std::ops::Range<u64>) -> Result<u64> {
+    let bytes = parse_str(host_call_fixture())?;
+    validate_module(&bytes)?;
     let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
+    let module = Module::new(&engine, &bytes)?;
     let charges = instantiation_charges(&bytes)?;
-    let comp = RefComponent::decode(&bytes)?;
+    let reference = RefModule::decode(&bytes)?;
     let mut first_completion = None;
     for fuel in range.clone() {
-        let blessed = blessed_component_verdict(&engine, &component, &charges, arg, fuel)?;
-        let reference = ref_component_verdict(&comp, arg, fuel)?;
+        let blessed = blessed_host_call_verdict(&engine, &module, &charges, arg, fuel)?;
+        let interpreted = ref_host_call_verdict(&reference, arg, fuel)?;
         assert_eq!(
-            blessed, reference,
+            blessed, interpreted,
             "budget {fuel} split the verdict between the engine and the spec"
         );
         if first_completion.is_none() && matches!(blessed, Verdict::Completed(_)) {
@@ -268,8 +268,8 @@ fn component_sweep(fixture: &str, arg: u32, range: std::ops::Range<u64>) -> Resu
 #[test]
 fn a_host_call_and_a_loop_exhaust_at_the_same_budget() -> Result<()> {
     // Wide enough to bracket instantiation, the call, its 40 bytes of
-    // boundary debt, and the loop from both sides.
-    let boundary = component_sweep(HOST_CALL_FIXTURE, 20, 1..800)?;
+    // boundary debt, the loop and the answer from both sides.
+    let boundary = host_call_sweep(20, 1..800)?;
     println!("host-call fixture: both runtimes first complete at {boundary} fuel");
     Ok(())
 }

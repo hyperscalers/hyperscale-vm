@@ -8,8 +8,8 @@
 //! hear back, so a mark the code cannot support is a torn settlement
 //! rather than a lost optimisation.
 
-use hyperscale_vm_runtime::check_module_method;
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, staking};
+use hyperscale_vm_runtime::check_method;
+use hyperscale_vm_stdlib::{ACCOUNT_MODULE, STAKING_MODULE, account, staking};
 
 /// One method, as the two conditions below see it.
 struct Method {
@@ -31,8 +31,8 @@ struct Package {
 
 fn packages() -> Vec<Package> {
     [
-        ("account", ACCOUNT_COMPONENT, account::metadata()),
-        ("staking", STAKING_COMPONENT, staking::metadata()),
+        ("account", ACCOUNT_MODULE, account::metadata()),
+        ("staking", STAKING_MODULE, staking::metadata()),
     ]
     .into_iter()
     .map(|(name, artifact, metadata)| Package {
@@ -65,7 +65,7 @@ fn every_marked_method_survives_its_artifact() {
             }
             let (name, artifact) = (package.name, package.artifact);
             assert_eq!(
-                check_module_method(artifact, &method.name),
+                check_method(artifact, &method.name),
                 Ok(()),
                 "{name}::{} is marked total and its artifact says otherwise",
                 method.name,
@@ -100,7 +100,7 @@ fn the_candidates_for_the_mark_are_what_they_were() {
         for method in package.methods {
             // A method the artifact does not export is a different
             // defect, and the publish gate already catches it.
-            if method.open && check_module_method(package.artifact, &method.name) == Ok(()) {
+            if method.open && check_method(package.artifact, &method.name) == Ok(()) {
                 candidates.push(format!("{}::{}", package.name, method.name));
             }
         }

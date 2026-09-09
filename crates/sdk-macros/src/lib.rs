@@ -26,9 +26,9 @@
 //! and its key is `ResourceOf(Arg(0))` — all of it read off the body.
 //! Nothing was written twice.
 //!
-//! # One component, one name
+//! # One package, one name
 //!
-//! The component is the module: the world a package publishes under is
+//! The package is the module: the name a package publishes under is
 //! the module's name, so the `#[state]` struct carries that name in
 //! `PascalCase` and a struct named anything else is refused. A package
 //! that stores nothing of its own writes no `#[state]` struct at all —
@@ -55,9 +55,9 @@
 //! # The two halves
 //!
 //! A host build gets `blueprint()`: the declaration, traced. A
-//! `wasm32` build gets the world, the bindings, and the `impl Guest`
-//! whose bodies are the bodies above with each state access rewritten to
-//! the kernel call its mode names. The export's parameter list and the
+//! `wasm32` build gets the exports, one per method, whose bodies are
+//! the bodies above with each state access rewritten to the kernel call
+//! its mode names. The export's parameter list and the
 //! signature's ABI binding are the same object seen from two sides, which
 //! is why neither is authored: what reaches an export is what the body
 //! could not compute, and that is a residue of the body rather than a
@@ -421,7 +421,7 @@ pub(crate) fn is_named(ty: &syn::Type, name: &str) -> bool {
 }
 
 /// The address vocabulary: every Rust type that crosses the boundary as
-/// the world's own address record, paired with the [`ParamType`] variant
+/// the boundary's own address record, paired with the [`ParamType`] variant
 /// naming the classes it admits.
 ///
 /// The one spelling of the family. The binding walk narrows by
@@ -514,7 +514,7 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
 /// names, unless `#[name("…")]` says otherwise.
 ///
 /// Kebab by default because every other published name already is — the
-/// module's world, its events, its errors — so a method was the one
+/// module's exports, its events, its errors — so a method was the one
 /// place an author restated a rule the macro applies everywhere else.
 /// The attribute stays for the rename that is not a respelling: a
 /// published name outlives the Rust identifier that happened to derive

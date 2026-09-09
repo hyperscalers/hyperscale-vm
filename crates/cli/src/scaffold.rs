@@ -227,7 +227,7 @@ targets = [\"wasm32-unknown-unknown\"]
 ///
 /// The `guest` feature is what says this crate publishes the package it
 /// authors, which is what a scaffolded crate is for: it earns the
-/// executing component beside the declaration every consumer reads.
+/// executing module beside the declaration every consumer reads.
 #[must_use]
 pub fn sdk_dependency(dir: &Path) -> String {
     publisher(&crate_dependency(dir, "sdk", "\"0.1\""))

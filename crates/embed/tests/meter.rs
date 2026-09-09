@@ -234,7 +234,7 @@ const WIDE: u64 = WIDE_BOUNDARY_BYTES as u64;
 type Case = (&'static str, fn(&mut Probe), Vec<Step>);
 
 #[test]
-#[allow(clippy::too_many_lines)] // one pinned case per world function
+#[allow(clippy::too_many_lines)] // one pinned case per kernel import
 fn every_function_charges_its_pinned_sequence() {
     // (what ran, the expected steps) — result bytes after the operation
     // succeeds, argument bytes before it runs, the scan ask between the
@@ -302,6 +302,13 @@ fn every_function_charges_its_pinned_sequence() {
                 let _ = meter::burn(p, 1);
             },
             vec![Host("burn")],
+        ),
+        (
+            "bucket-drop",
+            |p| {
+                let _ = meter::bucket_drop(p, 1);
+            },
+            vec![Host("bucket-drop")],
         ),
         (
             "mint-instances",

@@ -646,7 +646,6 @@ dependencies = [
  "hyperscale-vm-types",
  "serde_json",
  "thiserror 2.0.19",
- "wit-component",
 ]
 
 [[package]]
@@ -707,7 +706,6 @@ dependencies = [
  "hyperscale-vm-testing",
  "hyperscale-vm-types",
  "wasmtime",
- "wit-component",
 ]
 
 [[package]]

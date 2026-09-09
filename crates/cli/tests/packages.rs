@@ -3,7 +3,7 @@
 //!
 //! What this closes is the one thing a snapshot of the derivation cannot:
 //! a committed declaration says what the module traced, and says nothing
-//! about whether the *component* beside it will take those arguments.
+//! about whether the *module* beside it will take those arguments.
 //! That is the publish gate's question, and the generator answers to it
 //! here. `check_abi_against_export` and the
 //! totality biconditional stop judging hand-authoring here and start

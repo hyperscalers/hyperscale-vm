@@ -19,8 +19,8 @@ use hyperscale_vm_effects::{
     collection_id, order_key, package_slot,
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
-use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, SHIPPED as FIXTURES, lottery};
-use hyperscale_vm_harness::dual::DualModule;
+use hyperscale_vm_fixtures::{LOTTERY_MODULE, SHIPPED as FIXTURES, lottery};
+use hyperscale_vm_harness::dual::DualGuest;
 #[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::fixtures::repo_root;
@@ -31,7 +31,7 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_runtime::validate_module;
 use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_sdk::state::Word;
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, SHIPPED as PROTOCOL, STAKING_COMPONENT};
+use hyperscale_vm_stdlib::{ACCOUNT_MODULE, SHIPPED as PROTOCOL, STAKING_MODULE};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Moves,
     ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey, TxHash, encode_amount,
@@ -159,8 +159,8 @@ fn finish(session: KernelSession, fuel: u64) -> Receipt {
 }
 
 /// The account blob in both engines' forms, compiled once per binary.
-static ACCOUNT: LazyLock<DualModule> = LazyLock::new(|| {
-    DualModule::compile(ACCOUNT_COMPONENT).expect("the committed account blob compiles")
+static ACCOUNT: LazyLock<DualGuest> = LazyLock::new(|| {
+    DualGuest::compile(ACCOUNT_MODULE).expect("the committed account blob compiles")
 });
 
 /// Withdraw, deposit, then the pinned balance guard — one instantiation
@@ -291,9 +291,9 @@ fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
 #[test]
 fn no_committed_blob_carries_a_build_path() {
     for (name, blob) in [
-        ("account", ACCOUNT_COMPONENT),
-        ("staking", STAKING_COMPONENT),
-        ("lottery", LOTTERY_COMPONENT),
+        ("account", ACCOUNT_MODULE),
+        ("staking", STAKING_MODULE),
+        ("lottery", LOTTERY_MODULE),
     ] {
         let found = absolute_paths(blob);
         assert!(
@@ -347,8 +347,8 @@ fn the_digest_gate_covers_every_committed_blob() {
             let file = entry.expect("a directory entry").file_name();
             let name = file.to_str().expect("a nameable blob");
             let package = name
-                .strip_suffix(".component.wasm")
-                .unwrap_or_else(|| panic!("{directory}/{name} is not a committed component"));
+                .strip_suffix(".wasm")
+                .unwrap_or_else(|| panic!("{directory}/{name} is not a committed module"));
             assert!(covered.contains(package), "{directory}/{name} is not gated");
         }
     }
@@ -564,8 +564,8 @@ fn settled() -> Vec<u8> {
 }
 
 /// The lottery blob in both engines' forms, compiled once per binary.
-static LOTTERY_GUEST: LazyLock<DualModule> = LazyLock::new(|| {
-    DualModule::compile(LOTTERY_COMPONENT).expect("the committed lottery blob compiles")
+static LOTTERY_GUEST: LazyLock<DualGuest> = LazyLock::new(|| {
+    DualGuest::compile(LOTTERY_MODULE).expect("the committed lottery blob compiles")
 });
 
 /// Settle a closed round, on both runtimes at once.
@@ -615,7 +615,7 @@ fn dual_round() -> Result<(Receipt, u64)> {
 /// byte-identical across the two, at identical fuel.
 #[test]
 fn the_committed_lottery_settles_a_round_identically_on_both_runtimes() -> Result<()> {
-    validate_module(LOTTERY_COMPONENT).context("profile validation of the committed blob")?;
+    validate_module(LOTTERY_MODULE).context("profile validation of the committed blob")?;
 
     let (blessed_receipt, _) = dual_round()?;
     assert_eq!(

@@ -31,7 +31,7 @@ use hyperscale_vm_manifest_builder::{Names, TypedBuilder, TypedError, render};
 use hyperscale_vm_sdk::client::VaultField;
 use hyperscale_vm_sdk::hbor::{ShapeValue, from_slice, to_vec};
 use hyperscale_vm_sdk::{SlotId, SlotKind};
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT, account, instantiate, staking};
+use hyperscale_vm_stdlib::{ACCOUNT_MODULE, STAKING_MODULE, account, instantiate, staking};
 use hyperscale_vm_types::{
     Address, NetworkId, Outcome, Presence, PrincipalAddr, ResourceAddr, SubstateKey, TxHash,
     UnmetCondition, encode_amount,
@@ -301,8 +301,8 @@ fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
 /// packages' own native bodies.
 static LANES: LazyLock<Lanes> = LazyLock::new(|| {
     let mut lanes = Lanes::new();
-    lanes.seed(account_pkg(), ACCOUNT_COMPONENT);
-    lanes.seed(staking_pkg(), STAKING_COMPONENT);
+    lanes.seed(account_pkg(), ACCOUNT_MODULE);
+    lanes.seed(staking_pkg(), STAKING_MODULE);
     lanes.seed_native(account_pkg(), account::invoke);
     lanes.seed_native(staking_pkg(), staking::invoke);
     lanes

@@ -4,17 +4,15 @@
 //! Covering the movement primitives is not the same as covering the
 //! movements: every leak this kind of seam has ever sprung was a second
 //! writer somebody forgot about. So the enumeration is a test rather
-//! than a list in prose — the world file is the guest's whole reach, and
-//! a call that moves a bucket and is not answered here fails the build.
+//! than a list in prose — the import table is the guest's whole reach,
+//! and a call that moves a bucket and is not answered here fails the
+//! build.
 //!
 //! What it does not cover, deliberately: paths the kernel takes on its
 //! own behalf, outside the session and any declaration. Those are the
 //! host's, and they carry their own exemptions where they are written.
 
-/// The world every guest is linked against. Read as source rather than
-/// as a parsed model: what is under test is that a name appearing here
-/// was considered, and a substring is enough to establish that.
-const WORLD: &str = include_str!("../wit/kernel.wit");
+use hyperscale_vm_embed::abi::IMPORTS;
 
 /// Why a value-carrying call needs no movement requirement of its own,
 /// or which one it gets.
@@ -44,12 +42,10 @@ enum Verdict {
 
 use Verdict::{BothDirections, ByMode, InFlight, OwnBehaviour};
 
-/// The verdict every bucket-carrying call in the world carries.
+/// The verdict every bucket-carrying call in the import table carries.
 ///
-/// A run is the same operation over a `for-each` expansion, so it takes
-/// the verdict of the call it repeats — and it is listed rather than
-/// derived, because "it looked like the one above it" is exactly how a
-/// second writer gets forgotten.
+/// Listed rather than derived, because "it looked like the one above
+/// it" is exactly how a second writer gets forgotten.
 const VERDICTS: &[(&str, Verdict)] = &[
     // One call for every value mode and every width, so one verdict
     // covers what the exclusive hold and the commutative movement both
@@ -79,45 +75,62 @@ const VERDICTS: &[(&str, Verdict)] = &[
     ("burn", OwnBehaviour),
 ];
 
-/// Every function the world declares, as its name and its signature.
-fn world_functions() -> Vec<(String, String)> {
-    WORLD
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            let (name, rest) = line.split_once(": func")?;
-            (!name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
-                .then(|| (name.to_owned(), rest.to_owned()))
-        })
-        .collect()
-}
-
-/// A call moves value when ownership of a bucket crosses it.
+/// The imports through which no bucket's ownership crosses: reads,
+/// writes of bytes, the register collects, arithmetic, and the
+/// environment. A bucket's amount is read through `bucket-amount` and
+/// its slot released through `bucket-drop`, and neither changes who
+/// controls what it carries.
 ///
-/// Ownership rather than any mention: a borrowed bucket is read, and
-/// reading what a bucket holds moves nothing.
-fn moves_value(signature: &str) -> bool {
-    signature.contains("own<bucket>")
-}
+/// Enumerated so that a new import has to be filed under one list or
+/// the other before the build passes.
+const NOT_CARRYING: &[&str] = &[
+    "arg",
+    "take",
+    "reply",
+    "answer",
+    "site-len",
+    "site-declared",
+    "site-get",
+    "site-set",
+    "site-seal",
+    "site-open-seal",
+    "site-clear",
+    "site-balance",
+    "site-count",
+    "site-covered",
+    "site-order",
+    "site-entry",
+    "site-entry-set",
+    "site-insert",
+    "site-remove",
+    "bucket-amount",
+    "bucket-drop",
+    "mul-div",
+    "geometric-mean",
+    "fraction-compose",
+    "fraction-cmp",
+    "fixed-pow",
+    "clock",
+    "hash",
+    "emit",
+];
 
-/// The enumeration itself: every call that moves a bucket has a verdict,
-/// and every verdict answers a call that exists.
+/// The enumeration itself: every import is filed as carrying value or
+/// not, every carrying call has a verdict, and every verdict answers a
+/// call that exists.
 #[test]
 fn every_value_carrying_call_has_a_verdict() {
-    let mut unanswered: Vec<String> = Vec::new();
-    let mut carrying: Vec<String> = Vec::new();
-    for (name, signature) in world_functions() {
-        if !moves_value(&signature) {
-            continue;
+    let mut unfiled: Vec<&str> = Vec::new();
+    for (_, name, _, _) in IMPORTS {
+        let carrying = VERDICTS.iter().any(|(answered, _)| answered == name);
+        let not_carrying = NOT_CARRYING.contains(name);
+        if carrying == not_carrying {
+            unfiled.push(name);
         }
-        if !VERDICTS.iter().any(|(answered, _)| *answered == name) {
-            unanswered.push(name.clone());
-        }
-        carrying.push(name);
     }
     assert!(
-        unanswered.is_empty(),
-        "these calls move value and carry no verdict: {unanswered:?}\n\
+        unfiled.is_empty(),
+        "these imports are filed under both lists or neither: {unfiled:?}\n\
          a path that changes who controls value is covered or exempt, and \
          landing one without saying which is what every seam in the survey \
          got wrong"
@@ -126,11 +139,12 @@ fn every_value_carrying_call_has_a_verdict() {
     let stale: Vec<&str> = VERDICTS
         .iter()
         .map(|(name, _)| *name)
-        .filter(|name| !carrying.iter().any(|found| found == name))
+        .chain(NOT_CARRYING.iter().copied())
+        .filter(|name| !IMPORTS.iter().any(|(_, found, _, _)| found == name))
         .collect();
     assert!(
         stale.is_empty(),
-        "these verdicts answer calls the world no longer declares: {stale:?}"
+        "these entries answer calls the kernel no longer defines: {stale:?}"
     );
 }
 

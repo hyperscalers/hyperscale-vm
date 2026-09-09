@@ -5,9 +5,7 @@ mod common;
 
 use common::{every_import, import_wat, module};
 use hyperscale_vm_embed::abi::{CoreType, STATE};
-use hyperscale_vm_runtime::{
-    ModuleExport, ProfileError, module_exports, validate_core_module, validate_module,
-};
+use hyperscale_vm_runtime::{ModuleExport, ProfileError, module_exports, validate_module};
 use wat::parse_str;
 
 fn refused(wat: &str) -> ProfileError {
@@ -162,38 +160,42 @@ fn the_profile_still_holds() {
     ));
 }
 
-/// A chain the component budget refused fits the module budget: one
-/// chain stands at a time, so the halving is gone.
+/// The chain budget is the whole reserve: one chain stands at a time,
+/// so frames as heavy as the locals limit allows chain until the reserve
+/// itself runs out.
 #[test]
-fn the_module_budget_is_the_whole_reserve() {
+fn the_chain_budget_is_the_whole_reserve() {
     use std::fmt::Write as _;
 
     use hyperscale_vm_runtime::profile::{
-        MAX_CALL_CHAIN_BYTES, MAX_LOCALS_PER_FUNCTION, MAX_MODULE_CHAIN_BYTES,
-        STACK_BYTES_PER_SLOT, STACK_FRAME_OVERHEAD_BYTES,
+        HOST_FRAME_RESERVE_BYTES, MAX_CALL_CHAIN_BYTES, MAX_LOCALS_PER_FUNCTION,
+        MAX_WASM_STACK_BYTES, STACK_BYTES_PER_SLOT, STACK_FRAME_OVERHEAD_BYTES,
     };
-    assert_eq!(MAX_MODULE_CHAIN_BYTES, 2 * MAX_CALL_CHAIN_BYTES);
-    // Frames as heavy as the locals limit allows, chained one past what
-    // the halved budget admits: over it, and well inside the whole one.
-    let frame = MAX_LOCALS_PER_FUNCTION * STACK_BYTES_PER_SLOT + STACK_FRAME_OVERHEAD_BYTES;
-    let depth = MAX_CALL_CHAIN_BYTES / frame + 1;
-    assert!(depth * frame < MAX_MODULE_CHAIN_BYTES);
-    let locals = format!("(local {})", "i32 ".repeat(MAX_LOCALS_PER_FUNCTION));
-    let mut wat = String::from("(module (memory (export \"memory\") 1 1)\n");
-    for index in 0..depth {
-        let callee = if index + 1 < depth {
-            format!(" call $f{}", index + 1)
-        } else {
-            String::new()
-        };
-        let export = if index == 0 { " (export \"run\")" } else { "" };
-        let _ = writeln!(wat, "  (func $f{index}{export} {locals}{callee})");
-    }
-    wat.push(')');
-    let bytes = parse_str(&wat).expect("parses");
-    validate_module(&bytes).expect("the chain fits one whole reserve");
-    assert!(
-        validate_core_module(&bytes).is_err(),
-        "the same chain is over the halved budget"
+    assert_eq!(
+        MAX_CALL_CHAIN_BYTES,
+        MAX_WASM_STACK_BYTES - HOST_FRAME_RESERVE_BYTES
     );
+    let frame = MAX_LOCALS_PER_FUNCTION * STACK_BYTES_PER_SLOT + STACK_FRAME_OVERHEAD_BYTES;
+    let chain = |depth: usize| {
+        let locals = format!("(local {})", "i32 ".repeat(MAX_LOCALS_PER_FUNCTION));
+        let mut wat = String::from("(module (memory (export \"memory\") 1 1)\n");
+        for index in 0..depth {
+            let callee = if index + 1 < depth {
+                format!(" call $f{}", index + 1)
+            } else {
+                String::new()
+            };
+            let export = if index == 0 { " (export \"run\")" } else { "" };
+            let _ = writeln!(wat, "  (func $f{index}{export} {locals}{callee})");
+        }
+        wat.push(')');
+        parse_str(&wat).expect("parses")
+    };
+    // The deepest chain of such frames that fits, and one more.
+    let fits = MAX_CALL_CHAIN_BYTES / frame;
+    validate_module(&chain(fits)).expect("the chain fits the whole reserve");
+    assert!(matches!(
+        validate_module(&chain(fits + 1)),
+        Err(ProfileError::Structural(reason)) if reason.contains("call chain")
+    ));
 }

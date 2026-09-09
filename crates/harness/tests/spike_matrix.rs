@@ -2,17 +2,16 @@
 //! cross-backend fuel determinism.
 //!
 //! Probes each backend (Cranelift, Winch, Pulley) for: core execution under
-//! fuel, component-model execution under fuel, trap kind fidelity, and NaN
-//! bit patterns. Nothing is assumed — unsupported combinations are recorded,
-//! not failed, because the matrix itself is the deliverable. The only hard
-//! assertions are the baseline (Cranelift supports everything) and fuel/output
-//! agreement between every pair of backends that both support a probe.
+//! fuel, trap kind fidelity, and NaN bit patterns. Nothing is assumed —
+//! unsupported combinations are recorded, not failed, because the matrix
+//! itself is the deliverable. The only hard assertions are the baseline
+//! (Cranelift supports everything) and fuel/output agreement between every
+//! pair of backends that both support a probe.
 //!
 //! Run with `cargo test --test spike_matrix -- --nocapture` to see the matrix.
 
 use std::fmt::Write as _;
 
-use wasmtime::component::{Component, Linker as ComponentLinker};
 use wasmtime::error::{Context, format_err};
 use wasmtime::{Config, Engine, Instance, Module, Result, Store, Strategy, Trap};
 
@@ -65,18 +64,6 @@ const CORE_WAT: &str = r#"
     i32.div_s))
 "#;
 
-const COMPONENT_WAT: &str = r#"
-(component
-  (core module $m
-    (func (export "add") (param i32 i32) (result i32)
-      local.get 0
-      local.get 1
-      i32.add))
-  (core instance $i (instantiate $m))
-  (func (export "add") (param "a" u32) (param "b" u32) (result u32)
-    (canon lift (core func $i "add"))))
-"#;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Backend {
     Cranelift,
@@ -124,8 +111,6 @@ struct Report {
     core_exec: Probe,
     core_fuel: Probe,
     core_fuel_fill: Probe,
-    component_exec: Probe,
-    component_fuel: Probe,
     trap_unreachable: Probe,
     trap_div0: Probe,
     nan_div_bits: Probe,
@@ -175,27 +160,6 @@ fn probe_core_fuel_fill(backend: Backend) -> Result<String> {
     Ok(format!("fill60k={}", 1_000_000 - after_fill))
 }
 
-fn probe_component(backend: Backend, fuel: bool) -> Result<String> {
-    let engine = backend.configure(fuel, false)?;
-    let component = Component::new(&engine, COMPONENT_WAT).context("compile component")?;
-    let linker = ComponentLinker::new(&engine);
-    let mut store = Store::new(&engine, ());
-    if fuel {
-        store.set_fuel(1_000_000)?;
-    }
-    let instance = linker.instantiate(&mut store, &component)?;
-    let add = instance.get_typed_func::<(u32, u32), (u32,)>(&mut store, "add")?;
-    let (sum,) = add.call(&mut store, (2, 3))?;
-    if sum != 5 {
-        return Err(format_err!("component add(2, 3) returned {sum}"));
-    }
-    if fuel {
-        let consumed = 1_000_000 - store.get_fuel()?;
-        return Ok(format!("call={consumed}"));
-    }
-    Ok("ok".to_string())
-}
-
 fn probe_trap(backend: Backend, export: &'static str, arg: Option<i32>) -> Result<String> {
     let engine = backend.configure(false, false)?;
     let (mut store, instance) = core_instance(&engine, None)?;
@@ -235,8 +199,6 @@ fn run_matrix() -> Vec<Report> {
             core_exec: stringify(probe_core_exec(backend)),
             core_fuel: stringify(probe_core_fuel(backend)),
             core_fuel_fill: stringify(probe_core_fuel_fill(backend)),
-            component_exec: stringify(probe_component(backend, false)),
-            component_fuel: stringify(probe_component(backend, true)),
             trap_unreachable: stringify(probe_trap(backend, "unreach", None)),
             trap_div0: stringify(probe_trap(backend, "div0", Some(0))),
             nan_div_bits: stringify(probe_nan(backend, true, "nan_div")),
@@ -253,8 +215,6 @@ fn render(reports: &[Report]) -> String {
             ("core exec", &r.core_exec),
             ("core fuel", &r.core_fuel),
             ("core fuel fill", &r.core_fuel_fill),
-            ("component exec", &r.component_exec),
-            ("component fuel", &r.component_fuel),
             ("trap unreachable", &r.trap_unreachable),
             ("trap div0", &r.trap_div0),
             ("nan div bits (canon)", &r.nan_div_bits),
@@ -285,8 +245,6 @@ fn backend_matrix_and_fuel_determinism() {
     for (label, probe) in [
         ("core exec", &cranelift.core_exec),
         ("core fuel", &cranelift.core_fuel),
-        ("component exec", &cranelift.component_exec),
-        ("component fuel", &cranelift.component_fuel),
     ] {
         assert!(probe.is_ok(), "cranelift {label}: {probe:?}");
     }
@@ -300,7 +258,6 @@ fn backend_matrix_and_fuel_determinism() {
         for b in &reports[..] {
             for (label, pa, pb) in [
                 ("core fuel", &a.core_fuel, &b.core_fuel),
-                ("component fuel", &a.component_fuel, &b.component_fuel),
                 ("trap unreachable", &a.trap_unreachable, &b.trap_unreachable),
                 ("trap div0", &a.trap_div0, &b.trap_div0),
             ] {

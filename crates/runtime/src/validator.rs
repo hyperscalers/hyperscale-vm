@@ -1,61 +1,51 @@
 //! Deploy-time profile validation.
 //!
-//! A component binary is validated once, before it enters state; a
-//! non-conforming artifact never deploys. Two passes: wasmparser's validator
-//! under the profile's feature set (rejecting floats, SIMD, threads,
-//! exceptions, tail calls, memory64, GC, and Component Model async), then a
-//! structural pass enforcing the [`crate::profile`] limits and the
-//! component-level import allowlist.
+//! A module is validated once, before it enters state; a non-conforming
+//! artifact never deploys. Three passes: wasmparser's validator under the
+//! profile's feature set (rejecting floats, SIMD, threads, exceptions,
+//! tail calls, memory64 and GC), a structural pass enforcing the
+//! [`crate::profile`] limits, and the boundary pass holding the module's
+//! imports and exports to what the kernel defines.
 
 use hyperscale_vm_embed::abi::{CoreType, IMPORTS, MEMORY};
 use thiserror::Error;
-use wasmparser::types::Types;
 use wasmparser::{
-    CanonicalFunction, ComponentAlias, ComponentDefinedType, ComponentExternalKind,
-    ComponentImportSectionReader, ComponentType, ComponentTypeRef, ComponentValType,
     CompositeInnerType, ConstExpr, DataKind, DataSectionReader, ElementItems, ElementKind,
     ElementSectionReader, ExternalKind, FunctionBody, GlobalSectionReader, Operator, Parser,
-    Payload, PrimitiveValType, TypeBounds, TypeRef, TypeSectionReader, ValType, Validator,
-    WasmFeatures,
+    Payload, TypeRef, TypeSectionReader, ValType, Validator, WasmFeatures,
 };
 
 use crate::exports::{core_type, scan_module};
-use crate::frames::{check_component_stack_bounds, check_module_stack_bounds, check_stack_bounds};
+use crate::frames::check_stack_bounds;
 use crate::profile;
 
 /// A profile violation. Every variant is a deterministic deploy-time verdict.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ProfileError {
-    /// The artifact exceeds [`profile::MAX_COMPONENT_BYTES`].
-    #[error("component of {actual} bytes exceeds the {max}-byte limit")]
-    ComponentTooLarge {
+    /// The artifact exceeds [`profile::MAX_ARTIFACT_BYTES`].
+    #[error("artifact of {actual} bytes exceeds the {max}-byte limit")]
+    ArtifactTooLarge {
         /// Artifact size.
         actual: usize,
         /// The limit it exceeds.
         max: usize,
     },
-    /// The binary is not a component (a bare core module, or garbage).
-    #[error("artifact is not a component")]
-    NotAComponent,
     /// Rejected by validation under the profile feature set.
     #[error("outside the profile feature set: {0}")]
     Feature(String),
-    /// A component-level import outside the kernel world.
-    #[error("import outside the kernel world: {0}")]
+    /// An import the kernel does not define.
+    #[error("import outside the kernel: {0}")]
     ForbiddenImport(String),
-    /// A nested component; contract artifacts are one component deep.
-    #[error("nested components are not permitted")]
-    NestedComponent,
-    /// A core module start section; instantiation must be inert.
+    /// A start section; instantiation must be inert.
     #[error("start sections are not permitted")]
     StartSection,
     /// A structural limit exceeded; the message names the limit.
     #[error("structural limit exceeded: {0}")]
     Structural(String),
-    /// A core module outside the boundary convention: an import the
-    /// kernel does not define or at a type it does not, an export the
-    /// kernel cannot call, or a memory the kernel cannot reach.
+    /// A module outside the boundary convention: an import the kernel
+    /// does not define or at a type it does not, an export the kernel
+    /// cannot call, or a memory the kernel cannot reach.
     #[error("outside the boundary convention: {0}")]
     Boundary(String),
 }
@@ -82,309 +72,14 @@ pub(crate) fn profile_features() -> WasmFeatures {
         | WasmFeatures::CALL_INDIRECT_OVERLONG
         | WasmFeatures::BULK_MEMORY
         | WasmFeatures::BULK_MEMORY_OPT
-        | WasmFeatures::COMPONENT_MODEL
-}
-
-/// Validates a component artifact against the deterministic profile.
-///
-/// # Errors
-///
-/// Returns the first [`ProfileError`] encountered; verdicts are deterministic
-/// functions of the bytes.
-pub fn validate_component(bytes: &[u8]) -> Result<(), ProfileError> {
-    validated_component(bytes).map(|_| ())
-}
-
-/// As [`validate_component`], handing back the validation's own type
-/// information — what lets a caller that goes on to read the exports do
-/// so without validating the same bytes twice.
-///
-/// # Errors
-///
-/// As [`validate_component`].
-pub fn validated_component(bytes: &[u8]) -> Result<Types, ProfileError> {
-    if bytes.len() > profile::MAX_COMPONENT_BYTES {
-        return Err(ProfileError::ComponentTooLarge {
-            actual: bytes.len(),
-            max: profile::MAX_COMPONENT_BYTES,
-        });
-    }
-    if !Parser::is_component(bytes) {
-        return Err(ProfileError::NotAComponent);
-    }
-
-    let types = Validator::new_with_features(profile_features())
-        .validate_all(bytes)
-        .map_err(|e| ProfileError::Feature(e.to_string()))?;
-
-    structural_pass(bytes)?;
-    // The stack bound runs once over the whole component: a core module's
-    // imports are wired to other modules' exports, and judging each module
-    // alone would weigh those edges at zero.
-    check_component_stack_bounds(bytes)?;
-    Ok(types)
-}
-
-/// A value type the profile models, as a type-index slot records it.
-///
-/// Recorded per slot rather than as a flag because the vocabulary is no
-/// longer uniform: a `result` arm is admissible where a value is
-/// returned and nowhere else, so knowing that a slot holds *a* value type
-/// stopped being enough to judge the position it appears in.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ValueSlot {
-    /// `u8`, `u32` or `u64`.
-    Scalar,
-    /// `bool`: the verdict of a declaration clause, which is the one
-    /// thing that crosses as a flag. A parameter shape only — no method
-    /// returns one, so a result position refuses it.
-    Flag,
-    /// A record whose every field is a scalar.
-    ///
-    /// Admitted as a class rather than by naming the kernel's own types,
-    /// because what the profile is judging is the property: such a record
-    /// flattens to its fields, so it crosses in registers and reaches no
-    /// linear memory. A record with a field the profile does not model is
-    /// refused by the same walk that models the field.
-    Flat,
-    /// `list<u8>`.
-    Bytes,
-    /// `list<u64>`: the one non-byte list the world names, carrying a
-    /// set of non-fungible instance ids. Admitted as its own slot rather
-    /// than by widening the byte one, because the element width is what
-    /// each engine's lowering turns on.
-    Ids,
-    /// `borrow<R>` of a state resource.
-    Handle,
-    /// `own<R>` of a state resource: a handle the guest holds rather than
-    /// one lent to it for a call, so one it can keep, return, or discard.
-    Owned,
-    /// A tuple of what a method hands back: its edges as owned handles,
-    /// behind the byte list it answers with where it answers one.
-    ///
-    /// A signature carries one result, so a method with more than one
-    /// thing to hand back hands them back together. The answer leads,
-    /// which is what lets the run behind it be read as edges without
-    /// looking at the count.
-    Handed,
-    /// `result<_, u32>`: the declared refusal channel, over the edges
-    /// the method produces or over nothing.
-    Declinable,
-}
-
-/// What a value type resolves to, or `None` where the profile models
-/// nothing of the kind.
-fn resolve(defined: &[Option<ValueSlot>], vt: ComponentValType) -> Option<ValueSlot> {
-    match vt {
-        ComponentValType::Primitive(
-            PrimitiveValType::U8 | PrimitiveValType::U32 | PrimitiveValType::U64,
-        ) => Some(ValueSlot::Scalar),
-        ComponentValType::Primitive(PrimitiveValType::Bool) => Some(ValueSlot::Flag),
-        ComponentValType::Type(index) => usize::try_from(index)
-            .ok()
-            .and_then(|index| defined.get(index).copied())
-            .flatten(),
-        ComponentValType::Primitive(_) => None,
-    }
-}
-
-/// Whether a value type may occupy a parameter position.
-///
-/// The refusal channel is deliberately absent. It says how a method
-/// *ends*, and a method that took one would be a caller handling a
-/// callee's refusal — the shape A1 refuses at the manifest layer, which
-/// the call boundary should not quietly reopen.
-fn admits_param_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bool {
-    matches!(
-        resolve(defined, vt),
-        Some(
-            ValueSlot::Scalar
-                | ValueSlot::Flag
-                | ValueSlot::Flat
-                | ValueSlot::Bytes
-                | ValueSlot::Ids
-                | ValueSlot::Handle
-                | ValueSlot::Owned
-        )
-    )
-}
-
-/// Whether a value type may occupy an export's result position.
-///
-/// What a method hands back is what this admits: its edges — one own, or
-/// the tuple more than one returns in — the byte list it answers with
-/// where it answers one, and either behind the refusal channel. A record
-/// result has no consumer in the call convention, so it refuses here
-/// rather than deploying as a method that cannot end. Scalars are the
-/// one shape past that: both engines lift one identically and the
-/// convention aborts it deterministically, and it is what the
-/// differential lanes observe an execution through.
-fn admits_result_type(defined: &[Option<ValueSlot>], vt: ComponentValType) -> bool {
-    matches!(
-        resolve(defined, vt),
-        Some(
-            ValueSlot::Scalar
-                | ValueSlot::Bytes
-                | ValueSlot::Owned
-                | ValueSlot::Handed
-                | ValueSlot::Declinable
-        )
-    )
-}
-
-/// The canonical built-ins the profile admits: the three the executable
-/// spec implements, and no others.
-///
-/// The rest of the canon vocabulary is what a component-model version
-/// brings with it — resource construction, the async and stream families,
-/// context accessors — and none of it has a witness in `vm-ref`, which
-/// decodes `lift`, `lower` and `resource.drop` and refuses everything else
-/// as an unsupported structure. Admitting one here would deploy an
-/// artifact the blessed engine runs and the spec cannot read, which is the
-/// divergence the two-engine discipline exists to make impossible rather
-/// than to discover.
-///
-/// The second line, and deliberately so. Two things stand in front of it
-/// today: the async, stream and context families need a feature
-/// [`profile_features`] leaves off, and `resource.new` and `resource.rep`
-/// are refused by the parser itself over anything but a resource the
-/// component defines — which the type walk refuses. So nothing reaches
-/// this refusal, and what it is for is the day one of those moves: the
-/// engine pin is a protocol event, and an admitted built-in should have
-/// to be added here rather than arrive with a bump.
-fn check_canonical(canon: &CanonicalFunction) -> Result<(), ProfileError> {
-    match canon {
-        CanonicalFunction::Lift { .. }
-        | CanonicalFunction::Lower { .. }
-        | CanonicalFunction::ResourceDrop { .. } => Ok(()),
-        other => Err(ProfileError::Structural(format!(
-            "canonical built-in outside the profile: {other:?}"
-        ))),
-    }
-}
-
-/// Records one component type entry, resolving what its type-index slot
-/// holds. The walk mirrors the executable spec's type index space —
-/// declared types, then world-level `use` imports, aliases, and re-exports
-/// — because a function type resolves its parameters through it.
-fn record_component_type(
-    defined: &mut Vec<Option<ValueSlot>>,
-    entry: &ComponentType<'_>,
-) -> Result<(), ProfileError> {
-    let slot = match entry {
-        // A resource the guest defines rather than imports, which the
-        // world gives it no reason to want: every resource a contract
-        // handles is the kernel's, lent or handed over across the ABI.
-        // What defining one buys is a destructor — guest code the
-        // canonical ABI runs, like `realloc` and `post-return`, but
-        // reached through a built-in instead of named by a canon option,
-        // so the stack bound counts none of the frames it stands.
-        ComponentType::Resource { .. } => {
-            return Err(ProfileError::Structural(
-                "a component may not define a resource of its own".to_string(),
-            ));
-        }
-        ComponentType::Func(f) => {
-            for (_, vt) in &*f.params {
-                if !admits_param_type(defined, *vt) {
-                    return Err(ProfileError::Structural(
-                        "component parameter type is outside the profile vocabulary".to_string(),
-                    ));
-                }
-            }
-            if let Some(vt) = f.result
-                && !admits_result_type(defined, vt)
-            {
-                return Err(ProfileError::Structural(
-                    "component result type is outside the profile vocabulary".to_string(),
-                ));
-            }
-            None
-        }
-        ComponentType::Defined(ComponentDefinedType::List(element)) => match element {
-            ComponentValType::Primitive(PrimitiveValType::U8) => Some(ValueSlot::Bytes),
-            ComponentValType::Primitive(PrimitiveValType::U64) => Some(ValueSlot::Ids),
-            _ => {
-                return Err(ProfileError::Structural(
-                    "only list<u8> and list<u64> are within the profile".to_string(),
-                ));
-            }
-        },
-        ComponentType::Defined(ComponentDefinedType::Record(fields)) => {
-            for (_, vt) in &**fields {
-                if !matches!(resolve(defined, *vt), Some(ValueSlot::Scalar)) {
-                    return Err(ProfileError::Structural(
-                        "a record's fields must be scalars: what admits one is that it \
-                         flattens rather than crossing through memory"
-                            .to_string(),
-                    ));
-                }
-            }
-            Some(ValueSlot::Flat)
-        }
-        ComponentType::Defined(ComponentDefinedType::Borrow(_)) => Some(ValueSlot::Handle),
-        ComponentType::Defined(ComponentDefinedType::Own(_)) => Some(ValueSlot::Owned),
-        ComponentType::Defined(ComponentDefinedType::Tuple(elements)) => {
-            // The answer leads and the edges follow, so the walk admits
-            // a byte list at the head and owned handles everywhere else.
-            let edges = match elements.split_first() {
-                Some((head, rest)) if matches!(resolve(defined, *head), Some(ValueSlot::Bytes)) => {
-                    rest
-                }
-                _ => elements,
-            };
-            for element in edges {
-                if !matches!(resolve(defined, *element), Some(ValueSlot::Owned)) {
-                    return Err(ProfileError::Structural(
-                        "a tuple result is a method's edges as owned handles, behind the \
-                         byte list it answers with where it answers one"
-                            .to_string(),
-                    ));
-                }
-            }
-            Some(ValueSlot::Handed)
-        }
-        // The refusal channel, pinned to one shape. A code rather than a
-        // payload, and the same code width whatever the method returns,
-        // so what a receipt records is an index into the package's error
-        // table and never author-chosen bytes.
-        ComponentType::Defined(ComponentDefinedType::Result { ok, err }) => {
-            if !matches!(
-                err,
-                Some(ComponentValType::Primitive(PrimitiveValType::U32))
-            ) {
-                return Err(ProfileError::Structural(
-                    "a result's error arm must be u32, the package's error-table index".to_string(),
-                ));
-            }
-            // The ok arm is whatever a method that cannot decline would
-            // have returned: its edges, or nothing. An error arm says how
-            // a method ends, and says nothing about what it produces.
-            match ok.map(|vt| resolve(defined, vt)) {
-                None | Some(Some(ValueSlot::Owned | ValueSlot::Handed | ValueSlot::Bytes)) => {
-                    Some(ValueSlot::Declinable)
-                }
-                _ => {
-                    return Err(ProfileError::Structural(
-                        "a result's ok arm carries what the method hands back: its edges, \
-                         the value it answers with, or nothing"
-                            .to_string(),
-                    ));
-                }
-            }
-        }
-        _ => None,
-    };
-    defined.push(slot);
-    Ok(())
 }
 
 /// Validates a bare core module against the deterministic profile.
 ///
-/// The component path reaches the same structural pass through
-/// [`validate_component`]; this entry exists so a core module can be
-/// judged on its own — which is what lets the differential lanes assert
-/// that everything the profile admits has an executable-spec witness.
+/// The feature set, the structural limits and the stack bound, without
+/// the boundary convention: what lets the differential lanes assert that
+/// everything the profile admits has an executable-spec witness, over
+/// modules that import nothing and export whatever they like.
 ///
 /// # Errors
 ///
@@ -412,10 +107,10 @@ pub fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
 /// Returns the first [`ProfileError`] encountered; verdicts are
 /// deterministic functions of the bytes.
 pub fn validate_module(bytes: &[u8]) -> Result<(), ProfileError> {
-    if bytes.len() > profile::MAX_COMPONENT_BYTES {
-        return Err(ProfileError::ComponentTooLarge {
+    if bytes.len() > profile::MAX_ARTIFACT_BYTES {
+        return Err(ProfileError::ArtifactTooLarge {
             actual: bytes.len(),
-            max: profile::MAX_COMPONENT_BYTES,
+            max: profile::MAX_ARTIFACT_BYTES,
         });
     }
     Validator::new_with_features(profile_features())
@@ -423,7 +118,7 @@ pub fn validate_module(bytes: &[u8]) -> Result<(), ProfileError> {
         .map_err(|e| ProfileError::Feature(e.to_string()))?;
     core_structural_pass(bytes)?;
     boundary_pass(bytes)?;
-    check_module_stack_bounds(bytes)
+    check_stack_bounds(bytes)
 }
 
 /// The boundary convention over a parsed module.
@@ -505,111 +200,6 @@ fn boundary_pass(bytes: &[u8]) -> Result<(), ProfileError> {
         return Err(boundary(format!(
             "{memories} memories exported; the kernel reads exactly one, `{MEMORY}`"
         )));
-    }
-    Ok(())
-}
-
-/// Gates component imports to the kernel world and tracks the type-index
-/// slot a world-level `use` takes.
-fn check_component_imports(
-    reader: ComponentImportSectionReader<'_>,
-    defined: &mut Vec<Option<ValueSlot>>,
-) -> Result<(), ProfileError> {
-    for import in reader {
-        let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
-        let name = import.name.name;
-        // Type imports confer no capability — they are how a world's own
-        // types encode, whether `use`d from an interface or declared in
-        // the world itself — so only value-carrying imports are gated.
-        // They do take a type-index slot, and an equality import carries
-        // whatever the type it equals holds: a world-declared record
-        // reaches its export's signature through one of these, so
-        // dropping the slot would put every such export outside the
-        // vocabulary.
-        if let ComponentTypeRef::Type(bound) = import.ty {
-            let equals = match bound {
-                TypeBounds::Eq(index) => usize::try_from(index)
-                    .ok()
-                    .and_then(|index| defined.get(index).copied())
-                    .flatten(),
-                // A resource bound names a type with no representation of
-                // its own; what a body can do with one is fixed by the
-                // borrow types the interface exports.
-                TypeBounds::SubResource => None,
-            };
-            defined.push(equals);
-            continue;
-        }
-        if !name.starts_with(profile::KERNEL_IMPORT_PREFIX) {
-            return Err(ProfileError::ForbiddenImport(name.to_string()));
-        }
-    }
-    Ok(())
-}
-
-fn structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
-    let mut core_modules = 0usize;
-    // Type-index slots, by what each one holds.
-    let mut defined: Vec<Option<ValueSlot>> = Vec::new();
-    for payload in Parser::new(0).parse_all(bytes) {
-        let payload = payload.map_err(|e| ProfileError::Feature(e.to_string()))?;
-        match payload {
-            Payload::ModuleSection {
-                unchecked_range, ..
-            } => {
-                core_modules += 1;
-                if core_modules > profile::MAX_CORE_MODULES {
-                    return Err(ProfileError::Structural(format!(
-                        "more than {} core modules",
-                        profile::MAX_CORE_MODULES
-                    )));
-                }
-                core_structural_pass(&bytes[unchecked_range])?;
-            }
-            Payload::ComponentSection { .. } => return Err(ProfileError::NestedComponent),
-            Payload::ComponentTypeSection(reader) => {
-                for entry in reader {
-                    let entry = entry.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    record_component_type(&mut defined, &entry)?;
-                }
-            }
-            Payload::ComponentCanonicalSection(reader) => {
-                for canon in reader {
-                    let canon = canon.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    check_canonical(&canon)?;
-                }
-            }
-            Payload::ComponentImportSection(reader) => {
-                check_component_imports(reader, &mut defined)?;
-            }
-            Payload::ComponentAliasSection(reader) => {
-                for alias in reader {
-                    let alias = alias.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    if matches!(
-                        alias,
-                        ComponentAlias::InstanceExport {
-                            kind: ComponentExternalKind::Type,
-                            ..
-                        }
-                    ) {
-                        defined.push(None);
-                    }
-                }
-            }
-            Payload::ComponentExportSection(reader) => {
-                for export in reader {
-                    let export = export.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    if export.kind == ComponentExternalKind::Type {
-                        let aliased = usize::try_from(export.index)
-                            .ok()
-                            .and_then(|index| defined.get(index).copied())
-                            .flatten();
-                        defined.push(aliased);
-                    }
-                }
-            }
-            _ => {}
-        }
     }
     Ok(())
 }
@@ -970,39 +560,4 @@ fn check(actual: usize, max: usize, what: &str) -> Result<(), ProfileError> {
         )));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use wasmparser::{CanonicalFunction, ValType};
-
-    use super::check_canonical;
-
-    /// The canon allowlist, asked directly: nothing in front of it can
-    /// produce a built-in outside the three today, so the rule that will
-    /// catch the next one is tested where it can be reached.
-    #[test]
-    fn only_the_built_ins_the_spec_implements_are_admitted() {
-        assert!(
-            check_canonical(&CanonicalFunction::ResourceDrop { resource: 0 }).is_ok(),
-            "the spec decodes a drop",
-        );
-        for canon in [
-            CanonicalFunction::ResourceNew { resource: 0 },
-            CanonicalFunction::ResourceRep { resource: 0 },
-            CanonicalFunction::ContextGet {
-                ty: ValType::I32,
-                slot: 0,
-            },
-            CanonicalFunction::BackpressureDec,
-        ] {
-            let refusal = check_canonical(&canon)
-                .expect_err("a built-in the spec cannot read does not deploy")
-                .to_string();
-            assert!(
-                refusal.contains("canonical built-in outside the profile"),
-                "{refusal}"
-            );
-        }
-    }
 }

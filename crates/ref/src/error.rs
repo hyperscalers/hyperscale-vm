@@ -19,8 +19,8 @@ pub enum DecodeError {
     /// value position).
     #[error("type outside the profile subset")]
     UnsupportedType,
-    /// A structure the interpreter does not model (imports in a bare core
-    /// module, multiple memories, passive segments).
+    /// A structure the interpreter does not model (an import the kernel
+    /// does not define, multiple memories, passive segments).
     #[error("unsupported structure: {0}")]
     Unsupported(String),
     /// The named export does not exist or is not a function.
@@ -78,12 +78,9 @@ pub enum Trap {
     ///
     /// Unreachable for an artifact the profile admits: the deploy-time
     /// frame bound caps the deepest admissible chain at half this counter,
-    /// and a `vm-harness` assertion holds the two in that order. Recursion
-    /// through the canonical-ABI boundary is out of reach separately — the
-    /// ABI's re-entrance rule refuses it here, and the profile refuses the
-    /// shape that expresses it. The differential lanes treat reaching this
-    /// counter as a failure of those bounds rather than as a divergence to
-    /// excuse.
+    /// and a `vm-harness` assertion holds the two in that order. The
+    /// differential lanes treat reaching this counter as a failure of that
+    /// bound rather than as a divergence to excuse.
     #[error("call depth exhausted")]
     CallDepthExhausted,
     /// The fuel budget ran out. Charged on the spec schedule and tested

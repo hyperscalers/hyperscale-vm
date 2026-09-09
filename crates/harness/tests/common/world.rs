@@ -20,7 +20,7 @@ use hyperscale_vm_kernel::{
     MemoryStore, OverlayStore, Receipt, RunResult,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError, graph_records};
-use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, account};
+use hyperscale_vm_stdlib::{ACCOUNT_MODULE, account};
 use hyperscale_vm_types::{
     AbortReason, Address, CollectionId, ComponentAddr, Effect, EffectSet, EffectTarget, EntryKey,
     Mode, Outcome, PrincipalAddr, ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey,
@@ -92,7 +92,7 @@ pub fn account_world() -> Records {
 /// packages beside the account's.
 pub fn account_lanes() -> Lanes {
     let mut lanes = Lanes::new();
-    lanes.seed(pkg("account"), ACCOUNT_COMPONENT);
+    lanes.seed(pkg("account"), ACCOUNT_MODULE);
     lanes.seed_native(pkg("account"), account::invoke);
     lanes
 }

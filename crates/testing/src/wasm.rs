@@ -13,7 +13,7 @@ use hyperscale_vm_effects::PackageHash;
 use hyperscale_vm_kernel::{GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession};
 use hyperscale_vm_runtime::{
     InstantiationCharges, Invoking, add_kernel_imports, blessed_engine, instantiate_charged,
-    invoke_module, module_instantiation_charges, validate_module,
+    instantiation_charges, invoke_export, validate_module,
 };
 use hyperscale_vm_types::AbortReason;
 use wasmtime::{Engine, Linker, Module, Store};
@@ -82,7 +82,7 @@ impl Blessed {
                 .or_insert_with(|| {
                     validate_module(module).expect("a seeded package clears the profile");
                     let charges =
-                        module_instantiation_charges(module).expect("a validated package derives");
+                        instantiation_charges(module).expect("a validated package derives");
                     (
                         Module::new(&ENGINE, module).expect("a seeded package compiles"),
                         charges,
@@ -151,7 +151,7 @@ impl GuestBackend for Blessed {
             |store| linker.instantiate(store, module),
         )
         .expect("a published package instantiates");
-        let end = invoke_module(
+        let end = invoke_export(
             &mut store,
             &instance,
             call.export,

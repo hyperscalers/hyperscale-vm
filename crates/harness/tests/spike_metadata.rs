@@ -1,28 +1,23 @@
 //! Milestone 1 spike, question 4: custom-section round-trip and content
 //! addressing.
 //!
-//! The effect metadata rides a custom section in the component binary.
+//! The effect metadata rides a custom section in the core module binary.
 //! This probe attaches an opaque payload as a custom section to a compiled
-//! component, confirms the engine still compiles and runs the modified
+//! module, confirms the engine still compiles and runs the modified
 //! artifact, extracts the section back without instantiation, and checks that
 //! the artifact's identity (its bytes, hence any content address) covers the
 //! metadata: same code with different metadata is a different artifact.
 
-use wasmtime::component::{Component, Linker};
 use wasmtime::error::format_err;
-use wasmtime::{Config, Engine, Result, Store};
+use wasmtime::{Config, Engine, Instance, Module, Result, Store};
 use wat::parse_str;
 
-const COMPONENT_WAT: &str = r#"
-(component
-  (core module $m
-    (func (export "add") (param i32 i32) (result i32)
-      local.get 0
-      local.get 1
-      i32.add))
-  (core instance $i (instantiate $m))
-  (func (export "add") (param "a" u32) (param "b" u32) (result u32)
-    (canon lift (core func $i "add"))))
+const MODULE_WAT: &str = r#"
+(module
+  (func (export "add") (param i32 i32) (result i32)
+    local.get 0
+    local.get 1
+    i32.add))
 "#;
 
 const SECTION_NAME: &str = "hyperscale:effect-metadata";
@@ -69,8 +64,8 @@ fn attach_metadata(binary: &[u8], payload: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Walks the section framing (shared by core modules and components) and
-/// returns the payload of the named custom section. No engine involved.
+/// Walks the section framing and returns the payload of the named custom
+/// section. No engine involved.
 fn extract_metadata(binary: &[u8]) -> Result<Option<Vec<u8>>> {
     let mut pos = 8; // magic + version preamble
     while pos < binary.len() {
@@ -91,20 +86,18 @@ fn extract_metadata(binary: &[u8]) -> Result<Option<Vec<u8>>> {
     Ok(None)
 }
 
-fn runs(engine: &Engine, binary: &[u8]) -> Result<u32> {
-    let component = Component::new(engine, binary)?;
-    let linker = Linker::<()>::new(engine);
+fn runs(engine: &Engine, binary: &[u8]) -> Result<i32> {
+    let module = Module::new(engine, binary)?;
     let mut store = Store::new(engine, ());
-    let instance = linker.instantiate(&mut store, &component)?;
-    let add = instance.get_typed_func::<(u32, u32), (u32,)>(&mut store, "add")?;
-    let (sum,) = add.call(&mut store, (2, 3))?;
-    Ok(sum)
+    let instance = Instance::new(&mut store, &module, &[])?;
+    let add = instance.get_typed_func::<(i32, i32), i32>(&mut store, "add")?;
+    add.call(&mut store, (2, 3))
 }
 
 #[test]
 fn metadata_section_round_trips_and_addresses_the_artifact() -> Result<()> {
     let engine = Engine::new(&Config::new())?;
-    let plain = parse_str(COMPONENT_WAT)?;
+    let plain = parse_str(MODULE_WAT)?;
     assert_eq!(extract_metadata(&plain)?, None);
 
     let payload = b"opaque effect metadata bytes \x00\xff";

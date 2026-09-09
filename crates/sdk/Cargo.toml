@@ -24,7 +24,7 @@ hyperscale-hbor.workspace = true
 # The trait an engine implements, and the types a generated `client`
 # wrapper names. Carried on every target: the declaration and the call
 # surface are what a package is read through, and a consumer reading one
-# may itself be compiled to wasm. The component build drops both as dead
+# may itself be compiled to wasm. The guest build drops both as dead
 # code, so the artifact is the same bytes either way.
 hyperscale-vm-embed.workspace = true
 hyperscale-vm-effects.workspace = true

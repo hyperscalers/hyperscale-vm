@@ -24,7 +24,7 @@ use hyperscale_vm_kernel::{
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::{
     InstantiationCharges, Invoking, add_kernel_imports, blessed_engine, instantiate_charged,
-    invoke_module, module_instantiation_charges, validate_module,
+    instantiation_charges, invoke_export, validate_module,
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
@@ -135,7 +135,7 @@ impl Bench {
         let mut linker = Linker::<Invoking<KernelSession>>::new(&engine);
         add_kernel_imports(&mut linker)?;
         let pre = linker.instantiate_pre(&module)?;
-        let charges = module_instantiation_charges(&bytes)?;
+        let charges = instantiation_charges(&bytes)?;
         Ok(Self {
             engine,
             pre,
@@ -152,7 +152,7 @@ impl GuestBackend for Bench {
             self.pre.instantiate(s)
         })
         .expect("instantiate");
-        let end = invoke_module(&mut store, &instance, call.export, call.args, budget);
+        let end = invoke_export(&mut store, &instance, call.export, call.args, budget);
         InvokeResult {
             session: store.into_data().into_host(),
             fuel: end.fuel,

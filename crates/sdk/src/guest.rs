@@ -170,9 +170,8 @@ const fn count<T>(items: &[T]) -> u32 {
 ///
 /// Never inlined, and neither collector below is: making room for a
 /// register is the boundary's work, and the totality scan sets a
-/// collector aside on the terms it set the canonical ABI's allocator
-/// aside — which it can only do while the collect is a function of its
-/// own.
+/// collector aside as the boundary's support — which it can only do
+/// while the collect is a function of its own.
 #[inline(never)]
 fn take(len: u32) -> Vec<u8> {
     let mut bytes = vec![0u8; len as usize];

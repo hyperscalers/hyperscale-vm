@@ -19,8 +19,8 @@ use crate::store::StoreError;
 /// every replica.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SessionTrap {
-    /// A rep with no table entry — unreachable through either runtime's
-    /// canonical ABI, kept as an honest error rather than a panic.
+    /// A rep with no table entry: the class a guest earns for naming a
+    /// bucket the table does not hold.
     #[error("unknown capability handle {0}")]
     UnknownHandle(u32),
     /// An element whose capability does not grant the operation.
@@ -108,10 +108,10 @@ pub enum SessionTrap {
     },
     /// Value moved through a handle on a cell that denominates nothing.
     ///
-    /// Unreachable through either runtime's canonical ABI — a movement
-    /// handle is materialized only for a cell the declaration
-    /// denominated — and kept as an honest error rather than a panic,
-    /// like the handle refusals above it.
+    /// Unreachable through a declared site — a movement capability is
+    /// materialized only for a cell the declaration denominated — and
+    /// kept as an honest error rather than a panic, like the handle
+    /// refusals above it.
     #[error(
         "the handle at site {site} element {element} names a cell that denominates nothing, \
          so no value moves through it"

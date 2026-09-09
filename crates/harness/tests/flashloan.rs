@@ -22,7 +22,7 @@ use hyperscale_vm_effects::{
     IntentDecl, IntentHeader, ManifestGraph, Records, ResourceMeta, ResourceRecord, TestHasher,
     Value, admit_tree, child_key, resource_record_key,
 };
-use hyperscale_vm_fixtures::{FLASHLOAN_COMPONENT, flashloan};
+use hyperscale_vm_fixtures::{FLASHLOAN_MODULE, flashloan};
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -159,7 +159,7 @@ fn batch_entry(world: &Records, tree: &EnvelopeTree, composer: PrincipalAddr) ->
 
 static LANES: LazyLock<Lanes> = LazyLock::new(|| {
     let mut lanes = account_lanes();
-    lanes.seed(pkg("flashloan"), FLASHLOAN_COMPONENT);
+    lanes.seed(pkg("flashloan"), FLASHLOAN_MODULE);
     lanes.seed_native(pkg("flashloan"), flashloan::invoke);
     lanes
 });

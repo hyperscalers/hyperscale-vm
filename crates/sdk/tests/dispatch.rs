@@ -363,8 +363,8 @@ fn a_read_of_a_vault_answers_a_quantity_and_not_bytes() {
     );
 }
 
-/// A handle materialized at one mode cannot be read as another: the
-/// canonical ABI's mode escape, reached here by the same route.
+/// A site materialized at one mode cannot be read as another: the
+/// boundary's mode escape, reached here by the same route.
 #[test]
 fn an_argument_of_the_wrong_shape_is_a_violation() {
     let session = session(Mode::Write { moves: Moves::Both }, 10);

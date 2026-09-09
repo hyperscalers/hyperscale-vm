@@ -1,34 +1,33 @@
-//! Differential lane 5, guest pointers: every offset the canonical ABI
-//! takes from a guest, judged by the blessed engine and the reference
-//! interpreter against the same session.
+//! Guest pointers: every offset the boundary takes from a guest, judged by
+//! the blessed engine and the reference interpreter against the same
+//! session.
 //!
-//! A pointer that crosses the boundary carries two obligations — an
-//! alignment for what sits at it, and a length that stays inside memory —
-//! and neither is checked by any wasm instruction: the guest hands over a
-//! number and the ABI reads through it. So an interpreter that read where
-//! the engine refuses would not be lenient, it would be a second opinion
+//! A pointer that crosses the boundary carries one obligation — the range
+//! it names, at the length beside it, stays inside the memory — and no
+//! wasm instruction checks it: the guest hands over a number and the
+//! dispatch reads through it. There is no alignment rule; the boundary
+//! reads and writes unaligned. So an interpreter that read where the
+//! engine refuses would not be lenient, it would be a second opinion
 //! about what a transaction did.
 //!
-//! Three doors, because there are three ways a pointer arrives: a list
-//! lifted out of guest memory, the area a spilled result is written back
-//! to, and what `realloc` hands over when a list is lowered in.
+//! Three doors, because there are three ways a pointer arrives: a range
+//! the guest hands in, an out-pointer a fixed-width result is written
+//! back through, and a register the guest collects into.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::{
     Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, child_key,
 };
+use hyperscale_vm_embed::abi::{ABI, MEMORY, STATE};
+use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
+use hyperscale_vm_harness::dual::{DualGuest, Ended};
 use hyperscale_vm_kernel::{EnvInputs, KernelSession, MemoryStore, OverlayStore};
-use hyperscale_vm_ref::{CVal, HandleKind, RefComponent, RefComponentInstance};
-use hyperscale_vm_runtime::{
-    Bucket, Site, add_kernel_to_linker, blessed_engine, classify, validate_component,
-};
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Moves,
+    AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Moves,
     ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
-use wasmtime::component::{Component, Instance, Linker, Resource};
-use wasmtime::{Result, Store};
+use wasmtime::Result;
 use wat::parse_str;
 
 const FUEL: u64 = 1_000_000_000;
@@ -40,22 +39,20 @@ const RESOURCE: ResourceAddr = ResourceAddr::new([0x80; 31]);
 const INSTANCES: [u128; 3] = [10, 20, 30];
 const BALANCE: u128 = 42;
 
+/// The interval and the amount cell, at their positions in the session's
+/// capability table.
+const INTERVAL: GuestArg<'static> = GuestArg::Site { site: 0 };
+const CELL: GuestArg<'static> = GuestArg::Site { site: 1 };
+
+/// The first byte outside the guest's one page.
+const END: u64 = 65_536;
+
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
 }
 
 fn cell() -> SubstateKey {
     child_key(&TestHasher, OWNER, SlotId(16), &[])
-}
-
-/// How a lane ended, in the terms the two engines both answer in.
-///
-/// The abort class rather than the message: what a receipt records is the
-/// class, so that is what the two have to agree on.
-#[derive(Debug, PartialEq, Eq)]
-enum Verdict {
-    Ran,
-    Aborted(String),
 }
 
 /// A session holding one collection of instances and one amount cell.
@@ -110,285 +107,200 @@ fn session() -> KernelSession {
     .expect("the declaration materializes")
 }
 
-/// Run one component under both engines and answer their verdicts.
-fn both<T>(
-    source: &str,
-    export: &str,
-    args: &[CVal],
-    call: impl FnOnce(&Instance, &mut Store<KernelSession>) -> Result<T>,
-) -> Result<(Verdict, Verdict)> {
-    let bytes = parse_str(source)?;
-    validate_component(&bytes)?;
-
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let mut linker = Linker::<KernelSession>::new(&engine);
-    add_kernel_to_linker(&mut linker)?;
-    let mut store = Store::new(&engine, session());
-    store.set_fuel(FUEL)?;
-    let instance = linker.instantiate(&mut store, &component)?;
-    let blessed = match call(&instance, &mut store) {
-        Ok(_) => Verdict::Ran,
-        Err(error) => Verdict::Aborted(format!("{:?}", classify(&error))),
-    };
-
-    let comp = RefComponent::decode(&bytes)?;
-    let mut interpreted = RefComponentInstance::instantiate(&comp, session(), u64::MAX)
-        .map_err(|(_, error)| error)?;
-    let reference = match interpreted.invoke(export, args)? {
-        Ok(_) => Verdict::Ran,
-        Err(error) => Verdict::Aborted(format!("{:?}", error.abort_reason())),
-    };
-    Ok((blessed, reference))
-}
-
-// ─── the list a guest hands over ───────────────────────────────────────
-
-/// `take` names instances at a `(pointer, length)` the caller chooses.
-fn lifting(ptr: i32, len: i32) -> String {
+/// One guest whose every export takes its pointers as parameters, so a
+/// case is a call rather than another module.
+///
+/// The pointers are `u64` parameters the guest narrows to the `i32` the
+/// import takes: what the boundary judges is the number it is handed,
+/// and the caller chooses it.
+fn guest() -> String {
     format!(
         r#"
-(component
-  (import "hyperscale:kernel/state" (instance $state
-    (export "bucket" (type $bk (sub resource)))
-    (export "site" (type $rw (sub resource)))
-    (export "site-instance-take"
-      (func (param "r" (borrow $rw)) (param "element" u32) (param "ids" (list u64)) (result (own $bk))))))
-  (alias export $state "bucket" (type $bucket))
-  (alias export $state "site" (type $wrange))
-  (alias export $state "site-instance-take" (func $take))
+(module
+  (import "{STATE}" "site-instance-take"
+    (func $site_instance_take (param i32 i32 i32 i32) (result i32)))
+  (import "{STATE}" "site-balance" (func $site_balance (param i32 i32 i32)))
+  (import "{STATE}" "site-entry" (func $site_entry (param i32 i32 i32) (result i32)))
+  (import "{STATE}" "site-set" (func $site_set (param i32 i32 i32 i32)))
+  (import "{ABI}" "arg" (func $arg (param i32 i32)))
+  (import "{ABI}" "take" (func $take (param i32)))
+  (import "{ABI}" "reply" (func $reply (param i32 i32)))
+  (import "{ABI}" "answer" (func $answer (param i32 i32)))
+  (memory (export "{MEMORY}") 1 1)
 
-  (core module $alloc
-    (memory (export "mem") 1 1)
-    (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 1024))
-  (core instance $a (instantiate $alloc))
-  (core func $take_l (canon lower (func $take) (memory $a "mem")))
-  (core func $drop_r (canon resource.drop $wrange))
+  ;; One id an honest call names, written eight-aligned at 96 and again
+  ;; unaligned at 121; the caller says where the list is and how long.
+  ;; The bucket taken is the edge.
+  (func (export "take") (param $r i32) (param $ptr i64) (param $count i64)
+    (i64.store (i32.const 96) (i64.const 10))
+    (i64.store (i32.const 121) (i64.const 10))
+    (i32.store (i32.const 200)
+      (call $site_instance_take (local.get $r) (i32.const 0)
+        (i32.wrap_i64 (local.get $ptr)) (i32.wrap_i64 (local.get $count))))
+    (call $reply (i32.const 200) (i32.const 1)))
 
-  (core module $m
-    (import "env" "mem" (memory 1 1))
-    (import "k" "take" (func $take (param i32 i32 i32 i32) (result i32)))
-    (import "k" "drop" (func $drop (param i32)))
-    ;; One id an honest call would name, written eight-aligned.
-    (func (export "take") (param i32) (result i32)
-      (local $out i32)
-      i32.const 96
-      i64.const 10
-      i64.store
-      local.get 0
-      i32.const 0
-      i32.const {ptr}
-      i32.const {len}
-      call $take
-      local.set $out
-      local.get 0
-      call $drop
-      local.get $out))
+  ;; Bytes for a cell, from a range the caller chooses.
+  (func (export "set") (param $c i32) (param $ptr i64) (param $len i64)
+    (call $site_set (local.get $c) (i32.const 0)
+      (i32.wrap_i64 (local.get $ptr)) (i32.wrap_i64 (local.get $len)))
+    (call $reply (i32.const 0) (i32.const 0)))
 
-  (core instance $i (instantiate $m
-    (with "env" (instance (export "mem" (memory $a "mem"))))
-    (with "k" (instance (export "take" (func $take_l)) (export "drop" (func $drop_r))))))
+  ;; The balance through an out-pointer the caller chooses, its low
+  ;; eight bytes answered back.
+  (func (export "weigh") (param $c i32) (param $out i64)
+    (call $site_balance (local.get $c) (i32.const 0) (i32.wrap_i64 (local.get $out)))
+    (call $answer (i32.wrap_i64 (local.get $out)) (i32.const 8))
+    (call $reply (i32.const 0) (i32.const 0)))
 
-  (func (export "take")
-    (param "r" (borrow $wrange)) (result (own $bucket))
-    (canon lift (core func $i "take"))))
+  ;; Entry 0 fills the answer register; collect it where the caller
+  ;; says and answer what was collected.
+  (func (export "collect") (param $r i32) (param $ptr i64)
+    (local $len i32)
+    (local.set $len (call $site_entry (local.get $r) (i32.const 0) (i32.const 0)))
+    (call $take (i32.wrap_i64 (local.get $ptr)))
+    (call $answer (i32.wrap_i64 (local.get $ptr)) (local.get $len))
+    (call $reply (i32.const 0) (i32.const 0)))
+
+  ;; The bytes argument, collected where the caller says and answered.
+  (func (export "collect-arg") (param $payload i32) (param $ptr i64)
+    (call $arg (i32.const 0) (i32.wrap_i64 (local.get $ptr)))
+    (call $answer (i32.wrap_i64 (local.get $ptr)) (local.get $payload))
+    (call $reply (i32.const 0) (i32.const 0)))
+
+  ;; A site parameter carries no register.
+  (func (export "scalar-arg") (param $c i32)
+    (call $arg (i32.const 0) (i32.const 0))
+    (call $reply (i32.const 0) (i32.const 0)))
+
+  ;; Nothing filled the answer register.
+  (func (export "stale")
+    (call $take (i32.const 0))
+    (call $reply (i32.const 0) (i32.const 0))))
 "#
     )
 }
 
-fn lift_verdicts(ptr: i32, len: i32) -> Result<(Verdict, Verdict)> {
-    both(
-        &lifting(ptr, len),
-        "take",
-        &[CVal::Borrow(0, HandleKind::Site)],
-        |instance, store| {
-            instance
-                .get_typed_func::<(Resource<Site>,), (Resource<Bucket>,)>(&mut *store, "take")?
-                .call(store, (Resource::new_borrow(0),))
-        },
-    )
+static GUEST: LazyLock<DualGuest> = LazyLock::new(|| {
+    DualGuest::compile(&parse_str(guest()).expect("the fixture parses"))
+        .expect("the fixture compiles on both engines")
+});
+
+/// One call on a fresh instance per engine, ending the same on both.
+fn both(export: &str, args: &[GuestArg<'_>]) -> Result<Invocation> {
+    let mut dual = GUEST.instantiate(FUEL, session)?;
+    let ended = dual.invoke_both(export, args)?;
+    dual.finish()?;
+    Ok(ended)
 }
 
-/// A `list<u64>` is eight-aligned and bounded by the memory it sits in,
-/// and neither is something a wasm instruction checks — the guest hands
-/// over two numbers and the ABI reads through them.
-#[test]
-fn a_lifted_list_is_judged_the_same_by_both() -> Result<()> {
-    // The honest call, which both engines run.
-    let (blessed, reference) = lift_verdicts(96, 1)?;
-    assert_eq!(blessed, Verdict::Ran);
-    assert_eq!(reference, Verdict::Ran);
+/// The call is refused as the guest's violation, before any host body
+/// could answer, on both engines.
+fn violates(why: &str, export: &str, args: &[GuestArg<'_>]) -> Result<()> {
+    let ended = both(export, args)?;
+    assert_eq!(
+        ended.result,
+        Invoked::Aborted(AbortReason::AbiViolation),
+        "{why}: a range the boundary cannot read through"
+    );
+    assert!(!ended.exhausted, "{why}");
+    Ok(())
+}
 
-    // One past an eight-aligned slot, past the end of memory, and a
-    // length whose byte width runs past it. All three are the ABI
-    // declining to read rather than a load the guest executed, so all
-    // three abort as the same violation on both sides.
-    for (why, ptr, len) in [
-        ("misaligned", 101, 1),
-        ("out of bounds", 65_528, 4),
-        ("length past the end", 8, i32::MAX),
+// ─── the range a guest hands in ────────────────────────────────────────
+
+/// An id list is `count` ids at `ptr`, eight bytes each, and bytes for a
+/// cell are `len` at `ptr`; both are bounded by the memory they sit in,
+/// and neither bound is something a wasm instruction checks.
+#[test]
+fn a_range_handed_in_is_judged_the_same_by_both() -> Result<()> {
+    // The honest call, which both engines run: one id, taken into a
+    // bucket of one instance on each side.
+    let mut dual = GUEST.instantiate(FUEL, session)?;
+    let ended = dual.invoke_both("take", &[INTERVAL, GuestArg::U64(96), GuestArg::U64(1)])?;
+    let rep = ended.bucket()?;
+    let (blessed, reference) = dual.finish()?;
+    assert_eq!(blessed.session.bucket(rep)?.quantity(), 1);
+    assert_eq!(reference.session.bucket(rep)?.quantity(), 1);
+
+    // The same id at an unaligned address reads the same: there is no
+    // alignment rule to refuse it.
+    both("take", &[INTERVAL, GuestArg::U64(121), GuestArg::U64(1)])?.bucket()?;
+
+    // A list that starts inside and runs past the end, one that starts
+    // at the end, and a count whose byte width overflows the length:
+    // all three are the boundary declining to read rather than a load
+    // the guest executed, so all three are the same violation on both
+    // sides.
+    for (why, ptr, count) in [
+        ("past the end", END - 8, 4),
+        ("at the end", END, 1),
+        ("length overflow", 8, u64::from(u32::MAX / 4)),
     ] {
-        let (blessed, reference) = lift_verdicts(ptr, len)?;
-        assert_eq!(blessed, reference, "{why}");
-        assert_eq!(
-            blessed,
-            Verdict::Aborted("AbiViolation".into()),
-            "{why}: a pointer the ABI cannot read through"
-        );
+        violates(
+            why,
+            "take",
+            &[INTERVAL, GuestArg::U64(ptr), GuestArg::U64(count)],
+        )?;
     }
-    Ok(())
-}
-
-// ─── the area a result is written back to ──────────────────────────────
-
-/// `weigh` asks a balance into a return area the caller chooses.
-fn returning(retptr: i32) -> String {
-    format!(
-        r#"
-(component
-  (import "hyperscale:kernel/state" (instance $state
-    (export "site" (type $ac (sub resource)))
-    (type $amt_decl (record (field "low" u64) (field "high" u64)))
-    (export "amount" (type $amt (eq $amt_decl)))
-    (export "site-balance" (func (param "c" (borrow $ac)) (param "element" u32) (result $amt)))))
-  (alias export $state "site" (type $acell))
-  (alias export $state "site-balance" (func $balance))
-
-  (core module $alloc
-    (memory (export "mem") 1 1)
-    (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 1024))
-  (core instance $a (instantiate $alloc))
-  (core func $balance_l (canon lower (func $balance) (memory $a "mem")))
-  (core func $drop_c (canon resource.drop $acell))
-
-  (core module $m
-    (import "env" "mem" (memory 1 1))
-    (import "k" "balance" (func $balance (param i32 i32 i32)))
-    (import "k" "drop" (func $drop (param i32)))
-    (func (export "weigh") (param i32) (result i64)
-      (local $out i64)
-      local.get 0
-      i32.const 0
-      i32.const {retptr}
-      call $balance
-      i32.const {retptr}
-      i64.load align=1
-      local.set $out
-      local.get 0
-      call $drop
-      local.get $out))
-
-  (core instance $i (instantiate $m
-    (with "env" (instance (export "mem" (memory $a "mem"))))
-    (with "k" (instance (export "balance" (func $balance_l)) (export "drop" (func $drop_c))))))
-
-  (func (export "weigh")
-    (param "c" (borrow $acell)) (result u64)
-    (canon lift (core func $i "weigh"))))
-"#
+    violates(
+        "bytes past the end",
+        "set",
+        &[CELL, GuestArg::U64(END - 6), GuestArg::U64(16)],
     )
 }
 
-/// A spilled result travels through a pointer the guest chose, on the
-/// same terms as one it hands in.
+// ─── the out-pointer a result is written through ───────────────────────
+
+/// A fixed-width result travels through a pointer the guest chose, on the
+/// same terms as one it hands in: the write is judged when the host has
+/// answered, and it is the guest's violation all the same.
 #[test]
-fn a_return_area_is_judged_the_same_by_both() -> Result<()> {
-    let verdicts = |retptr: i32| {
-        both(
-            &returning(retptr),
-            "weigh",
-            &[CVal::Borrow(1, HandleKind::Site)],
-            |instance, store| {
-                instance
-                    .get_typed_func::<(Resource<Site>,), (u64,)>(&mut *store, "weigh")?
-                    .call(store, (Resource::new_borrow(1),))
-            },
-        )
-    };
-
-    // An `amount` is a record of two `u64`s, so its area is eight-aligned.
-    let (blessed, reference) = verdicts(96)?;
-    assert_eq!(blessed, Verdict::Ran);
-    assert_eq!(reference, Verdict::Ran);
-
-    for (why, retptr) in [("misaligned", 101), ("out of bounds", 65_534)] {
-        let (blessed, reference) = verdicts(retptr)?;
-        assert_eq!(blessed, reference, "{why}");
-        assert_eq!(blessed, Verdict::Aborted("AbiViolation".into()), "{why}");
-    }
-    Ok(())
+fn an_out_pointer_is_judged_the_same_by_both() -> Result<()> {
+    let ended = both("weigh", &[CELL, GuestArg::U64(96)])?;
+    assert_eq!(u128::from(ended.scalar()?), BALANCE);
+    let ended = both("weigh", &[CELL, GuestArg::U64(101)])?;
+    assert_eq!(u128::from(ended.scalar()?), BALANCE, "unaligned");
+    violates("past the end", "weigh", &[CELL, GuestArg::U64(END - 2)])
 }
 
-// ─── and what realloc hands over ───────────────────────────────────────
+// ─── and the register a guest collects into ────────────────────────────
 
-/// `count` takes a list the host lowers in, through a `realloc` that
-/// answers `at` whatever it was asked for.
-fn allocating(at: i32) -> String {
-    format!(
-        r#"
-(component
-  (import "hyperscale:kernel/state" (instance $state
-    (export "site" (type $rw (sub resource)))
-    (export "site-count" (func (param "r" (borrow $rw)) (param "element" u32) (result u32)))))
-  (alias export $state "site" (type $wrange))
-  (alias export $state "site-count" (func $count))
-
-  (core module $alloc
-    (memory (export "mem") 1 1)
-    (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const {at}))
-  (core instance $a (instantiate $alloc))
-  (core func $count_l (canon lower (func $count)))
-  (core func $drop_r (canon resource.drop $wrange))
-
-  (core module $m
-    (import "env" "mem" (memory 1 1))
-    (import "k" "count" (func $count (param i32 i32) (result i32)))
-    (import "k" "drop" (func $drop (param i32)))
-    (func (export "count") (param i32 i32 i32) (result i32)
-      (local $out i32)
-      local.get 0
-      i32.const 0
-      call $count
-      local.set $out
-      local.get 0
-      call $drop
-      local.get $out))
-
-  (core instance $i (instantiate $m
-    (with "env" (instance (export "mem" (memory $a "mem"))))
-    (with "k" (instance (export "count" (func $count_l)) (export "drop" (func $drop_r))))))
-
-  (func (export "count")
-    (param "r" (borrow $wrange)) (param "ids" (list u64)) (result u32)
-    (canon lift (core func $i "count") (memory $a "mem") (realloc (func $a "realloc")))))
-"#
-    )
-}
-
-/// The pointer a guest's own allocator answers with is a guest pointer
-/// like any other: the ABI is about to write a `list<u64>` through it.
+/// A register is collected at a pointer the guest chose, and only a
+/// filled one: an unfilled register — never filled, or a parameter that
+/// carries none — is a violation on the same terms as a range outside
+/// the memory.
 #[test]
-fn a_realloc_result_is_judged_the_same_by_both() -> Result<()> {
-    let verdicts = |at: i32| {
-        both(
-            &allocating(at),
-            "count",
-            &[CVal::Borrow(0, HandleKind::Site), CVal::Ids(vec![10, 20])],
-            |instance, store| {
-                instance
-                    .get_typed_func::<(Resource<Site>, &[u64]), (u32,)>(&mut *store, "count")?
-                    .call(store, (Resource::new_borrow(0), &[10u64, 20][..]))
-            },
-        )
-    };
+fn a_register_is_judged_the_same_by_both() -> Result<()> {
+    let ended = both("collect", &[INTERVAL, GuestArg::U64(96)])?;
+    assert_eq!(
+        ended.result,
+        Invoked::Produced {
+            edges: vec![],
+            answer: Some(b"x".to_vec()),
+        }
+    );
+    let ended = both(
+        "collect-arg",
+        &[GuestArg::Bytes(b"payload"), GuestArg::U64(96)],
+    )?;
+    assert_eq!(
+        ended.result,
+        Invoked::Produced {
+            edges: vec![],
+            answer: Some(b"payload".to_vec()),
+        }
+    );
 
-    let (blessed, reference) = verdicts(1024)?;
-    assert_eq!(blessed, Verdict::Ran);
-    assert_eq!(reference, Verdict::Ran);
-
-    // An allocator that answers an offset the elements cannot sit at.
-    let (blessed, reference) = verdicts(1025)?;
-    assert_eq!(blessed, reference);
-    assert_eq!(blessed, Verdict::Aborted("AbiViolation".into()));
-    Ok(())
+    violates(
+        "the answer register at the end",
+        "collect",
+        &[INTERVAL, GuestArg::U64(END)],
+    )?;
+    violates(
+        "an input register past the end",
+        "collect-arg",
+        &[GuestArg::Bytes(b"payload"), GuestArg::U64(END - 6)],
+    )?;
+    violates("a parameter with no register", "scalar-arg", &[CELL])?;
+    violates("an answer register never filled", "stale", &[])
 }

@@ -1,7 +1,7 @@
 //! Rebuild the committed guest blobs from the guest sources.
 //!
 //! Builds each guest through `cargo hyperscale`'s own compile step —
-//! which componentizes and profile-validates — and overwrites the
+//! which profile-validates — and overwrites the
 //! artifact its crate embeds:
 //! the protocol's own packages into `hyperscale-vm-stdlib`, the test
 //! packages into `hyperscale-vm-fixtures`. Both are built on identical
@@ -65,7 +65,7 @@ fn main() -> Result<()> {
         let artifact = build_guest(guest)?;
         let path = repo_root()
             .join(Path::new(directory))
-            .join(format!("{guest}.component.wasm"));
+            .join(format!("{guest}.wasm"));
         std::fs::write(&path, &artifact).with_context(|| format!("write {}", path.display()))?;
         println!("wrote {} ({} bytes)", path.display(), artifact.len());
     }

@@ -8,7 +8,7 @@ use common::{CLOCK_MS, Held, Kernel, every_import, ident, module};
 use hyperscale_vm_embed::abi::{ABI, CoreType, IMPORTS, MATH, STATE};
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
 use hyperscale_vm_runtime::{
-    Invoking, add_kernel_imports, blessed_engine, invoke_module, validate_module,
+    Invoking, add_kernel_imports, blessed_engine, invoke_export, validate_module,
 };
 use hyperscale_vm_types::AbortReason;
 use wasmtime::{Engine, Linker, Module, Store};
@@ -40,7 +40,7 @@ fn run_with(
     let instance = linker
         .instantiate(&mut store, &module)
         .expect("the fixture instantiates");
-    let ended = invoke_module(&mut store, &instance, export, args, budget);
+    let ended = invoke_export(&mut store, &instance, export, args, budget);
     (ended, store.into_data().into_host())
 }
 

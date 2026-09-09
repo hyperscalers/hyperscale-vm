@@ -9,92 +9,104 @@
 //! is, because the class decides the outcome variant and the outcome
 //! variant decides the fee.
 
+use hyperscale_vm_embed::abi::{ABI, MEMORY};
+use hyperscale_vm_embed::{Invocation, Invoked};
 use hyperscale_vm_harness::fixtures::NoHost;
-use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance};
-use hyperscale_vm_runtime::{Returned, blessed_engine, call_export, classify, validate_component};
+use hyperscale_vm_ref::{RefModule, RefModuleInstance};
+use hyperscale_vm_runtime::{
+    Invoking, add_kernel_imports, blessed_engine, invoke_export, validate_module,
+};
 use hyperscale_vm_types::AbortReason;
-use wasmtime::component::{Component, Linker};
-use wasmtime::error::Context;
-use wasmtime::{Error, Result, Store};
+use wasmtime::error::{Context, format_err};
+use wasmtime::{Linker, Module, Result, Store};
 use wat::parse_str;
 
-/// The interpreter's decode and instantiation failures as engine errors,
-/// so both lanes report through one type. Neither is reachable for a
-/// component this test builds; the conversion keeps the lane honest
-/// rather than papering over one with an `expect`.
-fn engine_error(error: &impl ToString) -> Error {
-    Error::msg(error.to_string())
+/// What a call may spend where the guest is expected to finish.
+const FUEL: u64 = 1_000_000;
+
+/// A module importing only the two register calls an answer needs, the
+/// one memory, and `body`.
+///
+/// Every export ends by answering eight bytes and replying no edge, so
+/// what each one exercises is the way it fails to get there.
+fn module(body: &str) -> Result<Vec<u8>> {
+    let wat = format!(
+        r#"(module
+  (import "{ABI}" "answer" (func $answer (param i32 i32)))
+  (import "{ABI}" "reply" (func $reply (param i32 i32)))
+  (memory (export "{MEMORY}") 1 1)
+  (func $done (param $ptr i32)
+    local.get $ptr
+    i32.const 8
+    call $answer
+    i32.const 0
+    i32.const 0
+    call $reply)
+{body})"#
+    );
+    let bytes = parse_str(wat)?;
+    validate_module(&bytes)?;
+    Ok(bytes)
 }
 
-/// A guest that fails one way per export, and imports nothing.
+/// A guest that fails one way per export.
 ///
 /// Every export the profile can reach a trap through, so the tables are
-/// exercised rather than transcribed twice and hoped over.
-const TRAPPING_GUEST: &str = r#"
-(component
-  (core module $m
-    (type $ret (func (result i64)))
-    (memory 1 1)
-    (table 1 1 funcref)
-    (func (export "boom") (result i64) unreachable)
-    (func (export "divide") (result i64)
-      (i64.div_s (i64.const 1) (i64.const 0)))
-    (func (export "remainder") (result i64)
-      (i64.rem_s (i64.const 1) (i64.const 0)))
-    (func (export "overflow") (result i64)
+/// exercised rather than transcribed twice and hoped over; `fine` runs
+/// to its answer.
+fn trapping_guest() -> Result<Vec<u8>> {
+    module(
+        r#"
+  (type $ret (func (result i64)))
+  (table 1 1 funcref)
+  (func (export "boom") unreachable (call $done (i32.const 0)))
+  (func (export "divide")
+    (i64.store (i32.const 0) (i64.div_s (i64.const 1) (i64.const 0)))
+    (call $done (i32.const 0)))
+  (func (export "remainder")
+    (i64.store (i32.const 0) (i64.rem_s (i64.const 1) (i64.const 0)))
+    (call $done (i32.const 0)))
+  (func (export "overflow")
+    (i64.store (i32.const 0)
       (i64.div_s (i64.const -9223372036854775808) (i64.const -1)))
-    (func (export "reach") (result i64)
-      (i64.load (i32.const 100000)))
-    (func (export "nullcall") (result i64)
-      (call_indirect (type $ret) (i32.const 0)))
-    (func (export "fine") (result i64) (i64.const 7)))
-  (core instance $i (instantiate $m))
-  (func (export "boom") (result u64) (canon lift (core func $i "boom")))
-  (func (export "divide") (result u64) (canon lift (core func $i "divide")))
-  (func (export "remainder") (result u64) (canon lift (core func $i "remainder")))
-  (func (export "overflow") (result u64) (canon lift (core func $i "overflow")))
-  (func (export "reach") (result u64) (canon lift (core func $i "reach")))
-  (func (export "nullcall") (result u64) (canon lift (core func $i "nullcall")))
-  (func (export "fine") (result u64) (canon lift (core func $i "fine"))))
-"#;
-
-/// One export's verdict on the blessed engine: its value, or its class.
-fn blessed(bytes: &[u8], export: &str) -> Result<std::result::Result<u64, AbortReason>> {
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, bytes)?;
-    let linker = Linker::<NoHost>::new(&engine);
-    let mut store = Store::new(&engine, NoHost);
-    store.set_fuel(1_000_000).context("fuel")?;
-    let instance = linker.instantiate(&mut store, &component)?;
-    let func = instance
-        .get_typed_func::<(), (u64,)>(&mut store, export)
-        .context("export")?;
-    Ok(match func.call(&mut store, ()) {
-        Ok((value,)) => Ok(value),
-        Err(error) => Err(classify(&error)),
-    })
+    (call $done (i32.const 0)))
+  (func (export "reach")
+    (i64.store (i32.const 0) (i64.load (i32.const 100000)))
+    (call $done (i32.const 0)))
+  (func (export "nullcall")
+    (i64.store (i32.const 0) (call_indirect (type $ret) (i32.const 0)))
+    (call $done (i32.const 0)))
+  (func (export "fine")
+    (i64.store (i32.const 0) (i64.const 7))
+    (call $done (i32.const 0)))"#,
+    )
 }
 
-/// The same export's verdict on the reference interpreter.
-fn reference(bytes: &[u8], export: &str) -> Result<std::result::Result<u64, AbortReason>> {
-    let component = RefComponent::decode(bytes).map_err(|e| engine_error(&e))?;
-    let mut instance = RefComponentInstance::instantiate(&component, NoHost, 1_000_000)
-        .map_err(|(_, e)| engine_error(&e))?;
-    let outcome = instance.invoke(export, &[]).map_err(|e| engine_error(&e))?;
-    Ok(match outcome {
-        Ok(values) => match values.as_slice() {
-            [CVal::U64(value)] => Ok(*value),
-            _ => Err(AbortReason::BadReturnShape),
-        },
-        Err(error) => Err(error.abort_reason()),
-    })
+/// One export's ending on the blessed engine, under `budget`.
+fn blessed(bytes: &[u8], export: &str, budget: u64) -> Result<Invocation> {
+    let engine = blessed_engine()?;
+    let module = Module::new(&engine, bytes)?;
+    let mut linker = Linker::<Invoking<NoHost>>::new(&engine);
+    add_kernel_imports(&mut linker)?;
+    let mut store = Store::new(&engine, Invoking::new(NoHost));
+    store.set_fuel(budget).context("fuel")?;
+    let instance = linker.instantiate(&mut store, &module)?;
+    Ok(invoke_export(&mut store, &instance, export, &[], budget))
+}
+
+/// The same export's ending on the reference interpreter.
+fn reference(bytes: &[u8], export: &str, budget: u64) -> Result<Invocation> {
+    let module = RefModule::decode(bytes).map_err(|error| format_err!("decode: {error}"))?;
+    let mut instance = RefModuleInstance::instantiate(&module, NoHost, budget)
+        .map_err(|(_, error)| format_err!("reference instantiation: {error}"))?;
+    Ok(instance.invoke(export, &[]))
 }
 
 /// Every trap the profile admits classifies identically on both engines,
 /// and to the class the vocabulary names for it.
 #[test]
 fn both_engines_classify_one_trap_as_one_class() -> Result<()> {
-    let bytes = parse_str(TRAPPING_GUEST)?;
+    let bytes = trapping_guest()?;
     let expected = [
         ("boom", AbortReason::Unreachable),
         ("divide", AbortReason::IntegerDivideByZero),
@@ -104,13 +116,21 @@ fn both_engines_classify_one_trap_as_one_class() -> Result<()> {
         ("nullcall", AbortReason::IndirectCallToNull),
     ];
     for (export, class) in expected {
-        let blessed = blessed(&bytes, export)?;
-        let reference = reference(&bytes, export)?;
+        let blessed = blessed(&bytes, export, FUEL)?.result;
+        let reference = reference(&bytes, export, FUEL)?.result;
         assert_eq!(blessed, reference, "`{export}` classified differently");
-        assert_eq!(blessed, Err(class), "`{export}` classified wrongly");
+        assert_eq!(
+            blessed,
+            Invoked::Aborted(class),
+            "`{export}` classified wrongly"
+        );
     }
-    assert_eq!(blessed(&bytes, "fine")?, Ok(7));
-    assert_eq!(reference(&bytes, "fine")?, Ok(7));
+    let seven = Invoked::Produced {
+        edges: Vec::new(),
+        answer: Some(7u64.to_le_bytes().to_vec()),
+    };
+    assert_eq!(blessed(&bytes, "fine", FUEL)?.result, seven);
+    assert_eq!(reference(&bytes, "fine", FUEL)?.result, seven);
     Ok(())
 }
 
@@ -118,170 +138,96 @@ fn both_engines_classify_one_trap_as_one_class() -> Result<()> {
 /// against a ceiling neither engine can finish under.
 #[test]
 fn both_engines_classify_exhaustion_as_exhaustion() -> Result<()> {
-    const SPINNER: &str = r#"
-(component
-  (core module $m
-    (func (export "spin") (result i64)
-      (local $i i64)
-      (loop $l
-        (local.set $i (i64.add (local.get $i) (i64.const 1)))
-        (br $l))
-      (local.get $i)))
-  (core instance $i (instantiate $m))
-  (func (export "spin") (result u64) (canon lift (core func $i "spin"))))
-"#;
-    let bytes = parse_str(SPINNER)?;
+    const CEILING: u64 = 50_000;
+    let bytes = module(
+        r#"
+  (func (export "spin")
+    (local $i i64)
+    (loop $l
+      (local.set $i (i64.add (local.get $i) (i64.const 1)))
+      (br $l))
+    (i64.store (i32.const 0) (local.get $i))
+    (call $done (i32.const 0)))"#,
+    )?;
 
-    let engine = blessed_engine()?;
-    let component = Component::new(&engine, &bytes)?;
-    let linker = Linker::<NoHost>::new(&engine);
-    let mut store = Store::new(&engine, NoHost);
-    store.set_fuel(50_000).context("fuel")?;
-    let instance = linker.instantiate(&mut store, &component)?;
-    let func = instance.get_typed_func::<(), (u64,)>(&mut store, "spin")?;
-    let blessed = classify(&func.call(&mut store, ()).unwrap_err());
+    let blessed = blessed(&bytes, "spin", CEILING)?;
+    let reference = reference(&bytes, "spin", CEILING)?;
 
-    let decoded = RefComponent::decode(&bytes).map_err(|e| engine_error(&e))?;
-    let mut interpreted = RefComponentInstance::instantiate(&decoded, NoHost, 50_000)
-        .map_err(|(_, e)| engine_error(&e))?;
-    let reference = interpreted
-        .invoke("spin", &[])
-        .map_err(|e| engine_error(&e))?
-        .expect_err("the ceiling stops it")
-        .abort_reason();
-
-    assert_eq!(blessed, AbortReason::OutOfGas);
-    assert_eq!(reference, AbortReason::OutOfGas);
+    assert_eq!(blessed.result, Invoked::Aborted(AbortReason::OutOfGas));
+    assert!(blessed.exhausted);
+    assert_eq!(reference.result, Invoked::Aborted(AbortReason::OutOfGas));
+    assert!(reference.exhausted);
     Ok(())
 }
 
-/// A guest that ends every way a method can that carries no edge: the
-/// refusal channel's two shapes each answering both ways, and the value
-/// a method answers with, alone and behind the channel.
+/// A guest that ends every way a method can that carries no edge: a
+/// completion with nothing answered, a decline, an answer, and an answer
+/// through a signature that could have declined and did not.
 ///
-/// Hand-written rather than compiled so the memory representation is
-/// visible — a one-byte discriminant, the payload at the alignment the
-/// wider arm fixes, a byte list as the pointer and length it lowers to
-/// — which is exactly what the reference interpreter reads and what
-/// nothing but this comparison holds it to.
-const ENDING_GUEST: &str = r#"
-(component
-  (core module $m
-    (memory (export "mem") 1 1)
-    (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 512)
-    (func (export "yes") (result i32)
-      (i32.store8 (i32.const 0) (i32.const 0))
-      (i32.store (i32.const 4) (i32.const 64))
-      (i32.store (i32.const 8) (i32.const 3))
-      (i32.store8 (i32.const 64) (i32.const 7))
-      (i32.store8 (i32.const 65) (i32.const 8))
-      (i32.store8 (i32.const 66) (i32.const 9))
-      i32.const 0)
-    (func (export "no") (result i32)
-      (i32.store8 (i32.const 0) (i32.const 1))
-      (i32.store (i32.const 4) (i32.const 5))
-      i32.const 0)
-    (func (export "unit-yes") (result i32)
-      (i32.store8 (i32.const 128) (i32.const 0))
-      i32.const 128)
-    (func (export "unit-no") (result i32)
-      (i32.store8 (i32.const 128) (i32.const 1))
-      (i32.store (i32.const 132) (i32.const 9))
-      i32.const 128)
-    (func (export "answer") (result i32)
-      (i32.store (i32.const 256) (i32.const 320))
-      (i32.store (i32.const 260) (i32.const 3))
-      (i32.store8 (i32.const 320) (i32.const 4))
-      (i32.store8 (i32.const 321) (i32.const 5))
-      (i32.store8 (i32.const 322) (i32.const 6))
-      i32.const 256)
-    (func (export "answer-or-decline") (result i32)
-      (i32.store8 (i32.const 384) (i32.const 0))
-      (i32.store (i32.const 388) (i32.const 448))
-      (i32.store (i32.const 392) (i32.const 2))
-      (i32.store8 (i32.const 448) (i32.const 1))
-      (i32.store8 (i32.const 449) (i32.const 2))
-      i32.const 384))
-  (core instance $i (instantiate $m))
-  (func (export "unit-yes") (result (result (error u32)))
-    (canon lift (core func $i "unit-yes") (memory $i "mem") (realloc (func $i "realloc"))))
-  (func (export "unit-no") (result (result (error u32)))
-    (canon lift (core func $i "unit-no") (memory $i "mem") (realloc (func $i "realloc"))))
-  (func (export "answer") (result (list u8))
-    (canon lift (core func $i "answer") (memory $i "mem") (realloc (func $i "realloc"))))
-  (func (export "answer-or-decline") (result (result (list u8) (error u32)))
-    (canon lift (core func $i "answer-or-decline")
-      (memory $i "mem") (realloc (func $i "realloc")))))
-"#;
+/// Hand-written so what crosses is visible: an answer is bytes at a
+/// pointer, a decline is the `i32` the export returns, one more than
+/// the error-table index — which is exactly what both engines read and
+/// what nothing but this comparison holds them to.
+fn ending_guest() -> Result<Vec<u8>> {
+    module(
+        r#"
+  (func (export "unit-yes")
+    (call $reply (i32.const 0) (i32.const 0)))
+  (func (export "unit-no") (result i32)
+    (i32.const 10))
+  (func (export "answer")
+    (i32.store8 (i32.const 64) (i32.const 4))
+    (i32.store8 (i32.const 65) (i32.const 5))
+    (i32.store8 (i32.const 66) (i32.const 6))
+    (call $answer (i32.const 64) (i32.const 3))
+    (call $reply (i32.const 0) (i32.const 0)))
+  (func (export "answer-or-decline") (result i32)
+    (i32.store8 (i32.const 128) (i32.const 1))
+    (i32.store8 (i32.const 129) (i32.const 2))
+    (call $answer (i32.const 128) (i32.const 2))
+    (call $reply (i32.const 0) (i32.const 0))
+    (i32.const 0))"#,
+    )
+}
 
 #[test]
 fn both_engines_read_what_a_method_hands_back_the_same_way() -> Result<()> {
-    let bytes = parse_str(ENDING_GUEST)?;
-    validate_component(&bytes).expect("the refusal channel is inside the profile");
+    let bytes = ending_guest()?;
 
     for (export, expected) in [
         (
             "unit-yes",
-            Returned::Produced {
+            Invoked::Produced {
                 edges: Vec::new(),
                 answer: None,
             },
         ),
-        ("unit-no", Returned::Declined(9)),
+        ("unit-no", Invoked::Declined(9)),
         (
             "answer",
-            Returned::Produced {
+            Invoked::Produced {
                 edges: Vec::new(),
                 answer: Some(vec![4, 5, 6]),
             },
         ),
         (
             "answer-or-decline",
-            Returned::Produced {
+            Invoked::Produced {
                 edges: Vec::new(),
                 answer: Some(vec![1, 2]),
             },
         ),
     ] {
-        let engine = blessed_engine()?;
-        let component = Component::new(&engine, &bytes)?;
-        let linker = Linker::<NoHost>::new(&engine);
-        let mut store = Store::new(&engine, NoHost);
-        store.set_fuel(1_000_000).context("fuel")?;
-        let instance = linker.instantiate(&mut store, &component)?;
-        let blessed = call_export(&mut store, &instance, export, &[])?;
-
-        let decoded = RefComponent::decode(&bytes).map_err(|e| engine_error(&e))?;
-        let mut interpreted = RefComponentInstance::instantiate(&decoded, NoHost, 1_000_000)
-            .map_err(|(_, e)| engine_error(&e))?;
-        let reference = interpreted
-            .invoke(export, &[])
-            .map_err(|e| engine_error(&e))?
-            .expect("the guest returns");
-
-        assert_eq!(blessed, expected, "`{export}` on the blessed engine");
         assert_eq!(
-            lifted(&reference),
+            blessed(&bytes, export, FUEL)?.result,
+            expected,
+            "`{export}` on the blessed engine"
+        );
+        assert_eq!(
+            reference(&bytes, export, FUEL)?.result,
             expected,
             "`{export}` on the reference interpreter"
         );
     }
     Ok(())
-}
-
-/// The interpreter's lifted values as the blessed engine's verdict, so
-/// the two lanes compare in one vocabulary.
-fn lifted(values: &[CVal]) -> Returned {
-    match values {
-        [] => Returned::Produced {
-            edges: Vec::new(),
-            answer: None,
-        },
-        [CVal::Declined(code)] => Returned::Declined(*code),
-        [CVal::Bytes(answer)] => Returned::Produced {
-            edges: Vec::new(),
-            answer: Some(answer.clone()),
-        },
-        other => panic!("off-convention result {other:?}"),
-    }
 }

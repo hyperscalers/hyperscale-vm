@@ -6,8 +6,8 @@
 //! export per session; this lane composes them. Both lanes must agree on
 //! every outcome, the access log, and the fuel, and `finish` must find
 //! every recorded access inside the declared set — the oracle — whatever
-//! the sequence did, including the adversarial exports (forged handles,
-//! mode escapes, leaked borrows).
+//! the sequence did, including the adversarial exports (forged sites,
+//! mode escapes, a register collected twice).
 
 #![no_main]
 
@@ -18,18 +18,17 @@ use hyperscale_vm_effects::{
     Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, child_key,
 };
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
-use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
-use hyperscale_vm_ref::{
-    CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
+use hyperscale_vm_kernel::{
+    Capability, EnvInputs, GuestArg, Invoked, KernelSession, MemoryStore, OverlayStore,
 };
-use hyperscale_vm_runtime::{HostRefusal, Site, add_kernel_to_linker, blessed_engine};
+use hyperscale_vm_ref::{RefModule, RefModuleInstance};
+use hyperscale_vm_runtime::{Invoking, add_kernel_imports, blessed_engine, invoke_export};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
     Mode, Moves, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use libfuzzer_sys::fuzz_target;
-use wasmtime::component::{Component, Instance, Linker, Resource};
-use wasmtime::{Engine, Error, Store};
+use wasmtime::{Engine, Linker, Module, Store};
 
 const FUEL: u64 = 1_000_000_000;
 const ASKS: CollectionId = CollectionId([4; 16]);
@@ -46,27 +45,30 @@ const EXPORTS: &[&str] = &[
     "no-such-entry",
     "escape",
     "forge",
-    "forge-zero",
     "hash-tag",
     "read-value",
     "handle-value",
-    "leak",
+    "retake",
 ];
 
 struct Runtime {
     engine: Engine,
-    component: Component,
-    reference: RefComponent,
+    module: Module,
+    linker: Linker<Invoking<KernelSession>>,
+    reference: RefModule,
 }
 
 static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     let bytes = wat::parse_str(KERNEL_GUEST_WAT).expect("fixture WAT parses");
     let engine = blessed_engine().expect("blessed engine");
-    let component = Component::new(&engine, &bytes).expect("fixture compiles");
-    let reference = RefComponent::decode(&bytes).expect("the spec decodes the fixture");
+    let module = Module::new(&engine, &bytes).expect("fixture compiles");
+    let mut linker = Linker::<Invoking<KernelSession>>::new(&engine);
+    add_kernel_imports(&mut linker).expect("kernel imports link");
+    let reference = RefModule::decode(&bytes).expect("the spec decodes the fixture");
     Runtime {
         engine,
-        component,
+        module,
+        linker,
         reference,
     }
 });
@@ -298,33 +300,24 @@ fn rep_where(caps: &[Capability], pred: impl Fn(&Capability) -> bool) -> u32 {
 
 /// The sites each export receives, in parameter order.
 ///
-/// Every capability crosses as one resource, so what a fixture picks is
-/// a position in the table rather than a type: the key it named, or the
-/// one interval it declared. A session seeds one width-one site per
-/// capability in table order, so that position is the site's too.
-fn args_for(fx: &Fx, caps: &[Capability], export: &str) -> Vec<(u32, HandleKind)> {
+/// What a fixture picks is a position in the session's capability
+/// table: the key it named, or the one interval it declared. A session
+/// seats one site per capability in table order, so that position is
+/// the site's too.
+fn args_for(fx: &Fx, caps: &[Capability], export: &str) -> Vec<u32> {
     let point = |wanted: SubstateKey| {
-        let rep = rep_where(caps, |c| match c {
+        rep_where(caps, |c| match c {
             Capability::Read(key)
             | Capability::Write(key)
             | Capability::Delta { key, .. }
             | Capability::Reserve { key, .. } => *key == wanted,
             _ => false,
-        });
-        (rep, HandleKind::Site)
+        })
     };
     // An interval has no key to pick it out by, so which of the two the
-    // fixture declared is the selector — the capability's own mode,
-    // which is where the distinction lives now that one resource carries
-    // every handle across.
-    let read_range = || {
-        let rep = rep_where(caps, |c| matches!(c, Capability::RangeRead(..)));
-        (rep, HandleKind::Site)
-    };
-    let write_range = || {
-        let rep = rep_where(caps, |c| matches!(c, Capability::RangeWrite(..)));
-        (rep, HandleKind::Site)
-    };
+    // fixture declared is the selector: the capability's own mode.
+    let read_range = || rep_where(caps, |c| matches!(c, Capability::RangeRead(..)));
+    let write_range = || rep_where(caps, |c| matches!(c, Capability::RangeWrite(..)));
     match export {
         "transfer" => vec![point(fx.sender), point(fx.recipient)],
         "peek" => vec![point(fx.config)],
@@ -332,20 +325,29 @@ fn args_for(fx: &Fx, caps: &[Capability], export: &str) -> Vec<(u32, HandleKind)
         "scan-sum" => vec![read_range()],
         "fill" | "place" | "no-such-entry" => vec![write_range()],
         "escape" => vec![point(fx.recipient)],
-        "leak" | "handle-value" | "read-value" => vec![point(fx.readable)],
-        "forge" | "forge-zero" | "hash-tag" => vec![],
+        "handle-value" | "read-value" | "retake" => vec![point(fx.readable)],
+        "forge" | "hash-tag" => vec![],
         other => unreachable!("unknown export {other}"),
     }
 }
 
+/// The sites, as the boundary takes them.
+fn guest_args(fx: &Fx, caps: &[Capability], export: &str) -> Vec<GuestArg<'static>> {
+    args_for(fx, caps, export)
+        .into_iter()
+        .map(|site| GuestArg::Site { site })
+        .collect()
+}
+
 /// One comparable outcome across both runtimes.
+///
+/// A fixture export answers a `u64` as eight little-endian bytes; every
+/// abort carries the class the kernel or the engine assigned it, which
+/// is the one comparison here that has to be exact.
 #[derive(Debug, PartialEq, Eq)]
 enum LaneOutcome {
     Value(u64),
-    UnknownHandle,
-    WrongHandleType,
-    BorrowsRemain,
-    Refusal(AbortReason),
+    Aborted(AbortReason),
     Other(String),
 }
 
@@ -358,82 +360,40 @@ impl LaneOutcome {
     }
 }
 
-/// The blessed engine's failure as a lane outcome.
-///
-/// A kernel refusal comes back as the class the host assigned it —
-/// downcast, not parsed — which is the one comparison here that has to be
-/// exact. The canonical-ABI classes below still read from the engine's
-/// prose, because wasmtime words them and resolves them to no trap kind;
-/// they are lane bookkeeping and reach no receipt.
-fn classify_blessed(error: &Error) -> LaneOutcome {
-    if let Some(refusal) = error.downcast_ref::<HostRefusal>() {
-        return LaneOutcome::Refusal(refusal.0);
+impl From<Invoked> for LaneOutcome {
+    fn from(ended: Invoked) -> Self {
+        match ended {
+            Invoked::Produced {
+                answer: Some(answer),
+                ..
+            } => match <[u8; 8]>::try_from(answer.as_slice()) {
+                Ok(bytes) => Self::Value(u64::from_le_bytes(bytes)),
+                Err(_) => Self::Other(format!("unexpected answer {answer:?}")),
+            },
+            Invoked::Aborted(reason) => Self::Aborted(reason),
+            other => Self::Other(format!("{other:?}")),
+        }
     }
-    let msg = format!("{error:#}");
-    if msg.contains("unknown handle index") {
-        LaneOutcome::UnknownHandle
-    } else if msg.contains("borrow handles") {
-        LaneOutcome::BorrowsRemain
-    } else if msg.contains("resource") && msg.contains("type") {
-        LaneOutcome::WrongHandleType
-    } else {
-        LaneOutcome::Other(msg)
-    }
-}
-
-fn call1<T: 'static>(
-    store: &mut Store<KernelSession>,
-    instance: &Instance,
-    export: &str,
-    rep: u32,
-) -> Result<u64, Error> {
-    let f = instance.get_typed_func::<(Resource<T>,), (u64,)>(&mut *store, export)?;
-    f.call(&mut *store, (Resource::new_borrow(rep),))
-        .map(|(v,)| v)
 }
 
 /// Runs the plan's call sequence on one instance, stopping at the first
-/// non-value outcome (a trapped store cannot be re-entered).
+/// non-value outcome (an aborted store cannot be re-entered).
 fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, KernelSession, u64)> {
     let rt = &*RUNTIME;
     let host = session(fx)?;
     let caps = host.capabilities().to_vec();
-    let mut store = Store::new(&rt.engine, host);
+    let mut store = Store::new(&rt.engine, Invoking::new(host));
     store.set_fuel(FUEL).expect("fuel is configured");
-    let mut linker = Linker::<KernelSession>::new(&rt.engine);
-    add_kernel_to_linker(&mut linker).expect("kernel world links");
-    let instance = linker
-        .instantiate(&mut store, &rt.component)
+    let instance = rt
+        .linker
+        .instantiate(&mut store, &rt.module)
         .expect("fixture instantiates");
 
     let mut outcomes = Vec::new();
     for export in &plan.calls {
-        let args = args_for(fx, &caps, export);
-        let result: Result<u64, Error> = match (*export, args.as_slice()) {
-            ("transfer", [(a, _), (b, _)]) => instance
-                .get_typed_func::<(Resource<Site>, Resource<Site>), (u64,)>(&mut store, export)
-                .and_then(|f| {
-                    f.call(
-                        &mut store,
-                        (Resource::new_borrow(*a), Resource::new_borrow(*b)),
-                    )
-                    .map(|(v,)| v)
-                }),
-            ("forge" | "forge-zero" | "hash-tag", []) => instance
-                .get_typed_func::<(), (u64,)>(&mut store, export)
-                .and_then(|f| f.call(&mut store, ()).map(|(v,)| v)),
-            (_, [(rep, kind)]) => match kind {
-                HandleKind::Site => call1::<Site>(&mut store, &instance, export, *rep),
-                // Nothing this fixture exports takes value; the bucket
-                // lane drives that.
-                HandleKind::Bucket => unreachable!("{export} takes no value handle"),
-            },
-            _ => unreachable!("unexpected arg shape for {export}"),
-        };
-        let outcome = match result {
-            Ok(v) => LaneOutcome::Value(v),
-            Err(e) => classify_blessed(&e),
-        };
+        let args = guest_args(fx, &caps, export);
+        let outcome =
+            LaneOutcome::from(invoke_export(&mut store, &instance, export, &args, FUEL).result);
         let stop = outcome.value().is_none();
         outcomes.push(outcome);
         if stop {
@@ -441,33 +401,20 @@ fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, KernelSession,
         }
     }
     let fuel = FUEL - store.get_fuel().expect("fuel is configured");
-    Some((outcomes, store.into_data(), fuel))
+    Some((outcomes, store.into_data().into_host(), fuel))
 }
 
 fn run_ref(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, KernelSession, u64)> {
     let rt = &*RUNTIME;
     let host = session(fx)?;
     let caps = host.capabilities().to_vec();
-    let mut instance = RefComponentInstance::instantiate(&rt.reference, host, FUEL)
+    let mut instance = RefModuleInstance::instantiate(&rt.reference, host, FUEL)
         .unwrap_or_else(|(_, error)| panic!("fixture instantiates: {error}"));
 
     let mut outcomes = Vec::new();
     for export in &plan.calls {
-        let args: Vec<CVal> = args_for(fx, &caps, export)
-            .into_iter()
-            .map(|(rep, kind)| CVal::Borrow(rep, kind))
-            .collect();
-        let outcome = match instance.invoke(export, &args).expect("fixture invokes") {
-            Ok(values) => match values.as_slice() {
-                [CVal::U64(v)] => LaneOutcome::Value(*v),
-                other => LaneOutcome::Other(format!("unexpected values {other:?}")),
-            },
-            Err(ExecError::Canon(CanonError::UnknownHandle)) => LaneOutcome::UnknownHandle,
-            Err(ExecError::Canon(CanonError::WrongHandleType)) => LaneOutcome::WrongHandleType,
-            Err(ExecError::Canon(CanonError::BorrowsRemain)) => LaneOutcome::BorrowsRemain,
-            Err(ExecError::Canon(CanonError::Host(reason))) => LaneOutcome::Refusal(reason),
-            Err(e) => LaneOutcome::Other(format!("{e:?}")),
-        };
+        let args = guest_args(fx, &caps, export);
+        let outcome = LaneOutcome::from(instance.invoke(export, &args).result);
         let stop = outcome.value().is_none();
         outcomes.push(outcome);
         if stop {

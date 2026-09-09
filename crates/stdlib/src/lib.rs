@@ -24,26 +24,26 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_types::StateWrites;
 pub use instantiate::instantiate;
 
-/// The componentized account guest: reservation-backed `withdraw` and
+/// The account guest: reservation-backed `withdraw` and
 /// delta `deposit`.
-pub const ACCOUNT_COMPONENT: &[u8] = include_bytes!("../blobs/account.component.wasm");
+pub const ACCOUNT_MODULE: &[u8] = include_bytes!("../blobs/account.wasm");
 
 /// The account package's content address under `hasher` — the key its
 /// metadata publishes under and instances bind to.
 #[must_use]
 pub fn account_package_hash(hasher: &dyn Hasher) -> PackageHash {
-    package_hash(hasher, ACCOUNT_COMPONENT)
+    package_hash(hasher, ACCOUNT_MODULE)
 }
 
-/// The componentized stake pool guest: `stake` and `unstake`, each a
+/// The stake pool guest: `stake` and `unstake`, each a
 /// delegation movement and the lifecycle fact recording it.
-pub const STAKING_COMPONENT: &[u8] = include_bytes!("../blobs/staking.component.wasm");
+pub const STAKING_MODULE: &[u8] = include_bytes!("../blobs/staking.wasm");
 
 /// The stake pool package's content address under `hasher` — the key its
 /// metadata publishes under and pool instances bind to.
 #[must_use]
 pub fn staking_package_hash(hasher: &dyn Hasher) -> PackageHash {
-    package_hash(hasher, STAKING_COMPONENT)
+    package_hash(hasher, STAKING_MODULE)
 }
 
 /// The stdlib account package as a publishable artifact: the committed
@@ -54,14 +54,14 @@ pub fn staking_package_hash(hasher: &dyn Hasher) -> PackageHash {
 /// signature set, one frozen encoding — so every consumer holds the same
 /// bytes and therefore the same content address.
 static ACCOUNT_ARTIFACT: LazyLock<Vec<u8>> = LazyLock::new(|| {
-    attach_metadata(ACCOUNT_COMPONENT, &account::metadata())
+    attach_metadata(ACCOUNT_MODULE, &account::metadata())
         .expect("the stdlib account metadata attaches to its committed blob")
 });
 
 /// The stdlib stake pool package as a publishable artifact, assembled the
 /// same way and for the same reason as the account's.
 static STAKING_ARTIFACT: LazyLock<Vec<u8>> = LazyLock::new(|| {
-    attach_metadata(STAKING_COMPONENT, &staking::metadata())
+    attach_metadata(STAKING_MODULE, &staking::metadata())
         .expect("the stdlib stake pool metadata attaches to its committed blob")
 });
 
@@ -89,10 +89,7 @@ pub const DECLARED: DeclaredPackages = &[
 
 /// The same two by name, with the committed bytes their digest gate and
 /// the regenerate example both read.
-pub const SHIPPED: &[(&str, &[u8])] = &[
-    ("account", ACCOUNT_COMPONENT),
-    ("staking", STAKING_COMPONENT),
-];
+pub const SHIPPED: &[(&str, &[u8])] = &[("account", ACCOUNT_MODULE), ("staking", STAKING_MODULE)];
 
 /// The protocol's own packages: the account every principal answers and
 /// the stake pool the beacon folds facts for.

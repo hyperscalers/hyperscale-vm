@@ -32,9 +32,9 @@ pub enum GuestArg<'a> {
     /// A value edge, transferred to the guest as the bucket the kernel
     /// holds for it.
     ///
-    /// Ownership, not a loan: the canonical ABI seats it in the guest's
-    /// table, and the kernel's rep is not reachable from the caller again
-    /// unless the guest hands it back.
+    /// Ownership, not a loan: the guest holds the rep for the call, and
+    /// the kernel's rep is not reachable from the caller again unless the
+    /// guest hands it back.
     Bucket(u32),
 }
 

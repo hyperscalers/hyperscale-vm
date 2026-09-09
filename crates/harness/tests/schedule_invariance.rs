@@ -9,18 +9,20 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use hyperscale_vm_effects::{Declaration, Hash32, Hasher, SlotId, TestHasher, child_key};
+use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
     MemoryStore, OverlayStore, RunResult, Unavailable, WorkingStore, decode_amount, execute_batch,
 };
-use hyperscale_vm_ref::{CVal, HandleKind, RefComponent, RefComponentInstance};
-use hyperscale_vm_runtime::{Site, add_kernel_to_linker, blessed_engine};
+use hyperscale_vm_ref::{RefModule, RefModuleInstance};
+use hyperscale_vm_runtime::{Invoking, add_kernel_imports, blessed_engine, invoke_export};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Moves,
     Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
-use wasmtime::component::{Component, Linker, Resource};
+use wasmtime::{Engine, Linker, Module, Result, Store};
+use wat::parse_str;
 
 /// The one answer a fixture guest hands back, so a receipt depends on
 /// what the body computed.
@@ -30,8 +32,6 @@ fn answered(value: u64) -> Vec<Answer> {
         value: value.to_le_bytes().to_vec(),
     }]
 }
-use wasmtime::{Engine, Result, Store};
-use wat::parse_str;
 
 const FUEL: u64 = 1_000_000_000;
 /// What the vaults in this batch hold.
@@ -127,15 +127,72 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
     (store, batch, shapes)
 }
 
-fn rep_of(session: &KernelSession, wanted: &Capability) -> u32 {
+fn rep_where(session: &KernelSession, pred: impl Fn(&Capability) -> bool) -> u32 {
     u32::try_from(
         session
             .capabilities()
             .iter()
-            .position(|c| c == wanted)
+            .position(pred)
             .expect("capability present"),
     )
     .expect("bounded")
+}
+
+/// The export a shape invokes and the sites it hands it, in parameter
+/// order, off the session's own capability table.
+fn call_for(session: &KernelSession, shape: Shape) -> (&'static str, Vec<GuestArg<'static>>) {
+    match shape {
+        Shape::Transfer { sender, recipient } => {
+            let a = rep_where(
+                session,
+                |c| matches!(c, Capability::Reserve { key, .. } if *key == sender),
+            );
+            let b = rep_where(session, |c| {
+                *c == Capability::Delta {
+                    key: recipient,
+                    moves: Moves::Both,
+                }
+            });
+            (
+                "transfer",
+                vec![GuestArg::Site { site: a }, GuestArg::Site { site: b }],
+            )
+        }
+        Shape::Rmw { cell } => {
+            let rep = rep_where(session, |c| *c == Capability::Write(cell));
+            ("rmw", vec![GuestArg::Site { site: rep }])
+        }
+    }
+}
+
+/// How an ending reads as a run: the eight answer bytes complete the
+/// transaction with their figure, and anything else aborts in the class
+/// it ended in.
+fn run_result(session: KernelSession, ended: Invocation, fuel: u64) -> RunResult {
+    let reason = match ended.result {
+        Invoked::Produced {
+            answer: Some(answer),
+            ..
+        } => match <[u8; 8]>::try_from(answer.as_slice()) {
+            Ok(bytes) => {
+                return RunResult::Completed {
+                    session,
+                    answers: answered(u64::from_le_bytes(bytes)),
+                    fuel,
+                };
+            }
+            Err(_) => AbortReason::BadReturnShape,
+        },
+        Invoked::Produced { answer: None, .. } | Invoked::Declined(_) => {
+            AbortReason::BadReturnShape
+        }
+        Invoked::Aborted(reason) | Invoked::Unavailable(reason) => reason,
+    };
+    RunResult::Aborted {
+        session,
+        outcome: Outcome::UserError { reason },
+        fuel,
+    }
 }
 
 fn stall(id: TxHash) {
@@ -146,7 +203,8 @@ fn stall(id: TxHash) {
 
 struct BlessedRunner {
     engine: Engine,
-    component: Component,
+    module: Module,
+    linker: Linker<Invoking<KernelSession>>,
     shapes: BTreeMap<TxHash, Shape>,
     delay: bool,
 }
@@ -154,10 +212,13 @@ struct BlessedRunner {
 impl BlessedRunner {
     fn new(shapes: BTreeMap<TxHash, Shape>, delay: bool) -> Result<Self> {
         let engine = blessed_engine()?;
-        let component = Component::new(&engine, parse_str(KERNEL_GUEST_WAT)?)?;
+        let module = Module::new(&engine, parse_str(KERNEL_GUEST_WAT)?)?;
+        let mut linker = Linker::<Invoking<KernelSession>>::new(&engine);
+        add_kernel_imports(&mut linker)?;
         Ok(Self {
             engine,
-            component,
+            module,
+            linker,
             shapes,
             delay,
         })
@@ -174,86 +235,30 @@ impl GuestRunner for BlessedRunner {
         if self.delay {
             stall(id);
         }
-        let shape = self.shapes[&id];
-        let mut linker = Linker::<KernelSession>::new(&self.engine);
-        add_kernel_to_linker(&mut linker).expect("wiring");
-        let mut store = Store::new(&self.engine, session);
+        let (export, args) = call_for(&session, self.shapes[&id]);
+        let mut store = Store::new(&self.engine, Invoking::new(session));
         store.set_fuel(FUEL).expect("fuel");
-        let instance = linker
-            .instantiate(&mut store, &self.component)
+        let instance = self
+            .linker
+            .instantiate(&mut store, &self.module)
             .expect("instantiate");
-        let result = match shape {
-            Shape::Transfer { sender, recipient } => {
-                let a = u32::try_from(
-                    store
-                        .data()
-                        .capabilities()
-                        .iter()
-                        .position(
-                            |c| matches!(c, Capability::Reserve { key, .. } if *key == sender),
-                        )
-                        .expect("capability present"),
-                )
-                .expect("bounded");
-                let b = rep_of(
-                    store.data(),
-                    &Capability::Delta {
-                        key: recipient,
-                        moves: Moves::Both,
-                    },
-                );
-                instance
-                    .get_typed_func::<(Resource<Site>, Resource<Site>), (u64,)>(
-                        &mut store, "transfer",
-                    )
-                    .and_then(|f| {
-                        f.call(
-                            &mut store,
-                            (Resource::new_borrow(a), Resource::new_borrow(b)),
-                        )
-                        .map(|(v,)| v)
-                    })
-            }
-            Shape::Rmw { cell } => {
-                let rep = rep_of(store.data(), &Capability::Write(cell));
-                instance
-                    .get_typed_func::<(Resource<Site>,), (u64,)>(&mut store, "rmw")
-                    .and_then(|f| {
-                        f.call(&mut store, (Resource::new_borrow(rep),))
-                            .map(|(v,)| v)
-                    })
-            }
-        };
+        let ended = invoke_export(&mut store, &instance, export, &args, FUEL);
         let fuel = FUEL - store.get_fuel().expect("fuel");
-        let session = store.into_data();
-        Ok(match result {
-            Ok(value) => RunResult::Completed {
-                session,
-                answers: answered(value),
-                fuel,
-            },
-            Err(_) => RunResult::Aborted {
-                session,
-                outcome: Outcome::UserError {
-                    reason: AbortReason::Unreachable,
-                },
-                fuel,
-            },
-        })
+        Ok(run_result(store.into_data().into_host(), ended, fuel))
     }
 }
 
 struct RefRunner {
-    comp: RefComponent,
+    module: RefModule,
     shapes: BTreeMap<TxHash, Shape>,
     delay: bool,
 }
 
 impl RefRunner {
     fn new(shapes: BTreeMap<TxHash, Shape>, delay: bool) -> Result<Self> {
-        let comp = RefComponent::decode(&parse_str(KERNEL_GUEST_WAT)?)?;
+        let module = RefModule::decode(&parse_str(KERNEL_GUEST_WAT)?)?;
         Ok(Self {
-            comp,
+            module,
             shapes,
             delay,
         })
@@ -270,65 +275,12 @@ impl GuestRunner for RefRunner {
         if self.delay {
             stall(id);
         }
-        let shape = self.shapes[&id];
-        let (export, args) = match shape {
-            Shape::Transfer { sender, recipient } => (
-                "transfer",
-                vec![
-                    CVal::Borrow(
-                        u32::try_from(
-                    session
-                        .capabilities()
-                        .iter()
-                        .position(
-                            |c| matches!(c, Capability::Reserve { key, .. } if *key == sender),
-                        )
-                        .expect("capability present"),
-                )
-                .expect("bounded"),
-                        HandleKind::Site,
-                    ),
-                    CVal::Borrow(
-                        rep_of(&session, &Capability::Delta { key: recipient, moves: Moves::Both }),
-                        HandleKind::Site,
-                    ),
-                ],
-            ),
-            Shape::Rmw { cell } => (
-                "rmw",
-                vec![CVal::Borrow(
-                    rep_of(&session, &Capability::Write(cell)),
-                    HandleKind::Site,
-                )],
-            ),
-        };
-        let mut instance = RefComponentInstance::instantiate(&self.comp, session, u64::MAX)
-            .map_err(|(_, error)| error)
-            .expect("decode");
-        let answer = instance.invoke(export, &args).expect("invoke");
+        let (export, args) = call_for(&session, self.shapes[&id]);
+        let mut instance = RefModuleInstance::instantiate(&self.module, session, u64::MAX)
+            .unwrap_or_else(|(_, error)| panic!("instantiate: {error}"));
+        let ended = instance.invoke(export, &args);
         let fuel = instance.fuel_consumed();
-        let session = instance.into_host();
-        Ok(match answer.as_deref() {
-            Ok([CVal::U64(v)]) => RunResult::Completed {
-                session,
-                answers: answered(*v),
-                fuel,
-            },
-            Ok(_) => RunResult::Aborted {
-                session,
-                outcome: Outcome::UserError {
-                    reason: AbortReason::BadReturnShape,
-                },
-                fuel,
-            },
-            Err(_) => RunResult::Aborted {
-                session,
-                outcome: Outcome::UserError {
-                    reason: AbortReason::Unreachable,
-                },
-                fuel,
-            },
-        })
+        Ok(run_result(instance.into_host(), ended, fuel))
     }
 }
 

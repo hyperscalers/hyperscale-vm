@@ -1,22 +1,19 @@
 //! The deterministic profile's structural limits.
 //!
-//! Every constant here is a consensus value: a component that exceeds one is
+//! Every constant here is a consensus value: a module that exceeds one is
 //! rejected at deploy, identically on every node. Runtime limits (fuel, call
 //! depth) live on the engine configuration; these are the shapes checked once,
 //! before code enters state.
 
 use hyperscale_vm_types::MAX_TX_BYTES_LEN;
 
-/// Maximum size of a component artifact, custom sections included.
+/// Maximum size of an artifact, custom sections included.
 ///
-/// A component reaches the chain as a publish transaction's body, so it can
+/// An artifact reaches the chain as a publish transaction's body, so it can
 /// be no larger than one: the deploy ceiling is the wire ceiling, and the two
-/// are one constant so they cannot drift into a component that admits at
+/// are one constant so they cannot drift into a module that admits at
 /// deploy but no envelope can carry.
-pub const MAX_COMPONENT_BYTES: usize = MAX_TX_BYTES_LEN;
-
-/// Maximum core modules inside one component.
-pub const MAX_CORE_MODULES: usize = 8;
+pub const MAX_ARTIFACT_BYTES: usize = MAX_TX_BYTES_LEN;
 
 /// Maximum functions defined in one core module.
 pub const MAX_FUNCTIONS_PER_MODULE: usize = 10_000;
@@ -79,25 +76,16 @@ pub const STACK_FRAME_OVERHEAD_BYTES: usize = 256;
 /// and the deepest operand stack together.
 pub const MAX_SLOTS_PER_FRAME: usize = MAX_PARAMS_PER_FUNCTION + MAX_LOCALS_PER_FUNCTION + 256;
 
-/// Native stack reserved for host frames at the canonical-ABI boundary.
+/// Native stack reserved for the host frames at either end of a guest
+/// call chain: the kernel's call into the export, and the import a leaf
+/// calls out to.
 pub const HOST_FRAME_RESERVE_BYTES: usize = 64 * 1024;
 
 /// What one guest call chain may consume.
 ///
-/// Halved because lowering re-enters the guest: a host function calls the
-/// guest's realloc while the original chain is still live, so two chains
-/// can stand at once. One level of re-entry is the whole of it because the
-/// artifact is judged on it — a realloc or post-return that can reach a
-/// lowered import is refused, so no admitted callback starts a third chain.
-pub const MAX_CALL_CHAIN_BYTES: usize = (MAX_WASM_STACK_BYTES - HOST_FRAME_RESERVE_BYTES) / 2;
-
-/// What one guest call chain may consume where the host never re-enters
-/// the guest.
-///
-/// A core module's imports are host functions that return without
-/// calling back in, so one chain stands at a time and the reserve covers
-/// the host frames at either end of it.
-pub const MAX_MODULE_CHAIN_BYTES: usize = MAX_WASM_STACK_BYTES - HOST_FRAME_RESERVE_BYTES;
+/// The whole reserve, because one chain stands at a time: an import is a
+/// host function that returns without calling back into the guest.
+pub const MAX_CALL_CHAIN_BYTES: usize = MAX_WASM_STACK_BYTES - HOST_FRAME_RESERVE_BYTES;
 
 /// How many frames one guest call chain may stand at once.
 ///
@@ -116,9 +104,6 @@ pub const MAX_MODULE_CHAIN_BYTES: usize = MAX_WASM_STACK_BYTES - HOST_FRAME_RESE
 /// compile time — it is the only crate that can see both constants.
 pub const MAX_CALL_CHAIN_FRAMES: usize = 256;
 
-/// The single import package a contract world may name.
-///
-/// Component import names follow the `package:namespace/interface` grammar,
-/// so every permitted import starts with this prefix —
-/// `hyperscale:kernel/state`, `hyperscale:kernel/env`, and so on.
+/// The prefix every kernel import module carries: `hyperscale:kernel/state`,
+/// `hyperscale:kernel/env`, and so on.
 pub const KERNEL_IMPORT_PREFIX: &str = "hyperscale:kernel/";

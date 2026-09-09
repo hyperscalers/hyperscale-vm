@@ -26,7 +26,7 @@ use hyperscale_vm_effects::{
     seals, supports,
 };
 use hyperscale_vm_runtime::{
-    CoreType, ModuleExport, check_module_method, module_exports, validate_module,
+    CoreType, ModuleExport, check_method, module_exports, validate_module,
 };
 
 pub use crate::section::{MAX_PACKAGE_METADATA_BYTES, decode_metadata, encode_metadata};
@@ -316,7 +316,7 @@ fn judge_totality(
             "claims totality, which a published package cannot: the mark is granted to \
              protocol code seeded at genesis",
         )),
-        Provenance::Protocol => check_module_method(artifact, method).map_err(|error| {
+        Provenance::Protocol => check_method(artifact, method).map_err(|error| {
             GateError::new(format!(
                 "claims totality its artifact does not support: {error}"
             ))
@@ -406,7 +406,7 @@ mod tests {
     use hyperscale_vm_effects::{
         AbiParam, Clause, Expr, MethodSignature, PackageMetadata, RuleExpr, SlotRef, seal_clauses,
     };
-    use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
+    use hyperscale_vm_fixtures::{LOTTERY_MODULE, book, lottery};
     use hyperscale_vm_stdlib::{account, account_artifact, staking_artifact};
     use hyperscale_vm_types::Moves;
     use wat::parse_str;
@@ -784,7 +784,7 @@ mod tests {
             .get_mut("settle")
             .expect("the lottery settles a round")
             .totality = Totality::Total;
-        let artifact = attach_metadata(LOTTERY_COMPONENT, &metadata).expect("attaches");
+        let artifact = attach_metadata(LOTTERY_MODULE, &metadata).expect("attaches");
 
         let error = admit_protocol_package(&artifact)
             .expect_err("a mark the code cannot support is not admissible");
@@ -797,8 +797,8 @@ mod tests {
         // admission path: settling walks the entrants, and a walk has no
         // static fuel ceiling, so the artifact itself refuses the mark
         // whatever the metadata claims.
-        let honest = attach_metadata(LOTTERY_COMPONENT, &lottery::metadata()).expect("attaches");
-        check_module_method(&honest, "settle").expect_err("a walk has no static ceiling");
+        let honest = attach_metadata(LOTTERY_MODULE, &lottery::metadata()).expect("attaches");
+        check_method(&honest, "settle").expect_err("a walk has no static ceiling");
     }
 
     /// A module whose one export takes a `u64`, for bindings to disagree

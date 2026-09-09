@@ -26,8 +26,6 @@ pub fn blessed_config() -> Config {
     // workspace and not about the version of the engine that ran it.
     config.operator_cost(blessed_operator_cost());
     config.cranelift_nan_canonicalization(true);
-    config.wasm_component_model(true);
-    config.wasm_component_model_async(false);
     config.wasm_simd(false);
     config.wasm_relaxed_simd(false);
     config.wasm_threads(false);
@@ -71,8 +69,6 @@ pub fn blessed_engine() -> Result<Engine> {
 #[cfg(test)]
 mod tests {
     use wasmtime::Module;
-    use wasmtime::component::Component;
-    use wat::parse_str;
 
     use super::blessed_engine;
 
@@ -109,7 +105,5 @@ mod tests {
                  (func (i32.const 0) (call_indirect (type $t)))
                  (func $f (type $t)))",
         );
-        Component::new(&engine, parse_str("(component)").expect("parses"))
-            .expect("the component model is in the profile");
     }
 }

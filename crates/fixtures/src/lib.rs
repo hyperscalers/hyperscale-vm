@@ -2,7 +2,7 @@
 //! that production never does.
 //!
 //! These are packages in every sense the protocol cares about — a
-//! componentized guest, authored effect metadata, one content address —
+//! guest module, authored effect metadata, one content address —
 //! and in no sense the protocol depends on. One module per package, on
 //! the same terms as the protocol's own. Nothing here is a protocol
 //! artifact; what separates them from [`hyperscale_vm_stdlib`]'s account
@@ -84,7 +84,7 @@ use hyperscale_vm_effects::{
 /// committed bytes for a consumer to publish.
 macro_rules! packages {
     ($(
-        $module:ident $(=> ($component:ident, $artifact:ident, $hash:ident, $blob:literal))?;
+        $module:ident $(=> ($module_bytes:ident, $artifact:ident, $hash:ident, $blob:literal))?;
     )*) => {
         // The modules themselves, so a package exists exactly by having
         // an entry here: a `pub mod` outside the list has nowhere to
@@ -92,10 +92,10 @@ macro_rules! packages {
         $(pub mod $module;)*
         $(
             $(
-                /// The committed component bytes: the guest as its
+                /// The committed module bytes: the guest as its
                 /// canonical builder produced it, before its declaration
                 /// is attached.
-                pub const $component: &[u8] = include_bytes!(concat!("../blobs/", $blob));
+                pub const $module_bytes: &[u8] = include_bytes!(concat!("../blobs/", $blob));
 
                 /// The package's content address under `hasher` — the key
                 /// its metadata publishes under and instances bind to.
@@ -110,7 +110,7 @@ macro_rules! packages {
                 #[must_use]
                 pub fn $artifact() -> &'static [u8] {
                     static ARTIFACT: LazyLock<Vec<u8>> = LazyLock::new(|| {
-                        attach_metadata($component, &$module::metadata())
+                        attach_metadata($module_bytes, &$module::metadata())
                             .expect("the metadata attaches to its committed blob")
                     });
                     &ARTIFACT
@@ -134,7 +134,7 @@ macro_rules! packages {
         /// builds, and what the regenerate example reads to know which
         /// guests to build.
         pub const SHIPPED: &[(&str, &[u8])] = &[
-            $($((stringify!($module), $component),)?)*
+            $($((stringify!($module), $module_bytes),)?)*
         ];
 
         /// The fixture artifacts an embedder seeds as a set.
@@ -160,9 +160,9 @@ macro_rules! packages {
 
 packages! {
     // The constant-product pool: swaps against a pair, and claims on it.
-    amm => (AMM_COMPONENT, amm_artifact, amm_package_hash, "amm.component.wasm");
+    amm => (AMM_MODULE, amm_artifact, amm_package_hash, "amm.wasm");
     // The order book: makers rest asks on a tick ladder, takers walk it.
-    book => (BOOK_COMPONENT, book_artifact, book_package_hash, "book.component.wasm");
+    book => (BOOK_MODULE, book_artifact, book_package_hash, "book.wasm");
     // Capped supply, deflationary supply, and delegated minting — the
     // three shapes that need issuance to be a rule rather than a fact
     // about the issuer's address.
@@ -173,34 +173,34 @@ packages! {
     custodian;
     // The flash lender: value that cannot come to rest, so the loan
     // cannot outlive the transaction that took it.
-    flashloan => (FLASHLOAN_COMPONENT, flashloan_artifact, flashloan_package_hash, "flashloan.component.wasm");
+    flashloan => (FLASHLOAN_MODULE, flashloan_artifact, flashloan_package_hash, "flashloan.wasm");
     // The shape corpus: every form the grammar admits, as a package that
     // has to execute them. Declared and never seeded — what it is for is
     // the derivation, not a network.
     grammar;
     // The lending market: collateral against debt, over a carried index.
-    lending => (LENDING_COMPONENT, lending_artifact, lending_package_hash, "lending.component.wasm");
+    lending => (LENDING_MODULE, lending_artifact, lending_package_hash, "lending.wasm");
     // The lottery: `enter` buys a ticket, `close` seals the round, and
     // `settle` opens the seal to pick a winner.
-    lottery => (LOTTERY_COMPONENT, lottery_artifact, lottery_package_hash, "lottery.component.wasm");
+    lottery => (LOTTERY_MODULE, lottery_artifact, lottery_package_hash, "lottery.wasm");
     // The non-fungible issuer, whose declaration is written out beside
     // it rather than traced.
     nf;
     // The fee splitter: revenue in, three configured shares out.
-    payouts => (PAYOUTS_COMPONENT, payouts_artifact, payouts_package_hash, "payouts.component.wasm");
+    payouts => (PAYOUTS_MODULE, payouts_artifact, payouts_package_hash, "payouts.wasm");
     // The redemption window: a stable against a reserve, at a price
     // that moves both ways.
-    peg => (PEG_COMPONENT, peg_artifact, peg_package_hash, "peg.component.wasm");
+    peg => (PEG_MODULE, peg_artifact, peg_package_hash, "peg.wasm");
     // The perpetual: margin against a size, marked and funded.
-    perp => (PERP_COMPONENT, perp_artifact, perp_package_hash, "perp.component.wasm");
+    perp => (PERP_MODULE, perp_artifact, perp_package_hash, "perp.wasm");
     // The registry, hand-authored alongside its declaration.
     registry;
     // The share class whose holders are a register, and the register
     // entry itself. The declaring end of the movement seam, where the
     // custodian is the declaring-nothing end.
-    security => (SECURITY_COMPONENT, security_artifact, security_package_hash, "security.component.wasm");
+    security => (SECURITY_MODULE, security_artifact, security_package_hash, "security.wasm");
     // The share vault: assets in, shares out, at whatever the pool is worth.
-    shares => (SHARES_COMPONENT, shares_artifact, shares_package_hash, "shares.component.wasm");
+    shares => (SHARES_MODULE, shares_artifact, shares_package_hash, "shares.wasm");
     // The pass sold at the door: a component proving conditionally.
     // Declared and never seeded — what it is for is the proving grammar,
     // which the corpus reaches without a network.
@@ -270,7 +270,7 @@ mod tests {
         );
         assert_ne!(
             lottery_package_hash(&TestHasher),
-            package_hash(&TestHasher, LOTTERY_COMPONENT)
+            package_hash(&TestHasher, LOTTERY_MODULE)
         );
     }
 
@@ -284,7 +284,7 @@ mod tests {
     fn every_committed_blob_is_a_package_this_crate_ships() {
         let named: BTreeSet<_> = SHIPPED
             .iter()
-            .map(|(name, _)| format!("{name}.component.wasm"))
+            .map(|(name, _)| format!("{name}.wasm"))
             .collect();
         let on_disk: BTreeSet<_> = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/blobs"))
             .expect("the blobs directory")

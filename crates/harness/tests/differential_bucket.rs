@@ -1,23 +1,25 @@
 //! Differential lane 3, owned handles: the bucket guest runs under the
 //! blessed engine and the reference interpreter against the *same kernel
-//! session*, and the two must agree on what a handle is numbered, on
+//! session*, and the two must agree on which bucket a number names, on
 //! where ownership sits after each call, and on the drop reaching the
-//! host.
+//! kernel.
 //!
 //! The lane exists because ownership widens what the engines have to
-//! agree about. Handle numbering was already differentially tested for
-//! borrows; transfer and drop ordering were not, and a divergence in
-//! either is a divergence in what value a transaction moved.
+//! agree about. A site index is judged against one table and a bucket
+//! rep against another, and the kernel holds both; what the engines
+//! carry between calls is only the number. A divergence in transfer or
+//! drop ordering is a divergence in what value a transaction moved.
 
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
     Hash32, IssuanceGrant, Issued, ResourceKind, SlotId, TestHasher, child_key,
 };
-use hyperscale_vm_harness::dual::{DualGuest, DualOutcome, materialize, rep_where};
+use hyperscale_vm_embed::abi::{ABI, MEMORY, STATE};
+use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
+use hyperscale_vm_harness::dual::{DualGuest, Ended, materialize, rep_where};
 use hyperscale_vm_harness::fixtures::BUCKET_GUEST_WAT;
-use hyperscale_vm_kernel::{Capability, EnvInputs, Held, KernelSession, MemoryStore};
-use hyperscale_vm_ref::{CVal, CanonError, ExecError, HandleKind};
+use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Moves,
     Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
@@ -195,6 +197,11 @@ fn rep_of(host: &KernelSession, wanted: SubstateKey, mode: Mode) -> u32 {
     })
 }
 
+/// The one site argument: a position in the session's capability table.
+const fn site(site: u32) -> GuestArg<'static> {
+    GuestArg::Site { site }
+}
+
 /// A session with the fixture's capabilities and two buckets in the
 /// kernel's keeping.
 ///
@@ -211,15 +218,18 @@ fn session(fx: &Fixture) -> (KernelSession, u32, u32) {
 /// since every call already had to agree.
 #[derive(Debug, PartialEq, Eq)]
 struct Trace {
-    /// The handle `hold` was given for the bucket it keeps.
+    /// The reps the session handed the sequence: the kept bucket, the
+    /// read site, and the empty bucket.
+    given: (u32, u32, u32),
+    /// The number `hold` was given for the bucket it keeps.
     held_handle: u64,
-    /// The handle `peek` was lent while that own is still seated.
-    borrow_handle: u64,
+    /// The site index `peek` was lent while that bucket is still held.
+    peeked_site: u64,
     /// The rep `release` handed back.
     released_rep: u32,
-    /// The handle `discard` was given, after two slots have freed.
+    /// The number `discard` was given.
     discard_handle: u64,
-    /// Whether the released bucket was still the kernel's to take.
+    /// What the released bucket still carried in the kernel's table.
     released_amount: u128,
     /// Whether the discarded bucket's rep names anything afterwards.
     discarded_survives: bool,
@@ -231,12 +241,14 @@ fn bucket_sequence(fx: &Fixture) -> Result<Trace> {
     let readable = rep_of(&probe, fx.readable, Mode::Read);
     let mut dual = GUEST.instantiate(FUEL, || session(fx).0)?;
 
-    let held_handle = dual.invoke_both("hold", &[CVal::Own(held)])?.scalar()?;
-    let borrow_handle = dual
-        .invoke_both("peek", &[CVal::Borrow(readable, HandleKind::Site)])?
+    let held_handle = dual
+        .invoke_both("hold", &[GuestArg::Bucket(held)])?
         .scalar()?;
+    let peeked_site = dual.invoke_both("peek", &[site(readable)])?.scalar()?;
     let released_rep = dual.invoke_both("release", &[])?.bucket()?;
-    let discard_handle = dual.invoke_both("discard", &[CVal::Own(spent)])?.scalar()?;
+    let discard_handle = dual
+        .invoke_both("discard", &[GuestArg::Bucket(spent)])?
+        .scalar()?;
 
     let (blessed, reference) = dual.finish()?;
     let (mut blessed, mut reference) = (blessed.session, reference.session);
@@ -253,8 +265,9 @@ fn bucket_sequence(fx: &Fixture) -> Result<Trace> {
         "the discarded rep diverged"
     );
     Ok(Trace {
+        given: (held, readable, spent),
         held_handle,
-        borrow_handle,
+        peeked_site,
         released_rep,
         discard_handle,
         released_amount,
@@ -333,7 +346,7 @@ enum Took {
     /// The value the bucket carried, once the lane took it back out of
     /// the kernel.
     Value(u128),
-    /// The host refused, in the class it assigned.
+    /// The kernel refused, in the class it assigned.
     Refusal(AbortReason),
 }
 
@@ -353,23 +366,23 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
         host
     };
     let probe = build();
-    // Every capability crosses as one resource, whichever mode it
+    // Every capability crosses as one site index, whichever mode it
     // carries; what the mode still decides is which table position the
     // fixture is naming. A mint names none — the grant is the
     // invocation's, so nothing crosses to stand for it.
-    let mut args: Vec<CVal> = take
+    let mut args: Vec<GuestArg<'_>> = take
         .cell(fx)
-        .map(|(key, mode)| CVal::Borrow(rep_of(&probe, key, mode), HandleKind::Site))
+        .map(|(key, mode)| site(rep_of(&probe, key, mode)))
         .into_iter()
         .collect();
-    args.extend(take.amount().map(CVal::U64));
+    args.extend(take.amount().map(GuestArg::U64));
 
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let produced = dual.invoke_both(take.export(), &args)?;
     let (blessed, reference) = dual.finish()?;
     let (mut blessed, mut reference) = (blessed.session, reference.session);
-    let took = match produced {
-        DualOutcome::Values(_) => {
+    let took = match produced.result {
+        Invoked::Produced { .. } => {
             let rep = produced.bucket()?;
             let value = blessed.bucket(rep)?.quantity();
             assert_eq!(
@@ -391,8 +404,8 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
             }
             Took::Value(value)
         }
-        DualOutcome::Refused(reason) => Took::Refusal(reason),
-        DualOutcome::Trapped(reason) => bail!("{} trapped: {reason:?}", take.export()),
+        Invoked::Aborted(reason) => Took::Refusal(reason),
+        other => bail!("{} ended off-convention: {other:?}", take.export()),
     };
     Ok((took, blessed))
 }
@@ -471,7 +484,7 @@ struct Credited {
     credit: Option<u128>,
     /// Whether the consumed bucket's rep still names anything.
     funds_survive: bool,
-    /// The class the host assigned, where the credit was refused.
+    /// The class the kernel assigned, where the credit was refused.
     refusal: Option<AbortReason>,
 }
 
@@ -501,28 +514,18 @@ fn credited(fx: &Fixture, export: &str, held: u128, delta: bool) -> Result<Credi
     };
     let mut probe = session_of(fx);
     let funds = minted(&mut probe, held);
-    let (key, mode, kind) = if delta {
-        (
-            fx.ledger,
-            Mode::Delta { moves: Moves::Both },
-            HandleKind::Site,
-        )
+    let (key, mode) = if delta {
+        (fx.ledger, Mode::Delta { moves: Moves::Both })
     } else {
-        (
-            fx.vault,
-            Mode::Write { moves: Moves::Both },
-            HandleKind::Site,
-        )
+        (fx.vault, Mode::Write { moves: Moves::Both })
     };
-    let args = vec![
-        CVal::Borrow(rep_of(&probe, key, mode), kind),
-        CVal::Own(funds),
-    ];
+    let args = [site(rep_of(&probe, key, mode)), GuestArg::Bucket(funds)];
     let mut dual = GUEST.instantiate(FUEL, build)?;
-    let refusal = match dual.invoke_both(export, &args)? {
-        DualOutcome::Values(_) => None,
-        DualOutcome::Refused(reason) => Some(reason),
-        DualOutcome::Trapped(reason) => bail!("{export} trapped: {reason:?}"),
+    let ended = dual.invoke_both(export, &args)?;
+    let refusal = match ended.result {
+        Invoked::Produced { .. } => None,
+        Invoked::Aborted(reason) => Some(reason),
+        other => bail!("{export} ended off-convention: {other:?}"),
     };
     let (blessed, reference) = dual.finish()?;
     let blessed = settled(blessed.session, key, funds, refusal);
@@ -552,16 +555,17 @@ fn a_credit_is_what_the_bucket_carried() -> Result<()> {
 #[test]
 fn a_put_consumes_the_handle_it_was_given() -> Result<()> {
     let fx = fixture();
-    // The canonical ABI lifts an owned argument out of the guest's table,
-    // so the value is the kernel's again and the rep names nothing.
+    // A credit takes the bucket back into the cell, so the value is the
+    // kernel's again and the rep names nothing.
     let credited = credited(&fx, "put-write", 30, false)?;
     assert!(!credited.funds_survive);
     Ok(())
 }
 
-/// And the handle is gone on the guest's side too: dropping it after
-/// the put reaches for a slot the table no longer holds, which both
-/// engines refuse as the canonical ABI's own violation.
+/// And the number is dead on the guest's side too: dropping it after
+/// the put names a slot the kernel's table no longer holds, which the
+/// kernel refuses as an unknown handle — identically on both engines,
+/// since neither holds a table of its own to answer differently from.
 #[test]
 fn a_consumed_handle_cannot_be_dropped_again() -> Result<()> {
     let fx = fixture();
@@ -574,11 +578,8 @@ fn a_consumed_handle_cannot_be_dropped_again() -> Result<()> {
     let funds = minted(&mut probe, 30);
     let rep = rep_of(&probe, fx.vault, Mode::Write { moves: Moves::Both });
     let mut dual = GUEST.instantiate(FUEL, build)?;
-    let refused = dual.invoke_both(
-        "put-write-then-drop",
-        &[CVal::Borrow(rep, HandleKind::Site), CVal::Own(funds)],
-    )?;
-    assert_eq!(refused, DualOutcome::Trapped(AbortReason::AbiViolation));
+    let refused = dual.invoke_both("put-write-then-drop", &[site(rep), GuestArg::Bucket(funds)])?;
+    assert_eq!(refused.result, Invoked::Aborted(AbortReason::HandleUnknown));
     Ok(())
 }
 
@@ -611,17 +612,17 @@ fn paired(fx: &Fixture, a: u64, b: u64) -> Result<Pair> {
     let produced = dual.invoke_both(
         "take-two",
         &[
-            CVal::Borrow(ledger, HandleKind::Site),
-            CVal::Borrow(vault, HandleKind::Site),
-            CVal::U64(a),
-            CVal::U64(b),
+            site(ledger),
+            site(vault),
+            GuestArg::U64(a),
+            GuestArg::U64(b),
         ],
     )?;
-    let DualOutcome::Values(values) = produced else {
+    let Invoked::Produced { edges, .. } = &produced.result else {
         bail!("take-two did not produce: {produced:?}");
     };
-    let [CVal::Own(one), CVal::Own(two)] = values.as_slice() else {
-        bail!("take-two returned {values:?}");
+    let [one, two] = edges.as_slice() else {
+        bail!("take-two replied {edges:?}");
     };
     let (one, two) = (*one, *two);
     let (blessed, reference) = dual.finish()?;
@@ -644,7 +645,7 @@ fn paired(fx: &Fixture, a: u64, b: u64) -> Result<Pair> {
     Ok(pair)
 }
 
-/// What a bucket weighs, read through a borrow on both engines.
+/// What a bucket weighs, asked on both engines.
 fn weighed(fx: &Fixture, held: u128) -> Result<u64> {
     let build = || {
         let mut host = session_of(fx);
@@ -655,11 +656,8 @@ fn weighed(fx: &Fixture, held: u128) -> Result<u64> {
     let funds = minted(&mut probe, held);
     let ledger = rep_of(&probe, fx.ledger, Mode::Delta { moves: Moves::Both });
     let mut dual = GUEST.instantiate(FUEL, build)?;
-    dual.invoke_both(
-        "weigh",
-        &[CVal::Own(funds), CVal::Borrow(ledger, HandleKind::Site)],
-    )?
-    .scalar()
+    dual.invoke_both("weigh", &[GuestArg::Bucket(funds), site(ledger)])?
+        .scalar()
 }
 
 /// One split, driven on both engines: what came off, and what was left.
@@ -676,11 +674,7 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
     let came_off = dual
         .invoke_both(
             "split",
-            &[
-                CVal::Own(funds),
-                CVal::U64(off),
-                CVal::Borrow(ledger, HandleKind::Site),
-            ],
+            &[GuestArg::Bucket(funds), GuestArg::U64(off), site(ledger)],
         )?
         .bucket()?;
     let (blessed, reference) = dual.finish()?;
@@ -716,13 +710,7 @@ fn lifted_value(fx: &Fixture, ids: &[u64]) -> Result<u128> {
     let held = rep_where(&probe, |c| matches!(c, Capability::Instances { .. }));
     let mut dual = GUEST.instantiate(FUEL, || session_of(fx))?;
     let rep = dual
-        .invoke_both(
-            "lift",
-            &[
-                CVal::Borrow(held, HandleKind::Site),
-                CVal::Ids(ids.to_vec()),
-            ],
-        )?
+        .invoke_both("lift", &[site(held), GuestArg::Ids(ids)])?
         .bucket()?;
     let (mut blessed, mut reference) = dual.finish().map(|(b, r)| (b.session, r.session))?;
     let value = blessed.take_bucket(rep)?.quantity();
@@ -746,13 +734,7 @@ fn taking_instances_out_of_a_collection_is_what_produces_them() -> Result<()> {
     let held = rep_where(&probe, |c| matches!(c, Capability::Instances { .. }));
     let mut dual = GUEST.instantiate(FUEL, || session_of(&fx))?;
     let round_trip = dual
-        .invoke_both(
-            "relift",
-            &[
-                CVal::Borrow(held, HandleKind::Site),
-                CVal::Ids(vec![10, 20]),
-            ],
-        )?
+        .invoke_both("relift", &[site(held), GuestArg::Ids(&[10, 20])])?
         .scalar()?;
     assert_eq!(round_trip, 3);
 
@@ -771,16 +753,10 @@ fn an_instance_a_body_does_not_hold_is_refused() -> Result<()> {
     let probe = session_of(&fx);
     let held = rep_where(&probe, |c| matches!(c, Capability::Instances { .. }));
     let mut dual = GUEST.instantiate(FUEL, || session_of(&fx))?;
-    let refused = dual.invoke_both(
-        "lift",
-        &[
-            CVal::Borrow(held, HandleKind::Site),
-            CVal::Ids(vec![10, 99]),
-        ],
-    )?;
+    let refused = dual.invoke_both("lift", &[site(held), GuestArg::Ids(&[10, 99])])?;
     assert_eq!(
-        refused,
-        DualOutcome::Refused(AbortReason::InstanceNotHeld),
+        refused.result,
+        Invoked::Aborted(AbortReason::InstanceNotHeld),
         "an unheld instance is refused"
     );
     Ok(())
@@ -809,7 +785,7 @@ fn a_bucket_survives_a_split_and_a_merge_whole() -> Result<()> {
     let funds = minted(&mut probe, 100);
     let mut dual = GUEST.instantiate(FUEL, build)?;
     let whole = dual
-        .invoke_both("halve", &[CVal::Own(funds), CVal::U64(30)])?
+        .invoke_both("halve", &[GuestArg::Bucket(funds), GuestArg::U64(30)])?
         .bucket()?;
     let (blessed, _) = dual.finish()?;
     let mut blessed = blessed.session;
@@ -819,15 +795,12 @@ fn a_bucket_survives_a_split_and_a_merge_whole() -> Result<()> {
 
 /// A merge of a bucket into itself is refused, identically, by both.
 ///
-/// The lane the divergence would have hidden in. A merge reads its
-/// target through a borrow and consumes its source as an own, so naming
-/// one bucket twice asks the boundary to take a slot out from under a
-/// lend it is holding. The blessed engine refuses that; an interpreter
-/// that did not model the lend would hand the kernel one rep twice and
-/// have it add a quantity to itself — a doubling on one runtime and a
-/// refusal on the other, which is a fork rather than a bug.
-///
-/// What the kernel does if it is ever reached anyway is its own test.
+/// The invariant is the kernel's, not the boundary's: a merge takes its
+/// source out of the table before it reads its target, so one rep named
+/// twice is taken and then looked up as a bucket the table no longer
+/// holds. Neither engine carries a table of its own that could answer
+/// first, which is what makes the two lanes one verdict — and the value
+/// is gone afterwards on both, which the close is what judges.
 #[test]
 fn a_merge_of_a_bucket_into_itself_is_refused_by_both_engines() -> Result<()> {
     let fx = fixture();
@@ -839,12 +812,11 @@ fn a_merge_of_a_bucket_into_itself_is_refused_by_both_engines() -> Result<()> {
     let mut probe = session_of(&fx);
     let funds = minted(&mut probe, 100);
     let mut dual = GUEST.instantiate(FUEL, build)?;
-    let refused = dual.invoke_both("self-merge", &[CVal::Own(funds)])?;
-    assert_eq!(refused, DualOutcome::Trapped(AbortReason::AbiViolation));
-    // And neither runtime moved value: the bucket carries what it did.
+    let refused = dual.invoke_both("self-merge", &[GuestArg::Bucket(funds)])?;
+    assert_eq!(refused.result, Invoked::Aborted(AbortReason::HandleUnknown));
     let (blessed, reference) = dual.finish()?;
-    assert_eq!(blessed.session.bucket(funds)?, Held::Amount(100));
-    assert_eq!(reference.session.bucket(funds)?, Held::Amount(100));
+    assert!(blessed.session.bucket(funds).is_err());
+    assert!(reference.session.bucket(funds).is_err());
     Ok(())
 }
 
@@ -862,7 +834,7 @@ fn a_method_with_two_edges_hands_back_two_buckets() -> Result<()> {
 
     // Distinct buckets, in the order the body took them: which slot an
     // edge lands in is what a consumer routes on, so the two engines
-    // agreeing on it is the whole of what the tuple has to promise.
+    // agreeing on it is the whole of what the reply has to promise.
     assert_eq!(pair.values, (30, 40));
     assert_ne!(pair.reps.0, pair.reps.1);
     Ok(())
@@ -880,7 +852,7 @@ fn issuance_is_the_one_bucket_with_no_cell_behind_it() -> Result<()> {
 fn an_invocation_granted_nothing_issues_nothing() -> Result<()> {
     let fx = fixture();
     let (refused, _) = both(&fx, Take::IssueUngranted(9))?;
-    // The handle is what a declaration grants, so a body that declared no
+    // The grant is what a declaration issues, so a body that declared no
     // issued output has nothing to name — and reaching for one anyway is
     // the same refusal on both engines.
     assert_eq!(refused, Took::Refusal(AbortReason::IssuanceUngranted));
@@ -897,19 +869,20 @@ fn a_reservation_answers_once() -> Result<()> {
     Ok(())
 }
 
+/// A bucket's rep is the kernel's own table index and a site's is its
+/// position in the capability table, so what the guest sees is the
+/// number the session handed it — and what it hands back is that same
+/// number. Nothing renumbers at the boundary, on either engine.
 #[test]
 fn ownership_transfer_and_the_drop_agree_across_the_engines() -> Result<()> {
     let fx = fixture();
     let trace = bucket_sequence(&fx)?;
+    let (held, readable, spent) = trace.given;
 
-    // The component model reserves index 0, so the kept bucket takes the
-    // first allocatable slot — and keeps it, which is what the borrow
-    // lands one past.
-    assert_eq!(trace.held_handle, 1);
-    assert_eq!(trace.borrow_handle, 2);
-    // Returning the bucket frees slot 1 after the borrow freed slot 2, so
-    // the next lowered handle takes the more recently freed of the two.
-    assert_eq!(trace.discard_handle, 1);
+    assert_eq!(trace.held_handle, u64::from(held));
+    assert_eq!(trace.peeked_site, u64::from(readable));
+    assert_eq!(trace.released_rep, held);
+    assert_eq!(trace.discard_handle, u64::from(spent));
     Ok(())
 }
 
@@ -917,18 +890,18 @@ fn ownership_transfer_and_the_drop_agree_across_the_engines() -> Result<()> {
 fn a_returned_bucket_comes_back_to_the_kernel_whole() -> Result<()> {
     let fx = fixture();
     let trace = bucket_sequence(&fx)?;
-    // The guest held a handle and gave back the same rep; the amount was
+    // The guest held a number and gave back the same rep; the amount was
     // never anywhere it could be rewritten.
     assert_eq!(trace.released_amount, HELD);
     Ok(())
 }
 
 #[test]
-fn an_empty_bucket_drops_and_reaches_the_host() -> Result<()> {
+fn an_empty_bucket_drops_and_reaches_the_kernel() -> Result<()> {
     let fx = fixture();
     let trace = bucket_sequence(&fx)?;
-    // Nothing but the destructor could have emptied the slot: the lane
-    // takes the released bucket by hand and never touches this one.
+    // Nothing but the drop could have emptied the slot: the lane takes
+    // the released bucket by hand and never touches this one.
     assert!(!trace.discarded_survives);
     Ok(())
 }
@@ -936,20 +909,20 @@ fn an_empty_bucket_drops_and_reaches_the_host() -> Result<()> {
 #[test]
 fn letting_go_of_value_keeps_it_the_tables_to_answer_for() -> Result<()> {
     let fx = fixture();
-    // The property the handle exists for, and where it is settled. The
-    // canonical ABI routes a discarded owned handle to the host, so the
-    // host learns of the discard where a record could not have noticed
-    // being forgotten — and what the host does with it is hold on to the
-    // value rather than judge it. A body that keeps a full bucket to the
-    // end delivers no drop at all, so a verdict here would answer for one
-    // of the two ways of losing value and be silent about the other.
-    let (outcome, held) = discarded(&fx, 40)?;
-    assert!(matches!(outcome, DualOutcome::Values(_)));
+    // The property the handle exists for, and where it is settled. A
+    // drop reaches the kernel as a call, so the kernel learns of the
+    // discard where a record could not have noticed being forgotten —
+    // and what it does with it is hold on to the value rather than
+    // judge it. A body that keeps a full bucket to the end delivers no
+    // drop at all, so a verdict here would answer for one of the two
+    // ways of losing value and be silent about the other.
+    let (ended, held) = discarded(&fx, 40)?;
+    assert!(matches!(ended.result, Invoked::Produced { .. }));
     assert_eq!(held, Some(40), "the value is still the transaction's");
 
     // Nothing to lose is nothing to hold on to, so the slot goes.
-    let (outcome, held) = discarded(&fx, 0)?;
-    assert!(matches!(outcome, DualOutcome::Values(_)));
+    let (ended, held) = discarded(&fx, 0)?;
+    assert!(matches!(ended.result, Invoked::Produced { .. }));
     assert_eq!(held, None, "an empty bucket leaves the table");
     Ok(())
 }
@@ -983,7 +956,7 @@ fn closed_after_discarding(
     let mut probe = session_of(fx);
     let funds = minted(&mut probe, held);
     let mut dual = GUEST.instantiate(FUEL, build)?;
-    dual.invoke_both("discard", &[CVal::Own(funds)])?;
+    dual.invoke_both("discard", &[GuestArg::Bucket(funds)])?;
 
     let (blessed, reference) = dual.finish()?;
     let closed = |session: KernelSession| {
@@ -999,7 +972,7 @@ fn closed_after_discarding(
 /// One discard on both engines: how the drop ended, and what the rep
 /// still names afterwards — which the two lanes have to agree on for
 /// `finish` to reach one verdict.
-fn discarded(fx: &Fixture, held: u128) -> Result<(DualOutcome, Option<u128>)> {
+fn discarded(fx: &Fixture, held: u128) -> Result<(Invocation, Option<u128>)> {
     let build = || {
         let mut host = session_of(fx);
         minted(&mut host, held);
@@ -1008,64 +981,43 @@ fn discarded(fx: &Fixture, held: u128) -> Result<(DualOutcome, Option<u128>)> {
     let mut probe = session_of(fx);
     let funds = minted(&mut probe, held);
     let mut dual = GUEST.instantiate(FUEL, build)?;
-    let outcome = dual.invoke_both("discard", &[CVal::Own(funds)])?;
+    let ended = dual.invoke_both("discard", &[GuestArg::Bucket(funds)])?;
 
     let (blessed, reference) = dual.finish()?;
     let survives = |session: KernelSession| session.bucket(funds).ok().map(|h| h.quantity());
     let blessed = survives(blessed.session);
     assert_eq!(blessed, survives(reference.session), "the discard diverged");
-    Ok((outcome, blessed))
+    Ok((ended, blessed))
 }
 
 // ─── and the read that moves none of it ────────────────────────────────
 
-/// A component whose one export asks a balance and hands back the figure.
+/// A module whose one export asks a balance and answers the figure.
 ///
-/// Its own component rather than a fixture export, because what it needs
-/// is a capability the fixture does not carry: a fresh read of a cell
-/// that holds value, which excludes no other reader.
-const PEEK_WAT: &str = r#"
-(component
-  (import "hyperscale:kernel/state" (instance $state
-    (export "site" (type $ar (sub resource)))
-    (type $amt_decl (record (field "low" u64) (field "high" u64)))
-    (export "amount" (type $amt (eq $amt_decl)))
-    (export "site-balance" (func (param "c" (borrow $ar)) (param "element" u32) (result $amt)))))
-  (alias export $state "site" (type $aread))
-  (alias export $state "site-balance" (func $balance))
-
-  (core module $alloc
-    (memory (export "mem") 1 1)
-    (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 1024))
-  (core instance $a (instantiate $alloc))
-  (core func $balance_l (canon lower (func $balance) (memory $a "mem")))
-  (core func $drop_r (canon resource.drop $aread))
-
-  (core module $m
-    (import "env" "mem" (memory 1 1))
-    (import "k" "balance" (func $balance (param i32 i32 i32)))
-    (import "k" "drop" (func $drop (param i32)))
-    (func (export "peek") (param i32) (result i64)
-      (local $held i64)
-      local.get 0
-      i32.const 0
-      i32.const 96
-      call $balance
-      i32.const 96
-      i64.load
-      local.set $held
-      local.get 0
-      call $drop
-      local.get $held))
-
-  (core instance $i (instantiate $m
-    (with "env" (instance (export "mem" (memory $a "mem"))))
-    (with "k" (instance (export "balance" (func $balance_l)) (export "drop" (func $drop_r))))))
-
-  (func (export "peek")
-    (param "c" (borrow $aread)) (result u64)
-    (canon lift (core func $i "peek"))))
-"#;
+/// Its own module rather than a fixture export, because what it needs is
+/// a capability the fixture does not carry: a fresh read of a cell that
+/// holds value, which excludes no other reader. It imports only what it
+/// calls, at the types the ABI table declares.
+static PEEK_WAT: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        r#"(module
+  (import "{STATE}" "site-balance" (func $balance (param i32 i32 i32)))
+  (import "{ABI}" "answer" (func $answer (param i32 i32)))
+  (import "{ABI}" "reply" (func $reply (param i32 i32)))
+  (memory (export "{MEMORY}") 1 1)
+  (func (export "peek") (param $c i32)
+    local.get $c
+    i32.const 0
+    i32.const 96
+    call $balance
+    i32.const 96
+    i32.const 8
+    call $answer
+    i32.const 0
+    i32.const 0
+    call $reply))"#
+    )
+});
 
 /// A session over one vault, declared read and denominated — the shape a
 /// method that only asks what a pool holds declares.
@@ -1084,45 +1036,58 @@ fn peeking() -> KernelSession {
 
 /// Asking a balance is the one thing a body does with value that moves
 /// none of it, and the two engines answer the same figure through the
-/// same handle.
+/// same site.
 #[test]
 fn a_balance_read_agrees_between_the_engines() -> Result<()> {
-    let guest = DualGuest::compile(&parse_str(PEEK_WAT)?)?;
+    let guest = DualGuest::compile(&parse_str(&*PEEK_WAT)?)?;
     let mut dual = guest.instantiate(FUEL, peeking)?;
     let held = dual
-        .invoke_both("peek", &[CVal::Borrow(0, HandleKind::Site)])?
+        .invoke_both("peek", &[site(0)])?
         .scalar()
         .map_err(|other| format_err!("peek: {other}"))?;
     assert_eq!(u128::from(held), BALANCE);
     Ok(())
 }
 
-/// A bucket's handle index, handed to a call that names a site, is the
-/// wrong type on both engines.
+/// A bucket's rep, handed where a site is expected, is judged by the
+/// kernel against its site table on both engines.
 ///
-/// The one canonical-ABI handle-type check left. Eleven access-mode
-/// resource types collapsed into one `site`, so a handle passed where a
-/// different *mode* is expected is the kernel's question now, answered
-/// at the operation — which leaves the bucket-versus-site distinction as
-/// the only one the boundary itself decides. Owned and borrowed handles
-/// share one table, so the index is a live one: what is wrong about the
-/// call is the type it was looked up as, not the number.
+/// Buckets and sites are two tables and a handle is only a number, so
+/// nothing at the boundary can say which table a number was meant for:
+/// the site table has whatever it has at that position, and the kernel
+/// either serves the read that capability grants or refuses it in the
+/// mode's own terms. What the lane holds is that the two engines carry
+/// the number unchanged and let the kernel answer — the same answer,
+/// which this computes from the table rather than assuming.
 #[test]
-fn a_bucket_index_read_as_a_site_is_the_wrong_handle_type() -> Result<()> {
+fn a_bucket_rep_read_as_a_site_is_judged_against_the_site_table() -> Result<()> {
     let fx = fixture();
-    let (_, held, _) = session(&fx);
+    let (probe, held, _) = session(&fx);
+    let at_that_position = probe.capabilities()[held as usize];
+    let expected = match at_that_position {
+        // A byte read is what a read capability grants, and the fixture
+        // stores one byte behind its readable cell.
+        Capability::Read(key) if key == fx.readable => Invoked::Produced {
+            edges: vec![],
+            answer: Some(1u64.to_le_bytes().to_vec()),
+        },
+        // Every other capability in the fixture holds value or an
+        // interval, and none of those grants a byte read.
+        _ => Invoked::Aborted(AbortReason::HandleWrongMode),
+    };
+
     let mut dual = GUEST.instantiate(FUEL, || session(&fx).0)?;
-    // `invoke_both` establishes the lanes agree; the interpreter says
-    // which check answered, because the blessed engine words its
-    // boundary refusals in prose and resolves them to no trap kind.
-    let outcome = dual.invoke_both("read-held", &[CVal::Own(held)])?;
-    assert_eq!(outcome, DualOutcome::Trapped(AbortReason::AbiViolation));
-    assert!(
-        matches!(
-            dual.reference_error("read-held", &[CVal::Own(held)])?,
-            Some(ExecError::Canon(CanonError::WrongHandleType))
-        ),
-        "the boundary answered on the handle's type, not on its number",
+    let ended = dual.invoke_both("read-held", &[GuestArg::Bucket(held)])?;
+    assert_eq!(
+        ended.result, expected,
+        "site {held} is {at_that_position:?}"
     );
+
+    // The first mint takes rep zero, and the fixture's table opens on
+    // its read cell: the number lands on a capability that grants the
+    // read, so the kernel serves it rather than refusing.
+    assert_eq!(held, 0);
+    assert_eq!(at_that_position, Capability::Read(fx.readable));
+    assert_eq!(ended.scalar()?, 1);
     Ok(())
 }

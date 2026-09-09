@@ -14,9 +14,7 @@ use hyperscale_vm_embed::{GuestArg, Invocation, Invoked, KernelHost};
 use hyperscale_vm_types::AbortReason;
 
 use crate::error::{DecodeError, InstantiateError, Trap};
-use crate::interp::{
-    CanonDispatch, CanonError, ExecError, FuncAddr, Store, call, instantiate_module,
-};
+use crate::interp::{ExecError, FuncAddr, ImportDispatch, Store, call, instantiate_module};
 use crate::module::{CoreImportKind, RefModule, Ty};
 use crate::ops::Value;
 
@@ -145,7 +143,7 @@ struct Kernel<H> {
     params: Vec<usize>,
 }
 
-impl<H: KernelHost> CanonDispatch for Kernel<H> {
+impl<H: KernelHost> ImportDispatch for Kernel<H> {
     fn param_count(&self, id: u32) -> usize {
         self.params[id as usize]
     }
@@ -171,7 +169,7 @@ impl<H: KernelHost> CanonDispatch for Kernel<H> {
 const fn fault(error: MeterError) -> ExecError {
     match error {
         MeterError::Exhausted => ExecError::Trap(Trap::OutOfFuel),
-        MeterError::Refused(reason) => ExecError::Canon(CanonError::Host(reason)),
+        MeterError::Refused(reason) => ExecError::Host(reason),
     }
 }
 
@@ -244,7 +242,7 @@ impl<'m, H: KernelHost> RefModuleInstance<'m, H> {
             ..Store::default()
         };
         let imported: Vec<FuncAddr> = (0..imports.len())
-            .map(|id| FuncAddr::Canon(u32::try_from(id).unwrap_or(u32::MAX)))
+            .map(|id| FuncAddr::Import(u32::try_from(id).unwrap_or(u32::MAX)))
             .collect();
         if let Err(trap) = instantiate_module(&[module], &mut store, 0, imported, None, None) {
             return Err((host, InstantiateError::Trap(trap)));
@@ -334,8 +332,8 @@ impl<'m, H: KernelHost> RefModuleInstance<'m, H> {
                 Some(Value::I64(_)) => Invoked::Aborted(AbortReason::BadReturnShape),
             },
             Err(ExecError::Trap(trap)) => Invoked::Aborted(trap.abort_reason()),
-            Err(ExecError::Canon(CanonError::Host(reason))) => Invoked::Aborted(reason),
-            Err(ExecError::Canon(_)) => Invoked::Aborted(AbortReason::AbiViolation),
+            Err(ExecError::Host(reason)) => Invoked::Aborted(reason),
+            Err(ExecError::Internal(_)) => Invoked::Aborted(AbortReason::AbiViolation),
         }
     }
 

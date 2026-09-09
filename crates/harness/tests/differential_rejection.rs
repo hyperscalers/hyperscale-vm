@@ -1,16 +1,18 @@
-//! Identical rejection: profile *feature-class* violations must be refused by
-//! both implementations — the validator rejects them at deploy, and the
-//! reference interpreter cannot represent them at decode (defense in depth).
+//! Identical rejection: profile *feature-class* violations must be refused
+//! by both implementations — the validator rejects them at deploy, and the
+//! reference interpreter cannot represent them at decode (defense in
+//! depth). One set of bytes faces both, so the refusals are of the same
+//! module rather than of two renderings of it.
 //!
-//! Structural limits (sizes, counts) are deliberately validator-only policy:
-//! the interpreter executes any validated shape, so those fixtures make no
-//! vm-ref claim.
+//! Structural limits (sizes, counts) are deliberately validator-only
+//! policy: the interpreter executes any validated shape, so those fixtures
+//! make no vm-ref claim.
 
 use hyperscale_vm_ref::RefModule;
-use hyperscale_vm_runtime::validate_component;
+use hyperscale_vm_runtime::validate_core_module;
 use wat::parse_str;
 
-/// Feature-class fixtures: (name, core module body).
+/// Feature-class fixtures: (name, module body).
 const FEATURE_FIXTURES: [(&str, &str); 8] = [
     (
         "floats",
@@ -34,12 +36,9 @@ const FEATURE_FIXTURES: [(&str, &str); 8] = [
 
 #[test]
 fn feature_violations_are_rejected_by_both_implementations() {
-    for (name, core) in FEATURE_FIXTURES {
-        let component =
-            parse_str(format!("(component (core module {core}))")).expect("fixture must parse");
-        validate_component(&component).expect_err(&format!("validator must reject {name}"));
-
-        let module = parse_str(format!("(module {core})")).expect("fixture must parse");
+    for (name, body) in FEATURE_FIXTURES {
+        let module = parse_str(format!("(module {body})")).expect("fixture must parse");
+        validate_core_module(&module).expect_err(&format!("validator must reject {name}"));
         RefModule::decode(&module).expect_err(&format!("vm-ref must reject {name}"));
     }
 }

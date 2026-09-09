@@ -13,7 +13,7 @@
 use std::fmt::Write as _;
 use std::time::Instant;
 
-use hyperscale_vm_runtime::{profile, validate_component};
+use hyperscale_vm_runtime::{profile, validate_core_module};
 use wasmtime::{Config, Engine, Instance, Module, Result, Store, Strategy};
 use wat::parse_str;
 
@@ -125,8 +125,8 @@ fn engine(strategy: Strategy) -> Result<Engine> {
 #[test]
 fn at_bound_bombs_validate() -> Result<()> {
     for (name, core) in bombs() {
-        let component = parse_str(format!("(component (core module {core}))"))?;
-        validate_component(&component)
+        let module = parse_str(format!("(module {core})"))?;
+        validate_core_module(&module)
             .unwrap_or_else(|e| panic!("bomb {name} must validate at bound: {e}"));
     }
     Ok(())

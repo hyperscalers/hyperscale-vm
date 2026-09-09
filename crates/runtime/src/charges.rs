@@ -1,7 +1,7 @@
 //! The derived instantiation charge sequence.
 //!
-//! Instantiating a component is metered work: under the blessed config the
-//! engine compiles one init function per core module that needs one — any
+//! Instantiating a module is metered work: under the blessed config the
+//! engine compiles an init function where the module needs one — any
 //! active data segment forces it, as do element segments applying to an
 //! imported table — and that function meters like guest code: entry one
 //! fuel, each active data segment one plus one per byte, element writes
@@ -17,19 +17,16 @@ use wasmparser::{DataKind, ElementKind, Parser, Payload};
 #[cfg(feature = "engine")]
 use wasmtime::{Result, Store, Trap};
 
-use crate::frames::{InstanceDef, instance_def};
 use crate::validator::ProfileError;
 
 /// The ordered charges instantiating an artifact costs, derived from its
 /// bytes alone.
 ///
-/// Per instantiated core module, in the component's core-instantiation
-/// order (a multiply-instantiated module counted each time, a
-/// never-instantiated one not at all): an entry charge of one iff the
-/// module has init work, then one plus the byte length per active data
-/// segment, in section order. Replayed charge-then-check against a
-/// budget, the arithmetic is bit-identical to metering the work — the
-/// residue of a budget that dies mid-instantiation included.
+/// An entry charge of one iff the module has init work, then one plus the
+/// byte length per active data segment, in section order. Replayed
+/// charge-then-check against a budget, the arithmetic is bit-identical to
+/// metering the work — the residue of a budget that dies
+/// mid-instantiation included.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstantiationCharges {
     charges: Vec<u64>,
@@ -50,57 +47,26 @@ impl InstantiationCharges {
     }
 }
 
-/// Derives the instantiation charges of a component artifact.
+/// Derives the instantiation charges of a module.
 ///
 /// # Errors
 ///
 /// [`ProfileError`] if the bytes do not parse; verdicts are deterministic
 /// functions of the bytes.
 pub fn instantiation_charges(bytes: &[u8]) -> Result<InstantiationCharges, ProfileError> {
-    let mut modules: Vec<SegmentFacts> = Vec::new();
+    let facts = segment_facts(bytes)?;
+    let inits_imported_table = facts.has_active_elements && !facts.declares_table;
     let mut charges = Vec::new();
-    for payload in Parser::new(0).parse_all(bytes) {
-        let payload = payload.map_err(|e| ProfileError::Feature(e.to_string()))?;
-        match payload {
-            Payload::ModuleSection {
-                unchecked_range, ..
-            } => {
-                modules.push(segment_facts(&bytes[unchecked_range])?);
-            }
-            Payload::InstanceSection(reader) => {
-                for instance in reader {
-                    let instance = instance.map_err(|e| ProfileError::Feature(e.to_string()))?;
-                    if let InstanceDef::Instantiate { module, .. } = instance_def(&instance)? {
-                        let facts = modules.get(module as usize).ok_or_else(|| {
-                            ProfileError::Structural(
-                                "core instance names an undefined module".to_string(),
-                            )
-                        })?;
-                        push_module_charges(facts, &mut charges);
-                    }
-                }
-            }
-            _ => {}
-        }
+    if !facts.data_lens.is_empty() || inits_imported_table {
+        charges.push(1);
+    }
+    for len in &facts.data_lens {
+        charges.push(1 + len);
     }
     Ok(InstantiationCharges { charges })
 }
 
-/// Derives the instantiation charges of one bare core module: the
-/// one-instance case of [`instantiation_charges`], which is what the
-/// differential lanes drive.
-///
-/// # Errors
-///
-/// [`ProfileError`] if the bytes do not parse.
-pub fn module_instantiation_charges(bytes: &[u8]) -> Result<InstantiationCharges, ProfileError> {
-    let facts = segment_facts(bytes)?;
-    let mut charges = Vec::new();
-    push_module_charges(&facts, &mut charges);
-    Ok(InstantiationCharges { charges })
-}
-
-/// Instantiates a component charging the derived sequence in place of the
+/// Instantiates a module charging the derived sequence in place of the
 /// engine's own accounting.
 ///
 /// The charge list is replayed charge-then-check against `budget` first —
@@ -140,7 +106,7 @@ where
     Ok(instance)
 }
 
-/// What the derivation reads off one core module.
+/// What the derivation reads off a module.
 #[derive(Default)]
 struct SegmentFacts {
     /// Whether the module declares its own table; a local table's element
@@ -180,16 +146,4 @@ fn segment_facts(bytes: &[u8]) -> Result<SegmentFacts, ProfileError> {
         }
     }
     Ok(facts)
-}
-
-/// One module's charges: the init-function entry iff the module has any,
-/// then each data segment's application.
-fn push_module_charges(facts: &SegmentFacts, charges: &mut Vec<u64>) {
-    let inits_imported_table = facts.has_active_elements && !facts.declares_table;
-    if !facts.data_lens.is_empty() || inits_imported_table {
-        charges.push(1);
-    }
-    for len in &facts.data_lens {
-        charges.push(1 + len);
-    }
 }

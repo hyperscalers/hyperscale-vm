@@ -17,7 +17,7 @@ use hyperscale_vm_types::Presence;
 
 /// Every authored package, in the order the exhaustive sweeps read them.
 ///
-/// Traced and hand-written alike. `nf` and `registry` are `wit_bindgen`
+/// Traced and hand-written alike. `nf` and `registry` are hand-authored
 /// packages whose declarations are written out beside them, which makes
 /// them the ones a rule the tracer happens to satisfy would miss.
 ///

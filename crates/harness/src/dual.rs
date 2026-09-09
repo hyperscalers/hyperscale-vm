@@ -8,38 +8,33 @@
 //! differential test misclassifies identically on both sides, masking
 //! exactly what the lane exists to catch.
 //!
-//! Arguments and results speak [`CVal`], the executable spec's boundary
-//! vocabulary; the blessed lane lowers and lifts it here, the same way
-//! the production embedding does, so handle numbering is compared like
-//! for like.
+//! Arguments are the binding's own [`GuestArg`]s, and an ending is the
+//! whole [`Invocation`] — the verdict, the fuel, the exhaustion flag —
+//! because the core boundary leaves an engine nothing to word: what
+//! differs between the lanes is execution.
 
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{Declaration, DeclaredAccess};
-use hyperscale_vm_embed::{GuestArg, Invocation};
+use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
-use hyperscale_vm_ref::{
-    CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance, RefModule,
-    RefModuleInstance,
-};
+use hyperscale_vm_ref::{RefModule, RefModuleInstance};
 use hyperscale_vm_runtime::{
-    Bucket, HostRefusal, InstantiationCharges, Invoking, Site, add_kernel_imports,
-    add_kernel_to_linker, blessed_engine, classify, instantiate_charged, instantiation_charges,
-    invoke_module, module_instantiation_charges, validate_component, validate_module,
+    InstantiationCharges, Invoking, add_kernel_imports, blessed_engine, instantiate_charged,
+    instantiation_charges, invoke_export, validate_module,
 };
-use hyperscale_vm_types::{ADDRESS_WORDS, AbortReason, EffectSet, ResourceAddr, TxHash};
-use wasmtime::component::{Component, Instance, Linker, Resource, ResourceAny, Val};
-use wasmtime::error::{bail, ensure, format_err};
-use wasmtime::{Engine, Instance as ModuleInstance, Linker as ModuleLinker, Module, Result, Store};
+use hyperscale_vm_types::{AbortReason, EffectSet, ResourceAddr, TxHash};
+use wasmtime::error::{ensure, format_err};
+use wasmtime::{Engine, Instance, Linker, Module, Result, Store};
 
 use crate::driver::test_hash;
 
 /// A guest in both engines' runnable forms, compiled once.
 pub struct DualGuest {
     engine: Engine,
-    component: Component,
+    module: Module,
     charges: InstantiationCharges,
-    reference: RefComponent,
+    reference: RefModule,
 }
 
 impl DualGuest {
@@ -50,12 +45,12 @@ impl DualGuest {
     /// Fails where the profile, either engine, or the charge derivation
     /// refuses the bytes.
     pub fn compile(bytes: &[u8]) -> Result<Self> {
-        validate_component(bytes)?;
+        validate_module(bytes)?;
         let engine = blessed_engine()?;
         Ok(Self {
-            component: Component::new(&engine, bytes)?,
+            module: Module::new(&engine, bytes)?,
             charges: instantiation_charges(bytes)?,
-            reference: RefComponent::decode(bytes)?,
+            reference: RefModule::decode(bytes)?,
             engine,
         })
     }
@@ -90,13 +85,13 @@ impl DualGuest {
         blessed: KernelSession,
         reference: KernelSession,
     ) -> Result<DualInstance<'_>> {
-        let mut linker = Linker::<KernelSession>::new(&self.engine);
-        add_kernel_to_linker(&mut linker)?;
-        let mut store = Store::new(&self.engine, blessed);
+        let mut linker = Linker::<Invoking<KernelSession>>::new(&self.engine);
+        add_kernel_imports(&mut linker)?;
+        let mut store = Store::new(&self.engine, Invoking::new(blessed));
         let instance = instantiate_charged(&mut store, budget, &self.charges, |s| {
-            linker.instantiate(s, &self.component)
+            linker.instantiate(s, &self.module)
         })?;
-        let reference = RefComponentInstance::instantiate(&self.reference, reference, budget)
+        let reference = RefModuleInstance::instantiate(&self.reference, reference, budget)
             .map_err(|(_, error)| format_err!("reference instantiation: {error}"))?;
         Ok(DualInstance {
             budget,
@@ -108,64 +103,12 @@ impl DualGuest {
 }
 
 /// One instantiation per engine, holding a session each; every call runs
-/// on both and must end identically.
+/// on both and must end identically, fuel included.
 pub struct DualInstance<'a> {
     budget: u64,
-    store: Store<KernelSession>,
+    store: Store<Invoking<KernelSession>>,
     instance: Instance,
-    reference: RefComponentInstance<'a, KernelSession>,
-}
-
-/// How one dual invocation ended — identically, or the harness fails.
-#[derive(Debug, PartialEq, Eq)]
-pub enum DualOutcome {
-    /// The values the export returned, in the spec's boundary vocabulary.
-    Values(Vec<CVal>),
-    /// The host refused, in the class it assigned.
-    Refused(AbortReason),
-    /// The guest trapped, in the class both engines classified it as.
-    Trapped(AbortReason),
-}
-
-impl DualOutcome {
-    /// The single scalar a `u64`-returning export produced.
-    ///
-    /// # Errors
-    ///
-    /// Fails on any other ending.
-    pub fn scalar(&self) -> Result<u64> {
-        match self {
-            Self::Values(values) => match values.as_slice() {
-                [CVal::U64(v)] => Ok(*v),
-                other => Err(format_err!("expected one u64, got {other:?}")),
-            },
-            other => Err(format_err!("expected a value, got {other:?}")),
-        }
-    }
-
-    /// The single owned bucket rep the export handed back.
-    ///
-    /// # Errors
-    ///
-    /// Fails on any other ending.
-    pub fn bucket(&self) -> Result<u32> {
-        match self {
-            Self::Values(values) => match values.as_slice() {
-                [CVal::Own(rep)] => Ok(*rep),
-                other => Err(format_err!("expected one owned bucket, got {other:?}")),
-            },
-            other => Err(format_err!("expected a value, got {other:?}")),
-        }
-    }
-
-    /// The refusal class, if the host refused.
-    #[must_use]
-    pub const fn refusal(&self) -> Option<AbortReason> {
-        match self {
-            Self::Refused(reason) => Some(*reason),
-            _ => None,
-        }
-    }
+    reference: RefModuleInstance<'a, KernelSession>,
 }
 
 /// One lane's end: the session back from its engine, and the fuel the
@@ -182,11 +125,10 @@ impl DualInstance<'_> {
     ///
     /// # Errors
     ///
-    /// Fails where the lanes diverge, or where an ending falls outside
-    /// the vocabulary the comparison speaks.
-    pub fn invoke_both(&mut self, export: &str, args: &[CVal]) -> Result<DualOutcome> {
-        let blessed = self.invoke_blessed(export, args)?;
-        let reference = self.invoke_reference(export, args)?;
+    /// Fails where the lanes diverge.
+    pub fn invoke_both(&mut self, export: &str, args: &[GuestArg<'_>]) -> Result<Invocation> {
+        let blessed = invoke_export(&mut self.store, &self.instance, export, args, self.budget);
+        let reference = self.reference.invoke(export, args);
         ensure!(
             blessed == reference,
             "{export} diverged: blessed {blessed:?}, reference {reference:?}"
@@ -209,7 +151,7 @@ impl DualInstance<'_> {
         );
         Ok((
             LaneEnd {
-                session: self.store.into_data(),
+                session: self.store.into_data().into_host(),
                 fuel: blessed_fuel,
             },
             LaneEnd {
@@ -218,150 +160,66 @@ impl DualInstance<'_> {
             },
         ))
     }
+}
 
-    fn invoke_blessed(&mut self, export: &str, args: &[CVal]) -> Result<DualOutcome> {
-        let Some(func) = self.instance.get_func(&mut self.store, export) else {
-            bail!("no export {export}");
-        };
-        let mut lowered = Vec::with_capacity(args.len());
-        for arg in args {
-            lowered.push(lower(&mut self.store, arg)?);
-        }
-        let arity = func.ty(&self.store).results().len();
-        let mut results = vec![Val::Bool(false); arity];
-        match func.call(&mut self.store, &lowered, &mut results) {
-            Ok(()) => {
-                let mut values = Vec::new();
-                for result in results {
-                    lift(&mut self.store, result, &mut values)?;
-                }
-                Ok(DualOutcome::Values(values))
-            }
-            Err(error) => {
-                if let Some(refusal) = error.downcast_ref::<HostRefusal>() {
-                    return Ok(DualOutcome::Refused(refusal.0));
-                }
-                Ok(DualOutcome::Trapped(classify(&error)))
-            }
-        }
-    }
-
-    /// The reference lane's own error, in the canonical ABI's words.
-    ///
-    /// Both lanes agree on *whether* a boundary call failed, and a
-    /// comparison of the two says nothing finer: wasmtime words its
-    /// boundary refusals in prose and resolves them to no trap kind, so
-    /// both flatten to one `AbortReason`. A test meaning one specific
-    /// boundary check — a handle of the wrong type, rather than any of
-    /// the several ways a handle can be wrong — asks the interpreter,
-    /// after [`Self::invoke_both`] has established the lanes agree.
+/// What a lane reads off an ending, in the shapes the fixtures answer in.
+///
+/// A fixture export answers a `u64` as eight little-endian bytes and
+/// hands a bucket back as its one edge; these read exactly that, and
+/// fail on any other ending so a lane cannot mistake a refusal for a
+/// figure.
+pub trait Ended {
+    /// The single `u64` the export answered with.
     ///
     /// # Errors
     ///
-    /// Fails where the invocation itself cannot be made.
-    pub fn reference_error(&mut self, export: &str, args: &[CVal]) -> Result<Option<ExecError>> {
-        Ok(self.reference.invoke(export, args)?.err())
-    }
+    /// Fails on any other ending.
+    fn scalar(&self) -> Result<u64>;
 
-    fn invoke_reference(&mut self, export: &str, args: &[CVal]) -> Result<DualOutcome> {
-        match self.reference.invoke(export, args)? {
-            Ok(values) => Ok(DualOutcome::Values(values)),
-            Err(ExecError::Canon(CanonError::Host(reason))) => Ok(DualOutcome::Refused(reason)),
-            Err(error) => Ok(DualOutcome::Trapped(error.abort_reason())),
-        }
-    }
+    /// The one bucket the export handed back.
+    ///
+    /// # Errors
+    ///
+    /// Fails on any other ending.
+    fn bucket(&self) -> Result<u32>;
+
+    /// The class the invocation aborted with, if it did.
+    fn refusal(&self) -> Option<AbortReason>;
 }
 
-/// A [`CVal`] argument as the blessed engine's boundary value. Borrows
-/// lower as borrows, mirroring the spec's own lowering, so handle
-/// numbering compares like for like.
-fn lower(store: &mut Store<KernelSession>, arg: &CVal) -> Result<Val> {
-    Ok(match arg {
-        CVal::Bool(b) => Val::Bool(*b),
-        CVal::U32(v) => Val::U32(*v),
-        CVal::U64(v) => Val::U64(*v),
-        CVal::Own(rep) => Val::Resource(ResourceAny::try_from_resource(
-            Resource::<Bucket>::new_own(*rep),
-            &mut *store,
-        )?),
-        CVal::Borrow(rep, kind) => Val::Resource(borrow(store, *rep, *kind)?),
-        CVal::Address(bytes) => {
-            let word = |at: usize| {
-                Val::U64(u64::from_le_bytes(
-                    bytes[at..at + 8].try_into().expect("eight bytes"),
-                ))
-            };
-            Val::Record(
-                ADDRESS_WORDS
-                    .iter()
-                    .enumerate()
-                    .map(|(index, name)| ((*name).to_owned(), word(index * 8)))
-                    .collect(),
-            )
-        }
-        CVal::Bytes(bytes) => Val::List(bytes.iter().copied().map(Val::U8).collect()),
-        CVal::Ids(ids) => Val::List(ids.iter().copied().map(Val::U64).collect()),
-        CVal::Declined(_) => bail!("a declined result is not an argument"),
-    })
-}
-
-/// A borrowed handle at the resource type its kind names.
-///
-/// Registered as an owned host handle rather than a borrowed one — the
-/// production lowering's own choice: a borrow is only representable
-/// inside an active call scope, and there is none while arguments are
-/// still being assembled. The guest parameter is a borrow either way;
-/// the canonical ABI lends the handle for the call and takes it back.
-fn borrow(store: &mut Store<KernelSession>, rep: u32, kind: HandleKind) -> Result<ResourceAny> {
-    let store = &mut *store;
-    match kind {
-        HandleKind::Site => ResourceAny::try_from_resource(Resource::<Site>::new_own(rep), store),
-        HandleKind::Bucket => {
-            ResourceAny::try_from_resource(Resource::<Bucket>::new_own(rep), store)
+impl Ended for Invocation {
+    fn scalar(&self) -> Result<u64> {
+        match &self.result {
+            Invoked::Produced {
+                answer: Some(answer),
+                ..
+            } => {
+                let bytes: [u8; 8] = answer
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| format_err!("expected eight answer bytes, got {answer:?}"))?;
+                Ok(u64::from_le_bytes(bytes))
+            }
+            other => Err(format_err!("expected an answer, got {other:?}")),
         }
     }
-}
 
-/// One blessed result into the comparison vocabulary. Tuples flatten,
-/// because the spec's lift reports a tuple result as its elements.
-fn lift(store: &mut Store<KernelSession>, value: Val, out: &mut Vec<CVal>) -> Result<()> {
-    match value {
-        Val::Bool(b) => out.push(CVal::Bool(b)),
-        Val::U32(v) => out.push(CVal::U32(v)),
-        Val::U64(v) => out.push(CVal::U64(v)),
-        Val::Resource(handle) => out.push(CVal::Own(
-            handle.try_into_resource::<Bucket>(&mut *store)?.rep(),
-        )),
-        Val::Tuple(items) => {
-            for item in items {
-                lift(store, item, out)?;
-            }
+    fn bucket(&self) -> Result<u32> {
+        match &self.result {
+            Invoked::Produced { edges, .. } => match edges.as_slice() {
+                [rep] => Ok(*rep),
+                other => Err(format_err!("expected one bucket, got {other:?}")),
+            },
+            other => Err(format_err!("expected a bucket, got {other:?}")),
         }
-        Val::Result(Ok(None)) => {}
-        Val::Result(Ok(Some(inner))) => lift(store, *inner, out)?,
-        Val::Result(Err(Some(code))) => match *code {
-            Val::U32(code) => out.push(CVal::Declined(code)),
-            other => bail!("declined with {other:?}"),
-        },
-        Val::List(items) => {
-            let mut bytes = Vec::with_capacity(items.len());
-            let mut ids = Vec::with_capacity(items.len());
-            for item in &items {
-                match item {
-                    Val::U8(b) => bytes.push(*b),
-                    Val::U64(id) => ids.push(*id),
-                    other => bail!("a list of {other:?} is outside the vocabulary"),
-                }
-            }
-            if ids.is_empty() {
-                out.push(CVal::Bytes(bytes));
-            } else {
-                out.push(CVal::Ids(ids));
-            }
-        }
-        other => bail!("a result of {other:?} is outside the vocabulary"),
     }
-    Ok(())
+
+    fn refusal(&self) -> Option<AbortReason> {
+        match self.result {
+            Invoked::Aborted(reason) => Some(reason),
+            _ => None,
+        }
+    }
 }
 
 /// A session over `store` under `declared`, each effect holding its
@@ -415,127 +273,4 @@ pub fn rep_where(session: &KernelSession, pred: impl Fn(&Capability) -> bool) ->
         .position(pred)
         .expect("capability present");
     u32::try_from(position).expect("bounded")
-}
-
-/// A core module in both engines' runnable forms, compiled once.
-pub struct DualModule {
-    engine: Engine,
-    module: Module,
-    charges: InstantiationCharges,
-    reference: RefModule,
-}
-
-impl DualModule {
-    /// Validate and compile `bytes` for both engines.
-    ///
-    /// # Errors
-    ///
-    /// Fails where the profile, either engine, or the charge derivation
-    /// refuses the bytes.
-    pub fn compile(bytes: &[u8]) -> Result<Self> {
-        validate_module(bytes)?;
-        let engine = blessed_engine()?;
-        Ok(Self {
-            module: Module::new(&engine, bytes)?,
-            charges: module_instantiation_charges(bytes)?,
-            reference: RefModule::decode(bytes)?,
-            engine,
-        })
-    }
-
-    /// Instantiate on both engines, one fresh session per lane.
-    ///
-    /// # Errors
-    ///
-    /// Fails where either engine refuses to instantiate.
-    pub fn instantiate(
-        &self,
-        budget: u64,
-        session: impl Fn() -> KernelSession,
-    ) -> Result<DualModuleInstance<'_>> {
-        self.instantiate_pair(budget, session(), session())
-    }
-
-    /// As [`Self::instantiate`], over the sessions an earlier step handed
-    /// back — how a lane threads one transaction across several
-    /// invocations.
-    ///
-    /// # Errors
-    ///
-    /// Fails where either engine refuses to instantiate.
-    pub fn instantiate_pair(
-        &self,
-        budget: u64,
-        blessed: KernelSession,
-        reference: KernelSession,
-    ) -> Result<DualModuleInstance<'_>> {
-        let mut linker = ModuleLinker::<Invoking<KernelSession>>::new(&self.engine);
-        add_kernel_imports(&mut linker)?;
-        let mut store = Store::new(&self.engine, Invoking::new(blessed));
-        let instance = instantiate_charged(&mut store, budget, &self.charges, |s| {
-            linker.instantiate(s, &self.module)
-        })?;
-        let reference = RefModuleInstance::instantiate(&self.reference, reference, budget)
-            .map_err(|(_, error)| format_err!("reference instantiation: {error}"))?;
-        Ok(DualModuleInstance {
-            budget,
-            store,
-            instance,
-            reference,
-        })
-    }
-}
-
-/// One core instantiation per engine, holding a session each; every
-/// call runs on both and must end identically, fuel included.
-pub struct DualModuleInstance<'a> {
-    budget: u64,
-    store: Store<Invoking<KernelSession>>,
-    instance: ModuleInstance,
-    reference: RefModuleInstance<'a, KernelSession>,
-}
-
-impl DualModuleInstance<'_> {
-    /// Invoke `export` on both engines and require the same ending.
-    ///
-    /// The whole [`Invocation`] is compared — the verdict, the fuel, and
-    /// the exhaustion flag — because the core boundary leaves an engine
-    /// nothing to word: what differs between the lanes is execution.
-    ///
-    /// # Errors
-    ///
-    /// Fails where the lanes diverge.
-    pub fn invoke_both(&mut self, export: &str, args: &[GuestArg<'_>]) -> Result<Invocation> {
-        let blessed = invoke_module(&mut self.store, &self.instance, export, args, self.budget);
-        let reference = self.reference.invoke(export, args);
-        ensure!(
-            blessed == reference,
-            "{export} diverged: blessed {blessed:?}, reference {reference:?}"
-        );
-        Ok(blessed)
-    }
-
-    /// Both sessions and what each lane charged.
-    ///
-    /// # Errors
-    ///
-    /// Fails where the fuel figures diverge.
-    pub fn finish(self) -> Result<(LaneEnd, LaneEnd)> {
-        let blessed_fuel = self.budget - self.store.get_fuel()?;
-        let reference_fuel = self.reference.fuel_consumed();
-        ensure!(
-            blessed_fuel == reference_fuel,
-            "fuel diverged: blessed {blessed_fuel}, reference {reference_fuel}"
-        );
-        Ok((
-            LaneEnd {
-                session: self.store.into_data().into_host(),
-                fuel: blessed_fuel,
-            },
-            LaneEnd {
-                session: self.reference.into_host(),
-                fuel: reference_fuel,
-            },
-        ))
-    }
 }

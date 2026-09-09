@@ -368,8 +368,8 @@ pub fn artifact(dir: &Path, provenance: Provenance) -> Result<Vec<u8>, BuildErro
     // say which line is wrong runs first, and the one that cannot is
     // reached only by a module that already type-checked.
     let metadata = declaration(dir)?;
-    let component = compile(dir)?;
-    let artifact = attach_metadata(&component, &metadata)
+    let module = compile(dir)?;
+    let artifact = attach_metadata(&module, &metadata)
         .map_err(|error| BuildError::new(format!("attach the declaration: {error}")))?;
     // The whole verdict, off the bytes the publish would carry. A
     // disagreement between the declaration and the code it describes is

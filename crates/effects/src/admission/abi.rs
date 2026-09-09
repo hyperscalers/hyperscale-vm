@@ -2,7 +2,7 @@
 //!
 //! Not a judgement. A site name resolves to positions in the capability
 //! table the declaration already fixed, and a literal picks the wire
-//! representation the canonical ABI carries it in. `publish/abi.rs` asks
+//! representation the boundary carries it in. `publish/abi.rs` asks
 //! the same question of a signature; this is its evaluated twin.
 
 use hyperscale_vm_types::{Address, ResourceAddr};

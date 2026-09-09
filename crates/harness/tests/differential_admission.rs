@@ -10,9 +10,9 @@
 
 use arbitrary::Unstructured;
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
-use hyperscale_vm_ref::{RefComponent, RefModule};
-use hyperscale_vm_runtime::{validate_component, validate_core_module, validate_module};
-use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
+use hyperscale_vm_ref::RefModule;
+use hyperscale_vm_runtime::{validate_core_module, validate_module};
+use hyperscale_vm_stdlib::ACCOUNT_MODULE;
 use wasm_smith::{Config, Module as SmithModule};
 use wasmtime::Result;
 use wat::parse_str;
@@ -178,17 +178,17 @@ fn typed_function_references_have_no_witness_and_no_admission() {
 }
 
 #[test]
-fn every_admitted_component_decodes_under_the_spec() -> Result<()> {
-    let wat = parse_str(KERNEL_GUEST_WAT)?;
-    validate_component(&wat).unwrap_or_else(|e| panic!("kernel-guest must validate: {e}"));
-    RefComponent::decode(&wat)
+fn the_kernel_guest_decodes_under_the_spec() -> Result<()> {
+    let wasm = parse_str(KERNEL_GUEST_WAT)?;
+    validate_module(&wasm).unwrap_or_else(|e| panic!("kernel-guest must validate: {e}"));
+    RefModule::decode(&wasm)
         .unwrap_or_else(|e| panic!("kernel-guest validates but the spec cannot decode it: {e}"));
     Ok(())
 }
 
 #[test]
 fn the_committed_stdlib_module_decodes_under_the_spec() {
-    validate_module(ACCOUNT_COMPONENT).unwrap_or_else(|e| panic!("stdlib must validate: {e}"));
-    RefModule::decode(ACCOUNT_COMPONENT)
+    validate_module(ACCOUNT_MODULE).unwrap_or_else(|e| panic!("stdlib must validate: {e}"));
+    RefModule::decode(ACCOUNT_MODULE)
         .unwrap_or_else(|e| panic!("stdlib validates but the spec cannot decode it: {e}"));
 }

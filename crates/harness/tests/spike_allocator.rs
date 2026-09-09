@@ -23,7 +23,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_runtime::{
     InstantiationCharges, Invoking, add_kernel_imports, blessed_config, blessed_engine,
-    instantiate_charged, invoke_module, module_instantiation_charges,
+    instantiate_charged, instantiation_charges, invoke_export,
 };
 use hyperscale_vm_stdlib::{account_artifact, staking_artifact};
 use hyperscale_vm_types::{
@@ -181,7 +181,7 @@ fn one_transfer(
     );
     let mut store = Store::new(engine, Invoking::new(session));
     let instance = instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
-    let withdraw = invoke_module(
+    let withdraw = invoke_export(
         &mut store,
         &instance,
         "withdraw",
@@ -211,7 +211,7 @@ fn one_transfer(
     });
     let mut store = Store::new(engine, Invoking::new(session));
     let instance = instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
-    let deposit = invoke_module(
+    let deposit = invoke_export(
         &mut store,
         &instance,
         "deposit",
@@ -264,7 +264,7 @@ fn compiled(
     add_kernel_imports(&mut linker)?;
     Ok((
         linker.instantiate_pre(&module)?,
-        module_instantiation_charges(artifact)?,
+        instantiation_charges(artifact)?,
     ))
 }
 

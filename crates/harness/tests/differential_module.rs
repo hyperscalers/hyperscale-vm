@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, child_key};
 use hyperscale_vm_embed::abi::{IMPORTS, MEMORY};
 use hyperscale_vm_embed::{GuestArg, Invoked};
-use hyperscale_vm_harness::dual::{DualModule, materialize, rep_where};
+use hyperscale_vm_harness::dual::{DualGuest, materialize, rep_where};
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, ResourceAddr,
@@ -57,8 +57,8 @@ fn module(body: &str) -> Vec<u8> {
 
 /// The one module every lane runs: bytes through the registers, value
 /// through handles, and every way a call can end.
-static GUEST: LazyLock<DualModule> = LazyLock::new(|| {
-    DualModule::compile(&module(
+static GUEST: LazyLock<DualGuest> = LazyLock::new(|| {
+    DualGuest::compile(&module(
         r#"
   (func (export "copy") (param $a i32) (param $b i32) (param $payload i32)
     (local $len i32)
