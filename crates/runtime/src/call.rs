@@ -11,12 +11,14 @@
 //! constructs are that world's, and because the mapping from a mode to
 //! its handle type is the same one the linker registers.
 
-use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
-use hyperscale_vm_types::{ADDRESS_WORDS, Address};
+use hyperscale_vm_embed::abi::MEMORY;
+use hyperscale_vm_embed::{GuestArg, Invocation, Invoked, KernelHost};
+use hyperscale_vm_types::{ADDRESS_WORDS, AbortReason, Address};
 use wasmtime::component::{Instance, Resource, ResourceAny, Val};
-use wasmtime::{AsContextMut, Error, Result, Store};
+use wasmtime::{AsContextMut, Error, Instance as ModuleInstance, Result, Store, Val as CoreVal};
 
-use crate::abort::{CallError, classify, exhausted};
+use crate::abort::{CallError, classify, exhausted, host_trap};
+use crate::imports::{Invoking, lowered};
 use crate::world::{Bucket, Site};
 
 /// An address as the world's `record address`: four little-endian words.
@@ -205,6 +207,80 @@ pub fn invoke_export<T: 'static>(
     budget: u64,
 ) -> Invocation {
     let outcome = call_export(&mut *store, instance, export, args);
+    let exhausted = outcome.as_ref().err().is_some_and(exhausted);
+    let result = match outcome {
+        Ok(Returned::Produced { edges, answer }) => Invoked::Produced { edges, answer },
+        Ok(Returned::Declined(code)) => Invoked::Declined(code),
+        Err(error) => Invoked::Aborted(classify(&error)),
+    };
+    let fuel = budget - store.get_fuel().expect("fuel metering is enabled");
+    Invocation {
+        result,
+        fuel,
+        exhausted,
+    }
+}
+
+/// Invoke `export` on a core module instance with `args`.
+///
+/// The arguments lower to core values and the input registers; the
+/// export's own result type says whether it can decline — one `i32` —
+/// and what it produced comes back through the registers it replied
+/// into. A decline discards whatever was replied before it.
+///
+/// # Errors
+///
+/// A missing export, an argument outside the convention, a guest trap,
+/// a host refusal, or a return outside the convention.
+pub fn call_module<H: KernelHost + 'static>(
+    store: &mut Store<Invoking<H>>,
+    instance: &ModuleInstance,
+    export: &str,
+    args: &[GuestArg<'_>],
+) -> Result<Returned> {
+    let Some(func) = instance.get_func(&mut *store, export) else {
+        return Err(CallError::ExportMissing(export.to_owned()).into());
+    };
+    let memory = instance
+        .get_memory(&mut *store, MEMORY)
+        .ok_or_else(|| host_trap(AbortReason::AbiViolation))?;
+    let (params, registers) = lowered(args)?;
+    store.data_mut().begin(registers, memory);
+    let arity = func.ty(&*store).results().len();
+    let mut results = vec![CoreVal::I32(0); arity];
+    func.call(&mut *store, &params, &mut results)?;
+    match results.first() {
+        None | Some(CoreVal::I32(0)) => {}
+        Some(CoreVal::I32(code)) => {
+            return Ok(Returned::Declined(code.cast_unsigned() - 1));
+        }
+        Some(other) => return Err(shape(export, &format!("{other:?}"))),
+    }
+    let reply = store
+        .data_mut()
+        .registers()
+        .reply()
+        .ok_or_else(|| shape(export, "no reply"))?;
+    Ok(Returned::Produced {
+        edges: reply.edges,
+        answer: reply.answer,
+    })
+}
+
+/// As [`invoke_export`], over a core module instance.
+///
+/// # Panics
+///
+/// Panics if the store does not meter fuel, which the blessed config
+/// always enables.
+pub fn invoke_module<H: KernelHost + 'static>(
+    store: &mut Store<Invoking<H>>,
+    instance: &ModuleInstance,
+    export: &str,
+    args: &[GuestArg<'_>],
+    budget: u64,
+) -> Invocation {
+    let outcome = call_module(store, instance, export, args);
     let exhausted = outcome.as_ref().err().is_some_and(exhausted);
     let result = match outcome {
         Ok(Returned::Produced { edges, answer }) => Invoked::Produced { edges, answer },

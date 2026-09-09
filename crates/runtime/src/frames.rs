@@ -211,7 +211,23 @@ const fn frame_bytes(slots: usize) -> usize {
 pub fn check_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
     let facts = collect(bytes)?;
     let instance = bare_instance(0, &facts, 0, &mut 0);
-    check_linked(&[facts], &[instance], &[])
+    check_linked(&[facts], &[instance], &[], profile::MAX_CALL_CHAIN_BYTES)
+}
+
+/// Proves a core module the kernel calls directly cannot exhaust the
+/// native stack.
+///
+/// The bare-module walk under the budget one chain has when nothing the
+/// host does re-enters the guest: every import returns to the frame that
+/// called it, so the heaviest chain is the whole of what stands at once.
+///
+/// # Errors
+///
+/// Exactly [`check_stack_bounds`]'s.
+pub fn check_module_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
+    let facts = collect(bytes)?;
+    let instance = bare_instance(0, &facts, 0, &mut 0);
+    check_linked(&[facts], &[instance], &[], profile::MAX_MODULE_CHAIN_BYTES)
 }
 
 /// A module judged on its own: every import is a host frame, because there
@@ -243,14 +259,21 @@ fn bare_instance(
 /// contract shape and a canonical-ABI callback that leaves the component.
 pub fn check_component_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
     let linked = link(bytes)?;
-    check_linked(&linked.modules, &linked.instances, &linked.callbacks)
+    check_linked(
+        &linked.modules,
+        &linked.instances,
+        &linked.callbacks,
+        profile::MAX_CALL_CHAIN_BYTES,
+    )
 }
 
-/// The stack bound over a linked instance graph.
+/// The stack bound over a linked instance graph, against the byte budget
+/// one chain may consume.
 fn check_linked(
     modules: &[ModuleFacts],
     instances: &[CoreInstance],
     callbacks: &[(FuncRef, &'static str)],
+    chain_bytes: usize,
 ) -> Result<(), ProfileError> {
     for facts in modules {
         for (local, func) in facts.funcs.iter().enumerate() {
@@ -269,12 +292,11 @@ fn check_linked(
     check_callbacks(&graph, callbacks)?;
 
     let heaviest = heaviest_path(&graph.edges, &graph.cost)?;
-    if heaviest.bytes > profile::MAX_CALL_CHAIN_BYTES {
+    if heaviest.bytes > chain_bytes {
         return Err(ProfileError::Structural(format!(
-            "the heaviest call chain needs {} stack bytes, over the {} the profile \
+            "the heaviest call chain needs {} stack bytes, over the {chain_bytes} the profile \
              reserves for one chain",
             heaviest.bytes,
-            profile::MAX_CALL_CHAIN_BYTES
         )));
     }
     if heaviest.frames > profile::MAX_CALL_CHAIN_FRAMES {

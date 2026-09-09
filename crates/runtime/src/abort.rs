@@ -11,10 +11,32 @@
 //! must agree with these one for one. Nothing here checks that; the
 //! differential lanes do, by comparing whole outcomes.
 
+use hyperscale_vm_embed::meter::MeterError;
 use hyperscale_vm_types::AbortReason;
 use wasmtime::{Error, Trap};
 
-use crate::world::HostRefusal;
+/// A kernel refusal in flight through the engine.
+///
+/// The class rides the error rather than its text: [`classify`] downcasts
+/// it back out, so nothing on the path from the kernel's verdict to the
+/// receipt's abort record passes through prose.
+#[derive(Debug, thiserror::Error)]
+#[error("kernel refusal: {0:?}")]
+pub struct HostRefusal(pub AbortReason);
+
+/// A host refusal as an engine trap, with its class recoverable.
+pub(crate) fn host_trap(reason: AbortReason) -> Error {
+    Error::new(HostRefusal(reason))
+}
+
+/// A metered failure as an engine error: exhaustion as the engine's own
+/// trap, a kernel refusal with its class recoverable.
+pub(crate) fn fault(error: MeterError) -> Error {
+    match error {
+        MeterError::Exhausted => Trap::OutOfFuel.into(),
+        MeterError::Refused(reason) => host_trap(reason),
+    }
+}
 
 /// An invocation the export convention does not admit.
 ///

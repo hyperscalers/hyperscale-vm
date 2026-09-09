@@ -91,6 +91,14 @@ pub const HOST_FRAME_RESERVE_BYTES: usize = 64 * 1024;
 /// lowered import is refused, so no admitted callback starts a third chain.
 pub const MAX_CALL_CHAIN_BYTES: usize = (MAX_WASM_STACK_BYTES - HOST_FRAME_RESERVE_BYTES) / 2;
 
+/// What one guest call chain may consume where the host never re-enters
+/// the guest.
+///
+/// A core module's imports are host functions that return without
+/// calling back in, so one chain stands at a time and the reserve covers
+/// the host frames at either end of it.
+pub const MAX_MODULE_CHAIN_BYTES: usize = MAX_WASM_STACK_BYTES - HOST_FRAME_RESERVE_BYTES;
+
 /// How many frames one guest call chain may stand at once.
 ///
 /// The byte budget bounds a chain's stack consumption, which is not the

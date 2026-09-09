@@ -19,13 +19,13 @@
 
 use core::cmp::Ordering;
 
-use hyperscale_vm_embed::KernelHost;
-use hyperscale_vm_embed::meter::{self, MeterError};
+use hyperscale_vm_embed::{KernelHost, meter};
+use hyperscale_vm_types::Drawn;
 use hyperscale_vm_types::math::{Rounding, U256};
-use hyperscale_vm_types::{AbortReason, Drawn};
 use wasmtime::component::{ComponentType, Lift, Linker, Lower, Resource, ResourceType};
-use wasmtime::{Error, Result, StoreContextMut, Trap};
+use wasmtime::{Result, StoreContextMut};
 
+use crate::abort::{fault, host_trap};
 use crate::gas::Port;
 
 /// The world's `amount`: a `u128` as the two halves the component model
@@ -217,29 +217,6 @@ pub struct Bucket;
 /// One marker for every mode and every width: a handle type says which
 /// table its rep indexes, and every site indexes the one the walk bound.
 pub struct Site;
-
-/// A host refusal as an engine trap, with its class recoverable.
-///
-/// The class rides the error rather than its text: the backend downcasts
-/// it back out, so nothing on the path from the kernel's verdict to the
-/// receipt's abort record passes through prose.
-fn host_trap(reason: AbortReason) -> Error {
-    Error::new(HostRefusal(reason))
-}
-
-/// A kernel refusal in flight through the engine.
-#[derive(Debug, thiserror::Error)]
-#[error("kernel refusal: {0:?}")]
-pub struct HostRefusal(pub AbortReason);
-
-/// A metered failure as an engine error: exhaustion as the engine's own
-/// trap, a kernel refusal with its class recoverable.
-fn fault(error: MeterError) -> Error {
-    match error {
-        MeterError::Exhausted => Trap::OutOfFuel.into(),
-        MeterError::Refused(reason) => host_trap(reason),
-    }
-}
 
 /// Adds the `hyperscale:kernel` interfaces to a component linker.
 ///

@@ -7,17 +7,20 @@
 //! structural pass enforcing the [`crate::profile`] limits and the
 //! component-level import allowlist.
 
+use hyperscale_vm_embed::abi::{CoreType, IMPORTS, MEMORY};
 use thiserror::Error;
 use wasmparser::types::Types;
 use wasmparser::{
     CanonicalFunction, ComponentAlias, ComponentDefinedType, ComponentExternalKind,
     ComponentImportSectionReader, ComponentType, ComponentTypeRef, ComponentValType,
     CompositeInnerType, ConstExpr, DataKind, DataSectionReader, ElementItems, ElementKind,
-    ElementSectionReader, FunctionBody, GlobalSectionReader, Operator, Parser, Payload,
-    PrimitiveValType, TypeBounds, TypeRef, TypeSectionReader, ValType, Validator, WasmFeatures,
+    ElementSectionReader, ExternalKind, FunctionBody, GlobalSectionReader, Operator, Parser,
+    Payload, PrimitiveValType, TypeBounds, TypeRef, TypeSectionReader, ValType, Validator,
+    WasmFeatures,
 };
 
-use crate::frames::{check_component_stack_bounds, check_stack_bounds};
+use crate::exports::{core_type, scan_module};
+use crate::frames::{check_component_stack_bounds, check_module_stack_bounds, check_stack_bounds};
 use crate::profile;
 
 /// A profile violation. Every variant is a deterministic deploy-time verdict.
@@ -50,6 +53,11 @@ pub enum ProfileError {
     /// A structural limit exceeded; the message names the limit.
     #[error("structural limit exceeded: {0}")]
     Structural(String),
+    /// A core module outside the boundary convention: an import the
+    /// kernel does not define or at a type it does not, an export the
+    /// kernel cannot call, or a memory the kernel cannot reach.
+    #[error("outside the boundary convention: {0}")]
+    Boundary(String),
 }
 
 /// The profile's wasm feature set, as an explicit allowlist. Everything
@@ -388,6 +396,117 @@ pub fn validate_core_module(bytes: &[u8]) -> Result<(), ProfileError> {
         .map_err(|e| ProfileError::Feature(e.to_string()))?;
     core_structural_pass(bytes)?;
     check_stack_bounds(bytes)
+}
+
+/// Validates a core module the kernel calls directly.
+///
+/// The profile's feature set and structural limits, then the boundary
+/// convention: every import is one the kernel defines, at the type it
+/// defines it; the module exports exactly one memory, named as the
+/// kernel reads it, and every other export is a function the kernel can
+/// call — boundary-typed parameters, and nothing or one `i32` back.
+/// Then the stack bound, over one module and one chain.
+///
+/// # Errors
+///
+/// Returns the first [`ProfileError`] encountered; verdicts are
+/// deterministic functions of the bytes.
+pub fn validate_module(bytes: &[u8]) -> Result<(), ProfileError> {
+    if bytes.len() > profile::MAX_COMPONENT_BYTES {
+        return Err(ProfileError::ComponentTooLarge {
+            actual: bytes.len(),
+            max: profile::MAX_COMPONENT_BYTES,
+        });
+    }
+    Validator::new_with_features(profile_features())
+        .validate_all(bytes)
+        .map_err(|e| ProfileError::Feature(e.to_string()))?;
+    core_structural_pass(bytes)?;
+    boundary_pass(bytes)?;
+    check_module_stack_bounds(bytes)
+}
+
+/// The boundary convention over a parsed module.
+fn boundary_pass(bytes: &[u8]) -> Result<(), ProfileError> {
+    let scan = scan_module(bytes)?;
+    let boundary = |what: String| ProfileError::Boundary(what);
+
+    let mut imported_funcs = 0u32;
+    for (module, name, ty) in &scan.imports {
+        let (TypeRef::Func(ty) | TypeRef::FuncExact(ty)) = ty else {
+            return Err(boundary(format!(
+                "`{module}` `{name}`: the kernel imports nothing but functions"
+            )));
+        };
+        let Some((_, _, params, results)) =
+            IMPORTS.iter().find(|(m, n, _, _)| m == module && n == name)
+        else {
+            return Err(ProfileError::ForbiddenImport(format!("{module}/{name}")));
+        };
+        let declared = scan
+            .types
+            .get(*ty as usize)
+            .ok_or_else(|| boundary(format!("`{module}` `{name}` names no type")))?;
+        let same = |declared: &[ValType], defined: &[CoreType]| {
+            declared.len() == defined.len()
+                && declared
+                    .iter()
+                    .zip(defined)
+                    .all(|(d, e)| core_type(*d) == Some(*e))
+        };
+        if !same(declared.params(), params) || !same(declared.results(), results) {
+            return Err(boundary(format!(
+                "`{module}` `{name}` is imported at {declared:?}, not the type the kernel \
+                 defines it at"
+            )));
+        }
+        imported_funcs += 1;
+    }
+
+    let mut memories = 0usize;
+    for (name, kind, index) in &scan.exports {
+        match kind {
+            ExternalKind::Memory => {
+                if name != MEMORY {
+                    return Err(boundary(format!(
+                        "memory exported as `{name}`; the kernel reads `{MEMORY}`"
+                    )));
+                }
+                memories += 1;
+            }
+            ExternalKind::Func => {
+                if *index < imported_funcs {
+                    return Err(boundary(format!("export `{name}` re-exports an import")));
+                }
+                let ty = scan
+                    .func_type(*index)
+                    .ok_or_else(|| boundary(format!("export `{name}` names no function")))?;
+                if ty.params().iter().any(|param| core_type(*param).is_none()) {
+                    return Err(boundary(format!(
+                        "export `{name}` takes {:?}; the boundary carries i32 and i64",
+                        ty.params()
+                    )));
+                }
+                if !matches!(ty.results(), [] | [ValType::I32]) {
+                    return Err(boundary(format!(
+                        "export `{name}` returns {:?}; an export returns nothing or one i32",
+                        ty.results()
+                    )));
+                }
+            }
+            _ => {
+                return Err(boundary(format!(
+                    "export `{name}` is a {kind:?}; the kernel reads functions and one memory"
+                )));
+            }
+        }
+    }
+    if memories != 1 {
+        return Err(boundary(format!(
+            "{memories} memories exported; the kernel reads exactly one, `{MEMORY}`"
+        )));
+    }
+    Ok(())
 }
 
 /// Gates component imports to the kernel world and tracks the type-index

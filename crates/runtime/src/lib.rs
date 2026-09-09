@@ -29,18 +29,25 @@ pub mod fuel;
 #[cfg(feature = "engine")]
 pub mod gas;
 #[cfg(feature = "engine")]
+pub mod imports;
+#[cfg(feature = "engine")]
 pub mod world;
 
 pub use charges::{InstantiationCharges, instantiation_charges, module_instantiation_charges};
-pub use exports::{ExportParam, ExportShape, classify_exports, component_exports};
+pub use exports::{
+    ExportParam, ExportShape, ModuleExport, classify_exports, component_exports, module_exports,
+};
 pub use totality::{TotalityError, check_body, check_method, check_reachable};
-pub use validator::{ProfileError, validate_component, validate_core_module, validated_component};
+pub use validator::{
+    ProfileError, validate_component, validate_core_module, validate_module, validated_component,
+};
 #[cfg(feature = "engine")]
 pub use {
-    abort::{CallError, classify, exhausted, trap_reason},
-    call::{Returned, call_export, invoke_export},
+    abort::{CallError, HostRefusal, classify, exhausted, trap_reason},
+    call::{Returned, call_export, call_module, invoke_export, invoke_module},
     charges::instantiate_charged,
     engine::{blessed_config, blessed_engine},
     fuel::blessed_operator_cost,
-    world::{Amount, Bucket, HostRefusal, Site, Wide, WitDrawn, WitRounding, add_kernel_to_linker},
+    imports::{Invoking, add_kernel_imports},
+    world::{Amount, Bucket, Site, Wide, WitDrawn, WitRounding, add_kernel_to_linker},
 };
