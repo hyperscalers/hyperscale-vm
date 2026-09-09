@@ -17,9 +17,8 @@
 //! is running, so the seeded sites a body may name are every node's, not
 //! its own node's. Reach is the transaction's declaration, which
 //! admission judged and the signer signed; it is not the argument list
-//! the node named. The case below fixes the rule rather than that
-//! consequence: a lane over two nodes of one manifest would state it
-//! outright, and is worth having before the rule is relied on.
+//! the node named. The cases below fix the rule; `node_reach.rs` states
+//! the consequence over two packages of one manifest.
 //!
 //! Whether it should be narrower than that is a design question. What
 //! this lane does is fix the answer in place, so a change to it is
