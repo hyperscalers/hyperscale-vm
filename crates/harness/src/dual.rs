@@ -16,18 +16,21 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{Declaration, DeclaredAccess};
+use hyperscale_vm_embed::{GuestArg, Invocation};
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_ref::{
-    CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance,
+    CVal, CanonError, ExecError, HandleKind, RefComponent, RefComponentInstance, RefModule,
+    RefModuleInstance,
 };
 use hyperscale_vm_runtime::{
-    Bucket, HostRefusal, InstantiationCharges, Site, add_kernel_to_linker, blessed_engine,
-    classify, instantiate_charged, instantiation_charges, validate_component,
+    Bucket, HostRefusal, InstantiationCharges, Invoking, Site, add_kernel_imports,
+    add_kernel_to_linker, blessed_engine, classify, instantiate_charged, instantiation_charges,
+    invoke_module, module_instantiation_charges, validate_component, validate_module,
 };
 use hyperscale_vm_types::{ADDRESS_WORDS, AbortReason, EffectSet, ResourceAddr, TxHash};
 use wasmtime::component::{Component, Instance, Linker, Resource, ResourceAny, Val};
 use wasmtime::error::{bail, ensure, format_err};
-use wasmtime::{Engine, Result, Store};
+use wasmtime::{Engine, Instance as ModuleInstance, Linker as ModuleLinker, Module, Result, Store};
 
 use crate::driver::test_hash;
 
@@ -412,4 +415,111 @@ pub fn rep_where(session: &KernelSession, pred: impl Fn(&Capability) -> bool) ->
         .position(pred)
         .expect("capability present");
     u32::try_from(position).expect("bounded")
+}
+
+/// A core module in both engines' runnable forms, compiled once.
+pub struct DualModule {
+    engine: Engine,
+    module: Module,
+    charges: InstantiationCharges,
+    reference: RefModule,
+}
+
+impl DualModule {
+    /// Validate and compile `bytes` for both engines.
+    ///
+    /// # Errors
+    ///
+    /// Fails where the profile, either engine, or the charge derivation
+    /// refuses the bytes.
+    pub fn compile(bytes: &[u8]) -> Result<Self> {
+        validate_module(bytes)?;
+        let engine = blessed_engine()?;
+        Ok(Self {
+            module: Module::new(&engine, bytes)?,
+            charges: module_instantiation_charges(bytes)?,
+            reference: RefModule::decode(bytes)?,
+            engine,
+        })
+    }
+
+    /// Instantiate on both engines, one fresh session per lane.
+    ///
+    /// # Errors
+    ///
+    /// Fails where either engine refuses to instantiate.
+    pub fn instantiate(
+        &self,
+        budget: u64,
+        session: impl Fn() -> KernelSession,
+    ) -> Result<DualModuleInstance<'_>> {
+        let mut linker = ModuleLinker::<Invoking<KernelSession>>::new(&self.engine);
+        add_kernel_imports(&mut linker)?;
+        let mut store = Store::new(&self.engine, Invoking::new(session()));
+        let instance = instantiate_charged(&mut store, budget, &self.charges, |s| {
+            linker.instantiate(s, &self.module)
+        })?;
+        let reference = RefModuleInstance::instantiate(&self.reference, session(), budget)
+            .map_err(|(_, error)| format_err!("reference instantiation: {error}"))?;
+        Ok(DualModuleInstance {
+            budget,
+            store,
+            instance,
+            reference,
+        })
+    }
+}
+
+/// One core instantiation per engine, holding a session each; every
+/// call runs on both and must end identically, fuel included.
+pub struct DualModuleInstance<'a> {
+    budget: u64,
+    store: Store<Invoking<KernelSession>>,
+    instance: ModuleInstance,
+    reference: RefModuleInstance<'a, KernelSession>,
+}
+
+impl DualModuleInstance<'_> {
+    /// Invoke `export` on both engines and require the same ending.
+    ///
+    /// The whole [`Invocation`] is compared — the verdict, the fuel, and
+    /// the exhaustion flag — because the core boundary leaves an engine
+    /// nothing to word: what differs between the lanes is execution.
+    ///
+    /// # Errors
+    ///
+    /// Fails where the lanes diverge.
+    pub fn invoke_both(&mut self, export: &str, args: &[GuestArg<'_>]) -> Result<Invocation> {
+        let blessed = invoke_module(&mut self.store, &self.instance, export, args, self.budget);
+        let reference = self.reference.invoke(export, args);
+        ensure!(
+            blessed == reference,
+            "{export} diverged: blessed {blessed:?}, reference {reference:?}"
+        );
+        Ok(blessed)
+    }
+
+    /// Both sessions and what each lane charged.
+    ///
+    /// # Errors
+    ///
+    /// Fails where the fuel figures diverge.
+    pub fn finish(self) -> Result<(LaneEnd, LaneEnd)> {
+        let blessed_fuel = self.budget - self.store.get_fuel()?;
+        let reference_fuel = self.reference.fuel_consumed();
+        ensure!(
+            blessed_fuel == reference_fuel,
+            "fuel diverged: blessed {blessed_fuel}, reference {reference_fuel}"
+        );
+        Ok((
+            LaneEnd {
+                session: self.store.into_data().into_host(),
+                fuel: blessed_fuel,
+            },
+            LaneEnd {
+                session: self.reference.into_host(),
+                fuel: reference_fuel,
+            },
+        ))
+    }
 }

@@ -15,8 +15,6 @@
 
 use wasmparser::{DataKind, ElementKind, Parser, Payload};
 #[cfg(feature = "engine")]
-use wasmtime::component::Instance;
-#[cfg(feature = "engine")]
 use wasmtime::{Result, Store, Trap};
 
 use crate::frames::{InstanceDef, instance_def};
@@ -119,14 +117,14 @@ pub fn module_instantiation_charges(bytes: &[u8]) -> Result<InstantiationCharges
 /// [`Trap::OutOfFuel`] when the budget dies in the replay; otherwise
 /// whatever `instantiate` itself returns.
 #[cfg(feature = "engine")]
-pub fn instantiate_charged<T, F>(
+pub fn instantiate_charged<T, I, F>(
     store: &mut Store<T>,
     budget: u64,
     charges: &InstantiationCharges,
     instantiate: F,
-) -> Result<Instance>
+) -> Result<I>
 where
-    F: FnOnce(&mut Store<T>) -> Result<Instance>,
+    F: FnOnce(&mut Store<T>) -> Result<I>,
 {
     let mut spent = 0u64;
     for &charge in charges.charges() {
