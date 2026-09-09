@@ -20,6 +20,7 @@
 //! and so stays in the kernel, which is what keeps this crate reachable
 //! from a package's host build.
 
+pub mod abi;
 mod call;
 mod host;
 pub mod meter;

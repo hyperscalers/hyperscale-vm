@@ -259,6 +259,12 @@ pub fn bucket_amount<P: HostAccess + FuelSink>(
     Ok(amount)
 }
 
+/// `state.bucket-drop`. Nothing crosses: the kernel decides what a
+/// dropped handle means on its own account.
+pub fn bucket_drop<P: HostAccess + FuelSink>(port: &mut P, bucket: u32) -> Result<(), MeterError> {
+    refused(port.host().bucket_drop(bucket))
+}
+
 /// `state.site-put`.
 pub fn site_put<P: HostAccess + FuelSink>(
     port: &mut P,
