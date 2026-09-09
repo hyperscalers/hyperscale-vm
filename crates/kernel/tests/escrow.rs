@@ -99,15 +99,38 @@ fn declared(effects: &[Effect]) -> Declaration {
     moving(set)
 }
 
-/// The sending node's call: its handles are the frame's two cells, the
-/// reserve it takes from and the record it writes, and the reserve is
-/// what names the cell a departing crossing left.
+/// The sending node's call: one output, the reservation it takes.
 fn taking() -> NodeCall {
-    let mut taking = call("take", 0, 1);
-    taking.args.push(CallArg::Site {
-        entries: vec![Some(0), Some(1)],
-    });
-    taking
+    call("take", 0, 1)
+}
+
+/// Lend every node of `entry` the whole declaration, as one site whose
+/// element `n` is capability `n`.
+///
+/// The backend here finds the cell it acts on by searching the table,
+/// so the site it is handed has to cover the table; a lowered manifest
+/// would lend each node the cells its own clause resolved. What the
+/// sending node's site also does is name the frame's cells for a
+/// departure: the reserve it takes from is what names the cell a
+/// crossing left.
+fn lent_whole(entry: BatchTx) -> BatchTx {
+    // A settlement invokes no node, and has none to lend.
+    if entry.calls().is_empty() {
+        return entry;
+    }
+    let width = u32::try_from(entry.declaration.ordered.len()).unwrap();
+    let calls = entry
+        .calls()
+        .iter()
+        .cloned()
+        .map(|mut call| {
+            call.args.push(CallArg::Site {
+                entries: (0..width).map(Some).collect(),
+            });
+            call
+        })
+        .collect();
+    entry.with_calls(calls)
 }
 
 /// One lowered call: what it produces, and what it consumes.
@@ -137,6 +160,16 @@ struct Moving;
 
 impl GuestBackend for Moving {
     fn invoke(&self, mut session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
+        // The one site every node is lent covers the table in order, so
+        // the element a capability is reached at is its rep.
+        let site = call
+            .args
+            .iter()
+            .find_map(|arg| match arg {
+                GuestArg::Site { site } => Some(*site),
+                _ => None,
+            })
+            .expect("every node is lent the declaration");
         let caps = session.capabilities().to_vec();
         let find = |wanted: fn(&Capability) -> bool| {
             caps.iter()
@@ -147,7 +180,7 @@ impl GuestBackend for Moving {
             "take" => {
                 let reserve = find(|cap| matches!(cap, Capability::Reserve { .. }))
                     .expect("the fixture declares one");
-                vec![session.reserve_take(reserve, 0).unwrap()]
+                vec![session.reserve_take(site, reserve).unwrap()]
             }
             "take_twice" => {
                 let reserves: Vec<u32> = caps
@@ -159,7 +192,7 @@ impl GuestBackend for Moving {
                 assert_eq!(reserves.len(), 2, "the fixture declares two");
                 let mut taken = Vec::new();
                 for reserve in reserves {
-                    taken.push(session.reserve_take(reserve, 0).unwrap());
+                    taken.push(session.reserve_take(site, reserve).unwrap());
                 }
                 taken
             }
@@ -173,7 +206,7 @@ impl GuestBackend for Moving {
                 // A trap is the guest's abort, not the fixture's panic:
                 // a consumer handed a bucket somebody already took is a
                 // verdict these tests read off the receipt.
-                if let Err(trap) = session.cell_put(delta, 0, funds) {
+                if let Err(trap) = session.cell_put(site, delta, funds) {
                     return InvokeResult {
                         session,
                         fuel: 0,
@@ -202,9 +235,10 @@ fn execute(
     batch: &[BatchTx],
     mode: ExecutionMode,
 ) -> Result<BatchOutcome, BatchError> {
+    let batch: Vec<BatchTx> = batch.iter().cloned().map(lent_whole).collect();
     execute_batch(
         base,
-        batch,
+        &batch,
         &ManifestWalk { backend: &Moving },
         test_hash,
         mode,
@@ -267,11 +301,7 @@ fn sending(amount: u128) -> BatchTx {
 
 /// The node's call when it departs twice: two outputs, one per reserve.
 fn taking_twice() -> NodeCall {
-    let mut taking = call("take_twice", 0, 2);
-    taking.args.push(CallArg::Site {
-        entries: vec![Some(0), Some(1), Some(2)],
-    });
-    taking
+    call("take_twice", 0, 2)
 }
 
 /// Two edges of one node departing at one crossing cell — the shape two
@@ -827,13 +857,7 @@ fn a_record_names_the_cell_its_value_left() {
         },
         crossing_cell(record_site()),
     ]);
-    let ambiguous = ambiguous.with_calls(vec![{
-        let mut taking = call("take", 0, 1);
-        taking.args.push(CallArg::Site {
-            entries: vec![Some(0), Some(1), Some(2)],
-        });
-        taking
-    }]);
+    let ambiguous = ambiguous.with_calls(vec![taking()]);
     let mut store = MemoryStore::new();
     store.write(cell(PAYER), encode_amount(1_000).to_vec());
     store.write(cell(0x77), encode_amount(0).to_vec());

@@ -173,12 +173,13 @@ fn one_transfer(
     pre: &InstancePre<Invoking<KernelSession>>,
     charges: &InstantiationCharges,
 ) -> Result<Receipt> {
-    let session = transfer_session();
+    let mut session = transfer_session();
     let sender_key = child_key(&TestHasher, SENDER, SlotId(1), &[]);
     let sender_rep = rep_where(
         &session,
         |c| matches!(c, Capability::Reserve { key, .. } if *key == sender_key),
     );
+    let sender_rep = session.bind_site(vec![Some(sender_rep)]);
     let mut store = Store::new(engine, Invoking::new(session));
     let instance = instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
     let withdraw = invoke_export(
@@ -209,6 +210,10 @@ fn one_transfer(
             moves: Moves::Both,
         }
     });
+    let flag_rep = session.bind_site(vec![Some(flag_rep)]);
+    let quarantine_rep = session.bind_site(vec![Some(quarantine_rep)]);
+    let recipient_rep = session.bind_site(vec![Some(recipient_rep)]);
+    session.lend_bucket(funds);
     let mut store = Store::new(engine, Invoking::new(session));
     let instance = instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
     let deposit = invoke_export(

@@ -33,6 +33,7 @@ mod fixtures;
 mod grants;
 mod materialize;
 mod ranges;
+mod reach;
 mod receipt;
 mod seal;
 mod trap;
@@ -56,6 +57,7 @@ use hyperscale_vm_types::{
 pub use materialize::{Capability, Interval, MaterializeError, Settlement};
 use ranges::Ranges;
 pub use ranges::SCAN_SEEK_BYTES;
+use reach::Reach;
 pub use receipt::{DeltaMap, FinishError, Receipt, StateDelta};
 pub use seal::DOMAIN_SEALED_DRAW;
 pub use trap::SessionTrap;
@@ -218,7 +220,13 @@ pub struct KernelSession {
     /// lets a session be acted through the moment it exists, rather than
     /// only after a walk has bound something. Sites a `for-each` needs
     /// are appended past the seeded ones.
+    ///
+    /// The seeded sites belong to no frame: a frame reaches the sites
+    /// the walk bound for it, and the seeded ones only where nobody
+    /// entered a frame at all.
     sites: Vec<(u32, u32)>,
+    /// The site reps the executing frame may resolve; see [`Reach`].
+    reach: Reach,
     /// Reservations already taken, by capability rep.
     ///
     /// A grant answers once. The read this replaces answered every time
@@ -387,22 +395,39 @@ impl KernelSession {
     /// Always appended, never matched against the seeded sites: a site
     /// the walk binds carries what the *declaration* resolved, which for
     /// a guarded-out clause is an absence no capability stands behind.
+    ///
+    /// Binding is lending: the executing frame reaches the site from
+    /// here on, and a frame reaches no site it was not bound.
     pub fn bind_site(&mut self, entries: Vec<Option<u32>>) -> u32 {
         let rep = u32::try_from(self.sites.len()).unwrap_or(u32::MAX);
         let start = u32::try_from(self.entries.len()).unwrap_or(u32::MAX);
         let len = u32::try_from(entries.len()).unwrap_or(u32::MAX);
         self.entries.extend(entries);
         self.sites.push((start, len));
+        self.reach.lend(rep);
         rep
     }
 
+    /// Lend the bucket at `rep` to the executing frame: an edge the
+    /// walk resolved for one of the frame's parameters.
+    pub fn lend_bucket(&mut self, rep: u32) {
+        self.buckets.lend(rep);
+    }
+
     /// The entries the site at `rep` covers.
+    ///
+    /// Existence is judged before reach, so a rep no site occupies is
+    /// unknown whoever asks, and a site the frame was not lent is
+    /// outside the frame.
     fn site(&self, rep: u32) -> Result<&[Option<u32>], SessionTrap> {
         let (start, len) = usize::try_from(rep)
             .ok()
             .and_then(|index| self.sites.get(index))
             .copied()
             .ok_or(SessionTrap::UnknownHandle(rep))?;
+        if !self.reach.holds(rep) {
+            return Err(SessionTrap::OutsideFrame(rep));
+        }
         let start = start as usize;
         self.entries
             .get(start..start + len as usize)
@@ -629,22 +654,31 @@ impl KernelSession {
     }
 
     /// Enter an invocation: subsequent emissions are stamped with
-    /// `emitter`, the address of the instance whose method runs next.
+    /// `emitter`, the address of the instance whose method runs next,
+    /// and the frame reaches nothing until it is lent something.
     ///
     /// The runner calls this as it walks each manifest node, since the
-    /// node names its target and the session does not.
+    /// node names its target and the session does not; what it then
+    /// binds and lends is the whole of what the frame can name.
     pub fn enter_invocation(&mut self, emitter: Address) {
         self.invocation = Some(emitter);
         // Issuance is one node's, granted from that node's own
-        // declaration, so entering the next one starts from nothing.
+        // declaration, so entering the next one starts from nothing —
+        // and so does reach, which is the frame's rather than the
+        // table's.
         self.issuance.clear();
+        self.reach.enter();
+        self.buckets.enter_frame();
     }
 
     /// Leave the current invocation. An emission outside one is a runner
-    /// defect and traps rather than guessing an emitter.
+    /// defect and traps rather than guessing an emitter; both tables are
+    /// the kernel's to resolve whole again, for the work between frames.
     pub fn leave_invocation(&mut self) {
         self.invocation = None;
         self.issuance.clear();
+        self.reach.leave();
+        self.buckets.leave_frame();
     }
 
     /// Emit an event from the executing instance.

@@ -892,8 +892,9 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &set);
 
         session.enter_invocation(Address::new([9; 31], AddressClass::Component));
+        let site = session.bind_site(vec![Some(0)]);
         session.emit(1, b"paid".to_vec()).unwrap();
-        session.delta_sub(0, 0, 1).unwrap();
+        session.delta_sub(site, 0, 1).unwrap();
 
         let (receipt, _) = session.finish(vec![], 7).unwrap();
         assert!(

@@ -16,6 +16,7 @@ use hyperscale_vm_types::{
 
 use super::buckets::Buckets;
 use super::ranges::Ranges;
+use super::reach::Reach;
 use super::{EnvInputs, KernelSession};
 use crate::escrow::EscrowDelta;
 use crate::ledger::AmountLedger;
@@ -643,6 +644,7 @@ impl KernelSession {
             sites: (0..u32::try_from(table_len).unwrap_or(u32::MAX))
                 .map(|index| (index, 1))
                 .collect(),
+            reach: Reach::default(),
             taken: BTreeSet::new(),
         })
     }

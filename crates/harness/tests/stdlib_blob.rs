@@ -68,6 +68,15 @@ fn entering(mut host: KernelSession, who: Address) -> KernelSession {
     host
 }
 
+/// Lend the frame one site per capability in `reps`, answering the site
+/// each is reached at — what the walk does for a node's handle
+/// parameters, done here by the caller driving the sequence.
+fn lending(host: &mut KernelSession, reps: &[u32]) -> Vec<u32> {
+    reps.iter()
+        .map(|rep| host.bind_site(vec![Some(*rep)]))
+        .collect()
+}
+
 /// The recipient's own cells a deposit reaches beside their vault: the
 /// flag it reads to pick a destination, and the quarantine it picks when
 /// the flag is set. Absent here, which is what "not refused" is.
@@ -176,11 +185,16 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
             amount: AMOUNT,
         },
     );
-    let mut dual = ACCOUNT.instantiate(FUEL, || entering(session(), SENDER))?;
+    let mut dual = ACCOUNT.instantiate(FUEL, || {
+        let mut host = entering(session(), SENDER);
+        lending(&mut host, &[sender_rep]);
+        host
+    })?;
+    let sender_site = lending(&mut entering(session(), SENDER), &[sender_rep])[0];
     // The grant is the bucket, so the withdrawal names no amount and
     // what comes back is the value itself rather than a reading of it.
     let Invoked::Produced { edges, .. } = dual
-        .invoke_both("withdraw", &[GuestArg::Site { site: sender_rep }])?
+        .invoke_both("withdraw", &[GuestArg::Site { site: sender_site }])?
         .result
     else {
         panic!("the withdrawal hands its grant back")
@@ -191,8 +205,8 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
     let (blessed, reference) = dual.finish()?;
     let withdraw_fuel = blessed.fuel;
 
-    let blessed_host = entering(blessed.session, RECIPIENT);
-    let reference_host = entering(reference.session, RECIPIENT);
+    let mut blessed_host = entering(blessed.session, RECIPIENT);
+    let mut reference_host = entering(reference.session, RECIPIENT);
     let (refused, quarantine) = recipient_cells();
     let recipient_rep = rep_of(
         &blessed_host,
@@ -209,16 +223,33 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
             moves: Moves::Both,
         },
     );
+    let lent = lending(
+        &mut blessed_host,
+        &[flag_rep, quarantine_rep, recipient_rep],
+    );
+    assert_eq!(
+        lent,
+        lending(
+            &mut reference_host,
+            &[flag_rep, quarantine_rep, recipient_rep]
+        ),
+        "the two hosts lend the same sites"
+    );
+    blessed_host.lend_bucket(funds);
+    reference_host.lend_bucket(funds);
+    let [flag_site, quarantine_site, recipient_site] = lent[..] else {
+        panic!("three sites")
+    };
     let mut dual = ACCOUNT.instantiate_pair(FUEL, blessed_host, reference_host)?;
     dual.invoke_both(
         "deposit",
         &[
-            GuestArg::Site { site: flag_rep },
+            GuestArg::Site { site: flag_site },
             GuestArg::Site {
-                site: quarantine_rep,
+                site: quarantine_site,
             },
             GuestArg::Site {
-                site: recipient_rep,
+                site: recipient_site,
             },
             GuestArg::Bucket(funds),
         ],
@@ -584,13 +615,23 @@ fn dual_round() -> Result<(Receipt, u64)> {
         }),
     );
 
-    let mut dual = LOTTERY_GUEST.instantiate(FUEL, || entering(lottery_session(), LOTTERY))?;
+    let reps = [seal_rep, tickets_rep, outcome_rep];
+    let mut dual = LOTTERY_GUEST.instantiate(FUEL, || {
+        let mut host = entering(lottery_session(), LOTTERY);
+        lending(&mut host, &reps);
+        host
+    })?;
+    let [seal_site, tickets_site, outcome_site] =
+        lending(&mut entering(lottery_session(), LOTTERY), &reps)[..]
+    else {
+        panic!("three sites")
+    };
     dual.invoke_both(
         "settle",
         &[
-            GuestArg::Site { site: seal_rep },
-            GuestArg::Site { site: tickets_rep },
-            GuestArg::Site { site: outcome_rep },
+            GuestArg::Site { site: seal_site },
+            GuestArg::Site { site: tickets_site },
+            GuestArg::Site { site: outcome_site },
         ],
     )?;
     let (blessed, reference) = dual.finish()?;

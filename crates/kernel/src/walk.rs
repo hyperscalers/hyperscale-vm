@@ -144,15 +144,19 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
         call: &NodeCall,
         outputs: &[Vec<Option<u32>>],
         fuel_budget: u64,
-        mut session: KernelSession,
+        session: KernelSession,
     ) -> Result<NodeSuccess, NodeFailure> {
-        // The node names its target, and every emission of this frame is
-        // attributed to it — the session holds one capability table for
-        // the whole transaction and cannot tell whose call is running.
-        session.enter_invocation(call.target);
-
+        // The gate and the signed bounds are the walk's own judgment
+        // over the transaction's tables, made before the frame opens.
         let session = gated(call, node, session)?;
         let mut session = edge_bounds_hold(call, node, outputs, session)?;
+
+        // The node names its target, and every emission of this frame is
+        // attributed to it — the session holds one capability table for
+        // the whole transaction, and what tells it whose call is running
+        // is what the frame is lent from here on: the sites bound and the
+        // edges lent below are the whole of what the body can name.
+        session.enter_invocation(call.target);
 
         let mut args = Vec::with_capacity(call.args.len());
         for arg in &call.args {
@@ -186,6 +190,7 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
                             AbortReason::MissingProducerEdge,
                         ));
                     };
+                    session.lend_bucket(produced);
                     args.push(GuestArg::Bucket(produced));
                 }
                 CallArg::Bool(taken) => args.push(GuestArg::Bool(*taken)),

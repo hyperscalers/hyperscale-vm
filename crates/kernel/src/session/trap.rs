@@ -23,6 +23,16 @@ pub enum SessionTrap {
     /// bucket the table does not hold.
     #[error("unknown capability handle {0}")]
     UnknownHandle(u32),
+    /// A rep the table holds and the executing frame was never lent: a
+    /// site bound for another node, or a bucket an earlier node left in
+    /// flight.
+    ///
+    /// The table is the whole transaction's, so the handle resolves;
+    /// what bounds a body is its frame, which reaches exactly what the
+    /// walk lent it and what it opened itself. Its own class rather
+    /// than an unknown handle, so a receipt says which fence answered.
+    #[error("handle {0} is outside the executing frame")]
+    OutsideFrame(u32),
     /// An element whose capability does not grant the operation.
     ///
     /// Carries both halves because the diagnostic is the whole value: a
@@ -247,6 +257,7 @@ impl From<SessionTrap> for AbortReason {
     fn from(trap: SessionTrap) -> Self {
         match trap {
             SessionTrap::UnknownHandle(_) => Self::HandleUnknown,
+            SessionTrap::OutsideFrame(_) => Self::HandleOutsideFrame,
             SessionTrap::Ungranted { .. } => Self::HandleWrongMode,
             SessionTrap::OutsideScope { .. } => Self::OutsideScope,
             SessionTrap::NotASeal(_) => Self::MalformedSeal,

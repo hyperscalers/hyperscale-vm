@@ -365,19 +365,21 @@ fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
         }
         host
     };
-    let probe = build();
     // Every capability crosses as one site index, whichever mode it
     // carries; what the mode still decides is which table position the
     // fixture is naming. A mint names none — the grant is the
-    // invocation's, so nothing crosses to stand for it.
-    let mut args: Vec<GuestArg<'_>> = take
-        .cell(fx)
-        .map(|(key, mode)| site(rep_of(&probe, key, mode)))
-        .into_iter()
-        .collect();
+    // invocation's, so nothing crosses to stand for it. The frame is
+    // entered, so the site is lent to it the way the walk lends one.
+    let cell = take.cell(fx).map(|(key, mode)| rep_of(&build(), key, mode));
+    let lending = || {
+        let mut host = build();
+        let lent = cell.map(|rep| host.bind_site(vec![Some(rep)]));
+        (host, lent)
+    };
+    let mut args: Vec<GuestArg<'_>> = lending().1.map(site).into_iter().collect();
     args.extend(take.amount().map(GuestArg::U64));
 
-    let mut dual = GUEST.instantiate(FUEL, build)?;
+    let mut dual = GUEST.instantiate(FUEL, || lending().0)?;
     let produced = dual.invoke_both(take.export(), &args)?;
     let (blessed, reference) = dual.finish()?;
     let (mut blessed, mut reference) = (blessed.session, reference.session);

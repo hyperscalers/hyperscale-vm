@@ -446,6 +446,17 @@ pub enum AbortReason {
     /// write the state either way.
     #[hbor(discriminant = 72)]
     CrossingKeyRepeated,
+    /// A body named a handle the table holds and its frame was never
+    /// lent: a site bound for another node, or a bucket an earlier node
+    /// left in flight.
+    ///
+    /// The table is the whole transaction's and a handle is a number the
+    /// guest writes, so the entry exists; what bounds a body is its
+    /// frame, which resolves exactly the handles the walk lent it and the
+    /// ones it made while it ran. Distinct from an unknown handle so a
+    /// receipt says which fence answered.
+    #[hbor(discriminant = 73)]
+    HandleOutsideFrame,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -743,6 +754,7 @@ mod tests {
             (69, AbortReason::EscrowRecordUnreadable),
             (71, AbortReason::OutsideScope),
             (72, AbortReason::CrossingKeyRepeated),
+            (73, AbortReason::HandleOutsideFrame),
         ];
         for (byte, reason) in classes {
             assert_eq!(

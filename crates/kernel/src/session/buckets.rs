@@ -10,12 +10,19 @@
 //! the whole transaction, answered once at the close over the table as a
 //! whole — so a body that lets a full bucket go and a body that holds one
 //! to the end meet the same verdict rather than two.
+//!
+//! The table is the transaction's and a rep is a number a guest writes,
+//! so what keeps a frame to its own buckets is its [`Reach`]: the edges
+//! the walk lent it and the buckets it opened itself. Every resolution
+//! of a rep passes through that fence, so a bucket an earlier node left
+//! in flight is a number the next frame can write and cannot resolve.
 
 use std::collections::BTreeSet;
 
 use hyperscale_vm_types::ResourceAddr;
 use hyperscale_vm_types::math::{MathError, Rounding, U256, mul_div};
 
+use super::reach::Reach;
 use super::{KernelSession, SessionTrap};
 
 /// What a bucket carries.
@@ -83,10 +90,30 @@ pub(super) struct Buckets {
     /// came off. A bucket that could carry nothing in particular would
     /// be one every destination had to admit.
     resources: Vec<ResourceAddr>,
+    /// The reps the executing frame may resolve.
+    reach: Reach,
 }
 
 impl Buckets {
-    /// Open a bucket carrying `held`, returning its rep.
+    /// Enter a frame: it resolves only what it is lent from here on and
+    /// what it opens.
+    pub(super) fn enter_frame(&mut self) {
+        self.reach.enter();
+    }
+
+    /// Leave the frame: the whole table is the kernel's to resolve
+    /// again.
+    pub(super) fn leave_frame(&mut self) {
+        self.reach.leave();
+    }
+
+    /// Lend the bucket at `rep` to the executing frame.
+    pub(super) fn lend(&mut self, rep: u32) {
+        self.reach.lend(rep);
+    }
+
+    /// Open a bucket carrying `held`, returning its rep. What a frame
+    /// opens is the frame's.
     ///
     /// # Panics
     ///
@@ -97,20 +124,38 @@ impl Buckets {
         let rep = u32::try_from(self.slots.len()).expect("bounded");
         self.slots.push(Some(held));
         self.resources.push(resource);
+        self.reach.lend(rep);
         rep
+    }
+
+    /// The slot of the live bucket at `rep`, once the frame is held to
+    /// it.
+    ///
+    /// Existence is judged before reach, so a rep naming nothing answers
+    /// as unknown whoever asks, and a rep naming a bucket the frame was
+    /// never lent answers as outside the frame.
+    fn live(&self, rep: u32) -> Result<usize, SessionTrap> {
+        let index = usize::try_from(rep)
+            .ok()
+            .filter(|index| self.slots.get(*index).is_some_and(Option::is_some))
+            .ok_or(SessionTrap::UnknownHandle(rep))?;
+        if self.reach.holds(rep) {
+            Ok(index)
+        } else {
+            Err(SessionTrap::OutsideFrame(rep))
+        }
     }
 
     /// What the bucket at `rep` carries.
     ///
     /// # Errors
     ///
-    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
+    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket;
+    /// [`SessionTrap::OutsideFrame`] for one the frame was not lent.
     pub(super) fn get(&self, rep: u32) -> Result<Held, SessionTrap> {
-        usize::try_from(rep)
-            .ok()
-            .and_then(|index| self.slots.get(index))
-            .cloned()
-            .flatten()
+        let index = self.live(rep)?;
+        self.slots[index]
+            .clone()
             .ok_or(SessionTrap::UnknownHandle(rep))
     }
 
@@ -133,13 +178,19 @@ impl Buckets {
     ///
     /// # Errors
     ///
-    /// [`SessionTrap::UnknownHandle`] for a rep past the table.
+    /// [`SessionTrap::UnknownHandle`] for a rep past the table;
+    /// [`SessionTrap::OutsideFrame`] for one the frame was not lent.
     pub(super) fn resource_of(&self, rep: u32) -> Result<ResourceAddr, SessionTrap> {
-        usize::try_from(rep)
+        let resource = usize::try_from(rep)
             .ok()
             .and_then(|index| self.resources.get(index))
             .copied()
-            .ok_or(SessionTrap::UnknownHandle(rep))
+            .ok_or(SessionTrap::UnknownHandle(rep))?;
+        if self.reach.holds(rep) {
+            Ok(resource)
+        } else {
+            Err(SessionTrap::OutsideFrame(rep))
+        }
     }
 
     /// Take the bucket at `rep` out of the table: the kernel holds the
@@ -147,12 +198,12 @@ impl Buckets {
     ///
     /// # Errors
     ///
-    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket.
+    /// [`SessionTrap::UnknownHandle`] for a rep naming no live bucket;
+    /// [`SessionTrap::OutsideFrame`] for one the frame was not lent.
     pub(super) fn take(&mut self, rep: u32) -> Result<Held, SessionTrap> {
-        usize::try_from(rep)
-            .ok()
-            .and_then(|index| self.slots.get_mut(index))
-            .and_then(Option::take)
+        let index = self.live(rep)?;
+        self.slots[index]
+            .take()
             .ok_or(SessionTrap::UnknownHandle(rep))
     }
 
