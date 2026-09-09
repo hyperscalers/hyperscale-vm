@@ -552,7 +552,7 @@ fn arg<'a>(args: &'a [GuestArg<'a>], at: usize) -> &'a GuestArg<'a> {
 
 /// The site at `at`.
 ///
-/// An argument of the wrong shape is the canonical ABI's own violation,
+/// An argument of the wrong shape is the boundary's own violation,
 /// reached here by the same route: the export's parameter list is a
 /// function of its signature, so anything but a site here is a
 /// composition that never should have been assembled. What the

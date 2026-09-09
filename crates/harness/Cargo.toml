@@ -18,7 +18,6 @@ hyperscale-vm-runtime = { workspace = true, features = ["engine"] }
 # GuestBackend over a component set", shared with every consumer.
 hyperscale-vm-testing.workspace = true
 wasmtime.workspace = true
-wit-component.workspace = true
 
 [dev-dependencies]
 arbitrary.workspace = true

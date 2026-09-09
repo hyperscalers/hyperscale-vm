@@ -15,38 +15,17 @@ use hyperscale_vm_gate::{admit_package, attach_metadata};
 use hyperscale_vm_types::Moves;
 use wat::parse_str;
 
-/// A component whose one export takes `param`, spelled as the state
-/// interface exports the resource it borrows — or as a plain `u64`,
-/// which is what a derived value crosses as.
+/// A module whose one export takes `param`: an `i32` for a site the
+/// binding borrows, or an `i64` for the scalar a derived value crosses
+/// as.
 fn taking(resource: Option<&str>) -> Vec<u8> {
-    let (import, param, core) = resource.map_or_else(
-        || (String::new(), "u64", "i64"),
-        |resource| {
-            (
-                format!(
-                    r#"(import "hyperscale:kernel/state" (instance $state
-    (export "{resource}" (type $c (sub resource)))))
-  (alias export $state "{resource}" (type $site))"#
-                ),
-                "(borrow $site)",
-                "i32",
-            )
-        },
-    );
+    let core = if resource.is_some() { "i32" } else { "i64" };
     let source = format!(
-        r#"
-(component
-  {import}
-  (core module $m
-    (func (export "m") (param {core}))
-    (func (export "seal")))
-  (core instance $i (instantiate $m))
-  (func (export "instantiate") (canon lift (core func $i "seal")))
-  (func (export "m") (param "r" {param})
-    (canon lift (core func $i "m"))))
-"#
+        "(module\n  (memory (export \"memory\") 1 1)\n  \
+         (func (export \"m\") (param {core}))\n  \
+         (func (export \"instantiate\")))"
     );
-    parse_str(&source).expect("the component assembles")
+    parse_str(&source).expect("the module assembles")
 }
 
 /// One `for-each` over a caller's list, writing a cell the element keys,
@@ -87,30 +66,32 @@ fn spreading(abi: Vec<AbiParam>) -> PackageMetadata {
 }
 
 #[test]
-fn a_derived_value_does_not_fill_a_site_parameter() {
-    // A site is a borrow on what the kernel owns, and a derived value is
-    // a copy the declaration evaluated — so nothing about the two lines
-    // up, and the mismatch is refused where every other capability
-    // parameter's is.
-    let artifact = attach_metadata(
-        &taking(Some("site")),
-        &spreading(vec![AbiParam::Derived(Expr::Arg(0))]),
-    )
-    .expect("attaches");
-    let refused =
-        admit_package(&artifact).expect_err("a derived value cannot fill a resource borrow");
-    assert_eq!(refused.method.as_deref(), Some("m"), "{refused}");
-    assert!(refused.message.contains("derived"), "{refused}");
-
-    // And the binding it does fill, so the refusal above is about the
-    // parameter's shape rather than about the binding.
+fn a_site_parameter_is_held_to_its_width() {
+    // A site crosses as its index, and a derived value as a scalar or a
+    // register's length: an `i32` takes either, and which it is the
+    // kernel judges at every operation. What the export type does say
+    // is the width, so a handle bound to a scalar parameter is refused
+    // where every other capability parameter's mismatch is.
     let artifact = attach_metadata(
         &taking(None),
-        &spreading(vec![AbiParam::Derived(Expr::Arg(0))]),
+        &spreading(vec![AbiParam::Handle { clause: 0, site: 0 }]),
     )
     .expect("attaches");
-    assert!(
-        admit_package(&artifact).is_ok(),
-        "a derived value as a scalar"
-    );
+    let refused = admit_package(&artifact).expect_err("a handle cannot fill a scalar");
+    assert_eq!(refused.method.as_deref(), Some("m"), "{refused}");
+    assert!(refused.message.contains("capability handle"), "{refused}");
+
+    // The same binding fills a parameter of its own width, and so does a
+    // derived value of either width.
+    for (module, abi) in [
+        (
+            taking(Some("site")),
+            vec![AbiParam::Handle { clause: 0, site: 0 }],
+        ),
+        (taking(Some("site")), vec![AbiParam::Derived(Expr::Arg(0))]),
+        (taking(None), vec![AbiParam::Derived(Expr::Arg(0))]),
+    ] {
+        let artifact = attach_metadata(&module, &spreading(abi)).expect("attaches");
+        assert!(admit_package(&artifact).is_ok());
+    }
 }

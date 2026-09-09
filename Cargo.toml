@@ -61,10 +61,6 @@ trybuild = "1.0.120"
 wasm-smith = "0.254.0"
 wasmparser = "0.254.0"
 wat = "=1.254.0"
-wit-component = "0.254.0"
-# The guest bindings generator, pinned exactly like the guest toolchain and
-# for the same reason: what it emits is part of a consensus artifact.
-wit-bindgen = "=0.60.0"
 # The blessed engine, pinned exactly to the 48 LTS. Upgrades are deliberate
 # protocol events, never dependency drift.
 wasmtime = { version = "=48.0.0", features = ["component-model", "winch", "pulley"] }

@@ -22,16 +22,18 @@ use hyperscale_vm_kernel::{
     Capability, EnvInputs, GuestArg, Invoked, KernelSession, MemoryStore, Receipt,
 };
 use hyperscale_vm_runtime::{
-    InstantiationCharges, add_kernel_to_linker, blessed_config, blessed_engine,
-    instantiate_charged, instantiation_charges, invoke_export,
+    InstantiationCharges, Invoking, add_kernel_imports, blessed_config, blessed_engine,
+    instantiate_charged, invoke_module, module_instantiation_charges,
 };
 use hyperscale_vm_stdlib::{account_artifact, staking_artifact};
 use hyperscale_vm_types::{
     Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, ResourceAddr, SubstateKey,
     TxHash, encode_amount,
 };
-use wasmtime::component::{Component, InstancePre, Linker};
-use wasmtime::{Engine, InstanceAllocationStrategy, PoolingAllocationConfig, Result, Store};
+use wasmtime::{
+    Engine, InstanceAllocationStrategy, InstancePre, Linker, Module, PoolingAllocationConfig,
+    Result, Store,
+};
 use wat::parse_str;
 
 const FUEL: u64 = 1_000_000_000;
@@ -84,11 +86,11 @@ fn session(base: &MemoryStore) -> KernelSession {
 /// charge-replayed instantiation.
 fn one_instantiation(
     engine: &Engine,
-    pre: &InstancePre<KernelSession>,
+    pre: &InstancePre<Invoking<KernelSession>>,
     charges: &InstantiationCharges,
     base: &MemoryStore,
 ) -> Result<()> {
-    let mut store = Store::new(engine, session(base));
+    let mut store = Store::new(engine, Invoking::new(session(base)));
     instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
     Ok(())
 }
@@ -168,7 +170,7 @@ fn transfer_session() -> KernelSession {
 /// charged instantiations, withdraw then deposit, then the receipt.
 fn one_transfer(
     engine: &Engine,
-    pre: &InstancePre<KernelSession>,
+    pre: &InstancePre<Invoking<KernelSession>>,
     charges: &InstantiationCharges,
 ) -> Result<Receipt> {
     let session = transfer_session();
@@ -177,9 +179,9 @@ fn one_transfer(
         &session,
         |c| matches!(c, Capability::Reserve { key, .. } if *key == sender_key),
     );
-    let mut store = Store::new(engine, session);
+    let mut store = Store::new(engine, Invoking::new(session));
     let instance = instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
-    let withdraw = invoke_export(
+    let withdraw = invoke_module(
         &mut store,
         &instance,
         "withdraw",
@@ -191,7 +193,7 @@ fn one_transfer(
     };
     let funds = reps[0];
 
-    let mut session = store.into_data();
+    let mut session = store.into_data().into_host();
     session.enter_invocation(RECIPIENT);
     let recipient_key = child_key(&TestHasher, RECIPIENT, SlotId(1), &[]);
     let recipient_rep = rep_where(&session, |c| {
@@ -207,9 +209,9 @@ fn one_transfer(
             moves: Moves::Both,
         }
     });
-    let mut store = Store::new(engine, session);
+    let mut store = Store::new(engine, Invoking::new(session));
     let instance = instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
-    let deposit = invoke_export(
+    let deposit = invoke_module(
         &mut store,
         &instance,
         "deposit",
@@ -233,6 +235,7 @@ fn one_transfer(
 
     let (receipt, _) = store
         .into_data()
+        .into_host()
         .finish(vec![], withdraw.fuel + deposit.fuel)
         .expect("oracle clean");
     Ok(receipt)
@@ -255,13 +258,13 @@ fn measure(label: &str, mut f: impl FnMut() -> Result<()>) -> Result<f64> {
 fn compiled(
     engine: &Engine,
     artifact: &[u8],
-) -> Result<(InstancePre<KernelSession>, InstantiationCharges)> {
-    let component = Component::new(engine, artifact)?;
-    let mut linker = Linker::<KernelSession>::new(engine);
-    add_kernel_to_linker(&mut linker)?;
+) -> Result<(InstancePre<Invoking<KernelSession>>, InstantiationCharges)> {
+    let module = Module::new(engine, artifact)?;
+    let mut linker = Linker::<Invoking<KernelSession>>::new(engine);
+    add_kernel_imports(&mut linker)?;
     Ok((
-        linker.instantiate_pre(&component)?,
-        instantiation_charges(artifact)?,
+        linker.instantiate_pre(&module)?,
+        module_instantiation_charges(artifact)?,
     ))
 }
 
@@ -280,17 +283,16 @@ fn per_invocation_allocation_cost() -> Result<()> {
         Ok(())
     })?;
 
-    // Decomposition guests: the component machinery alone, and one linear
-    // memory on top of it.
-    let empty_wat = parse_str("(component)")?;
-    let memory_wat =
-        parse_str("(component (core module $m (memory 1)) (core instance (instantiate $m)))")?;
+    // Decomposition guests: an empty module, and one linear memory on
+    // top of it.
+    let empty_wat = parse_str("(module)")?;
+    let memory_wat = parse_str("(module (memory (export \"memory\") 1 1))")?;
     let probes: [(&str, &[u8]); 2] = [("empty", &empty_wat), ("one memory", &memory_wat)];
 
     let mut ceiling_checks = vec![("session", session_only)];
     for (config_label, engine) in &engines()? {
         let store_only = measure(&format!("{config_label} store only"), || {
-            let _ = Store::new(engine, session(&base));
+            let _ = Store::new(engine, Invoking::new(session(&base)));
             Ok(())
         })?;
         ceiling_checks.push(("store", store_only));

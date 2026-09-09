@@ -453,13 +453,29 @@ impl DualModule {
         budget: u64,
         session: impl Fn() -> KernelSession,
     ) -> Result<DualModuleInstance<'_>> {
+        self.instantiate_pair(budget, session(), session())
+    }
+
+    /// As [`Self::instantiate`], over the sessions an earlier step handed
+    /// back — how a lane threads one transaction across several
+    /// invocations.
+    ///
+    /// # Errors
+    ///
+    /// Fails where either engine refuses to instantiate.
+    pub fn instantiate_pair(
+        &self,
+        budget: u64,
+        blessed: KernelSession,
+        reference: KernelSession,
+    ) -> Result<DualModuleInstance<'_>> {
         let mut linker = ModuleLinker::<Invoking<KernelSession>>::new(&self.engine);
         add_kernel_imports(&mut linker)?;
-        let mut store = Store::new(&self.engine, Invoking::new(session()));
+        let mut store = Store::new(&self.engine, Invoking::new(blessed));
         let instance = instantiate_charged(&mut store, budget, &self.charges, |s| {
             linker.instantiate(s, &self.module)
         })?;
-        let reference = RefModuleInstance::instantiate(&self.reference, session(), budget)
+        let reference = RefModuleInstance::instantiate(&self.reference, reference, budget)
             .map_err(|(_, error)| format_err!("reference instantiation: {error}"))?;
         Ok(DualModuleInstance {
             budget,

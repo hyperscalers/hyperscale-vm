@@ -124,6 +124,7 @@ fn call(export: &str, edges: usize, outputs: usize) -> NodeCall {
             .collect(),
         edges: Vec::new(),
         outputs: vec![EdgeContent::Fungible; outputs],
+        answers: false,
         issues: Vec::new(),
         evidence: Vec::new(),
         requires: Vec::new(),

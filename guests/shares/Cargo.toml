@@ -11,7 +11,6 @@ module = "shares_guest::shares"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wit-bindgen.workspace = true
 hyperscale-vm-sdk.workspace = true
 
 [dev-dependencies]

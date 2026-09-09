@@ -8,9 +8,9 @@
 //! different order would pass its own tests while the artifact it stands
 //! for did something else.
 
+use crate::abi::Shape;
 use crate::lower::{Lowered, Need, flag_ident, handle_ident, value_ident};
 use crate::term::Term;
-use crate::wit::{Shape, Socket};
 use crate::{is_address, is_named};
 
 /// What one export parameter carries.
@@ -38,8 +38,8 @@ pub enum Carries {
 /// One export parameter: what the world calls it, and what a target has
 /// to bind for the body to read it.
 pub struct Binding {
-    /// The parameter the WIT document declares.
-    pub param: Socket,
+    /// What the parameter carries across the boundary.
+    pub param: Shape,
     /// The identifier the parameter arrives under.
     pub ident: syn::Ident,
     /// What it carries.
@@ -320,12 +320,9 @@ pub fn bindings(
 ) -> Vec<Binding> {
     let mut bindings = Vec::new();
 
-    for (position, site) in lowered.handles.iter().copied().enumerate() {
+    for site in lowered.handles.iter().copied() {
         bindings.push(Binding {
-            param: Socket {
-                name: format!("handle-{position}"),
-                shape: Shape::Handle,
-            },
+            param: Shape::Handle,
             ident: handle_ident(site),
             carries: Carries::Handle,
         });
@@ -333,10 +330,7 @@ pub fn bindings(
 
     for position in 0..lowered.flags.len() {
         bindings.push(Binding {
-            param: Socket {
-                name: format!("flag-{position}"),
-                shape: Shape::Flag,
-            },
+            param: Shape::Flag,
             ident: flag_ident(position),
             carries: Carries::Flag,
         });
@@ -359,10 +353,7 @@ pub fn bindings(
             },
         };
         bindings.push(Binding {
-            param: Socket {
-                name: format!("value-{position}"),
-                shape,
-            },
+            param: shape,
             ident: value_ident(position),
             carries,
         });

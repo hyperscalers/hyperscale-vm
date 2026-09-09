@@ -18,8 +18,9 @@ use hyperscale_vm_effects::{
     Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, Value, child_key,
     collection_id, order_key, package_slot,
 };
+use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, SHIPPED as FIXTURES, lottery};
-use hyperscale_vm_harness::dual::DualGuest;
+use hyperscale_vm_harness::dual::DualModule;
 #[cfg(target_os = "linux")]
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::fixtures::repo_root;
@@ -27,8 +28,7 @@ use hyperscale_vm_kernel::{
     Capability, DOMAIN_SEALED_DRAW, EnvInputs, Interval, KernelSession, MemoryStore, OverlayStore,
     Receipt,
 };
-use hyperscale_vm_ref::{CVal, HandleKind};
-use hyperscale_vm_runtime::validate_component;
+use hyperscale_vm_runtime::validate_module;
 use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_sdk::state::Word;
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, SHIPPED as PROTOCOL, STAKING_COMPONENT};
@@ -159,8 +159,8 @@ fn finish(session: KernelSession, fuel: u64) -> Receipt {
 }
 
 /// The account blob in both engines' forms, compiled once per binary.
-static ACCOUNT: LazyLock<DualGuest> = LazyLock::new(|| {
-    DualGuest::compile(ACCOUNT_COMPONENT).expect("the committed account blob compiles")
+static ACCOUNT: LazyLock<DualModule> = LazyLock::new(|| {
+    DualModule::compile(ACCOUNT_COMPONENT).expect("the committed account blob compiles")
 });
 
 /// Withdraw, deposit, then the pinned balance guard — one instantiation
@@ -179,9 +179,15 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
     let mut dual = ACCOUNT.instantiate(FUEL, || entering(session(), SENDER))?;
     // The grant is the bucket, so the withdrawal names no amount and
     // what comes back is the value itself rather than a reading of it.
-    let funds = dual
-        .invoke_both("withdraw", &[CVal::Borrow(sender_rep, HandleKind::Site)])?
-        .bucket()?;
+    let Invoked::Produced { edges, .. } = dual
+        .invoke_both("withdraw", &[GuestArg::Site { site: sender_rep }])?
+        .result
+    else {
+        panic!("the withdrawal hands its grant back")
+    };
+    let [funds] = edges[..] else {
+        panic!("one edge")
+    };
     let (blessed, reference) = dual.finish()?;
     let withdraw_fuel = blessed.fuel;
 
@@ -207,10 +213,14 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
     dual.invoke_both(
         "deposit",
         &[
-            CVal::Borrow(flag_rep, HandleKind::Site),
-            CVal::Borrow(quarantine_rep, HandleKind::Site),
-            CVal::Borrow(recipient_rep, HandleKind::Site),
-            CVal::Own(funds),
+            GuestArg::Site { site: flag_rep },
+            GuestArg::Site {
+                site: quarantine_rep,
+            },
+            GuestArg::Site {
+                site: recipient_rep,
+            },
+            GuestArg::Bucket(funds),
         ],
     )?;
     let (blessed, reference) = dual.finish()?;
@@ -554,8 +564,8 @@ fn settled() -> Vec<u8> {
 }
 
 /// The lottery blob in both engines' forms, compiled once per binary.
-static LOTTERY_GUEST: LazyLock<DualGuest> = LazyLock::new(|| {
-    DualGuest::compile(LOTTERY_COMPONENT).expect("the committed lottery blob compiles")
+static LOTTERY_GUEST: LazyLock<DualModule> = LazyLock::new(|| {
+    DualModule::compile(LOTTERY_COMPONENT).expect("the committed lottery blob compiles")
 });
 
 /// Settle a closed round, on both runtimes at once.
@@ -578,9 +588,9 @@ fn dual_round() -> Result<(Receipt, u64)> {
     dual.invoke_both(
         "settle",
         &[
-            CVal::Borrow(seal_rep, HandleKind::Site),
-            CVal::Borrow(tickets_rep, HandleKind::Site),
-            CVal::Borrow(outcome_rep, HandleKind::Site),
+            GuestArg::Site { site: seal_rep },
+            GuestArg::Site { site: tickets_rep },
+            GuestArg::Site { site: outcome_rep },
         ],
     )?;
     let (blessed, reference) = dual.finish()?;
@@ -605,7 +615,7 @@ fn dual_round() -> Result<(Receipt, u64)> {
 /// byte-identical across the two, at identical fuel.
 #[test]
 fn the_committed_lottery_settles_a_round_identically_on_both_runtimes() -> Result<()> {
-    validate_component(LOTTERY_COMPONENT).context("profile validation of the committed blob")?;
+    validate_module(LOTTERY_COMPONENT).context("profile validation of the committed blob")?;
 
     let (blessed_receipt, _) = dual_round()?;
     assert_eq!(

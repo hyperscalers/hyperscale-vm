@@ -36,7 +36,6 @@ fn manifest(name: &str, sdk: &str, testing: &str) -> String {
          crate-type = [\"cdylib\", \"rlib\"]\n\
          \n\
          [dependencies]\n\
-         wit-bindgen = \"=0.60.0\"\n\
          hyperscale-vm-sdk = {sdk}\n\
          \n\
          [dev-dependencies]\n\
@@ -357,7 +356,6 @@ fn member_manifest(name: &str) -> String {
          crate-type = [\"cdylib\", \"rlib\"]\n\
          \n\
          [dependencies]\n\
-         wit-bindgen.workspace = true\n\
          hyperscale-vm-sdk.workspace = true\n\
          \n\
          [dev-dependencies]\n\
@@ -503,22 +501,6 @@ mod tests {
             super::CARGO_CONFIG,
             include_str!("../../../guests/.cargo/config.toml"),
             "the scaffold ships new authors the workspace's own link terms"
-        );
-    }
-
-    /// The third pin the standalone manifest restates: the codegen
-    /// crate's exact version, which the member shape inherits and the
-    /// standalone one has to say for itself.
-    #[test]
-    fn the_scaffolded_wit_bindgen_pin_is_the_guests_workspaces_own() {
-        let pin = |text: &str| {
-            let at = text.find("wit-bindgen = ").expect("a wit-bindgen pin");
-            text[at..].lines().next().expect("a line").to_owned()
-        };
-        assert_eq!(
-            pin(&super::manifest("probe", "\"0\"", "\"0\"")),
-            pin(include_str!("../../../guests/Cargo.toml")),
-            "the scaffold ships new authors the workspace's own codegen terms"
         );
     }
 

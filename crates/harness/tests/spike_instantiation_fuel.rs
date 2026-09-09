@@ -18,10 +18,9 @@
 //! every platform.
 
 use hyperscale_vm_fixtures::artifacts;
-use hyperscale_vm_runtime::{blessed_engine, instantiation_charges, module_instantiation_charges};
+use hyperscale_vm_runtime::{blessed_engine, module_instantiation_charges};
 use hyperscale_vm_stdlib::{ACCOUNT_COMPONENT, STAKING_COMPONENT};
-use wasmtime::component::{Component, Linker};
-use wasmtime::{Instance, Module, Ref, RefType, Result, Store, Table, TableType};
+use wasmtime::{Instance, Linker, Module, Ref, RefType, Result, Store, Table, TableType};
 use wat::parse_str;
 
 fn instantiation_fuel(wat: &str) -> Result<u64> {
@@ -99,23 +98,21 @@ fn imported_table_elements_charge_the_init_entry_only() -> Result<()> {
 
 #[test]
 fn committed_artifacts_charge_what_the_derivation_says() -> Result<()> {
-    // The engine instantiates whatever the compiled component links — the
-    // artifact's own core modules plus any fused adapters it synthesizes —
-    // while the derivation walks only the artifact's own core
-    // instantiations, so equality over the committed corpus proves the
-    // rest charges nothing. Instantiation calls no import, so trapping
-    // stubs stand in for the kernel world.
+    // The derivation reads the committed module's own segments, and
+    // equality over the committed corpus proves the engine charges
+    // nothing beyond them. Instantiation calls no import, so trapping
+    // stubs stand in for the kernel.
     let engine = blessed_engine()?;
     let mut corpus: Vec<&[u8]> = vec![ACCOUNT_COMPONENT, STAKING_COMPONENT];
     corpus.extend(artifacts());
     for bytes in corpus {
-        let derived = instantiation_charges(bytes)?.total();
-        let component = Component::new(&engine, bytes)?;
+        let derived = module_instantiation_charges(bytes)?.total();
+        let module = Module::new(&engine, bytes)?;
         let mut linker: Linker<()> = Linker::new(&engine);
-        linker.define_unknown_imports_as_traps(&component)?;
+        linker.define_unknown_imports_as_traps(&module)?;
         let mut store = Store::new(&engine, ());
         store.set_fuel(1_000_000)?;
-        linker.instantiate(&mut store, &component)?;
+        linker.instantiate(&mut store, &module)?;
         assert_eq!(1_000_000 - store.get_fuel()?, derived);
     }
     Ok(())

@@ -8,7 +8,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -32,7 +31,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -104,7 +102,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -122,7 +119,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -383,7 +379,6 @@ dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
  "security-guest",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -493,7 +488,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -635,7 +629,6 @@ name = "grammar-guest"
 version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -690,7 +683,6 @@ dependencies = [
  "hyperscale-vm-types",
  "serde_json",
  "thiserror 2.0.20",
- "wit-component",
 ]
 
 [[package]]
@@ -761,7 +753,6 @@ dependencies = [
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-sdk-macros",
  "hyperscale-vm-types",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -898,7 +889,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -939,7 +929,6 @@ name = "lottery-guest"
 version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -947,17 +936,6 @@ name = "mach2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
-
-[[package]]
-name = "macro-string"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59a9dbbfc75d2688ed057456ce8a3ee3f48d12eec09229f560f3643b9f275653"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
 
 [[package]]
 name = "memchr"
@@ -977,9 +955,6 @@ dependencies = [
 [[package]]
 name = "nf-guest"
 version = "0.0.0"
-dependencies = [
- "wit-bindgen",
-]
 
 [[package]]
 name = "object"
@@ -1005,7 +980,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -1014,7 +988,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -1023,7 +996,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -1058,16 +1030,6 @@ dependencies = [
  "embedded-io 0.4.0",
  "embedded-io 0.6.1",
  "serde",
-]
-
-[[package]]
-name = "prettyplease"
-version = "0.2.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
-dependencies = [
- "proc-macro2",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -1166,9 +1128,6 @@ dependencies = [
 [[package]]
 name = "registry-guest"
 version = "0.0.0"
-dependencies = [
- "wit-bindgen",
-]
 
 [[package]]
 name = "rustc-demangle"
@@ -1207,7 +1166,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -1289,7 +1247,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -1324,7 +1281,6 @@ name = "staking-guest"
 version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -1490,7 +1446,6 @@ version = "0.0.0"
 dependencies = [
  "hyperscale-vm-sdk",
  "hyperscale-vm-testing",
- "wit-bindgen",
 ]
 
 [[package]]
@@ -1986,59 +1941,6 @@ name = "winnow"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
-
-[[package]]
-name = "wit-bindgen"
-version = "0.60.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a301904d6657d6364c758d869e5389d05d393b16d5b65db60b4f03cbe71bb80d"
-dependencies = [
- "bitflags",
- "wit-bindgen-rust-macro",
-]
-
-[[package]]
-name = "wit-bindgen-core"
-version = "0.60.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48521bb96e56cbb9e031ad306c80dc20e89e69e49ada02781ee06f60fbcb545f"
-dependencies = [
- "anyhow",
- "heck",
- "wit-parser",
-]
-
-[[package]]
-name = "wit-bindgen-rust"
-version = "0.60.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3df3fe9b9a0066f82fd0c2f07f79d0ffc0f85c53fa5f998516d8722712479042"
-dependencies = [
- "anyhow",
- "heck",
- "indexmap",
- "prettyplease",
- "syn 2.0.119",
- "wasm-metadata",
- "wit-bindgen-core",
- "wit-component",
-]
-
-[[package]]
-name = "wit-bindgen-rust-macro"
-version = "0.60.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d689c4bc9d6af067c651cfba444766343c9a4bdef15fad1e2efab95c0c277af0"
-dependencies = [
- "anyhow",
- "macro-string",
- "prettyplease",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
- "wit-bindgen-core",
- "wit-bindgen-rust",
-]
 
 [[package]]
 name = "wit-component"

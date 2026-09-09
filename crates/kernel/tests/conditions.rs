@@ -117,6 +117,7 @@ fn call(target: Address, evidence: Vec<Claim>, requires: Vec<Rule<JudgedLeaf>>) 
         args: Vec::new(),
         edges: Vec::new(),
         outputs: Vec::new(),
+        answers: false,
         issues: Vec::new(),
         evidence,
         requires,

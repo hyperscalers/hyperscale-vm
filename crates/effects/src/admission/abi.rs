@@ -202,6 +202,7 @@ pub(super) fn lower_call(
             .iter()
             .map(|(_, content)| content.clone())
             .collect(),
+        answers: signature.answers,
         issues,
         evidence: evidence.to_vec(),
         requires,

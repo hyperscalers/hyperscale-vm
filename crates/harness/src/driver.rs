@@ -1,4 +1,4 @@
-//! The dual-engine driver: one component registry, one execution per
+//! The dual-engine driver: one package registry, one execution per
 //! lane, one agreement assertion.
 //!
 //! Every batch fixture wants the same arrangement — the blessed engine
@@ -19,7 +19,7 @@ use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, ExecutionMode, GuestBackend, GuestCall, InvokeResult, KernelSession,
     ManifestWalk, MemoryStore, Receipt, decode_amount, execute_batch,
 };
-use hyperscale_vm_ref::{CVal, RefComponent, RefComponentInstance};
+use hyperscale_vm_ref::{RefModule, RefModuleInstance};
 use hyperscale_vm_testing::{Blessed, Dispatch, FUEL_CEILING, Native};
 use hyperscale_vm_types::{AbortReason, Address, Outcome, SubstateKey, encode_amount};
 
@@ -28,40 +28,36 @@ use hyperscale_vm_types::{AbortReason, Address, Outcome, SubstateKey, encode_amo
 /// same committed bytes the blessed lane compiled.
 #[derive(Default)]
 pub struct Reference {
-    components: BTreeMap<PackageHash, RefComponent>,
+    modules: BTreeMap<PackageHash, RefModule>,
 }
 
 impl Reference {
-    /// Decode a package's component bytes under the address a call
-    /// names them at.
+    /// Decode a package's module bytes under the address a call names
+    /// them at.
     ///
     /// # Panics
     ///
     /// Panics if the bytes do not decode — a fixture defect, not a
     /// runtime condition.
-    pub fn seed(&mut self, package: PackageHash, component: &[u8]) {
-        self.components.insert(
+    pub fn seed(&mut self, package: PackageHash, module: &[u8]) {
+        self.modules.insert(
             package,
-            RefComponent::decode(component).expect("a seeded package decodes"),
+            RefModule::decode(module).expect("a seeded package decodes"),
         );
     }
 }
 
 impl GuestBackend for Reference {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
-        let component = self
-            .components
+        let module = self
+            .modules
             .get(&call.package)
             .expect("the call names a seeded package");
-        let args: Vec<CVal> = call.args.iter().map(CVal::from).collect();
-        let mut instance = RefComponentInstance::instantiate(
-            component,
-            session,
-            call.fuel_budget.min(FUEL_CEILING),
-        )
-        .map_err(|(_, error)| error)
-        .expect("a seeded package instantiates");
-        let end = instance.invoke_kernel(call.export, &args);
+        let mut instance =
+            RefModuleInstance::instantiate(module, session, call.fuel_budget.min(FUEL_CEILING))
+                .map_err(|(_, error)| error)
+                .expect("a seeded package instantiates");
+        let end = instance.invoke(call.export, call.args);
         InvokeResult {
             session: instance.into_host(),
             fuel: end.fuel,
@@ -93,12 +89,12 @@ impl Lanes {
         }
     }
 
-    /// Seed one package's component bytes on both engine lanes: the
+    /// Seed one package's module bytes on both engine lanes: the
     /// blessed lane validates and compiles them, the reference lane
     /// decodes them.
-    pub fn seed(&mut self, package: PackageHash, component: &[u8]) {
-        self.blessed.seed(package, component);
-        self.reference.seed(package, component);
+    pub fn seed(&mut self, package: PackageHash, module: &[u8]) {
+        self.blessed.seed(package, module);
+        self.reference.seed(package, module);
     }
 
     /// Seed the package's own native body as the third lane.

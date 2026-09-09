@@ -97,6 +97,8 @@ use wasmparser::{
     FunctionBody, Instance, InstantiationArgKind, Operator, Parser, Payload, TypeRef,
 };
 
+use crate::profile;
+
 /// The kernel-world imports a total body may call, each with the
 /// invariant that discharges its refusals before the body starts.
 ///
@@ -309,6 +311,77 @@ pub fn check_method(artifact: &[u8], method: &str) -> Result<(), TotalityError> 
     let shim = parsed.shim_closure(&wiring.abi_support(module))?;
     let undischarged = wiring.undischarged_imports(artifact, instance, &parsed.imports);
     parsed.walk(entry, &shim, &undischarged)
+}
+
+/// Whether the method a core module exports as `method` can carry the
+/// mark.
+///
+/// The body is the export itself, resolved by name in the one module,
+/// and every import is a kernel function: discharged where the
+/// declaration settles its refusals before the body runs, undischarged
+/// otherwise.
+///
+/// What is set aside is the register collects. A function that collects
+/// a register — one whose body calls the boundary's `take` or `arg` —
+/// makes room for bytes the kernel already holds, and the allocation
+/// that makes room is the boundary's work on the same terms the
+/// canonical ABI's allocator was: linear memory is taken as safe, so
+/// the collector and everything it reaches are outside the scan. The
+/// entry itself is never a collector; a body that collects registers by
+/// hand is scanned whole.
+///
+/// # Errors
+///
+/// [`TotalityError::NoSuchExport`] if the module exports no such
+/// method, or whatever the walk from its body yields.
+pub fn check_module_method(module: &[u8], method: &str) -> Result<(), TotalityError> {
+    let parsed = Module::parse(module)?;
+    let entry = parsed
+        .export_named(method)
+        .ok_or_else(|| TotalityError::NoSuchExport(method.to_string()))?;
+    let undischarged = parsed
+        .imports
+        .iter()
+        .enumerate()
+        .filter(|(_, (module, name))| !discharged_import(module, name))
+        .filter_map(|(index, _)| u32::try_from(index).ok())
+        .collect();
+    let collects: BTreeSet<u32> = parsed
+        .imports
+        .iter()
+        .enumerate()
+        .filter(|(_, (module, name))| {
+            module.strip_prefix(profile::KERNEL_IMPORT_PREFIX) == Some("abi")
+                && matches!(name.as_str(), "take" | "arg")
+        })
+        .filter_map(|(index, _)| u32::try_from(index).ok())
+        .collect();
+    let imported = u32::try_from(parsed.imports.len()).unwrap_or(u32::MAX);
+    let mut collectors = Vec::new();
+    for index in imported..imported.saturating_add(u32::try_from(parsed.bodies.len()).unwrap_or(0))
+    {
+        if index != entry
+            && parsed
+                .callees(index)?
+                .iter()
+                .any(|callee| collects.contains(callee))
+        {
+            collectors.push(index);
+        }
+    }
+    let support = parsed.reachable(collectors, &BTreeSet::from([entry]))?;
+    parsed.walk(entry, &support, &undischarged)
+}
+
+/// Whether a kernel import's refusals are discharged before a total body
+/// runs.
+fn discharged_import(module: &str, name: &str) -> bool {
+    let Some(interface) = module.strip_prefix(profile::KERNEL_IMPORT_PREFIX) else {
+        return false;
+    };
+    interface == "abi"
+        || DISCHARGED.contains(&(interface, name))
+        || (interface == "state" && name == "bucket-drop")
 }
 
 /// One core function, as the component's index space names it.

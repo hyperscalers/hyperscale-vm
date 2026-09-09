@@ -11,5 +11,4 @@ module = "grammar_guest::grammar"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wit-bindgen.workspace = true
 hyperscale-vm-sdk.workspace = true

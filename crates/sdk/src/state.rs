@@ -823,7 +823,7 @@ pub struct Bucket {
     #[cfg(not(component))]
     rep: u32,
     #[cfg(component)]
-    handle: crate::guest::kernel::state::Bucket,
+    handle: crate::guest::BucketHandle,
 }
 
 impl Bucket {
@@ -835,14 +835,14 @@ impl Bucket {
     /// constructor a body can reach.
     #[cfg(component)]
     #[must_use]
-    pub const fn held(handle: crate::guest::kernel::state::Bucket) -> Self {
+    pub const fn held(handle: crate::guest::BucketHandle) -> Self {
         Self { handle }
     }
 
     /// The handle the kernel holds this value behind.
     #[cfg(component)]
     #[must_use]
-    pub fn into_handle(self) -> crate::guest::kernel::state::Bucket {
+    pub fn into_handle(self) -> crate::guest::BucketHandle {
         self.handle
     }
 
@@ -1002,14 +1002,14 @@ impl NfBucket {
     /// [`Bucket::held`] states.
     #[cfg(component)]
     #[must_use]
-    pub const fn held(handle: crate::guest::kernel::state::Bucket) -> Self {
+    pub const fn held(handle: crate::guest::BucketHandle) -> Self {
         Self(Bucket::held(handle))
     }
 
     /// The handle the kernel holds these instances behind.
     #[cfg(component)]
     #[must_use]
-    pub fn into_handle(self) -> crate::guest::kernel::state::Bucket {
+    pub fn into_handle(self) -> crate::guest::BucketHandle {
         self.0.into_handle()
     }
 

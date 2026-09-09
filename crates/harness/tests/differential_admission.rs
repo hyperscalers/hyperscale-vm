@@ -11,7 +11,7 @@
 use arbitrary::Unstructured;
 use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_ref::{RefComponent, RefModule};
-use hyperscale_vm_runtime::{validate_component, validate_core_module};
+use hyperscale_vm_runtime::{validate_component, validate_core_module, validate_module};
 use hyperscale_vm_stdlib::ACCOUNT_COMPONENT;
 use wasm_smith::{Config, Module as SmithModule};
 use wasmtime::Result;
@@ -179,16 +179,16 @@ fn typed_function_references_have_no_witness_and_no_admission() {
 
 #[test]
 fn every_admitted_component_decodes_under_the_spec() -> Result<()> {
-    // The hand-written world guest and the committed stdlib artifact are
-    // the two component shapes the profile actually ships.
     let wat = parse_str(KERNEL_GUEST_WAT)?;
-    for (name, bytes) in [
-        ("kernel-guest", wat.as_slice()),
-        ("stdlib", ACCOUNT_COMPONENT),
-    ] {
-        validate_component(bytes).unwrap_or_else(|e| panic!("{name} must validate: {e}"));
-        RefComponent::decode(bytes)
-            .unwrap_or_else(|e| panic!("{name} validates but the spec cannot decode it: {e}"));
-    }
+    validate_component(&wat).unwrap_or_else(|e| panic!("kernel-guest must validate: {e}"));
+    RefComponent::decode(&wat)
+        .unwrap_or_else(|e| panic!("kernel-guest validates but the spec cannot decode it: {e}"));
     Ok(())
+}
+
+#[test]
+fn the_committed_stdlib_module_decodes_under_the_spec() {
+    validate_module(ACCOUNT_COMPONENT).unwrap_or_else(|e| panic!("stdlib must validate: {e}"));
+    RefModule::decode(ACCOUNT_COMPONENT)
+        .unwrap_or_else(|e| panic!("stdlib validates but the spec cannot decode it: {e}"));
 }

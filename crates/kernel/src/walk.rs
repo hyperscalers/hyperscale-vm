@@ -276,6 +276,19 @@ fn settled(
                     ));
                 }
             }
+            // An answer is the declaration's to promise: a method that
+            // says it answers and hands nothing back, or hands something
+            // back it never declared, is a package whose code and
+            // signature part company, on the terms a wrong arity has.
+            if answer.is_some() != call.answers {
+                return Err(fail(
+                    session,
+                    Outcome::UserError {
+                        reason: AbortReason::BadReturnShape,
+                    },
+                    invoked.fuel,
+                ));
+            }
             // What a method answered with rides the receipt, so the
             // width one may carry is the vocabulary's rather than the
             // guest's. Refused here, where the value comes back, so an

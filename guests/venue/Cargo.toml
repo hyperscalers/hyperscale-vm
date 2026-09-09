@@ -11,7 +11,6 @@ module = "venue_guest::venue"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wit-bindgen.workspace = true
 hyperscale-vm-sdk.workspace = true
 
 [dev-dependencies]

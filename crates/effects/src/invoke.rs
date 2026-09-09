@@ -171,6 +171,11 @@ pub struct NodeCall {
     /// as the cell its ids frame — and the ids are the declaration's, so
     /// the walk holds the produced edge to exactly them.
     pub outputs: Vec<EdgeContent>,
+    /// Whether the method answers with a value beside its edges. An
+    /// export answers exactly when its signature says so, and the walk
+    /// holds the reply to it: a core signature cannot say it, so the
+    /// declaration is the only place it is written down.
+    pub answers: bool,
     /// The resources this node's method brings into or out of existence,
     /// in the order its declaration names them — which is the index its
     /// body passes.

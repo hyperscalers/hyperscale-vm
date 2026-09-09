@@ -2,22 +2,22 @@
 //!
 //! The sibling of [`crate::guest`], from one [`Lowered`] and one binding
 //! walk. What differs is only how a parameter arrives — a handle as the
-//! rep the kernel materialized rather than a resource the canonical ABI
-//! lent, a value as an assembled argument rather than a lifted one — and
-//! what an edge goes back as. Everything between is the author's text,
-//! unchanged, which is the whole reason this is worth having.
+//! rep the kernel materialized rather than the index an export receives,
+//! a value as an assembled argument rather than a register collected —
+//! and what an edge goes back as. Everything between is the author's
+//! text, unchanged, which is the whole reason this is worth having.
 //!
 //! Emitted for every crate that reads this package, and for a publisher
-//! on every build but the one that emits its artifact: a component has an
+//! on every build but the one that emits its artifact: a module has an
 //! engine to be called by and needs no dispatch of its own.
 
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use crate::abi::Shape;
 use crate::bind::{Binding, Carries, bindings};
 use crate::lower::Lowered;
 use crate::role::Role;
-use crate::wit::Shape;
 
 /// One method's arm of the package's dispatch.
 ///
@@ -59,7 +59,7 @@ pub fn arm(
                     let mut #name = ::hyperscale_vm_sdk::host::#reader(__args, #position);
                 )
             }
-            Carries::Value { narrow } => match param.shape {
+            Carries::Value { narrow } => match param {
                 Shape::Scalar => quote!(
                     let #ident = ::hyperscale_vm_sdk::host::scalar(__args, #position);
                 ),

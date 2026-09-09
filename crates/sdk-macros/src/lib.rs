@@ -203,6 +203,7 @@
 // the prefix is the only thing distinguishing "the contract's syntax" from
 // "the macro's model of it".
 #![allow(clippy::absolute_paths)]
+mod abi;
 mod bind;
 mod client;
 mod emit;
@@ -219,7 +220,6 @@ mod rule;
 mod state;
 mod syntax;
 mod term;
-mod wit;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1871,20 +1871,15 @@ fn module_allows(attrs: &mut Vec<syn::Attribute>, role: Role) {
 /// A reader builds no component: the declaration and the calling surface
 /// the same text yields are what it came for, and it runs the bodies
 /// through the dispatch rather than through wasm.
-fn executing(world: &str, methods: &[Lowered], role: Role) -> (TokenStream2, TokenStream2) {
+fn executing(methods: &[Lowered], role: Role) -> (TokenStream2, TokenStream2) {
     let arms: Vec<_> = methods.iter().map(|method| method.host.clone()).collect();
-    let component = if role.publishes() {
-        let shapes: Vec<_> = methods
-            .iter()
-            .map(|method| method.guest.export.clone())
-            .collect();
-        let document = wit::document(world, &shapes);
+    let exports = if role.publishes() {
         let exports: Vec<_> = methods.iter().map(|method| &method.guest).collect();
-        guest::component(world, &document, &exports)
+        guest::module(&exports)
     } else {
         quote!()
     };
-    (component, host::dispatch(&arms, role))
+    (exports, host::dispatch(&arms, role))
 }
 
 /// The denominated vault fields, as the client module's markers carry
@@ -2033,7 +2028,6 @@ fn expand(
 ) -> syn::Result<TokenStream2> {
     let span = module.span();
     let module_name = module.ident.clone();
-    let world = kebab(&module_name.to_string());
     let Some((_, items)) = &mut module.content else {
         return Err(syn::Error::new(
             span,
@@ -2097,7 +2091,7 @@ fn expand(
     let state_table = state_table(&fields, &config_fields);
     let config_table = config_fields.iter().map(|(name, _)| quote!(.config(#name)));
 
-    let (component, dispatch) = executing(&world, &methods, role);
+    let (component, dispatch) = executing(&methods, role);
 
     // Before the markers are stripped: `encode_declared` reads them, and
     // what it pushes has to survive the strip that follows.

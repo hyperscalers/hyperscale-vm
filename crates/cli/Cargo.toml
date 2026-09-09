@@ -23,7 +23,6 @@ hyperscale-vm-runtime = { workspace = true, features = ["engine"] }
 # `cargo --message-format=json` is what says which file a build wrote.
 serde_json.workspace = true
 thiserror.workspace = true
-wit-component.workspace = true
 
 [dev-dependencies]
 hyperscale-hbor.workspace = true

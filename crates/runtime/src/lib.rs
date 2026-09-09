@@ -37,7 +37,8 @@ pub use charges::{InstantiationCharges, instantiation_charges, module_instantiat
 pub use exports::{
     ExportParam, ExportShape, ModuleExport, classify_exports, component_exports, module_exports,
 };
-pub use totality::{TotalityError, check_body, check_method, check_reachable};
+pub use hyperscale_vm_embed::abi::CoreType;
+pub use totality::{TotalityError, check_body, check_method, check_module_method, check_reachable};
 pub use validator::{
     ProfileError, validate_component, validate_core_module, validate_module, validated_component,
 };

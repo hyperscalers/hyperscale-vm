@@ -151,13 +151,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "c2540621ed29b6bc4156d70c2cd0e08f1a8ff356c4f137adc59e94a9d624aa5a";
+const PIN_TRANSFER: &str = "3ab705f6313de2c057c24409aa5de62ea440c3d6fdd57386b556095a28796137";
 
-const PIN_SWAP: &str = "e14f63469695b7574ea180cde0a6a84c5994ac3a227db304ef5fe48703b6616a";
+const PIN_SWAP: &str = "fa9bc04ba3c822264f8942f9801539b0298f31fa59460407a76c12b3e248d29b";
 
-const PIN_FILL: &str = "77f730a9471e87df50e8d3b6b73d891ddc47f035706f18718e28e94f7999c23b";
+const PIN_FILL: &str = "88d323be22057d27aef695c57240589a2b2b6d66c460a81c500cd57344bec735";
 
-const PIN_PROPOSE: &str = "9034ede521aeb9c053f724d9f95ae126d4e933abe168399ecbb021ae20edcd43";
+const PIN_PROPOSE: &str = "9c3568dbff35902bbf0c2b5ad47fdb10a67652a993605eebd1a79fe060285a9a";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {
@@ -396,25 +396,18 @@ fn a_named_instance_inside_a_core_is_not_what_refuses_it() {
     );
 }
 
-/// One kernel WIT, and no package holds a copy of it.
+/// The kernel surface is the import table the SDK links against, and no
+/// package carries a description of its own.
 ///
-/// Drift used to be checkable only by comparing eight copies against the
-/// canonical file; now there is nothing to compare, because a package
-/// resolves `hyperscale:kernel` out of the SDK rather than vendoring it.
-/// What is left to assert is that the vendoring did not come back — a
-/// package with its own copy would compile against a world nothing holds
-/// it to.
+/// A package that held one would compile against a boundary nothing
+/// holds it to; what is left to assert is that none reappeared.
 #[test]
-fn no_guest_vendors_its_own_kernel_world() -> Result<()> {
-    let canonical = std::fs::read(repo_root().join("crates/runtime/wit/kernel.wit"))?;
-    let vendored = std::fs::read(repo_root().join("crates/sdk/wit/deps/kernel/kernel.wit"))?;
-    assert_eq!(canonical, vendored, "the SDK's kernel.wit drifted");
-
+fn no_guest_vendors_its_own_kernel_surface() -> Result<()> {
     for guest in std::fs::read_dir(repo_root().join("guests"))? {
         let guest = guest?.path();
         assert!(
-            !guest.join("wit/deps").exists(),
-            "{} vendors its own dependencies",
+            !guest.join("wit").exists(),
+            "{} vendors a boundary description of its own",
             guest.display()
         );
     }

@@ -19,21 +19,19 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, GuestRunner,
-    InvokeResult, Invoked, KernelSession, ManifestWalk, MemoryStore, OverlayStore, RunResult,
-    execute_batch,
+    InvokeResult, KernelSession, ManifestWalk, MemoryStore, OverlayStore, RunResult, execute_batch,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_runtime::{
-    InstantiationCharges, Returned, add_kernel_to_linker, blessed_engine, call_export, classify,
-    exhausted, instantiate_charged, instantiation_charges, validate_component,
+    InstantiationCharges, Invoking, add_kernel_imports, blessed_engine, instantiate_charged,
+    invoke_module, module_instantiation_charges, validate_module,
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     Address, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
-use wasmtime::component::{Component, InstancePre, Linker};
 use wasmtime::error::Context;
-use wasmtime::{Engine, Result, Store};
+use wasmtime::{Engine, InstancePre, Linker, Module, Result, Store};
 
 const RES: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const RECIPIENT: PrincipalAddr = PrincipalAddr::new([0xFE; 31]);
@@ -124,7 +122,7 @@ fn funded_store(senders: u32) -> MemoryStore {
 
 struct Bench {
     engine: Engine,
-    pre: InstancePre<KernelSession>,
+    pre: InstancePre<Invoking<KernelSession>>,
     charges: InstantiationCharges,
 }
 
@@ -132,12 +130,12 @@ impl Bench {
     fn build() -> Result<Self> {
         let engine = blessed_engine()?;
         let bytes = build_guest("account")?;
-        validate_component(&bytes).context("profile")?;
-        let component = Component::new(&engine, &bytes)?;
-        let mut linker = Linker::<KernelSession>::new(&engine);
-        add_kernel_to_linker(&mut linker)?;
-        let pre = linker.instantiate_pre(&component)?;
-        let charges = instantiation_charges(&bytes)?;
+        validate_module(&bytes).context("profile")?;
+        let module = Module::new(&engine, &bytes)?;
+        let mut linker = Linker::<Invoking<KernelSession>>::new(&engine);
+        add_kernel_imports(&mut linker)?;
+        let pre = linker.instantiate_pre(&module)?;
+        let charges = module_instantiation_charges(&bytes)?;
         Ok(Self {
             engine,
             pre,
@@ -149,24 +147,17 @@ impl Bench {
 impl GuestBackend for Bench {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
         let budget = call.fuel_budget.min(FUEL);
-        let mut store = Store::new(&self.engine, session);
+        let mut store = Store::new(&self.engine, Invoking::new(session));
         let instance = instantiate_charged(&mut store, budget, &self.charges, |s| {
             self.pre.instantiate(s)
         })
         .expect("instantiate");
-        let outcome = call_export(&mut store, &instance, call.export, call.args);
-        let exhausted = outcome.as_ref().err().is_some_and(exhausted);
-        let result = match outcome {
-            Ok(Returned::Produced { edges, answer }) => Invoked::Produced { edges, answer },
-            Ok(Returned::Declined(code)) => Invoked::Declined(code),
-            Err(error) => Invoked::Aborted(classify(&error)),
-        };
-        let fuel = budget - store.get_fuel().expect("fuel");
+        let end = invoke_module(&mut store, &instance, call.export, call.args, budget);
         InvokeResult {
-            session: store.into_data(),
-            fuel,
-            result,
-            exhausted,
+            session: store.into_data().into_host(),
+            fuel: end.fuel,
+            result: end.result,
+            exhausted: end.exhausted,
         }
     }
 }

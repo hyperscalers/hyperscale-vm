@@ -26,7 +26,7 @@ use hyperscale_vm_effects::{
     seals, supports,
 };
 use hyperscale_vm_runtime::{
-    ExportParam, ExportShape, check_method, classify_exports, validated_component,
+    CoreType, ModuleExport, check_module_method, module_exports, validate_module,
 };
 
 pub use crate::section::{MAX_PACKAGE_METADATA_BYTES, decode_metadata, encode_metadata};
@@ -182,11 +182,11 @@ pub enum Provenance {
 }
 
 fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, GateError> {
-    let types = validated_component(artifact)
+    validate_module(artifact)
         .map_err(|error| GateError::new(format!("artifact is outside the profile: {error}")))?;
     let metadata = extract_metadata(artifact)?
         .ok_or_else(|| GateError::new("artifact declares no effect metadata section"))?;
-    let exports = classify_exports(artifact, &types)
+    let exports = module_exports(artifact)
         .map_err(|error| GateError::new(format!("artifact does not parse: {error}")))?;
     // Every refusal below is about the method the loop is on, so the name
     // is attached here and no message carries it — which is what stops
@@ -195,13 +195,12 @@ fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, Gat
         let judged = || {
             let export = exports
                 .get(method.as_str())
-                .ok_or_else(|| GateError::new("the component does not export it"))?;
+                .ok_or_else(|| GateError::new("the module does not export it"))?;
             // The composed signature check: the same judgment the
             // metadata cache runs at its door, asked here first so a
             // refusal names the artifact rather than a call.
             check_signature(signature).map_err(|error| GateError::new(error.to_string()))?;
             check_abi_against_export(signature, &export.params)?;
-            check_outputs_against_export(signature, export)?;
             judge_totality(artifact, method, signature, export, provenance)
         };
         judged().map_err(|refusal| refusal.about(method))?;
@@ -262,40 +261,6 @@ fn judge_seal(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), 
     ))
 }
 
-/// Judge what a method declares it hands back against what its export
-/// hands back.
-///
-/// Every edge crosses as a bucket the kernel takes ownership of, so an
-/// export's result carries one own per declared output; a method that
-/// answers carries a byte list beside them. Both are functions of the
-/// artifact, so a signature disagreeing with either describes a package
-/// that is not the one being published.
-fn check_outputs_against_export(
-    signature: &MethodSignature,
-    export: &ExportShape,
-) -> Result<(), GateError> {
-    let declared = signature.outputs.len();
-    if declared != export.edges {
-        return Err(GateError::new(format!(
-            "the signature produces {declared} value edges, the export \
-             hands back {}",
-            export.edges
-        )));
-    }
-    if signature.answers != export.answers {
-        return Err(GateError::new(if export.answers {
-            "the export hands back a value beside its edges, and the signature says it \
-             answers with nothing"
-                .to_owned()
-        } else {
-            "the signature says the method answers with a value, and the export hands \
-             back none"
-                .to_owned()
-        }));
-    }
-    Ok(())
-}
-
 /// Judge a claim to totality: refused outright from a publisher, and read
 /// against the code when the protocol makes it.
 ///
@@ -323,13 +288,13 @@ fn judge_totality(
     artifact: &[u8],
     method: &str,
     signature: &MethodSignature,
-    export: &ExportShape,
+    export: &ModuleExport,
     provenance: Provenance,
 ) -> Result<(), GateError> {
-    // The weakest state is the one the component type decides outright,
+    // The weakest state is the one the export's type decides outright,
     // in both directions. A signature is `Fallible` exactly when its
-    // export carries an error arm: claiming it without one describes a
-    // refusal channel the code does not have, and omitting it with one
+    // export returns the decline code: claiming it without one describes
+    // a refusal channel the code does not have, and omitting it with one
     // hides the channel from every reader that acts on the mark. Neither
     // is a conservative reading — the mark is a function of the artifact,
     // so there is one right answer and the gate holds authors to it.
@@ -351,7 +316,7 @@ fn judge_totality(
             "claims totality, which a published package cannot: the mark is granted to \
              protocol code seeded at genesis",
         )),
-        Provenance::Protocol => check_method(artifact, method).map_err(|error| {
+        Provenance::Protocol => check_module_method(artifact, method).map_err(|error| {
             GateError::new(format!(
                 "claims totality its artifact does not support: {error}"
             ))
@@ -359,15 +324,19 @@ fn judge_totality(
     }
 }
 
-/// Judge a method's ABI binding against the export type that will
-/// receive the arguments it builds.
+/// Judge a method's ABI binding against the export that will receive
+/// the arguments it builds.
 ///
 /// `check_abi` has already judged the binding against the signature, so
 /// clause and parameter indices resolve; what remains is whether the
-/// compiled export can take what the binding builds.
+/// compiled export can take what the binding builds. A core signature
+/// says less than the binding does — a site, a bucket, a flag and a
+/// register's length are all one `i32` — so what the gate holds is the
+/// width of each position, and the kernel checks what each index names
+/// at every operation.
 fn check_abi_against_export(
     signature: &MethodSignature,
-    params: &[ExportParam],
+    params: &[CoreType],
 ) -> Result<(), GateError> {
     if signature.abi.len() != params.len() {
         return Err(GateError::new(format!(
@@ -379,7 +348,7 @@ fn check_abi_against_export(
     for (position, (binding, param)) in signature.abi.iter().zip(params).enumerate() {
         match binding {
             AbiParam::Handle { clause, site } => {
-                if *param != ExportParam::Handle {
+                if *param != CoreType::I32 {
                     return Err(GateError::new(format!(
                         "ABI parameter {position} is a capability \
                          handle, but the export takes {param:?}"
@@ -408,7 +377,7 @@ fn check_abi_against_export(
                 }
             }
             AbiParam::Bucket(_) => {
-                if *param != ExportParam::Bucket {
+                if *param != CoreType::I32 {
                     return Err(GateError::new(format!(
                         "ABI parameter {position} is a value edge, \
                          but the export takes {param:?}"
@@ -416,21 +385,17 @@ fn check_abi_against_export(
                 }
             }
             AbiParam::Guard(_) => {
-                if *param != ExportParam::Flag {
+                if *param != CoreType::I32 {
                     return Err(GateError::new(format!(
                         "ABI parameter {position} is a clause's guard \
                          verdict, but the export takes {param:?}"
                     )));
                 }
             }
-            AbiParam::Derived(_) => {
-                if param.is_resource() {
-                    return Err(GateError::new(format!(
-                        "ABI parameter {position} is a derived \
-                         value, but the export takes {param:?}"
-                    )));
-                }
-            }
+            // A derived value crosses as a scalar or as a register's
+            // length, and which is a fact about the expression the
+            // runtime holds the call to; either width is a value.
+            AbiParam::Derived(_) => {}
         }
     }
     Ok(())
@@ -442,34 +407,25 @@ mod tests {
         AbiParam, Clause, Expr, MethodSignature, PackageMetadata, RuleExpr, SlotRef, seal_clauses,
     };
     use hyperscale_vm_fixtures::{LOTTERY_COMPONENT, book, lottery};
-    use hyperscale_vm_runtime::component_exports;
     use hyperscale_vm_stdlib::{account, account_artifact, staking_artifact};
     use hyperscale_vm_types::Moves;
     use wat::parse_str;
 
     use super::{admit_protocol_package, *};
 
-    /// A component exporting one no-argument function per name.
+    /// A module exporting one no-argument function per name.
     fn component_exporting(names: &[&str]) -> Vec<u8> {
         use std::fmt::Write as _;
 
         // Every published package brings its components up through a
         // seal of its own, so the fixture exports one beside whatever
         // the case under test names.
-        let names: Vec<&str> = names.iter().copied().chain(["instantiate"]).collect();
-        let mut source = String::from("(component\n  (core module $m\n");
-        for index in 0..names.len() {
-            let _ = writeln!(source, "    (func (export \"f{index}\"))");
-        }
-        source.push_str("  )\n  (core instance $i (instantiate $m))\n");
-        for (index, name) in names.iter().enumerate() {
-            let _ = writeln!(
-                source,
-                "  (func (export \"{name}\") (canon lift (core func $i \"f{index}\")))"
-            );
+        let mut source = String::from("(module\n  (memory (export \"memory\") 1 1)\n");
+        for name in names.iter().copied().chain(["instantiate"]) {
+            let _ = writeln!(source, "  (func (export \"{name}\"))");
         }
         source.push(')');
-        parse_str(&source).expect("the component assembles")
+        parse_str(&source).expect("the module assembles")
     }
 
     /// Metadata declaring one empty signature per method name, beside
@@ -619,17 +575,19 @@ mod tests {
         assert_ne!(artifact, public);
     }
 
-    /// A component whose one export declines: the refusal channel over a
+    /// A module whose one export declines: the refusal channel over a
     /// method producing nothing, which is the shape a `Fallible` mark is
     /// judged against.
     fn component_declining(name: &str) -> Vec<u8> {
         parse_str(&*format!(
-            "(component\n  (core module $m\n    (memory (export \"mem\") 1 1)\n               (func (export \"f\") (result i32) i32.const 0)\n               (func (export \"seal\")))\n             (core instance $i (instantiate $m))\n             (func (export \"instantiate\") (canon lift (core func $i \"seal\")))\n             (func (export \"{name}\") (result (result (error u32)))\n               (canon lift (core func $i \"f\") (memory $i \"mem\"))))"
+            "(module\n  (memory (export \"memory\") 1 1)\n  \
+             (func (export \"{name}\") (result i32) i32.const 0)\n  \
+             (func (export \"instantiate\")))"
         ))
-        .expect("the component assembles")
+        .expect("the module assembles")
     }
 
-    /// The totality mark is a function of the component type, and the
+    /// The totality mark is a function of the export's type, and the
     /// gate holds it to that in both directions.
     ///
     /// Under-claiming is refused as firmly as over-claiming, which is
@@ -770,27 +728,6 @@ mod tests {
         assert!(admit_package(&with_section(1, b"code")).is_err());
     }
 
-    #[test]
-    fn only_the_outermost_components_exports_count() {
-        // A nested component's exports are its own; nothing a manifest
-        // names can reach them, so they cannot back a declaration.
-        let inner = "(component (core module $m (func (export \"f\"))) \
-             (core instance $i (instantiate $m)) \
-             (func (export \"hidden\") (canon lift (core func $i \"f\"))))";
-        let outer = parse_str(&*format!(
-            "(component (core module $m (func (export \"f\"))) \
-             (core instance $i (instantiate $m)) \
-             (func (export \"shown\") (canon lift (core func $i \"f\"))) \
-             {inner})"
-        ))
-        .expect("the component assembles");
-
-        let exports = component_exports(&outer).expect("parses");
-        assert_eq!(exports.keys().collect::<Vec<_>>(), vec!["shown"]);
-        let artifact = attach_metadata(&outer, &declaring(&["hidden"])).expect("attaches");
-        assert!(admit_package(&artifact).is_err());
-    }
-
     /// The committed stdlib artifacts pass the same gate a runtime
     /// publish would: their authored metadata agrees with the export
     /// types their blobs compile to. Without this the stdlib's binding
@@ -861,23 +798,19 @@ mod tests {
         // static fuel ceiling, so the artifact itself refuses the mark
         // whatever the metadata claims.
         let honest = attach_metadata(LOTTERY_COMPONENT, &lottery::metadata()).expect("attaches");
-        check_method(&honest, "settle").expect_err("a walk has no static ceiling");
+        check_module_method(&honest, "settle").expect_err("a walk has no static ceiling");
     }
 
-    /// A component whose one export takes a `u64`, for bindings to
-    /// disagree with.
+    /// A module whose one export takes a `u64`, for bindings to disagree
+    /// with.
     fn scalar_export() -> Vec<u8> {
         parse_str(
-            r#"(component
-                 (core module $m
-                   (func (export "f") (param i64) (result i64) local.get 0)
-                   (func (export "seal")))
-                 (core instance $i (instantiate $m))
-                 (func (export "instantiate") (canon lift (core func $i "seal")))
-                 (func (export "m") (param "clock" u64) (result u64)
-                   (canon lift (core func $i "f"))))"#,
+            r#"(module
+                 (memory (export "memory") 1 1)
+                 (func (export "m") (param i64))
+                 (func (export "instantiate")))"#,
         )
-        .expect("the component assembles")
+        .expect("the module assembles")
     }
 
     #[test]
@@ -929,19 +862,12 @@ mod tests {
         // is left to hold is whether the site it names is declared at
         // all — an empty loop declares none.
         let borrow_export = parse_str(
-            r#"(component
-                 (import "hyperscale:kernel/state" (instance $state
-                   (export "site" (type $ac (sub resource)))))
-                 (alias export $state "site" (type $access))
-                 (core module $m
-                   (func (export "f") (param i32) (result i64) i64.const 0)
-                   (func (export "seal")))
-                 (core instance $i (instantiate $m))
-                 (func (export "instantiate") (canon lift (core func $i "seal")))
-                 (func (export "m") (param "vault" (borrow $access)) (result u64)
-                   (canon lift (core func $i "f"))))"#,
+            r#"(module
+                 (memory (export "memory") 1 1)
+                 (func (export "m") (param i32))
+                 (func (export "instantiate")))"#,
         )
-        .expect("the component assembles");
+        .expect("the module assembles");
         let mut unbacked = declaring(&["m"]);
         {
             let signature = unbacked.methods.get_mut("m").expect("declared");
@@ -976,37 +902,5 @@ mod tests {
         }
         let artifact = attach_metadata(&borrow_export, &sound).expect("attaches");
         assert!(admit_package(&artifact).is_ok());
-    }
-
-    /// INV-VM-GATE-2's one door: a signature's declared value outputs equal
-    /// the edges its export hands back, and its answers claim matches. The
-    /// gate is the single enforcement point, so both refusal arms are
-    /// driven here — inverting or dropping the check turns this red.
-    #[test]
-    fn a_signature_that_disagrees_with_its_export_on_outputs_refuses() {
-        let export = |edges: usize, answers: bool| ExportShape {
-            params: Vec::new(),
-            edges,
-            answers,
-            declines: false,
-        };
-        let signature = |outputs: usize, answers: bool| MethodSignature {
-            outputs: vec![Expr::SelfAddr; outputs],
-            answers,
-            ..MethodSignature::default()
-        };
-
-        // Agreement passes, edges and answers alike.
-        assert!(check_outputs_against_export(&signature(2, false), &export(2, false)).is_ok());
-        assert!(check_outputs_against_export(&signature(0, true), &export(0, true)).is_ok());
-
-        // Fewer declared edges than the export hands back, and more: both
-        // refused.
-        assert!(check_outputs_against_export(&signature(1, false), &export(2, false)).is_err());
-        assert!(check_outputs_against_export(&signature(3, false), &export(2, false)).is_err());
-
-        // The answers claim disagreeing with the export, both directions.
-        assert!(check_outputs_against_export(&signature(0, true), &export(0, false)).is_err());
-        assert!(check_outputs_against_export(&signature(0, false), &export(0, true)).is_err());
     }
 }

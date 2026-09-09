@@ -18,25 +18,17 @@ use wat::parse_str;
 
 const RES: Address = Address::new([0xE1; 31], AddressClass::Resource);
 
-/// A component exporting `m(c: borrow<capability>, amount: u64)`.
+/// A module exporting `m(c: site, amount: u64)`.
 fn component() -> Vec<u8> {
     parse_str(
         r#"
-(component
-  (import "hyperscale:kernel/state" (instance $state
-    (export "site" (type $wc (sub resource)))))
-  (alias export $state "site" (type $wcell))
-  (core module $m
-    (func (export "m") (param i32 i64))
-    (func (export "seal")))
-  (core instance $i (instantiate $m))
-  (func (export "instantiate") (canon lift (core func $i "seal")))
-  (func (export "m")
-    (param "c" (borrow $wcell)) (param "amount" u64)
-    (canon lift (core func $i "m"))))
+(module
+  (memory (export "memory") 1 1)
+  (func (export "m") (param i32 i64))
+  (func (export "instantiate")))
 "#,
     )
-    .expect("the component assembles")
+    .expect("the module assembles")
 }
 
 /// Metadata whose one method writes `slot` under its own prefix, keyed

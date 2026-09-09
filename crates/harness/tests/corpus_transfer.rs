@@ -14,7 +14,7 @@ use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_manifest_builder::TypedBuilder;
-use hyperscale_vm_runtime::check_method;
+use hyperscale_vm_runtime::check_module_method;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     Address, EffectSet, EffectTarget, Event, Mode, Moves, Outcome, SubstateKey, TxHash,
@@ -384,7 +384,7 @@ fn the_stdlib_deposit_earns_the_mark_it_claims() -> Result<()> {
         "the fixture under test is the claim itself",
     );
     assert_eq!(
-        check_method(&artifact, "deposit"),
+        check_module_method(&artifact, "deposit"),
         Ok(()),
         "the claim has to survive the artifact, or it is not a claim",
     );
@@ -394,7 +394,7 @@ fn the_stdlib_deposit_earns_the_mark_it_claims() -> Result<()> {
         Totality::Infallible,
     );
     assert!(
-        check_method(&artifact, "withdraw-nf").is_err(),
+        check_module_method(&artifact, "withdraw-nf").is_err(),
         "one module, two verdicts — the check is per method",
     );
     Ok(())

@@ -7,5 +7,3 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-[dependencies]
-wit-bindgen.workspace = true

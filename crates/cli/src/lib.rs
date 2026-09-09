@@ -36,10 +36,9 @@ pub use hyperscale_vm_effects::{explain, explain_method};
 pub use hyperscale_vm_gate::{GateError, Provenance};
 use hyperscale_vm_gate::{admit_package, admit_protocol_package, attach_metadata, decode_metadata};
 use hyperscale_vm_manifest_builder::signing::{Terms, wrap_publish};
-use hyperscale_vm_runtime::validate_component;
+use hyperscale_vm_runtime::validate_module;
 pub use hyperscale_vm_types::{NetworkId, PrincipalAddr};
 use serde_json::{Value as Json, from_str};
-use wit_component::ComponentEncoder;
 
 pub mod scaffold;
 
@@ -119,15 +118,15 @@ fn built_wasm(messages: &str) -> Result<PathBuf, BuildError> {
     }
 }
 
-/// The package's code: its library built for wasm32 and componentized.
+/// The package's code: its library built for wasm32.
 ///
-/// The bare component, before any metadata is attached — which is what a
+/// The bare module, before any metadata is attached — which is what a
 /// consumer holding only code wants, and what the committed blobs are.
 ///
 /// # Errors
 ///
-/// [`BuildError`] if the guest build, the componentization, or the
-/// deterministic profile refuses.
+/// [`BuildError`] if the guest build or the deterministic profile
+/// refuses.
 pub fn compile(dir: &Path) -> Result<Vec<u8>, BuildError> {
     // `--lib` alone: the metadata binary beside it is a host program, and
     // asking wasm32 to build one would ask for a `main` that is
@@ -157,8 +156,8 @@ pub fn compile(dir: &Path) -> Result<Vec<u8>, BuildError> {
     // A linker signature mismatch is a build that succeeded and a module
     // that is wrong: two definitions claim one symbol, the toolchain's
     // wins, and the method's export is simply not there. What fails
-    // otherwise is the componentization two steps on, naming a function
-    // the module does not have and saying nothing about why.
+    // otherwise is the publish gate, naming a method the module does not
+    // export and saying nothing about why.
     let stderr = String::from_utf8_lossy(&built.stderr);
     if let Some(mismatch) = stderr
         .lines()
@@ -171,20 +170,11 @@ pub fn compile(dir: &Path) -> Result<Vec<u8>, BuildError> {
         )));
     }
     let messages = String::from_utf8_lossy(&built.stdout);
-    let core = std::fs::read(built_wasm(&messages)?)
-        .map_err(|error| BuildError::new(format!("read the core module: {error}")))?;
-    // wit-component's API errors with `anyhow::Error`, which has no
-    // `StdError` impl to convert through; flatten its chain instead.
-    let component = ComponentEncoder::default()
-        .validate(true)
-        .module(&core)
-        .map_err(|error| BuildError::new(format!("encode component: {error:#}")))?
-        .encode()
-        .map_err(|error| BuildError::new(format!("componentize: {error:#}")))?;
-    validate_component(&component).map_err(|error| {
-        BuildError::new(format!("the component is outside the profile: {error}"))
-    })?;
-    Ok(component)
+    let module = std::fs::read(built_wasm(&messages)?)
+        .map_err(|error| BuildError::new(format!("read the module: {error}")))?;
+    validate_module(&module)
+        .map_err(|error| BuildError::new(format!("the module is outside the profile: {error}")))?;
+    Ok(module)
 }
 
 /// What a package's own manifest says about deriving its declaration.
