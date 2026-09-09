@@ -1,29 +1,24 @@
 //! One transaction, two nodes, two packages: what the second one can
 //! reach of the first one's.
 //!
-//! [`capability_reach`] fixes the rule — a body reaches every capability
-//! the transaction declared, not the sites its own call was handed. This
-//! lane states the consequence the rule was worth writing down for,
-//! because it is the shape a composition actually takes: two packages in
-//! one manifest, each node lent its own site, and the second node's body
-//! naming the first node's instead.
+//! `capability_reach.rs` fixes the rule — a frame resolves exactly the
+//! sites it was lent, plus the buckets it was lent or opened. This lane
+//! states the rule over the shape a composition actually takes: two
+//! packages in one manifest, each node lent its own site, and the
+//! second node's body naming the first node's instead.
 //!
-//! The walk binds one capability table for the whole transaction and
-//! cannot tell whose call is running, so the site the prowler names is
-//! served — it reads the keeper's cell, and writes it. Both are inside
-//! what the transaction declared and the signer signed, and neither is
-//! inside what the prowler's own node was given.
+//! The walk binds one capability table for the whole transaction, and
+//! what tells it whose call is running is what it lent that frame. The
+//! site the prowler names is a number the table holds and the prowler's
+//! frame was never lent, so the read and the write it attempts are both
+//! refused as outside the frame — whichever node declared the cell, and
+//! whatever mode it was declared at. The prowler's own cell is reached
+//! through the site its node was handed and not by its seeded number.
 //!
-//! What still bounds it, and is asserted beside the reach so the lane
-//! reads as a fence with one gap rather than as an absence of fences:
-//! the mode the capability carries. A prowler that names a cell declared
-//! for reading cannot write it, whoever declared it.
-//!
-//! The reach is not searchable. A rep past the table is a refusal, and a
-//! refusal ends the transaction rather than the call, so a body gets one
-//! guess and cannot enumerate the table — it has to know the layout,
-//! which whoever composed the manifest does. [`capability_reach`] pins
-//! that refusal.
+//! What bounds a site the frame does reach is unchanged, and asserted
+//! beside the fence so the lane reads as two fences rather than one: a
+//! cell declared for reading refuses the write through the site that
+//! was lent for it.
 
 use std::sync::Arc;
 
@@ -52,8 +47,7 @@ const KEPT: &[u8] = b"the-keepers-own";
 /// What the prowler's cell holds, at its own width.
 const PROWLED: &[u8] = b"pp";
 
-/// The byte a prowler writes over the keeper's cell, recognisable in a
-/// receipt.
+/// The byte a prowler writes over a cell, recognisable in a receipt.
 const OVERWRITTEN: u8 = 0x5A;
 
 const fn tx() -> TxHash {
@@ -164,8 +158,9 @@ fn keeper() -> Vec<u8> {
     parse_str(&text).expect("the keeper parses")
 }
 
-/// The prowler: a package that ignores the site its node was given and
-/// names `foreign` instead.
+/// The prowler: a package whose `-foreign` exports ignore the site its
+/// node was given and name `foreign` instead, and whose `-own` exports
+/// act through what they were handed.
 ///
 /// The number is in its text, which is where a body that knows the
 /// manifest's shape would put it: reps are the table's order, and
@@ -194,6 +189,17 @@ fn prowler(foreign: u32) -> Vec<u8> {
   (func (export "write-foreign") (param $site i32)
     (i32.store8 (i32.const 0) (i32.const {OVERWRITTEN}))
     (call $site_set (i32.const {foreign}) (i32.const 0) (i32.const 0) (i32.const 1))
+    (call $answered (i64.const 0)))
+
+  ;; Read the cell its own node was lent, through the site it was handed.
+  (func (export "read-own") (param $site i32)
+    (call $answered
+      (i64.extend_i32_u (call $site_get (local.get $site) (i32.const 0)))))
+
+  ;; Write one byte over that cell, through the site it was handed.
+  (func (export "write-own") (param $site i32)
+    (i32.store8 (i32.const 0) (i32.const {OVERWRITTEN}))
+    (call $site_set (local.get $site) (i32.const 0) (i32.const 0) (i32.const 1))
     (call $answered (i64.const 0))))
 "#
     );
@@ -238,24 +244,28 @@ fn manifest(fx: &Fixture, probe: &KernelSession, export: &str) -> Vec<NodeCall> 
     ]
 }
 
-/// Walk the two nodes on `backend`, answering what each node answered
-/// and the session they left.
-fn walked(
-    fx: &Fixture,
-    calls: Vec<NodeCall>,
-    backend: &dyn GuestBackend,
-) -> Result<(Vec<Answer>, KernelSession, u64)> {
+/// Walk the two nodes on `backend`, answering how the walk ended.
+fn run(fx: &Fixture, calls: Vec<NodeCall>, backend: &dyn GuestBackend) -> RunResult {
     let entry = BatchTx::new(tx(), declaration(fx), env()).with_calls(calls);
-    let run = ManifestWalk { backend }
+    ManifestWalk { backend }
         .run(&entry, session(fx))
-        .expect("both packages are seeded on both engines");
-    match run {
-        RunResult::Completed {
-            session,
-            answers,
-            fuel,
-        } => Ok((answers, session, fuel)),
+        .expect("both packages are seeded on both engines")
+}
+
+/// Walk the two nodes on `backend` to completion, answering what each
+/// node answered.
+fn walked(fx: &Fixture, calls: Vec<NodeCall>, backend: &dyn GuestBackend) -> Result<Vec<Answer>> {
+    match run(fx, calls, backend) {
+        RunResult::Completed { answers, .. } => Ok(answers),
         RunResult::Aborted { outcome, .. } => bail!("the walk aborted: {outcome:?}"),
+    }
+}
+
+/// Walk the two nodes on `backend` to an abort, answering its outcome.
+fn aborted(fx: &Fixture, calls: Vec<NodeCall>, backend: &dyn GuestBackend) -> Result<Outcome> {
+    match run(fx, calls, backend) {
+        RunResult::Aborted { outcome, .. } => Ok(outcome),
+        RunResult::Completed { answers, .. } => bail!("the walk completed: {answers:?}"),
     }
 }
 
@@ -280,100 +290,93 @@ fn answered(answers: &[Answer], node: u32) -> Result<u64> {
     Ok(u64::from_le_bytes(bytes))
 }
 
-/// The prowler reads the keeper's cell, and both engines serve it.
+/// Each node reads the site it was lent, and each answers its own cell.
 ///
-/// Its own node was lent one site and it named the other. The width it
-/// answers is the keeper's cell, which is the whole finding: the site a
-/// body may name is the transaction's, not its node's.
+/// The two widths differ, so the figures say which cell each frame
+/// reached: the site a body may name is the one its node was handed.
 #[test]
-fn a_node_reads_a_cell_declared_for_another_node() -> Result<()> {
+fn each_node_reaches_the_site_it_was_lent() -> Result<()> {
+    let fx = fixture();
+    let probe = session(&fx);
+    let kept = rep_of(&probe, fx.kept);
+
+    let lanes = lanes(kept);
+    for backend in lanes.engine_backends() {
+        let answers = walked(&fx, manifest(&fx, &probe, "read-own"), backend)?;
+        assert_eq!(answered(&answers, 0)?, KEPT.len() as u64, "the keeper");
+        assert_eq!(answered(&answers, 1)?, PROWLED.len() as u64, "the prowler");
+    }
+    Ok(())
+}
+
+/// The prowler names the keeper's site, and both engines refuse it as
+/// outside the prowler's frame.
+///
+/// Its own node was lent one site and it named the other. The seeded
+/// number of its own cell is refused the same way: a frame reaches a
+/// cell by the site it was lent, and the seeded sites belong to no
+/// frame.
+#[test]
+fn a_node_cannot_read_a_cell_declared_for_another_node() -> Result<()> {
     let fx = fixture();
     let probe = session(&fx);
     let kept = rep_of(&probe, fx.kept);
     let prowled = rep_of(&probe, fx.prowled);
     assert_ne!(kept, prowled, "the two nodes are lent different sites");
 
-    let lanes = lanes(kept);
-    for backend in lanes.engine_backends() {
-        let (answers, _, _) = walked(&fx, manifest(&fx, &probe, "read-foreign"), backend)?;
-
-        // The keeper read what it was lent, which is the same cell —
-        // so the two nodes agreeing is what says the prowler reached it
-        // rather than merely answering a number.
-        assert_eq!(answered(&answers, 0)?, KEPT.len() as u64, "the keeper");
-        assert_eq!(
-            answered(&answers, 1)?,
-            KEPT.len() as u64,
-            "the prowler read the keeper's cell"
-        );
-        assert_ne!(
-            answered(&answers, 1)?,
-            PROWLED.len() as u64,
-            "the two cells differ in width, so the figure says which was read"
-        );
+    for foreign in [kept, prowled] {
+        let lanes = lanes(foreign);
+        for backend in lanes.engine_backends() {
+            let outcome = aborted(&fx, manifest(&fx, &probe, "read-foreign"), backend)?;
+            assert_eq!(
+                outcome,
+                Outcome::UserError {
+                    reason: AbortReason::HandleOutsideFrame
+                },
+                "naming seeded site {foreign}"
+            );
+        }
     }
     Ok(())
 }
 
-/// And it writes it: the keeper's cell carries the prowler's byte when
-/// the transaction settles.
-///
-/// The mode was declared for the keeper's own node, and the capability
-/// carries it for the whole transaction — so what the prowler needed in
-/// order to rewrite a cell it was never lent was the number.
+/// And it cannot write it: the mode the keeper declared is its own
+/// frame's to exercise, and the prowler never reaches the question.
 #[test]
-fn a_node_writes_a_cell_declared_for_another_node() -> Result<()> {
+fn a_node_cannot_write_a_cell_declared_for_another_node() -> Result<()> {
     let fx = fixture();
     let probe = session(&fx);
     let kept = rep_of(&probe, fx.kept);
 
     let lanes = lanes(kept);
     for backend in lanes.engine_backends() {
-        let (answers, session, fuel) =
-            walked(&fx, manifest(&fx, &probe, "write-foreign"), backend)?;
-        let (receipt, _) = session.finish(answers, fuel).expect("the oracle is clean");
-
-        assert!(
-            matches!(receipt.outcome, Outcome::Completed { .. }),
-            "{:?}",
-            receipt.outcome
-        );
+        let outcome = aborted(&fx, manifest(&fx, &probe, "write-foreign"), backend)?;
         assert_eq!(
-            receipt.delta.cells.get(&fx.kept).cloned().flatten(),
-            Some(vec![OVERWRITTEN]),
-            "the prowler rewrote the keeper's cell"
+            outcome,
+            Outcome::UserError {
+                reason: AbortReason::HandleOutsideFrame
+            }
         );
     }
     Ok(())
 }
 
-/// The mode still holds: a cell declared for reading refuses the write,
-/// whichever node names it.
+/// The mode still holds inside the frame: a cell declared for reading
+/// refuses the write through the very site that was lent for it.
 ///
 /// Reaching a capability and being granted an operation on it stay two
-/// questions, and the second is asked at every operation — so what
-/// widened is which cells a body can name, not what it may do to them.
+/// questions, and the second is asked at every operation — so what the
+/// frame narrowed is which cells a body can name, not what it may do to
+/// the ones it can.
 #[test]
-fn a_prowler_cannot_exceed_the_mode_the_cell_was_declared_at() -> Result<()> {
+fn a_node_cannot_exceed_the_mode_its_own_cell_was_declared_at() -> Result<()> {
     let fx = fixture();
     let probe = session(&fx);
-    let prowled = rep_of(&probe, fx.prowled);
+    let kept = rep_of(&probe, fx.kept);
 
-    // The prowler names the read-only cell this time, which is the one
-    // its own node was lent — so what refuses is the mode alone.
-    let lanes = lanes(prowled);
+    let lanes = lanes(kept);
     for backend in lanes.engine_backends() {
-        let entry = BatchTx::new(tx(), declaration(&fx), env()).with_calls(manifest(
-            &fx,
-            &probe,
-            "write-foreign",
-        ));
-        let run = ManifestWalk { backend }
-            .run(&entry, session(&fx))
-            .expect("both packages are seeded on both engines");
-        let RunResult::Aborted { outcome, .. } = run else {
-            bail!("a write through a read capability completed");
-        };
+        let outcome = aborted(&fx, manifest(&fx, &probe, "write-own"), backend)?;
         assert_eq!(
             outcome,
             Outcome::UserError {

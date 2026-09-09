@@ -1,31 +1,24 @@
 //! One transaction, two nodes, two packages: what the second one can
 //! reach of the value the first one left in flight.
 //!
-//! [`node_reach`] states the site axis of reach — a body names any
-//! capability the transaction declared. This lane states the bucket
-//! axis. The bucket table is one flat slot vector for the transaction,
-//! a rep is the position a take or split minted, and an edge a producer
-//! returned stays in the table until the node it was routed to consumes
-//! it. Between those two nodes it is a number, and a body that writes
-//! the number holds it: a prowler names the keeper's in-flight edge,
-//! merges it into a bucket of its own with `bucket-put`, and credits
-//! its own vault with the total.
+//! `node_reach.rs` states the site axis of reach; this lane states the
+//! bucket axis. The bucket table is one flat slot vector for the
+//! transaction, a rep is the position a take or split minted, and an
+//! edge a producer returned stays in the table until the node it was
+//! routed to consumes it. Between those two nodes it is a number, and
+//! reps are minted from zero in the order the transaction opens
+//! buckets, so the first take of the first node is rep 0 whatever else
+//! the manifest declares — a number whoever composed the manifest
+//! knows.
 //!
-//! What the composition then does with the transaction depends on node
-//! order, and the lane records each way. With no consumer declared, the
-//! transaction settles: the keeper's vault is debited and the prowler's
-//! credited, and the close finds no value in flight because the slot
-//! the prowler drained is empty. With the edge's consumer declared after
-//! the prowler, the walk finds the slot empty where it judges the
-//! consumer's signed bound and refuses the batch as a composition
-//! defect — priced to nobody, though a guest caused it. With the
-//! consumer ahead of the prowler, the edge is gone before the prowler
-//! names it, and what refuses is the table: an unknown handle.
-//!
-//! The number is knowable. Reps are minted from zero in the order the
-//! transaction opens buckets, so the first take of the first node is
-//! rep 0 whatever else the manifest declares, and whoever composed the
-//! manifest knows which node runs first.
+//! What a frame can do with the number is nothing. A frame resolves the
+//! buckets the walk lent it and the ones it opened itself, and an edge
+//! in flight between two other nodes is neither, so a prowler that
+//! names it to merge it into a bucket of its own is refused as outside
+//! its frame. The refusal is the same wherever the composer put the
+//! edge's consumer — after the prowler, ahead of it, or nowhere — so
+//! node order decides nothing about what a frame can reach. The node
+//! the edge was routed to reaches it, which is the positive case.
 
 use std::sync::Arc;
 
@@ -273,73 +266,59 @@ fn walked(fx: &Fixture, calls: Vec<NodeCall>) -> (Outcome, MemoryStore) {
     (receipt.outcome.clone(), end)
 }
 
-/// The prowler merges the keeper's in-flight edge into its own bucket,
-/// and the transaction settles with the value in the prowler's vault.
-///
-/// The keeper's node was lent its vault and produced an edge; the
-/// prowler's node was lent its own vault and nothing else. What the
-/// prowler needed in order to take the keeper's value was the number,
-/// and the close balances because the slot it drained is empty.
-#[test]
-fn a_node_merges_a_bucket_an_earlier_node_left_in_flight() {
-    let fx = fixture();
-    let (outcome, end) = walked(&fx, vec![taking(&fx), stealing(&fx)]);
-
-    assert!(
-        matches!(outcome, Outcome::Completed { .. }),
-        "the theft settled: {outcome:?}"
-    );
-    assert_eq!(
-        amount_of(&end, fx.kept),
-        BALANCE - TAKEN,
-        "the keeper's vault paid the edge"
-    );
-    assert_eq!(
-        amount_of(&end, fx.prowled),
-        BALANCE + TAKEN,
-        "and the prowler's vault received it"
-    );
-}
-
-/// With the edge's consumer declared after the prowler, the walk finds
-/// the slot empty where it judges the consumer's signed bound, and
-/// refuses the batch as a composition defect.
-///
-/// The verdict is priced to nobody: the walk reads an empty producer
-/// slot as the plan naming an edge nothing produced, which is a defect
-/// in whoever composed the batch — though here a guest emptied it.
-#[test]
-fn a_consumer_declared_after_the_prowler_finds_the_edge_gone() {
-    let fx = fixture();
-    let (outcome, end) = walked(&fx, vec![taking(&fx), stealing(&fx), receiving(&fx)]);
-
-    assert_eq!(
-        outcome,
-        Outcome::ProtocolError {
-            reason: AbortReason::MissingProducerEdge
-        }
-    );
-    assert_eq!(amount_of(&end, fx.kept), BALANCE, "nothing committed");
-    assert_eq!(amount_of(&end, fx.prowled), BALANCE);
-}
-
-/// With the consumer ahead of the prowler, the edge is consumed before
-/// the prowler names it, and the table refuses the rep as unknown.
-///
-/// Node order is the composer's, so whether the reach spends anything
-/// is decided by where the composer put the consumer rather than by
-/// anything the kernel judges.
-#[test]
-fn a_consumer_declared_ahead_of_the_prowler_leaves_it_nothing_to_name() {
-    let fx = fixture();
-    let (outcome, end) = walked(&fx, vec![taking(&fx), receiving(&fx), stealing(&fx)]);
-
+/// The prowler is refused, and nothing it did commits.
+fn refused_outside_the_frame(fx: &Fixture, calls: Vec<NodeCall>) {
+    let (outcome, end) = walked(fx, calls);
     assert_eq!(
         outcome,
         Outcome::UserError {
-            reason: AbortReason::HandleUnknown
+            reason: AbortReason::HandleOutsideFrame
         }
     );
     assert_eq!(amount_of(&end, fx.kept), BALANCE, "nothing committed");
     assert_eq!(amount_of(&end, fx.prowled), BALANCE);
+}
+
+/// The node an edge was routed to reaches it: the keeper takes, and the
+/// keeper's receiving node credits the vault with the edge it was lent.
+#[test]
+fn the_node_an_edge_was_routed_to_reaches_it() {
+    let fx = fixture();
+    let (outcome, end) = walked(&fx, vec![taking(&fx), receiving(&fx)]);
+
+    assert!(
+        matches!(outcome, Outcome::Completed { .. }),
+        "the edge came back: {outcome:?}"
+    );
+    assert_eq!(amount_of(&end, fx.kept), BALANCE, "taken and put back");
+    assert_eq!(amount_of(&end, fx.prowled), BALANCE);
+}
+
+/// The prowler names the keeper's in-flight edge to merge it into its
+/// own bucket, and its frame refuses the number.
+///
+/// The keeper's node was lent its vault and produced an edge; the
+/// prowler's node was lent its own vault and nothing else, and the
+/// bucket it opened for itself is the only one its frame resolves.
+#[test]
+fn a_node_cannot_merge_a_bucket_an_earlier_node_left_in_flight() {
+    let fx = fixture();
+    refused_outside_the_frame(&fx, vec![taking(&fx), stealing(&fx)]);
+}
+
+/// With the edge's consumer declared after the prowler, the refusal is
+/// the same: the walk never reaches the consumer.
+#[test]
+fn a_consumer_declared_after_the_prowler_changes_nothing() {
+    let fx = fixture();
+    refused_outside_the_frame(&fx, vec![taking(&fx), stealing(&fx), receiving(&fx)]);
+}
+
+/// With the consumer ahead of the prowler, the edge is already consumed
+/// when the prowler names it — and the fence still answers before the
+/// table does, because the rep was never the prowler's to resolve.
+#[test]
+fn a_consumer_declared_ahead_of_the_prowler_changes_nothing() {
+    let fx = fixture();
+    refused_outside_the_frame(&fx, vec![taking(&fx), receiving(&fx), stealing(&fx)]);
 }

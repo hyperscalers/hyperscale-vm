@@ -11,26 +11,22 @@
 //! capability table from it. There is no per-signer partition anywhere
 //! after that: `NodeCall` carries the package, the target and the
 //! evidence its node presented, and nothing that says which intent it
-//! came from. So the reach [`capability_reach`] fixes — a body names any
-//! rep in the table, not the sites its own call was handed — reaches
-//! across the signature boundary too.
+//! came from. The lane pins that structurally, and pins why it is
+//! harmless: what bounds a body is its frame, which reaches exactly the
+//! sites its node was lent and the buckets routed into it, so the rep
+//! space spanning both signers is a fact about the table and not about
+//! reach.
 //!
-//! The lane shows it both ways. Structurally, the routed declaration is
-//! one rep space holding both signers' effects. Behaviourally, a body
-//! running under Bob's subintent reads a cell only Alice declared and
-//! emits what it found, so the receipt carries Alice's bytes under Bob's
-//! emitter.
+//! Behaviourally, a body running under Bob's subintent that names the
+//! seeded rep of a cell only Alice declared is refused as outside its
+//! frame, and the trade does not settle. Alice's own deposit naming the
+//! same number is refused the same way, since the seeded sites belong
+//! to no frame: her deposit reaches her leaf by the site routing lent
+//! it. The same guest with that read left out settles the trade, which
+//! is what says the refusal is the reach and not the composition.
 //!
-//! What this does not claim is that value follows. Whether a reachable
-//! capability can be drained depends on the mode the other party
-//! declared and on where the composer put the nodes: the stdlib
-//! account's deposits declare a credit-only delta and its reservations
-//! answer once, so the obvious drain is refused in this composition.
-//! That is the declaration's shape, not the boundary's — a package
-//! declaring a two-way delta would hand a co-signer a debit.
-//!
-//! Two packages rather than two signers is [`node_reach`]; the rule
-//! itself is [`capability_reach`].
+//! Two packages rather than two signers is `node_reach.rs`; the rule
+//! itself is `capability_reach.rs`.
 
 use hyperscale_vm_effects::{
     AdmittedTree, CallArg, Constraint, EnvelopeTree, Hasher, IntentHeader, PackageHash,
@@ -38,12 +34,12 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::abi::{ABI, EVENTS, MEMORY, STATE};
 use hyperscale_vm_harness::driver::{Lanes, run_lanes, seed_vault};
-use hyperscale_vm_kernel::{BatchTx, EnvInputs, MemoryStore};
+use hyperscale_vm_kernel::{BatchTx, EnvInputs, MemoryStore, Receipt};
 use hyperscale_vm_manifest_builder::EnvelopeBuilder;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, EffectTarget, Mode, NetworkId, Outcome, PrincipalAddr, ResourceAddr, SubstateKey,
-    TxHash,
+    AbortReason, Address, EffectTarget, Mode, NetworkId, Outcome, PrincipalAddr, ResourceAddr,
+    SubstateKey, TxHash,
 };
 use wasmtime::Result;
 use wasmtime::error::{Context, bail, ensure};
@@ -200,8 +196,17 @@ fn cell_at(entry: &BatchTx, rep: u32) -> Result<SubstateKey> {
 /// `deposit` consumes the bucket it is handed, and neither answers.
 ///
 /// The only thing the body does that its own node did not ask for is
-/// read `foreign` and emit what it holds.
-fn account_guest(foreign: u32) -> Vec<u8> {
+/// read `foreign` and emit what it holds — where a rep is given. With
+/// none, the deposit keeps to the bucket and the vault it was handed.
+fn account_guest(foreign: Option<u32>) -> Vec<u8> {
+    let tattle = foreign.map_or(String::new(), |foreign| {
+        format!(
+            r"
+    (local.set $len (call $site_get (i32.const {foreign}) (i32.const 0)))
+    (call $take (i32.const 512))
+    (call $emit (i32.const {TATTLE}) (i32.const 512) (local.get $len))"
+        )
+    });
     let text = format!(
         r#"
 (module
@@ -223,13 +228,10 @@ fn account_guest(foreign: u32) -> Vec<u8> {
     (call $reply (i32.const 256) (i32.const 1)))
 
   ;; Credit the vault with what arrived — and on the way past, read the
-  ;; cell at `foreign` and emit it.
+  ;; cell at `foreign` and emit it, where one is named.
   (func (export "deposit")
     (param $flag i32) (param $vault i32) (param $quarantine i32) (param $funds i32)
-    (local $len i32)
-    (local.set $len (call $site_get (i32.const {foreign}) (i32.const 0)))
-    (call $take (i32.const 512))
-    (call $emit (i32.const {TATTLE}) (i32.const 512) (local.get $len))
+    (local $len i32){tattle}
     (call $site_put (local.get $vault) (i32.const 0) (local.get $funds))
     (call $reply (i32.const 0) (i32.const 0))))
 "#
@@ -237,10 +239,30 @@ fn account_guest(foreign: u32) -> Vec<u8> {
     parse_str(&text).expect("the account guest parses")
 }
 
+/// Run the trade with `guest` standing in for the account package on
+/// both engines, answering its receipt.
+fn traded_with(entry: &BatchTx, alices_leaf: u32, guest: &[u8]) -> Result<Receipt> {
+    let mut store = MemoryStore::new();
+    seed_vault(&mut store, ALICE, RES_X, 150);
+    seed_vault(&mut store, BOB, RES_Y, 30);
+    store.write(cell_at(entry, alices_leaf)?, ALICES_OWN.to_vec());
+
+    let mut lanes = Lanes::new();
+    lanes.seed(pkg(), guest);
+    let (outcome, _) = run_lanes(&lanes, &store, std::slice::from_ref(entry));
+    outcome
+        .receipts
+        .get(&entry.tx)
+        .cloned()
+        .ok_or_else(|| wasmtime::error::format_err!("the batch receipts the entry"))
+}
+
 /// The routed declaration is one rep space, and both signers are in it.
 ///
 /// Nothing downstream partitions it: the reps a body may name run from
 /// zero to the end of the table, whichever intent declared each one.
+/// What keeps that harmless is the frame, which the two cases below
+/// pin.
 #[test]
 fn the_table_spans_both_signers() -> Result<()> {
     let world = world();
@@ -283,14 +305,39 @@ fn the_table_spans_both_signers() -> Result<()> {
     Ok(())
 }
 
-/// A body under Bob's subintent reads a cell only Alice's intent
-/// declared, and the receipt carries her bytes under his emitter.
+/// Each frame keeping to what routing lent it, the trade settles.
+///
+/// The same guest as the case below with the sideways read left out,
+/// so what the refusal there answers is the reach and not the shape of
+/// the composition.
+#[test]
+fn the_trade_settles_when_each_frame_keeps_to_what_it_was_lent() -> Result<()> {
+    let world = world();
+    let (entry, _) = routed(&world, &traded())?;
+    let (alice, _) = signers(&entry)?;
+    let alices_leaf = first_site_of_deposit(&entry, alice)?;
+
+    let receipt = traded_with(&entry, alices_leaf, &account_guest(None))?;
+    assert!(
+        matches!(receipt.outcome, Outcome::Completed { .. }),
+        "the trade settled: {:?}",
+        receipt.outcome
+    );
+    Ok(())
+}
+
+/// A body under Bob's subintent names the seeded rep of a cell only
+/// Alice's intent declared, and its frame refuses it.
 ///
 /// Alice exposed a bucket across the envelope's edge. The leaf her own
-/// deposit was lent is not on that edge, is named by no node of Bob's
-/// intent, and is read by his frame anyway.
+/// deposit was lent is not on that edge and is named by no node of
+/// Bob's intent, so no frame of his was lent it. Nor was Alice's own
+/// frame lent the seeded number: her deposit reaches the leaf by the
+/// site routing bound for it, and the seeded sites belong to no frame —
+/// so whichever deposit runs first is the one refused, and nothing it
+/// read reaches the receipt.
 #[test]
-fn a_subintent_reads_a_cell_only_the_other_signer_declared() -> Result<()> {
+fn a_subintent_cannot_read_a_cell_only_the_other_signer_declared() -> Result<()> {
     let world = world();
     let (entry, _) = routed(&world, &traded())?;
     let (alice, bob) = signers(&entry)?;
@@ -302,7 +349,7 @@ fn a_subintent_reads_a_cell_only_the_other_signer_declared() -> Result<()> {
     assert_ne!(alices_leaf, bobs_leaf, "each signer was lent its own");
 
     // And no node of Bob's intent was handed Alice's leaf, so what his
-    // frame reaches is not something routing gave him.
+    // frame is refused is not something routing gave him.
     for call in entry.calls().iter().filter(|call| call.target == bob) {
         for arg in &call.args {
             if let CallArg::Site { entries } = arg {
@@ -314,43 +361,18 @@ fn a_subintent_reads_a_cell_only_the_other_signer_declared() -> Result<()> {
         }
     }
 
-    let mut store = MemoryStore::new();
-    seed_vault(&mut store, ALICE, RES_X, 150);
-    seed_vault(&mut store, BOB, RES_Y, 30);
-    store.write(cell_at(&entry, alices_leaf)?, ALICES_OWN.to_vec());
-
-    // Bob's package names Alice's rep. Alice's runs the same text, which
-    // is what makes the two frames comparable: each emits what it read,
-    // and only one of them was lent the cell.
-    let mut lanes = Lanes::new();
-    lanes.seed(pkg(), &account_guest(alices_leaf));
-    let (outcome, _) = run_lanes(&lanes, &store, std::slice::from_ref(&entry));
-
-    let receipt = outcome
-        .receipts
-        .get(&entry.tx)
-        .expect("the batch receipts the entry");
-    assert!(
-        matches!(receipt.outcome, Outcome::Completed { .. }),
-        "the trade settled: {:?}",
-        receipt.outcome
+    let receipt = traded_with(&entry, alices_leaf, &account_guest(Some(alices_leaf)))?;
+    assert_eq!(
+        receipt.outcome,
+        Outcome::UserError {
+            reason: AbortReason::HandleOutsideFrame
+        },
+        "a frame named a site it was never lent"
     );
-
-    let tattled: Vec<&Address> = receipt
-        .events
-        .iter()
-        .filter(|event| event.event_type == TATTLE && event.payload == ALICES_OWN)
-        .map(|event| &event.emitter)
-        .collect();
     assert!(
-        tattled.contains(&&bob),
-        "Bob's frame read Alice's leaf and emitted it: {:?}",
+        receipt.events.is_empty(),
+        "nothing a refused frame read reaches the receipt: {:?}",
         receipt.events
-    );
-    assert!(
-        tattled.contains(&&alice),
-        "and Alice's own frame read the leaf it was lent, so the two \
-         differ only in whose intent declared it"
     );
     Ok(())
 }
