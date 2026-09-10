@@ -163,7 +163,6 @@ fn every_ending_the_convention_folds_deploys_and_decodes() -> Result<()> {
         let mut dual = guest.instantiate(FUEL, session)?;
         let ended = dual.invoke_both(name, &[])?;
         assert_eq!(ended.result, expected, "{name}");
-        assert!(!ended.exhausted, "{name}");
         dual.finish()?;
     }
     Ok(())

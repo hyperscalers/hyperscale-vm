@@ -76,19 +76,18 @@ pub enum Invoked {
     Unavailable(AbortReason),
 }
 
-/// How one invocation ended, as an engine reports it: the verdict, the
-/// fuel it consumed, and whether the budget exhausted.
+/// How one invocation ended, as an engine reports it: the verdict, and
+/// the fuel it consumed.
 ///
-/// Exhaustion is the engine's own flag, not an inference from the
-/// class: whether a trap was *caused by* the counter is a fact the
-/// engine knows and a class reader can only guess at, and two engines
-/// must agree on it exactly.
+/// Exhaustion is the verdict's own class. The meter is the only thing
+/// that can say out of gas — the module's `exhaust`, or a boundary
+/// charge the counter cannot cover — and either leaves the counter at
+/// nothing, so an aborted invocation of that class reads the whole
+/// budget as spent on every engine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Invocation {
     /// The verdict.
     pub result: Invoked,
     /// Fuel consumed of the call's budget.
     pub fuel: u64,
-    /// Whether the budget exhausted.
-    pub exhausted: bool,
 }

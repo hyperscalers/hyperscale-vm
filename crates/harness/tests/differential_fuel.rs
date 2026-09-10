@@ -1,36 +1,40 @@
 //! Exhaustion as a shared verdict.
 //!
-//! The engine buffers per-operator fuel into a function-local variable and
-//! tests it at three points — function entry, loop header, and before a
-//! bulk-op byte charge. The spec charges the same schedule and tests at
-//! the same three, so the two run out on the same operator rather than
-//! merely somewhere near each other.
+//! Both engines run the instrumented module, so the counter is decided
+//! by the same instructions on both: a block is paid for at its head, a
+//! bulk operator pays its bytes where it runs, and `exhaust` refuses in
+//! the host. What is left to check is that neither engine adds a charge
+//! of its own or drops one — that the budget at which a call first
+//! completes is the same budget on both, and that every budget on the
+//! way there splits the verdict the same way.
 //!
-//! The sweep is what makes that claim testable: at every budget across the
-//! boundary the two runtimes must agree on whether the call completes, and
-//! the budget at which each flips is the operator each stopped on.
+//! The sweep is what makes that claim testable: at every budget across
+//! the boundary the two runtimes must agree on whether the call
+//! completes, and the budget at which each flips is the block each
+//! stopped at.
 //!
 //! The host-call sweep extends the claim to the boundary supplement: the
 //! bytes a host call moves through guest memory are charged into the
-//! same counter the instruction schedule draws on, so code that runs
-//! *after* the call exhausts at the same budget on both sides.
+//! same counter the module's own checks read, so code that runs *after*
+//! the call exhausts at the same budget on both sides.
 
 use hyperscale_vm_embed::abi::{ABI, CRYPTO, MEMORY};
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
 use hyperscale_vm_harness::fixtures::NoHost;
+use hyperscale_vm_meter::{FUEL, instantiation_cost};
 use hyperscale_vm_ref::{
-    InstantiateError, RefInstance, RefModule, RefModuleInstance, Trap as RefTrap, Value,
+    ExecError, InstantiateError, RefInstance, RefModule, RefModuleInstance, Value,
 };
 use hyperscale_vm_runtime::{
-    InstantiationCharges, Invoking, add_kernel_imports, blessed_engine, instantiate_charged,
-    instantiation_charges, invoke_export, validate_module,
+    HostRefusal, Invoking, add_kernel_imports, add_meter_import, admit, admit_core_module,
+    blessed_engine, instantiate_metered, invoke_export,
 };
 use hyperscale_vm_types::AbortReason;
-use wasmtime::{Engine, Instance, Linker, Module, Result, Store, Trap};
+use wasmtime::{Engine, Error, Linker, Module, Result, Store};
 use wat::parse_str;
 
-/// A counted loop: the loop header is the engine's per-iteration fuel
-/// check, so the exhaustion point walks with the budget.
+/// A counted loop: the loop header opens a block paid for on every
+/// iteration, so the exhaustion point walks with the budget.
 const LOOP_FIXTURE: &str = r#"(module
   (func (export "burn") (param i32) (result i32)
     (local $i i32)
@@ -47,7 +51,8 @@ const LOOP_FIXTURE: &str = r#"(module
         br 0))
     local.get $i))"#;
 
-/// Bulk copies charge per byte at their own check point.
+/// Bulk copies charge per byte at their own check, in front of the
+/// operator.
 const BULK_FIXTURE: &str = r#"(module
   (memory 1 1)
   (func (export "burn") (param i32) (result i32)
@@ -64,47 +69,84 @@ enum Verdict {
     Other(String),
 }
 
-fn blessed_verdict(wasm: &[u8], arg: i32, fuel: u64) -> Result<Verdict> {
-    let engine = blessed_engine()?;
-    let module = Module::new(&engine, wasm)?;
-    let mut store = Store::new(&engine, ());
-    store.set_fuel(fuel)?;
-    let instance = Instance::new(&mut store, &module, &[])?;
-    let func = instance.get_typed_func::<(i32,), (i32,)>(&mut store, "burn")?;
-    Ok(match func.call(&mut store, (arg,)) {
-        Ok((v,)) => Verdict::Completed(v),
-        Err(e) => match e.downcast_ref::<Trap>() {
-            Some(Trap::OutOfFuel) => Verdict::OutOfFuel,
-            other => Verdict::Other(format!("{other:?}")),
-        },
-    })
+/// A bare fixture in both engines' runnable forms.
+struct Bare {
+    engine: Engine,
+    module: Module,
+    cost: u64,
+    reference: RefModule,
 }
 
-fn ref_verdict(wasm: &[u8], arg: i32, fuel: u64) -> Result<Verdict> {
-    let module = RefModule::decode(wasm)?;
-    let mut instance = match RefInstance::instantiate_with_fuel(&module, fuel) {
-        Ok(instance) => instance,
-        Err(RefTrap::OutOfFuel) => return Ok(Verdict::OutOfFuel),
-        Err(t) => return Ok(Verdict::Other(format!("{t:?}"))),
-    };
-    Ok(match instance.invoke("burn", &[Value::I32(arg)])? {
-        Ok(values) => match values.as_slice() {
-            [Value::I32(v)] => Verdict::Completed(*v),
-            other => Verdict::Other(format!("{other:?}")),
-        },
-        Err(RefTrap::OutOfFuel) => Verdict::OutOfFuel,
-        Err(t) => Verdict::Other(format!("{t:?}")),
-    })
+impl Bare {
+    fn admit(fixture: &str) -> Result<Self> {
+        let author = parse_str(fixture)?;
+        let admitted = admit_core_module(&author)?;
+        let engine = blessed_engine()?;
+        Ok(Self {
+            module: Module::new(&engine, &admitted)?,
+            cost: instantiation_cost(&author)?,
+            reference: RefModule::decode(&admitted)?,
+            engine,
+        })
+    }
+
+    fn blessed_verdict(&self, arg: i32, fuel: u64) -> Result<Verdict> {
+        let mut linker = Linker::<()>::new(&self.engine);
+        add_meter_import(&mut linker)?;
+        let mut store = Store::new(&self.engine, ());
+        let instance = match instantiate_metered(&mut store, fuel, self.cost, |s| {
+            linker.instantiate(s, &self.module)
+        }) {
+            Ok(instance) => instance,
+            Err(e) => return Ok(refused(&e)),
+        };
+        let func = instance.get_typed_func::<(i32,), (i32,)>(&mut store, "burn")?;
+        Ok(match func.call(&mut store, (arg,)) {
+            Ok((v,)) => Verdict::Completed(v),
+            Err(e) => refused(&e),
+        })
+    }
+
+    fn ref_verdict(&self, arg: i32, fuel: u64) -> Result<Verdict> {
+        let Some(budget) = fuel.checked_sub(self.cost) else {
+            return Ok(Verdict::OutOfFuel);
+        };
+        let mut instance = match RefInstance::instantiate(&self.reference) {
+            Ok(instance) => instance,
+            Err(t) => return Ok(Verdict::Other(format!("{t:?}"))),
+        };
+        assert!(
+            instance.set_global(FUEL, Value::I64(budget.cast_signed())),
+            "an admitted module exports the counter"
+        );
+        Ok(match instance.invoke("burn", &[Value::I32(arg)])? {
+            Ok(values) => match values.as_slice() {
+                [Value::I32(v)] => Verdict::Completed(*v),
+                other => Verdict::Other(format!("{other:?}")),
+            },
+            Err(ExecError::Host(AbortReason::OutOfGas)) => Verdict::OutOfFuel,
+            Err(e) => Verdict::Other(format!("{e:?}")),
+        })
+    }
+}
+
+/// The blessed engine's refusal as a verdict: the meter's out of gas,
+/// or anything else spelled out.
+fn refused(error: &Error) -> Verdict {
+    match error.downcast_ref::<HostRefusal>() {
+        Some(HostRefusal(AbortReason::OutOfGas)) => Verdict::OutOfFuel,
+        other => Verdict::Other(format!("{other:?}")),
+    }
 }
 
 /// Sweeps the budget across the exhaustion boundary and returns the lowest
 /// budget at which the call completed, asserting agreement at every step.
 fn sweep(fixture: &str, arg: i32, range: std::ops::Range<u64>) -> Result<u64> {
-    let wasm = parse_str(fixture)?;
+    let bare = Bare::admit(fixture)?;
     let mut first_completion = None;
     for fuel in range.clone() {
-        let blessed = blessed_verdict(&wasm, arg, fuel)?;
-        let reference = ref_verdict(&wasm, arg, fuel)?;
+        let blessed = bare.blessed_verdict(arg, fuel)?;
+        let reference = bare.ref_verdict(arg, fuel)?;
         assert_eq!(
             blessed, reference,
             "budget {fuel} split the verdict between the engine and the spec"
@@ -133,15 +175,15 @@ fn a_counted_loop_exhausts_at_the_same_budget() -> Result<()> {
 
 #[test]
 fn a_bulk_copy_exhausts_at_the_same_budget() -> Result<()> {
-    // The per-byte charge lands at its own check point, ahead of the
-    // bounds check, so the boundary sits just past the byte count.
+    // The per-byte charge lands at its own check, ahead of the operator,
+    // so the boundary sits just past the byte count.
     let boundary = sweep(BULK_FIXTURE, 64, 1..90)?;
     println!("bulk fixture: both runtimes first complete at {boundary} fuel");
     Ok(())
 }
 
 /// A host call, then a counted loop: the call's boundary bytes (8 of data
-/// in, 32 of digest out) are debt the loop's own headers must see, so the
+/// in, 32 of digest out) are debt the loop's own checks must see, so the
 /// exhaustion point after the call walks with the budget on both sides.
 /// The count is answered as a `u64` at 48.
 fn host_call_fixture() -> String {
@@ -188,10 +230,7 @@ fn verdict(ended: Invocation) -> Verdict {
                 i32::try_from(u64::from_le_bytes(bytes)).expect("the fixture counts low"),
             )
         }
-        Invoked::Aborted(AbortReason::OutOfGas) => {
-            assert!(ended.exhausted, "exhaustion carries its flag");
-            Verdict::OutOfFuel
-        }
+        Invoked::Aborted(AbortReason::OutOfGas) => Verdict::OutOfFuel,
         other => Verdict::Other(format!("{other:?}")),
     }
 }
@@ -199,7 +238,7 @@ fn verdict(ended: Invocation) -> Verdict {
 fn blessed_host_call_verdict(
     engine: &Engine,
     module: &Module,
-    charges: &InstantiationCharges,
+    cost: u64,
     arg: u64,
     fuel: u64,
 ) -> Result<Verdict> {
@@ -207,14 +246,9 @@ fn blessed_host_call_verdict(
     add_kernel_imports(&mut linker)?;
     let mut store = Store::new(engine, Invoking::new(NoHost));
     let instance =
-        match instantiate_charged(&mut store, fuel, charges, |s| linker.instantiate(s, module)) {
+        match instantiate_metered(&mut store, fuel, cost, |s| linker.instantiate(s, module)) {
             Ok(instance) => instance,
-            Err(e) => {
-                return Ok(match e.downcast_ref::<Trap>() {
-                    Some(Trap::OutOfFuel) => Verdict::OutOfFuel,
-                    other => Verdict::Other(format!("{other:?}")),
-                });
-            }
+            Err(e) => return Ok(refused(&e)),
         };
     Ok(verdict(invoke_export(
         &mut store,
@@ -228,7 +262,7 @@ fn blessed_host_call_verdict(
 fn ref_host_call_verdict(module: &RefModule, arg: u64, fuel: u64) -> Result<Verdict> {
     let mut instance = match RefModuleInstance::instantiate(module, NoHost, fuel) {
         Ok(instance) => instance,
-        Err((_, InstantiateError::Trap(RefTrap::OutOfFuel))) => return Ok(Verdict::OutOfFuel),
+        Err((_, InstantiateError::OutOfGas)) => return Ok(Verdict::OutOfFuel),
         Err((_, error)) => return Err(error.into()),
     };
     Ok(verdict(instance.invoke("burn", &[GuestArg::U64(arg)])))
@@ -237,15 +271,15 @@ fn ref_host_call_verdict(module: &RefModule, arg: u64, fuel: u64) -> Result<Verd
 /// As [`sweep`], for the host-call fixture: same verdict-agreement claim,
 /// with the boundary supplement inside the budget.
 fn host_call_sweep(arg: u64, range: std::ops::Range<u64>) -> Result<u64> {
-    let bytes = parse_str(host_call_fixture())?;
-    validate_module(&bytes)?;
+    let author = parse_str(host_call_fixture())?;
+    let admitted = admit(&author)?;
     let engine = blessed_engine()?;
-    let module = Module::new(&engine, &bytes)?;
-    let charges = instantiation_charges(&bytes)?;
-    let reference = RefModule::decode(&bytes)?;
+    let module = Module::new(&engine, &admitted)?;
+    let cost = instantiation_cost(&author)?;
+    let reference = RefModule::decode(&admitted)?;
     let mut first_completion = None;
     for fuel in range.clone() {
-        let blessed = blessed_host_call_verdict(&engine, &module, &charges, arg, fuel)?;
+        let blessed = blessed_host_call_verdict(&engine, &module, cost, arg, fuel)?;
         let interpreted = ref_host_call_verdict(&reference, arg, fuel)?;
         assert_eq!(
             blessed, interpreted,
@@ -267,8 +301,8 @@ fn host_call_sweep(arg: u64, range: std::ops::Range<u64>) -> Result<u64> {
 
 #[test]
 fn a_host_call_and_a_loop_exhaust_at_the_same_budget() -> Result<()> {
-    // Wide enough to bracket instantiation, the call, its 40 bytes of
-    // boundary debt, the loop and the answer from both sides.
+    // Wide enough to bracket the call, its 40 bytes of boundary debt,
+    // the loop and the answer from both sides.
     let boundary = host_call_sweep(20, 1..800)?;
     println!("host-call fixture: both runtimes first complete at {boundary} fuel");
     Ok(())

@@ -148,9 +148,9 @@ pub enum AbortReason {
     StackExhausted,
     /// The transaction spent its signed ceiling.
     ///
-    /// Charged as the declared limit rather than as the counter standing
-    /// at the trap — that figure is engine-defined and no consensus
-    /// reader may see it.
+    /// The meter's own verdict: the module's `exhaust`, or a boundary
+    /// charge the counter cannot cover, either of which spends the
+    /// counter whole — so the fuel reported is the declared limit.
     #[hbor(discriminant = 8)]
     OutOfGas,
     /// A trap the profile does not model.

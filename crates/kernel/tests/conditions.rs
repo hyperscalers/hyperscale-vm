@@ -102,7 +102,6 @@ impl GuestBackend for Inert {
                 edges: Vec::new(),
                 answer: None,
             },
-            exhausted: false,
         }
     }
 }

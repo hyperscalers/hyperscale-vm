@@ -4,11 +4,16 @@
 //! kind — must match exactly. Fresh instances per invocation keep the two
 //! sides' state histories identical.
 
+use hyperscale_vm_meter::{FUEL as COUNTER, instantiation_cost};
 use hyperscale_vm_ref::module::Ty;
-use hyperscale_vm_ref::{RefInstance, RefModule, Trap as RefTrap, Value};
-use hyperscale_vm_runtime::blessed_engine;
+use hyperscale_vm_ref::{ExecError, RefInstance, RefModule, Trap as RefTrap, Value};
+use hyperscale_vm_runtime::{
+    HostRefusal, add_meter_import, admit_core_module, blessed_engine, counter, instantiate_metered,
+    remaining,
+};
+use hyperscale_vm_types::AbortReason;
 use wasmtime::error::Context;
-use wasmtime::{Engine, Instance, Module, Result, Store, Trap, Val};
+use wasmtime::{Engine, Linker, Module, Result, Store, Trap, Val};
 use wat::parse_str;
 
 const I32_EDGES: [i32; 9] = [0, 1, -1, 2, 7, 31, 33, i32::MIN, i32::MAX];
@@ -19,6 +24,7 @@ const I64_EDGES: [i64; 9] = [0, 1, -1, 2, 7, 63, 65, i64::MIN, i64::MAX];
 enum Outcome {
     Values(Vec<Value>),
     Trap(RefTrap),
+    OutOfFuel,
     HostError(String),
 }
 
@@ -31,22 +37,32 @@ const fn map_trap(trap: Trap) -> Option<RefTrap> {
         Trap::TableOutOfBounds => Some(RefTrap::TableOutOfBounds),
         Trap::IndirectCallToNull => Some(RefTrap::IndirectCallToNull),
         Trap::BadSignature => Some(RefTrap::BadSignature),
-        Trap::OutOfFuel => Some(RefTrap::OutOfFuel),
         _ => None,
     }
 }
 
 const FUEL: u64 = 1_000_000_000;
 
+/// A fixture in both engines' runnable forms: admitted once, the
+/// instrumented module compiled and decoded.
+struct Fixture {
+    module: Module,
+    cost: u64,
+    reference: RefModule,
+}
+
 fn wasmtime_outcome(
     engine: &Engine,
-    module: &Module,
+    fixture: &Fixture,
     export: &str,
     args: &[Value],
 ) -> (Outcome, Option<u64>) {
+    let mut linker = Linker::<()>::new(engine);
+    add_meter_import(&mut linker).expect("the meter import registers");
     let mut store = Store::new(engine, ());
-    store.set_fuel(FUEL).expect("fuel on");
-    let instance = match Instance::new(&mut store, module, &[]) {
+    let instance = match instantiate_metered(&mut store, FUEL, fixture.cost, |s| {
+        linker.instantiate(s, &fixture.module)
+    }) {
         Ok(i) => i,
         Err(e) => return (Outcome::HostError(format!("instantiate: {e:#}")), None),
     };
@@ -64,7 +80,8 @@ fn wasmtime_outcome(
     let mut results = vec![Val::I32(0); result_len];
     match func.call(&mut store, &vals, &mut results) {
         Ok(()) => {
-            let fuel = FUEL - store.get_fuel().expect("fuel on");
+            let counter = counter(&mut store, &instance);
+            let fuel = FUEL - remaining(&mut store, &counter);
             (
                 Outcome::Values(
                     results
@@ -80,35 +97,53 @@ fn wasmtime_outcome(
             )
         }
         Err(e) => (
-            e.downcast_ref::<Trap>().map_or_else(
-                || Outcome::HostError(format!("{e:#}")),
-                |t| {
-                    map_trap(*t).map_or_else(
-                        || Outcome::HostError(format!("unmapped trap {t:?}")),
-                        Outcome::Trap,
-                    )
-                },
-            ),
+            if matches!(
+                e.downcast_ref::<HostRefusal>(),
+                Some(HostRefusal(AbortReason::OutOfGas))
+            ) {
+                Outcome::OutOfFuel
+            } else {
+                e.downcast_ref::<Trap>().map_or_else(
+                    || Outcome::HostError(format!("{e:#}")),
+                    |t| {
+                        map_trap(*t).map_or_else(
+                            || Outcome::HostError(format!("unmapped trap {t:?}")),
+                            Outcome::Trap,
+                        )
+                    },
+                )
+            },
             None,
         ),
     }
 }
 
-fn ref_outcome(module: &RefModule, export: &str, args: &[Value]) -> (Outcome, Option<u64>) {
-    // The same budget the blessed store gets: with the engine charging
-    // bulk-op bytes before the bounds check, an over-long fill or copy
-    // exhausts fuel rather than trapping out of bounds, and an unbounded
+fn ref_outcome(fixture: &Fixture, export: &str, args: &[Value]) -> (Outcome, Option<u64>) {
+    // The same budget the blessed store gets, less the same prepaid
+    // instantiation: a bulk operator paying its bytes before the bounds
+    // check exhausts rather than trapping out of bounds, and an unbounded
     // reference side would mask exactly that verdict.
-    let mut instance = match RefInstance::instantiate_with_fuel(module, FUEL) {
+    let mut instance = match RefInstance::instantiate(&fixture.reference) {
         Ok(i) => i,
         Err(t) => return (Outcome::Trap(t), None),
     };
+    let budget = FUEL - fixture.cost;
+    assert!(
+        instance.set_global(COUNTER, Value::I64(budget.cast_signed())),
+        "an admitted module exports the counter"
+    );
     match instance.invoke(export, args) {
         Ok(Ok(values)) => {
-            let fuel = instance.fuel_consumed();
-            (Outcome::Values(values), Some(fuel))
+            let left = instance
+                .global(COUNTER)
+                .expect("the counter is still exported")
+                .as_i64()
+                .cast_unsigned();
+            (Outcome::Values(values), Some(FUEL - left))
         }
-        Ok(Err(trap)) => (Outcome::Trap(trap), None),
+        Ok(Err(ExecError::Trap(trap))) => (Outcome::Trap(trap), None),
+        Ok(Err(ExecError::Host(AbortReason::OutOfGas))) => (Outcome::OutOfFuel, None),
+        Ok(Err(other)) => (Outcome::HostError(format!("{other:?}")), None),
         Err(e) => (Outcome::HostError(format!("{e:#}")), None),
     }
 }
@@ -142,9 +177,14 @@ fn single(is64: bool) -> Box<dyn Iterator<Item = Value>> {
 
 fn compare_fixture(name: &str, wat_text: &str) -> Result<usize> {
     let bytes = parse_str(wat_text).with_context(|| format!("fixture {name}"))?;
+    let admitted = admit_core_module(&bytes).with_context(|| format!("admit {name}"))?;
     let engine = blessed_engine()?;
-    let module = Module::new(&engine, &bytes)?;
-    let ref_module = RefModule::decode(&bytes).with_context(|| format!("decode {name}"))?;
+    let fixture = Fixture {
+        module: Module::new(&engine, &admitted)?,
+        cost: instantiation_cost(&bytes)?,
+        reference: RefModule::decode(&admitted).with_context(|| format!("decode {name}"))?,
+    };
+    let ref_module = &fixture.reference;
 
     let mut exports: Vec<(String, u32)> = ref_module
         .exports
@@ -155,15 +195,15 @@ fn compare_fixture(name: &str, wat_text: &str) -> Result<usize> {
 
     let mut invocations = 0usize;
     for (export, func_idx) in exports {
-        let func = &ref_module.funcs[func_idx as usize];
-        let params: Vec<bool> = ref_module.types[func.ty as usize]
+        let params: Vec<bool> = ref_module
+            .func_type(func_idx)
             .params
             .iter()
             .map(|t| matches!(t, Ty::I64))
             .collect();
         for args in arg_matrix(&params) {
-            let (blessed, blessed_fuel) = wasmtime_outcome(&engine, &module, &export, &args);
-            let (reference, ref_fuel) = ref_outcome(&ref_module, &export, &args);
+            let (blessed, blessed_fuel) = wasmtime_outcome(&engine, &fixture, &export, &args);
+            let (reference, ref_fuel) = ref_outcome(&fixture, &export, &args);
             assert_eq!(
                 blessed, reference,
                 "divergence in {name}::{export} with args {args:?}"

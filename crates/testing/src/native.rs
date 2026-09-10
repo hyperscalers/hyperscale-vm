@@ -43,7 +43,6 @@ impl GuestBackend for Native {
                 session,
                 fuel: 0,
                 result: Invoked::Aborted(AbortReason::CodeUnavailable),
-                exhausted: false,
             };
         };
         let (session, result) = dispatch(call.export, session, call.args);
@@ -55,7 +54,6 @@ impl GuestBackend for Native {
             // number would be the harder thing to notice.
             fuel: 0,
             result,
-            exhausted: false,
         }
     }
 }

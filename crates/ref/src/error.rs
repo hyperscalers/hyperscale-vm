@@ -31,18 +31,21 @@ pub enum DecodeError {
     ArgumentMismatch,
 }
 
-/// Why a component did not instantiate: the artifact would not decode,
-/// or core instantiation trapped — an out-of-bounds active segment, or
-/// a budget that died while segments were applied.
+/// Why a module did not instantiate: the artifact would not decode, the
+/// budget did not cover what instantiation prepays, or core
+/// instantiation trapped on an out-of-bounds active segment.
 ///
-/// The trap arm is what makes exhaustion recognizable at this seam: an
-/// embedder maps [`Trap::OutOfFuel`] here to the sender's own
-/// deterministic abort, and everything else to a refused artifact.
+/// The budget arm is what makes exhaustion recognizable at this seam: an
+/// embedder maps it to the sender's own deterministic abort, and
+/// everything else to a refused artifact.
 #[derive(Debug, Error)]
 pub enum InstantiateError {
     /// The artifact would not decode.
     #[error(transparent)]
     Decode(#[from] DecodeError),
+    /// The budget is under the prepaid instantiation charge.
+    #[error("the budget does not cover instantiation")]
+    OutOfGas,
     /// Core instantiation trapped.
     #[error("instantiation trapped: {0}")]
     Trap(Trap),
@@ -83,12 +86,6 @@ pub enum Trap {
     /// bound rather than as a divergence to excuse.
     #[error("call depth exhausted")]
     CallDepthExhausted,
-    /// The fuel budget ran out. Charged on the spec schedule and tested
-    /// at the three points the engine tests its own — function entry,
-    /// loop header, and the bulk-op byte charge — so the verdict is
-    /// shared rather than engine-defined.
-    #[error("all fuel consumed by WebAssembly")]
-    OutOfFuel,
     /// The optional step budget ran out — a harness safety valve for
     /// generated corpora, never a consensus verdict.
     #[error("step budget exhausted")]
@@ -117,7 +114,6 @@ impl Trap {
             Self::IndirectCallToNull => AbortReason::IndirectCallToNull,
             Self::BadSignature => AbortReason::IndirectCallSignature,
             Self::CallDepthExhausted => AbortReason::StackExhausted,
-            Self::OutOfFuel => AbortReason::OutOfGas,
             Self::StepBudgetExhausted => {
                 panic!("the step budget is a harness valve, never an execution verdict")
             }

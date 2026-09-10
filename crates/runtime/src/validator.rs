@@ -8,11 +8,13 @@
 //! imports and exports to what the kernel defines.
 
 use hyperscale_vm_embed::abi::{CoreType, IMPORTS, MEMORY};
+use hyperscale_vm_meter::{FUEL, NAMESPACE};
 use thiserror::Error;
 use wasmparser::{
     CompositeInnerType, ConstExpr, DataKind, DataSectionReader, ElementItems, ElementKind,
-    ElementSectionReader, ExternalKind, FunctionBody, GlobalSectionReader, Operator, Parser,
-    Payload, TypeRef, TypeSectionReader, ValType, Validator, WasmFeatures,
+    ElementSectionReader, ExportSectionReader, ExternalKind, FunctionBody, GlobalSectionReader,
+    Import, Operator, Parser, Payload, TypeRef, TypeSectionReader, ValType, Validator,
+    WasmFeatures,
 };
 
 use crate::exports::{core_type, scan_module};
@@ -226,7 +228,7 @@ fn core_structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
                 for import in reader.into_imports() {
                     let import = import.map_err(|e| ProfileError::Feature(e.to_string()))?;
                     check_import(
-                        &import.ty,
+                        &import,
                         &mut imported_functions,
                         &mut memory_min_pages,
                         &mut table_min_elements,
@@ -292,6 +294,7 @@ fn core_structural_pass(bytes: &[u8]) -> Result<(), ProfileError> {
             Payload::ElementSection(reader) => {
                 check_element_segments(reader, table_min_elements.first().copied().unwrap_or(0))?;
             }
+            Payload::ExportSection(reader) => check_exports(reader)?,
             Payload::StartSection { .. } => return Err(ProfileError::StartSection),
             Payload::CodeSectionEntry(body) => {
                 module_blocks += validate_function_body(&body)?;
@@ -341,14 +344,22 @@ fn check_types(
 /// Counts one import into the per-kind totals; imported memories and tables
 /// carry the same maximum bounds as declared ones, and record their minima
 /// for the segment bounds. A global or tag import has no executable-spec
-/// witness, so it is a profile violation rather than a counted item.
+/// witness, so it is a profile violation rather than a counted item. The
+/// meter's namespace is the pass's to write, so an author naming it is
+/// reaching for the counter and refused.
 fn check_import(
-    ty: &TypeRef,
+    import: &Import<'_>,
     imported_functions: &mut usize,
     memory_min_pages: &mut Vec<u64>,
     table_min_elements: &mut Vec<u64>,
 ) -> Result<(), ProfileError> {
-    match ty {
+    if import.module == NAMESPACE {
+        return Err(ProfileError::ForbiddenImport(format!(
+            "{}/{}",
+            import.module, import.name
+        )));
+    }
+    match &import.ty {
         TypeRef::Func(_) | TypeRef::FuncExact(_) => *imported_functions += 1,
         TypeRef::Memory(memory) => {
             memory_min_pages.push(memory.initial);
@@ -362,6 +373,21 @@ fn check_import(
             return Err(ProfileError::Structural(
                 "only function, memory, and table imports are within the profile".to_string(),
             ));
+        }
+    }
+    Ok(())
+}
+
+/// An export named as the meter's counter is the pass's to define; an
+/// author defining one would be handing the module its own budget.
+fn check_exports(reader: ExportSectionReader<'_>) -> Result<(), ProfileError> {
+    for export in reader {
+        let export = export.map_err(|e| ProfileError::Feature(e.to_string()))?;
+        if export.name == FUEL && export.kind == ExternalKind::Global {
+            return Err(ProfileError::Structural(format!(
+                "a global exported as `{FUEL}` is the meter's counter, which only the pass \
+                 may define"
+            )));
         }
     }
     Ok(())

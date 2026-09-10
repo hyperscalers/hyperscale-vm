@@ -2,14 +2,15 @@
 //!
 //! One constructor produces the locked [`wasmtime::Config`]; no other
 //! configuration path exists, so nothing can accidentally run outside the
-//! profile. Fuel is always on and priced by [`crate::fuel`], the profile's
-//! disabled proposals are disabled here as defense in depth behind the
-//! deploy validator, and NaN canonicalization is enabled even though the
-//! profile bans floats.
+//! profile. The engine meters nothing: fuel is the module's own, counted
+//! by the meter's pass, so what a receipt reports is a fact about the
+//! bytes and never about the version of the engine that ran them. The
+//! profile's disabled proposals are disabled here as defense in depth
+//! behind the deploy validator, and NaN canonicalization is enabled even
+//! though the profile bans floats.
 
 use wasmtime::{Config, Engine, Result, Strategy};
 
-use crate::fuel::blessed_operator_cost;
 use crate::profile::{MAX_MEMORY_PAGES, MAX_WASM_STACK_BYTES};
 
 /// One wasm page: the unit [`MAX_MEMORY_PAGES`] counts.
@@ -20,11 +21,6 @@ const WASM_PAGE_BYTES: u64 = 64 * 1024;
 pub fn blessed_config() -> Config {
     let mut config = Config::new();
     config.strategy(Strategy::Cranelift);
-    config.consume_fuel(true);
-    // Price operators from the canonical schedule rather than the engine's
-    // own defaults, so what a receipt reports is a fact about this
-    // workspace and not about the version of the engine that ran it.
-    config.operator_cost(blessed_operator_cost());
     config.cranelift_nan_canonicalization(true);
     config.wasm_simd(false);
     config.wasm_relaxed_simd(false);
@@ -37,10 +33,10 @@ pub fn blessed_config() -> Config {
     config.wasm_multi_memory(false);
     config.wasm_stack_switching(false);
     config.max_wasm_stack(MAX_WASM_STACK_BYTES);
-    // Copy-on-write memory images charge instantiation fuel by the
-    // host-page-rounded image span — a host-platform-dependent number.
-    // Disabling them makes active-data-segment initialization cost one fuel
-    // per byte plus one per segment, identical on every host.
+    // Apply active data segments byte for byte rather than mapping a
+    // copy-on-write image: every invocation instantiates afresh, and
+    // under the reservation below an image costs more to map than the
+    // segments cost to write (measured in the transfer bench).
     config.memory_init_cow(false);
     // Map linear memories at the profile's own ceiling instead of
     // wasmtime's 4 GiB span: every invocation maps and unmaps a fresh

@@ -211,7 +211,6 @@ impl GuestBackend for Moving {
                         session,
                         fuel: 0,
                         result: Invoked::Aborted(AbortReason::from(trap)),
-                        exhausted: false,
                     };
                 }
                 Vec::new()
@@ -225,7 +224,6 @@ impl GuestBackend for Moving {
                 edges,
                 answer: None,
             },
-            exhausted: false,
         }
     }
 }

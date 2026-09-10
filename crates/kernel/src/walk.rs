@@ -53,12 +53,6 @@ pub struct InvokeResult {
     pub fuel: u64,
     /// How the invocation ended.
     pub result: Invoked,
-    /// Whether the invocation ended by exhausting its fuel budget.
-    ///
-    /// Reported as a flag rather than read out of the reason text: each
-    /// engine words its own trap, and the classification is consensus
-    /// content that has to be identical on both.
-    pub exhausted: bool,
 }
 
 /// The engine embedding: instantiate the named package and invoke one of
@@ -74,23 +68,6 @@ pub trait GuestBackend: Sync {
 pub struct ManifestWalk<'a, B: ?Sized> {
     /// The engine behind every invocation.
     pub backend: &'a B,
-}
-
-/// How a trapped invocation reads: its outcome and what it spent.
-///
-/// One figure for exhaustion, whichever engine reported it. The counter
-/// standing at a trap is engine-defined — one flushes an in-register
-/// total, the other charges every operator — so a node that spent its
-/// allowance reports the allowance. It could not have consumed more, and
-/// both engines agree on that by construction rather than by happening to
-/// count the same.
-///
-/// The class comes from the backend, which already classified the failure
-/// against its own engine; the exhaustion flag decides only what is
-/// charged.
-const fn trapped(exhausted: bool, reason: AbortReason, budget: u64, spent: u64) -> (Outcome, u64) {
-    let charged = if exhausted { budget } else { spent };
-    (Outcome::UserError { reason }, charged)
 }
 
 /// A node's invocation did not produce edges.
@@ -218,7 +195,7 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
                 fuel_budget,
             },
         );
-        settled(node, call, invoked, fuel_budget)
+        settled(node, call, invoked)
     }
 }
 
@@ -228,12 +205,7 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
 /// Separate from assembling the call because the two read different
 /// halves of the node — what goes in comes from the declaration, and
 /// what comes back is the artifact's own answer.
-fn settled(
-    node: u32,
-    call: &NodeCall,
-    invoked: InvokeResult,
-    fuel_budget: u64,
-) -> Result<NodeSuccess, NodeFailure> {
+fn settled(node: u32, call: &NodeCall, invoked: InvokeResult) -> Result<NodeSuccess, NodeFailure> {
     let session = invoked.session;
     match invoked.result {
         // Edges come back as the buckets the kernel holds again, one per
@@ -350,10 +322,11 @@ fn settled(
             },
             invoked.fuel,
         )),
-        Invoked::Aborted(reason) => {
-            let (outcome, spent) = trapped(invoked.exhausted, reason, fuel_budget, invoked.fuel);
-            Err(fail(session, outcome, spent))
-        }
+        // What a trapped invocation spent is what the meter's counter
+        // gave up, exact at every ending: a block is paid for whole
+        // before it runs, and exhaustion spends the counter whole, so a
+        // node that ran out reports its allowance on either engine.
+        Invoked::Aborted(reason) => Err(fail(session, Outcome::UserError { reason }, invoked.fuel)),
         Invoked::Unavailable(reason) => Err(NodeFailure::Unavailable(reason)),
     }
 }

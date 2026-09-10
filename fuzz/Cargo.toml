@@ -17,6 +17,7 @@ hyperscale-hbor = { path = "../crates/hbor" }
 hyperscale-vm-effects = { path = "../crates/effects" }
 hyperscale-vm-harness = { path = "../crates/harness" }
 hyperscale-vm-kernel = { path = "../crates/kernel" }
+hyperscale-vm-meter = { path = "../crates/meter" }
 hyperscale-vm-ref = { path = "../crates/ref" }
 hyperscale-vm-runtime = { path = "../crates/runtime" }
 hyperscale-vm-types = { path = "../crates/types" }

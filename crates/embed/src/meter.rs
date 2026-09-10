@@ -1,8 +1,9 @@
 //! The boundary cost model, stated once.
 //!
-//! Engine fuel meters guest instructions but is blind to boundary copies —
-//! a value crossing the boundary moves bytes the instruction schedule
-//! never sees. Every kernel function therefore carries a supplement:
+//! The meter's pass counts guest instructions and is blind to boundary
+//! copies — a value crossing the boundary moves bytes the instruction
+//! schedule never sees. Every kernel function therefore carries a
+//! supplement:
 //! argument bytes before the host operation, result bytes after it
 //! succeeds, and for the interval functions a second supplement for what a
 //! scan lifted out of the store — bytes that never cross the ABI and so
@@ -50,8 +51,8 @@ pub struct Exhausted;
 /// The fuel budget a metered call draws on.
 ///
 /// One number governs the transaction: an engine implements this over the
-/// same counter its instruction schedule charges, so boundary debt is
-/// visible to its own exhaustion checks.
+/// counter the meter's pass defined in the module, so boundary debt is
+/// visible to the module's own exhaustion checks.
 pub trait FuelSink {
     /// Deducts `fuel` from the budget.
     ///

@@ -167,14 +167,13 @@ pub struct Receipt {
     /// with the issued half is attest it, so the shard taking a crossing
     /// claims its own argument rather than a share of a sum.
     pub escrow: EscrowDelta,
-    /// Total fuel consumed: engine schedule plus boundary supplement.
+    /// Total fuel consumed: the meter's schedule plus the boundary
+    /// supplement, read off the module's own counter.
     ///
-    /// Exact on a completed execution and engine-defined at a core trap,
-    /// where wasmtime's in-register counter never flushes and `vm-ref`
-    /// charges every executed operator. Reported as the engine saw it
-    /// either way; what a consumer needs agreement on is
-    /// [`Work`](crate::Work), which is derived beside the receipt rather
-    /// than on it.
+    /// Exact at every ending, a trap included, because a block is paid
+    /// for whole before it runs and exhaustion spends the counter whole.
+    /// What a consumer prices is [`Work`](crate::Work), which is derived
+    /// beside the receipt rather than on it.
     pub fuel: u64,
 }
 

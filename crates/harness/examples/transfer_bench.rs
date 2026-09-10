@@ -22,9 +22,10 @@ use hyperscale_vm_kernel::{
     InvokeResult, KernelSession, ManifestWalk, MemoryStore, OverlayStore, RunResult, execute_batch,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
+use hyperscale_vm_meter::instantiation_cost;
 use hyperscale_vm_runtime::{
-    InstantiationCharges, Invoking, add_kernel_imports, blessed_engine, instantiate_charged,
-    instantiation_charges, invoke_export, validate_module,
+    Invoking, add_kernel_imports, admit as admit_module, blessed_engine, instantiate_metered,
+    invoke_export,
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
@@ -123,24 +124,20 @@ fn funded_store(senders: u32) -> MemoryStore {
 struct Bench {
     engine: Engine,
     pre: InstancePre<Invoking<KernelSession>>,
-    charges: InstantiationCharges,
+    cost: u64,
 }
 
 impl Bench {
     fn build() -> Result<Self> {
         let engine = blessed_engine()?;
         let bytes = build_guest("account")?;
-        validate_module(&bytes).context("profile")?;
-        let module = Module::new(&engine, &bytes)?;
+        let admitted = admit_module(&bytes).context("admission")?;
+        let module = Module::new(&engine, &admitted)?;
         let mut linker = Linker::<Invoking<KernelSession>>::new(&engine);
         add_kernel_imports(&mut linker)?;
         let pre = linker.instantiate_pre(&module)?;
-        let charges = instantiation_charges(&bytes)?;
-        Ok(Self {
-            engine,
-            pre,
-            charges,
-        })
+        let cost = instantiation_cost(&bytes)?;
+        Ok(Self { engine, pre, cost })
     }
 }
 
@@ -148,16 +145,14 @@ impl GuestBackend for Bench {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
         let budget = call.fuel_budget.min(FUEL);
         let mut store = Store::new(&self.engine, Invoking::new(session));
-        let instance = instantiate_charged(&mut store, budget, &self.charges, |s| {
-            self.pre.instantiate(s)
-        })
-        .expect("instantiate");
+        let instance =
+            instantiate_metered(&mut store, budget, self.cost, |s| self.pre.instantiate(s))
+                .expect("instantiate");
         let end = invoke_export(&mut store, &instance, call.export, call.args, budget);
         InvokeResult {
             session: store.into_data().into_host(),
             fuel: end.fuel,
             result: end.result,
-            exhausted: end.exhausted,
         }
     }
 }
@@ -310,6 +305,6 @@ fn main() -> Result<()> {
             RunResult::Completed { fuel, .. } | RunResult::Aborted { fuel, .. } => fuel,
         }
     };
-    println!("\nfuel per transfer: {fuel_check} (engine schedule + boundary supplement)");
+    println!("\nfuel per transfer: {fuel_check} (the meter's schedule + boundary supplement)");
     Ok(())
 }

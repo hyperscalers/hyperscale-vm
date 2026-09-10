@@ -243,13 +243,12 @@ fn every_ending_is_shared() -> Result<()> {
         let mut dual = GUEST.instantiate(FUEL, || session(&fx))?;
         let ended = dual.invoke_both(export, args)?;
         assert_eq!(ended.result, expected, "{export}");
-        assert!(!ended.exhausted, "{export}");
         dual.finish()?;
     }
     let mut dual = GUEST.instantiate(10_000, || session(&fx))?;
     let ended = dual.invoke_both("spin", &[])?;
     assert_eq!(ended.result, Invoked::Aborted(AbortReason::OutOfGas));
-    assert!(ended.exhausted);
+    assert_eq!(ended.fuel, 10_000, "exhaustion spends the counter whole");
     Ok(())
 }
 

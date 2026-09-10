@@ -11,9 +11,9 @@ use std::sync::{LazyLock, Mutex};
 use hyperscale_vm_cli::compile;
 use hyperscale_vm_effects::PackageHash;
 use hyperscale_vm_kernel::{GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession};
+use hyperscale_vm_meter::instantiation_cost;
 use hyperscale_vm_runtime::{
-    InstantiationCharges, Invoking, add_kernel_imports, blessed_engine, instantiate_charged,
-    instantiation_charges, invoke_export, validate_module,
+    Invoking, add_kernel_imports, admit, blessed_engine, instantiate_metered, invoke_export,
 };
 use hyperscale_vm_types::AbortReason;
 use wasmtime::{Engine, Linker, Module, Store};
@@ -37,19 +37,20 @@ static ENGINE: LazyLock<Engine> =
     LazyLock::new(|| blessed_engine().expect("the blessed engine configures"));
 
 /// Modules compiled once per process, by the content address a call
-/// names them at.
+/// names them at: the instrumented module, and what instantiating it
+/// prepays.
 ///
 /// The key already means "these exact bytes", so the cache cannot go
 /// stale within a run — and the cargo build behind [`Blessed::build`]
 /// happens once per distinct package rather than once per test.
-static COMPILED: LazyLock<Mutex<BTreeMap<PackageHash, (Module, InstantiationCharges)>>> =
+static COMPILED: LazyLock<Mutex<BTreeMap<PackageHash, (Module, u64)>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 /// Compiled packages, by the content address a call names them at.
 #[derive(Clone)]
 pub struct Blessed {
     engine: Engine,
-    modules: BTreeMap<PackageHash, (Module, InstantiationCharges)>,
+    modules: BTreeMap<PackageHash, (Module, u64)>,
 }
 
 impl Blessed {
@@ -71,21 +72,19 @@ impl Blessed {
     ///
     /// # Panics
     ///
-    /// Panics if the bytes fail the profile, do not compile, or do not
-    /// derive a charge sequence — a fixture defect, never a runtime
-    /// condition.
+    /// Panics if the bytes are not admitted or do not compile — a
+    /// fixture defect, never a runtime condition.
     pub fn seed(&mut self, package: PackageHash, module: &[u8]) {
         let entry = {
             let mut compiled = COMPILED.lock().expect("no cache user panics mid-insert");
             compiled
                 .entry(package)
                 .or_insert_with(|| {
-                    validate_module(module).expect("a seeded package clears the profile");
-                    let charges =
-                        instantiation_charges(module).expect("a validated package derives");
+                    let admitted = admit(module).expect("a seeded package is admitted");
+                    let cost = instantiation_cost(module).expect("an admitted package prices");
                     (
-                        Module::new(&ENGINE, module).expect("a seeded package compiles"),
-                        charges,
+                        Module::new(&ENGINE, &admitted).expect("a seeded package compiles"),
+                        cost,
                     )
                 })
                 .clone()
@@ -134,20 +133,19 @@ impl Default for Blessed {
 impl GuestBackend for Blessed {
     fn invoke(&self, session: KernelSession, call: &GuestCall<'_>) -> InvokeResult {
         let mut store = Store::new(&self.engine, Invoking::new(session));
-        let Some((module, charges)) = self.modules.get(&call.package) else {
+        let Some((module, cost)) = self.modules.get(&call.package) else {
             return InvokeResult {
                 session: store.into_data().into_host(),
                 fuel: 0,
                 result: Invoked::Aborted(AbortReason::CodeUnavailable),
-                exhausted: false,
             };
         };
         let mut linker = Linker::<Invoking<KernelSession>>::new(&self.engine);
         add_kernel_imports(&mut linker).expect("the kernel imports wire");
-        let instance = instantiate_charged(
+        let instance = instantiate_metered(
             &mut store,
             call.fuel_budget.min(FUEL_CEILING),
-            charges,
+            *cost,
             |store| linker.instantiate(store, module),
         )
         .expect("a published package instantiates");
@@ -162,7 +160,6 @@ impl GuestBackend for Blessed {
             session: store.into_data().into_host(),
             fuel: end.fuel,
             result: end.result,
-            exhausted: end.exhausted,
         }
     }
 }

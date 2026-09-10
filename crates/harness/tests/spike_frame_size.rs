@@ -69,8 +69,6 @@ fn depth_at_overflow(strategy: Strategy, locals: usize) -> Option<u32> {
     let wasm = parse_str(recursive_module(locals)).expect("fixture parses");
     let module = Module::new(&engine, &wasm).ok()?;
     let mut store = Store::new(&engine, ());
-    // Fuel must not be what stops it.
-    store.set_fuel(u64::MAX).expect("fuel on");
     let instance = Instance::new(&mut store, &module, &[]).expect("instantiates");
     let run = instance
         .get_typed_func::<(), i64>(&mut store, "run")

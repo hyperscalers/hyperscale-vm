@@ -2,19 +2,15 @@
 //!
 //! `Work::units` is built for a consumer that hashes it and signs it, so it
 //! has to be a function of committed content alone. Fuel is that on a
-//! completed execution and is not on an aborted one: wasmtime never
-//! flushes its in-register counter when a core trap unwinds, while
-//! `vm-ref` charges every executed operator, so the same trap reports two
-//! different numbers (`spike_trap_fuel` pins the pair). The rule that
-//! keeps the scalar agreeable is that only a completed execution attests
-//! its fuel.
+//! completed execution and is not something an aborted one is priced by:
+//! how far a body got before it failed is not what it is charged for.
+//! The rule that keeps the scalar agreeable is that only a completed
+//! execution attests its fuel.
 //!
-//! The lane injects that divergence rather than reproducing it — the two
-//! runtimes' behaviour is already pinned, and what needs testing here is
-//! that the kernel is indifferent to it. A runner reporting wildly
-//! different fuel for the same aborting outcome stands in for the pair,
-//! which also makes the property hold against whatever the engines do
-//! next.
+//! The lane injects a divergence rather than trusting the meter: a
+//! runner reporting wildly different fuel for the same aborting outcome
+//! is what the kernel has to be indifferent to, which also makes the
+//! property hold against whatever an engine does next.
 //!
 //! The rest is R1's actual demand: an abort's work is not zero, because
 //! the declaration behind it was admitted, routed, and locked in full

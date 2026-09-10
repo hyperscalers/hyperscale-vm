@@ -16,14 +16,27 @@ pub enum Value {
 }
 
 impl Value {
-    pub(crate) fn as_i32(self) -> i32 {
+    /// The 32-bit integer this is.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a 64-bit value: validated code never mistypes, and a
+    /// caller reading a counter reads the width the meter defined.
+    #[must_use]
+    pub fn as_i32(self) -> i32 {
         match self {
             Self::I32(v) => v,
             Self::I64(_) => unreachable!("validated code never mistypes"),
         }
     }
 
-    pub(crate) fn as_i64(self) -> i64 {
+    /// The 64-bit integer this is.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a 32-bit value, on the same terms as [`Self::as_i32`].
+    #[must_use]
+    pub fn as_i64(self) -> i64 {
         match self {
             Self::I64(v) => v,
             Self::I32(_) => unreachable!("validated code never mistypes"),
@@ -233,14 +246,14 @@ pub struct BrTargets {
 /// The fuel schedule, stated in the spec's own operator vocabulary.
 ///
 /// `nop`, `drop`, and pure control structure (`block`, `loop`, `unreachable`,
-/// `return`, `else`, `end`) are free; every other operator costs one; each
-/// function entry costs one. `memory.fill`/`memory.copy` additionally cost
-/// one per byte moved, charged at the execution site in the interpreter.
+/// `return`, `else`, `end`) are free; every other operator costs one.
+/// `memory.fill`/`memory.copy` additionally cost one per byte moved.
 ///
-/// This is an independent statement of the schedule the blessed engine is
-/// configured with, sharing no constant with it. The harness holds the two
-/// to each other operator by operator, and the differential fuel lane holds
-/// the whole accounting to the engine's.
+/// This is an independent statement of the schedule the meter's pass
+/// charges by, sharing no constant with it. The interpreter charges
+/// nothing itself — it runs the instrumented module like any engine —
+/// and a harness lane holds every block's charge in that module to the
+/// sum of this function over the block's operators.
 #[must_use]
 pub const fn fuel_cost(op: &Op) -> u64 {
     match op {

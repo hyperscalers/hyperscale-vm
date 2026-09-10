@@ -748,6 +748,7 @@ dependencies = [
  "hyperscale-vm-fixtures",
  "hyperscale-vm-kernel",
  "hyperscale-vm-manifest-builder",
+ "hyperscale-vm-meter",
  "hyperscale-vm-ref",
  "hyperscale-vm-runtime",
  "hyperscale-vm-sdk",
@@ -802,6 +803,7 @@ name = "hyperscale-vm-ref"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-embed",
+ "hyperscale-vm-meter",
  "hyperscale-vm-types",
  "thiserror 2.0.19",
  "wasmparser",
@@ -812,8 +814,8 @@ name = "hyperscale-vm-runtime"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-embed",
+ "hyperscale-vm-meter",
  "hyperscale-vm-types",
- "serde_json",
  "thiserror 2.0.19",
  "wasmparser",
  "wasmtime",
@@ -867,6 +869,7 @@ dependencies = [
  "hyperscale-vm-fixtures",
  "hyperscale-vm-kernel",
  "hyperscale-vm-manifest-builder",
+ "hyperscale-vm-meter",
  "hyperscale-vm-runtime",
  "hyperscale-vm-sdk",
  "hyperscale-vm-sdk-macros",

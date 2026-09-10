@@ -33,6 +33,7 @@ thiserror.workspace = true
 # the contract is right. A chain that could only answer the second would
 # make running both a thing each consumer had to remember.
 hyperscale-vm-cli.workspace = true
+hyperscale-vm-meter.workspace = true
 hyperscale-vm-runtime = { workspace = true, features = ["engine"] }
 wasmtime.workspace = true
 

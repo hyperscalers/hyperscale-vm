@@ -19,11 +19,11 @@
 //!
 //! Fuel is not always the right term to pass. A declaration is admitted,
 //! routed, and locked in full whatever the verdict, but fuel is
-//! outcome-dependent — and worse, engine-defined at a core trap, where
-//! wasmtime's in-register counter never flushes and `vm-ref` charges every
-//! executed operator. An aborted execution therefore attests its footprint
-//! alone; `vm_kernel`'s receipt constructor is where that rule is applied,
-//! because the outcome is what selects it and the outcome lives there.
+//! outcome-dependent: what an aborted execution got through is not what
+//! it is charged for. An aborted execution therefore attests its
+//! footprint alone; `vm_kernel`'s receipt constructor is where that rule
+//! is applied, because the outcome is what selects it and the outcome
+//! lives there.
 //!
 //! Placeholder weights, on the same terms as the effects crate's
 //! footprint weights: what

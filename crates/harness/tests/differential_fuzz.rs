@@ -1,9 +1,9 @@
 //! Differential lane 1, generated corpus: wasm-smith modules constrained to
-//! the profile subset, executed under the blessed engine and the reference
-//! interpreter with edge-value arguments. Outcomes and fuel must agree,
-//! exhaustion included: both sides run the same fuel budget and out-of-fuel
-//! is compared like any other verdict. Only a stack exhaustion still skips,
-//! until the deploy-time frame bound makes it unreachable.
+//! the profile subset, admitted through the meter, and executed under the
+//! blessed engine and the reference interpreter with edge-value arguments.
+//! Outcomes and fuel must agree, exhaustion included: both sides run the
+//! same instrumented module under the same budget and out-of-fuel is
+//! compared like any other verdict.
 //!
 //! A module the spec cannot decode is not skipped quietly: the profile
 //! validator has to have rejected it too, which is the same implication
@@ -18,11 +18,16 @@
 
 use arbitrary::Unstructured;
 use hyperscale_vm_harness::on_deep_stack;
+use hyperscale_vm_meter::{FUEL as COUNTER, instantiation_cost};
 use hyperscale_vm_ref::module::Ty;
-use hyperscale_vm_ref::{RefInstance, RefModule, Trap as RefTrap, Value};
-use hyperscale_vm_runtime::{blessed_engine, validate_core_module};
+use hyperscale_vm_ref::{ExecError, RefInstance, RefModule, Trap as RefTrap, Value};
+use hyperscale_vm_runtime::{
+    HostRefusal, add_meter_import, admit_core_module, blessed_engine, counter, instantiate_metered,
+    remaining, validate_core_module,
+};
+use hyperscale_vm_types::AbortReason;
 use wasm_smith::{Config, Module as SmithModule};
-use wasmtime::{Engine, Instance, Module, Result, Store, Trap, Val};
+use wasmtime::{Engine, Linker, Module, Result, Store, Trap, Val};
 
 const SEEDS: u64 = 3_072;
 const ENTROPY_BYTES: usize = 4096;
@@ -96,19 +101,35 @@ const fn map_trap(trap: Trap) -> Option<RefTrap> {
     }
 }
 
+/// A generated module in both engines' runnable forms.
+struct Fixture {
+    module: Module,
+    cost: u64,
+    reference: RefModule,
+}
+
 fn wasmtime_outcome(
     engine: &Engine,
-    module: &Module,
+    fixture: &Fixture,
     export: &str,
     args: &[Value],
 ) -> (Outcome, Option<u64>) {
+    let mut linker = Linker::<()>::new(engine);
+    add_meter_import(&mut linker).expect("the meter import registers");
     let mut store = Store::new(engine, ());
-    store.set_fuel(WASMTIME_FUEL).expect("fuel on");
-    let instance = match Instance::new(&mut store, module, &[]) {
+    let instance = match instantiate_metered(&mut store, WASMTIME_FUEL, fixture.cost, |s| {
+        linker.instantiate(s, &fixture.module)
+    }) {
         Ok(i) => i,
         // Instantiation traps (an out-of-bounds active segment) compare like
-        // call traps.
+        // call traps; a budget under the prepaid segments is exhaustion.
         Err(e) => {
+            if matches!(
+                e.downcast_ref::<HostRefusal>(),
+                Some(HostRefusal(AbortReason::OutOfGas))
+            ) {
+                return (Outcome::OutOfFuel, None);
+            }
             return (
                 e.downcast_ref::<Trap>()
                     .and_then(|t| map_trap(*t))
@@ -134,7 +155,8 @@ fn wasmtime_outcome(
     let mut results = vec![Val::I32(0); result_len];
     match func.call(&mut store, &vals, &mut results) {
         Ok(()) => {
-            let fuel = WASMTIME_FUEL - store.get_fuel().expect("fuel on");
+            let counter = counter(&mut store, &instance);
+            let fuel = WASMTIME_FUEL - remaining(&mut store, &counter);
             (
                 Outcome::Values(
                     results
@@ -151,7 +173,13 @@ fn wasmtime_outcome(
         }
         Err(e) => (
             match e.downcast_ref::<Trap>() {
-                Some(Trap::OutOfFuel) => Outcome::OutOfFuel,
+                _ if matches!(
+                    e.downcast_ref::<HostRefusal>(),
+                    Some(HostRefusal(AbortReason::OutOfGas))
+                ) =>
+                {
+                    Outcome::OutOfFuel
+                }
                 Some(Trap::StackOverflow) => panic!(
                     "an admitted module overflowed the engine's stack; the deploy-time \
                      frame bound is not holding"
@@ -167,26 +195,36 @@ fn wasmtime_outcome(
     }
 }
 
-fn ref_outcome(module: &RefModule, export: &str, args: &[Value]) -> (Outcome, Option<u64>) {
-    let mut instance = match RefInstance::instantiate(module) {
+fn ref_outcome(fixture: &Fixture, export: &str, args: &[Value]) -> (Outcome, Option<u64>) {
+    let Some(budget) = WASMTIME_FUEL.checked_sub(fixture.cost) else {
+        return (Outcome::OutOfFuel, None);
+    };
+    let mut instance = match RefInstance::instantiate(&fixture.reference) {
         Ok(i) => i,
-        Err(RefTrap::OutOfFuel) => return (Outcome::OutOfFuel, None),
         Err(t) => return (Outcome::Trap(t), None),
     };
     instance.set_step_limit(REF_STEPS);
-    instance.set_fuel_limit(WASMTIME_FUEL);
+    assert!(
+        instance.set_global(COUNTER, Value::I64(budget.cast_signed())),
+        "an admitted module exports the counter"
+    );
     match instance.invoke(export, args) {
         Ok(Ok(values)) => {
-            let fuel = instance.fuel_consumed();
-            (Outcome::Values(values), Some(fuel))
+            let left = instance
+                .global(COUNTER)
+                .expect("the counter is still exported")
+                .as_i64()
+                .cast_unsigned();
+            (Outcome::Values(values), Some(WASMTIME_FUEL - left))
         }
-        Ok(Err(RefTrap::OutOfFuel)) => (Outcome::OutOfFuel, None),
-        Ok(Err(RefTrap::CallDepthExhausted)) => panic!(
+        Ok(Err(ExecError::Host(AbortReason::OutOfGas))) => (Outcome::OutOfFuel, None),
+        Ok(Err(ExecError::Trap(RefTrap::CallDepthExhausted))) => panic!(
             "an admitted module exhausted the spec's call depth; the deploy-time frame \
              bound is not holding"
         ),
-        Ok(Err(RefTrap::StepBudgetExhausted)) => (Outcome::Exhausted, None),
-        Ok(Err(trap)) => (Outcome::Trap(trap), None),
+        Ok(Err(ExecError::Trap(RefTrap::StepBudgetExhausted))) => (Outcome::Exhausted, None),
+        Ok(Err(ExecError::Trap(trap))) => (Outcome::Trap(trap), None),
+        Ok(Err(other)) => (Outcome::Other(format!("{other:?}")), None),
         Err(e) => (Outcome::Other(format!("{e:#}")), None),
     }
 }
@@ -261,11 +299,15 @@ fn fuzz_body() -> Result<()> {
         };
         // Bulk memory generates table and passive-segment operators the
         // profile excludes; those modules leave the lane here.
-        if validate_core_module(&wasm).is_err() {
+        let Ok(admitted) = admit_core_module(&wasm) else {
             skipped_profile += 1;
             continue;
-        }
-        let wasmtime_module = Module::new(&engine, &wasm)?;
+        };
+        let fixture = Fixture {
+            module: Module::new(&engine, &admitted)?,
+            cost: instantiation_cost(&wasm)?,
+            reference: RefModule::decode(&admitted)?,
+        };
 
         let mut exports: Vec<(String, u32)> = ref_module
             .exports
@@ -282,9 +324,8 @@ fn fuzz_body() -> Result<()> {
                 .map(|t| matches!(t, Ty::I64))
                 .collect();
             for args in arg_sets(&params) {
-                let (blessed, blessed_fuel) =
-                    wasmtime_outcome(&engine, &wasmtime_module, &export, &args);
-                let (reference, ref_fuel) = ref_outcome(&ref_module, &export, &args);
+                let (blessed, blessed_fuel) = wasmtime_outcome(&engine, &fixture, &export, &args);
+                let (reference, ref_fuel) = ref_outcome(&fixture, &export, &args);
                 if blessed == Outcome::Exhausted || reference == Outcome::Exhausted {
                     exhausted += 1;
                     continue;

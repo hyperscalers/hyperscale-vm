@@ -5,11 +5,12 @@
 //! the [`ImportDispatch`] trait, whose implementor answers without calling
 //! back in.
 
+use hyperscale_vm_meter::{EXHAUST, FUEL, NAMESPACE};
 use hyperscale_vm_types::AbortReason;
 
 use crate::error::{DecodeError, Trap};
-use crate::module::{RefModule, Ty};
-use crate::ops::{LoadKind, Op, StoreKind, Value, eval_binary, eval_unary, fuel_cost};
+use crate::module::{CoreImportKind, RefModule, Ty};
+use crate::ops::{LoadKind, Op, StoreKind, Value, eval_binary, eval_unary};
 
 pub(crate) const PAGE: usize = 64 * 1024;
 
@@ -117,30 +118,17 @@ pub(crate) struct Store {
     pub depth: usize,
     /// Optional instruction budget; `None` is unbounded.
     pub steps_remaining: Option<u64>,
-    /// Optional fuel budget; `None` is unbounded.
-    pub fuel_limit: Option<u64>,
-    /// Fuel consumed under the spec schedule ([`fuel_cost`] plus one per
-    /// function entry, plus one per byte moved by `memory.fill`/`memory.copy`).
-    pub fuel_consumed: u64,
 }
 
 impl Store {
-    /// Whether the fuel budget still covers what has been charged.
-    ///
-    /// The engine buffers per-operator cost into a function-local variable
-    /// and tests it at exactly three points — function entry, loop header,
-    /// and before a bulk-op byte charge (`fuel_function_entry`,
-    /// `translate_loop_header`, `manual_fuel_check`). The spec charges the
-    /// same schedule and tests at the same three, so the two exhaust on
-    /// the same operator.
-    pub(crate) const fn check_fuel(&self) -> Result<(), Trap> {
-        // The engine traps once consumption reaches its allotment, not
-        // once it passes it: its counter is `consumed - allotted` and the
-        // check is `>= 0`.
-        match self.fuel_limit {
-            Some(limit) if self.fuel_consumed >= limit => Err(Trap::OutOfFuel),
-            _ => Ok(()),
-        }
+    /// The global at `index` of the one instance.
+    pub(crate) fn global(&self, index: u32) -> Value {
+        self.instances[0].globals[index as usize]
+    }
+
+    /// Set the global at `index` of the one instance.
+    pub(crate) fn set_global(&mut self, index: u32, value: Value) {
+        self.instances[0].globals[index as usize] = value;
     }
 }
 
@@ -159,22 +147,29 @@ pub(crate) trait ImportDispatch {
     ) -> Result<Vec<Value>, ExecError>;
 }
 
-/// A dispatcher for stores with no imports.
-pub(crate) struct Unimported;
+/// The dispatcher of a bare module: its one import is the meter's
+/// `exhaust`, answered by zeroing the counter and refusing out of gas.
+pub(crate) struct Metered {
+    /// The counter's global index, where the module was instrumented.
+    fuel: Option<u32>,
+}
 
-impl ImportDispatch for Unimported {
+impl ImportDispatch for Metered {
     fn param_count(&self, _id: u32) -> usize {
-        unreachable!("bare modules import nothing")
+        0
     }
 
     fn dispatch(
         &mut self,
         _modules: &[&RefModule],
-        _store: &mut Store,
+        store: &mut Store,
         _id: u32,
         _args: Vec<Value>,
     ) -> Result<Vec<Value>, ExecError> {
-        unreachable!("bare modules import nothing")
+        if let Some(fuel) = self.fuel {
+            store.set_global(fuel, Value::I64(0));
+        }
+        Err(ExecError::Host(AbortReason::OutOfGas))
     }
 }
 
@@ -235,11 +230,8 @@ fn run(
         is_loop: false,
     }];
     let mut pc = 0usize;
-    store.fuel_consumed += 1; // function entry
-    store.check_fuel()?;
 
     while pc < func.ops.len() {
-        store.fuel_consumed += fuel_cost(&func.ops[pc]);
         if let Some(remaining) = store.steps_remaining.as_mut() {
             if *remaining == 0 {
                 return Err(Trap::StepBudgetExhausted.into());
@@ -260,7 +252,6 @@ fn run(
                 is_loop: false,
             }),
             Op::Loop { params } => {
-                store.check_fuel()?;
                 control.push(Label {
                     height: stack.len() - usize::from(*params),
                     arity: usize::from(*params),
@@ -304,27 +295,19 @@ fn run(
                 }
             }
             Op::Br(depth) => {
-                // A back edge re-enters the loop header, which is where
-                // the engine tests fuel again.
-                if branch(&mut stack, &mut control, *depth as usize, &mut pc) {
-                    store.check_fuel()?;
-                }
+                branch(&mut stack, &mut control, *depth as usize, &mut pc);
                 continue;
             }
             Op::BrIf(depth) => {
                 if stack.pop().expect("validated").as_i32() != 0 {
-                    if branch(&mut stack, &mut control, *depth as usize, &mut pc) {
-                        store.check_fuel()?;
-                    }
+                    branch(&mut stack, &mut control, *depth as usize, &mut pc);
                     continue;
                 }
             }
             Op::BrTable(targets) => {
                 let idx = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
                 let depth = targets.targets.get(idx).copied().unwrap_or(targets.default);
-                if branch(&mut stack, &mut control, depth as usize, &mut pc) {
-                    store.check_fuel()?;
-                }
+                branch(&mut stack, &mut control, depth as usize, &mut pc);
                 continue;
             }
             Op::Return => return Ok(split_top(&mut stack, result_arity)),
@@ -404,9 +387,6 @@ fn run(
                 let n = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
                 let val = stack.pop().expect("validated").as_i32() as u8;
                 let dest = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
-                // The engine charges the byte count before the bounds check.
-                store.fuel_consumed += n as u64;
-                store.check_fuel()?;
                 let mem = memory_mut(store, instance);
                 let end = dest.checked_add(n).ok_or(Trap::MemoryOutOfBounds)?;
                 if end > mem.data.len() {
@@ -418,9 +398,6 @@ fn run(
                 let n = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
                 let src = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
                 let dest = stack.pop().expect("validated").as_i32().cast_unsigned() as usize;
-                // The engine charges the byte count before the bounds check.
-                store.fuel_consumed += n as u64;
-                store.check_fuel()?;
                 let mem = memory_mut(store, instance);
                 let src_end = src.checked_add(n).ok_or(Trap::MemoryOutOfBounds)?;
                 let dest_end = dest.checked_add(n).ok_or(Trap::MemoryOutOfBounds)?;
@@ -617,20 +594,10 @@ pub(crate) fn instantiate_module(
         imported_memory
     };
 
-    // The engine compiles one init function per module that needs one: any
-    // active data segment forces it, as do element segments applying to an
-    // imported table (a local table's elements are precomputed host-side).
-    // Its entry costs one fuel; each data segment adds one plus one per
-    // byte; element writes are free.
-    let inits_imported_table = module.table.is_none() && !module.elements.is_empty();
-    if !module.datas.is_empty() || inits_imported_table {
-        store.fuel_consumed += 1;
-        store.check_fuel()?;
-    }
+    // What the segments cost was prepaid by whoever holds the budget,
+    // before the counter this module carries existed.
     if let Some(mem_idx) = memory {
         for seg in &module.datas {
-            store.fuel_consumed += 1 + seg.items.len() as u64;
-            store.check_fuel()?;
             let mem = &mut store.memories[mem_idx as usize];
             let start = seg.offset as usize;
             let end = start + seg.items.len();
@@ -689,14 +656,21 @@ pub(crate) fn instantiate_module(
     Ok(instance_idx)
 }
 
-/// A bare-module instance: no imports.
+/// A bare-module instance: a module that imports nothing of the
+/// kernel's, and at most the meter's `exhaust`.
 pub struct RefInstance<'m> {
     module: &'m RefModule,
     store: Store,
+    /// The counter's global index, where the module was instrumented.
+    fuel: Option<u32>,
 }
 
 impl<'m> RefInstance<'m> {
-    /// Instantiates a module with no imports.
+    /// Instantiates a bare module.
+    ///
+    /// The counter, where the module carries one, starts at nothing:
+    /// whoever holds the budget sets it through [`Self::set_global`],
+    /// less what the segments cost, which is prepaid off the bytes.
     ///
     /// # Errors
     ///
@@ -704,39 +678,28 @@ impl<'m> RefInstance<'m> {
     ///
     /// # Panics
     ///
-    /// If the module declares imports; bare instantiation is import-free by
-    /// contract.
+    /// If the module imports anything but the meter's `exhaust`; bare
+    /// instantiation is otherwise import-free by contract.
     pub fn instantiate(module: &'m RefModule) -> Result<Self, Trap> {
-        Self::build(module, None)
-    }
-
-    /// Instantiates under a fuel budget. Instantiation is metered — the
-    /// engine compiles an init function for active data segments and its
-    /// entry checks fuel like any other — so the budget has to be in place
-    /// before the segments apply, not after.
-    ///
-    /// # Errors
-    ///
-    /// Exactly [`RefInstance::instantiate`]'s, plus [`Trap::OutOfFuel`].
-    ///
-    /// # Panics
-    ///
-    /// If the module declares imports.
-    pub fn instantiate_with_fuel(module: &'m RefModule, fuel: u64) -> Result<Self, Trap> {
-        Self::build(module, Some(fuel))
-    }
-
-    fn build(module: &'m RefModule, fuel: Option<u64>) -> Result<Self, Trap> {
-        assert!(
-            module.imports.entries.is_empty(),
-            "bare instantiation requires an import-free module"
-        );
-        let mut store = Store {
-            fuel_limit: fuel,
-            ..Store::default()
-        };
-        instantiate_module(&[module], &mut store, 0, Vec::new(), None, None)?;
-        Ok(Self { module, store })
+        let mut imported = Vec::with_capacity(module.imports.entries.len());
+        for (id, entry) in module.imports.entries.iter().enumerate() {
+            assert!(
+                entry.module == NAMESPACE
+                    && entry.name == EXHAUST
+                    && matches!(entry.kind, CoreImportKind::Func(_)),
+                "bare instantiation admits only the meter's import, not `{}` `{}`",
+                entry.module,
+                entry.name
+            );
+            imported.push(FuncAddr::Import(u32::try_from(id).unwrap_or(u32::MAX)));
+        }
+        let mut store = Store::default();
+        instantiate_module(&[module], &mut store, 0, imported, None, None)?;
+        Ok(Self {
+            module,
+            store,
+            fuel: module.global_exports.get(FUEL).copied(),
+        })
     }
 
     /// Bounds each subsequent invocation to `limit` interpreted instructions
@@ -745,15 +708,23 @@ impl<'m> RefInstance<'m> {
         self.store.steps_remaining = Some(limit);
     }
 
-    /// Bounds execution to `limit` fuel on the spec schedule.
-    pub const fn set_fuel_limit(&mut self, limit: u64) {
-        self.store.fuel_limit = Some(limit);
+    /// An exported global's value, by export name.
+    #[must_use]
+    pub fn global(&self, name: &str) -> Option<Value> {
+        let index = *self.module.global_exports.get(name)?;
+        Some(self.store.global(index))
     }
 
-    /// Total fuel consumed under the spec schedule.
-    #[must_use]
-    pub const fn fuel_consumed(&self) -> u64 {
-        self.store.fuel_consumed
+    /// Set an exported global, by export name; answers whether the
+    /// module exports one of that name.
+    pub fn set_global(&mut self, name: &str, value: Value) -> bool {
+        match self.module.global_exports.get(name) {
+            Some(index) => {
+                self.store.set_global(*index, value);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Invokes an exported function.
@@ -761,12 +732,13 @@ impl<'m> RefInstance<'m> {
     /// # Errors
     ///
     /// [`DecodeError::NoSuchExport`] / [`DecodeError::ArgumentMismatch`] for
-    /// bad invocations; otherwise the trap the execution produced.
+    /// bad invocations; otherwise the trap the execution produced, or the
+    /// out-of-gas refusal the meter's `exhaust` answered.
     pub fn invoke(
         &mut self,
         export: &str,
         args: &[Value],
-    ) -> Result<Result<Vec<Value>, Trap>, DecodeError> {
+    ) -> Result<Result<Vec<Value>, ExecError>, DecodeError> {
         let idx = *self
             .module
             .exports
@@ -790,18 +762,13 @@ impl<'m> RefInstance<'m> {
             instance: 0,
             func: idx,
         };
-        match call(
+        let mut metered = Metered { fuel: self.fuel };
+        Ok(call(
             &[self.module],
-            &mut Unimported,
+            &mut metered,
             &mut self.store,
             addr,
             args.to_vec(),
-        ) {
-            Ok(values) => Ok(Ok(values)),
-            Err(ExecError::Trap(t)) => Ok(Err(t)),
-            Err(ExecError::Host(_) | ExecError::Internal(_)) => {
-                unreachable!("bare modules import nothing")
-            }
-        }
+        ))
     }
 }

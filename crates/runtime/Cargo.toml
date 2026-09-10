@@ -15,13 +15,13 @@ engine = ["dep:wasmtime"]
 
 [dependencies]
 hyperscale-vm-embed.workspace = true
+hyperscale-vm-meter.workspace = true
 hyperscale-vm-types.workspace = true
 thiserror.workspace = true
 wasmparser.workspace = true
 wasmtime = { workspace = true, optional = true }
 
 [dev-dependencies]
-serde_json.workspace = true
 wat.workspace = true
 
 [lints]

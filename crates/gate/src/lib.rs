@@ -26,7 +26,7 @@ use hyperscale_vm_effects::{
     seals, supports,
 };
 use hyperscale_vm_runtime::{
-    CoreType, ModuleExport, check_method, module_exports, validate_module,
+    CoreType, ModuleExport, admit as admit_module, check_method, module_exports,
 };
 
 pub use crate::section::{MAX_PACKAGE_METADATA_BYTES, decode_metadata, encode_metadata};
@@ -182,7 +182,7 @@ pub enum Provenance {
 }
 
 fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, GateError> {
-    validate_module(artifact)
+    admit_module(artifact)
         .map_err(|error| GateError::new(format!("artifact is outside the profile: {error}")))?;
     let metadata = extract_metadata(artifact)?
         .ok_or_else(|| GateError::new("artifact declares no effect metadata section"))?;

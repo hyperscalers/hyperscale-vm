@@ -36,7 +36,6 @@ impl GuestBackend for Speaking {
                 edges: Vec::new(),
                 answer,
             },
-            exhausted: false,
         }
     }
 }

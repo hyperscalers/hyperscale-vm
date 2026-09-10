@@ -135,6 +135,9 @@ pub struct RefModule {
     pub datas: Vec<Segment<Vec<u8>>>,
     /// Function exports by name.
     pub exports: HashMap<String, u32>,
+    /// Global exports by name, which is how the meter's counter is
+    /// reached from outside.
+    pub global_exports: HashMap<String, u32>,
     /// Memory export names (a module has at most one memory).
     pub memory_exports: Vec<String>,
     /// Table export names (a module has at most one table).
@@ -207,6 +210,11 @@ impl RefModule {
                         match export.kind {
                             ExternalKind::Func => {
                                 module.exports.insert(export.name.to_string(), export.index);
+                            }
+                            ExternalKind::Global => {
+                                module
+                                    .global_exports
+                                    .insert(export.name.to_string(), export.index);
                             }
                             ExternalKind::Memory => {
                                 module.memory_exports.push(export.name.to_string());

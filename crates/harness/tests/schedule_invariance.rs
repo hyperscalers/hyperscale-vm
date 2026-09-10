@@ -15,8 +15,11 @@ use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, KernelSession,
     MemoryStore, OverlayStore, RunResult, Unavailable, WorkingStore, decode_amount, execute_batch,
 };
+use hyperscale_vm_meter::instantiation_cost;
 use hyperscale_vm_ref::{RefModule, RefModuleInstance};
-use hyperscale_vm_runtime::{Invoking, add_kernel_imports, blessed_engine, invoke_export};
+use hyperscale_vm_runtime::{
+    Invoking, add_kernel_imports, admit, blessed_engine, instantiate_metered, invoke_export,
+};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Moves,
     Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
@@ -204,6 +207,7 @@ fn stall(id: TxHash) {
 struct BlessedRunner {
     engine: Engine,
     module: Module,
+    cost: u64,
     linker: Linker<Invoking<KernelSession>>,
     shapes: BTreeMap<TxHash, Shape>,
     delay: bool,
@@ -212,12 +216,14 @@ struct BlessedRunner {
 impl BlessedRunner {
     fn new(shapes: BTreeMap<TxHash, Shape>, delay: bool) -> Result<Self> {
         let engine = blessed_engine()?;
-        let module = Module::new(&engine, parse_str(KERNEL_GUEST_WAT)?)?;
+        let author = parse_str(KERNEL_GUEST_WAT)?;
+        let module = Module::new(&engine, admit(&author)?)?;
         let mut linker = Linker::<Invoking<KernelSession>>::new(&engine);
         add_kernel_imports(&mut linker)?;
         Ok(Self {
             engine,
             module,
+            cost: instantiation_cost(&author)?,
             linker,
             shapes,
             delay,
@@ -237,13 +243,12 @@ impl GuestRunner for BlessedRunner {
         }
         let (export, args) = call_for(&session, self.shapes[&id]);
         let mut store = Store::new(&self.engine, Invoking::new(session));
-        store.set_fuel(FUEL).expect("fuel");
-        let instance = self
-            .linker
-            .instantiate(&mut store, &self.module)
-            .expect("instantiate");
+        let instance = instantiate_metered(&mut store, FUEL, self.cost, |s| {
+            self.linker.instantiate(s, &self.module)
+        })
+        .expect("instantiate");
         let ended = invoke_export(&mut store, &instance, export, &args, FUEL);
-        let fuel = FUEL - store.get_fuel().expect("fuel");
+        let fuel = ended.fuel;
         Ok(run_result(store.into_data().into_host(), ended, fuel))
     }
 }
@@ -256,7 +261,7 @@ struct RefRunner {
 
 impl RefRunner {
     fn new(shapes: BTreeMap<TxHash, Shape>, delay: bool) -> Result<Self> {
-        let module = RefModule::decode(&parse_str(KERNEL_GUEST_WAT)?)?;
+        let module = RefModule::decode(&admit(&parse_str(KERNEL_GUEST_WAT)?)?)?;
         Ok(Self {
             module,
             shapes,
@@ -276,10 +281,10 @@ impl GuestRunner for RefRunner {
             stall(id);
         }
         let (export, args) = call_for(&session, self.shapes[&id]);
-        let mut instance = RefModuleInstance::instantiate(&self.module, session, u64::MAX)
+        let mut instance = RefModuleInstance::instantiate(&self.module, session, FUEL)
             .unwrap_or_else(|(_, error)| panic!("instantiate: {error}"));
         let ended = instance.invoke(export, &args);
-        let fuel = instance.fuel_consumed();
+        let fuel = ended.fuel;
         Ok(run_result(instance.into_host(), ended, fuel))
     }
 }

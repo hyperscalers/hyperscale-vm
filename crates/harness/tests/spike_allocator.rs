@@ -21,9 +21,10 @@ use hyperscale_vm_harness::dual::{materialize, rep_where};
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, GuestArg, Invoked, KernelSession, MemoryStore, Receipt,
 };
+use hyperscale_vm_meter::{instantiation_cost, instrument};
 use hyperscale_vm_runtime::{
-    InstantiationCharges, Invoking, add_kernel_imports, blessed_config, blessed_engine,
-    instantiate_charged, instantiation_charges, invoke_export,
+    Invoking, add_kernel_imports, blessed_config, blessed_engine, instantiate_metered,
+    invoke_export,
 };
 use hyperscale_vm_stdlib::{account_artifact, staking_artifact};
 use hyperscale_vm_types::{
@@ -83,15 +84,15 @@ fn session(base: &MemoryStore) -> KernelSession {
 }
 
 /// One production-shaped invocation prefix: fresh session, fresh store,
-/// charge-replayed instantiation.
+/// prepaid instantiation.
 fn one_instantiation(
     engine: &Engine,
     pre: &InstancePre<Invoking<KernelSession>>,
-    charges: &InstantiationCharges,
+    cost: u64,
     base: &MemoryStore,
 ) -> Result<()> {
     let mut store = Store::new(engine, Invoking::new(session(base)));
-    instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
+    instantiate_metered(&mut store, FUEL, cost, |s| pre.instantiate(s))?;
     Ok(())
 }
 
@@ -171,7 +172,7 @@ fn transfer_session() -> KernelSession {
 fn one_transfer(
     engine: &Engine,
     pre: &InstancePre<Invoking<KernelSession>>,
-    charges: &InstantiationCharges,
+    cost: u64,
 ) -> Result<Receipt> {
     let mut session = transfer_session();
     let sender_key = child_key(&TestHasher, SENDER, SlotId(1), &[]);
@@ -181,7 +182,7 @@ fn one_transfer(
     );
     let sender_rep = session.bind_site(vec![Some(sender_rep)]);
     let mut store = Store::new(engine, Invoking::new(session));
-    let instance = instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
+    let instance = instantiate_metered(&mut store, FUEL, cost, |s| pre.instantiate(s))?;
     let withdraw = invoke_export(
         &mut store,
         &instance,
@@ -215,7 +216,7 @@ fn one_transfer(
     let recipient_rep = session.bind_site(vec![Some(recipient_rep)]);
     session.lend_bucket(funds);
     let mut store = Store::new(engine, Invoking::new(session));
-    let instance = instantiate_charged(&mut store, FUEL, charges, |s| pre.instantiate(s))?;
+    let instance = instantiate_metered(&mut store, FUEL, cost, |s| pre.instantiate(s))?;
     let deposit = invoke_export(
         &mut store,
         &instance,
@@ -259,17 +260,20 @@ fn measure(label: &str, mut f: impl FnMut() -> Result<()>) -> Result<f64> {
     Ok(nanos_per)
 }
 
-/// Compile `artifact` for `engine` the way the production backend does.
+/// Compile `artifact` for `engine` the way the production backend does:
+/// the meter's pass, then one pre-linked instantiation. The pass alone
+/// rather than admission, because the decomposition probes are not
+/// kernel modules and the artifacts were admitted where they were built.
 fn compiled(
     engine: &Engine,
     artifact: &[u8],
-) -> Result<(InstancePre<Invoking<KernelSession>>, InstantiationCharges)> {
-    let module = Module::new(engine, artifact)?;
+) -> Result<(InstancePre<Invoking<KernelSession>>, u64)> {
+    let module = Module::new(engine, instrument(artifact)?)?;
     let mut linker = Linker::<Invoking<KernelSession>>::new(engine);
     add_kernel_imports(&mut linker)?;
     Ok((
         linker.instantiate_pre(&module)?,
-        instantiation_charges(artifact)?,
+        instantiation_cost(artifact)?,
     ))
 }
 
@@ -302,9 +306,9 @@ fn per_invocation_allocation_cost() -> Result<()> {
         })?;
         ceiling_checks.push(("store", store_only));
         for (name, artifact) in probes.iter().copied().chain(artifacts) {
-            let (pre, charges) = compiled(engine, artifact)?;
-            let label = format!("{config_label} {name} (charge {})", charges.total());
-            let ns = measure(&label, || one_instantiation(engine, &pre, &charges, &base))?;
+            let (pre, cost) = compiled(engine, artifact)?;
+            let label = format!("{config_label} {name} (prepaid {cost})");
+            let ns = measure(&label, || one_instantiation(engine, &pre, cost, &base))?;
             ceiling_checks.push(("instantiation", ns));
         }
     }
@@ -326,10 +330,10 @@ fn concurrent_instantiation_cost() -> Result<()> {
     const PER_THREAD: u32 = 3_000;
     let artifact = account_artifact();
     for (config_label, engine) in &engines()? {
-        let (pre, charges) = compiled(engine, artifact)?;
+        let (pre, cost) = compiled(engine, artifact)?;
         let base = MemoryStore::new();
         for _ in 0..WARMUP {
-            one_instantiation(engine, &pre, &charges, &base)?;
+            one_instantiation(engine, &pre, cost, &base)?;
         }
         let start = Instant::now();
         thread::scope(|scope| {
@@ -337,7 +341,7 @@ fn concurrent_instantiation_cost() -> Result<()> {
                 scope.spawn(|| {
                     let base = MemoryStore::new();
                     for _ in 0..PER_THREAD {
-                        one_instantiation(engine, &pre, &charges, &base)
+                        one_instantiation(engine, &pre, cost, &base)
                             .expect("warmed instantiation succeeds");
                     }
                 });
@@ -362,10 +366,10 @@ fn per_transfer_allocation_cost() -> Result<()> {
     let engines = engines()?;
     let mut receipts: Vec<Receipt> = Vec::new();
     for (config_label, engine) in &engines {
-        let (pre, charges) = compiled(engine, artifact)?;
-        receipts.push(one_transfer(engine, &pre, &charges)?);
+        let (pre, cost) = compiled(engine, artifact)?;
+        receipts.push(one_transfer(engine, &pre, cost)?);
         let label = format!("{config_label} transfer");
-        let ns = measure(&label, || one_transfer(engine, &pre, &charges).map(|_| ()))?;
+        let ns = measure(&label, || one_transfer(engine, &pre, cost).map(|_| ()))?;
         assert!(ns < 1_000_000.0, "a transfer costs {ns} ns");
     }
     for (index, receipt) in receipts.iter().enumerate() {

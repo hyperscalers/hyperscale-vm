@@ -674,6 +674,7 @@ dependencies = [
  "hyperscale-vm-effects",
  "hyperscale-vm-harness",
  "hyperscale-vm-kernel",
+ "hyperscale-vm-meter",
  "hyperscale-vm-ref",
  "hyperscale-vm-runtime",
  "hyperscale-vm-types",
@@ -701,6 +702,7 @@ dependencies = [
  "hyperscale-vm-effects",
  "hyperscale-vm-embed",
  "hyperscale-vm-kernel",
+ "hyperscale-vm-meter",
  "hyperscale-vm-ref",
  "hyperscale-vm-runtime",
  "hyperscale-vm-testing",
@@ -729,10 +731,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperscale-vm-meter"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.19",
+ "wasm-encoder",
+ "wasmparser",
+]
+
+[[package]]
 name = "hyperscale-vm-ref"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-embed",
+ "hyperscale-vm-meter",
  "hyperscale-vm-types",
  "thiserror 2.0.19",
  "wasmparser",
@@ -743,6 +755,7 @@ name = "hyperscale-vm-runtime"
 version = "0.1.0"
 dependencies = [
  "hyperscale-vm-embed",
+ "hyperscale-vm-meter",
  "hyperscale-vm-types",
  "thiserror 2.0.19",
  "wasmparser",
@@ -790,6 +803,7 @@ dependencies = [
  "hyperscale-vm-effects",
  "hyperscale-vm-kernel",
  "hyperscale-vm-manifest-builder",
+ "hyperscale-vm-meter",
  "hyperscale-vm-runtime",
  "hyperscale-vm-sdk",
  "hyperscale-vm-sdk-macros",

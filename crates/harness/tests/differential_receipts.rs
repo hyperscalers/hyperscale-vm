@@ -12,9 +12,11 @@
 use hyperscale_vm_embed::abi::{ABI, MEMORY};
 use hyperscale_vm_embed::{Invocation, Invoked};
 use hyperscale_vm_harness::fixtures::NoHost;
+use hyperscale_vm_meter::instantiation_cost;
 use hyperscale_vm_ref::{RefModule, RefModuleInstance};
 use hyperscale_vm_runtime::{
-    Invoking, add_kernel_imports, blessed_engine, invoke_export, validate_module,
+    Invoking, add_kernel_imports, admit, blessed_engine, instantiate_metered, invoke_export,
+    validate_module,
 };
 use hyperscale_vm_types::AbortReason;
 use wasmtime::error::{Context, format_err};
@@ -85,18 +87,20 @@ fn trapping_guest() -> Result<Vec<u8>> {
 /// One export's ending on the blessed engine, under `budget`.
 fn blessed(bytes: &[u8], export: &str, budget: u64) -> Result<Invocation> {
     let engine = blessed_engine()?;
-    let module = Module::new(&engine, bytes)?;
+    let module = Module::new(&engine, admit(bytes)?)?;
     let mut linker = Linker::<Invoking<NoHost>>::new(&engine);
     add_kernel_imports(&mut linker)?;
     let mut store = Store::new(&engine, Invoking::new(NoHost));
-    store.set_fuel(budget).context("fuel")?;
-    let instance = linker.instantiate(&mut store, &module)?;
+    let cost = instantiation_cost(bytes).context("prepay")?;
+    let instance =
+        instantiate_metered(&mut store, budget, cost, |s| linker.instantiate(s, &module))?;
     Ok(invoke_export(&mut store, &instance, export, &[], budget))
 }
 
 /// The same export's ending on the reference interpreter.
 fn reference(bytes: &[u8], export: &str, budget: u64) -> Result<Invocation> {
-    let module = RefModule::decode(bytes).map_err(|error| format_err!("decode: {error}"))?;
+    let module =
+        RefModule::decode(&admit(bytes)?).map_err(|error| format_err!("decode: {error}"))?;
     let mut instance = RefModuleInstance::instantiate(&module, NoHost, budget)
         .map_err(|(_, error)| format_err!("reference instantiation: {error}"))?;
     Ok(instance.invoke(export, &[]))
@@ -154,9 +158,9 @@ fn both_engines_classify_exhaustion_as_exhaustion() -> Result<()> {
     let reference = reference(&bytes, "spin", CEILING)?;
 
     assert_eq!(blessed.result, Invoked::Aborted(AbortReason::OutOfGas));
-    assert!(blessed.exhausted);
+    assert_eq!(blessed.fuel, CEILING, "exhaustion spends the counter whole");
     assert_eq!(reference.result, Invoked::Aborted(AbortReason::OutOfGas));
-    assert!(reference.exhausted);
+    assert_eq!(reference.fuel, CEILING);
     Ok(())
 }
 

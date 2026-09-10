@@ -1,12 +1,12 @@
-//! Milestone 1 spike, questions 1–2: the backend feature matrix and
-//! cross-backend fuel determinism.
+//! The backend feature matrix.
 //!
-//! Probes each backend (Cranelift, Winch, Pulley) for: core execution under
-//! fuel, trap kind fidelity, and NaN bit patterns. Nothing is assumed —
+//! Probes each backend (Cranelift, Winch, Pulley) for: core execution,
+//! trap kind fidelity, and NaN bit patterns. Nothing is assumed —
 //! unsupported combinations are recorded, not failed, because the matrix
 //! itself is the deliverable. The only hard assertions are the baseline
-//! (Cranelift supports everything) and fuel/output agreement between every
-//! pair of backends that both support a probe.
+//! (Cranelift supports everything) and trap agreement between every pair
+//! of backends that both support a probe. Fuel is not a column: the meter
+//! counts inside the module, so no backend has a schedule of its own.
 //!
 //! Run with `cargo test --test spike_matrix -- --nocapture` to see the matrix.
 
@@ -82,9 +82,8 @@ impl Backend {
         }
     }
 
-    fn configure(self, fuel: bool, nan_canon: bool) -> Result<Engine> {
+    fn configure(self, nan_canon: bool) -> Result<Engine> {
         let mut config = Config::new();
-        config.consume_fuel(fuel);
         config.cranelift_nan_canonicalization(nan_canon);
         match self {
             Self::Cranelift => {
@@ -109,8 +108,6 @@ type Probe = Result<String, String>;
 struct Report {
     backend: Backend,
     core_exec: Probe,
-    core_fuel: Probe,
-    core_fuel_fill: Probe,
     trap_unreachable: Probe,
     trap_div0: Probe,
     nan_div_bits: Probe,
@@ -121,48 +118,31 @@ fn stringify(result: Result<String>) -> Probe {
     result.map_err(|e| format!("{e:#}"))
 }
 
-fn core_instance(engine: &Engine, fuel: Option<u64>) -> Result<(Store<()>, Instance)> {
+fn core_instance(engine: &Engine) -> Result<(Store<()>, Instance)> {
     let module = Module::new(engine, CORE_WAT).context("compile core module")?;
     let mut store = Store::new(engine, ());
-    if let Some(f) = fuel {
-        store.set_fuel(f).context("set fuel")?;
-    }
     let instance = Instance::new(&mut store, &module, &[]).context("instantiate")?;
     Ok((store, instance))
 }
 
 fn probe_core_exec(backend: Backend) -> Result<String> {
-    let engine = backend.configure(false, false)?;
-    let (mut store, instance) = core_instance(&engine, None)?;
+    let engine = backend.configure(false)?;
+    let (mut store, instance) = core_instance(&engine)?;
     let add = instance.get_typed_func::<(i32, i32), i32>(&mut store, "add")?;
     let sum = add.call(&mut store, (2, 3))?;
     if sum != 5 {
         return Err(format_err!("add(2, 3) returned {sum}"));
     }
+    let work = instance.get_typed_func::<i64, i64>(&mut store, "work")?;
+    work.call(&mut store, 10_000)?;
+    let fill = instance.get_typed_func::<i32, i32>(&mut store, "fill")?;
+    fill.call(&mut store, 60_000)?;
     Ok("ok".to_string())
 }
 
-fn probe_core_fuel(backend: Backend) -> Result<String> {
-    let engine = backend.configure(true, false)?;
-    let (mut store, instance) = core_instance(&engine, Some(1_000_000))?;
-    let work = instance.get_typed_func::<i64, i64>(&mut store, "work")?;
-    work.call(&mut store, 10_000)?;
-    let after_loop = store.get_fuel()?;
-    Ok(format!("loop10k={}", 1_000_000 - after_loop))
-}
-
-fn probe_core_fuel_fill(backend: Backend) -> Result<String> {
-    let engine = backend.configure(true, false)?;
-    let (mut store, instance) = core_instance(&engine, Some(1_000_000))?;
-    let fill = instance.get_typed_func::<i32, i32>(&mut store, "fill")?;
-    fill.call(&mut store, 60_000)?;
-    let after_fill = store.get_fuel()?;
-    Ok(format!("fill60k={}", 1_000_000 - after_fill))
-}
-
 fn probe_trap(backend: Backend, export: &'static str, arg: Option<i32>) -> Result<String> {
-    let engine = backend.configure(false, false)?;
-    let (mut store, instance) = core_instance(&engine, None)?;
+    let engine = backend.configure(false)?;
+    let (mut store, instance) = core_instance(&engine)?;
     let err = if let Some(a) = arg {
         let f = instance.get_typed_func::<i32, i32>(&mut store, export)?;
         f.call(&mut store, a).expect_err("expected a trap")
@@ -177,8 +157,8 @@ fn probe_trap(backend: Backend, export: &'static str, arg: Option<i32>) -> Resul
 }
 
 fn probe_nan(backend: Backend, canon: bool, export: &'static str) -> Result<String> {
-    let engine = backend.configure(false, canon)?;
-    let (mut store, instance) = core_instance(&engine, None)?;
+    let engine = backend.configure(canon)?;
+    let (mut store, instance) = core_instance(&engine)?;
     let bits = if export == "nan_div" {
         let f = instance.get_typed_func::<(f64, f64), i64>(&mut store, export)?;
         f.call(&mut store, (0.0, 0.0))?
@@ -197,8 +177,6 @@ fn run_matrix() -> Vec<Report> {
         .map(|backend| Report {
             backend,
             core_exec: stringify(probe_core_exec(backend)),
-            core_fuel: stringify(probe_core_fuel(backend)),
-            core_fuel_fill: stringify(probe_core_fuel_fill(backend)),
             trap_unreachable: stringify(probe_trap(backend, "unreach", None)),
             trap_div0: stringify(probe_trap(backend, "div0", Some(0))),
             nan_div_bits: stringify(probe_nan(backend, true, "nan_div")),
@@ -213,8 +191,6 @@ fn render(reports: &[Report]) -> String {
         let _ = writeln!(out, "== {} ==", r.backend.name());
         for (label, probe) in [
             ("core exec", &r.core_exec),
-            ("core fuel", &r.core_fuel),
-            ("core fuel fill", &r.core_fuel_fill),
             ("trap unreachable", &r.trap_unreachable),
             ("trap div0", &r.trap_div0),
             ("nan div bits (canon)", &r.nan_div_bits),
@@ -235,29 +211,27 @@ fn render(reports: &[Report]) -> String {
 }
 
 #[test]
-fn backend_matrix_and_fuel_determinism() {
+fn backend_matrix() {
     let reports = run_matrix();
     println!("{}", render(&reports));
 
     // Baseline: the blessed-path candidate must support everything.
     let cranelift = &reports[0];
     assert_eq!(cranelift.backend, Backend::Cranelift);
-    for (label, probe) in [
-        ("core exec", &cranelift.core_exec),
-        ("core fuel", &cranelift.core_fuel),
-    ] {
-        assert!(probe.is_ok(), "cranelift {label}: {probe:?}");
-    }
+    assert!(
+        cranelift.core_exec.is_ok(),
+        "cranelift core exec: {:?}",
+        cranelift.core_exec
+    );
 
     // Every pair of backends that both support a probe must agree exactly on
-    // profile-admitted behavior: fuel counts and trap kinds. NaN bit patterns
-    // are deliberately excluded — the matrix records them, and the observed
+    // profile-admitted behavior: trap kinds. NaN bit patterns are
+    // deliberately excluded — the matrix records them, and the observed
     // Winch payload-preserving quieting is a reason the profile bans floats,
     // not a harness failure.
     for a in &reports[..] {
         for b in &reports[..] {
             for (label, pa, pb) in [
-                ("core fuel", &a.core_fuel, &b.core_fuel),
                 ("trap unreachable", &a.trap_unreachable, &b.trap_unreachable),
                 ("trap div0", &a.trap_div0, &b.trap_div0),
             ] {
@@ -271,47 +245,6 @@ fn backend_matrix_and_fuel_determinism() {
                     );
                 }
             }
-        }
-    }
-
-    // Bulk-op fuel is size-proportional on the Cranelift-compiled paths
-    // (Cranelift and Pulley agree exactly) but Winch charges only the flat
-    // operator cost. The divergence is pinned: if an upstream Winch fix
-    // lands, this assertion trips and the matrix gets re-recorded.
-    let pulley = &reports[2];
-    assert_eq!(pulley.backend, Backend::Pulley);
-    assert_eq!(cranelift.core_fuel_fill, pulley.core_fuel_fill);
-    assert_eq!(
-        cranelift.core_fuel_fill.as_deref(),
-        Ok("fill60k=60007"),
-        "cranelift fill fuel moved off the pinned size-proportional schedule"
-    );
-    let winch = &reports[1];
-    assert_eq!(winch.backend, Backend::Winch);
-    assert_eq!(
-        winch.core_fuel_fill.as_deref(),
-        Ok("fill60k=7"),
-        "winch bulk-op fuel is no longer the flat operator schedule"
-    );
-}
-
-#[test]
-fn fuel_is_deterministic_across_runs() {
-    // Ten fresh engine+store runs per backend must consume identical fuel.
-    for backend in Backend::ALL {
-        let runs: Vec<Probe> = (0..10)
-            .map(|_| stringify(probe_core_fuel(backend)))
-            .collect();
-        let Ok(first) = &runs[0] else {
-            continue; // Unsupported backends are recorded by the matrix test.
-        };
-        for run in &runs[1..] {
-            assert_eq!(
-                run.as_ref().ok(),
-                Some(first),
-                "fuel varies across runs on {}",
-                backend.name()
-            );
         }
     }
 }

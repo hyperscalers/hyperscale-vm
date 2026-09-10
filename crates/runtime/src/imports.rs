@@ -2,29 +2,31 @@
 //!
 //! One `func_wrap` per dispatch in [`hyperscale_vm_embed::abi`], and
 //! nothing decided here: the engine contributes the store — its data
-//! the host and the registers, its fuel the budget, the instance's one
-//! memory the bytes — and the dispatch reads all four through one
+//! the host and the registers, the instance's counter the budget, its
+//! one memory the bytes — and the dispatch reads all four through one
 //! [`Boundary`]. What this file knows is how a wasmtime `Caller` is
 //! those four things.
 
 use hyperscale_vm_embed::abi::{self, Boundary, GuestMemory, IMPORTS, MEMORY, Registers};
 use hyperscale_vm_embed::meter::{Exhausted, FuelSink, HostAccess, MeterError};
 use hyperscale_vm_embed::{GuestArg, KernelHost};
+use hyperscale_vm_meter::FUEL;
 use hyperscale_vm_types::AbortReason;
-use wasmtime::{Caller, Extern, Linker, Memory, Result, Val};
+use wasmtime::{Caller, Extern, Global, Linker, Memory, Result, Val};
 
 use crate::abort::{fault, host_trap};
+use crate::budget::{add_meter_import, exhausted, remaining, set};
 
 /// The store's data while a guest runs: the host, and the registers of
 /// the call in flight.
 ///
-/// The memory is remembered from the first host call of an invocation,
-/// so the export lookup happens once per call rather than once per
-/// import.
+/// The memory and the counter are remembered from the first host call
+/// of an invocation, so the export lookups happen once per call rather
+/// than once per import.
 pub struct Invoking<H> {
     host: H,
     registers: Registers,
-    memory: Option<Memory>,
+    exports: Option<(Memory, Global)>,
 }
 
 impl<H> Invoking<H> {
@@ -33,7 +35,7 @@ impl<H> Invoking<H> {
         Self {
             host,
             registers: Registers::default(),
-            memory: None,
+            exports: None,
         }
     }
 
@@ -53,10 +55,10 @@ impl<H> Invoking<H> {
     }
 
     /// Begins one call: its registers, as [`abi::lower`] built them,
-    /// and the instance's memory.
-    pub(crate) fn begin(&mut self, registers: Registers, memory: Memory) {
+    /// and the instance's memory and counter.
+    pub(crate) fn begin(&mut self, registers: Registers, memory: Memory, counter: Global) {
         self.registers = registers;
-        self.memory = Some(memory);
+        self.exports = Some((memory, counter));
     }
 
     /// The registers of the call in flight.
@@ -69,21 +71,30 @@ impl<H> Invoking<H> {
 struct Port<'c, 'a, H: 'static> {
     caller: &'c mut Caller<'a, Invoking<H>>,
     memory: Memory,
+    counter: Global,
 }
 
 impl<'c, 'a, H: KernelHost + 'static> Port<'c, 'a, H> {
     fn new(caller: &'c mut Caller<'a, Invoking<H>>) -> Result<Self> {
-        let memory = if let Some(memory) = caller.data().memory {
-            memory
+        let (memory, counter) = if let Some(exports) = caller.data().exports {
+            exports
         } else {
             let memory = caller
                 .get_export(MEMORY)
                 .and_then(Extern::into_memory)
                 .ok_or_else(|| host_trap(AbortReason::AbiViolation))?;
-            caller.data_mut().memory = Some(memory);
-            memory
+            let counter = caller
+                .get_export(FUEL)
+                .and_then(Extern::into_global)
+                .expect("an admitted module exports the meter's counter");
+            caller.data_mut().exports = Some((memory, counter));
+            (memory, counter)
         };
-        Ok(Self { caller, memory })
+        Ok(Self {
+            caller,
+            memory,
+            counter,
+        })
     }
 }
 
@@ -107,15 +118,15 @@ impl<H: KernelHost + 'static> HostAccess for Port<'_, '_, H> {
 
 impl<H: KernelHost + 'static> FuelSink for Port<'_, '_, H> {
     fn consume(&mut self, fuel: u64) -> std::result::Result<(), Exhausted> {
-        let current = self.caller.get_fuel().expect("fuel metering is enabled");
-        if let Some(remaining) = current.checked_sub(fuel) {
-            self.caller
-                .set_fuel(remaining)
-                .expect("fuel metering is enabled");
+        let held = remaining(&mut *self.caller, &self.counter);
+        if let Some(left) = held.checked_sub(fuel) {
+            set(&mut *self.caller, &self.counter, left);
             Ok(())
         } else {
-            // Zeroed first, matching the engine's own exhaustion behavior.
-            self.caller.set_fuel(0).expect("fuel metering is enabled");
+            // Zeroed here as `exhaust` zeroes it, so the whole budget
+            // reads as spent whichever way the counter ran out; the
+            // refusal itself is raised where the dispatch's error is.
+            let _ = exhausted(&mut *self.caller, &self.counter);
             Err(Exhausted)
         }
     }
@@ -146,10 +157,13 @@ macro_rules! import {
     };
 }
 
-/// Adds every kernel import to a core linker.
+/// Adds every kernel import to a core linker, and the meter's beside
+/// them.
 ///
 /// The set is [`IMPORTS`], and the validator admits exactly that set, so
-/// a module the gate passed is one the linker resolves.
+/// a module the gate passed is one the linker resolves; the meter's
+/// `exhaust` is the one import an admitted module carries that its
+/// author never wrote.
 ///
 /// # Errors
 ///
@@ -158,6 +172,8 @@ macro_rules! import {
 #[allow(clippy::too_many_lines)] // one registration per import
 pub fn add_kernel_imports<H: KernelHost + 'static>(linker: &mut Linker<Invoking<H>>) -> Result<()> {
     use abi::{ABI, CRYPTO, ENV, EVENTS, MATH, STATE};
+
+    add_meter_import(linker)?;
 
     import!(linker, ABI, "arg", arg(index: u32, ptr: u32));
     import!(linker, ABI, "take", take(ptr: u32));

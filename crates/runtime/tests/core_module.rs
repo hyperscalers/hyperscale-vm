@@ -7,8 +7,9 @@ mod common;
 use common::{CLOCK_MS, Held, Kernel, every_import, ident, module};
 use hyperscale_vm_embed::abi::{ABI, CoreType, IMPORTS, MATH, STATE};
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
+use hyperscale_vm_meter::instantiation_cost;
 use hyperscale_vm_runtime::{
-    Invoking, add_kernel_imports, blessed_engine, invoke_export, validate_module,
+    Invoking, add_kernel_imports, admit, blessed_engine, instantiate_metered, invoke_export,
 };
 use hyperscale_vm_types::AbortReason;
 use wasmtime::{Engine, Linker, Module, Store};
@@ -31,15 +32,16 @@ fn run_with(
     budget: u64,
 ) -> (Invocation, Kernel) {
     let bytes = parse_str(wat).expect("the fixture parses");
-    validate_module(&bytes).expect("the fixture is admitted");
-    let module = Module::new(engine, &bytes).expect("the fixture compiles");
+    let admitted = admit(&bytes).expect("the fixture is admitted");
+    let module = Module::new(engine, &admitted).expect("the fixture compiles");
     let mut linker = Linker::<Invoking<Kernel>>::new(engine);
     add_kernel_imports(&mut linker).expect("the imports register");
     let mut store = Store::new(engine, Invoking::new(kernel));
-    store.set_fuel(budget).expect("fuel is on");
-    let instance = linker
-        .instantiate(&mut store, &module)
-        .expect("the fixture instantiates");
+    let cost = instantiation_cost(&bytes).expect("the fixture prices");
+    let instance = instantiate_metered(&mut store, budget, cost, |store| {
+        linker.instantiate(store, &module)
+    })
+    .expect("the fixture instantiates");
     let ended = invoke_export(&mut store, &instance, export, args, budget);
     (ended, store.into_data().into_host())
 }
@@ -145,7 +147,6 @@ fn bytes_cross_through_the_registers() {
             answer: Some(b"alpha".to_vec()),
         }
     );
-    assert!(!ended.exhausted);
     assert!(ended.fuel > 0);
     assert_eq!(kernel.values[1], b"payload");
     let digest = [b"alpha".iter().fold(0u8, |acc, b| acc.wrapping_add(*b)); 32];
@@ -296,7 +297,8 @@ fn register_and_memory_misuse_are_abi_violations() {
 }
 
 /// A trap keeps its class, a refusal keeps the kernel's, exhaustion is
-/// the engine's, and a name the module does not export is its own.
+/// the meter's and reads the whole budget, and a name the module does
+/// not export is its own.
 #[test]
 fn every_other_ending_keeps_its_class() {
     let engine = engine();
@@ -311,7 +313,6 @@ fn every_other_ending_keeps_its_class() {
     assert_eq!(aborted(&ended), AbortReason::HandleUnknown);
     let (ended, _) = run_with(&engine, &wat, "spin", &[], Kernel::seeded(), 10_000);
     assert_eq!(aborted(&ended), AbortReason::OutOfGas);
-    assert!(ended.exhausted);
     assert_eq!(ended.fuel, 10_000);
     let (ended, _) = run(&engine, &wat, "absent", &[]);
     assert_eq!(aborted(&ended), AbortReason::ExportMissing);

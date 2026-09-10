@@ -20,6 +20,7 @@ use hyperscale_vm_kernel::{
     ManifestWalk, MemoryStore, Receipt, decode_amount, execute_batch,
 };
 use hyperscale_vm_ref::{RefModule, RefModuleInstance};
+use hyperscale_vm_runtime::admit;
 use hyperscale_vm_testing::{Blessed, Dispatch, FUEL_CEILING, Native};
 use hyperscale_vm_types::{AbortReason, Address, Outcome, SubstateKey, encode_amount};
 
@@ -32,17 +33,18 @@ pub struct Reference {
 }
 
 impl Reference {
-    /// Decode a package's module bytes under the address a call names
-    /// them at.
+    /// Admit a package's module bytes and decode what the meter made of
+    /// them, under the address a call names them at.
     ///
     /// # Panics
     ///
-    /// Panics if the bytes do not decode — a fixture defect, not a
-    /// runtime condition.
+    /// Panics if the bytes are not admitted or do not decode — a
+    /// fixture defect, not a runtime condition.
     pub fn seed(&mut self, package: PackageHash, module: &[u8]) {
+        let admitted = admit(module).expect("a seeded package is admitted");
         self.modules.insert(
             package,
-            RefModule::decode(module).expect("a seeded package decodes"),
+            RefModule::decode(&admitted).expect("a seeded package decodes"),
         );
     }
 }
@@ -62,7 +64,6 @@ impl GuestBackend for Reference {
             session: instance.into_host(),
             fuel: end.fuel,
             result: end.result,
-            exhausted: end.exhausted,
         }
     }
 }

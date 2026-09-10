@@ -21,8 +21,11 @@ use hyperscale_vm_harness::fixtures::KERNEL_GUEST_WAT;
 use hyperscale_vm_kernel::{
     Capability, EnvInputs, GuestArg, Invoked, KernelSession, MemoryStore, OverlayStore,
 };
+use hyperscale_vm_meter::instantiation_cost;
 use hyperscale_vm_ref::{RefModule, RefModuleInstance};
-use hyperscale_vm_runtime::{Invoking, add_kernel_imports, blessed_engine, invoke_export};
+use hyperscale_vm_runtime::{
+    Invoking, add_kernel_imports, admit, blessed_engine, instantiate_metered, invoke_export,
+};
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
     Mode, Moves, ResourceAddr, SubstateKey, TxHash, encode_amount,
@@ -54,20 +57,23 @@ const EXPORTS: &[&str] = &[
 struct Runtime {
     engine: Engine,
     module: Module,
+    cost: u64,
     linker: Linker<Invoking<KernelSession>>,
     reference: RefModule,
 }
 
 static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     let bytes = wat::parse_str(KERNEL_GUEST_WAT).expect("fixture WAT parses");
+    let admitted = admit(&bytes).expect("the fixture is admitted");
     let engine = blessed_engine().expect("blessed engine");
-    let module = Module::new(&engine, &bytes).expect("fixture compiles");
+    let module = Module::new(&engine, &admitted).expect("fixture compiles");
     let mut linker = Linker::<Invoking<KernelSession>>::new(&engine);
     add_kernel_imports(&mut linker).expect("kernel imports link");
-    let reference = RefModule::decode(&bytes).expect("the spec decodes the fixture");
+    let reference = RefModule::decode(&admitted).expect("the spec decodes the fixture");
     Runtime {
         engine,
         module,
+        cost: instantiation_cost(&bytes).expect("the fixture prices"),
         linker,
         reference,
     }
@@ -383,24 +389,24 @@ fn run_blessed(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, KernelSession,
     let host = session(fx)?;
     let caps = host.capabilities().to_vec();
     let mut store = Store::new(&rt.engine, Invoking::new(host));
-    store.set_fuel(FUEL).expect("fuel is configured");
-    let instance = rt
-        .linker
-        .instantiate(&mut store, &rt.module)
-        .expect("fixture instantiates");
+    let instance = instantiate_metered(&mut store, FUEL, rt.cost, |s| {
+        rt.linker.instantiate(s, &rt.module)
+    })
+    .expect("fixture instantiates");
 
     let mut outcomes = Vec::new();
+    let mut fuel = 0;
     for export in &plan.calls {
         let args = guest_args(fx, &caps, export);
-        let outcome =
-            LaneOutcome::from(invoke_export(&mut store, &instance, export, &args, FUEL).result);
+        let ended = invoke_export(&mut store, &instance, export, &args, FUEL);
+        fuel = ended.fuel;
+        let outcome = LaneOutcome::from(ended.result);
         let stop = outcome.value().is_none();
         outcomes.push(outcome);
         if stop {
             break;
         }
     }
-    let fuel = FUEL - store.get_fuel().expect("fuel is configured");
     Some((outcomes, store.into_data().into_host(), fuel))
 }
 
@@ -421,7 +427,7 @@ fn run_ref(fx: &Fx, plan: &Plan) -> Option<(Vec<LaneOutcome>, KernelSession, u64
             break;
         }
     }
-    let fuel = instance.fuel_consumed();
+    let fuel = instance.consumed();
     Some((outcomes, instance.into_host(), fuel))
 }
 

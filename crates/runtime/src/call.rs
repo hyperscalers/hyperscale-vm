@@ -10,7 +10,8 @@ use hyperscale_vm_embed::{GuestArg, Invocation, Invoked, KernelHost};
 use hyperscale_vm_types::AbortReason;
 use wasmtime::{Error, Instance, Result, Store, Val};
 
-use crate::abort::{CallError, classify, exhausted, host_trap};
+use crate::abort::{CallError, classify, host_trap};
+use crate::budget::{counter, remaining};
 use crate::imports::{Invoking, lowered};
 
 /// How an invocation ended, as the artifact's own result type says it can.
@@ -31,7 +32,7 @@ pub enum Returned {
     ///
     /// Not a failure of the call — the guest ran to completion and said
     /// no on its own terms, which is what makes its fuel an ordinary
-    /// completed figure rather than an engine-defined one.
+    /// completed figure rather than an abort's.
     Declined(u32),
 }
 
@@ -67,7 +68,8 @@ pub fn call_export<H: KernelHost + 'static>(
         .get_memory(&mut *store, MEMORY)
         .ok_or_else(|| host_trap(AbortReason::AbiViolation))?;
     let (params, registers) = lowered(args)?;
-    store.data_mut().begin(registers, memory);
+    let counter = counter(&mut *store, instance);
+    store.data_mut().begin(registers, memory, counter);
     let arity = func.ty(&*store).results().len();
     let mut results = vec![Val::I32(0); arity];
     func.call(&mut *store, &params, &mut results)?;
@@ -89,9 +91,11 @@ pub fn call_export<H: KernelHost + 'static>(
     })
 }
 
-/// Invoke `export` and fold how it ended into the protocol's vocabulary:
-/// the verdict, the fuel spent of `budget`, and whether the budget
-/// exhausted.
+/// Invoke `export` and fold how it ended into the protocol's vocabulary.
+///
+/// The verdict, and the fuel spent of `budget`: what the counter has
+/// given up since the instance was set to it, so a second call on one
+/// instance reads cumulatively.
 ///
 /// Infallible where [`call_export`] is not, because every way a call can
 /// end is a deterministic verdict — a trap is a class, an off-convention
@@ -100,8 +104,8 @@ pub fn call_export<H: KernelHost + 'static>(
 ///
 /// # Panics
 ///
-/// Panics if the store does not meter fuel, which the blessed config
-/// always enables.
+/// Panics if the instance exports no counter: the module was not
+/// admitted through the meter.
 pub fn invoke_export<H: KernelHost + 'static>(
     store: &mut Store<Invoking<H>>,
     instance: &Instance,
@@ -109,17 +113,12 @@ pub fn invoke_export<H: KernelHost + 'static>(
     args: &[GuestArg<'_>],
     budget: u64,
 ) -> Invocation {
-    let outcome = call_export(store, instance, export, args);
-    let exhausted = outcome.as_ref().err().is_some_and(exhausted);
-    let result = match outcome {
+    let result = match call_export(store, instance, export, args) {
         Ok(Returned::Produced { edges, answer }) => Invoked::Produced { edges, answer },
         Ok(Returned::Declined(code)) => Invoked::Declined(code),
         Err(error) => Invoked::Aborted(classify(&error)),
     };
-    let fuel = budget - store.get_fuel().expect("fuel metering is enabled");
-    Invocation {
-        result,
-        fuel,
-        exhausted,
-    }
+    let counter = counter(&mut *store, instance);
+    let fuel = budget.saturating_sub(remaining(&mut *store, &counter));
+    Invocation { result, fuel }
 }

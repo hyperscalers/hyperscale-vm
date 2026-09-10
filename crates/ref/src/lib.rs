@@ -2,10 +2,12 @@
 //!
 //! A slow, obviously-correct implementation of exactly the subset the profile
 //! validator admits — the executable spec, differentially tested against the
-//! blessed engine. Execution semantics and the fuel schedule are implemented
-//! independently of wasmtime; sharing is permitted at the decode layer
-//! (wasmparser) and at the boundary dispatch, which is stated once in
-//! `hyperscale-vm-embed` for both engines.
+//! blessed engine. Execution semantics are implemented independently of
+//! wasmtime; sharing is permitted at the decode layer (wasmparser), at the
+//! boundary dispatch, which is stated once in `hyperscale-vm-embed` for
+//! both engines, and at the meter, whose instrumented module both engines
+//! run. The schedule that module charges by is restated here in
+//! [`fuel_cost`], sharing no constant with the pass.
 
 pub mod boundary;
 pub mod error;

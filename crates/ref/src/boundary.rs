@@ -3,17 +3,19 @@
 //! A module the kernel calls directly: its imports resolve by `(module,
 //! name)` to the dispatch [`hyperscale_vm_embed::abi`] states once, and
 //! the interpreter contributes what an engine contributes — its memory,
-//! its counter, and the host it was handed — as one [`Boundary`]. What
-//! stays the interpreter's own is execution.
+//! the counter the meter's pass defined in the module, and the host it
+//! was handed — as one [`Boundary`]. What stays the interpreter's own is
+//! execution.
 
 use hyperscale_vm_embed::abi::{
     self, Boundary, CoreType, CoreValue, GuestMemory, IMPORTS, MEMORY, Registers,
 };
 use hyperscale_vm_embed::meter::{Exhausted, FuelSink, HostAccess, MeterError};
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked, KernelHost};
+use hyperscale_vm_meter::{EXHAUST, FUEL, NAMESPACE};
 use hyperscale_vm_types::AbortReason;
 
-use crate::error::{DecodeError, InstantiateError, Trap};
+use crate::error::{DecodeError, InstantiateError};
 use crate::interp::{ExecError, FuncAddr, ImportDispatch, Store, call, instantiate_module};
 use crate::module::{CoreImportKind, RefModule, Ty};
 use crate::ops::Value;
@@ -26,8 +28,21 @@ type Dispatch<H> = fn(&mut Port<'_, H>, &[Value]) -> Result<Vec<Value>, MeterErr
 struct Port<'a, H> {
     store: &'a mut Store,
     memory: usize,
+    /// The counter's global index.
+    fuel: u32,
     host: &'a mut H,
     registers: &'a mut Registers,
+}
+
+impl<H> Port<'_, H> {
+    fn remaining(&self) -> u64 {
+        self.store.global(self.fuel).as_i64().cast_unsigned()
+    }
+
+    fn set_remaining(&mut self, value: u64) {
+        self.store
+            .set_global(self.fuel, Value::I64(value.cast_signed()));
+    }
 }
 
 impl<H: KernelHost> GuestMemory for Port<'_, H> {
@@ -56,10 +71,14 @@ impl<H: KernelHost> HostAccess for Port<'_, H> {
 
 impl<H: KernelHost> FuelSink for Port<'_, H> {
     fn consume(&mut self, fuel: u64) -> Result<(), Exhausted> {
-        self.store.fuel_consumed = self.store.fuel_consumed.saturating_add(fuel);
-        match self.store.fuel_limit {
-            Some(limit) if self.store.fuel_consumed > limit => Err(Exhausted),
-            _ => Ok(()),
+        if let Some(left) = self.remaining().checked_sub(fuel) {
+            self.set_remaining(left);
+            Ok(())
+        } else {
+            // Zeroed as `exhaust` zeroes it, so the whole budget reads
+            // as spent whichever way the counter ran out.
+            self.set_remaining(0);
+            Err(Exhausted)
         }
     }
 }
@@ -133,12 +152,23 @@ fn resolve<H: KernelHost>(module: &str, name: &str) -> Option<Dispatch<H>> {
     })
 }
 
+/// The meter's `exhaust`: the counter is spent whole and the call is
+/// refused out of gas.
+fn exhaust<H: KernelHost>(
+    port: &mut Port<'_, H>,
+    _args: &[Value],
+) -> Result<Vec<Value>, MeterError> {
+    port.set_remaining(0);
+    Err(MeterError::Exhausted)
+}
+
 /// The kernel behind a module's imports: the host, the registers, and
 /// one dispatch per imported function in import order.
 struct Kernel<H> {
     host: H,
     registers: Registers,
     memory: usize,
+    fuel: u32,
     imports: Vec<Dispatch<H>>,
     params: Vec<usize>,
 }
@@ -158,6 +188,7 @@ impl<H: KernelHost> ImportDispatch for Kernel<H> {
         let mut port = Port {
             store,
             memory: self.memory,
+            fuel: self.fuel,
             host: &mut self.host,
             registers: &mut self.registers,
         };
@@ -165,10 +196,11 @@ impl<H: KernelHost> ImportDispatch for Kernel<H> {
     }
 }
 
-/// A metered failure as an interpreter error.
+/// A metered failure as an interpreter error: both are the host's own
+/// refusals, carrying their class.
 const fn fault(error: MeterError) -> ExecError {
     match error {
-        MeterError::Exhausted => ExecError::Trap(Trap::OutOfFuel),
+        MeterError::Exhausted => ExecError::Host(AbortReason::OutOfGas),
         MeterError::Refused(reason) => ExecError::Host(reason),
     }
 }
@@ -178,21 +210,29 @@ pub struct RefModuleInstance<'m, H> {
     module: &'m RefModule,
     store: Store,
     kernel: Kernel<H>,
+    /// The whole budget, which the counter was set to less the prepaid
+    /// instantiation.
+    budget: u64,
 }
 
 impl<'m, H: KernelHost> RefModuleInstance<'m, H> {
     /// Instantiates `module` against `host`, bounded by `fuel`.
     ///
     /// Every import must be one the kernel defines, at the type it
-    /// defines it, and the module must export its memory as the kernel
-    /// reads it — what the validator admits, checked again here because
-    /// the interpreter also runs modules that never faced it.
+    /// defines it, or the meter's `exhaust`; the module must export its
+    /// memory as the kernel reads it and the counter as the meter
+    /// defines it — what the validator and the pass produce, checked
+    /// again here because the interpreter also runs modules that never
+    /// faced them. Instantiation is prepaid off the counter: one per
+    /// active data segment and one per byte, judged before any segment
+    /// applies.
     ///
     /// # Errors
     ///
     /// The host comes back with the error, so a session survives a
-    /// refused artifact: a decode error for an import or memory outside
-    /// the boundary, or the trap instantiation produced.
+    /// refused artifact: a decode error for an import or export outside
+    /// the boundary, the budget failing to cover instantiation, or the
+    /// trap instantiation produced.
     pub fn instantiate(
         module: &'m RefModule,
         host: H,
@@ -208,20 +248,29 @@ impl<'m, H: KernelHost> RefModuleInstance<'m, H> {
                 ));
                 return Err((host, refused.into()));
             };
-            let defined = IMPORTS
-                .iter()
-                .find(|(m, n, _, _)| *m == entry.module && *n == entry.name);
-            let dispatch = resolve::<H>(&entry.module, &entry.name);
-            let (Some((_, _, declared_params, declared_results)), Some(dispatch)) =
-                (defined, dispatch)
-            else {
-                let refused = DecodeError::Unsupported(format!(
-                    "import `{}` `{}` is not one the kernel defines",
-                    entry.module, entry.name
-                ));
-                return Err((host, refused.into()));
-            };
             let ty = &module.types[ty as usize];
+            let (dispatch, declared_params, declared_results): (
+                Dispatch<H>,
+                &[CoreType],
+                &[CoreType],
+            ) = if entry.module == NAMESPACE && entry.name == EXHAUST {
+                (exhaust, &[], &[])
+            } else {
+                let defined = IMPORTS
+                    .iter()
+                    .find(|(m, n, _, _)| *m == entry.module && *n == entry.name);
+                let dispatch = resolve::<H>(&entry.module, &entry.name);
+                let (Some((_, _, declared_params, declared_results)), Some(dispatch)) =
+                    (defined, dispatch)
+                else {
+                    let refused = DecodeError::Unsupported(format!(
+                        "import `{}` `{}` is not one the kernel defines",
+                        entry.module, entry.name
+                    ));
+                    return Err((host, refused.into()));
+                };
+                (dispatch, declared_params, declared_results)
+            };
             if !same(&ty.params, declared_params) || !same(&ty.results, declared_results) {
                 let refused = DecodeError::Unsupported(format!(
                     "import `{}` `{}` is not at the type the kernel defines",
@@ -237,10 +286,21 @@ impl<'m, H: KernelHost> RefModuleInstance<'m, H> {
                 DecodeError::Unsupported(format!("the module exports no memory `{MEMORY}`"));
             return Err((host, refused.into()));
         }
-        let mut store = Store {
-            fuel_limit: Some(fuel),
-            ..Store::default()
+        let Some(fuel_index) = module.global_exports.get(FUEL).copied() else {
+            let refused = DecodeError::Unsupported(format!(
+                "the module exports no counter `{FUEL}`: it was not admitted through the meter"
+            ));
+            return Err((host, refused.into()));
         };
+        // One per active data segment plus one per byte, the other
+        // statement of the charge the meter derives from the bytes.
+        let prepaid = module.datas.iter().fold(0u64, |cost, seg| {
+            cost.saturating_add(1 + seg.items.len() as u64)
+        });
+        let Some(left) = fuel.checked_sub(prepaid) else {
+            return Err((host, InstantiateError::OutOfGas));
+        };
+        let mut store = Store::default();
         let imported: Vec<FuncAddr> = (0..imports.len())
             .map(|id| FuncAddr::Import(u32::try_from(id).unwrap_or(u32::MAX)))
             .collect();
@@ -252,6 +312,7 @@ impl<'m, H: KernelHost> RefModuleInstance<'m, H> {
             return Err((host, refused.into()));
         };
         let memory = memory as usize;
+        store.set_global(fuel_index, Value::I64(left.cast_signed()));
         Ok(Self {
             module,
             store,
@@ -259,25 +320,25 @@ impl<'m, H: KernelHost> RefModuleInstance<'m, H> {
                 host,
                 registers: Registers::default(),
                 memory,
+                fuel: fuel_index,
                 imports,
                 params,
             },
+            budget: fuel,
         })
     }
 
     /// Invokes `export` with `args`, folding how it ended into the
-    /// protocol's vocabulary: the verdict, the fuel consumed since
-    /// instantiation, and whether the budget exhausted.
+    /// protocol's vocabulary: the verdict, and the fuel consumed since
+    /// instantiation.
     ///
     /// Infallible on the same terms as the blessed engine's invocation:
     /// every ending is a verdict.
     pub fn invoke(&mut self, export: &str, args: &[GuestArg<'_>]) -> Invocation {
         let result = self.call(export, args);
-        let exhausted = matches!(result, Invoked::Aborted(AbortReason::OutOfGas));
         Invocation {
             result,
-            fuel: self.store.fuel_consumed,
-            exhausted,
+            fuel: self.consumed(),
         }
     }
 
@@ -337,10 +398,12 @@ impl<'m, H: KernelHost> RefModuleInstance<'m, H> {
         }
     }
 
-    /// Total fuel consumed: instantiation and every call since.
+    /// Fuel consumed of the budget: the prepaid instantiation and every
+    /// call since, read off the counter.
     #[must_use]
-    pub const fn fuel_consumed(&self) -> u64 {
-        self.store.fuel_consumed
+    pub fn consumed(&self) -> u64 {
+        let remaining = self.store.global(self.kernel.fuel).as_i64().cast_unsigned();
+        self.budget.saturating_sub(remaining)
     }
 
     /// The host, once the instance is done with.

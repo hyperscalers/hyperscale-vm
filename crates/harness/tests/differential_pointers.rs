@@ -202,7 +202,6 @@ fn violates(why: &str, export: &str, args: &[GuestArg<'_>]) -> Result<()> {
         Invoked::Aborted(AbortReason::AbiViolation),
         "{why}: a range the boundary cannot read through"
     );
-    assert!(!ended.exhausted, "{why}");
     Ok(())
 }
 

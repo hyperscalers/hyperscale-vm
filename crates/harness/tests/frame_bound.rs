@@ -13,7 +13,7 @@
 //! refused.
 
 use hyperscale_vm_harness::on_deep_stack;
-use hyperscale_vm_ref::{MAX_CALL_DEPTH, RefInstance, RefModule, Trap, Value};
+use hyperscale_vm_ref::{ExecError, MAX_CALL_DEPTH, RefInstance, RefModule, Trap, Value};
 use hyperscale_vm_runtime::profile::{
     MAX_CALL_CHAIN_BYTES, MAX_CALL_CHAIN_FRAMES, STACK_FRAME_OVERHEAD_BYTES,
 };
@@ -86,7 +86,7 @@ fn a_chain_past_the_specs_counter_never_deploys() {
         let mut interpreter = RefInstance::instantiate(&reference).expect("instantiates");
         assert_eq!(
             interpreter.invoke("run", &[]).expect("invocable"),
-            Err(Trap::CallDepthExhausted),
+            Err(ExecError::Trap(Trap::CallDepthExhausted)),
             "the trap the deploy-time bound keeps out of reach"
         );
     });
@@ -101,7 +101,6 @@ fn both_runtimes_execute_the_deepest_admissible_chain() -> Result<()> {
         let engine = blessed_engine()?;
         let module = Module::new(&engine, &wasm)?;
         let mut store = Store::new(&engine, ());
-        store.set_fuel(u64::MAX)?;
         let instance = Instance::new(&mut store, &module, &[])?;
         let blessed = instance
             .get_typed_func::<(), i64>(&mut store, "run")?

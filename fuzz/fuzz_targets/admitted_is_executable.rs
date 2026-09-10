@@ -9,7 +9,7 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 use hyperscale_vm_ref::RefModule;
-use hyperscale_vm_runtime::validate_core_module;
+use hyperscale_vm_runtime::admit_core_module;
 use libfuzzer_sys::fuzz_target;
 use wasm_smith::{Config, Module};
 
@@ -45,9 +45,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let wasm = module.to_bytes();
-    if validate_core_module(&wasm).is_ok() {
+    if let Ok(admitted) = admit_core_module(&wasm) {
         assert!(
-            RefModule::decode(&wasm).is_ok(),
+            RefModule::decode(&admitted).is_ok(),
             "the profile admits a module the executable spec cannot decode"
         );
     }

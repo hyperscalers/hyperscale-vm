@@ -25,7 +25,7 @@ use hyperscale_vm_types::work_units;
 /// total it cannot decompose.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Work {
-    /// Fuel consumed, as the engine reported it — priced into
+    /// Fuel consumed, as the meter's counter reported it — priced into
     /// [`Work::units`] only on a completed execution.
     pub fuel: u64,
     /// The declared footprint of the part of the declaration this shard
@@ -39,16 +39,10 @@ impl Work {
     /// Price one execution.
     ///
     /// Only a completed execution attests its fuel. An abort attests its
-    /// footprint alone — not a pricing judgement but a determinism one:
-    /// fuel at a core trap is engine-defined, wasmtime's in-register
-    /// counter never having flushed, where `vm-ref` charges every executed
-    /// operator (`spike_trap_fuel`). A scalar carrying that number could
-    /// not be agreed on across the two runtimes, and prorating the
-    /// footprint by how far execution got fails the same way — progress
-    /// being the thing that diverges. What survives is the declaration,
-    /// which the verdict does not touch, and which the transaction put
-    /// through admission, routing, and locking in full whichever way it
-    /// ended.
+    /// footprint alone: an aborted transaction pays the class's own fee
+    /// rather than a reading of how far it got, and the declaration is
+    /// what survives the verdict — the transaction put it through
+    /// admission, routing, and locking in full whichever way it ended.
     #[must_use]
     pub const fn attest(completed: bool, fuel: u64, footprint: u64) -> Self {
         Self {

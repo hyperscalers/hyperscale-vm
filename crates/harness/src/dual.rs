@@ -9,19 +9,20 @@
 //! exactly what the lane exists to catch.
 //!
 //! Arguments are the binding's own [`GuestArg`]s, and an ending is the
-//! whole [`Invocation`] — the verdict, the fuel, the exhaustion flag —
-//! because the core boundary leaves an engine nothing to word: what
-//! differs between the lanes is execution.
+//! whole [`Invocation`] — the verdict and the fuel — because the core
+//! boundary leaves an engine nothing to word: what differs between the
+//! lanes is execution.
 
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{Declaration, DeclaredAccess};
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
+use hyperscale_vm_meter::instantiation_cost;
 use hyperscale_vm_ref::{RefModule, RefModuleInstance};
 use hyperscale_vm_runtime::{
-    InstantiationCharges, Invoking, add_kernel_imports, blessed_engine, instantiate_charged,
-    instantiation_charges, invoke_export, validate_module,
+    Invoking, add_kernel_imports, admit, blessed_engine, counter, instantiate_metered,
+    invoke_export, remaining,
 };
 use hyperscale_vm_types::{AbortReason, EffectSet, ResourceAddr, TxHash};
 use wasmtime::error::{ensure, format_err};
@@ -29,28 +30,29 @@ use wasmtime::{Engine, Instance, Linker, Module, Result, Store};
 
 use crate::driver::test_hash;
 
-/// A guest in both engines' runnable forms, compiled once.
+/// A guest in both engines' runnable forms, admitted and compiled once.
 pub struct DualGuest {
     engine: Engine,
     module: Module,
-    charges: InstantiationCharges,
+    /// What instantiation prepays off the counter.
+    cost: u64,
     reference: RefModule,
 }
 
 impl DualGuest {
-    /// Validate and compile `bytes` for both engines.
+    /// Admit `bytes` and compile what the meter made of them for both
+    /// engines.
     ///
     /// # Errors
     ///
-    /// Fails where the profile, either engine, or the charge derivation
-    /// refuses the bytes.
+    /// Fails where admission or either engine refuses the bytes.
     pub fn compile(bytes: &[u8]) -> Result<Self> {
-        validate_module(bytes)?;
+        let admitted = admit(bytes)?;
         let engine = blessed_engine()?;
         Ok(Self {
-            module: Module::new(&engine, bytes)?,
-            charges: instantiation_charges(bytes)?,
-            reference: RefModule::decode(bytes)?,
+            module: Module::new(&engine, &admitted)?,
+            cost: instantiation_cost(bytes)?,
+            reference: RefModule::decode(&admitted)?,
             engine,
         })
     }
@@ -88,7 +90,7 @@ impl DualGuest {
         let mut linker = Linker::<Invoking<KernelSession>>::new(&self.engine);
         add_kernel_imports(&mut linker)?;
         let mut store = Store::new(&self.engine, Invoking::new(blessed));
-        let instance = instantiate_charged(&mut store, budget, &self.charges, |s| {
+        let instance = instantiate_metered(&mut store, budget, self.cost, |s| {
             linker.instantiate(s, &self.module)
         })?;
         let reference = RefModuleInstance::instantiate(&self.reference, reference, budget)
@@ -142,9 +144,10 @@ impl DualInstance<'_> {
     /// # Errors
     ///
     /// Fails where the fuel figures diverge.
-    pub fn finish(self) -> Result<(LaneEnd, LaneEnd)> {
-        let blessed_fuel = self.budget - self.store.get_fuel()?;
-        let reference_fuel = self.reference.fuel_consumed();
+    pub fn finish(mut self) -> Result<(LaneEnd, LaneEnd)> {
+        let counter = counter(&mut self.store, &self.instance);
+        let blessed_fuel = self.budget - remaining(&mut self.store, &counter);
+        let reference_fuel = self.reference.consumed();
         ensure!(
             blessed_fuel == reference_fuel,
             "fuel diverged: blessed {blessed_fuel}, reference {reference_fuel}"

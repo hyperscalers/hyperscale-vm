@@ -22,10 +22,10 @@ use hyperscale_vm_embed::abi::{ABI, MATH, MEMORY};
 use hyperscale_vm_embed::{GuestArg, Invocation};
 use hyperscale_vm_harness::dual::Ended;
 use hyperscale_vm_harness::fixtures::NoHost;
+use hyperscale_vm_meter::instantiation_cost;
 use hyperscale_vm_ref::{RefModule, RefModuleInstance};
 use hyperscale_vm_runtime::{
-    InstantiationCharges, Invoking, add_kernel_imports, blessed_engine, instantiate_charged,
-    instantiation_charges, invoke_export, validate_module,
+    Invoking, add_kernel_imports, admit, blessed_engine, instantiate_metered, invoke_export,
 };
 use hyperscale_vm_types::AbortReason;
 use wasmtime::error::format_err;
@@ -149,22 +149,22 @@ fn guest() -> String {
     )
 }
 
-/// The guest in both engines' runnable forms, compiled once.
+/// The guest in both engines' runnable forms, admitted and compiled once.
 struct Lanes {
     engine: Engine,
     module: Module,
-    charges: InstantiationCharges,
+    cost: u64,
     reference: RefModule,
 }
 
 static LANES: LazyLock<Lanes> = LazyLock::new(|| {
     let bytes = parse_str(guest()).expect("the fixture parses");
-    validate_module(&bytes).expect("the fixture is admitted");
+    let admitted = admit(&bytes).expect("the fixture is admitted");
     let engine = blessed_engine().expect("the blessed engine configures");
     Lanes {
-        module: Module::new(&engine, &bytes).expect("the fixture compiles"),
-        charges: instantiation_charges(&bytes).expect("the charges derive"),
-        reference: RefModule::decode(&bytes).expect("the fixture decodes"),
+        module: Module::new(&engine, &admitted).expect("the fixture compiles"),
+        cost: instantiation_cost(&bytes).expect("the fixture prices"),
+        reference: RefModule::decode(&admitted).expect("the fixture decodes"),
         engine,
     }
 });
@@ -174,7 +174,7 @@ fn run_blessed(export: &str, args: &[GuestArg<'_>]) -> Result<Invocation> {
     let mut linker = Linker::<Invoking<NoHost>>::new(&lanes.engine);
     add_kernel_imports(&mut linker)?;
     let mut store = Store::new(&lanes.engine, Invoking::new(NoHost));
-    let instance = instantiate_charged(&mut store, FUEL, &lanes.charges, |s| {
+    let instance = instantiate_metered(&mut store, FUEL, lanes.cost, |s| {
         linker.instantiate(s, &lanes.module)
     })?;
     Ok(invoke_export(&mut store, &instance, export, args, FUEL))
@@ -193,7 +193,6 @@ fn agreed(export: &str, words: &[u64]) -> Invocation {
     let reference = run_ref(export, &args).expect("the reference lane runs");
     assert_eq!(blessed, reference, "engines disagree on {export}{words:?}");
     assert!(blessed.fuel > 0, "both lanes charge");
-    assert!(!blessed.exhausted);
     blessed
 }
 
