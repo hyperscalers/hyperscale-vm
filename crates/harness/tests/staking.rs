@@ -603,7 +603,7 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
 /// record of each mark it issues, and minting the owner badge it comes
 /// up holding — filed in the founder's own account.
 fn bring_up_graph() -> ManifestGraph {
-    graph(|b| instantiate(b, OPERATOR, pool().into()))
+    graph(|b| instantiate(b, OPERATOR, pool().into(), ()))
 }
 
 /// The same bring-up, written out — the sign-in, the seal, the deposit.

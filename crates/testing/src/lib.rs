@@ -68,7 +68,7 @@ use hyperscale_vm_kernel::{
     execute_batch,
 };
 pub use hyperscale_vm_manifest_builder::TypedError;
-use hyperscale_vm_manifest_builder::{TypedBuilder, graph_records};
+use hyperscale_vm_manifest_builder::{Args, TypedBuilder, graph_records};
 use hyperscale_vm_stdlib::{ACCOUNT_MODULE, instantiate};
 pub use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, PrincipalAddr, ResourceAddr};
 use hyperscale_vm_types::{CallTarget, SubstateKey, TxHash, encode_amount};
@@ -259,12 +259,32 @@ impl Chain {
     /// Bring up an instance of `C`'s package under `config`, as
     /// `founder`, and answer a handle to it.
     ///
+    /// [`Chain::derive`] and [`Chain::bring_up`] in one call, for a
+    /// package whose bring-up takes no arguments. A bring-up that takes
+    /// some is composed from the two, because what it takes may name the
+    /// instance itself — a rule over the badge the instance issues — and
+    /// that address exists only once the record is derived.
+    ///
+    /// # Panics
+    ///
+    /// If `C`'s package was never published, if the configuration does
+    /// not encode, or if the bring-up did anything but complete.
+    pub fn instantiate<C: Component>(&mut self, founder: PrincipalAddr, config: C::Config) -> C {
+        let instance = self.derive::<C>(config);
+        self.bring_up(founder, instance.address(), ())
+            .expect_completed();
+        instance
+    }
+
+    /// Register an instance of `C`'s package under `config`, and answer
+    /// a handle to it.
+    ///
     /// The package is named once, as the handle's own type: an instance
     /// address folds in the declaration hash, and the handle is what
     /// carries the fact that this address runs that declaration. The
-    /// configuration is sealed into the record leaf, which is what a
-    /// real creation does and what a body reading `self.config` needs to
-    /// be there.
+    /// chain answers for the address from here — a call typed against
+    /// it resolves — and nothing is written: the instance is derivable,
+    /// and [`Chain::bring_up`] is what makes it actual.
     ///
     /// # Panics
     ///
@@ -272,7 +292,7 @@ impl Chain {
     /// chain does not hold answers no call — or if the configuration
     /// does not encode, which is a slot the package could not have
     /// declared.
-    pub fn instantiate<C: Component>(&mut self, founder: PrincipalAddr, config: C::Config) -> C {
+    pub fn derive<C: Component>(&mut self, config: C::Config) -> C {
         let package =
             declaration_hash(&TestHasher, &C::metadata()).expect("a traced declaration encodes");
         assert!(
@@ -280,26 +300,93 @@ impl Chain {
             "the package must be published before an instance of it is created — \
              `chain.publish(package!(..))` names the code a declaration alone cannot"
         );
-        C::at(self.create(founder, package, config.values()))
+        C::at(self.register(package, config.values()))
+    }
+
+    /// Make `instance` actual: one `instantiate` transaction signed by
+    /// `founder`, over `args`, the same node a wallet composes.
+    ///
+    /// The leaf's bytes are evaluated from the record rather than
+    /// supplied by anyone. `founder` signs in first, because a package
+    /// may hold bringing up to the caller its configuration names; and
+    /// the supply the component comes up holding leaves as an edge,
+    /// filed in that same account. The conclusion is answered rather
+    /// than asserted on, because a bring-up may decline — a
+    /// configuration the package refuses to come up under — and a test
+    /// of that refusal reads it here.
+    ///
+    /// # Panics
+    ///
+    /// If the manifest does not build or admit, or if the package
+    /// declares no seal — a package written the long way seats its leaf
+    /// through [`Chain::instantiate_raw`] instead.
+    pub fn bring_up(
+        &mut self,
+        founder: PrincipalAddr,
+        instance: impl Into<ComponentAddr>,
+        args: impl Args,
+    ) -> Conclusion<()> {
+        let address = instance.into();
+        let leaf = child_key(&TestHasher, address, CONFIG, &[]);
+        let bytes = self
+            .records
+            .instances
+            .get(CallTarget::from(address))
+            .expect("the chain derived the instance")
+            .leaf_bytes()
+            .expect("an instance's record encodes");
+        // The bring-up, composed where what the package asks for is read
+        // off its own declaration rather than restated here.
+        let concluded = self.transact(founder, |b| instantiate(b, founder, address, args));
+        if concluded.completed() {
+            assert_eq!(
+                self.store.cell(leaf),
+                Some(bytes),
+                "the seal writes the record's own bytes"
+            );
+        }
+        concluded
     }
 
     /// Bring up an instance of a package the chain holds only as a
     /// hash, as `founder`.
     ///
     /// What a hand-written package uses, having no module for the macro
-    /// to derive a handle from.
+    /// to derive a handle from. A package written the long way declares
+    /// no seal, so the chain seats its leaf directly, as genesis seats
+    /// what it writes; one that does declare a seal is brought up
+    /// through it, over no arguments.
     ///
     /// # Panics
     ///
     /// If the configuration does not encode — a slot the package could
-    /// not have declared.
+    /// not have declared — or if the bring-up did anything but complete.
     pub fn instantiate_raw(
         &mut self,
         founder: PrincipalAddr,
         package: PackageHash,
         config: impl ConfigValues,
     ) -> ComponentAddr {
-        self.create(founder, package, config.values())
+        let address = self.register(package, config.values());
+        let seals = self
+            .records
+            .packages
+            .get(package)
+            .is_some_and(|metadata| metadata.seal().is_some());
+        if seals {
+            self.bring_up(founder, address, ()).expect_completed();
+        } else {
+            let leaf = child_key(&TestHasher, address, CONFIG, &[]);
+            let bytes = self
+                .records
+                .instances
+                .get(CallTarget::from(address))
+                .expect("the chain registered the instance")
+                .leaf_bytes()
+                .expect("an instance's record encodes");
+            self.store.write(leaf, bytes);
+        }
+        address
     }
 
     /// Adopt `address` as an instance of `C`'s package.
@@ -331,23 +418,11 @@ impl Chain {
         }
     }
 
-    /// Register a creation record and make the instance actual.
+    /// Register a creation record, so the chain answers for its address.
     ///
-    /// A package that declares the generated seal is sealed through it:
-    /// an `instantiate` transaction signed by `founder`, the same node a
-    /// wallet composes, with the leaf's bytes evaluated from the record
-    /// rather than supplied by anyone. `founder` signs in first, because
-    /// a package may hold bringing up to the caller its configuration
-    /// names; and the supply the component comes up holding leaves as an
-    /// edge, filed in that same account. A package written the long way
-    /// declares no seal, so the chain seats its leaf directly, as
-    /// genesis seats what it writes.
-    fn create(
-        &mut self,
-        founder: PrincipalAddr,
-        package: PackageHash,
-        config: Vec<Value>,
-    ) -> ComponentAddr {
+    /// This tier's answer to what an envelope's presented record is: the
+    /// target resolves before any call against it is typed.
+    fn register(&mut self, package: PackageHash, config: Vec<Value>) -> ComponentAddr {
         self.created += 1;
         let meta = InstanceMeta {
             package,
@@ -355,29 +430,7 @@ impl Chain {
             salt: salt(self.created),
         };
         let address = meta.address(&TestHasher);
-        let leaf = child_key(&TestHasher, address, CONFIG, &[]);
-        let bytes = meta.leaf_bytes().expect("an instance's record encodes");
         self.records.instances.create(&TestHasher, meta);
-        // The chain answers for the address from here, which is this
-        // tier's answer to what an envelope's presented record is.
-        let seals = self
-            .records
-            .packages
-            .get(package)
-            .is_some_and(|metadata| metadata.seal().is_some());
-        if !seals {
-            self.store.write(leaf, bytes);
-            return address;
-        }
-        // The bring-up, composed where what the package asks for is read
-        // off its own declaration rather than restated here.
-        self.transact(founder, |b| instantiate(b, founder, address))
-            .expect_completed();
-        assert_eq!(
-            self.store.cell(leaf),
-            Some(bytes),
-            "the seal writes the record's own bytes"
-        );
         address
     }
 

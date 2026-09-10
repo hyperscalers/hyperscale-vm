@@ -20,18 +20,20 @@
 //! way.
 
 use hyperscale_vm_effects::ResourceKind;
-use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{Args, TypedBuilder, TypedError};
 use hyperscale_vm_types::{ComponentAddr, PrincipalAddr};
 
 use crate::account;
 
 /// Append the instantiation of the component at `address`, as
-/// `founder`.
+/// `founder`, over `args`.
 ///
 /// The seal is called, and the supply it yields — where the package
 /// declares one — is filed in the founder's own account. What the
 /// package asks for is read off its own declaration, so a caller states
-/// only what is theirs to state: who is bringing it up, and where.
+/// only what is theirs to state: who is bringing it up, where, and the
+/// arguments its bring-up takes — bound at the call the way every other
+/// method's are, and `()` for a package whose bring-up takes none.
 ///
 /// # Errors
 ///
@@ -42,6 +44,7 @@ pub fn instantiate(
     root: &mut TypedBuilder<'_>,
     founder: PrincipalAddr,
     address: ComponentAddr,
+    args: impl Args,
 ) -> Result<(), TypedError> {
     // Which method seals is the declaration's answer, not a name this
     // crate knows.
@@ -51,9 +54,9 @@ pub fn instantiate(
     // yields no edge.
     let outputs = if signature.requires_evidence() {
         let signed_in = account::authorize(root, founder)?;
-        root.call_presenting(signed_in, address, &seal, ())?
+        root.call_presenting(signed_in, address, &seal, args)?
     } else {
-        root.call(address, &seal, ())?
+        root.call(address, &seal, args)?
     };
     // One edge per supply the package states, and the kind decides which
     // door each is filed through: a balance lands in a vault and an
