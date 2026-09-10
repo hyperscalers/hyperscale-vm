@@ -6,4 +6,8 @@ publish = false
 
 [lib]
 crate-type = ["cdylib"]
+# A core module authored against the boundary itself: its exports call
+# the kernel's imports and nothing else, so a host test binary would have
+# no symbols to link them to. Nothing here runs on the host.
+test = false
 
