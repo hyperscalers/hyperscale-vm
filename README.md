@@ -27,8 +27,9 @@ Rust implementation of the Hyperscale VM: an execution engine built for a sharde
 | [`hbor-macros`](crates/hbor-macros) | Derive macros for HBOR encode, decode, and schema |
 | [`kernel`](crates/kernel) | The object model and mode semantics: the substate store with access recording, structural ownership, the delta/reserve execution semantics, supply accumulators, and the trace-subset oracle |
 | [`manifest-builder`](crates/manifest-builder) | Typed client-side manifest construction |
+| [`meter`](crates/meter) | The fuel meter: the pass that makes a module count its own fuel, and the schedule it counts by |
 | [`ref`](crates/ref) | The reference interpreter of the profile: the executable spec, independently written, differentially tested against the blessed engine |
-| [`runtime`](crates/runtime) | The blessed-engine embedding: wasmtime configuration, the deploy-time profile validator, the `hyperscale:kernel` world, fuel and canonical-ABI copy metering |
+| [`runtime`](crates/runtime) | The blessed-engine embedding: wasmtime configuration, the deploy-time profile validator, admission through the meter, the kernel imports, and the boundary copy supplement |
 | [`sdk`](crates/sdk) | The guest-side authoring surface |
 | [`sdk-macros`](crates/sdk-macros) | Proc macros behind the SDK's blueprint and state declarations |
 | [`stdlib`](crates/stdlib) | The protocol's own packages — the account and the stake pool — as committed blobs, traced metadata, and the genesis flash |

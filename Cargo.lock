@@ -788,6 +788,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperscale-vm-meter"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.19",
+ "wasm-encoder",
+ "wasmparser",
+ "wat",
+]
+
+[[package]]
 name = "hyperscale-vm-ref"
 version = "0.1.0"
 dependencies = [

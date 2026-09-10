@@ -12,6 +12,7 @@ members = [
     "crates/harness",
     "crates/kernel",
     "crates/manifest-builder",
+    "crates/meter",
     "crates/ref",
     "crates/runtime",
     "crates/sdk",
@@ -58,6 +59,7 @@ trybuild = "1.0.120"
 # engine's line is what keeps one copy in the tree. `wat` alone needs an
 # exact pin: it versions as 1.x, so a caret would admit the whole major and
 # drag a second wasm-encoder and wasmparser back in behind it.
+wasm-encoder = { version = "0.254.0", features = ["wasmparser"] }
 wasm-smith = "0.254.0"
 wasmparser = "0.254.0"
 wat = "=1.254.0"
