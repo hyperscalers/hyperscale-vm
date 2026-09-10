@@ -73,13 +73,16 @@ pub mod peg {
         band: UnitFixed,
     }
 
-    /// What a redemption declines with.
+    /// What the window declines with.
     #[error]
     enum Error {
         /// The posted deviation is outside the band the window quotes in.
         OutsideBand,
         /// The redemption is too small to be worth a subunit of reserve.
         NothingRedeemed,
+        /// The stable and the reserve are one asset, so a redemption
+        /// would pay out what was handed in.
+        SameAsset,
     }
 
     #[state]
@@ -100,6 +103,16 @@ pub mod peg {
     }
 
     impl Peg {
+        /// Bring the window up, or refuse the pair it was configured
+        /// with.
+        pub fn instantiate(&mut self) -> Result<(), Error> {
+            let terms = self.config();
+            if terms.stable == terms.reserve {
+                return Err(Error::SameAsset);
+            }
+            Ok(())
+        }
+
         /// Post what the stable is trading at, as its distance from
         /// parity.
         ///

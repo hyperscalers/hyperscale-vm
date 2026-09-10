@@ -194,3 +194,20 @@ fn a_lot_of_nothing_is_refused(chain: &mut Chain) {
         "a decline moves nothing"
     );
 }
+
+/// A table claiming more than the whole never comes up: it could divide
+/// no payment, and a splitter that exists only to refuse is worse than
+/// one that was never actual.
+#[hyperscale_vm_testing::test]
+fn a_table_cannot_claim_more_than_the_whole(chain: &mut Chain) {
+    chain.publish(package!(payouts_guest::payouts));
+    let splitter = chain.derive::<Payouts>(Terms {
+        asset: ASSET,
+        protocol: UnitFixed::percent(50).expect("a half is under one"),
+        treasury: UnitFixed::percent(50).expect("a half is under one"),
+        referrer: UnitFixed::percent(1).expect("a hundredth is under one"),
+    });
+    chain
+        .bring_up(PAYER, splitter, ())
+        .expect_declined(Error::OverClaimed);
+}

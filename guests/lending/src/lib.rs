@@ -81,8 +81,8 @@ pub mod lending {
         /// borrows.
         ltv: UnitFixed,
         /// The ratio of debt to collateral above which anyone may
-        /// liquidate. Above `ltv`, so a position does not open already
-        /// liquidatable.
+        /// liquidate. Above `ltv`, which the bring-up holds it to, so a
+        /// position does not open already liquidatable.
         liquidation_threshold: UnitFixed,
         /// What the debt is multiplied by each period. One is a market
         /// that charges nothing.
@@ -107,6 +107,11 @@ pub mod lending {
         StillCovered,
         /// The position owes nothing.
         NothingOwed,
+        /// Collateral and debt are one asset.
+        SameAsset,
+        /// The liquidation threshold is not above the loan-to-value, so a
+        /// position drawn to its limit would open already liquidatable.
+        LiquidatesAtOpen,
     }
 
     #[state]
@@ -137,6 +142,26 @@ pub mod lending {
     }
 
     impl Lending {
+        /// Bring the market up, or refuse the terms it was configured
+        /// with.
+        ///
+        /// Each bound alone is the type's — a loan-to-value and a
+        /// threshold both run to one — and what the type cannot say is
+        /// how the two sit against each other. A market whose threshold
+        /// is at or under its loan-to-value would liquidate a position
+        /// the moment it drew what it was allowed to, so it is refused
+        /// before it exists.
+        pub fn instantiate(&mut self) -> Result<(), Error> {
+            let terms = self.config();
+            if terms.collateral == terms.debt {
+                return Err(Error::SameAsset);
+            }
+            if terms.liquidation_threshold.scaled() <= terms.ltv.scaled() {
+                return Err(Error::LiquidatesAtOpen);
+            }
+            Ok(())
+        }
+
         /// Post what the two sides are worth.
         ///
         /// Both at once, because a judgment reads both and a market that

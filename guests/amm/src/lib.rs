@@ -41,10 +41,11 @@ pub mod amm {
         fee: UnitFixed,
     }
 
-    /// What a swap declines with when the output misses its floor.
+    /// What the pool declines with.
     ///
-    /// A race the sender lost between signing and execution rather than
-    /// a defect it committed, so it is declared rather than trapped.
+    /// A swap whose output misses its floor is a race the sender lost
+    /// between signing and execution rather than a defect it committed,
+    /// so it is declared rather than trapped.
     #[error]
     enum Error {
         SlippageExceeded,
@@ -55,6 +56,12 @@ pub mod amm {
         /// funds the pool and receives nothing has made a donation they
         /// did not offer.
         NothingMinted,
+        /// The pair names one asset twice.
+        ///
+        /// Refused at bring-up, so the pool never exists: a swap would
+        /// sell the side it was paid in out of the reserve it was paid
+        /// into, and quote the pool against itself.
+        SelfPaired,
     }
 
     /// The pool's whole balance sheet: the pair's reserves, and the
@@ -76,6 +83,20 @@ pub mod amm {
     }
 
     impl Amm {
+        /// Bring the pool up, or refuse the pair it was configured with.
+        ///
+        /// The fee is bounded by its type, so the one configuration the
+        /// type cannot rule out is a pair of one asset — and refusing it
+        /// here is what keeps a pool that should not exist from ever
+        /// being actual.
+        pub fn instantiate(&mut self) -> Result<(), Error> {
+            let settings = self.config();
+            if settings.x == settings.y {
+                return Err(Error::SelfPaired);
+            }
+            Ok(())
+        }
+
         /// Swap `input` against the pool, returning the bought side.
         pub fn swap(&mut self, input: Bucket, min_out: Quantity) -> Result<Bucket, Error> {
             let settings = self.config();

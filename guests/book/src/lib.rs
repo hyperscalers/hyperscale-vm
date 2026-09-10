@@ -54,10 +54,14 @@ pub mod book {
         tick: Fixed<QuoteUnit, Tick>,
     }
 
-    /// What placing an ask declines with.
+    /// What the book declines with.
     #[error]
     enum Error {
         UnpricedAsk,
+        /// The pair names one asset twice.
+        SelfPaired,
+        /// A tick worth nothing, which prices every ask at nothing.
+        UnpricedTick,
     }
 
     #[state]
@@ -74,6 +78,24 @@ pub mod book {
     }
 
     impl Book {
+        /// Bring the book up, or refuse the pair and the step it was
+        /// configured with.
+        ///
+        /// A tick is fixed at creation so the ladder cannot be restepped
+        /// under standing asks, which is also why a tick worth nothing
+        /// is refused here: every ask on it would fill for nothing, and
+        /// nothing after creation could correct it.
+        pub fn instantiate(&mut self) -> Result<(), Error> {
+            let pair = self.config();
+            if pair.base == pair.quote {
+                return Err(Error::SelfPaired);
+            }
+            if pair.tick.is_zero() {
+                return Err(Error::UnpricedTick);
+            }
+            Ok(())
+        }
+
         /// Insert an ask at `ticks` per base unit, escrowing the maker's
         /// funds.
         pub fn place_ask(&mut self, ticks: u64, funds: Bucket) -> Result<(), Error> {

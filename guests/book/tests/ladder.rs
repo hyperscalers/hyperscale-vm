@@ -124,3 +124,33 @@ fn a_walk_outside_the_asks_price_takes_none_of_it(chain: &mut Chain) {
         "and the ask is untouched"
     );
 }
+
+/// A book quoting one asset in itself never comes up.
+#[hyperscale_vm_testing::test]
+fn a_book_cannot_quote_an_asset_in_itself(chain: &mut Chain) {
+    chain.publish(package!(book_guest::book));
+    let ladder = chain.derive::<Book>(Pair {
+        base: BASE_ASSET,
+        quote: BASE_ASSET,
+        tick: Fixed::<QuoteUnit, Tick>::from_scaled(Wide::from_u128(ONE)),
+    });
+    chain
+        .bring_up(MAKER, ladder, ())
+        .expect_declined(Error::SelfPaired);
+}
+
+/// A book whose tick is worth nothing never comes up: the step is fixed
+/// at creation, so a ladder that priced every ask at nothing could never
+/// be corrected.
+#[hyperscale_vm_testing::test]
+fn a_book_cannot_step_by_nothing(chain: &mut Chain) {
+    chain.publish(package!(book_guest::book));
+    let ladder = chain.derive::<Book>(Pair {
+        base: BASE_ASSET,
+        quote: QUOTE_ASSET,
+        tick: Fixed::<QuoteUnit, Tick>::from_scaled(Wide::from_u128(0)),
+    });
+    chain
+        .bring_up(MAKER, ladder, ())
+        .expect_declined(Error::UnpricedTick);
+}

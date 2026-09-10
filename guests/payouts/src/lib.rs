@@ -57,6 +57,9 @@ pub mod payouts {
         ShareUnclaimed,
         /// The payment is too small to pay a whole lot of.
         BelowOneLot,
+        /// The table's shares claim more than the whole, so no payment
+        /// could ever be divided by it.
+        OverClaimed,
     }
 
     #[state]
@@ -67,6 +70,23 @@ pub mod payouts {
     }
 
     impl Payouts {
+        /// Bring the splitter up, or refuse a table that claims more than
+        /// the whole.
+        ///
+        /// Each share is bounded by its type; their sum is not, and a
+        /// division by shares past one is a take the kernel refuses on
+        /// every payment. A splitter that could never pay is refused
+        /// before it exists rather than after it holds funds.
+        pub fn instantiate(&mut self) -> Result<(), Error> {
+            let terms = self.config();
+            let claimed =
+                terms.protocol.scaled() + terms.treasury.scaled() + terms.referrer.scaled();
+            if claimed > UnitFixed::ONE.scaled() {
+                return Err(Error::OverClaimed);
+            }
+            Ok(())
+        }
+
         /// Divide a payment three ways and keep what will not divide.
         ///
         /// The dust lands in the splitter's own vault, where it joins the

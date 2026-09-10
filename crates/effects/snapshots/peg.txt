@@ -11,12 +11,13 @@ config
 errors
       0  outside-band
       1  nothing-redeemed
+      2  same-asset
 
-instantiate() — infallible
+instantiate() — fallible
   declares
       0  requires self.config is absent
       1  write self.config
-  exports  handle for clause 1, self.record
+  exports  handle for clause 1, self.record, config.stable, config.reserve
 
 post-deviation(u256) — infallible
   declares

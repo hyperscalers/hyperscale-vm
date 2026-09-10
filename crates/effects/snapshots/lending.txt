@@ -20,6 +20,8 @@ errors
       2  over-ltv
       3  still-covered
       4  nothing-owed
+      5  same-asset
+      6  liquidates-at-open
 
 accrue(u64) — infallible
   declares
@@ -50,11 +52,11 @@ index-scaled() — infallible, answers
       0  read self.index
   exports  handle for clause 0
 
-instantiate() — infallible
+instantiate() — fallible
   declares
       0  requires self.config is absent
       1  write self.config
-  exports  handle for clause 1, self.record
+  exports  handle for clause 1, self.record, config.collateral, config.debt, config.liquidation_threshold, config.ltv
 
 liquidate(u64) — fallible
   declares

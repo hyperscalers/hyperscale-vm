@@ -326,3 +326,31 @@ fn a_position_whose_backing_rounds_away_is_liquidatable(chain: &mut Chain) {
         0
     );
 }
+
+/// The terms a market may not come up under: one asset on both sides,
+/// or a threshold that would liquidate a position at its first draw.
+///
+/// Each is refused by the bring-up, where the founder signed, rather
+/// than surfacing later as a market that seizes what it just lent.
+#[hyperscale_vm_testing::test]
+fn a_market_refuses_terms_it_could_not_run_under(chain: &mut Chain) {
+    chain.publish(package!(lending_guest::lending));
+    let terms = |collateral: ResourceAddr, threshold: u8| Terms {
+        collateral,
+        debt: DEBT,
+        oracle: ORACLE.into(),
+        ltv: UnitFixed::percent(50).expect("a half is under one"),
+        liquidation_threshold: UnitFixed::percent(threshold).expect("under one"),
+        growth_per_period: growth(),
+    };
+
+    let same = chain.derive::<Lending>(terms(DEBT, 80));
+    chain
+        .bring_up(BORROWER, same, ())
+        .expect_declined(Error::SameAsset);
+
+    let inverted = chain.derive::<Lending>(terms(COLLATERAL, 50));
+    chain
+        .bring_up(BORROWER, inverted, ())
+        .expect_declined(Error::LiquidatesAtOpen);
+}

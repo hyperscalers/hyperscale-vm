@@ -9,6 +9,7 @@ config
 errors
       0  share-unclaimed
       1  below-one-lot
+      2  over-claimed
 
 disburse(bucket) — infallible
   takes    arg0 carrying config.asset
@@ -27,11 +28,11 @@ in-lots(bucket, u128) — fallible
   yields   edge 1 carrying resource-of(arg0)
   exports  edge arg0, arg1
 
-instantiate() — infallible
+instantiate() — fallible
   declares
       0  requires self.config is absent
       1  write self.config
-  exports  handle for clause 1, self.record
+  exports  handle for clause 1, self.record, config.protocol, config.treasury, config.referrer
 
 settle(bucket) — fallible
   takes    arg0 carrying config.asset

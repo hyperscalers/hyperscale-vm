@@ -12,6 +12,7 @@ errors
       0  slippage-exceeded
       1  empty-pool
       2  nothing-minted
+      3  self-paired
 
 add-liquidity(bucket, bucket) — fallible
   takes    arg0 carrying config.x
@@ -24,13 +25,13 @@ add-liquidity(bucket, bucket) — fallible
   yields   edge 0 carrying self-issued(fungible["share"])
   exports  handles for clauses 0–2, edge arg0, edge arg1
 
-instantiate() — infallible
+instantiate() — fallible
   declares
       0  requires self.config is absent
       1  write self.config
       2  requires self.resource[self-issued(fungible["share"])] is absent
       3  write self.resource[self-issued(fungible["share"])]
-  exports  handle for clause 1, handle for clause 3, self.record
+  exports  handle for clause 1, handle for clause 3, self.record, config.x, config.y
 
 remove-liquidity(bucket) — fallible
   takes    arg0 carrying self-issued(fungible["share"])

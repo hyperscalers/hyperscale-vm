@@ -122,3 +122,21 @@ fn a_reserve_that_once_overflowed_the_curve_now_trades(chain: &mut Chain) {
         1_500
     );
 }
+
+/// A pool of an asset against itself never comes up.
+///
+/// Refused by the bring-up rather than by every swap after it: a pool
+/// that exists holding funds and refusing every call is worse than one
+/// that was never actual, and the founder learns so where they signed.
+#[hyperscale_vm_testing::test]
+fn a_pool_cannot_pair_an_asset_with_itself(chain: &mut Chain) {
+    chain.publish(package!(amm_guest::amm));
+    let pool = chain.derive::<Amm>(Settings {
+        x: X,
+        y: X,
+        fee: UnitFixed::bps(30).expect("thirty basis points is under one"),
+    });
+    chain
+        .bring_up(ALICE, pool, ())
+        .expect_declined(Error::SelfPaired);
+}

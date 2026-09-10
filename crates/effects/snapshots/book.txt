@@ -9,6 +9,8 @@ config
       2  tick
 errors
       0  unpriced-ask
+      1  self-paired
+      2  unpriced-tick
 
 fill-asks(u64, u64, bucket) — infallible
   takes    arg2 carrying config.quote
@@ -20,11 +22,11 @@ fill-asks(u64, u64, bucket) — infallible
   yields   edge 1 carrying resource-of(arg2)
   exports  handles for clauses 0–2, edge arg2, config.tick
 
-instantiate() — infallible
+instantiate() — fallible
   declares
       0  requires self.config is absent
       1  write self.config
-  exports  handle for clause 1, self.record
+  exports  handle for clause 1, self.record, config.base, config.quote, config.tick
 
 place-ask(u64, bucket) — fallible
   takes    arg1 carrying config.base

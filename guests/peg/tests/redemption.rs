@@ -236,3 +236,18 @@ fn a_redemption_worth_no_reserve_is_refused(chain: &mut Chain) {
     let quoted = chain.transact(HOLDER, |b| window.quote(b, 0u128));
     quoted.expect_declined(Error::NothingRedeemed);
 }
+
+/// A window redeeming an asset for itself never comes up.
+#[hyperscale_vm_testing::test]
+fn a_window_cannot_redeem_an_asset_for_itself(chain: &mut Chain) {
+    chain.publish(package!(peg_guest::peg));
+    let window = chain.derive::<Peg>(Terms {
+        stable: STABLE,
+        reserve: STABLE,
+        oracle: ORACLE.into(),
+        band: UnitFixed::percent(10).expect("a tenth is under one"),
+    });
+    chain
+        .bring_up(HOLDER, window, ())
+        .expect_declined(Error::SameAsset);
+}
