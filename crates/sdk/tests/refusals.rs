@@ -293,6 +293,35 @@ fn the_lowering_refuses_a_published_name_collision() {
     refuse.compile_fail("tests/refusals/colliding_name.rs");
 }
 
+/// The bring-up is one node with one body, and what an authored
+/// `instantiate` may say about it is exactly what any method may — minus
+/// a return type, since the supply is `initial(..)`'s; minus a gate,
+/// since the founder is the configuration's; and minus a published name,
+/// since the name is what marks it. A refusing body ends in `Ok(())`,
+/// because the supply is filed after it.
+#[test]
+fn the_lowering_bounds_the_bring_up_body() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/bring_up_returns.rs");
+    refuse.compile_fail("tests/refusals/bring_up_gated.rs");
+    refuse.compile_fail("tests/refusals/bring_up_renamed.rs");
+    refuse.compile_fail("tests/refusals/bring_up_tail.rs");
+}
+
+/// The configuration leaf is written by the bring-up alone.
+///
+/// `self.__seal()` is the seal's own marker, lowered only while the
+/// synthesized `instantiate` is being walked. A body spelling it
+/// anywhere else is refused at the call — a rule, rather than the host
+/// build failing to find a method nothing emits — because a method that
+/// wrote the leaf would make a component actual outside the one node
+/// that may.
+#[test]
+fn the_lowering_refuses_a_seal_outside_the_bring_up() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/seal_outside_the_bring_up.rs");
+}
+
 /// A method carries one gate.
 ///
 /// The gate attributes are collected before any is read, so a second one

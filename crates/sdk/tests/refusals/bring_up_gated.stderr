@@ -1,0 +1,5 @@
+error: the bring-up's gate is the configuration's: `#[requires(..)]` on the `#[config]` struct names who may bring a component up, and a second spelling here would be a second answer
+  --> tests/refusals/bring_up_gated.rs:22:9
+   |
+22 |         #[requires(config.founder)]
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^

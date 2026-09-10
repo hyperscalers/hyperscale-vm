@@ -1,0 +1,5 @@
+error: what a component comes up holding is `initial(..)`'s to say, so the bring-up's body declares no return type — or `Result<(), Error>`, where it can refuse the configuration it was brought up under
+  --> tests/refusals/bring_up_returns.rs:16:42
+   |
+16 |         pub fn instantiate(&mut self) -> Bucket {
+   |                                          ^^^^^^

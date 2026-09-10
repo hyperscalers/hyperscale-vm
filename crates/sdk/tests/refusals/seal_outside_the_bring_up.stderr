@@ -1,0 +1,17 @@
+error: the configuration leaf is written by the bring-up alone — `self.__seal()` is the seal's own marker and no other method spells it
+  --> tests/refusals/seal_outside_the_bring_up.rs:17:13
+   |
+17 |             self.__seal();
+   |             ^^^^
+
+error[E0599]: no method named `__seal` found for mutable reference `&mut Contract` in the current scope
+  --> tests/refusals/seal_outside_the_bring_up.rs:17:18
+   |
+17 |             self.__seal();
+   |                  ^^^^^^
+   |
+help: there is a method `reseal` with a similar name
+   |
+17 -             self.__seal();
+17 +             self.reseal();
+   |

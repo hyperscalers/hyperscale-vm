@@ -1,0 +1,5 @@
+error: `instantiate` is the seal's published name, and the method's own name is what marks it as the seal's body — it cannot publish under another
+  --> tests/refusals/bring_up_renamed.rs:11:9
+   |
+11 |         #[name("set-up")]
+   |         ^^^^^^^^^^^^^^^^^

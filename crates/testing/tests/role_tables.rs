@@ -10,7 +10,8 @@
 
 use hyperscale_vm_effects::{Claim, RuleBytes, StoredRule, TestHasher};
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_testing::{Chain, PrincipalAddr, account, package, principal};
+use hyperscale_vm_stdlib::instantiate;
+use hyperscale_vm_testing::{Chain, Component, PrincipalAddr, account, package, principal};
 use hyperscale_vm_types::{Outcome, Presence, ResourceAddr, UnmetCondition};
 
 const FOUNDER: PrincipalAddr = principal(0x51);
@@ -28,7 +29,7 @@ mod registry {
     #[resource(non_fungible, initial(0))]
     struct AdminBadge;
 
-    /// Only the founder may bring the registry up or seed its table.
+    /// Only the founder may bring the registry up.
     #[config]
     #[requires(config.founder)]
     struct Settings {
@@ -51,15 +52,15 @@ mod registry {
     }
 
     impl Registry {
-        /// Seed the roles, under the one-way door the table's own
-        /// absence is.
+        /// Bring the registry up with its admin rule seeded, so there is
+        /// no instant at which the component is actual and its surface
+        /// has no rule to open it.
         ///
-        /// A call of its own rather than part of the bring-up: what the
-        /// cell holds is what a caller hands over, and an attribute has
-        /// no way to say it. The cell's `Absent` door is what makes it
-        /// once-only, so it needs no help from the seal.
-        #[requires(config.founder)]
-        pub fn seed_admin(&mut self, rule: RuleBytes, delay_ms: u64) {
+        /// The body of the seal rather than a call after it: what the
+        /// cell holds is what the founder hands over, and the rule names
+        /// the badge this same bring-up mints. The founder's gate is the
+        /// configuration's, inherited here.
+        pub fn instantiate(&mut self, rule: RuleBytes, delay_ms: u64) {
             self.admin.create(rule);
             self.delay_ms.set(delay_ms);
         }
@@ -98,18 +99,6 @@ mod registry {
 
 const DELAY_MS: u64 = 100_000;
 
-fn setup() -> (Chain, registry::client::Registry) {
-    let mut chain = Chain::native();
-    chain.publish(package!(registry));
-    let instance = chain.instantiate::<registry::client::Registry>(
-        FOUNDER,
-        registry::client::Settings {
-            founder: FOUNDER.address(),
-        },
-    );
-    (chain, instance)
-}
-
 /// The registry's own admin badge.
 fn badge(instance: registry::client::Registry) -> ResourceAddr {
     instance.issued_admin_badge(&TestHasher)
@@ -120,40 +109,59 @@ fn stored(rule: &StoredRule) -> RuleBytes {
     RuleBytes::try_from(rule).expect("a rule within the caps encodes")
 }
 
-/// Seed the registry's admin rule with instance 0 of the badge its
-/// bring-up already filed in the founder's account.
-fn seeded() -> (Chain, registry::client::Registry) {
-    let (mut chain, instance) = setup();
-    let rule = stored(&StoredRule::claim(Claim::of_instance(badge(instance), 0)));
+/// A rule naming instance `id` of the badge the registry's own bring-up
+/// mints.
+fn admin_rule(instance: registry::client::Registry, id: u64) -> RuleBytes {
+    stored(&StoredRule::claim(Claim::of_instance(badge(instance), id)))
+}
+
+/// The registry, derived and then brought up in one transaction that
+/// seeds its admin rule — a rule over instance `id` of the badge the
+/// same transaction mints and files in the founder's account.
+///
+/// Two steps rather than one because the rule names the instance: its
+/// badge's address exists once the record is derived, and the bring-up
+/// is what makes the record actual.
+fn seeded_naming(id: u64) -> (Chain, registry::client::Registry) {
+    let mut chain = Chain::native();
+    chain.publish(package!(registry));
+    let instance = chain.derive::<registry::client::Registry>(registry::client::Settings {
+        founder: FOUNDER.address(),
+    });
     chain
-        .transact(FOUNDER, |b| instance.seed_admin(b, rule.clone(), DELAY_MS))
+        .bring_up(FOUNDER, instance, (admin_rule(instance, id), DELAY_MS))
         .expect_completed();
     (chain, instance)
 }
 
-/// A component whose rule nobody seeded refuses its gated call as the
-/// unmet rule — a routed verdict a caller can read, never a trap.
-///
-/// What an unwritten cell admits is the identity the address itself
-/// derives, and a component derives from no key: there is nothing to
-/// present for it, so the branch that would open the surface has no
-/// satisfier and the surface stays closed until somebody seeds a rule.
+/// The registry seeded with the one badge instance its bring-up minted.
+fn seeded() -> (Chain, registry::client::Registry) {
+    seeded_naming(0)
+}
+
+/// A registry someone other than its founder tries to bring up is
+/// refused before any body runs: the gate is the configuration's, and
+/// the body it now wraps changes nothing about who may reach it.
 #[test]
-fn an_unseeded_registry_refuses_its_surface_as_the_routed_absence() {
-    let (mut chain, instance) = setup();
-    let outcome = chain
-        .transact(FOUNDER, |b| instance.set_flag(b, 7))
-        .refused()
-        .cloned()
-        .expect("an unseeded rule refuses");
+fn only_the_founder_brings_the_registry_up() {
+    let mut chain = Chain::native();
+    chain.publish(package!(registry));
+    let instance = chain.derive::<registry::client::Registry>(registry::client::Settings {
+        founder: FOUNDER.address(),
+    });
+    let refused = chain
+        .try_transact(SUCCESSOR, |b| {
+            instantiate(
+                b,
+                SUCCESSOR,
+                instance.address(),
+                (admin_rule(instance, 0), DELAY_MS),
+            )
+        })
+        .err();
     assert!(
-        matches!(
-            outcome,
-            Outcome::ConditionUnmet {
-                condition: UnmetCondition::Satisfies { .. },
-            }
-        ),
-        "refused as the unmet rule: {outcome:?}",
+        refused.is_some(),
+        "a stranger's bring-up is refused before any body runs"
     );
 }
 
@@ -162,10 +170,12 @@ fn an_unseeded_registry_refuses_its_surface_as_the_routed_absence() {
 /// An approval on instance 3 and one on instance 7 are two different
 /// claims about one resource. A rendering that drops the instance says
 /// the right badge was presented and mysteriously refused, which sends
-/// the reader looking for the wrong fault.
+/// the reader looking for the wrong fault. The rule here names an
+/// instance nobody was minted, so what the founder presents is the
+/// wrong seat rather than no seat.
 #[test]
 fn a_refusal_names_the_instance_that_was_presented() {
-    let (mut chain, instance) = setup();
+    let (mut chain, instance) = seeded_naming(1);
     let refused = chain.transact(FOUNDER, |b| {
         let held = account::present_instance(b, FOUNDER, badge(instance), 0)?;
         b.call_presenting(held, instance, "set-flag", (7u128,))?
@@ -175,8 +185,9 @@ fn a_refusal_names_the_instance_that_was_presented() {
     assert!(told.contains("instance 0"), "{told}");
 }
 
-/// Seeding the table opens the surface to whoever holds the badge its
-/// rules name — the badge the bring-up already minted.
+/// The bring-up opens the surface to whoever holds the badge its rule
+/// names — the badge the same bring-up minted — in the very next
+/// transaction, with no window in which the table is empty.
 #[test]
 fn a_seeded_table_opens_the_surface_to_the_badge_holder() {
     let (mut chain, instance) = seeded();
@@ -189,17 +200,18 @@ fn a_seeded_table_opens_the_surface_to_the_badge_holder() {
         .expect_completed();
 }
 
-/// The one-way door: a second seeding is refused where the table
-/// lives, before any body runs.
+/// The one-way door: a second bring-up of an actual component is
+/// refused where its leaves live, before any body runs — the
+/// configuration leaf's absence is the fence, and the table's is the
+/// cell's own.
 #[test]
-fn a_second_seeding_is_refused_where_the_table_lives() {
+fn a_second_bring_up_is_refused_where_the_component_lives() {
     let (mut chain, instance) = seeded();
-    let rule = stored(&StoredRule::claim(Claim::of_instance(badge(instance), 0)));
     let outcome = chain
-        .transact(FOUNDER, |b| instance.seed_admin(b, rule.clone(), DELAY_MS))
+        .bring_up(FOUNDER, instance, (admin_rule(instance, 0), DELAY_MS))
         .refused()
         .cloned()
-        .expect("the second seeding is refused");
+        .expect("the second bring-up is refused");
     assert!(
         matches!(
             outcome,

@@ -1,0 +1,5 @@
+error: a bring-up that can refuse ends in `Ok(())` — the supply the component comes up holding is filed after it, by the declaration
+  --> tests/refusals/bring_up_tail.rs:26:13
+   |
+26 |             if settings.x == settings.y {
+   |             ^^

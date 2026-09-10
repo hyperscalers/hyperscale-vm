@@ -728,6 +728,11 @@ pub struct Lowerer<'a> {
     /// expression of unit type, which is a statement rather than a value
     /// however it is spelled.
     returns: bool,
+    /// Whether this is the seal — the one method that writes the
+    /// `CONFIG` leaf. `self.__seal()` lowers only here, so a body
+    /// spelling it anywhere else is refused at the call rather than by
+    /// the host build failing to find a method nothing emits.
+    seals: bool,
     locals: Vec<BTreeMap<String, Slot>>,
     out: Lowered,
     /// The clause scopes being built, innermost last.
@@ -766,12 +771,14 @@ impl<'a> Lowerer<'a> {
         params: &'a [(String, syn::Type)],
         returns: bool,
         total: bool,
+        seals: bool,
     ) -> Self {
         Self {
             declared,
             total,
             params,
             returns,
+            seals,
             locals: vec![BTreeMap::new()],
             out: Lowered::default(),
             scopes: vec![Vec::new()],
@@ -785,7 +792,13 @@ impl<'a> Lowerer<'a> {
 
     /// A second lowerer over the same inputs, for the survey walk.
     fn twin(&self) -> Self {
-        Self::new(self.declared, self.params, self.returns, self.total)
+        Self::new(
+            self.declared,
+            self.params,
+            self.returns,
+            self.total,
+            self.seals,
+        )
     }
 
     /// The declaration an issuance is called on, kind and all.
@@ -3345,10 +3358,24 @@ impl<'a> Lowerer<'a> {
         // component, whose accesses cannot land in this declaration.
         if is_self(&call.receiver) {
             let name = call.method.to_string();
-            // The generated seal's marker, which no authored body can
-            // spell: `expand` never emits it into the module, so the one
-            // caller is the synthesized `instantiate`.
+            // The seal's marker: the `CONFIG` write, which is the fence's
+            // one escape. Lowered where the synthesized `instantiate` is
+            // being walked and refused anywhere else — a body writing the
+            // configuration leaf from another method would make the
+            // component actual outside the one node that may.
             if name == "__seal" {
+                if !self.seals {
+                    self.error(
+                        call.span(),
+                        "the configuration leaf is written by the bring-up alone — \
+                         `self.__seal()` is the seal's own marker and no other method \
+                         spells it",
+                    );
+                    for arg in &call.args {
+                        self.expr(arg);
+                    }
+                    return Eval::absent(call.span(), "a seal outside the bring-up");
+                }
                 return self.seal_record(call);
             }
             if self.declared.accessors.contains_key(&name) {
@@ -4272,7 +4299,7 @@ mod tests {
             resources: &[],
             declines: &BTreeSet::new(),
         };
-        Lowerer::new(&declared, &[], false, false)
+        Lowerer::new(&declared, &[], false, false, false)
             .run(&block)
             .map_err(|errors| errors.iter().map(ToString::to_string).collect())
     }

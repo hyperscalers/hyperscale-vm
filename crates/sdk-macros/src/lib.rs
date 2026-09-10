@@ -88,6 +88,18 @@
 //! - `#[event] struct …` / `#[record] struct …` — an emitted event's
 //!   payload; a stored record's shape.
 //!
+//! On the state struct's `pub fn instantiate`, where there is one: the
+//! bring-up's body. The macro synthesizes the seal for every instance
+//! package — the `CONFIG` write, one record per declared resource, the
+//! supply an `initial(..)` states — and an authored `instantiate` is
+//! spliced into it: its parameters are the seal's, and its statements
+//! run after the records and before the supply, in the same node. It
+//! declares no return type, or `Result<(), Error>` ending in `Ok(())`
+//! to refuse a configuration it cannot run under; it carries no gate,
+//! because `#[requires(..)]` on the `#[config]` struct already names who
+//! may bring the component up. A package declaring none is brought up
+//! by the synthesized seal alone.
+//!
 //! On a `pub` method:
 //! - `#[requires(<rule>)]` — the gate, over the leaves `self`,
 //!   `config.<field>`, `issued(<Resource>)`, and `governs(<field>)`,
@@ -226,7 +238,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use hyperscale_vm_effects::ResourceKind;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{format_ident, quote};
+use quote::{ToTokens, format_ident, quote};
 use syn::spanned::Spanned;
 
 use crate::gate::{Gate, check_gate_shape, gate_calls, parse_gate};
@@ -1246,7 +1258,11 @@ fn lower_method(
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let returns = !matches!(method.sig.output, syn::ReturnType::Default);
     let claims_total = total_attr(method).is_some();
-    let lowered = Lowerer::new(declared, &params, returns, claims_total)
+    // The seal is the synthesized method alone: an authored `instantiate`
+    // is spliced into it before anything is lowered, so the name reaching
+    // here under an instance package is the macro's own.
+    let seals = matches!(serves, client::Serves::Instances) && published == INSTANTIATE;
+    let lowered = Lowerer::new(declared, &params, returns, claims_total, seals)
         .run(&method.block)
         .map_err(|errors| {
             errors
@@ -1403,6 +1419,7 @@ fn lower_methods(
 ) -> syn::Result<Vec<Lowered>> {
     let mut lowered = Vec::new();
     let mut published: Vec<String> = Vec::new();
+    let mut bring_up: Option<syn::ImplItemFn> = None;
     let helpers = inline::helpers(items, state_name, declared.accessors)?;
     for item in items {
         let syn::Item::Impl(block) = item else {
@@ -1450,13 +1467,30 @@ fn lower_methods(
                         .find(|attr| attr.path().is_ident("name"))
                         .map_or_else(|| method.sig.ident.span(), Spanned::span)
                 };
-                if matches!(serves, client::Serves::Instances) && name == INSTANTIATE {
-                    return Err(syn::Error::new(
-                        at(),
-                        "`instantiate` is the generated seal: the macro derives it for \
-                         every instance-serving package, so an authored method cannot \
-                         publish under the name",
-                    ));
+                if matches!(serves, client::Serves::Instances)
+                    && (name == INSTANTIATE || method.sig.ident == INSTANTIATE)
+                {
+                    // The bring-up's body, by the Rust name: what the
+                    // author wrote is spliced into the seal the macro
+                    // synthesizes, rather than lowered as a method of its
+                    // own. The published name is the seal's alone.
+                    if method.sig.ident != INSTANTIATE {
+                        return Err(syn::Error::new(
+                            at(),
+                            "`instantiate` is the seal: the macro derives it for every \
+                             instance-serving package, and a method named `instantiate` \
+                             is its body — an authored method cannot be renamed onto it",
+                        ));
+                    }
+                    if published.contains(&name) {
+                        return Err(syn::Error::new(
+                            at(),
+                            "a package brings up one way — this is a second `instantiate`",
+                        ));
+                    }
+                    published.push(name);
+                    bring_up = Some(inline::splice(method, &helpers)?);
+                    continue;
                 }
                 if published.contains(&name) {
                     return Err(syn::Error::new(
@@ -1475,7 +1509,11 @@ fn lower_methods(
     }
     if matches!(serves, client::Serves::Instances) {
         lowered.push(lower_method(
-            &instantiate_method(declared.resources, instantiation_gate(items)?),
+            &instantiate_method(
+                declared.resources,
+                instantiation_gate(items)?,
+                bring_up.as_ref(),
+            )?,
             declared,
             serves,
         )?);
@@ -1493,15 +1531,17 @@ fn lower_methods(
     Ok(lowered)
 }
 
-/// The name a package's generated seal publishes under.
+/// The name a package's seal publishes under.
 ///
-/// One declaration because two sites read it: the refusal that keeps an
-/// authored method off the name, and the method the macro synthesizes to
-/// take it.
+/// One declaration because three sites read it: the check that keeps a
+/// renamed method off the name, the one that takes an authored method
+/// of the name as the bring-up's body, and the method the macro
+/// synthesizes to publish it.
 pub(crate) const INSTANTIATE: &str = "instantiate";
 
-/// The generated `instantiate` — the seal that makes a component actual,
-/// beside the record of every resource it declares.
+/// The `instantiate` the macro synthesizes — the seal that makes a
+/// component actual, beside the record of every resource it declares,
+/// and around whatever body the author gave it.
 ///
 /// Synthesized rather than authored: the statements lower to the
 /// `CONFIG` write and one `RESOURCE` write per declared mark, each under
@@ -1513,7 +1553,25 @@ pub(crate) const INSTANTIATE: &str = "instantiate";
 /// the node that makes the component actual is the node that says what
 /// it issues. A package declaring no resource comes up in this one node
 /// and nothing else.
-fn instantiate_method(resources: &[Resource], gate: Option<&syn::Attribute>) -> syn::ImplItemFn {
+///
+/// An authored `pub fn instantiate` is the seal's body: its parameters
+/// are the seal's, and its statements run after the seal and the
+/// records and before the supply an `initial(..)` states. So the whole
+/// of the bring-up is still one node, the fence's one escape is still
+/// the `CONFIG` leaf, and what a body may declare is exactly what any
+/// method may — each write under its own door — minus the fence. The
+/// supply is the tail, and the author never touches it: the body
+/// declares no return type, or `Result<(), Error>` ending in `Ok(())`
+/// where it can refuse the configuration it was brought up under; what
+/// the component comes up holding is `initial(..)`'s to say, and an
+/// authored return type would be a second claim about it. The gate stays
+/// the configuration's: a founder is named where the address folds them,
+/// so a gate on the body would be a second spelling of one answer.
+fn instantiate_method(
+    resources: &[Resource],
+    gate: Option<&syn::Attribute>,
+    authored: Option<&syn::ImplItemFn>,
+) -> syn::Result<syn::ImplItemFn> {
     let records = resources.iter().map(|resource| {
         let name = syn::Ident::new(&resource.name, Span::call_site());
         let stated = match resource.kind {
@@ -1552,26 +1610,166 @@ fn instantiate_method(resources: &[Resource], gate: Option<&syn::Attribute>) -> 
             ResourceKind::NonFungible => quote!(#name::__found(#initial)),
         }
     });
-    let (returns, supply) = match supplied.len() {
-        0 => (quote!(), quote!()),
-        1 => (quote!(-> #(#edges)*), quote!(#(#founds)*)),
+    let (yields, supply) = match supplied.len() {
+        0 => (quote!(()), quote!(())),
+        1 => (quote!(#(#edges)*), quote!(#(#founds)*)),
         // Several leave as a tuple, the shape any method handing back
         // more than one edge already takes.
-        _ => (quote!(-> (#(#edges),*)), quote!((#(#founds),*))),
+        _ => (quote!((#(#edges),*)), quote!((#(#founds),*))),
+    };
+    let body = authored.map(bring_up_body).transpose()?;
+    let (attrs, params, statements) = body.as_ref().map_or_else(
+        || (Vec::new(), Vec::new(), Vec::new()),
+        |body| {
+            (
+                body.attrs.clone(),
+                body.params.clone(),
+                body.statements.clone(),
+            )
+        },
+    );
+    // A body that can refuse wraps the supply in the arm it declared;
+    // one that cannot, and the synthesized seal, yield it bare. A seal
+    // yielding nothing declares no return type, which is what keeps a
+    // package declaring no `instantiate` at the same declaration it had.
+    let (returns, tail) = match (
+        body.as_ref().and_then(|body| body.declines.clone()),
+        supplied.is_empty(),
+    ) {
+        (Some(error), _) => (
+            quote!(-> ::core::result::Result<#yields, #error>),
+            quote!(Ok(#supply)),
+        ),
+        (None, true) => (quote!(), quote!()),
+        (None, false) => (quote!(-> #yields), supply),
     };
     let name = syn::Ident::new(INSTANTIATE, Span::call_site());
-    syn::parse_quote!(
-        /// Makes this component actual: seals its creation-fixed record
-        /// into the configuration leaf, writes the record of every
-        /// resource it issues, and issues the supply it comes up
-        /// holding — each write refused where its leaf is already there.
+    Ok(syn::parse_quote!(
+        #(#attrs)*
         #gate
-        pub fn #name(&mut self) #returns {
+        pub fn #name(&mut self, #(#params),*) #returns {
             self.__seal();
             #(#records)*
-            #supply
+            #(#statements)*
+            #tail
         }
-    )
+    ))
+}
+
+/// The success side of a `Result<T, E>` return type, where `ty` is one.
+fn result_held(ty: &syn::Type) -> Option<&syn::Type> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let last = path.path.segments.last()?;
+    if last.ident != "Result" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return None;
+    };
+    match args.args.first()? {
+        syn::GenericArgument::Type(held) => Some(held),
+        _ => None,
+    }
+}
+
+/// What an authored `instantiate` contributes to the seal: its
+/// parameters, its statements, the arm it declines with, and whatever
+/// attributes it carries that are not the seal's to refuse.
+struct BringUp {
+    attrs: Vec<syn::Attribute>,
+    params: Vec<syn::FnArg>,
+    statements: Vec<syn::Stmt>,
+    declines: Option<syn::Type>,
+}
+
+/// Read an authored `instantiate` as the seal's body, refusing what it
+/// may not say: a gate, a published name, a return type that is not a
+/// unit refusal arm, and a tail that is not `Ok(())`.
+fn bring_up_body(method: &syn::ImplItemFn) -> syn::Result<BringUp> {
+    if let Some((attr, _)) = own_attr(&method.attrs, GATES) {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "the bring-up's gate is the configuration's: `#[requires(..)]` on the \
+             `#[config]` struct names who may bring a component up, and a second \
+             spelling here would be a second answer",
+        ));
+    }
+    if let Some((attr, _)) = own_attr(&method.attrs, &["name"]) {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "`instantiate` is the seal's published name, and the method's own name is \
+             what marks it as the seal's body — it cannot publish under another",
+        ));
+    }
+    let declines = match &method.sig.output {
+        syn::ReturnType::Default => None,
+        syn::ReturnType::Type(_, ty) => {
+            let unit_ok = result_held(ty).is_some_and(
+                |held| matches!(held, syn::Type::Tuple(tuple) if tuple.elems.is_empty()),
+            );
+            match declined_with(method) {
+                Some(arm) if unit_ok => Some(arm),
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        ty,
+                        "what a component comes up holding is `initial(..)`'s to say, so the \
+                         bring-up's body declares no return type — or `Result<(), Error>`, \
+                         where it can refuse the configuration it was brought up under",
+                    ));
+                }
+            }
+        }
+    };
+    let mut statements = method.block.stmts.clone();
+    if declines.is_some() {
+        // The tail is the refusal arm's success side, and the supply is
+        // what it wraps: `Ok(())` is the one tail a unit arm has, and it
+        // is replaced rather than kept so the seal's tail is the
+        // declaration's.
+        let ok_unit = matches!(
+            statements.last(),
+            Some(syn::Stmt::Expr(syn::Expr::Call(call), None))
+                if call.func.to_token_stream().to_string() == "Ok"
+                    && call.args.len() == 1
+                    && matches!(call.args.first(), Some(syn::Expr::Tuple(unit)) if unit.elems.is_empty())
+        );
+        if !ok_unit {
+            let at = statements
+                .last()
+                .map_or_else(|| method.block.span(), Spanned::span);
+            return Err(syn::Error::new(
+                at,
+                "a bring-up that can refuse ends in `Ok(())` — the supply the component \
+                 comes up holding is filed after it, by the declaration",
+            ));
+        }
+        statements.pop();
+    } else if let Some(syn::Stmt::Expr(_, semi @ None)) = statements.last_mut() {
+        // A trailing expression of a body yielding nothing is a
+        // statement, and the supply follows it as the tail.
+        *semi = Some(syn::Token![;](Span::call_site()));
+    }
+    let attrs = method
+        .attrs
+        .iter()
+        .filter(|attr| !attr.path().is_ident("doc"))
+        .cloned()
+        .collect();
+    let params = method
+        .sig
+        .inputs
+        .iter()
+        .filter(|arg| matches!(arg, syn::FnArg::Typed(_)))
+        .cloned()
+        .collect();
+    Ok(BringUp {
+        attrs,
+        params,
+        statements,
+        declines,
+    })
 }
 
 /// The `#[requires(..)]` a `#[config]` struct carries, if any: who may
