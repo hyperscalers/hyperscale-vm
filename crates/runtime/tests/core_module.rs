@@ -7,7 +7,7 @@ mod common;
 use common::{CLOCK_MS, Held, Kernel, every_import, ident, module};
 use hyperscale_vm_embed::abi::{ABI, CoreType, IMPORTS, MATH, STATE};
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
-use hyperscale_vm_meter::instantiation_cost;
+use hyperscale_vm_meter::{PAGE, instantiation_cost};
 use hyperscale_vm_runtime::{
     Invoking, add_kernel_imports, admit, blessed_engine, instantiate_metered, invoke_export,
 };
@@ -311,9 +311,9 @@ fn every_other_ending_keeps_its_class() {
     assert_eq!(aborted(&ended), AbortReason::Unreachable);
     let (ended, _) = run(&engine, &wat, "refused", &[]);
     assert_eq!(aborted(&ended), AbortReason::HandleUnknown);
-    let (ended, _) = run_with(&engine, &wat, "spin", &[], Kernel::seeded(), 10_000);
+    let (ended, _) = run_with(&engine, &wat, "spin", &[], Kernel::seeded(), PAGE + 10_000);
     assert_eq!(aborted(&ended), AbortReason::OutOfGas);
-    assert_eq!(ended.fuel, 10_000);
+    assert_eq!(ended.fuel, PAGE + 10_000);
     let (ended, _) = run(&engine, &wat, "absent", &[]);
     assert_eq!(aborted(&ended), AbortReason::ExportMissing);
 }

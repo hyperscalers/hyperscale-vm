@@ -18,15 +18,18 @@ pub const FLAT: u64 = 1;
 pub const FREE: u64 = 0;
 
 /// What one page of linear memory costs, grown at run time or declared
-/// as the module's minimum: the host zeroes and faults it in, and an
-/// instance holds it until the invocation ends.
+/// as the module's minimum.
 ///
-/// Charged per page rather than per grow so a body cannot buy the whole
-/// of the profile's ceiling for one unit, and charged for the declared
-/// minimum at instantiation so declaring it is not a way around the
-/// grow. A placeholder on the same terms as the work weights: set
-/// against measured baselines rather than chosen here.
-pub const PAGE: u64 = 256;
+/// A page the host maps and never touches costs it about what a few
+/// hundred flat operators do. A page a body touches costs it the
+/// faulting in, the zeroing and the tearing down of sixteen native
+/// pages, about what thirty thousand flat operators do, and sixteen
+/// stores are all it takes to touch one; the price is the touched
+/// figure, since the stores cannot carry it. Charged per page rather
+/// than per grow so a body cannot buy the whole of the profile's
+/// ceiling for one unit, and charged for the declared minimum at
+/// instantiation so declaring it is not a way around the grow.
+pub const PAGE: u64 = 32_768;
 
 /// The price of one operator.
 ///

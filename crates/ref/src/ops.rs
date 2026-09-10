@@ -245,7 +245,7 @@ pub struct BrTargets {
 
 /// What one page of linear memory costs, grown or declared: the spec's
 /// own statement of the price, held to the pass's by a harness lane.
-pub const PAGE_COST: u64 = 256;
+pub const PAGE_COST: u64 = 32_768;
 
 /// The fuel schedule, stated in the spec's own operator vocabulary.
 ///

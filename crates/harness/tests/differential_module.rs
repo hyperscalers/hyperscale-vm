@@ -15,6 +15,7 @@ use hyperscale_vm_embed::abi::{IMPORTS, MEMORY};
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_harness::dual::{DualGuest, materialize, rep_where};
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore};
+use hyperscale_vm_meter::PAGE;
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, ResourceAddr,
     SubstateKey, TxHash, encode_amount,
@@ -245,10 +246,14 @@ fn every_ending_is_shared() -> Result<()> {
         assert_eq!(ended.result, expected, "{export}");
         dual.finish()?;
     }
-    let mut dual = GUEST.instantiate(10_000, || session(&fx))?;
+    let mut dual = GUEST.instantiate(PAGE + 10_000, || session(&fx))?;
     let ended = dual.invoke_both("spin", &[])?;
     assert_eq!(ended.result, Invoked::Aborted(AbortReason::OutOfGas));
-    assert_eq!(ended.fuel, 10_000, "exhaustion spends the counter whole");
+    assert_eq!(
+        ended.fuel,
+        PAGE + 10_000,
+        "exhaustion spends the counter whole"
+    );
     Ok(())
 }
 

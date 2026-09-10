@@ -21,7 +21,7 @@
 use hyperscale_vm_embed::abi::{ABI, CRYPTO, MEMORY};
 use hyperscale_vm_embed::{GuestArg, Invocation, Invoked};
 use hyperscale_vm_harness::fixtures::NoHost;
-use hyperscale_vm_meter::{FUEL, instantiation_cost};
+use hyperscale_vm_meter::{FUEL, PAGE, instantiation_cost};
 use hyperscale_vm_ref::{
     ExecError, InstantiateError, RefInstance, RefModule, RefModuleInstance, Value,
 };
@@ -185,7 +185,7 @@ fn a_counted_loop_exhausts_at_the_same_budget() -> Result<()> {
 fn a_bulk_copy_exhausts_at_the_same_budget() -> Result<()> {
     // The per-byte charge lands at its own check, ahead of the operator,
     // so the boundary sits just past the prepaid page and the byte count.
-    let boundary = sweep(BULK_FIXTURE, 64, 1..400)?;
+    let boundary = sweep(BULK_FIXTURE, 64, PAGE - 8..PAGE + 400)?;
     println!("bulk fixture: both runtimes first complete at {boundary} fuel");
     Ok(())
 }
@@ -194,7 +194,7 @@ fn a_bulk_copy_exhausts_at_the_same_budget() -> Result<()> {
 fn a_grow_exhausts_at_the_same_budget() -> Result<()> {
     // Three pages grown on top of the one prepaid: four page prices and
     // a handful of operators, bracketed from both sides.
-    let boundary = sweep(GROW_FIXTURE, 3, 1..1_200)?;
+    let boundary = sweep(GROW_FIXTURE, 3, 4 * PAGE - 8..4 * PAGE + 200)?;
     println!("grow fixture: both runtimes first complete at {boundary} fuel");
     Ok(())
 }
@@ -320,7 +320,7 @@ fn host_call_sweep(arg: u64, range: std::ops::Range<u64>) -> Result<u64> {
 fn a_host_call_and_a_loop_exhaust_at_the_same_budget() -> Result<()> {
     // Wide enough to bracket the prepaid page, the call, its 40 bytes of
     // boundary debt, the loop and the answer from both sides.
-    let boundary = host_call_sweep(20, 1..1_200)?;
+    let boundary = host_call_sweep(20, PAGE - 8..PAGE + 1_200)?;
     println!("host-call fixture: both runtimes first complete at {boundary} fuel");
     Ok(())
 }
