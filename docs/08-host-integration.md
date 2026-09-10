@@ -44,6 +44,6 @@ One consequence the host relies on elsewhere: the payer shard's fee-binding chec
 ## 5. What the engine hands back
 
 - **Shard-invariant outputs.** Execution projects to a form every participant derives identically — receipt hash, events, outcome — with only the database writes filtered per shard by ownership. All failures collapse to one canonical failed-receipt hash.
-- **Events as consensus content.** Blueprint-declared, WIT-typed, size- and count-capped, carried success-only, homed on the emitting object's shard — a multi-shard transaction's events ride only their emitters' receipts — and merkled into the receipt root. The host's beacon witness channel consumes the staking component's events from its home shard.
+- **Events as consensus content.** Blueprint-declared, typed by the package's own event table, size- and count-capped, carried success-only, homed on the emitting object's shard — a multi-shard transaction's events ride only their emitters' receipts — and merkled into the receipt root. The host's beacon witness channel consumes the staking component's events from its home shard.
 - **Attested work.** Each finalized tick's receipts carry the work the shard actually executed — compute plus declared footprint, locality-scoped — which is what the emission reweighting in §2 consumes.
 - **Abort classes in the outcome vector.** Fee attribution rides the certificate itself ([04-execution-semantics.md](04-execution-semantics.md) §4), so settlement needs no side channel.

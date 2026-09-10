@@ -6,7 +6,7 @@ The manifest is the artifact every other layer reads: `route()` folds over it, a
 
 A manifest is a directed acyclic graph:
 
-- **Nodes** are method invocations, typed against the target's WIT signature ([05-runtime.md](05-runtime.md)). Arguments are literals, envelope inputs, or inbound edges.
+- **Nodes** are method invocations, typed against the target's declared signature ([05-runtime.md](05-runtime.md)). Arguments are literals, envelope inputs, or inbound edges.
 - **Edges** are typed value flows — resource amounts, proofs, plain data — each with exactly one producer and one consumer. Buckets are edges; proofs are edges. There is no ambient auth zone: evidence flows explicitly to the nodes that need it, and every claim it carries was minted by a gate that read state ([06-authority.md](06-authority.md)).
 - **Linearity is well-formedness.** Every output edge must be consumed; a node's remainder (change from a partial take, residue after a swap) is a typed **rest edge** that must be routed somewhere, usually back to the sender's account. "Nothing dangles" is a syntactic check, not an execution-time discovery. SDK sugar auto-routes rest edges so the ergonomic cost lands in tooling, not on users.
 - **Transient values are edge types.** A value whose type restricts its consumers to designated methods must be consumed like any edge, so the hot-potato pattern — flash loans, single-use rights — needs zero runtime machinery: the repayment obligation is unparseable to violate.
@@ -19,7 +19,7 @@ A manifest is a directed acyclic graph:
 ## 2. What each consumer reads
 
 - **`route()`**: a fold over nodes — evaluate each node's effect signature with its bound literals and inbound edge types, union the results. Order-independent by construction (INV-VM-ACCESS-5).
-- **Admission**: type agreement between every node and its WIT signature plus effect metadata; well-formedness (single producer and consumer per edge, acyclicity, constraint syntax); envelope binding. The parser and graph type-checker are more surface than an instruction-list decoder — a one-time toll at the layer where correctness matters most, and the admission checks are the bounded-decode discipline applied one level up.
+- **Admission**: type agreement between every node and its declared signature plus effect metadata; well-formedness (single producer and consumer per edge, acyclicity, constraint syntax); envelope binding. The parser and graph type-checker are more surface than an instruction-list decoder — a one-time toll at the layer where correctness matters most, and the admission checks are the bounded-decode discipline applied one level up.
 - **Wallets**: the manifest *is* the asset-flow diagram to display — sources, transformations, destinations, and the user's own constraints — with no simulation and no instruction-trace recovery. Value movement is manifest structure, not call side effects, which is what makes signing legible and blind-signing structurally impossible.
 - **The surface syntax** is SSA-style let-binding form — `let usdc = pool.swap(xrd); account.deposit(usdc)` — imperative to read, dataflow in denotation. The graph is the canonical (hashed, signed) encoding; the text form is a projection.
 

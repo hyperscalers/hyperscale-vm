@@ -16,7 +16,7 @@ Start with the overview; it tells the whole story in three pages and links down.
 | [02-manifests-and-intents.md](02-manifests-and-intents.md) | The typed dataflow manifest: nodes, edges, linearity, constraints — and subintents as separately-signed sub-graphs |
 | [03-objects-and-state.md](03-objects-and-state.md) | Structural ownership, canonical addresses, substate layout, the storage bond, onboarding, the no-singleton rule, and value linearity and conservation |
 | [04-execution-semantics.md](04-execution-semantics.md) | Deterministic parallel execution: conflict groups, canonical order, the transaction clock and the sealed draw, the abort taxonomy, and the fee quantities |
-| [05-runtime.md](05-runtime.md) | The Component Model host: the frozen deterministic profile, the blessed engine and the reference interpreter, the host surface, authentication, and the encodings |
+| [05-runtime.md](05-runtime.md) | The core boundary: the frozen deterministic profile, the blessed engine and the reference interpreter, the host surface, authentication, and the encodings |
 | [06-authority.md](06-authority.md) | What a proof carries, one rule tree over three leaves, what a method requires and what it mints, the entries a resource's issuer seals into it, presence at admission versus satisfaction at execution, and choosing between a badge and a stored rule |
 | [07-stdlib-and-upgrades.md](07-stdlib-and-upgrades.md) | The two-tier package rule, the migration pattern, co-location, and the stdlib inventory |
 | [08-host-integration.md](08-host-integration.md) | The contract between engine and host: read-set provisions, engagement evidence, cross-shard fee assurance, target authority, and work attestation |

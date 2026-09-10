@@ -69,7 +69,7 @@ Two verdicts in two places: AUTH-1 is answered at admission over signed content,
 
 | Gate rule | Invariant | Enforcement sites |
 |---|---|---|
-| Deterministic profile (`validate_component`) | INV-VM-RUN-2's substrate | Two by design: `cargo hyperscale` at build, the gate at admission — the same call, so a refused artifact is refused before anyone signs one |
+| Deterministic profile (`validate_module`) | INV-VM-RUN-2's substrate | Two by design: `cargo hyperscale` at build, the gate at admission — the same call, so a refused artifact is refused before anyone signs one |
 | Metadata section present, canonical, within budget | INV-VM-RUN-2 | Same two doors, same call |
 | Composed signature check (`check_signature`) | INV-VM-ACCESS-4 and the signature bounds | Two by design: the gate, and `MetadataCache::publish` — the cache's own door, so no path seeds a record past the judgment |
 | ABI binding vs export type (`check_abi_against_export`) | INV-VM-ACCESS-1's materialization contract | Single point: the gate |
