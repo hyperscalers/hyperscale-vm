@@ -20,7 +20,7 @@ use wasmparser::{
     TypeSectionReader,
 };
 
-use crate::schedule::cost;
+use crate::schedule::{PAGE, cost};
 use crate::{EXHAUST, FUEL, NAMESPACE, PassError, Survey};
 
 struct Pass<'s> {
@@ -85,12 +85,16 @@ const fn ends_block(op: &Operator<'_>) -> bool {
     )
 }
 
-/// Whether the operator moves a run-time byte count it has to pay for.
-const fn moves_bytes(op: &Operator<'_>) -> bool {
-    matches!(
-        op,
-        Operator::MemoryFill { .. } | Operator::MemoryCopy { .. } | Operator::MemoryInit { .. }
-    )
+/// What an operator charges at run time over the count on top of the
+/// stack: one per byte moved, or [`PAGE`] per page grown.
+const fn per_unit(op: &Operator<'_>) -> Option<u64> {
+    match op {
+        Operator::MemoryFill { .. } | Operator::MemoryCopy { .. } | Operator::MemoryInit { .. } => {
+            Some(1)
+        }
+        Operator::MemoryGrow { .. } => Some(PAGE),
+        _ => None,
+    }
 }
 
 /// The charge of the block starting at `ops[0]`: the schedule summed up
@@ -156,20 +160,28 @@ impl Pass<'_> {
         f.instruction(&Instruction::GlobalSet(self.fuel));
     }
 
-    /// The same check over the byte count on top of the stack, teed into
-    /// `scratch` so the operator that consumes it still finds it there.
-    fn check_bytes(&self, f: &mut Function, scratch: u32) {
+    /// The same check over the count on top of the stack at `unit` each,
+    /// teed into `scratch` so the operator that consumes the count still
+    /// finds it there. A unit of one emits no multiply.
+    fn check_counted(&self, f: &mut Function, scratch: u32, unit: u64) {
+        let unit = i64::try_from(unit).unwrap_or(i64::MAX);
+        let scaled = |f: &mut Function| {
+            f.instruction(&Instruction::LocalGet(scratch));
+            f.instruction(&Instruction::I64ExtendI32U);
+            if unit != 1 {
+                f.instruction(&Instruction::I64Const(unit));
+                f.instruction(&Instruction::I64Mul);
+            }
+        };
         f.instruction(&Instruction::LocalTee(scratch));
         f.instruction(&Instruction::GlobalGet(self.fuel));
-        f.instruction(&Instruction::LocalGet(scratch));
-        f.instruction(&Instruction::I64ExtendI32U);
+        scaled(f);
         f.instruction(&Instruction::I64LtU);
         f.instruction(&Instruction::If(BlockType::Empty));
         f.instruction(&Instruction::Call(self.exhaust));
         f.instruction(&Instruction::End);
         f.instruction(&Instruction::GlobalGet(self.fuel));
-        f.instruction(&Instruction::LocalGet(scratch));
-        f.instruction(&Instruction::I64ExtendI32U);
+        scaled(f);
         f.instruction(&Instruction::I64Sub);
         f.instruction(&Instruction::GlobalSet(self.fuel));
     }
@@ -285,10 +297,10 @@ impl Reencode for Pass<'_> {
         for op in func.get_operators_reader()? {
             ops.push(op?);
         }
-        // The scratch a bulk operator tees its byte count into, added
-        // only where one is present: a local the module never names
-        // would still stand in its frame.
-        let scratch = ops.iter().any(moves_bytes).then(|| {
+        // The scratch a counted operator tees its count into, added only
+        // where one is present: a local the module never names would
+        // still stand in its frame.
+        let scratch = ops.iter().any(|op| per_unit(op).is_some()).then(|| {
             locals.push((1, ValType::I32));
             params.saturating_add(declared)
         });
@@ -308,9 +320,9 @@ impl Reencode for Pass<'_> {
             }
             if let Some(scratch) = scratch
                 && dead.is_none()
-                && moves_bytes(op)
+                && let Some(unit) = per_unit(op)
             {
-                self.check_bytes(&mut f, scratch);
+                self.check_counted(&mut f, scratch, unit);
             }
             f.instruction(&self.instruction(op.clone())?);
 

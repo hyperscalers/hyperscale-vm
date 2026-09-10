@@ -243,11 +243,16 @@ pub struct BrTargets {
     pub default: u32,
 }
 
+/// What one page of linear memory costs, grown or declared: the spec's
+/// own statement of the price, held to the pass's by a harness lane.
+pub const PAGE_COST: u64 = 256;
+
 /// The fuel schedule, stated in the spec's own operator vocabulary.
 ///
 /// `nop`, `drop`, and pure control structure (`block`, `loop`, `unreachable`,
 /// `return`, `else`, `end`) are free; every other operator costs one.
-/// `memory.fill`/`memory.copy` additionally cost one per byte moved.
+/// `memory.fill`/`memory.copy` additionally cost one per byte moved, and
+/// `memory.grow` [`PAGE_COST`] per page.
 ///
 /// This is an independent statement of the schedule the meter's pass
 /// charges by, sharing no constant with it. The interpreter charges

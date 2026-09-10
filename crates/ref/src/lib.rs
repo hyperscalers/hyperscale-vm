@@ -19,4 +19,4 @@ pub use boundary::RefModuleInstance;
 pub use error::{DecodeError, InstantiateError, Trap};
 pub use interp::{ExecError, MAX_CALL_DEPTH, RefInstance};
 pub use module::{RefModule, translate};
-pub use ops::{Op, Value, fuel_cost};
+pub use ops::{Op, PAGE_COST, Value, fuel_cost};

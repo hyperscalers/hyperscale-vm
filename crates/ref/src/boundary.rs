@@ -18,7 +18,7 @@ use hyperscale_vm_types::AbortReason;
 use crate::error::{DecodeError, InstantiateError};
 use crate::interp::{ExecError, FuncAddr, ImportDispatch, Store, call, instantiate_module};
 use crate::module::{CoreImportKind, RefModule, Ty};
-use crate::ops::Value;
+use crate::ops::{PAGE_COST, Value};
 
 /// One import's dispatch: the boundary and the core arguments in, the
 /// core results out.
@@ -223,9 +223,9 @@ impl<'m, H: KernelHost> RefModuleInstance<'m, H> {
     /// memory as the kernel reads it and the counter as the meter
     /// defines it — what the validator and the pass produce, checked
     /// again here because the interpreter also runs modules that never
-    /// faced them. Instantiation is prepaid off the counter: one per
-    /// active data segment and one per byte, judged before any segment
-    /// applies.
+    /// faced them. Instantiation is prepaid off the counter: the page
+    /// price per page of declared minimum memory, and one per active
+    /// data segment and one per byte, judged before any segment applies.
     ///
     /// # Errors
     ///
@@ -292,11 +292,16 @@ impl<'m, H: KernelHost> RefModuleInstance<'m, H> {
             ));
             return Err((host, refused.into()));
         };
-        // One per active data segment plus one per byte, the other
-        // statement of the charge the meter derives from the bytes.
-        let prepaid = module.datas.iter().fold(0u64, |cost, seg| {
-            cost.saturating_add(1 + seg.items.len() as u64)
-        });
+        // The page price per declared page, then one per active data
+        // segment plus one per byte: the other statement of the charge
+        // the meter derives from the bytes.
+        let pages = module.memory.map_or(0, |(initial, _)| initial);
+        let prepaid = module
+            .datas
+            .iter()
+            .fold(pages.saturating_mul(PAGE_COST), |cost, seg| {
+                cost.saturating_add(1 + seg.items.len() as u64)
+            });
         let Some(left) = fuel.checked_sub(prepaid) else {
             return Err((host, InstantiateError::OutOfGas));
         };

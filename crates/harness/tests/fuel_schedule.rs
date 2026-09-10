@@ -16,7 +16,7 @@
 //! run the instrumented module to the same exhaustion.
 
 use hyperscale_vm_meter::instrument;
-use hyperscale_vm_ref::{fuel_cost, translate};
+use hyperscale_vm_ref::{PAGE_COST, fuel_cost, translate};
 use wasmparser::{Operator, Parser, Payload};
 use wat::parse_str;
 
@@ -195,10 +195,12 @@ fn bodies(bytes: &[u8]) -> Vec<Vec<Operator<'_>>> {
 
 /// What one instruction of an instrumented body is: a charge the pass
 /// wrote at a block's head, the run-time check in front of a bulk
-/// operator, or one of the author's own operators.
+/// operator, the same check scaled by the page price in front of a
+/// grow, or one of the author's own operators.
 enum Read<'a> {
     Charge(u64),
     ByteCheck,
+    PageCheck(u64),
     Author(Operator<'a>),
 }
 
@@ -246,6 +248,34 @@ const fn byte_check_at(ops: &[Operator<'_>]) -> bool {
     )
 }
 
+/// The run-time check the pass writes in front of `memory.grow`: the
+/// byte check with the count scaled by one price, named twice.
+fn page_check_at(ops: &[Operator<'_>]) -> Option<u64> {
+    let [
+        Operator::LocalTee { .. },
+        Operator::GlobalGet { .. },
+        Operator::LocalGet { .. },
+        Operator::I64ExtendI32U,
+        Operator::I64Const { value: p1 },
+        Operator::I64Mul,
+        Operator::I64LtU,
+        Operator::If { .. },
+        Operator::Call { .. },
+        Operator::End,
+        Operator::GlobalGet { .. },
+        Operator::LocalGet { .. },
+        Operator::I64ExtendI32U,
+        Operator::I64Const { value: p2 },
+        Operator::I64Mul,
+        Operator::I64Sub,
+        Operator::GlobalSet { .. },
+    ] = ops
+    else {
+        return None;
+    };
+    (p1 == p2).then(|| u64::try_from(*p1).expect("a price is unsigned"))
+}
+
 /// An instrumented body read back as charges and author operators.
 fn read_back<'a>(ops: &[Operator<'a>]) -> Vec<Read<'a>> {
     let mut read = Vec::new();
@@ -257,6 +287,9 @@ fn read_back<'a>(ops: &[Operator<'a>]) -> Vec<Read<'a>> {
         } else if ops.get(at..at + 13).is_some_and(byte_check_at) {
             read.push(Read::ByteCheck);
             at += 13;
+        } else if let Some(price) = ops.get(at..at + 17).and_then(page_check_at) {
+            read.push(Read::PageCheck(price));
+            at += 17;
         } else {
             read.push(Read::Author(ops[at].clone()));
             at += 1;
@@ -289,7 +322,7 @@ fn blocks(read: &[Read<'_>]) -> Vec<(u64, u64)> {
                 charged = *charge;
                 open = true;
             }
-            Read::ByteCheck => {}
+            Read::ByteCheck | Read::PageCheck(_) => {}
             Read::Author(op) => {
                 if dead.is_none() {
                     open = true;
@@ -369,24 +402,34 @@ fn the_pass_and_the_spec_price_every_block_alike() {
     assert!(checked > 10, "only {checked} blocks were read back");
 }
 
-/// The bulk operators carry their byte check, and only they do.
+/// The bulk operators carry their byte check and the grow its page
+/// check, and only they do; the page price is the spec's.
 #[test]
-fn only_the_bulk_operators_carry_a_byte_check() {
+fn only_the_counted_operators_carry_a_run_time_check() {
     let author = parse_str(EVERY_OPERATOR).expect("the fixture assembles");
     let instrumented = instrument(&author).expect("the fixture instruments");
-    let mut checks = 0usize;
+    let mut byte_checks = 0usize;
+    let mut page_checks = 0usize;
     let mut bulk = 0usize;
+    let mut grows = 0usize;
     for body in bodies(&instrumented) {
         for item in read_back(&body) {
             match item {
-                Read::ByteCheck => checks += 1,
+                Read::ByteCheck => byte_checks += 1,
+                Read::PageCheck(price) => {
+                    assert_eq!(price, PAGE_COST, "the pass and the spec price a page alike");
+                    page_checks += 1;
+                }
                 Read::Author(Operator::MemoryFill { .. } | Operator::MemoryCopy { .. }) => {
                     bulk += 1;
                 }
+                Read::Author(Operator::MemoryGrow { .. }) => grows += 1,
                 _ => {}
             }
         }
     }
     assert_eq!(bulk, 2, "the fixture carries a fill and a copy");
-    assert_eq!(checks, bulk, "one byte check per bulk operator");
+    assert_eq!(byte_checks, bulk, "one byte check per bulk operator");
+    assert_eq!(grows, 1, "the fixture carries a grow");
+    assert_eq!(page_checks, grows, "one page check per grow");
 }

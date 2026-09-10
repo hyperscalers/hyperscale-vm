@@ -21,7 +21,8 @@
 //! the schedule summed over the block's operators; a block that costs
 //! nothing gets no check, because charging nothing is not an operation.
 //! The bulk memory operators charge their byte count at run time through
-//! the same check, over a scratch local the pass adds to the function.
+//! the same check, over a scratch local the pass adds to the function,
+//! and `memory.grow` charges [`PAGE`] per page it adds the same way.
 //!
 //! The counter never goes negative: a block is paid for whole before it
 //! runs, so what the global holds at any ending — a return, a trap, an
@@ -29,8 +30,8 @@
 //!
 //! Instantiation is prepaid by the host, off the bytes alone
 //! ([`instantiation_cost`]): the global does not exist until the module
-//! does, and the segments it applies are the one piece of work that runs
-//! before any block.
+//! does, and the memory it declares and the segments it applies are the
+//! work that runs before any block.
 
 use wasmparser::{
     BinaryReaderError, CompositeInnerType, DataKind, ExternalKind, Parser, Payload, TypeRef,
@@ -39,7 +40,7 @@ use wasmparser::{
 mod pass;
 mod schedule;
 
-pub use schedule::{FLAT, FREE, cost};
+pub use schedule::{FLAT, FREE, PAGE, cost};
 
 /// The import namespace the pass reserves; author bytes may not name it.
 pub const NAMESPACE: &str = "hyperscale:meter";
@@ -79,9 +80,10 @@ struct Survey {
     globals: u32,
     /// The parameter count of every defined function, in code order.
     params: Vec<u32>,
-    /// What instantiation is prepaid: one per active data segment plus
-    /// one per byte it writes.
-    data_cost: u64,
+    /// What instantiation is prepaid: [`PAGE`] per page of declared
+    /// minimum memory, plus one per active data segment and one per byte
+    /// it writes.
+    prepaid: u64,
 }
 
 fn survey(bytes: &[u8]) -> Result<Survey, PassError> {
@@ -122,6 +124,14 @@ fn survey(bytes: &[u8]) -> Result<Survey, PassError> {
                     function_types.push(ty.map_err(malformed)?);
                 }
             }
+            Payload::MemorySection(reader) => {
+                for memory in reader {
+                    let memory = memory.map_err(malformed)?;
+                    survey.prepaid = survey
+                        .prepaid
+                        .saturating_add(memory.initial.saturating_mul(PAGE));
+                }
+            }
             Payload::GlobalSection(reader) => {
                 survey.globals += reader.count();
             }
@@ -137,8 +147,8 @@ fn survey(bytes: &[u8]) -> Result<Survey, PassError> {
                 for data in reader {
                     let data = data.map_err(malformed)?;
                     if matches!(data.kind, DataKind::Active { .. }) {
-                        survey.data_cost = survey
-                            .data_cost
+                        survey.prepaid = survey
+                            .prepaid
                             .saturating_add(1)
                             .saturating_add(data.data.len() as u64);
                     }
@@ -173,14 +183,17 @@ pub fn instrument(bytes: &[u8]) -> Result<Vec<u8>, PassError> {
 }
 
 /// What instantiating `bytes` costs, prepaid off the counter before the
-/// module exists: one per active data segment, plus one per byte the
-/// segment writes. Element segments cost nothing.
+/// module exists.
+///
+/// [`PAGE`] per page of the memory's declared minimum, plus one per
+/// active data segment and one per byte the segment writes. Element
+/// segments cost nothing.
 ///
 /// # Errors
 ///
 /// [`PassError::Malformed`] where the bytes do not parse.
 pub fn instantiation_cost(bytes: &[u8]) -> Result<u64, PassError> {
-    Ok(survey(bytes)?.data_cost)
+    Ok(survey(bytes)?.prepaid)
 }
 
 #[cfg(test)]
@@ -188,7 +201,7 @@ mod tests {
     use wasmparser::{ElementItems, ExternalKind, Operator, Parser, Payload, Validator};
     use wat::parse_str;
 
-    use super::{EXHAUST, FUEL, NAMESPACE, PassError, instantiation_cost, instrument};
+    use super::{EXHAUST, FUEL, NAMESPACE, PAGE, PassError, instantiation_cost, instrument};
 
     /// Every function body of a module as short operator spellings,
     /// which is what an expected instruction sequence is written in.
@@ -233,6 +246,8 @@ mod tests {
             Operator::Nop => "nop".into(),
             Operator::MemoryFill { .. } => "memory.fill".into(),
             Operator::MemoryCopy { .. } => "memory.copy".into(),
+            Operator::MemoryGrow { .. } => "memory.grow".into(),
+            Operator::I64Mul => "i64.mul".into(),
             other => format!("{other:?}"),
         }
     }
@@ -510,15 +525,59 @@ mod tests {
         assert_eq!(elements, vec![2]);
     }
 
+    /// A grow charges its page count where it runs, at the page price.
     #[test]
-    fn instantiation_is_priced_per_segment_and_per_byte() {
-        let empty = parse_str("(module (memory 1))").unwrap();
-        assert_eq!(instantiation_cost(&empty).unwrap(), 0);
+    fn a_grow_charges_its_pages_at_run_time() {
+        let bytes = parse_str(
+            r#"(module (memory 1 4) (func (export "f") (param i32) (result i32)
+                local.get 0 memory.grow))"#,
+        )
+        .unwrap();
+        let out = instrument(&bytes).unwrap();
+        valid(&out);
+        assert_eq!(
+            bodies(&out),
+            vec![seq(&[
+                check(2, 0, 0),
+                ops(&["local.get 0"]),
+                ops(&[
+                    "local.tee 1",
+                    "global.get 0",
+                    "local.get 1",
+                    "i64.extend_i32_u",
+                    &format!("i64.const {PAGE}"),
+                    "i64.mul",
+                    "i64.lt_u",
+                    "if",
+                    "call 0",
+                    "end",
+                    "global.get 0",
+                    "local.get 1",
+                    "i64.extend_i32_u",
+                    &format!("i64.const {PAGE}"),
+                    "i64.mul",
+                    "i64.sub",
+                    "global.set 0",
+                ]),
+                ops(&["memory.grow", "end"]),
+            ])]
+        );
+    }
+
+    #[test]
+    fn instantiation_is_priced_per_page_per_segment_and_per_byte() {
+        let none = parse_str("(module)").unwrap();
+        assert_eq!(instantiation_cost(&none).unwrap(), 0);
+        let empty = parse_str("(module (memory 2))").unwrap();
+        assert_eq!(instantiation_cost(&empty).unwrap(), 2 * PAGE);
         let seeded = parse_str(
             r#"(module (memory 1) (data (i32.const 0) "abc") (data (i32.const 8) "de"))"#,
         )
         .unwrap();
-        assert_eq!(instantiation_cost(&seeded).unwrap(), (1 + 3) + (1 + 2));
+        assert_eq!(
+            instantiation_cost(&seeded).unwrap(),
+            PAGE + (1 + 3) + (1 + 2)
+        );
     }
 
     #[test]

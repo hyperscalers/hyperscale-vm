@@ -13,7 +13,8 @@ use hyperscale_vm_effects::PackageHash;
 use hyperscale_vm_kernel::{GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession};
 use hyperscale_vm_meter::instantiation_cost;
 use hyperscale_vm_runtime::{
-    Invoking, add_kernel_imports, admit, blessed_engine, instantiate_metered, invoke_export,
+    HostRefusal, Invoking, add_kernel_imports, admit, blessed_engine, instantiate_metered,
+    invoke_export,
 };
 use hyperscale_vm_types::AbortReason;
 use wasmtime::{Engine, Linker, Module, Store};
@@ -142,20 +143,28 @@ impl GuestBackend for Blessed {
         };
         let mut linker = Linker::<Invoking<KernelSession>>::new(&self.engine);
         add_kernel_imports(&mut linker).expect("the kernel imports wire");
-        let instance = instantiate_metered(
-            &mut store,
-            call.fuel_budget.min(FUEL_CEILING),
-            *cost,
-            |store| linker.instantiate(store, module),
-        )
-        .expect("a published package instantiates");
-        let end = invoke_export(
-            &mut store,
-            &instance,
-            call.export,
-            call.args,
-            call.fuel_budget.min(FUEL_CEILING),
-        );
+        let budget = call.fuel_budget.min(FUEL_CEILING);
+        let instance = match instantiate_metered(&mut store, budget, *cost, |store| {
+            linker.instantiate(store, module)
+        }) {
+            Ok(instance) => instance,
+            // A budget under the prepaid instantiation is the sender's own
+            // deterministic refusal, spending the whole of it.
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<HostRefusal>(),
+                    Some(HostRefusal(AbortReason::OutOfGas))
+                ) =>
+            {
+                return InvokeResult {
+                    session: store.into_data().into_host(),
+                    fuel: budget,
+                    result: Invoked::Aborted(AbortReason::OutOfGas),
+                };
+            }
+            Err(error) => panic!("a published package instantiates: {error:#}"),
+        };
+        let end = invoke_export(&mut store, &instance, call.export, call.args, budget);
         InvokeResult {
             session: store.into_data().into_host(),
             fuel: end.fuel,

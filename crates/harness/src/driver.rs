@@ -16,10 +16,10 @@ use std::sync::Arc;
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{Hasher, PackageHash, SlotId, TestHasher, Value, child_key};
 use hyperscale_vm_kernel::{
-    BatchOutcome, BatchTx, ExecutionMode, GuestBackend, GuestCall, InvokeResult, KernelSession,
-    ManifestWalk, MemoryStore, Receipt, decode_amount, execute_batch,
+    BatchOutcome, BatchTx, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
+    KernelSession, ManifestWalk, MemoryStore, Receipt, decode_amount, execute_batch,
 };
-use hyperscale_vm_ref::{RefModule, RefModuleInstance};
+use hyperscale_vm_ref::{InstantiateError, RefModule, RefModuleInstance};
 use hyperscale_vm_runtime::admit;
 use hyperscale_vm_testing::{Blessed, Dispatch, FUEL_CEILING, Native};
 use hyperscale_vm_types::{AbortReason, Address, Outcome, SubstateKey, encode_amount};
@@ -55,10 +55,20 @@ impl GuestBackend for Reference {
             .modules
             .get(&call.package)
             .expect("the call names a seeded package");
-        let mut instance =
-            RefModuleInstance::instantiate(module, session, call.fuel_budget.min(FUEL_CEILING))
-                .map_err(|(_, error)| error)
-                .expect("a seeded package instantiates");
+        let budget = call.fuel_budget.min(FUEL_CEILING);
+        let mut instance = match RefModuleInstance::instantiate(module, session, budget) {
+            Ok(instance) => instance,
+            // The same refusal the blessed lane reaches: a budget under the
+            // prepaid instantiation, spending the whole of it.
+            Err((session, InstantiateError::OutOfGas)) => {
+                return InvokeResult {
+                    session,
+                    fuel: budget,
+                    result: Invoked::Aborted(AbortReason::OutOfGas),
+                };
+            }
+            Err((_, error)) => panic!("a seeded package instantiates: {error}"),
+        };
         let end = instance.invoke(call.export, call.args);
         InvokeResult {
             session: instance.into_host(),

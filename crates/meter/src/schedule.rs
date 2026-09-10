@@ -17,11 +17,23 @@ pub const FLAT: u64 = 1;
 /// translation as anything a machine executes.
 pub const FREE: u64 = 0;
 
+/// What one page of linear memory costs, grown at run time or declared
+/// as the module's minimum: the host zeroes and faults it in, and an
+/// instance holds it until the invocation ends.
+///
+/// Charged per page rather than per grow so a body cannot buy the whole
+/// of the profile's ceiling for one unit, and charged for the declared
+/// minimum at instantiation so declaring it is not a way around the
+/// grow. A placeholder on the same terms as the work weights: set
+/// against measured baselines rather than chosen here.
+pub const PAGE: u64 = 256;
+
 /// The price of one operator.
 ///
-/// The bulk memory operators are priced here at [`FLAT`] for the
-/// instruction itself; the bytes they move are charged at run time, one
-/// per byte, by the check the pass emits in front of them.
+/// The bulk memory operators and `memory.grow` are priced here at
+/// [`FLAT`] for the instruction itself; the bytes the one moves and the
+/// pages the other adds are charged at run time, by the check the pass
+/// emits in front of them.
 #[must_use]
 pub const fn cost(op: &Operator<'_>) -> u64 {
     match op {
