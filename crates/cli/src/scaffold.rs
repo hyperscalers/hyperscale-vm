@@ -191,9 +191,19 @@ build-std = [\"std\", \"panic_abort\"]
 # `--strip-all` drops the name section: its mangled symbols embed
 # crate-disambiguator hashes that cargo salts with the build host, and
 # a consensus artifact carries no debug payload.
+#
+# The shadow stack is the linear memory Rust spills locals into, sized
+# by the linker and independent of the native stack the deploy-time
+# frame bound proves. Half a page, against a corpus peak under one
+# kilobyte, so the data segment and the allocator's first carve share
+# the one page a guest declares. Placed first so an overflow wraps
+# below zero into an out-of-bounds trap instead of running into the
+# heap.
 [target.wasm32-unknown-unknown]
 rustflags = [
     \"-C\", \"link-arg=--max-memory=16777216\",
+    \"-C\", \"link-arg=-zstack-size=32768\",
+    \"-C\", \"link-arg=--stack-first\",
     \"-C\", \"link-arg=--strip-all\",
     \"-Z\", \"unstable-options\",
     \"-C\", \"panic=immediate-abort\",
