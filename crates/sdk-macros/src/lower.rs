@@ -548,6 +548,15 @@ fn split_tail(block: &syn::Block) -> (&[syn::Stmt], Option<&syn::Expr>) {
     }
 }
 
+/// The expression inside any parentheses: `(x)` reads as `x`.
+fn unparen(expr: &syn::Expr) -> &syn::Expr {
+    match expr {
+        syn::Expr::Paren(paren) => unparen(&paren.expr),
+        syn::Expr::Group(group) => unparen(&group.expr),
+        other => other,
+    }
+}
+
 /// Strip a type ascription off a pattern: `let x: u64 = …` binds `x`.
 fn unwrap_pat(pat: &syn::Pat) -> &syn::Pat {
     match pat {
@@ -1022,10 +1031,33 @@ impl<'a> Lowerer<'a> {
         // The seal's tail is the supply it founds, which is the macro's
         // whatever an authored bring-up ended in.
         self.synthesizing = self.seal.is_some();
-        let returned = tail.map_or_else(Returned::default, |tail| self.returned(tail));
+        let returned = tail.map_or_else(Returned::default, |tail| self.tail(tail, &mut statements));
         self.synthesizing = false;
         self.locals.pop();
         (statements, returned)
+    }
+
+    /// Read the tail expression: what the method hands back, and the
+    /// statement the tail becomes where it hands back nothing.
+    ///
+    /// A refusal at the tail is the method's own exit, exactly as an
+    /// early `return Err(..)` is: the body runs inside a closure whose
+    /// error arm is the decline, and the refusal unwinds to it through
+    /// `?` — spelled so rather than as a `return`, because the closure's
+    /// epilogue follows the body and a `return` would leave it
+    /// unreachable in the compiler's eyes.
+    fn tail(&mut self, tail: &syn::Expr, statements: &mut Vec<TokenStream>) -> Returned {
+        if let syn::Expr::Call(call) = unparen(tail)
+            && free_call_name(call).as_deref() == Some("Err")
+        {
+            let code = self.code(tail);
+            statements.push(quote!(
+                let __refusal: ::core::result::Result<(), _> = #code;
+                __refusal?;
+            ));
+            return Returned::default();
+        }
+        self.returned(tail)
     }
 
     /// Fold one thing a tail hands back into what the method returns: a
@@ -4392,6 +4424,46 @@ mod tests {
         Lowerer::new(&declared, &[], false, false, None)
             .run(&block)
             .map_err(|errors| errors.iter().map(ToString::to_string).collect())
+    }
+
+    /// One pass over `body` as a method with a return type.
+    fn lower_returning(body: &str) -> Lowered {
+        let block: syn::Block = syn::parse_str(body).expect("the fixture parses as a block");
+        let fields = fields();
+        let config = syn::Ident::new("Terms", proc_macro2::Span::call_site());
+        let accessors = accessors(Some(&config), crate::client::Serves::Principals);
+        let declared = Declared {
+            fields: &fields,
+            accessors: &accessors,
+            config_record: Some(&config),
+            config_fields: &[],
+            resources: &[],
+            declines: &BTreeSet::new(),
+        };
+        Lowerer::new(&declared, &[], true, false, None)
+            .run(&block)
+            .unwrap_or_else(|errors| {
+                panic!(
+                    "the fixture drew a hard error: {}",
+                    errors
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )
+            })
+    }
+
+    #[test]
+    fn a_refusal_at_the_tail_leaves_the_method() {
+        let lowered = lower_returning("{ self.owed.at(1).set(1); Err(Error::Empty) }");
+        let body = lowered.body.to_string();
+        assert!(
+            body.ends_with("= Err (Error :: Empty) ; __refusal ? ;"),
+            "the tail's refusal is the method's exit: {body}"
+        );
+        assert!(lowered.answer.is_none(), "a refusal answers nothing");
+        assert!(lowered.outputs.is_empty(), "and hands back no edge");
     }
 
     /// The lowering of `body`.

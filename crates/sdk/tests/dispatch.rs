@@ -94,6 +94,12 @@ mod till {
         }
 
         /// Read the vault and insist on something it will not be.
+        /// Decline at the tail rather than through an early `return`.
+        pub fn refuse(&mut self, resource: ResourceAddr) -> Result<(), Error> {
+            let _ = self.vaults.at(resource).balance();
+            Err(Error::Short)
+        }
+
         pub fn insist(&mut self, resource: ResourceAddr) {
             assert_eq!(
                 self.vaults.at(resource).balance(),
@@ -308,6 +314,22 @@ fn the_error_arm_declines_rather_than_trapping() {
     let (_, invoked) = till::invoke("withdraw", session, &[cell(), GuestArg::Bytes(&wide(30))]);
 
     assert_eq!(invoked, Invoked::Declined(0), "the package's own code");
+}
+
+/// A refusal at the tail is the method's exit as much as an early one: a
+/// body that ends in `Err(..)` declines, and nothing it did before that
+/// is a success.
+#[test]
+fn a_refusal_at_the_tail_declines() {
+    let session = session(Mode::Read, 10);
+
+    let (_, invoked) = till::invoke("refuse", session, &[cell()]);
+
+    assert_eq!(
+        invoked,
+        Invoked::Declined(0),
+        "the tail's `Err` is the package's own refusal"
+    );
 }
 
 #[test]
