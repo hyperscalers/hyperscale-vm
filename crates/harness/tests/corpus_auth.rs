@@ -362,8 +362,8 @@ fn cancel_graph() -> ManifestGraph {
     cancel_by(ALICE)
 }
 
-fn promote_graph() -> ManifestGraph {
-    graph(|b| account::promote(b, ALICE))
+fn promote_by(signer: PrincipalAddr) -> ManifestGraph {
+    graph_signed(signer, |b| account::promote(b, ALICE))
 }
 
 /// Whether `signer` opens Alice's sign-in at `clock_ms`: the whole
@@ -463,8 +463,8 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
         let (results, after) = run_both_at(
             &world,
             &store,
-            &[(&promote_graph(), TxHash(Hash32([tag; 32])))],
-            Some(TAKER),
+            &[(&promote_by(BOB), TxHash(Hash32([tag; 32])))],
+            Some(BOB),
             clock_ms,
         );
         assert!(matches!(&results[0], TxResult::Completed(_)));
@@ -474,12 +474,30 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     assert_acts(&world, &early, ALICE, before, true, 0x63);
     assert_acts(&world, &early, BOB, before, false, 0x64);
 
-    // At the instant, anybody may enact it — the clock has licensed it,
-    // and enacting is the only thing that moves the rule. The verdicts
-    // swap on the write rather than on the read.
+    // At the instant, the recovery role may enact it — the clock has
+    // licensed it, and enacting is the only thing that moves the rule.
+    // The verdicts swap on the write rather than on the read.
     let enacted = promoted(at, 0x65);
     assert_acts(&world, &enacted, BOB, at, true, 0x66);
     assert_acts(&world, &enacted, ALICE, at, false, 0x67);
+
+    // A stranger may not, matured or not: enacting is gated where
+    // proposing is, so a matured replacement is nobody's lever but the
+    // recovery role's.
+    let (results, _) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_by(TAKER), TxHash(Hash32([0xC0; 32])))],
+        Some(TAKER),
+        at,
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 1 },
+        })],
+        "a stranger's sign-in opens no gate of Alice's"
+    );
 
     // A later cancel by the new holder drops nothing that was enacted:
     // what enacting moved is the governing rule, and a cancel touches
@@ -643,8 +661,8 @@ fn recovery_rotates_a_hostile_primary_out() {
     let (results, enacted) = run_both_at(
         &world,
         &store,
-        &[(&promote_graph(), TxHash(Hash32([0x96; 32])))],
-        Some(TAKER),
+        &[(&promote_by(BOB), TxHash(Hash32([0x96; 32])))],
+        Some(BOB),
         at,
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
@@ -700,8 +718,8 @@ fn a_freeze_keeps_the_proposal_it_finds_pending() {
     let (results, enacted) = run_both_at(
         &world,
         &store,
-        &[(&promote_graph(), TxHash(Hash32([0xA4; 32])))],
-        Some(TAKER),
+        &[(&promote_by(BOB), TxHash(Hash32([0xA4; 32])))],
+        Some(BOB),
         at,
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
@@ -1004,8 +1022,8 @@ fn a_replacement_replaces_the_delay_too_and_not_before_it_is_enacted() {
     let (results, store) = run_both_at(
         &world,
         &store,
-        &[(&promote_graph(), TxHash(Hash32([0x76; 32])))],
-        Some(TAKER),
+        &[(&promote_by(BOB), TxHash(Hash32([0x76; 32])))],
+        Some(BOB),
         at,
     );
     let TxResult::Completed(receipt) = &results[0] else {

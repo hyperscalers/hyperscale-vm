@@ -295,10 +295,11 @@ pub mod account {
 
         /// Enact a replacement whose delay has run out.
         ///
-        /// Open to anyone, because it does only what the clock already
-        /// licensed: the party who wants it is whoever proposed it, and
-        /// it is a node in their own transaction. Nothing happens before
-        /// the instant the proposal named.
+        /// The recovery role's, like proposing and cancelling: the
+        /// party who wants it is whoever proposed it, and the gate is
+        /// the one they already opened to propose. Nothing happens
+        /// before the instant the proposal named.
+        #[requires(governs(recovery))]
         pub fn promote(&mut self) {
             if let Some(pending) = self.pending.get()
                 && pending.effective_at_ms <= clock_ms()

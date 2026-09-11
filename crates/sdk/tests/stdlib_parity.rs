@@ -175,6 +175,7 @@ fn account() -> Blueprint {
             t.point(&holder.child(own(2), &[])).write();
             t.point(&holder.child(own(3), &[])).write();
             t.point(&holder.child(own(5), &[])).write();
+            t.governed_by_what_it_writes(own(2));
         })
         .method("cancel", &[], |t: &mut Trace| {
             let holder = t.self_addr();

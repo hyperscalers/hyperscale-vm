@@ -140,10 +140,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
             governs(auth_cell()),
             vec![Expr::Tuple(vec![Expr::Arg(0), Expr::Arg(1)])],
         ),
-        // Open, because it does only what the clock already licensed:
-        // whoever wants a replacement enacted is whoever proposed it, and
-        // it is a node in their own transaction.
-        ("account", "promote", open(), vec![]),
+        ("account", "promote", governs(own_cell(2)), vec![]),
         ("account", "propose", governs(own_cell(2)), vec![]),
         ("account", "refuse", this(), vec![]),
         ("account", "securify", this(), vec![]),

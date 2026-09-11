@@ -93,6 +93,7 @@ promote() — infallible
       2  write self.recovery
       3  write self.confirmation
       4  write self.delay_ms
+      5  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
   exports  handles for clauses 0–4
 
 propose(rule, rule, rule, u64) — infallible
