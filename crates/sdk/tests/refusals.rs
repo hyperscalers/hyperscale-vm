@@ -321,6 +321,11 @@ fn the_lowering_bounds_the_bring_up_body() {
 fn the_lowering_refuses_a_seal_outside_the_bring_up() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/seal_outside_the_bring_up.rs");
+    // The founding and the record write are the bring-up's own on the
+    // same terms, held to the synthesized statements even inside an
+    // authored bring-up.
+    refuse.compile_fail("tests/refusals/authored_found.rs");
+    refuse.compile_fail("tests/refusals/found_outside_the_bring_up.rs");
 }
 
 /// A method carries one gate.
@@ -499,6 +504,7 @@ fn the_macro_bounds_what_a_helper_may_be() {
     // because declaring anything under the prefix is refused, not
     // because a stub happens to be missing.
     refuse.compile_fail("tests/refusals/reserved_item_name.rs");
+    refuse.compile_fail("tests/refusals/reserved_in_nested_mod.rs");
 }
 
 /// A key position takes the vocabulary.

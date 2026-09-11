@@ -1,0 +1,11 @@
+error: `__found` starts with `__`, which the generated code reserves for its own items — name the function without the leading underscores
+  --> tests/refusals/reserved_in_nested_mod.rs:15:16
+   |
+15 |             fn __found() {}
+   |                ^^^^^^^
+
+error: `__record` starts with `__`, which the generated code reserves for its own items — name the function without the leading underscores
+  --> tests/refusals/reserved_in_nested_mod.rs:20:12
+   |
+20 |         fn __record() {}
+   |            ^^^^^^^^

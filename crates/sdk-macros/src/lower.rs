@@ -39,6 +39,7 @@
 //! never reaches the guest, and a fresh id the guest never draws does.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use hyperscale_vm_effects::vocabulary::RESOURCE;
 use hyperscale_vm_effects::{GrantedBehaviour, Issued, ResourceKind};
@@ -728,11 +729,17 @@ pub struct Lowerer<'a> {
     /// expression of unit type, which is a statement rather than a value
     /// however it is spelled.
     returns: bool,
-    /// Whether this is the seal — the one method that writes the
-    /// `CONFIG` leaf. `self.__seal()` lowers only here, so a body
-    /// spelling it anywhere else is refused at the call rather than by
-    /// the host build failing to find a method nothing emits.
-    seals: bool,
+    /// The seal's authored statements, by top-level index, where this is
+    /// the seal — the one method that writes the `CONFIG` leaf and
+    /// founds the marks' supply. Every other statement of the seal is
+    /// the macro's own, and `self.__seal()`, `Mark::__record(..)` and
+    /// `Mark::__found(..)` lower only from those: a body spelling one
+    /// anywhere else is refused at the call rather than by the host
+    /// build failing to find a method nothing emits.
+    seal: Option<Range<usize>>,
+    /// Whether the top-level statement being walked is the seal's own
+    /// rather than an author's.
+    synthesizing: bool,
     locals: Vec<BTreeMap<String, Slot>>,
     out: Lowered,
     /// The clause scopes being built, innermost last.
@@ -771,14 +778,15 @@ impl<'a> Lowerer<'a> {
         params: &'a [(String, syn::Type)],
         returns: bool,
         total: bool,
-        seals: bool,
+        seal: Option<Range<usize>>,
     ) -> Self {
         Self {
             declared,
             total,
             params,
             returns,
-            seals,
+            seal,
+            synthesizing: false,
             locals: vec![BTreeMap::new()],
             out: Lowered::default(),
             scopes: vec![Vec::new()],
@@ -797,7 +805,7 @@ impl<'a> Lowerer<'a> {
             self.params,
             self.returns,
             self.total,
-            self.seals,
+            self.seal.clone(),
         )
     }
 
@@ -1004,10 +1012,18 @@ impl<'a> Lowerer<'a> {
             (&block.stmts[..], None)
         };
         let mut statements = Vec::new();
-        for stmt in body {
+        for (index, stmt) in body.iter().enumerate() {
+            self.synthesizing = self
+                .seal
+                .as_ref()
+                .is_some_and(|authored| !authored.contains(&index));
             statements.push(self.stmt(stmt));
         }
+        // The seal's tail is the supply it founds, which is the macro's
+        // whatever an authored bring-up ended in.
+        self.synthesizing = self.seal.is_some();
         let returned = tail.map_or_else(Returned::default, |tail| self.returned(tail));
+        self.synthesizing = false;
         self.locals.pop();
         (statements, returned)
     }
@@ -2889,6 +2905,35 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Refuse a kernel-issuance spelling from an authored statement.
+    ///
+    /// The bring-up's own statements are the only text that lowers one:
+    /// a mark's record is written and its supply founded where the
+    /// component becomes actual, and a body spelling either elsewhere —
+    /// another method, or the authored half of the bring-up — would be
+    /// writing a second record or founding a supply nothing granted.
+    fn refuse_synthesized_spelling(
+        &mut self,
+        call: &syn::ExprCall,
+        spelling: &str,
+        does: &str,
+    ) -> Eval {
+        self.error(
+            call.func.span(),
+            &format!(
+                "`{spelling}` is the bring-up's own marker: the synthesized seal {does} a \
+                 mark where the component becomes actual, and no authored statement spells it"
+            ),
+        );
+        for arg in &call.args {
+            self.expr(arg);
+        }
+        Eval::absent(
+            call.span(),
+            "a kernel-issuance spelling outside the bring-up",
+        )
+    }
+
     #[allow(clippy::too_many_lines)] // one arm per free call the vocabulary names
     fn free_call(&mut self, call: &syn::ExprCall) -> Eval {
         for arg in &call.args {
@@ -2927,6 +2972,9 @@ impl<'a> Lowerer<'a> {
         // comes up holding, so no `Mint` entry governs it and the mark's
         // own grants have no say.
         if name == "mint" || name == "__found" {
+            if name == "__found" && !self.synthesizing {
+                return self.refuse_synthesized_spelling(call, "__found", "founds");
+            }
             let Some(issued) = self.issuing_mark(call, &name) else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
@@ -2945,6 +2993,9 @@ impl<'a> Lowerer<'a> {
         // becomes actual, so a body that wrote one would be writing a
         // second.
         if name == "__record" {
+            if !self.synthesizing {
+                return self.refuse_synthesized_spelling(call, "__record", "records");
+            }
             let Some(issued) = self.issuing_mark(call, "__record") else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
@@ -3385,7 +3436,7 @@ impl<'a> Lowerer<'a> {
             // configuration leaf from another method would make the
             // component actual outside the one node that may.
             if name == "__seal" {
-                if !self.seals {
+                if !self.synthesizing {
                     self.error(
                         call.span(),
                         "the configuration leaf is written by the bring-up alone — \
@@ -4323,7 +4374,7 @@ mod tests {
             resources: &[],
             declines: &BTreeSet::new(),
         };
-        Lowerer::new(&declared, &[], false, false, false)
+        Lowerer::new(&declared, &[], false, false, None)
             .run(&block)
             .map_err(|errors| errors.iter().map(ToString::to_string).collect())
     }

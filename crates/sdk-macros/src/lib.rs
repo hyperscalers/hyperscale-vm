@@ -234,6 +234,7 @@ mod syntax;
 mod term;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 
 use hyperscale_vm_effects::ResourceKind;
 use proc_macro::TokenStream;
@@ -772,11 +773,12 @@ fn check_use_shadows(tree: &syn::UseTree, matched: &[&str]) -> syn::Result<()> {
 ///
 /// Item names too, and these carry more than shadowing: the kernel
 /// spellings `__found`, `__record` and `__seal` exist only as the
-/// lowering's own emissions, and their gates assume no authored text can
-/// spell them. An author supplying `fn __found` on a mark would hand the
-/// reading build the stub that assumption rests on being absent — so the
-/// whole prefix is refused where a name is declared, which is what makes
-/// the assumption true by construction.
+/// lowering's own emissions, and the lowering admits them from the
+/// synthesized bring-up alone. An author supplying `fn __found` on a
+/// mark would hand the reading build the stub that assumption rests on
+/// being absent — so the whole prefix is refused where a name is
+/// declared, nested modules and trait items included, which is what
+/// makes the assumption true by construction.
 fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::Result<()> {
     struct Reserved<'e> {
         errors: &'e mut Vec<syn::Error>,
@@ -796,6 +798,44 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
             syn::visit::visit_pat_ident(self, pat);
         }
     }
+    fn reserve_items(
+        items: &[syn::Item],
+        state_name: &syn::Ident,
+        reserve_name: &impl Fn(&syn::Ident, &mut Vec<syn::Error>),
+        errors: &mut Vec<syn::Error>,
+    ) {
+        for item in items {
+            match item {
+                syn::Item::Fn(function) => reserve_name(&function.sig.ident, errors),
+                syn::Item::Impl(block) => {
+                    for inner in &block.items {
+                        let syn::ImplItem::Fn(method) = inner else {
+                            continue;
+                        };
+                        reserve_name(&method.sig.ident, errors);
+                        let on_state = block.trait_.is_none()
+                            && matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name));
+                        if on_state {
+                            syn::visit::Visit::visit_block(&mut Reserved { errors }, &method.block);
+                        }
+                    }
+                }
+                syn::Item::Trait(trait_) => {
+                    for inner in &trait_.items {
+                        if let syn::TraitItem::Fn(method) = inner {
+                            reserve_name(&method.sig.ident, errors);
+                        }
+                    }
+                }
+                syn::Item::Mod(module) => {
+                    if let Some((_, inner)) = &module.content {
+                        reserve_items(inner, state_name, reserve_name, errors);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     let mut errors = Vec::new();
     let reserve_name = |ident: &syn::Ident, errors: &mut Vec<syn::Error>| {
         if ident.to_string().starts_with("__") {
@@ -808,30 +848,7 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
             ));
         }
     };
-    for item in items {
-        match item {
-            syn::Item::Fn(function) => reserve_name(&function.sig.ident, &mut errors),
-            syn::Item::Impl(block) => {
-                for inner in &block.items {
-                    let syn::ImplItem::Fn(method) = inner else {
-                        continue;
-                    };
-                    reserve_name(&method.sig.ident, &mut errors);
-                    let on_state = block.trait_.is_none()
-                        && matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name));
-                    if on_state {
-                        syn::visit::Visit::visit_block(
-                            &mut Reserved {
-                                errors: &mut errors,
-                            },
-                            &method.block,
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    reserve_items(items, state_name, &reserve_name, &mut errors);
     errors
         .into_iter()
         .reduce(|mut all, error| {
@@ -1219,6 +1236,7 @@ fn lower_method(
     method: &syn::ImplItemFn,
     declared: &Declared<'_>,
     serves: client::Serves,
+    seal: Option<Range<usize>>,
 ) -> syn::Result<Lowered> {
     let published = method_name(method)?;
     let mut params = Vec::new();
@@ -1269,11 +1287,7 @@ fn lower_method(
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let returns = !matches!(method.sig.output, syn::ReturnType::Default);
     let claims_total = total_attr(method).is_some();
-    // The seal is the synthesized method alone: an authored `instantiate`
-    // is spliced into it before anything is lowered, so the name reaching
-    // here under an instance package is the macro's own.
-    let seals = matches!(serves, client::Serves::Instances) && published == INSTANTIATE;
-    let lowered = Lowerer::new(declared, &params, returns, claims_total, seals)
+    let lowered = Lowerer::new(declared, &params, returns, claims_total, seal)
         .run(&method.block)
         .map_err(|errors| {
             errors
@@ -1514,20 +1528,17 @@ fn lower_methods(
                 }
                 published.push(name);
                 let method = inline::splice(method, &helpers)?;
-                lowered.push(lower_method(&method, declared, serves)?);
+                lowered.push(lower_method(&method, declared, serves, None)?);
             }
         }
     }
     if matches!(serves, client::Serves::Instances) {
-        lowered.push(lower_method(
-            &instantiate_method(
-                declared.resources,
-                instantiation_gate(items)?,
-                bring_up.as_ref(),
-            )?,
-            declared,
-            serves,
-        )?);
+        let (seal, authored) = instantiate_method(
+            declared.resources,
+            instantiation_gate(items)?,
+            bring_up.as_ref(),
+        )?;
+        lowered.push(lower_method(&seal, declared, serves, Some(authored))?);
     } else if let Some(attr) = instantiation_gate(items)? {
         // A principals package instantiates nothing — the registry serves
         // it to every principal address by class — so an instantiation gate
@@ -1582,7 +1593,7 @@ fn instantiate_method(
     resources: &[Resource],
     gate: Option<&syn::Attribute>,
     authored: Option<&syn::ImplItemFn>,
-) -> syn::Result<syn::ImplItemFn> {
+) -> syn::Result<(syn::ImplItemFn, Range<usize>)> {
     let records = resources.iter().map(|resource| {
         let name = syn::Ident::new(&resource.name, Span::call_site());
         let stated = match resource.kind {
@@ -1654,8 +1665,13 @@ fn instantiate_method(
         (None, true) => (quote!(), quote!()),
         (None, false) => (quote!(-> #yields), supply),
     };
+    // Where the authored statements sit among the seal's own: after the
+    // seal and the records, before the supply. The lowering holds the
+    // kernel-issuance spellings to the statements outside this window.
+    let first_authored = 1 + resources.len();
+    let authored_window = first_authored..first_authored + statements.len();
     let name = syn::Ident::new(INSTANTIATE, Span::call_site());
-    Ok(syn::parse_quote!(
+    let seal = syn::parse_quote!(
         #(#attrs)*
         #gate
         pub fn #name(&mut self, #(#params),*) #returns {
@@ -1664,7 +1680,8 @@ fn instantiate_method(
             #(#statements)*
             #tail
         }
-    ))
+    );
+    Ok((seal, authored_window))
 }
 
 /// The success side of a `Result<T, E>` return type, where `ty` is one.

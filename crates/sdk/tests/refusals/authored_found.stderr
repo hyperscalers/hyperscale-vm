@@ -1,0 +1,29 @@
+error: `__record` is the bring-up's own marker: the synthesized seal records a mark where the component becomes actual, and no authored statement spells it
+  --> tests/refusals/authored_found.rs:20:13
+   |
+20 |             Token::__record(0);
+   |             ^^^^^
+
+error: `__found` is the bring-up's own marker: the synthesized seal founds a mark where the component becomes actual, and no authored statement spells it
+  --> tests/refusals/authored_found.rs:21:21
+   |
+21 |             let _ = Token::__found(Quantity::from_subunits(5));
+   |                     ^^^^^
+
+error[E0599]: no associated function or constant named `__record` found for struct `Token` in the current scope
+  --> tests/refusals/authored_found.rs:20:20
+   |
+ 8 |     struct Token;
+   |     ------------ associated function or constant `__record` not found for this struct
+...
+20 |             Token::__record(0);
+   |                    ^^^^^^^^ associated function or constant not found in `Token`
+
+error[E0599]: no associated function or constant named `__found` found for struct `Token` in the current scope
+  --> tests/refusals/authored_found.rs:21:28
+   |
+ 8 |     struct Token;
+   |     ------------ associated function or constant `__found` not found for this struct
+...
+21 |             let _ = Token::__found(Quantity::from_subunits(5));
+   |                            ^^^^^^^ associated function or constant not found in `Token`
