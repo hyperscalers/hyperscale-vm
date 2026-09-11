@@ -11,6 +11,7 @@ use hyperscale_vm_types::{Address, Effect, EffectSet};
 
 use crate::admission::Admitted;
 use crate::dsl::{Declaration, DeclaredAccess};
+use crate::envelope::MARKER_CELL_BYTES;
 use crate::invoke::NodeCall;
 use crate::types::ShardId;
 
@@ -126,11 +127,11 @@ impl Routing {
         self.per_shard
             .entry(shard)
             .or_default()
-            .insert_at_cap(effect)
+            .insert_bounded(effect, MARKER_CELL_BYTES)
             .expect("only reserve amounts fold, and this is a write");
         self.declaration
             .set
-            .insert_at_cap(effect)
+            .insert_bounded(effect, MARKER_CELL_BYTES)
             .expect("only reserve amounts fold, and this is a write");
         self.declaration.ordered.push(DeclaredAccess {
             reach: None,

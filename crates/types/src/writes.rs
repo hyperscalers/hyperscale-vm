@@ -22,7 +22,7 @@ use hyperscale_hbor::{Hash32, Hasher, Hbor, to_vec};
 
 use crate::address::{Address, CollectionId, LocalKey, ResourceAddr, SubstateKey};
 use crate::amount::{amount_cell, read_amount};
-use crate::envelope::MAX_TX_BYTES_LEN;
+use crate::envelope::MAX_ARTIFACT_BYTES;
 
 /// The bytes one committed cell value may carry — one bound for a cell
 /// wherever it travels, in a receipt or a provision.
@@ -30,7 +30,7 @@ use crate::envelope::MAX_TX_BYTES_LEN;
 /// A wire bound on the protocol's own cells, a package artifact the
 /// widest of them; a package's slots are held to their own declared
 /// widths, under [`MAX_SLOT_WIDTH`].
-pub const MAX_CELL_VALUE_LEN: usize = MAX_TX_BYTES_LEN;
+pub const MAX_CELL_VALUE_LEN: usize = MAX_ARTIFACT_BYTES;
 
 /// The most bytes one leaf of a declared slot may hold.
 ///

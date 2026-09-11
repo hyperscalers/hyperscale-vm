@@ -20,7 +20,7 @@ use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap, wrap_publish};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    AccountSigner, MAX_TX_BYTES_LEN, NetworkId, PrincipalAddr, ResourceAddr, SchemeId,
+    AccountSigner, MAX_ARTIFACT_BYTES, NetworkId, PrincipalAddr, ResourceAddr, SchemeId,
     SchemeVerifier, TransactionBody, TransactionEnvelope,
 };
 
@@ -257,6 +257,6 @@ fn a_publish_envelope_signs_and_verifies() {
 #[test]
 fn an_over_cap_publish_body_refuses_to_sign() {
     let key = TestSigner(7);
-    let envelope = wrap_publish(vec![0u8; MAX_TX_BYTES_LEN + 1], ALICE, NETWORK, terms());
+    let envelope = wrap_publish(vec![0u8; MAX_ARTIFACT_BYTES + 1], ALICE, NETWORK, terms());
     assert!(sign(envelope, &key, &TestHasher).is_err());
 }

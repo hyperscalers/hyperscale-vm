@@ -146,6 +146,34 @@ impl EffectSet {
             .map_or(MAX_SLOT_WIDTH, |declared| declared.width)
     }
 
+    /// The bytes the set lets a body read off the store: each target's
+    /// [`read_bytes`] at the width the set holds for it.
+    #[must_use]
+    pub fn read_bytes(&self) -> u64 {
+        self.by_target
+            .iter()
+            .fold(0u64, |total, (target, declared)| {
+                total.saturating_add(read_bytes(target, declared.width))
+            })
+    }
+
+    /// The bytes the set lets a body write onto the store: each target's
+    /// [`write_bytes`] at the width the set holds for it.
+    #[must_use]
+    pub fn write_bytes(&self) -> u64 {
+        self.by_target
+            .iter()
+            .fold(0u64, |total, (target, declared)| {
+                let widest = declared
+                    .modes
+                    .iter()
+                    .map(|mode| write_bytes(target, *mode, declared.width))
+                    .max()
+                    .unwrap_or(0);
+                total.saturating_add(widest)
+            })
+    }
+
     /// Every effect in the set, in canonical (target, mode) order.
     pub fn iter(&self) -> impl Iterator<Item = Effect> + '_ {
         self.by_target.iter().flat_map(|(target, declared)| {
@@ -232,6 +260,52 @@ impl EffectSet {
             };
             (claims(ConflictClass::Write) && claims(ConflictClass::Movement)).then_some(*key)
         })
+    }
+}
+
+/// The leaves `target` reaches: one for a point or an entry, and for a
+/// range its cap plus the coverage probe and presence seek every scan
+/// makes before the first entry comes back.
+#[must_use]
+const fn leaves_read(target: &EffectTarget) -> u64 {
+    match target {
+        EffectTarget::Point(_) | EffectTarget::Entry { .. } => 1,
+        EffectTarget::Range { cap, .. } => (*cap as u64).saturating_add(1),
+    }
+}
+
+/// The leaves `target` lets a body write: one for a point or an entry,
+/// and for a range its cap.
+#[must_use]
+const fn leaves_written(target: &EffectTarget) -> u64 {
+    match target {
+        EffectTarget::Point(_) | EffectTarget::Entry { .. } => 1,
+        EffectTarget::Range { cap, .. } => *cap as u64,
+    }
+}
+
+/// The bytes one declared target lets a body read off the store, at
+/// `width` per leaf.
+///
+/// Every mode reads: a write hands the body the leaf it overwrites, and
+/// a commutative movement reads the amount cell it moves. The scan floor
+/// charges the same figure in fuel at the boundary rate; this is the
+/// disk's dimension, not a second charge for the copy.
+#[must_use]
+pub const fn read_bytes(target: &EffectTarget, width: u32) -> u64 {
+    leaves_read(target).saturating_mul(width as u64)
+}
+
+/// The bytes one declared effect lets a body write onto the store, at
+/// `width` per leaf: nothing for a read, and the written leaves' worth
+/// for every mode that moves or overwrites.
+#[must_use]
+pub const fn write_bytes(target: &EffectTarget, mode: Mode, width: u32) -> u64 {
+    match mode {
+        Mode::Read => 0,
+        Mode::Delta { .. } | Mode::Reserve { .. } | Mode::Write { .. } => {
+            leaves_written(target).saturating_mul(width as u64)
+        }
     }
 }
 
@@ -437,5 +511,60 @@ mod tests {
             mode: Mode::Reserve { amount: u128::MAX },
         });
         assert!(overflow.is_err());
+    }
+
+    /// The byte terms follow the declaration: a range reads its cap plus
+    /// the probe and writes its cap, a point reads and writes one leaf,
+    /// and a read writes nothing.
+    #[test]
+    fn declared_bytes_follow_the_cap_and_the_width() {
+        let range = EffectTarget::Range {
+            owner: Address::new([1; 31], AddressClass::Component),
+            collection: CollectionId([2; 16]),
+            lo: 0,
+            hi: 100,
+            cap: 7,
+        };
+        assert_eq!(super::read_bytes(&range, 16), 8 * 16);
+        assert_eq!(super::write_bytes(&range, Mode::Read, 16), 0);
+        assert_eq!(
+            super::write_bytes(&range, Mode::Write { moves: Moves::Both }, 16),
+            7 * 16
+        );
+        assert_eq!(super::read_bytes(&target(1), 4096), 4096);
+        assert_eq!(
+            super::write_bytes(&target(1), Mode::Delta { moves: Moves::Both }, 16),
+            16
+        );
+
+        let mut set = EffectSet::new();
+        set.insert_bounded(
+            Effect {
+                target: range,
+                mode: Mode::Read,
+            },
+            16,
+        )
+        .unwrap();
+        set.insert_bounded(
+            Effect {
+                target: target(1),
+                mode: Mode::Write { moves: Moves::Both },
+            },
+            4096,
+        )
+        .unwrap();
+        assert_eq!(set.read_bytes(), 8 * 16 + 4096);
+        assert_eq!(set.write_bytes(), 4096);
+        // A target the set holds at no declared width is priced at the
+        // cap, like everything else about it.
+        let mut capped = EffectSet::new();
+        capped
+            .insert_at_cap(Effect {
+                target: target(2),
+                mode: Mode::Read,
+            })
+            .unwrap();
+        assert_eq!(capped.read_bytes(), u64::from(MAX_SLOT_WIDTH));
     }
 }

@@ -241,9 +241,11 @@ fn summarise(graph: &ManifestGraph, chain: &Records) {
         report.footprints.len()
     );
     let gas_limits = vec![NODE_CEILING; report.manifest().nodes.len()];
+    let work = report.work(&gas_limits, &[SchemeId::ED25519], 0);
     println!(
-        "   work       {} at a {NODE_CEILING} fuel ceiling per node, signed under ed25519",
-        report.declared_work(&gas_limits, &[SchemeId::ED25519])
+        "   work       {} fuel, {} bytes read, {} written, footprint {}, {} bytes retained, at a \
+         {NODE_CEILING} fuel ceiling per node, signed under ed25519",
+        work.compute, work.read_bytes, work.write_bytes, work.footprint, work.retention
     );
     for required in report.unsatisfiable() {
         let reason = match required.authority {

@@ -8,19 +8,19 @@
 use hyperscale_vm_effects::{
     PackageMetadata, decode_metadata as decode_canonical, encode_metadata as encode_canonical,
 };
-use hyperscale_vm_types::MAX_TX_BYTES_LEN;
+use hyperscale_vm_types::MAX_ARTIFACT_BYTES;
 
 use crate::GateError;
 
 /// The bound on an encoded metadata section.
 ///
-/// A section rides inside a published artifact and the artifact inside a
-/// transaction, so the code it describes has to fit beside it; a quarter
-/// of the transaction budget is the share this side claims. The cap is
+/// A section rides inside a published artifact, so the code it
+/// describes has to fit beside it; a quarter of the artifact budget is
+/// the share this side claims. The cap is
 /// also what makes decode linear: HBOR frames every collection with its
 /// length and every element costs at least a byte, so no claimed count
 /// can outrun the input.
-pub const MAX_PACKAGE_METADATA_BYTES: usize = MAX_TX_BYTES_LEN / 4;
+pub const MAX_PACKAGE_METADATA_BYTES: usize = MAX_ARTIFACT_BYTES / 4;
 
 /// Encode package metadata into its canonical section bytes.
 ///

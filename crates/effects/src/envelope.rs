@@ -84,6 +84,17 @@ pub const ESCROW_CLAIM_SLOT: SlotId = SlotId(0xFFFE);
 /// it from any other cell and tell when it stops being needed.
 pub const COMMITTED_TX_SLOT: SlotId = SlotId(0xFFFC);
 
+/// The most bytes a [`Marker`] cell holds.
+///
+/// A nullifier, a committed cell or a claim, each a transaction hash,
+/// an expiry and what it marks. The width the declaration prices these
+/// cells at, held to by the encoding pin beside the type.
+pub const MARKER_CELL_BYTES: u32 = 96;
+
+/// The most bytes a [`CrossingCell`] holds: the escrow record under a
+/// producing node's target, on [`MARKER_CELL_BYTES`]'s terms.
+pub const CROSSING_CELL_BYTES: u32 = 256;
+
 // Held at compile time rather than by a test: every side is a constant,
 // so a kernel cell colliding with a package's own — or with another
 // kernel family — is a thing the build can refuse outright.

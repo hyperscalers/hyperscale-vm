@@ -51,7 +51,9 @@ use hyperscale_vm_types::{
 // The emission caps and the event record are the shared vocabulary: the
 // same constants bound the kernel's emission here and the wire's decode in
 // the consensus workspace, so the two cannot drift.
-use hyperscale_vm_types::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX};
+use hyperscale_vm_types::{
+    Event, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
+};
 pub use materialize::{Capability, Interval, MaterializeError, Settlement};
 use ranges::Ranges;
 pub use ranges::SCAN_SEEK_BYTES;
@@ -688,9 +690,11 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`]: no invocation to attribute it to, a type past
-    /// [`MAX_EVENT_TYPES`], or a count or payload past its cap. The caps
-    /// trap rather than truncate, so what a transaction emitted is either
-    /// entirely in its receipt or the transaction did not complete.
+    /// [`MAX_EVENT_TYPES`], a count or payload past its cap, or the
+    /// transaction's event bytes past [`MAX_EVENT_BYTES_PER_TX`] between
+    /// them. The caps trap rather than truncate, so what a transaction
+    /// emitted is either entirely in its receipt or the transaction did
+    /// not complete.
     pub fn emit(&mut self, event_type: u32, payload: Vec<u8>) -> Result<(), SessionTrap> {
         let emitter = self.invocation.ok_or(SessionTrap::NoInvocation)?;
         if event_type >= MAX_EVENT_TYPES {
@@ -701,6 +705,13 @@ impl KernelSession {
         }
         if self.events.len() >= MAX_EVENTS_PER_TX {
             return Err(SessionTrap::TooManyEvents);
+        }
+        // The byte cap is the priced one: a manifest naming a package
+        // with events enters it whole into its declared retention, so
+        // what the receipt may carry is what the declaration paid for.
+        let carried: usize = self.events.iter().map(|event| event.payload.len()).sum();
+        if carried.saturating_add(payload.len()) > MAX_EVENT_BYTES_PER_TX {
+            return Err(SessionTrap::EventBytesExceeded);
         }
         self.events.push(Event {
             emitter,
@@ -731,8 +742,8 @@ mod tests {
 
     use hyperscale_vm_types::{
         ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectTarget,
-        MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MAX_SLOT_WIDTH, Mode, Moves,
-        encode_amount,
+        MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
+        MAX_SLOT_WIDTH, Mode, Moves, encode_amount,
     };
 
     use super::fixtures::{declared, env, key, session_holding, session_over, tx};
@@ -977,6 +988,25 @@ mod tests {
 
         session.leave_invocation();
         assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::NoInvocation));
+    }
+
+    /// The bytes a transaction's events carry between them are capped
+    /// below what the count and payload caps would admit together, and
+    /// the cap traps at the emit that crosses it.
+    #[test]
+    fn event_bytes_past_the_transaction_cap_trap() {
+        let mut session = session_over(MemoryStore::new(), &declared(&[]));
+        session.enter_invocation(Address::new([7; 31], AddressClass::Component));
+        let full = MAX_EVENT_BYTES_PER_TX / MAX_EVENT_PAYLOAD_BYTES;
+        for _ in 0..full {
+            session.emit(0, vec![0u8; MAX_EVENT_PAYLOAD_BYTES]).unwrap();
+        }
+        assert_eq!(
+            session.emit(0, vec![0u8; 1]),
+            Err(SessionTrap::EventBytesExceeded)
+        );
+        // An empty payload adds no bytes and still fits under the count.
+        session.emit(0, Vec::new()).unwrap();
     }
 
     /// A written value past the cell cap traps at production. The guard

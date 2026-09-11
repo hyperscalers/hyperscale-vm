@@ -61,11 +61,12 @@ pub use dsl::{
     self_child, supports,
 };
 pub use envelope::{
-    AdmittedTree, Binding, COMMITTED_TX_SLOT, CrossingCell, CrossingSite, ESCROW_CLAIM_SLOT,
-    ESCROW_RECORD_SLOT, EnvelopeTree, IntentDecl, IntentHeader, MAX_SUBINTENTS, Marked, Marker,
-    NULLIFIER_SLOT, Socket, Subintent, SubintentRecord, admit_tree, admit_tree_with_authority,
-    committed_tx_key, crossing_expiry_ms, encode_tree, escrow_claim_key, escrow_record_key,
-    nullifier_expiry_ms, nullifier_key, route_tree,
+    AdmittedTree, Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, CrossingCell, CrossingSite,
+    ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, EnvelopeTree, IntentDecl, IntentHeader,
+    MARKER_CELL_BYTES, MAX_SUBINTENTS, Marked, Marker, NULLIFIER_SLOT, Socket, Subintent,
+    SubintentRecord, admit_tree, admit_tree_with_authority, committed_tx_key, crossing_expiry_ms,
+    encode_tree, escrow_claim_key, escrow_record_key, nullifier_expiry_ms, nullifier_key,
+    route_tree,
 };
 pub use explain::{
     address_text, claim_text, explain, explain_admission, explain_admission_tree, explain_method,
@@ -80,12 +81,13 @@ pub use graph::{
 };
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
-    ABSENT_REP, AUTH_BYTE_WEIGHT, AbortReason, Address, AddressClass, Answer, EntryKey, EntryLeaf,
-    Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT, LegRole, LegShape, MAX_ANSWER_BYTES, MAX_CELL_VALUE_LEN,
-    MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
-    MAX_MANIFEST_NODES, Outcome, ProtocolHasher, SettledWrites, StateWrites, SubintentHash,
-    TX_UNITS, TxHash, VERIFY_WEIGHT, ValueEdge, declared_work, entry_leaf_key, signature_work,
-    work_units,
+    ABSENT_REP, AbortReason, Address, AddressClass, Answer, BASIS_POINTS, DeclaredWork, EntryKey,
+    EntryLeaf, Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT, LegRole, LegShape, MAX_ANSWER_BYTES,
+    MAX_ARTIFACT_BYTES, MAX_CALL_BYTES, MAX_CELL_VALUE_LEN, MAX_ERROR_CODES,
+    MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
+    MAX_MANIFEST_NODES, Outcome, PriceTable, ProtocolHasher, SettledWrites, StateWrites,
+    SubintentHash, TxHash, VERIFY_WEIGHT, ValueEdge, entry_leaf_key, signature_bytes,
+    signature_compute, work_units,
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};

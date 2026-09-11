@@ -37,16 +37,17 @@ pub use address::{
     SWEEP_BUCKET_BYTES, SWEEP_BUCKET_SHIFT, SubstateKey, SweepBucket, WrongClass,
 };
 pub use amount::{AMOUNT_CELL_BYTES, Quanta, amount_cell, encode_amount, read_amount};
-pub use effect::{Effect, EffectConflict, EffectSet};
+pub use effect::{Effect, EffectConflict, EffectSet, read_bytes, write_bytes};
 pub use envelope::{
-    ARTIFACT_GRACE_MS, CROSSING_GRACE_MS, MAX_GAS_LIMIT, MAX_MESSAGE_LEN, MAX_PRIORITY_BP,
-    MAX_SUBINTENTS, MAX_TX_BYTES_LEN, NetworkId, SubintentHash, SubintentSig, TermsRefusal,
-    TransactionBody, TransactionEnvelope, TxHash, admit_ceilings, gas_limit_total,
+    ARTIFACT_GRACE_MS, CROSSING_GRACE_MS, MAX_ARTIFACT_BYTES, MAX_CALL_BYTES, MAX_ENVELOPE_BYTES,
+    MAX_GAS_LIMIT, MAX_MESSAGE_LEN, MAX_PRIORITY_BP, MAX_SUBINTENTS, NetworkId, SubintentHash,
+    SubintentSig, TermsRefusal, TransactionBody, TransactionEnvelope, TxHash, admit_ceilings,
+    gas_limit_total,
 };
 pub use execution::{
     ABSENT_REP, AbortReason, Answer, Event, MAX_ANSWER_BYTES, MAX_CROSSINGS_PER_TX,
-    MAX_ERROR_CODES, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
-    MAX_MANIFEST_NODES, Outcome, UnmetCondition,
+    MAX_ERROR_CODES, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
+    MAX_EVENTS_PER_TX, MAX_MANIFEST_NODES, Outcome, UnmetCondition,
 };
 pub use hashing::ProtocolHasher;
 pub use legs::{LegRole, LegShape, ValueEdge};
@@ -56,8 +57,8 @@ pub use scheme::{
 };
 pub use seeds::{Drawn, SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded};
 pub use work::{
-    AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, VERIFY_WEIGHT, WORK_PER_QUANTUM,
-    declared_work, price, signature_work, work_units,
+    BASIS_POINTS, DeclaredWork, FOOTPRINT_WEIGHT, FUEL_WEIGHT, PriceTable, VERIFY_WEIGHT,
+    WORK_PER_QUANTUM, signature_bytes, signature_compute, work_units,
 };
 pub use writes::{
     Compose, EntryKey, EntryLeaf, MAX_CELL_VALUE_LEN, MAX_SLOT_WIDTH, Movement, OverDebit,

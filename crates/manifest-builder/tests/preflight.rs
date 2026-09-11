@@ -16,8 +16,8 @@ use hyperscale_vm_manifest_builder::{
 };
 use hyperscale_vm_stdlib::{account, staking};
 use hyperscale_vm_types::{
-    Address, AddressClass, MAX_GAS_LIMIT, NetworkId, PrincipalAddr, ResourceAddr, SchemeId,
-    TermsRefusal, TextError, declared_work, gas_limit_total, signature_work,
+    Address, AddressClass, DeclaredWork, EffectSet, MAX_GAS_LIMIT, NetworkId, PriceTable,
+    PrincipalAddr, ResourceAddr, SchemeId, TermsRefusal, TextError, gas_limit_total,
 };
 
 /// Any network; these tests only need every intent to name the same one.
@@ -133,15 +133,43 @@ fn a_report_is_what_the_chain_derives() {
             .fold(0u64, |total, set| total + footprint(set)),
         "the reservation is taken once against every shard's declaration"
     );
+    let work = report.work(&[4_000, 3_000], &[SchemeId::ED25519], 500);
+    let signature = DeclaredWork::signature(SchemeId::ED25519);
     assert_eq!(
-        report.declared_work(&[4_000, 3_000], &[SchemeId::ED25519]),
-        declared_work(report.footprint(), 7_000, signature_work(SchemeId::ED25519)),
-        "the compute term is the sum over the nodes"
+        work.compute,
+        7_000 + signature.compute,
+        "the compute term is the sum over the nodes plus the verification"
+    );
+    assert_eq!(work.footprint, report.footprint());
+    assert_eq!(
+        work.read_bytes,
+        routing
+            .per_shard
+            .values()
+            .map(EffectSet::read_bytes)
+            .sum::<u64>()
+            + 500,
+        "reads are the declaration's bytes plus the artifacts"
+    );
+    assert_eq!(work.retention, work.write_bytes + signature.retention);
+    let twice = report.work(
+        &[4_000, 3_000],
+        &[SchemeId::ED25519, SchemeId::ED25519],
+        500,
     );
     assert!(
-        report.declared_work(&[4_000, 3_000], &[SchemeId::ED25519, SchemeId::ED25519])
-            > report.declared_work(&[4_000, 3_000], &[SchemeId::ED25519]),
-        "a second signature is a second verification to pay for"
+        twice.compute > work.compute && twice.retention > work.retention,
+        "a second signature is a second verification and more material to keep"
+    );
+    assert_eq!(
+        report.price(
+            &PriceTable::GENESIS,
+            &[4_000, 3_000],
+            &[SchemeId::ED25519],
+            500,
+            0
+        ),
+        PriceTable::GENESIS.price(&work, 0)
     );
     assert_eq!(report.shards().count(), routing.per_shard.len());
 }
@@ -347,8 +375,8 @@ fn the_compute_column_sums_to_the_terms_and_splits_per_intent() {
     );
     let total = gas_limit_total(&gas_limits);
     assert_eq!(
-        report.declared_work(&gas_limits, &[SchemeId::ED25519]),
-        declared_work(report.footprint(), total, signature_work(SchemeId::ED25519)),
+        report.work(&gas_limits, &[SchemeId::ED25519], 0).compute,
+        total + DeclaredWork::signature(SchemeId::ED25519).compute,
     );
 
     let by_intent = report.compute_by_intent(&gas_limits).unwrap();

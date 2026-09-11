@@ -1,45 +1,30 @@
-//! What a transaction costs, priced into a single scalar — before it runs
-//! from what it declared, and after it runs from what it did.
+//! What a transaction declares it may consume, dimension by dimension,
+//! and the table that prices the vector into a fee.
 //!
-//! Fuel already folds heterogeneous costs — instructions, memory, calls —
-//! into one number by a fixed schedule. Declaration footprint is another
-//! priced dimension of the same kind, so the combine belongs beside the
-//! rest of the schedule rather than at the consumer. The weight relating
-//! the two only means anything against the weights inside fuel itself, and
-//! splitting it from the schedule that set them would let the two drift
-//! with nothing to catch it.
+//! Five dimensions, each in its own unit, because the resources are not
+//! one resource: compute is fuel, reads and writes are bytes off and
+//! onto the store, footprint is exclusion, retention is what every
+//! validator stores and gossips for the horizon. They stay a vector
+//! until the fee so a block can cap each on its own content — a block
+//! of scan-heavy transactions saturates disk while compute idles, and
+//! no scalar can see it — and the fee is the table-weighted sum.
 //!
-//! Both sides of that quantity are priced here for the same reason. An
-//! embedder admits a transaction against what it *declares* — a footprint
-//! it computed and a fuel ceiling its sender signed — and settles it
-//! against what the execution *attested*. Those two numbers bound each
-//! other, so they have to be read off one set of weights: a declared
-//! figure computed at the consumer would answer a fuel-weight change by
-//! staying where it was.
+//! Every figure on the declared side is a pure function of signed
+//! content and published metadata, so every participant of a
+//! cross-shard transaction reaches one vector and one price before
+//! anything runs. Nothing measured enters it.
 //!
-//! Fuel is not always the right term to pass. A declaration is admitted,
-//! routed, and locked in full whatever the verdict, but fuel is
-//! outcome-dependent: what an aborted execution got through is not what
-//! it is charged for. An aborted execution therefore attests its
-//! footprint alone; `vm_kernel`'s receipt constructor is where that rule
-//! is applied, because the outcome is what selects it and the outcome
-//! lives there.
+//! The attested side is one scalar still: what an execution consumed
+//! under the engine's schedule, reported in the local receipt. An
+//! aborted execution attests its footprint alone; `vm_kernel`'s receipt
+//! constructor is where that rule is applied, because the outcome is
+//! what selects it and the outcome lives there.
 //!
-//! Placeholder weights, on the same terms as the effects crate's
-//! footprint weights: what
-//! one unit costs is set against measured baselines rather than chosen
-//! here. Which end of the ratio fails is worth knowing before calibrating —
-//! fuel runs at engine-schedule magnitude while footprint peaks in the low
-//! hundreds per effect, so at an even weighting fuel dominates and
-//! footprint is visible mainly where fuel is near zero. That is the
-//! cross-shard counterpart case this quantity exists to price, so an even
-//! weighting is not useless — but it is the wrong way round if declaration
-//! cost is meant to lead.
-//!
-//! Saturating throughout. The consumer accumulates these into a per-chain
-//! running total, where a wrapped value reads as a shard that did almost
-//! nothing — the one failure mode that looks like ordinary data rather
-//! than like an error.
+//! Every weight is a placeholder: what one unit costs is set against
+//! measured baselines rather than chosen here, and the table is a
+//! consensus value the beacon moves once per epoch. Saturating
+//! throughout, so a wrapped figure never reads as a shard that did
+//! almost nothing.
 
 use crate::amount::Quanta;
 use crate::scheme::SchemeId;
@@ -50,37 +35,13 @@ pub const FUEL_WEIGHT: u64 = 1;
 /// Work units charged per unit of declared footprint.
 pub const FOOTPRINT_WEIGHT: u64 = 1;
 
-/// Work units charged per ed25519-equivalent signature verification, the
-/// unit [`verify_weight`](crate::SchemeSpec::verify_weight) counts in.
-pub const VERIFY_WEIGHT: u64 = 1;
-
-/// Work units charged per byte of auth material carried — a public key
-/// and the signature over it.
+/// Fuel one ed25519-equivalent signature verification costs, the unit
+/// [`verify_weight`](crate::SchemeSpec::verify_weight) counts in.
 ///
-/// Separate from the verification term because the two scale apart. A
-/// post-quantum scheme is a kilobyte of material at roughly the
-/// verification cost of a curve, so a single weight over either one would
-/// price it as the other.
-pub const AUTH_BYTE_WEIGHT: u64 = 1;
-
-/// Work units charged for carrying one transaction at all, before
-/// anything it declares.
-///
-/// The two weights above price what a transaction asks for, and both
-/// terms can be near zero: a minimal declaration prices at almost
-/// nothing and a signed fuel ceiling may be zero outright. What such a
-/// transaction still costs is a place in every structure that tracks it
-/// one-per-transaction, and that cost scales with the count rather than
-/// with the ask. Without this term a budget over work would bound weight
-/// while the number ran free, which is the direction a flood of trivial
-/// envelopes takes.
-///
-/// Sized against [`FUEL_WEIGHT`] and the largest ceiling an embedder
-/// admits, not chosen apart from them: it is what keeps the count and
-/// the weight a bounded factor from each other, so an embedder's own
-/// ceiling has to be picked against this value. A placeholder like the
-/// weights beside it.
-pub const TX_UNITS: u64 = 1_000_000;
+/// Verification is admission's compute, paid before an execution
+/// exists, and it enters the compute dimension in fuel like the rest:
+/// fifty microseconds of a core at the rate the limits derive from.
+pub const VERIFY_WEIGHT: u64 = 100_000;
 
 /// The work a single execution attests: its fuel and its footprint under
 /// one schedule.
@@ -95,7 +56,7 @@ pub const fn work_units(fuel: u64, footprint: u64) -> u64 {
         .saturating_add(FOOTPRINT_WEIGHT.saturating_mul(footprint))
 }
 
-/// What carrying and verifying one signature under `scheme` costs.
+/// The compute verifying one signature under `scheme` costs, in fuel.
 ///
 /// Read off the registry rather than off the material an envelope
 /// carries, because the scheme is signed content and the key and
@@ -106,175 +67,335 @@ pub const fn work_units(fuel: u64, footprint: u64) -> u64 {
 /// it also verifies under nothing — no envelope reaches a fee carrying
 /// one.
 #[must_use]
-pub const fn signature_work(scheme: SchemeId) -> u64 {
+pub const fn signature_compute(scheme: SchemeId) -> u64 {
     match scheme.spec() {
-        Some(spec) => {
-            let bytes = (spec.key_len + spec.sig_len) as u64;
-            VERIFY_WEIGHT
-                .saturating_mul(spec.verify_weight)
-                .saturating_add(AUTH_BYTE_WEIGHT.saturating_mul(bytes))
-        }
+        Some(spec) => VERIFY_WEIGHT.saturating_mul(spec.verify_weight),
         None => 0,
     }
 }
 
-/// The work a transaction declares before it runs: the fixed carry
-/// charge, the footprint it claims, the compute it signed for, and what
-/// its signatures cost to carry and check.
-///
-/// The compute enters at [`FUEL_WEIGHT`] because that is what the fuel
-/// it stands for will cost — so this bounds the [`work_units`] the same
-/// transaction can go on to attest, which is what lets an embedder hold
-/// a reservation against it and release the reservation later without
-/// the two figures being measured differently.
-///
-/// `signatures` is the sum of [`signature_work`] over every signature the
-/// envelope binds, its composer's included. It sits on the declared side
-/// alone: verification is admission's cost, paid before an execution
-/// exists to attest anything.
-///
-/// `compute` is the sum of the envelope's per-node ceilings, held to
-/// [`MAX_GAS_LIMIT`](crate::MAX_GAS_LIMIT) at derivation rather than
-/// here; a figure large enough to saturate this is one the derivation
-/// already refused.
+/// The bytes one signature under `scheme` carries: its key and the
+/// signature over it, off the registry on [`signature_compute`]'s terms.
+/// Retention, since every validator stores them for the horizon.
 #[must_use]
-pub const fn declared_work(footprint: u64, compute: u64, signatures: u64) -> u64 {
-    TX_UNITS
-        .saturating_add(FOOTPRINT_WEIGHT.saturating_mul(footprint))
-        .saturating_add(FUEL_WEIGHT.saturating_mul(compute))
-        .saturating_add(signatures)
+pub const fn signature_bytes(scheme: SchemeId) -> u64 {
+    match scheme.spec() {
+        Some(spec) => (spec.key_len + spec.sig_len) as u64,
+        None => 0,
+    }
 }
 
-/// Work units per quantum of the protocol resource: the rate a declared
-/// price is settled at.
+/// What a transaction declares it may consume, before it runs, in
+/// five dimensions each in its own unit.
 ///
-/// The one figure that turns the scalar above into a fee, and a
+/// The declaration is the whole bound: a shard cannot consult another
+/// before running a leg, so every resource a leg may consume is read off
+/// the signed transaction alone, and what is declared is what is charged
+/// on every outcome. A block caps each dimension on its own content and
+/// a [`PriceTable`] weighs them into one fee.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeclaredWork {
+    /// Fuel: the sum of the per-node ceilings the composer signed, plus
+    /// the verification of every signature the envelope binds.
+    pub compute: u64,
+    /// Bytes read off the store: `(cap + 1) × width` per declared range,
+    /// `width` per declared point, and every distinct package's artifact
+    /// once, since instantiating a node reads it.
+    pub read_bytes: u64,
+    /// Bytes written onto the store: `cap × width` per declared range,
+    /// `width` per declared point, and the cells the kernel writes of
+    /// its own accord at their fixed widths.
+    pub write_bytes: u64,
+    /// Exclusion and depth, on the effects schedule: what the
+    /// declaration stops others doing and how far a body may walk.
+    pub footprint: u64,
+    /// Bytes every validator retains for the horizon: the envelope, the
+    /// writes, the auth material, and the events a package may emit.
+    pub retention: u64,
+}
+
+impl DeclaredWork {
+    /// Nothing declared.
+    pub const ZERO: Self = Self {
+        compute: 0,
+        read_bytes: 0,
+        write_bytes: 0,
+        footprint: 0,
+        retention: 0,
+    };
+
+    /// The vector sum, saturating per dimension.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self {
+            compute: self.compute.saturating_add(other.compute),
+            read_bytes: self.read_bytes.saturating_add(other.read_bytes),
+            write_bytes: self.write_bytes.saturating_add(other.write_bytes),
+            footprint: self.footprint.saturating_add(other.footprint),
+            retention: self.retention.saturating_add(other.retention),
+        }
+    }
+
+    /// Whether every dimension is at or under `caps`': the one reading of
+    /// a cap, so a proposer filling a block and a validator judging it
+    /// stop at the same place.
+    #[must_use]
+    pub const fn fits(&self, caps: &Self) -> bool {
+        self.compute <= caps.compute
+            && self.read_bytes <= caps.read_bytes
+            && self.write_bytes <= caps.write_bytes
+            && self.footprint <= caps.footprint
+            && self.retention <= caps.retention
+    }
+
+    /// What one signature under `scheme` declares: its verification as
+    /// compute and its material as retention.
+    #[must_use]
+    pub const fn signature(scheme: SchemeId) -> Self {
+        Self {
+            compute: signature_compute(scheme),
+            retention: signature_bytes(scheme),
+            ..Self::ZERO
+        }
+    }
+}
+
+/// A basis point's denominator: the unit a priority is stated in.
+pub const BASIS_POINTS: u32 = 10_000;
+
+/// Work units per quantum of the protocol resource: the rate a weighted
+/// vector is settled at.
+///
+/// The one figure that turns the weighted sum into a fee, and a
 /// placeholder like the weights it divides: what a unit of work costs
 /// is set against measured baselines rather than chosen here. Sized so
-/// that a minimal transaction — [`TX_UNITS`] and a modest ceiling —
-/// prices in the tens of quanta, inside the ceilings every fixture
-/// already signs and the balances it funds.
+/// that a transfer — two ceilings and a signature — prices in the tens
+/// of quanta, inside the ceilings every fixture signs and the balances
+/// it funds.
 pub const WORK_PER_QUANTUM: u64 = 100_000;
 
-/// What `work` costs in quanta: the declared price, rounded up so no
-/// transaction that declares anything is carried for nothing.
+/// The weight of each dimension, in fuel-equivalents per unit.
 ///
-/// A pure function of the work, which is a pure function of signed
-/// content — so every shard names one price for one transaction before
-/// anything runs, and a participant that measures only its own legs
-/// bills the same as one that ran the whole.
-#[must_use]
-pub const fn price(work: u64) -> Quanta {
-    (work as u128).div_ceil(WORK_PER_QUANTUM as u128)
+/// Only the ratios mean anything until calibration: compute is the unit,
+/// and every other row says how many operators one of its units is
+/// worth. One table for the whole network, never per shard — address
+/// placement is the protocol's choice and reshape moves it, so a
+/// per-shard price would bill a sender for a placement they did not
+/// pick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PriceTable {
+    /// Per unit of fuel.
+    pub compute: u64,
+    /// Per byte read off the store.
+    pub read_bytes: u64,
+    /// Per byte written onto the store.
+    pub write_bytes: u64,
+    /// Per footprint unit.
+    pub footprint: u64,
+    /// Per byte retained.
+    pub retention: u64,
+}
+
+impl PriceTable {
+    /// The table the chain is born with: five nanoseconds a byte off disk
+    /// against half a nanosecond an operator, a leaf write as tree nodes
+    /// and a checkpoint rather than one byte, an exclusion unit pricing
+    /// lock contention that no other row sees, and a retained byte held
+    /// and gossiped by every validator for the horizon.
+    pub const GENESIS: Self = Self {
+        compute: 1,
+        read_bytes: 10,
+        write_bytes: 50,
+        footprint: 1_000,
+        retention: 20,
+    };
+
+    /// The vector under this table, in fuel-equivalents: the weighted
+    /// sum, wide enough that no declared vector saturates it.
+    #[must_use]
+    pub const fn weighted(&self, work: &DeclaredWork) -> u128 {
+        (self.compute as u128) * (work.compute as u128)
+            + (self.read_bytes as u128) * (work.read_bytes as u128)
+            + (self.write_bytes as u128) * (work.write_bytes as u128)
+            + (self.footprint as u128) * (work.footprint as u128)
+            + (self.retention as u128) * (work.retention as u128)
+    }
+
+    /// What `work` costs in quanta at `priority_bp` over the table
+    /// price, rounded up once so no transaction that declares anything
+    /// is carried for nothing.
+    ///
+    /// A pure function of the work and the table, both pure functions of
+    /// signed content and the anchor — so every shard names one price for
+    /// one transaction before anything runs, and a participant that
+    /// measures only its own legs bills the same as one that ran the
+    /// whole.
+    #[must_use]
+    pub const fn price(&self, work: &DeclaredWork, priority_bp: u32) -> Quanta {
+        let raised = self
+            .weighted(work)
+            .saturating_mul((BASIS_POINTS as u128) + (priority_bp as u128));
+        raised.div_ceil((WORK_PER_QUANTUM as u128) * (BASIS_POINTS as u128))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, SchemeId, TX_UNITS, VERIFY_WEIGHT,
-        WORK_PER_QUANTUM, declared_work, price, signature_work, work_units,
+        BASIS_POINTS, DeclaredWork, FOOTPRINT_WEIGHT, FUEL_WEIGHT, PriceTable, SchemeId,
+        VERIFY_WEIGHT, WORK_PER_QUANTUM, signature_bytes, signature_compute, work_units,
     };
+
+    const fn only(compute: u64) -> DeclaredWork {
+        DeclaredWork {
+            compute,
+            ..DeclaredWork::ZERO
+        }
+    }
 
     /// A price is never zero for work that is not, rounds up at the
     /// rate, and never falls as the work rises.
     #[test]
     fn a_price_rounds_up_and_is_monotone() {
-        assert_eq!(price(0), 0);
-        assert_eq!(price(1), 1);
-        assert_eq!(price(WORK_PER_QUANTUM), 1);
-        assert_eq!(price(WORK_PER_QUANTUM + 1), 2);
-        assert_eq!(
-            price(u64::MAX),
-            u128::from(u64::MAX).div_ceil(u128::from(WORK_PER_QUANTUM))
-        );
+        let table = PriceTable::GENESIS;
+        assert_eq!(table.price(&DeclaredWork::ZERO, 0), 0);
+        assert_eq!(table.price(&only(1), 0), 1);
+        assert_eq!(table.price(&only(WORK_PER_QUANTUM), 0), 1);
+        assert_eq!(table.price(&only(WORK_PER_QUANTUM + 1), 0), 2);
         for work in [0, 1, 999, 1_000_000, u64::from(u32::MAX)] {
-            assert!(price(work + 1) >= price(work));
+            assert!(table.price(&only(work + 1), 0) >= table.price(&only(work), 0));
         }
     }
 
+    /// Every dimension moves the price on its own, at its own row.
     #[test]
-    fn a_declaration_costs_something_whatever_it_asks_for() {
-        // The term the count bound rests on: a transaction declaring
-        // nothing and signing a zero ceiling still costs a place in every
-        // structure that holds one entry per transaction.
-        assert_eq!(declared_work(0, 0, 0), TX_UNITS);
-        assert!(declared_work(0, 0, 0) > 0);
-    }
-
-    #[test]
-    fn declared_work_is_monotone_in_both_asks() {
-        // Asking for more never declares less, so no sender lowers what
-        // it reserved by widening what it claims.
-        for footprint in [0, 1, 1_000, u64::from(u32::MAX)] {
-            for gas in [0, 1, 1_000, u64::from(u32::MAX)] {
-                for sigs in [0, 1, 1_000] {
-                    let base = declared_work(footprint, gas, sigs);
-                    assert!(declared_work(footprint + 1, gas, sigs) >= base);
-                    assert!(declared_work(footprint, gas + 1, sigs) >= base);
-                    assert!(declared_work(footprint, gas, sigs + 1) >= base);
-                }
-            }
+    fn every_dimension_is_priced_at_its_row() {
+        let table = PriceTable::GENESIS;
+        let rows = [
+            (
+                DeclaredWork {
+                    read_bytes: 1,
+                    ..DeclaredWork::ZERO
+                },
+                table.read_bytes,
+            ),
+            (
+                DeclaredWork {
+                    write_bytes: 1,
+                    ..DeclaredWork::ZERO
+                },
+                table.write_bytes,
+            ),
+            (
+                DeclaredWork {
+                    footprint: 1,
+                    ..DeclaredWork::ZERO
+                },
+                table.footprint,
+            ),
+            (
+                DeclaredWork {
+                    retention: 1,
+                    ..DeclaredWork::ZERO
+                },
+                table.retention,
+            ),
+            (only(1), table.compute),
+        ];
+        for (unit, weight) in rows {
+            assert!(weight > 0, "a zero row makes a dimension free");
+            assert_eq!(table.weighted(&unit), u128::from(weight));
         }
     }
 
+    /// The priority raises the price by its basis points, rounded once
+    /// with the rate rather than twice.
     #[test]
-    fn a_declaration_covers_the_work_its_execution_can_attest() {
-        // The property an embedder's reserve-then-release depends on:
-        // whatever the execution goes on to attest, the figure taken at
-        // admission was at least that — so the release cannot exceed the
-        // reservation and a running total cannot drift below zero. Fuel
-        // is capped by the signed ceiling and footprint is the same
-        // declaration on both sides.
-        for footprint in [0, 1, 640, 100_000] {
-            for gas in [0, 1, 50_000, 1_000_000] {
-                for burned in [0, gas / 2, gas] {
-                    assert!(
-                        declared_work(footprint, gas, 0) >= work_units(burned, footprint),
-                        "declared {} < attested {} at footprint {footprint}, gas {gas}",
-                        declared_work(footprint, gas, 0),
-                        work_units(burned, footprint),
-                    );
-                }
-            }
-        }
+    fn a_priority_raises_the_price_proportionally() {
+        let table = PriceTable::GENESIS;
+        let work = only(10 * WORK_PER_QUANTUM);
+        assert_eq!(table.price(&work, 0), 10);
+        assert_eq!(table.price(&work, BASIS_POINTS), 20);
+        assert_eq!(table.price(&work, BASIS_POINTS / 2), 15);
+        assert_eq!(table.price(&work, 1), 11, "any priority at all rounds up");
+        assert_eq!(table.price(&DeclaredWork::ZERO, BASIS_POINTS), 0);
+    }
+
+    /// The weighted sum is wide: the whole of every dimension at the
+    /// genesis rows fits without wrapping.
+    #[test]
+    fn the_weighted_sum_does_not_wrap_at_the_ceiling() {
+        let everything = DeclaredWork {
+            compute: u64::MAX,
+            read_bytes: u64::MAX,
+            write_bytes: u64::MAX,
+            footprint: u64::MAX,
+            retention: u64::MAX,
+        };
+        let table = PriceTable::GENESIS;
+        let sum = u128::from(
+            table.compute
+                + table.read_bytes
+                + table.write_bytes
+                + table.footprint
+                + table.retention,
+        ) * u128::from(u64::MAX);
+        assert_eq!(table.weighted(&everything), sum);
     }
 
     #[test]
-    fn the_declared_ceiling_reads_as_the_ceiling() {
-        // Saturating like its counterpart: a declaration at the top pins
-        // rather than wrapping to something an embedder would admit.
-        assert_eq!(declared_work(u64::MAX, u64::MAX, u64::MAX), u64::MAX);
-        assert_eq!(declared_work(u64::MAX, 0, 0), u64::MAX);
-        assert_eq!(declared_work(0, 0, u64::MAX), u64::MAX);
+    fn the_vector_sums_and_fits_per_dimension() {
+        let a = DeclaredWork {
+            compute: 1,
+            read_bytes: 2,
+            write_bytes: 3,
+            footprint: 4,
+            retention: 5,
+        };
+        let b = DeclaredWork {
+            compute: u64::MAX,
+            read_bytes: 20,
+            write_bytes: 30,
+            footprint: 40,
+            retention: 50,
+        };
+        let sum = a.saturating_add(b);
+        assert_eq!(sum.compute, u64::MAX, "saturating per dimension");
+        assert_eq!(sum.read_bytes, 22);
+        assert!(a.fits(&b));
+        assert!(!b.fits(&a));
+        assert!(a.fits(&a), "a cap admits its own figure");
+        let mut over = a;
+        over.retention += 1;
+        assert!(!over.fits(&a), "one dimension over is over");
     }
 
-    /// A wider scheme declares more, which is the whole reason the term
-    /// is read off the registry: a kilobyte signature is a fee fact
-    /// rather than free bandwidth.
+    /// A wider scheme declares more on both of its axes, which is the
+    /// whole reason the terms are read off the registry: a kilobyte
+    /// signature is a fee fact rather than free bandwidth.
     #[test]
     fn a_wider_scheme_declares_more() {
-        let ed = signature_work(SchemeId::ED25519);
-        let secp = signature_work(SchemeId::SECP256K1);
-        assert!(ed > 0 && secp > 0);
+        let ed = DeclaredWork::signature(SchemeId::ED25519);
+        let secp = DeclaredWork::signature(SchemeId::SECP256K1);
+        assert!(ed.compute > 0 && ed.retention > 0);
         assert!(
-            secp > ed,
+            secp.compute > ed.compute && secp.retention > ed.retention,
             "secp256k1 carries a wider key and verifies slower"
         );
-        assert!(declared_work(0, 0, secp) > declared_work(0, 0, ed));
+        assert_eq!(ed.read_bytes + ed.write_bytes + ed.footprint, 0);
     }
 
-    /// Both halves of a signature's cost move the total, so neither a
-    /// slow scheme with small material nor a fast one with a lot of it
-    /// prices as free.
     #[test]
-    fn both_halves_of_a_signature_are_priced() {
+    fn a_signature_prices_its_verification_in_fuel() {
         const { assert!(VERIFY_WEIGHT > 0) };
-        const { assert!(AUTH_BYTE_WEIGHT > 0) };
         let spec = SchemeId::ED25519.spec().expect("ed25519 is registered");
         assert_eq!(
-            signature_work(SchemeId::ED25519),
+            signature_compute(SchemeId::ED25519),
             VERIFY_WEIGHT * spec.verify_weight
-                + AUTH_BYTE_WEIGHT * (spec.key_len + spec.sig_len) as u64
+        );
+        assert_eq!(
+            signature_bytes(SchemeId::ED25519),
+            (spec.key_len + spec.sig_len) as u64
         );
     }
 
@@ -282,12 +403,15 @@ mod tests {
     /// because it verifies under nothing either.
     #[test]
     fn an_unregistered_scheme_prices_at_nothing() {
-        assert_eq!(signature_work(SchemeId::NONE), 0);
-        assert_eq!(signature_work(SchemeId(u16::MAX)), 0);
+        assert_eq!(DeclaredWork::signature(SchemeId::NONE), DeclaredWork::ZERO);
+        assert_eq!(
+            DeclaredWork::signature(SchemeId(u16::MAX)),
+            DeclaredWork::ZERO
+        );
     }
 
     #[test]
-    fn both_components_are_priced() {
+    fn both_attested_components_are_priced() {
         // Neither term is silently dropped: moving either one alone moves
         // the total. A weight set to zero would make one half of the
         // quantity unobservable, which is the failure the components on
@@ -297,8 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn work_is_monotone_in_both_components() {
-        // Doing more never attests less, on either axis independently.
+    fn attested_work_is_monotone_in_both_components() {
         for fuel in [0, 1, 1_000, u64::from(u32::MAX)] {
             for footprint in [0, 1, 1_000, u64::from(u32::MAX)] {
                 assert!(work_units(fuel + 1, footprint) >= work_units(fuel, footprint));
@@ -311,7 +434,7 @@ mod tests {
     fn an_aborts_work_is_its_footprint_alone() {
         // The shape the kernel's abort rule depends on: dropping the fuel
         // term leaves the footprint term intact rather than zeroing the
-        // quantity, which is the whole point of R1.
+        // quantity.
         let footprint = 640;
         assert_eq!(
             work_units(0, footprint),
@@ -321,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ceiling_reads_as_the_ceiling() {
+    fn the_attested_ceiling_reads_as_the_ceiling() {
         // Never wraps: at the top the total pins rather than restarting
         // near zero, so a saturated shard cannot read as an idle one.
         assert_eq!(work_units(u64::MAX, u64::MAX), u64::MAX);

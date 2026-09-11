@@ -5,15 +5,10 @@
 //! depth) live on the engine configuration; these are the shapes checked once,
 //! before code enters state.
 
-use hyperscale_vm_types::MAX_TX_BYTES_LEN;
-
-/// Maximum size of an artifact, custom sections included.
-///
-/// An artifact reaches the chain as a publish transaction's body, so it can
-/// be no larger than one: the deploy ceiling is the wire ceiling, and the two
-/// are one constant so they cannot drift into a module that admits at
-/// deploy but no envelope can carry.
-pub const MAX_ARTIFACT_BYTES: usize = MAX_TX_BYTES_LEN;
+/// Maximum size of an artifact, custom sections included: the publish
+/// body's wire cap, so the deploy ceiling and the wire ceiling cannot
+/// drift into a module that admits at deploy but no envelope can carry.
+pub use hyperscale_vm_types::MAX_ARTIFACT_BYTES;
 
 /// Maximum functions defined in one core module.
 pub const MAX_FUNCTIONS_PER_MODULE: usize = 10_000;

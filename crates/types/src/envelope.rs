@@ -24,19 +24,46 @@ use crate::address::PrincipalAddr;
 use crate::amount::Quanta;
 use crate::execution::MAX_MANIFEST_NODES;
 use crate::scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId};
-use crate::work::signature_work;
+use crate::work::DeclaredWork;
 
-/// The cap on an envelope body's bytes — a call tree or a package
-/// artifact.
+/// The cap on a call body's bytes: the bound envelope tree.
 ///
 /// A wire bound: decode happens before anything is known about a
 /// transaction at all, so what stands here is what a decoder will
-/// allocate for a stranger.
-pub const MAX_TX_BYTES_LEN: usize = 1024 * 1024;
+/// allocate for a stranger. Sized for [`MAX_SUBINTENTS`] subintents at a
+/// kilobyte of post-quantum material each, with the tree around them.
+pub const MAX_CALL_BYTES: usize = 128 * 1024;
+
+/// The cap on a publish body's bytes: the package artifact, its
+/// metadata section included.
+///
+/// A wire bound on [`MAX_CALL_BYTES`]'s terms, and the deploy ceiling
+/// too: an artifact reaches the chain as a publish body, so the two are
+/// one constant and cannot drift into a module that admits at deploy
+/// but no envelope can carry. Ten times the largest blob the corpus
+/// builds, under the per-transaction write ceiling.
+pub const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
 
 /// The cap on an envelope's optional message, in bytes. A wire bound,
-/// on [`MAX_TX_BYTES_LEN`]'s terms.
+/// on [`MAX_CALL_BYTES`]'s terms.
 pub const MAX_MESSAGE_LEN: usize = 1024;
+
+/// The widest a whole envelope encodes: the larger body at its cap,
+/// every signature the envelope may bind at the widest registered
+/// scheme, a ceiling per manifest node, the message, and the scalars.
+///
+/// What a decoder allocates for the envelope as the network carries it,
+/// derived from the caps inside it so it moves when they do.
+pub const MAX_ENVELOPE_BYTES: usize = MAX_ARTIFACT_BYTES
+    + (MAX_SUBINTENTS + 1) * (MAX_KEY_BYTES + MAX_SIG_BYTES + 16)
+    + MAX_MANIFEST_NODES * 10
+    + MAX_MESSAGE_LEN
+    + 256;
+
+const _: () = assert!(
+    MAX_CALL_BYTES <= MAX_ARTIFACT_BYTES,
+    "the envelope's widest body is the artifact"
+);
 
 /// How long a transaction-derived artifact outlives the signed window it
 /// was derived from, in milliseconds.
@@ -75,7 +102,7 @@ pub const CROSSING_GRACE_MS: u64 = 1_500_000;
 /// signatures it carries for them.
 ///
 /// A wire bound on the decode; the signatures themselves are priced,
-/// per scheme, by [`signature_work`].
+/// per scheme, by [`DeclaredWork::signature`].
 pub const MAX_SUBINTENTS: usize = 32;
 
 /// The most compute one envelope may sign for, in fuel, summed over its
@@ -197,12 +224,12 @@ pub struct SubintentSig {
 pub enum TransactionBody {
     /// The bound envelope tree, canonically encoded; the effect
     /// vocabulary owns the encoding.
-    Call(#[hbor(max = MAX_TX_BYTES_LEN)] Vec<u8>),
+    Call(#[hbor(max = MAX_CALL_BYTES)] Vec<u8>),
     /// A module to publish under the composer's own prefix,
     /// its effect metadata section included. Content addressing covers
     /// the whole artifact, so the code and the signatures it declares
     /// cannot drift apart.
-    Publish(#[hbor(max = MAX_TX_BYTES_LEN)] Vec<u8>),
+    Publish(#[hbor(max = MAX_ARTIFACT_BYTES)] Vec<u8>),
 }
 
 /// A transaction: what it asks for and the signing-time choices, under
@@ -315,17 +342,18 @@ impl TransactionEnvelope {
         Ok(hasher.hash(&[], &[&preimage]).0)
     }
 
-    /// What every signature this envelope binds costs to carry and check.
+    /// What every signature this envelope binds declares: its
+    /// verification as compute and its material as retention.
     ///
     /// The composer's, plus one per bound subintent. Each scheme is signed
     /// content and each width comes from the registry, so this is a pure
     /// function of what the composer put their name to.
     #[must_use]
-    pub fn signature_work(&self) -> u64 {
+    pub fn signatures(&self) -> DeclaredWork {
         self.subintent_sigs
             .iter()
-            .fold(signature_work(self.signer_scheme), |total, sig| {
-                total.saturating_add(signature_work(sig.scheme))
+            .fold(DeclaredWork::signature(self.signer_scheme), |total, sig| {
+                total.saturating_add(DeclaredWork::signature(sig.scheme))
             })
     }
 
@@ -435,7 +463,7 @@ mod tests {
         MAX_GAS_LIMIT, MAX_PRIORITY_BP, NetworkId, PrincipalAddr, SubintentSig, TermsRefusal,
         TransactionBody, TransactionEnvelope,
     };
-    use crate::{SchemeId, signature_work};
+    use crate::{DeclaredWork, SchemeId};
 
     fn sample() -> TransactionEnvelope {
         TransactionEnvelope {
@@ -482,11 +510,13 @@ mod tests {
     /// Every signature the envelope binds is priced, and each scheme is
     /// priced as the registry has it.
     #[test]
-    fn the_declared_signature_work_counts_every_signature() {
+    fn the_declared_signatures_count_every_signature() {
+        let ed = DeclaredWork::signature(SchemeId::ED25519);
+        let secp = DeclaredWork::signature(SchemeId::SECP256K1);
         let mut envelope = sample();
         assert_eq!(
-            envelope.signature_work(),
-            signature_work(SchemeId::ED25519) * 2,
+            envelope.signatures(),
+            ed.saturating_add(ed),
             "the composer's signature and the one subintent it binds"
         );
 
@@ -496,12 +526,12 @@ mod tests {
             signature: vec![0x77; 64],
         });
         assert_eq!(
-            envelope.signature_work(),
-            signature_work(SchemeId::ED25519) * 2 + signature_work(SchemeId::SECP256K1)
+            envelope.signatures(),
+            ed.saturating_add(ed).saturating_add(secp)
         );
 
         envelope.subintent_sigs.clear();
-        assert_eq!(envelope.signature_work(), signature_work(SchemeId::ED25519));
+        assert_eq!(envelope.signatures(), ed);
     }
 
     /// The scheme is signed content while the material it describes is

@@ -28,9 +28,9 @@ use hyperscale_vm_effects::{
     route_tree,
 };
 use hyperscale_vm_types::{
-    Address, CallTarget, EffectTarget, NetworkWord, Presence, PrincipalAddr, ResourceAddr,
-    SchemeId, SubintentHash, SubstateKey, TermsRefusal, TextError, admit_ceilings, declared_work,
-    gas_limit_total, price, signature_work,
+    Address, CallTarget, DeclaredWork, EffectTarget, NetworkWord, Presence, PriceTable,
+    PrincipalAddr, ResourceAddr, SchemeId, SubintentHash, SubstateKey, TermsRefusal, TextError,
+    admit_ceilings, gas_limit_total,
 };
 
 /// Why a transaction could not be preflighted.
@@ -342,30 +342,75 @@ impl Report {
             .fold(0, |total, shard| total.saturating_add(*shard))
     }
 
-    /// What this transaction costs a block at `gas_limits` under
-    /// `schemes`: the fixed carry charge, the footprint it declares, the
-    /// compute it would sign for its nodes, and what the signatures it
-    /// will carry cost to check.
-    ///
-    /// `schemes` names one entry per signature the envelope will bind —
-    /// the composer's and each bound subintent signer's. Neither it nor
-    /// the ceilings can be read off the graph: both are the composer's
-    /// own choices, so both are asked for here rather than reported.
+    /// The bytes the declaration lets execution read off the store,
+    /// summed over the participating shards: the disk's dimension of the
+    /// vector, before the artifacts the calls instantiate.
     #[must_use]
-    pub fn declared_work(&self, gas_limits: &[u64], schemes: &[SchemeId]) -> u64 {
-        let signatures = schemes.iter().fold(0u64, |total, scheme| {
-            total.saturating_add(signature_work(*scheme))
-        });
-        declared_work(self.footprint(), gas_limit_total(gas_limits), signatures)
+    pub fn read_bytes(&self) -> u64 {
+        self.routing
+            .per_shard
+            .values()
+            .fold(0, |total, shard| total.saturating_add(shard.read_bytes()))
     }
 
-    /// What this transaction will be charged, in quanta, at `gas_limits`
-    /// under `schemes`: [`Self::declared_work`] at the protocol's rate.
-    /// The figure a signed fee ceiling has to cover, or admission
-    /// refuses the envelope.
+    /// The bytes the declaration lets execution write onto the store,
+    /// summed over the participating shards.
     #[must_use]
-    pub fn price(&self, gas_limits: &[u64], schemes: &[SchemeId]) -> u128 {
-        price(self.declared_work(gas_limits, schemes))
+    pub fn write_bytes(&self) -> u64 {
+        self.routing
+            .per_shard
+            .values()
+            .fold(0, |total, shard| total.saturating_add(shard.write_bytes()))
+    }
+
+    /// What this transaction would declare, signed at `gas_limits` under
+    /// `schemes`, with `artifact_bytes` of package code behind its calls.
+    ///
+    /// `schemes` names one entry per signature the envelope will bind —
+    /// the composer's and each bound subintent signer's — and
+    /// `artifact_bytes` the length of every distinct package the calls
+    /// run, once each. Neither can be read off the graph and the chain
+    /// records here: the ceilings and the schemes are the composer's own
+    /// choices, and the records serve metadata rather than code, so all
+    /// three are asked for rather than reported. The envelope's own
+    /// length is the one term missing: the report is asked before the
+    /// envelope exists, and what the signer adds around the tree is
+    /// theirs to add to the retention.
+    #[must_use]
+    pub fn work(
+        &self,
+        gas_limits: &[u64],
+        schemes: &[SchemeId],
+        artifact_bytes: u64,
+    ) -> DeclaredWork {
+        let signatures = schemes.iter().fold(DeclaredWork::ZERO, |total, scheme| {
+            total.saturating_add(DeclaredWork::signature(*scheme))
+        });
+        let write_bytes = self.write_bytes();
+        DeclaredWork {
+            compute: gas_limit_total(gas_limits),
+            read_bytes: self.read_bytes().saturating_add(artifact_bytes),
+            write_bytes,
+            footprint: self.footprint(),
+            retention: write_bytes,
+        }
+        .saturating_add(signatures)
+    }
+
+    /// What this transaction would be charged, in quanta, under `table`
+    /// at `priority_bp`: [`Self::work`] at the table's rows. The figure a
+    /// signed fee ceiling has to cover, or admission refuses the
+    /// envelope.
+    #[must_use]
+    pub fn price(
+        &self,
+        table: &PriceTable,
+        gas_limits: &[u64],
+        schemes: &[SchemeId],
+        artifact_bytes: u64,
+        priority_bp: u32,
+    ) -> u128 {
+        table.price(&self.work(gas_limits, schemes, artifact_bytes), priority_bp)
     }
 
     /// The compute column: each node's ceiling from `gas_limits`, in node

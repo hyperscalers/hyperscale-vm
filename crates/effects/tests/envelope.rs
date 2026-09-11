@@ -1326,3 +1326,70 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
         Err(AdmissionError::PresentedForCall { node: 0, .. })
     ));
 }
+
+/// The widths the declaration prices the kernel's own cells at bound
+/// what the cells encode to, at their widest.
+mod cell_widths {
+    use hyperscale_hbor::Hash32;
+    use hyperscale_vm_effects::{
+        CROSSING_CELL_BYTES, CrossingCell, MARKER_CELL_BYTES, Marked, Marker,
+    };
+    use hyperscale_vm_types::{
+        Address, AddressClass, LocalKey, ResourceAddr, SubintentHash, SubstateKey, TxHash,
+    };
+
+    const fn hash32() -> Hash32 {
+        Hash32([0xFF; 32])
+    }
+
+    const fn key() -> SubstateKey {
+        SubstateKey {
+            owner: Address::new([0xFF; 31], AddressClass::Component),
+            local: LocalKey([0xFF; 16]),
+        }
+    }
+
+    #[test]
+    fn a_marker_encodes_under_its_width() {
+        let widest = [
+            Marked::Spent(SubintentHash(hash32())),
+            Marked::Committed,
+            Marked::Claimed {
+                intent: SubintentHash(hash32()),
+                local: u32::MAX,
+                output: u32::MAX,
+            },
+        ];
+        for marks in widest {
+            let marker = Marker {
+                tx: TxHash(hash32()),
+                expiry_ms: u64::MAX,
+                marks,
+            };
+            assert!(
+                marker.to_bytes().len() <= MARKER_CELL_BYTES as usize,
+                "{marker:?} encodes past the marker width"
+            );
+        }
+    }
+
+    #[test]
+    fn a_crossing_cell_encodes_under_its_width() {
+        let cell = CrossingCell {
+            resource: ResourceAddr::new([0xFF; 31]),
+            amount: u128::MAX,
+            intent: SubintentHash(hash32()),
+            local: u32::MAX,
+            output: u32::MAX,
+            expiry_ms: u64::MAX,
+            tx: TxHash(hash32()),
+            consumer_claim: key(),
+            origin: Some(key()),
+        };
+        assert!(
+            cell.to_bytes().len() <= CROSSING_CELL_BYTES as usize,
+            "a crossing cell encodes to {} bytes",
+            cell.to_bytes().len()
+        );
+    }
+}

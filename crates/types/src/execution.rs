@@ -35,6 +35,21 @@ pub const MAX_EVENTS_PER_TX: usize = 256;
 /// the retention rate, and this bounds what one decode allocates.
 pub const MAX_EVENT_PAYLOAD_BYTES: usize = 4096;
 
+/// The event bytes one transaction may emit between all its events.
+///
+/// A price bound, not only a wire one: events are receipt content every
+/// validator retains, so a manifest naming a package with an event
+/// table enters this figure whole into its declared retention, and the
+/// kernel holds the transaction to it at emit. Without it a node could
+/// put a mebibyte into its receipt for a million fuel and no cap would
+/// see it.
+pub const MAX_EVENT_BYTES_PER_TX: usize = 64 * 1024;
+
+const _: () = assert!(
+    MAX_EVENT_BYTES_PER_TX <= MAX_EVENTS_PER_TX * MAX_EVENT_PAYLOAD_BYTES,
+    "the byte cap binds before the count and payload caps together would"
+);
+
 /// The bound on manifest nodes admission or routing will address.
 ///
 /// A bound on pre-payment work: admission's single walk is linear in
@@ -461,6 +476,9 @@ pub enum AbortReason {
     /// A lowered call at a node the batch bound no compute ceiling for.
     #[hbor(discriminant = 74)]
     MissingCeiling,
+    /// Event bytes past what one transaction may emit between them.
+    #[hbor(discriminant = 75)]
+    EventBytesExceeded,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -760,6 +778,7 @@ mod tests {
             (72, AbortReason::CrossingKeyRepeated),
             (73, AbortReason::HandleOutsideFrame),
             (74, AbortReason::MissingCeiling),
+            (75, AbortReason::EventBytesExceeded),
         ];
         for (byte, reason) in classes {
             assert_eq!(

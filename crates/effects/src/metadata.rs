@@ -196,15 +196,22 @@ impl SlotWidths {
 }
 
 /// The width of a leaf in the protocol's own band, which every owner has
-/// and no package declares.
+/// and no package declares, and of the cells the kernel writes of its
+/// own accord.
 ///
 /// An amount cell is sixteen bytes; an instance entry holds nothing, its
 /// id being its order; a halt flag is a byte; a resource record is a
-/// kind and its display digits; a stored rule is an argument's width.
-/// The configuration leaf and an instance's data are records whose
-/// shapes belong to the package that wrote them, so they are bounded at
-/// the cap here, as is every slot outside the band.
+/// kind and its display digits; a stored rule is an argument's width. A
+/// nullifier, a committed cell and a claim are markers, and an escrow
+/// record is a crossing cell, each at the width its encoding pins. The
+/// configuration leaf and an instance's data are records whose shapes
+/// belong to the package that wrote them, so they are bounded at the cap
+/// here, as is every slot outside the band.
 const fn protocol_width(slot: SlotId) -> u32 {
+    use crate::envelope::{
+        COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT,
+        MARKER_CELL_BYTES, NULLIFIER_SLOT,
+    };
     use crate::vocabulary::{AUTH, HALT, NF_VAULT, RESOURCE, VAULT};
     match slot {
         VAULT => AMOUNT_WIDTH,
@@ -212,6 +219,8 @@ const fn protocol_width(slot: SlotId) -> u32 {
         HALT => 1,
         RESOURCE => 2,
         AUTH => RULE_WIDTH,
+        NULLIFIER_SLOT | ESCROW_CLAIM_SLOT | COMMITTED_TX_SLOT => MARKER_CELL_BYTES,
+        ESCROW_RECORD_SLOT => CROSSING_CELL_BYTES,
         _ => MAX_SLOT_WIDTH,
     }
 }
