@@ -32,6 +32,8 @@ struct StubHost {
     log: Log,
     /// What the next scan ask reports as lifted.
     scan_debt: usize,
+    /// What the next floor ask reports as owed before the page.
+    scan_floor: usize,
     /// Whether operations refuse instead of answering.
     refuse: bool,
 }
@@ -117,6 +119,10 @@ impl KernelHost for StubHost {
         self.log.lock().unwrap().push(Host("take-scan-debt"));
         std::mem::take(&mut self.scan_debt)
     }
+    fn scan_floor(&mut self, _site: u32, _element: u32) -> Result<usize, AbortReason> {
+        let floor = std::mem::take(&mut self.scan_floor);
+        self.op("scan-floor", floor)
+    }
     fn site_count(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
         self.op("site-count", 2)
     }
@@ -191,6 +197,7 @@ impl Probe {
             host: StubHost {
                 log: Arc::clone(&log),
                 scan_debt,
+                scan_floor: 0,
                 refuse: false,
             },
             log,
@@ -324,6 +331,7 @@ fn every_function_charges_its_pinned_sequence() {
             },
             vec![
                 Charge(24),
+                Host("scan-floor"),
                 Host("site-instance-take"),
                 Host("take-scan-debt"),
                 Charge(3),
@@ -336,6 +344,7 @@ fn every_function_charges_its_pinned_sequence() {
             },
             vec![
                 Charge(5),
+                Host("scan-floor"),
                 Host("site-instance-put"),
                 Host("take-scan-debt"),
                 Charge(3),
@@ -402,14 +411,24 @@ fn every_function_charges_its_pinned_sequence() {
             |p| {
                 let _ = meter::site_count(p, 0, 0);
             },
-            vec![Host("site-count"), Host("take-scan-debt"), Charge(3)],
+            vec![
+                Host("scan-floor"),
+                Host("site-count"),
+                Host("take-scan-debt"),
+                Charge(3),
+            ],
         ),
         (
             "site-covered",
             |p| {
                 let _ = meter::site_covered(p, 0, 0);
             },
-            vec![Host("site-covered"), Host("take-scan-debt"), Charge(3)],
+            vec![
+                Host("scan-floor"),
+                Host("site-covered"),
+                Host("take-scan-debt"),
+                Charge(3),
+            ],
         ),
         (
             "site-order",
@@ -417,6 +436,7 @@ fn every_function_charges_its_pinned_sequence() {
                 let _ = meter::site_order(p, 0, 0, 0);
             },
             vec![
+                Host("scan-floor"),
                 Host("site-order"),
                 Host("take-scan-debt"),
                 Charge(3),
@@ -429,6 +449,7 @@ fn every_function_charges_its_pinned_sequence() {
                 let _ = meter::site_entry(p, 0, 0, 0);
             },
             vec![
+                Host("scan-floor"),
                 Host("site-entry"),
                 Host("take-scan-debt"),
                 Charge(3),
@@ -442,6 +463,7 @@ fn every_function_charges_its_pinned_sequence() {
             },
             vec![
                 Charge(5),
+                Host("scan-floor"),
                 Host("site-entry-set"),
                 Host("take-scan-debt"),
                 Charge(3),
@@ -454,6 +476,7 @@ fn every_function_charges_its_pinned_sequence() {
             },
             vec![
                 Charge(AMOUNT + 5),
+                Host("scan-floor"),
                 Host("site-insert"),
                 Host("take-scan-debt"),
                 Charge(3),
@@ -464,7 +487,12 @@ fn every_function_charges_its_pinned_sequence() {
             |p| {
                 let _ = meter::site_remove(p, 0, 0, 0);
             },
-            vec![Host("site-remove"), Host("take-scan-debt"), Charge(3)],
+            vec![
+                Host("scan-floor"),
+                Host("site-remove"),
+                Host("take-scan-debt"),
+                Charge(3),
+            ],
         ),
         (
             "mul-div",
@@ -546,7 +574,9 @@ fn every_function_charges_its_pinned_sequence() {
 fn a_refusal_charges_no_result_bytes() {
     // "Result bytes after it succeeds": a refused operation crossed
     // nothing back, so the sequence stops at the operation — except the
-    // scan ask, which is owed whether the call refused or not.
+    // scan ask, which is owed whether the call refused or not. A floor
+    // ask that refuses stops the sequence there: the page was never
+    // asked for.
     let mut probe = Probe::refusing();
     assert_eq!(
         meter::site_get(&mut probe, 0, 0),
@@ -567,10 +597,7 @@ fn a_refusal_charges_no_result_bytes() {
         meter::site_entry(&mut probe, 0, 0, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
-    assert_eq!(
-        probe.steps(),
-        vec![Host("site-entry"), Host("take-scan-debt"), Charge(3)]
-    );
+    assert_eq!(probe.steps(), vec![Host("scan-floor")]);
 }
 
 #[test]
@@ -584,6 +611,35 @@ fn exhaustion_stops_the_sequence_where_it_lands() {
         Err(MeterError::Exhausted)
     );
     assert_eq!(probe.steps(), vec![Charge(5)]);
+}
+
+/// The floor of a scan is paid before the store is asked for the page,
+/// and a budget that cannot pay it never has the page fetched: the
+/// kernel is asked what the walk costs and nothing else.
+#[test]
+fn the_scan_floor_is_paid_before_the_page() {
+    let mut probe = Probe::new(3);
+    probe.host.scan_floor = 7;
+    assert_eq!(meter::site_count(&mut probe, 0, 0), Ok(2));
+    assert_eq!(
+        probe.steps(),
+        vec![
+            Host("scan-floor"),
+            Charge(7),
+            Host("site-count"),
+            Host("take-scan-debt"),
+            Charge(3),
+        ]
+    );
+
+    let mut probe = Probe::new(3);
+    probe.host.scan_floor = 7;
+    probe.remaining = Some(6);
+    assert_eq!(
+        meter::site_count(&mut probe, 0, 0),
+        Err(MeterError::Exhausted)
+    );
+    assert_eq!(probe.steps(), vec![Host("scan-floor"), Charge(7)]);
 }
 
 #[test]

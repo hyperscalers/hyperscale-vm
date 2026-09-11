@@ -93,7 +93,28 @@ fn refused<T>(answer: Result<T, AbortReason>) -> Result<T, MeterError> {
     answer.map_err(MeterError::Refused)
 }
 
-/// Charges what the call just made lifted out of the store by scanning.
+/// Charges the floor of the scan the call about to be made would take,
+/// before it is made.
+///
+/// The seek and the entries the declared cap admits are priced whatever
+/// the page turns out to hold, so they are paid before the store is
+/// asked for it: a budget that cannot cover them refuses here, and the
+/// page is never fetched. Nothing is charged where no walk is owed,
+/// which is a page already held or a cap of zero.
+fn charge_scan_floor<P: HostAccess + FuelSink>(
+    port: &mut P,
+    site: u32,
+    element: u32,
+) -> Result<(), MeterError> {
+    let floor = refused(port.host().scan_floor(site, element))?;
+    if floor == 0 {
+        return Ok(());
+    }
+    charge(port, floor)
+}
+
+/// Charges what the call just made lifted out of the store by scanning,
+/// beyond the floor paid ahead of it.
 ///
 /// Asked before the call's own refusal propagates, because the page was
 /// read either way: an index the scan does not contain is a refusal the
@@ -200,6 +221,7 @@ pub fn site_instance_take<P: HostAccess + FuelSink>(
     ids: &[u64],
 ) -> Result<u32, MeterError> {
     charge(port, ids.len() * 8)?;
+    charge_scan_floor(port, site, element)?;
     let taken = port.host().site_instance_take(site, element, ids);
     charge_scan(port)?;
     refused(taken)
@@ -215,6 +237,7 @@ pub fn site_instance_put<P: HostAccess + FuelSink>(
     value: Vec<u8>,
 ) -> Result<(), MeterError> {
     charge(port, value.len())?;
+    charge_scan_floor(port, site, element)?;
     let filed = port.host().site_instance_put(site, element, funds, value);
     charge_scan(port)?;
     refused(filed)
@@ -302,6 +325,7 @@ pub fn site_count<P: HostAccess + FuelSink>(
     site: u32,
     element: u32,
 ) -> Result<u32, MeterError> {
+    charge_scan_floor(port, site, element)?;
     let count = port.host().site_count(site, element);
     charge_scan(port)?;
     refused(count)
@@ -313,6 +337,7 @@ pub fn site_covered<P: HostAccess + FuelSink>(
     site: u32,
     element: u32,
 ) -> Result<bool, MeterError> {
+    charge_scan_floor(port, site, element)?;
     let covered = port.host().site_covered(site, element);
     charge_scan(port)?;
     refused(covered)
@@ -325,6 +350,7 @@ pub fn site_order<P: HostAccess + FuelSink>(
     element: u32,
     index: u32,
 ) -> Result<u128, MeterError> {
+    charge_scan_floor(port, site, element)?;
     let order = port.host().site_order(site, element, index);
     charge_scan(port)?;
     let order = refused(order)?;
@@ -339,6 +365,7 @@ pub fn site_entry<P: HostAccess + FuelSink>(
     element: u32,
     index: u32,
 ) -> Result<Vec<u8>, MeterError> {
+    charge_scan_floor(port, site, element)?;
     let value = port.host().site_entry(site, element, index);
     charge_scan(port)?;
     let value = refused(value)?;
@@ -355,6 +382,7 @@ pub fn site_entry_set<P: HostAccess + FuelSink>(
     value: Vec<u8>,
 ) -> Result<(), MeterError> {
     charge(port, value.len())?;
+    charge_scan_floor(port, site, element)?;
     let set = port.host().site_entry_set(site, element, index, value);
     charge_scan(port)?;
     refused(set)
@@ -369,6 +397,7 @@ pub fn site_insert<P: HostAccess + FuelSink>(
     value: Vec<u8>,
 ) -> Result<(), MeterError> {
     charge(port, AMOUNT_BOUNDARY_BYTES + value.len())?;
+    charge_scan_floor(port, site, element)?;
     let inserted = port.host().site_insert(site, element, order, value);
     charge_scan(port)?;
     refused(inserted)
@@ -381,6 +410,7 @@ pub fn site_remove<P: HostAccess + FuelSink>(
     element: u32,
     index: u32,
 ) -> Result<(), MeterError> {
+    charge_scan_floor(port, site, element)?;
     let removed = port.host().site_remove(site, element, index);
     charge_scan(port)?;
     refused(removed)

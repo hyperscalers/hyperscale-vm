@@ -52,6 +52,11 @@ pub(super) struct Ranges {
     /// alternating a write with a count would buy an unbounded number of
     /// them at the cost of the loop alone.
     scanned: usize,
+    /// The interval whose scan floor the fuel holder has already paid,
+    /// so the scan that follows charges only what the floor did not
+    /// cover. Set by [`KernelSession::scan_floor`] and taken by the next
+    /// materialization, whichever interval it is for.
+    prepaid: Option<(u32, u32)>,
     /// The distinct entries each write interval has changed, against the
     /// cap that interval declared.
     ///
@@ -124,13 +129,28 @@ impl KernelSession {
         self.acting_interval(site, element, Op::TakeInstances)
     }
 
+    /// What a walk over `cap` entries of `[lo, hi]` costs before any
+    /// entry comes back: the seek floor plus one entry unit per entry
+    /// the cap admits. A cap of zero or an inverted span takes no walk
+    /// at all — the store answers empty without touching a layer — so
+    /// those owe nothing.
+    const fn walk_floor(lo: u128, hi: u128, cap: u32) -> usize {
+        if cap == 0 || lo > hi {
+            0
+        } else {
+            SCAN_SEEK_BYTES.saturating_add((cap as usize).saturating_mul(AMOUNT_CELL_BYTES))
+        }
+    }
+
     /// Read a run of entries, charging what it lifted to
     /// [`Self::take_scan_debt`].
     ///
     /// The seek is charged whatever the run holds, because walking the
-    /// layers and the base is what an empty one costs too. A cap of zero
-    /// or an inverted span takes no walk at all — the store answers
-    /// empty without touching a layer — so those charge nothing.
+    /// layers and the base is what an empty one costs too, and every
+    /// entry the cap admits is charged at the entry floor whether or not
+    /// the run filled it — that is the walk the declaration bought.
+    /// The value bytes are charged as they come back. A walk whose floor
+    /// was prepaid through [`Self::scan_floor`] owes only the bytes.
     fn lift(
         &mut self,
         owner: Address,
@@ -138,24 +158,42 @@ impl KernelSession {
         lo: u128,
         hi: u128,
         cap: u32,
+        prepaid: bool,
     ) -> Result<Vec<(u128, Vec<u8>)>, SessionTrap> {
         let entries = self
             .store
             .entries_in_range(owner, collection, lo, hi, cap)?;
-        // Mirrors the store's own short-circuit: where it walked nothing,
-        // there is no seek to charge a floor for.
-        let seek = if cap == 0 || lo > hi {
+        let floor = if prepaid {
             0
         } else {
-            SCAN_SEEK_BYTES
+            Self::walk_floor(lo, hi, cap)
         };
-        let lifted = entries.iter().fold(seek, |total, (_, value)| {
-            total
-                .saturating_add(AMOUNT_CELL_BYTES)
-                .saturating_add(value.len())
-        });
+        let lifted = entries
+            .iter()
+            .fold(floor, |total, (_, value)| total.saturating_add(value.len()));
         self.ranges.scanned = self.ranges.scanned.saturating_add(lifted);
         Ok(entries)
+    }
+
+    /// What materializing the interval behind `rep` costs before the
+    /// store is asked for its page, for the fuel holder to charge ahead
+    /// of the call that would ask.
+    ///
+    /// Nothing where the page is already held; otherwise the walk floor
+    /// of the declared interval. The walk that follows charges only what
+    /// the floor did not cover, so a body whose budget cannot pay the
+    /// floor never has the page fetched on its behalf.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`] resolving the interval raises.
+    pub fn scan_floor(&mut self, site: u32, element: u32) -> Result<usize, SessionTrap> {
+        if self.ranges.scans.contains_key(&(site, element)) {
+            return Ok(0);
+        }
+        let interval = self.interval(site, element)?;
+        self.ranges.prepaid = Some((site, element));
+        Ok(Self::walk_floor(interval.lo, interval.hi, interval.cap))
     }
 
     /// Whether one entry is there, on the same terms a page is read.
@@ -165,7 +203,9 @@ impl KernelSession {
         collection: CollectionId,
         order: u128,
     ) -> Result<bool, SessionTrap> {
-        Ok(!self.lift(owner, collection, order, order, 1)?.is_empty())
+        Ok(!self
+            .lift(owner, collection, order, order, 1, false)?
+            .is_empty())
     }
 
     /// Materialize the interval behind `rep` if it is not already.
@@ -174,12 +214,14 @@ impl KernelSession {
             return Ok(());
         }
         let interval = self.interval(site, element)?;
+        let prepaid = self.ranges.prepaid.take() == Some((site, element));
         let entries = self.lift(
             interval.owner,
             interval.collection,
             interval.lo,
             interval.hi,
             interval.cap,
+            prepaid,
         )?;
         self.ranges.scans.insert(
             (site, element),
@@ -295,7 +337,14 @@ impl KernelSession {
             None => true,
             Some(_) if interval.cap == 0 => false,
             Some(resume) => self
-                .lift(interval.owner, interval.collection, resume, interval.hi, 1)?
+                .lift(
+                    interval.owner,
+                    interval.collection,
+                    resume,
+                    interval.hi,
+                    1,
+                    false,
+                )?
                 .is_empty(),
         };
         if let Some(page) = self.ranges.scans.get_mut(&(site, element)) {
@@ -999,7 +1048,8 @@ mod tests {
 
     /// The charge follows the walk: a cap-zero read short-circuits in
     /// the store without touching a layer, so it owes no seek floor —
-    /// while the cap-one neighbour pays it, entries or none.
+    /// while the cap-one neighbour pays it and the one entry its cap
+    /// admits, entries or none.
     #[test]
     fn a_cap_zero_read_owes_no_seek() {
         let owner = Address::new([9; 31], AddressClass::Component);
@@ -1021,7 +1071,50 @@ mod tests {
 
         let mut session = session_over(MemoryStore::new(), &at_cap(1));
         session.range_count(0, 0).unwrap();
-        assert_eq!(session.take_scan_debt(), SCAN_SEEK_BYTES);
+        assert_eq!(
+            session.take_scan_debt(),
+            SCAN_SEEK_BYTES + AMOUNT_CELL_BYTES
+        );
+    }
+
+    /// The floor is what the declaration bought — the seek and every
+    /// entry the cap admits — and it is the fuel holder's to pay before
+    /// the page is read. A scan whose floor was paid ahead owes only the
+    /// bytes it lifted; one that was not owes the floor too, so the two
+    /// paths price a page identically.
+    #[test]
+    fn a_prepaid_floor_leaves_only_the_bytes_to_charge() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let mut store = MemoryStore::new();
+        for order in 0..2u128 {
+            store.entry_write(owner, collection, order, vec![7; 10]);
+        }
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 4,
+            },
+            mode: Mode::Read,
+        }]);
+        let floor = SCAN_SEEK_BYTES + 4 * AMOUNT_CELL_BYTES;
+
+        let mut session = session_over(store.clone(), &set);
+        assert_eq!(session.scan_floor(0, 0), Ok(floor));
+        assert_eq!(session.range_count(0, 0), Ok(2));
+        assert_eq!(
+            session.take_scan_debt(),
+            20,
+            "the bytes, and only the bytes"
+        );
+        assert_eq!(session.scan_floor(0, 0), Ok(0), "a held page owes no walk");
+
+        let mut session = session_over(store, &set);
+        assert_eq!(session.range_count(0, 0), Ok(2));
+        assert_eq!(session.take_scan_debt(), floor + 20);
     }
 
     #[test]

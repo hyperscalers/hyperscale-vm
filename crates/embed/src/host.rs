@@ -202,6 +202,22 @@ pub trait KernelHost: Send {
     /// after every range function, each of which can reach a scan.
     fn take_scan_debt(&mut self) -> usize;
 
+    /// What materializing the interval costs before the store is asked
+    /// for its page, in the same terms: the seek floor and one entry
+    /// unit per entry the declared cap admits, or nothing where the page
+    /// is already held.
+    ///
+    /// Asked before every range function, so the floor is paid before
+    /// the page is read: a body whose budget cannot cover the walk its
+    /// declaration bought never has the page fetched on its behalf. What
+    /// the scan then lifts beyond the floor comes back through
+    /// [`Self::take_scan_debt`].
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn scan_floor(&mut self, site: u32, element: u32) -> Result<usize, AbortReason>;
+
     /// Entries currently in the interval, bounded by the declared cap.
     ///
     /// # Errors

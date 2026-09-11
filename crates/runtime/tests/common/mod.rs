@@ -256,6 +256,10 @@ impl KernelHost for Kernel {
         0
     }
 
+    fn scan_floor(&mut self, _site: u32, _element: u32) -> Result<usize, AbortReason> {
+        Ok(0)
+    }
+
     fn site_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
         self.note(format!("site-count({site},{element})"));
         let index = self.site(site)?;

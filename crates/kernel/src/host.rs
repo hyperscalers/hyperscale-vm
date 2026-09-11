@@ -101,6 +101,9 @@ impl KernelHost for KernelSession {
     fn take_scan_debt(&mut self) -> usize {
         Self::take_scan_debt(self)
     }
+    fn scan_floor(&mut self, site: u32, element: u32) -> Result<usize, AbortReason> {
+        refused(Self::scan_floor(self, site, element))
+    }
     fn site_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
         refused(Self::range_count(self, site, element))
     }
