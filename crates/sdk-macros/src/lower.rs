@@ -44,7 +44,7 @@ use std::ops::Range;
 use hyperscale_vm_effects::vocabulary::RESOURCE;
 use hyperscale_vm_effects::{GrantedBehaviour, Issued, ResourceKind};
 use proc_macro2::{Span, TokenStream};
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 
 mod resource_ops;
@@ -425,6 +425,50 @@ pub struct Lowered {
 /// them differently — a guest hands the kernel the handle it owns, a
 /// host the table position it holds — where the answer is one
 /// expression both halves encode the same way.
+/// What a method's signature says its tail hands back.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Yields {
+    /// No return type: whatever sits last is a statement.
+    Nothing,
+    /// A value, read at the tail.
+    Value,
+    /// A `Result`. The tail spells `Ok(..)` and is read inside it,
+    /// spells `Err(..)` and is the method's refusal, or is any other
+    /// fallible value and unwinds where it stands.
+    Fallible {
+        /// Whether the success payload is `()`, which answers nothing —
+        /// so a bare fallible tail answers nothing either, exactly as
+        /// `Ok(())` does.
+        unit: bool,
+    },
+}
+
+impl Yields {
+    /// Read off a method's declared return type.
+    pub fn of(output: &syn::ReturnType) -> Self {
+        let syn::ReturnType::Type(_, ty) = output else {
+            return Self::Nothing;
+        };
+        let syn::Type::Path(path) = &**ty else {
+            return Self::Value;
+        };
+        let Some(last) = path.path.segments.last() else {
+            return Self::Value;
+        };
+        if last.ident != "Result" {
+            return Self::Value;
+        }
+        let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+            return Self::Value;
+        };
+        let unit = matches!(
+            args.args.first(),
+            Some(syn::GenericArgument::Type(syn::Type::Tuple(tuple))) if tuple.elems.is_empty()
+        );
+        Self::Fallible { unit }
+    }
+}
+
 #[derive(Default)]
 struct Returned {
     /// The resource of each value edge, in output order.
@@ -733,11 +777,10 @@ pub struct Lowerer<'a> {
     /// materializes none.
     total: bool,
     params: &'a [(String, syn::Type)],
-    /// Whether the method yields anything at all, read off its return
-    /// type. A body ending in a loop or a conditional has a tail
-    /// expression of unit type, which is a statement rather than a value
-    /// however it is spelled.
-    returns: bool,
+    /// What the method's return type says its tail hands back. A body
+    /// yielding nothing has no tail worth the name: a loop or a
+    /// conditional sitting last is a statement however it is spelled.
+    yields: Yields,
     /// The seal's authored statements, by top-level index, where this is
     /// the seal — the one method that writes the `CONFIG` leaf and
     /// founds the marks' supply. Every other statement of the seal is
@@ -785,7 +828,7 @@ impl<'a> Lowerer<'a> {
     pub fn new(
         declared: &'a Declared<'a>,
         params: &'a [(String, syn::Type)],
-        returns: bool,
+        yields: Yields,
         total: bool,
         seal: Option<Range<usize>>,
     ) -> Self {
@@ -793,7 +836,7 @@ impl<'a> Lowerer<'a> {
             declared,
             total,
             params,
-            returns,
+            yields,
             seal,
             synthesizing: false,
             locals: vec![BTreeMap::new()],
@@ -812,7 +855,7 @@ impl<'a> Lowerer<'a> {
         Self::new(
             self.declared,
             self.params,
-            self.returns,
+            self.yields,
             self.total,
             self.seal.clone(),
         )
@@ -1015,10 +1058,10 @@ impl<'a> Lowerer<'a> {
         // A method yielding nothing has no tail expression worth the
         // name: whatever sits last is a statement, and reading it as a
         // return would try to hand back the unit a loop evaluates to.
-        let (body, tail) = if self.returns {
-            split_tail(block)
-        } else {
+        let (body, tail) = if self.yields == Yields::Nothing {
             (&block.stmts[..], None)
+        } else {
+            split_tail(block)
         };
         let mut statements = Vec::new();
         for (index, stmt) in body.iter().enumerate() {
@@ -1040,24 +1083,59 @@ impl<'a> Lowerer<'a> {
     /// Read the tail expression: what the method hands back, and the
     /// statement the tail becomes where it hands back nothing.
     ///
-    /// A refusal at the tail is the method's own exit, exactly as an
-    /// early `return Err(..)` is: the body runs inside a closure whose
-    /// error arm is the decline, and the refusal unwinds to it through
-    /// `?` — spelled so rather than as a `return`, because the closure's
-    /// epilogue follows the body and a `return` would leave it
-    /// unreachable in the compiler's eyes.
+    /// A fallible method's tail is read inside a literal `Ok(..)`, where
+    /// the edges it hands back are visible. Any other tail is a fallible
+    /// value the body already holds — a helper's result, a conditional,
+    /// a match — and unwinds where it stands, as the author would have
+    /// written `Ok(tail?)`: its success payload is the answer, or
+    /// nothing where the payload is unit. A refusal at the tail is the
+    /// method's own exit, exactly as an early `return Err(..)` is.
+    ///
+    /// Every exit unwinds through `?` rather than a `return`: the body
+    /// runs inside a closure whose error arm is the decline and whose
+    /// epilogue follows the body, and a `return` would leave that
+    /// epilogue unreachable in the compiler's eyes.
     fn tail(&mut self, tail: &syn::Expr, statements: &mut Vec<TokenStream>) -> Returned {
-        if let syn::Expr::Call(call) = unparen(tail)
-            && free_call_name(call).as_deref() == Some("Err")
-        {
-            let code = self.code(tail);
-            statements.push(quote!(
-                let __refusal: ::core::result::Result<(), _> = #code;
-                __refusal?;
-            ));
-            return Returned::default();
+        let literal = match unparen(tail) {
+            syn::Expr::Call(call) => free_call_name(call),
+            _ => None,
+        };
+        let span = tail.span();
+        match (self.yields, literal.as_deref()) {
+            (Yields::Fallible { .. }, Some("Err")) => {
+                let code = self.code(tail);
+                statements.push(quote_spanned!(span =>
+                    let __refusal: ::core::result::Result<(), _> = #code;
+                    __refusal?;
+                ));
+                Returned::default()
+            }
+            (Yields::Fallible { .. }, Some("Ok")) => self.returned(tail),
+            (Yields::Fallible { unit: true }, _) => {
+                let code = self.code(tail);
+                statements.push(quote_spanned!(span => (#code)?;));
+                Returned::default()
+            }
+            (Yields::Fallible { unit: false }, _) => {
+                let code = self.code(tail);
+                let mut returned = Returned::default();
+                let unwound = Eval {
+                    val: Val::Opaque,
+                    code: Code::Rust(quote_spanned!(span => (#code)?)),
+                };
+                self.hands_back(tail, unwound, 0, &mut returned);
+                returned
+            }
+            (_, Some("Err")) => {
+                self.error(
+                    span,
+                    "this method does not decline — a refusal at the tail needs a `Result` \
+                     return type naming the error table it refuses from",
+                );
+                Returned::default()
+            }
+            _ => self.returned(tail),
         }
-        self.returned(tail)
     }
 
     /// Fold one thing a tail hands back into what the method returns: a
@@ -4382,7 +4460,7 @@ fn free_call_mark(call: &syn::ExprCall) -> Option<syn::Ident> {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{Field, FieldKind, Lowered, Lowerer};
+    use super::{Field, FieldKind, Lowered, Lowerer, Yields};
     use crate::{Declared, accessors};
 
     /// The state a refusal fixture is written against: one byte cell,
@@ -4421,13 +4499,13 @@ mod tests {
             resources: &[],
             declines: &BTreeSet::new(),
         };
-        Lowerer::new(&declared, &[], false, false, None)
+        Lowerer::new(&declared, &[], Yields::Nothing, false, None)
             .run(&block)
             .map_err(|errors| errors.iter().map(ToString::to_string).collect())
     }
 
-    /// One pass over `body` as a method with a return type.
-    fn lower_returning(body: &str) -> Lowered {
+    /// One pass over `body` as a method whose signature says `yields`.
+    fn lower_as(yields: Yields, body: &str) -> Result<Lowered, Vec<String>> {
         let block: syn::Block = syn::parse_str(body).expect("the fixture parses as a block");
         let fields = fields();
         let config = syn::Ident::new("Terms", proc_macro2::Span::call_site());
@@ -4440,23 +4518,18 @@ mod tests {
             resources: &[],
             declines: &BTreeSet::new(),
         };
-        Lowerer::new(&declared, &[], true, false, None)
+        Lowerer::new(&declared, &[], yields, false, None)
             .run(&block)
-            .unwrap_or_else(|errors| {
-                panic!(
-                    "the fixture drew a hard error: {}",
-                    errors
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                )
-            })
+            .map_err(|errors| errors.iter().map(ToString::to_string).collect())
     }
 
     #[test]
     fn a_refusal_at_the_tail_leaves_the_method() {
-        let lowered = lower_returning("{ self.owed.at(1).set(1); Err(Error::Empty) }");
+        let lowered = lower_as(
+            Yields::Fallible { unit: false },
+            "{ self.owed.at(1).set(1); Err(Error::Empty) }",
+        )
+        .expect("a tail refusal lowers");
         let body = lowered.body.to_string();
         assert!(
             body.ends_with("= Err (Error :: Empty) ; __refusal ? ;"),
@@ -4464,6 +4537,42 @@ mod tests {
         );
         assert!(lowered.answer.is_none(), "a refusal answers nothing");
         assert!(lowered.outputs.is_empty(), "and hands back no edge");
+    }
+
+    #[test]
+    fn a_bare_fallible_tail_unwinds_where_it_stands() {
+        let lowered = lower_as(
+            Yields::Fallible { unit: false },
+            "{ self.owed.at(1).get() }",
+        )
+        .expect("a fallible tail lowers");
+        let answer = lowered
+            .answer
+            .expect("the payload is the answer")
+            .to_string();
+        assert!(
+            answer.contains(") ?)") && lowered.body.is_empty(),
+            "the tail unwinds inside the answer: {answer}"
+        );
+
+        let lowered = lower_as(Yields::Fallible { unit: true }, "{ self.owed.at(1).get() }")
+            .expect("a unit fallible tail lowers");
+        assert!(lowered.answer.is_none(), "a unit payload answers nothing");
+        assert!(
+            lowered.body.to_string().ends_with(") ? ;"),
+            "and the tail unwinds as a statement: {}",
+            lowered.body
+        );
+    }
+
+    #[test]
+    fn a_tail_refusal_needs_a_result_return_type() {
+        let errors =
+            lower_as(Yields::Value, "{ Err(Error::Empty) }").expect_err("a refusal without an arm");
+        assert!(
+            errors[0].contains("does not decline"),
+            "the refusal is named at the tail: {errors:?}"
+        );
     }
 
     /// The lowering of `body`.

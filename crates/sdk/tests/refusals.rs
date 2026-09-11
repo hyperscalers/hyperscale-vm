@@ -483,6 +483,18 @@ fn the_macro_bounds_the_tuple_arities() {
     cases.compile_fail("tests/refusals/seventeen_config_fields.rs");
 }
 
+/// A fallible method's tail is read inside a literal `Ok(..)`, and any
+/// other tail is a fallible value unwound where it stands — a helper's
+/// result, a conditional, a match — so the shapes Rust admits for a
+/// `Result` body are the shapes a method admits. A refusal at the tail
+/// needs an arm to leave through.
+#[test]
+fn the_tail_of_a_fallible_method_is_any_result() {
+    let cases = TestCases::new();
+    cases.pass("tests/refusals/result_tail.rs");
+    cases.compile_fail("tests/refusals/err_tail_without_result.rs");
+}
+
 /// A private method is an inlining site: its body substitutes where it
 /// is called, under the caller's own declaration walk. The bounds are
 /// what substitution needs — no cycle, plain-name parameters, a name no

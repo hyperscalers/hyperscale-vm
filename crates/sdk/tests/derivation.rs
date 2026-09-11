@@ -1588,6 +1588,78 @@ fn a_helper_that_tries_splices_as_the_inline_spelling() {
     assert_eq!(method("spelled").answers, method("factored").answers);
 }
 
+/// Two spellings of one fallible tail: the helper's result unwound into
+/// a binding and rewrapped, and the helper's result handed back as it
+/// stands. The second is read as the first, so the two declare and
+/// answer alike — with a unit payload, neither answers.
+#[blueprint]
+mod tails {
+    use hyperscale_vm_sdk::state::{Cell, Quantity};
+
+    #[error]
+    enum Error {
+        Empty,
+    }
+
+    #[state]
+    struct Tails {
+        held: Cell<Quantity>,
+    }
+
+    impl Tails {
+        pub fn spelled(&mut self) -> Result<Quantity, Error> {
+            let held = self.poll()?;
+            Ok(held)
+        }
+
+        pub fn bare(&mut self) -> Result<Quantity, Error> {
+            self.poll()
+        }
+
+        pub fn spelled_unit(&mut self) -> Result<(), Error> {
+            self.nonempty()?;
+            Ok(())
+        }
+
+        pub fn bare_unit(&mut self) -> Result<(), Error> {
+            self.nonempty()
+        }
+
+        fn poll(&self) -> Result<Quantity, Error> {
+            let held = self.held.get();
+            if held.is_zero() {
+                return Err(Error::Empty);
+            }
+            Ok(held)
+        }
+
+        fn nonempty(&self) -> Result<(), Error> {
+            if self.held.get().is_zero() {
+                return Err(Error::Empty);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// A bare fallible tail is the `Ok(tail?)` an author would otherwise
+/// write, in what it declares and in whether it answers.
+#[test]
+fn a_bare_fallible_tail_reads_as_its_spelled_form() {
+    let metadata = tails::blueprint().metadata();
+    let method = |name: &str| &metadata.methods[name];
+    assert_eq!(method("spelled").effects, method("bare").effects);
+    assert!(
+        method("spelled").answers && method("bare").answers,
+        "a payload answers"
+    );
+    assert_eq!(method("spelled-unit").effects, method("bare-unit").effects);
+    assert!(
+        !method("spelled-unit").answers && !method("bare-unit").answers,
+        "a unit payload answers nothing"
+    );
+}
+
 /// Two exports taking one bucket: the take spelled at the tail, and the
 /// same take as the tail of a helper without an early exit. The helper
 /// splices bare, so its produced edge is the export's declared output.

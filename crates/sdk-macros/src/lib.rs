@@ -247,7 +247,7 @@ use quote::{ToTokens, format_ident, quote};
 use syn::spanned::Spanned;
 
 use crate::gate::{Gate, check_gate_shape, gate_calls, parse_gate};
-use crate::lower::{Field, Lowerer};
+use crate::lower::{Field, Lowerer, Yields};
 use crate::records::{encode_declared, event_emitters};
 use crate::resource::{Resource, grant_registrations, resource_marks, resources};
 use crate::role::Role;
@@ -1289,9 +1289,9 @@ fn lower_method(
         ));
     }
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
-    let returns = !matches!(method.sig.output, syn::ReturnType::Default);
+    let yields = Yields::of(&method.sig.output);
     let claims_total = total_attr(method).is_some();
-    let lowered = Lowerer::new(declared, &params, returns, claims_total, seal)
+    let lowered = Lowerer::new(declared, &params, yields, claims_total, seal)
         .run(&method.block)
         .map_err(|errors| {
             errors
