@@ -649,7 +649,9 @@ impl Admission<'_> {
         // clauses declared on one target sum exactly as the set
         // semantics say — and an overflow is this fold's refusal.
         for access in &frame.ordered {
-            self.declaration.set.insert(access.effect)?;
+            self.declaration
+                .set
+                .insert_from(access.effect, &frame.set)?;
             self.declaration.ordered.push(*access);
         }
         // What this node proves is read off its declared clauses, the

@@ -121,12 +121,12 @@ fn swap_profile_and_provision_shape_are_exact() {
 
     let pool_set = &routing.per_shard[&shard_of(pool())];
     assert_eq!(
-        *pool_set,
-        set(&[
+        shape(pool_set),
+        shape(&set(&[
             point(config_leaf(pool()), Mode::Read),
             point(reserve(pool(), RES_X), Mode::Write { moves: Moves::In }),
             point(reserve(pool(), RES_Y), Mode::Write { moves: Moves::Out }),
-        ])
+        ]))
     );
     // The pool-shard provision carries the two balance cells and the
     // fence's leaf: the reserves are read-modify-writes, and the

@@ -1,7 +1,7 @@
 //! The corpus world: packages, instances, stores, graphs, and the
 //! dual-lane manifest walk every corpus binary drives.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
@@ -728,6 +728,22 @@ pub fn set(effects: &[Effect]) -> EffectSet {
         set.insert(*effect).unwrap();
     }
     set
+}
+
+/// A set without the widths its slots stated: the targets and modes,
+/// which is what a shape case asserts.
+#[must_use]
+pub fn shape(set: &EffectSet) -> BTreeSet<Effect> {
+    set.iter().collect()
+}
+
+/// [`shape`] over every shard of a routing.
+#[must_use]
+pub fn shapes(per_shard: &BTreeMap<ShardId, EffectSet>) -> BTreeMap<ShardId, BTreeSet<Effect>> {
+    per_shard
+        .iter()
+        .map(|(shard, set)| (*shard, shape(set)))
+        .collect()
 }
 
 /// Where the sharded routing above puts an address — asked rather than

@@ -243,7 +243,7 @@ fn transfer_profile_and_provision_shape_are_exact() {
             ]),
         ),
     ]);
-    assert_eq!(routing.per_shard, expected);
+    assert_eq!(shapes(&routing.per_shard), shapes(&expected));
 
     // The acceptance test, executable: the balance movement stays
     // commutative on both sides — both credits and one reservation, and

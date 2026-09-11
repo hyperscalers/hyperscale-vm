@@ -193,25 +193,15 @@ pub trait KernelHost: Send {
     /// A deterministic refusal, including a second take of one grant.
     fn site_reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason>;
 
-    /// What interval scans lifted out of the store since this was last
-    /// asked, in the boundary-byte terms the fuel schedule prices.
+    /// What materializing the interval costs, in boundary-byte terms:
+    /// the seek floor and one entry more than the declared cap admits
+    /// at the slot's width, or nothing where the page is already held.
     ///
-    /// Materializing an interval crosses no ABI boundary — the page stays
-    /// host-side until an accessor asks it for one entry — so the copy
-    /// metering that prices every other host call is blind to it. Asked
-    /// after every range function, each of which can reach a scan.
-    fn take_scan_debt(&mut self) -> usize;
-
-    /// What materializing the interval costs before the store is asked
-    /// for its page, in the same terms: the seek floor and one entry
-    /// unit per entry the declared cap admits, or nothing where the page
-    /// is already held.
-    ///
-    /// Asked before every range function, so the floor is paid before
-    /// the page is read: a body whose budget cannot cover the walk its
-    /// declaration bought never has the page fetched on its behalf. What
-    /// the scan then lifts beyond the floor comes back through
-    /// [`Self::take_scan_debt`].
+    /// Asked before every range function, so the whole of the walk is
+    /// paid before the page is read: a body whose budget cannot cover
+    /// what its declaration bought never has the page fetched on its
+    /// behalf, and no byte the page holds is charged after the fact,
+    /// because the width bounds every one of them ahead.
     ///
     /// # Errors
     ///

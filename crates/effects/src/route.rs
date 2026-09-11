@@ -163,7 +163,7 @@ pub fn route(admitted: &Admitted, shards: &dyn ShardResolver) -> Routing {
         per_shard
             .entry(shards.shard_of(access.effect.target.owner()))
             .or_default()
-            .insert(access.effect)
+            .insert_from(access.effect, &declaration.set)
             .expect("the union declaration folded these effects");
     }
     Routing {

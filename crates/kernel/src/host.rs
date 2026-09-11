@@ -98,9 +98,6 @@ impl KernelHost for KernelSession {
     fn site_reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
         refused(Self::reserve_take(self, site, element))
     }
-    fn take_scan_debt(&mut self) -> usize {
-        Self::take_scan_debt(self)
-    }
     fn scan_floor(&mut self, site: u32, element: u32) -> Result<usize, AbortReason> {
         refused(Self::scan_floor(self, site, element))
     }

@@ -156,18 +156,6 @@ fn settled<T>(answer: Result<T, AbortReason>) -> T {
     answer.unwrap_or_else(|reason| refuse(reason))
 }
 
-/// Take what materializing an interval lifted out of the store.
-///
-/// Every range operation asks, because every one of them can reach a
-/// scan and the session refuses to finish still owing. The figure is
-/// dropped rather than charged: an engine prices those bytes as fuel,
-/// and this path has none. Asked before a refusal propagates, because
-/// the page was read either way.
-fn scanned<T>(answer: Result<T, AbortReason>) -> T {
-    kernel(|k| k.take_scan_debt());
-    settled(answer)
-}
-
 /// The substate this handle reads.
 ///
 /// # Panics
@@ -394,7 +382,7 @@ pub fn bucket_amount(rep: u32) -> u128 {
 #[must_use]
 pub fn entry_count(handle: Handle) -> u32 {
     let Handle { site, element } = handle;
-    scanned(kernel(|k| k.site_count(site, element)))
+    settled(kernel(|k| k.site_count(site, element)))
 }
 
 /// Whether this interval's page holds every entry the interval does.
@@ -405,7 +393,7 @@ pub fn entry_count(handle: Handle) -> u32 {
 #[must_use]
 pub fn entry_covered(handle: Handle) -> bool {
     let Handle { site, element } = handle;
-    scanned(kernel(|k| k.site_covered(site, element)))
+    settled(kernel(|k| k.site_covered(site, element)))
 }
 
 /// The order key of this interval's entry at `index`.
@@ -418,7 +406,7 @@ pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
     let Handle { site, element } = handle;
     // The kernel orders by the packed integer and knows nothing of what
     // was packed into it, so the type is put back on at this seam.
-    OrderKey::from_bits(scanned(kernel(|k| k.site_order(site, element, index))))
+    OrderKey::from_bits(settled(kernel(|k| k.site_order(site, element, index))))
 }
 
 /// The value of this interval's entry at `index`.
@@ -429,7 +417,7 @@ pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
 #[must_use]
 pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
     let Handle { site, element } = handle;
-    scanned(kernel(|k| k.site_entry(site, element, index)))
+    settled(kernel(|k| k.site_entry(site, element, index)))
 }
 
 /// The value of the entry at `order`, or empty where there is none.
@@ -447,7 +435,7 @@ pub fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {
 /// On a handle that holds no exclusive write over the interval.
 pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
     let Handle { site, element } = handle;
-    scanned(kernel(|k| {
+    settled(kernel(|k| {
         k.site_entry_set(site, element, index, value.to_vec())
     }));
 }
@@ -459,7 +447,7 @@ pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
 /// On a handle that holds no exclusive write over the interval.
 pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
     let Handle { site, element } = handle;
-    scanned(kernel(|k| {
+    settled(kernel(|k| {
         k.site_insert(site, element, order.bits(), value.to_vec())
     }));
 }
@@ -472,7 +460,7 @@ pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
 /// gave up the inbound direction answers the movement it kept.
 pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
     let Handle { site, element } = handle;
-    scanned(kernel(|k| {
+    settled(kernel(|k| {
         k.site_instance_put(site, element, funds, value.to_vec())
     }));
 }
@@ -485,7 +473,7 @@ pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
 #[must_use]
 pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
     let Handle { site, element } = handle;
-    scanned(kernel(|k| k.site_instance_take(site, element, ids)))
+    settled(kernel(|k| k.site_instance_take(site, element, ids)))
 }
 
 /// Remove this interval's entry at `index`.
@@ -495,7 +483,7 @@ pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
 /// On a handle that holds no exclusive write over the interval.
 pub fn entry_remove(handle: Handle, index: u32) {
     let Handle { site, element } = handle;
-    scanned(kernel(|k| k.site_remove(site, element, index)));
+    settled(kernel(|k| k.site_remove(site, element, index)));
 }
 
 /// The transaction clock, in milliseconds.

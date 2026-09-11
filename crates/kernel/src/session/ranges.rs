@@ -1,5 +1,5 @@
-//! The interval machinery: materialized scans, the scan-debt accounting
-//! behind boundary pricing, and the write-cap budget.
+//! The interval machinery: materialized scans, the walk floor behind
+//! boundary pricing, and the write-cap budget.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,21 +42,6 @@ pub(super) struct Ranges {
     /// that walk quadratic in the interval and floods the access log with
     /// one record per step.
     scans: BTreeMap<(u32, u32), Scan>,
-    /// What the scans above lifted out of the store, in boundary-byte
-    /// terms, since whoever holds the fuel budget last drained it.
-    ///
-    /// A scan crosses no ABI boundary — a page stays host-side until an
-    /// accessor asks it for one entry — so the copy metering that prices
-    /// every other host call is blind to it. Left unpriced, the page a
-    /// write invalidates would be free to re-materialize, and a body
-    /// alternating a write with a count would buy an unbounded number of
-    /// them at the cost of the loop alone.
-    scanned: usize,
-    /// The interval whose scan floor the fuel holder has already paid,
-    /// so the scan that follows charges only what the floor did not
-    /// cover. Set by [`KernelSession::scan_floor`] and taken by the next
-    /// materialization, whichever interval it is for.
-    prepaid: Option<(u32, u32)>,
     /// The distinct entries each write interval has changed, against the
     /// cap that interval declared.
     ///
@@ -69,13 +54,6 @@ pub(super) struct Ranges {
     /// across the transaction rather than per scan — a write budget the
     /// invalidation of a materialized interval must not refund.
     written: BTreeMap<u32, BTreeSet<u128>>,
-}
-
-impl Ranges {
-    /// What the scans still owe the fuel budget, in boundary bytes.
-    pub(super) const fn owing(&self) -> usize {
-        self.scanned
-    }
 }
 
 impl KernelSession {
@@ -129,28 +107,34 @@ impl KernelSession {
         self.acting_interval(site, element, Op::TakeInstances)
     }
 
-    /// What a walk over `cap` entries of `[lo, hi]` costs before any
-    /// entry comes back: the seek floor plus one entry unit per entry
-    /// the cap admits. A cap of zero or an inverted span takes no walk
-    /// at all — the store answers empty without touching a layer — so
-    /// those owe nothing.
-    const fn walk_floor(lo: u128, hi: u128, cap: u32) -> usize {
+    /// What a walk over `cap` entries of `[lo, hi]` costs, in the
+    /// boundary-byte terms the fuel schedule prices: the seek floor, and
+    /// one entry more than the cap admits at the slot's width — the one
+    /// more being the coverage probe and the presence seek a full page
+    /// wants. A cap of zero or an inverted span takes no walk at all —
+    /// the store answers empty without touching a layer — so those owe
+    /// nothing.
+    ///
+    /// The whole price, paid before the store is asked: every byte an
+    /// entry can hold is inside the width the slot declared, so nothing
+    /// the walk lifts is unpaid and nothing is charged after the fact.
+    const fn walk_floor(lo: u128, hi: u128, cap: u32, width: u32) -> usize {
         if cap == 0 || lo > hi {
             0
         } else {
-            SCAN_SEEK_BYTES.saturating_add((cap as usize).saturating_mul(AMOUNT_CELL_BYTES))
+            SCAN_SEEK_BYTES.saturating_add(
+                (cap as usize)
+                    .saturating_add(1)
+                    .saturating_mul(width as usize),
+            )
         }
     }
 
-    /// Read a run of entries, charging what it lifted to
-    /// [`Self::take_scan_debt`].
+    /// Read a run of entries.
     ///
-    /// The seek is charged whatever the run holds, because walking the
-    /// layers and the base is what an empty one costs too, and every
-    /// entry the cap admits is charged at the entry floor whether or not
-    /// the run filled it — that is the walk the declaration bought.
-    /// The value bytes are charged as they come back. A walk whose floor
-    /// was prepaid through [`Self::scan_floor`] owes only the bytes.
+    /// Charges nothing: the floor of the interval a run reads under was
+    /// paid through [`Self::scan_floor`] before the store was asked, and
+    /// the floor covers every byte the run can hold.
     fn lift(
         &mut self,
         owner: Address,
@@ -158,31 +142,22 @@ impl KernelSession {
         lo: u128,
         hi: u128,
         cap: u32,
-        prepaid: bool,
     ) -> Result<Vec<(u128, Vec<u8>)>, SessionTrap> {
-        let entries = self
+        Ok(self
             .store
-            .entries_in_range(owner, collection, lo, hi, cap)?;
-        let floor = if prepaid {
-            0
-        } else {
-            Self::walk_floor(lo, hi, cap)
-        };
-        let lifted = entries
-            .iter()
-            .fold(floor, |total, (_, value)| total.saturating_add(value.len()));
-        self.ranges.scanned = self.ranges.scanned.saturating_add(lifted);
-        Ok(entries)
+            .entries_in_range(owner, collection, lo, hi, cap)?)
     }
 
-    /// What materializing the interval behind `rep` costs before the
-    /// store is asked for its page, for the fuel holder to charge ahead
-    /// of the call that would ask.
+    /// What materializing the interval behind `rep` costs, for the fuel
+    /// holder to charge ahead of the call that would ask the store for
+    /// its page.
     ///
     /// Nothing where the page is already held; otherwise the walk floor
-    /// of the declared interval. The walk that follows charges only what
-    /// the floor did not cover, so a body whose budget cannot pay the
-    /// floor never has the page fetched on its behalf.
+    /// of the declared interval, which covers everything the walk can
+    /// lift. A body whose budget cannot pay it never has the page
+    /// fetched on its behalf, and a page a write invalidated is floored
+    /// again on its next ask, which is what bounds a body alternating a
+    /// write with a count.
     ///
     /// # Errors
     ///
@@ -192,8 +167,12 @@ impl KernelSession {
             return Ok(0);
         }
         let interval = self.interval(site, element)?;
-        self.ranges.prepaid = Some((site, element));
-        Ok(Self::walk_floor(interval.lo, interval.hi, interval.cap))
+        Ok(Self::walk_floor(
+            interval.lo,
+            interval.hi,
+            interval.cap,
+            interval.width,
+        ))
     }
 
     /// Whether one entry is there, on the same terms a page is read.
@@ -203,9 +182,7 @@ impl KernelSession {
         collection: CollectionId,
         order: u128,
     ) -> Result<bool, SessionTrap> {
-        Ok(!self
-            .lift(owner, collection, order, order, 1, false)?
-            .is_empty())
+        Ok(!self.lift(owner, collection, order, order, 1)?.is_empty())
     }
 
     /// Materialize the interval behind `rep` if it is not already.
@@ -214,14 +191,12 @@ impl KernelSession {
             return Ok(());
         }
         let interval = self.interval(site, element)?;
-        let prepaid = self.ranges.prepaid.take() == Some((site, element));
         let entries = self.lift(
             interval.owner,
             interval.collection,
             interval.lo,
             interval.hi,
             interval.cap,
-            prepaid,
         )?;
         self.ranges.scans.insert(
             (site, element),
@@ -231,17 +206,6 @@ impl KernelSession {
             },
         );
         Ok(())
-    }
-
-    /// What interval scans have lifted out of the store since this was
-    /// last asked, in the boundary-byte terms the fuel schedule prices.
-    ///
-    /// Called by whoever holds the fuel budget, after every host call
-    /// that can reach a scan. [`Self::finish`] refuses a session that
-    /// still owes, so an accessor added later cannot quietly scan for
-    /// free — it fails every test that runs it.
-    pub const fn take_scan_debt(&mut self) -> usize {
-        std::mem::replace(&mut self.ranges.scanned, 0)
     }
 
     /// Charge one entry against the declared write cap of the capability
@@ -328,8 +292,8 @@ impl KernelSession {
             Some((last, _)) => Some(last + 1),
             None => Some(interval.lo),
         };
-        // The probe is one entry of headroom past a page that filled to
-        // its cap, so a declaration buying at least one entry covers it.
+        // The probe is the one entry past the cap the floor paid for, so
+        // a declaration buying at least one entry covers it.
         // An interval that bought none answers closed instead: it read
         // nothing, so nothing is known to be covered, and reaching for
         // the answer would be an access the declaration never bought.
@@ -337,14 +301,7 @@ impl KernelSession {
             None => true,
             Some(_) if interval.cap == 0 => false,
             Some(resume) => self
-                .lift(
-                    interval.owner,
-                    interval.collection,
-                    resume,
-                    interval.hi,
-                    1,
-                    false,
-                )?
+                .lift(interval.owner, interval.collection, resume, interval.hi, 1)?
                 .is_empty(),
         };
         if let Some(page) = self.ranges.scans.get_mut(&(site, element)) {
@@ -569,8 +526,8 @@ mod tests {
 
     use hyperscale_vm_effects::Declaration;
     use hyperscale_vm_types::{
-        AMOUNT_CELL_BYTES, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget,
-        Mode, Moves,
+        Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, MAX_SLOT_WIDTH, Mode,
+        Moves,
     };
 
     use super::super::fixtures::{
@@ -769,19 +726,19 @@ mod tests {
         }]);
         let mut session = session_over(store, &set);
 
+        let page = SCAN_SEEK_BYTES + 5 * MAX_SLOT_WIDTH as usize;
+        assert_eq!(session.scan_floor(0, 0), Ok(page));
         assert_eq!(session.range_count(0, 0), Ok(4));
-        let page = SCAN_SEEK_BYTES + 4 * (AMOUNT_CELL_BYTES + 10);
-        assert_eq!(session.take_scan_debt(), page);
-        // Drained, and a memoized page is not scanned twice.
+        // A memoized page is not scanned twice, so it owes no second walk.
+        assert_eq!(session.scan_floor(0, 0), Ok(0));
         assert_eq!(session.range_count(0, 0), Ok(4));
-        assert_eq!(session.take_scan_debt(), 0);
         // A write drops the page, and asking for it again buys another.
         assert_eq!(session.range_set(0, 0, 0, vec![8; 10]), Ok(()));
+        assert_eq!(session.scan_floor(0, 0), Ok(page));
         assert_eq!(session.range_count(0, 0), Ok(4));
-        assert_eq!(session.take_scan_debt(), page);
     }
 
-    /// Scan debt is priced fuel, so which pages a write drops is
+    /// A walk floor is priced fuel, so which pages a write drops is
     /// consensus-visible: a write into one collection must not buy the
     /// re-materialization of another's page.
     #[test]
@@ -816,11 +773,11 @@ mod tests {
         )
         .expect("two write intervals materialize");
 
+        assert!(session.scan_floor(0, 0).unwrap() > 0, "the page is bought");
         assert_eq!(session.range_count(0, 0), Ok(1));
-        assert!(session.take_scan_debt() > 0, "the page was lifted");
         assert_eq!(session.range_insert(1, 0, 5, vec![1]), Ok(()));
+        assert_eq!(session.scan_floor(0, 0), Ok(0), "the cached page survives");
         assert_eq!(session.range_count(0, 0), Ok(1));
-        assert_eq!(session.take_scan_debt(), 0, "the cached page survives");
     }
 
     /// An instance arrives or it does not.
@@ -976,17 +933,22 @@ mod tests {
         }]);
         let mut session = session_over(store, &set);
 
-        // A full page: the answer costs a page and a probe.
+        // A full page: the answer costs the page, whose floor covers the
+        // probe past it.
+        assert!(session.scan_floor(0, 0).unwrap() > 0);
         assert!(session.range_covered(0, 0).unwrap());
-        assert!(session.take_scan_debt() > 0);
-        // Asked again, it answers from the memo and lifts nothing.
+        // Asked again, it answers from the memo and owes nothing.
+        assert_eq!(session.scan_floor(0, 0), Ok(0));
         assert!(session.range_covered(0, 0).unwrap());
-        assert_eq!(session.take_scan_debt(), 0);
         // A write drops the page and the memo with it: a fifth entry
-        // past the cap turns the same question false.
+        // past the cap turns the same question false, over a page
+        // bought again.
         assert_eq!(session.range_insert(0, 0, 10, vec![2]), Ok(()));
+        assert!(
+            session.scan_floor(0, 0).unwrap() > 0,
+            "the new page is bought"
+        );
         assert!(!session.range_covered(0, 0).unwrap());
-        assert!(session.take_scan_debt() > 0, "the new page was paid for");
     }
 
     /// A full page whose last entry sits on the interval's own upper
@@ -1049,8 +1011,9 @@ mod tests {
 
     /// The charge follows the walk: a cap-zero read short-circuits in
     /// the store without touching a layer, so it owes no seek floor —
-    /// while the cap-one neighbour pays it and the one entry its cap
-    /// admits, entries or none.
+    /// while the cap-one neighbour pays it and two entries at the width,
+    /// the one its cap admits and the one the coverage probe wants,
+    /// entries or none.
     #[test]
     fn a_cap_zero_read_owes_no_seek() {
         let owner = Address::new([9; 31], AddressClass::Component);
@@ -1067,55 +1030,57 @@ mod tests {
             }])
         };
         let mut session = session_over(MemoryStore::new(), &at_cap(0));
+        assert_eq!(session.scan_floor(0, 0), Ok(0), "no walk, no floor");
         session.range_count(0, 0).unwrap();
-        assert_eq!(session.take_scan_debt(), 0, "no walk, no floor");
 
         let mut session = session_over(MemoryStore::new(), &at_cap(1));
-        session.range_count(0, 0).unwrap();
         assert_eq!(
-            session.take_scan_debt(),
-            SCAN_SEEK_BYTES + AMOUNT_CELL_BYTES
+            session.scan_floor(0, 0),
+            Ok(SCAN_SEEK_BYTES + 2 * MAX_SLOT_WIDTH as usize)
         );
+        session.range_count(0, 0).unwrap();
     }
 
-    /// The floor is what the declaration bought — the seek and every
-    /// entry the cap admits — and it is the fuel holder's to pay before
-    /// the page is read. A scan whose floor was paid ahead owes only the
-    /// bytes it lifted; one that was not owes the floor too, so the two
-    /// paths price a page identically.
+    /// The floor is what the declaration bought — the seek, and every
+    /// entry the cap admits plus the probe past it, at the slot's width
+    /// — and it is the same figure whatever the interval holds, because
+    /// the walk is paid before the store says: a page of four entries
+    /// and an empty one cost one floor.
     #[test]
-    fn a_prepaid_floor_leaves_only_the_bytes_to_charge() {
+    fn the_floor_is_the_declaration_whatever_the_page_holds() {
         let owner = Address::new([9; 31], AddressClass::Component);
         let collection = CollectionId([4; 16]);
         let mut store = MemoryStore::new();
-        for order in 0..2u128 {
+        for order in 0..4u128 {
             store.entry_write(owner, collection, order, vec![7; 10]);
         }
-        let set = declared(&[Effect {
-            target: EffectTarget::Range {
-                owner,
-                collection,
-                lo: 0,
-                hi: u128::MAX,
-                cap: 4,
+        let mut set = EffectSet::new();
+        set.insert_bounded(
+            Effect {
+                target: EffectTarget::Range {
+                    owner,
+                    collection,
+                    lo: 0,
+                    hi: u128::MAX,
+                    cap: 4,
+                },
+                mode: Mode::Read,
             },
-            mode: Mode::Read,
-        }]);
-        let floor = SCAN_SEEK_BYTES + 4 * AMOUNT_CELL_BYTES;
+            10,
+        )
+        .unwrap();
+        let floor = SCAN_SEEK_BYTES + 5 * 10;
 
-        let mut session = session_over(store.clone(), &set);
-        assert_eq!(session.scan_floor(0, 0), Ok(floor));
-        assert_eq!(session.range_count(0, 0), Ok(2));
-        assert_eq!(
-            session.take_scan_debt(),
-            20,
-            "the bytes, and only the bytes"
-        );
-        assert_eq!(session.scan_floor(0, 0), Ok(0), "a held page owes no walk");
+        let mut full = session_over(store, &set);
+        assert_eq!(full.scan_floor(0, 0), Ok(floor));
+        assert_eq!(full.range_count(0, 0), Ok(4));
+        assert_eq!(full.scan_floor(0, 0), Ok(0), "a held page owes no walk");
+        assert!(full.range_covered(0, 0).unwrap());
+        assert_eq!(full.scan_floor(0, 0), Ok(0), "the probe rode the floor");
 
-        let mut session = session_over(store, &set);
-        assert_eq!(session.range_count(0, 0), Ok(2));
-        assert_eq!(session.take_scan_debt(), floor + 20);
+        let mut empty = session_over(MemoryStore::new(), &set);
+        assert_eq!(empty.scan_floor(0, 0), Ok(floor));
+        assert_eq!(empty.range_count(0, 0), Ok(0));
     }
 
     #[test]

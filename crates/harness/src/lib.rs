@@ -130,9 +130,6 @@ pub mod fixtures {
         fn site_reserve_take(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
             Err(AbortReason::HandleUnknown)
         }
-        fn take_scan_debt(&mut self) -> usize {
-            0
-        }
         fn scan_floor(&mut self, _site: u32, _element: u32) -> Result<usize, AbortReason> {
             Ok(0)
         }

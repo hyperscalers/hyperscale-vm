@@ -117,6 +117,18 @@ impl EffectSet {
         Ok(modes.insert(effect.mode) || narrowed)
     }
 
+    /// [`insert_bounded`](Self::insert_bounded) at the width `source`
+    /// holds the target at: how a set folded from another keeps what the
+    /// other stated, since a fold that inserted plainly would widen every
+    /// target back to the cap.
+    ///
+    /// # Errors
+    ///
+    /// As [`insert`](Self::insert).
+    pub fn insert_from(&mut self, effect: Effect, source: &Self) -> Result<bool, EffectConflict> {
+        self.insert_bounded(effect, source.width_of(&effect.target))
+    }
+
     /// The most bytes one leaf under `target` may hold, or
     /// [`MAX_SLOT_WIDTH`] for a target the set does not hold.
     #[must_use]
@@ -224,6 +236,7 @@ mod tests {
         Address, AddressClass, CollectionId, EffectTarget, LocalKey, SubstateKey,
     };
     use crate::mode::{ConflictClass, Mode, ModeKind, Moves};
+    use crate::writes::MAX_SLOT_WIDTH;
 
     /// Distinct point targets, with no derivation: what these tests need
     /// of a key is only that two differ.
@@ -232,6 +245,33 @@ mod tests {
             owner: Address::new([0x10; 31], AddressClass::Component),
             local: LocalKey([byte; 16]),
         })
+    }
+
+    /// A target's width is what it was stated at, folded by minimum: a
+    /// plain insert leaves a stated width alone, a fold from another set
+    /// carries the other's statement, and a fresh set knows nothing but
+    /// the cap.
+    #[test]
+    fn a_width_folds_by_minimum_and_rides_a_fold_from_its_source() {
+        let read = Effect {
+            target: target(1),
+            mode: Mode::Read,
+        };
+        let mut set = EffectSet::new();
+        assert_eq!(set.width_of(&read.target), MAX_SLOT_WIDTH);
+        set.insert_bounded(read, 40).unwrap();
+        set.insert(read).unwrap();
+        assert_eq!(set.width_of(&read.target), 40);
+        assert!(
+            set.insert_bounded(read, 8).unwrap(),
+            "a narrower width moves the set"
+        );
+        assert_eq!(set.width_of(&read.target), 8);
+
+        let mut folded = EffectSet::new();
+        folded.insert_from(read, &set).unwrap();
+        assert_eq!(folded.width_of(&read.target), 8);
+        assert_eq!(folded, set);
     }
 
     #[test]

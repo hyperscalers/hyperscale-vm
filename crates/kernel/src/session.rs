@@ -145,7 +145,7 @@ pub struct KernelSession {
     /// executing shard holds that vault. `None` where it does not, or
     /// where another execution of this shard's already charged it.
     fee: Option<FeeBurn>,
-    /// The interval machinery: materialized scans, scan debt, write caps.
+    /// The interval machinery: materialized scans and write caps.
     ranges: Ranges,
     /// The cell and amount a call-time refusal found no floor for, where
     /// one did: what the walk names in the outcome when the trap it is

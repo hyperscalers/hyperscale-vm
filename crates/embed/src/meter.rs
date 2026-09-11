@@ -96,11 +96,11 @@ fn refused<T>(answer: Result<T, AbortReason>) -> Result<T, MeterError> {
 /// Charges the floor of the scan the call about to be made would take,
 /// before it is made.
 ///
-/// The seek and the entries the declared cap admits are priced whatever
-/// the page turns out to hold, so they are paid before the store is
-/// asked for it: a budget that cannot cover them refuses here, and the
-/// page is never fetched. Nothing is charged where no walk is owed,
-/// which is a page already held or a cap of zero.
+/// The seek and every byte the declared cap and the slot's width admit
+/// are priced whatever the page turns out to hold, so the whole walk is
+/// paid before the store is asked for it: a budget that cannot cover it
+/// refuses here, and the page is never fetched. Nothing is charged where
+/// no walk is owed, which is a page already held or a cap of zero.
 fn charge_scan_floor<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -111,17 +111,6 @@ fn charge_scan_floor<P: HostAccess + FuelSink>(
         return Ok(());
     }
     charge(port, floor)
-}
-
-/// Charges what the call just made lifted out of the store by scanning,
-/// beyond the floor paid ahead of it.
-///
-/// Asked before the call's own refusal propagates, because the page was
-/// read either way: an index the scan does not contain is a refusal the
-/// scan had to happen to reach.
-fn charge_scan<P: HostAccess + FuelSink>(port: &mut P) -> Result<(), MeterError> {
-    let lifted = port.host().take_scan_debt();
-    charge(port, lifted)
 }
 
 /// `state.site_len`.
@@ -222,9 +211,7 @@ pub fn site_instance_take<P: HostAccess + FuelSink>(
 ) -> Result<u32, MeterError> {
     charge(port, ids.len() * 8)?;
     charge_scan_floor(port, site, element)?;
-    let taken = port.host().site_instance_take(site, element, ids);
-    charge_scan(port)?;
-    refused(taken)
+    refused(port.host().site_instance_take(site, element, ids))
 }
 
 /// `state.site_instance_put`. Asks the store what each order already holds
@@ -238,9 +225,7 @@ pub fn site_instance_put<P: HostAccess + FuelSink>(
 ) -> Result<(), MeterError> {
     charge(port, value.len())?;
     charge_scan_floor(port, site, element)?;
-    let filed = port.host().site_instance_put(site, element, funds, value);
-    charge_scan(port)?;
-    refused(filed)
+    refused(port.host().site_instance_put(site, element, funds, value))
 }
 
 /// `state.bucket_take`.
@@ -326,9 +311,7 @@ pub fn site_count<P: HostAccess + FuelSink>(
     element: u32,
 ) -> Result<u32, MeterError> {
     charge_scan_floor(port, site, element)?;
-    let count = port.host().site_count(site, element);
-    charge_scan(port)?;
-    refused(count)
+    refused(port.host().site_count(site, element))
 }
 
 /// `state.site_covered`.
@@ -338,9 +321,7 @@ pub fn site_covered<P: HostAccess + FuelSink>(
     element: u32,
 ) -> Result<bool, MeterError> {
     charge_scan_floor(port, site, element)?;
-    let covered = port.host().site_covered(site, element);
-    charge_scan(port)?;
-    refused(covered)
+    refused(port.host().site_covered(site, element))
 }
 
 /// `state.site_order`.
@@ -351,9 +332,7 @@ pub fn site_order<P: HostAccess + FuelSink>(
     index: u32,
 ) -> Result<u128, MeterError> {
     charge_scan_floor(port, site, element)?;
-    let order = port.host().site_order(site, element, index);
-    charge_scan(port)?;
-    let order = refused(order)?;
+    let order = refused(port.host().site_order(site, element, index))?;
     charge(port, AMOUNT_BOUNDARY_BYTES)?;
     Ok(order)
 }
@@ -366,9 +345,7 @@ pub fn site_entry<P: HostAccess + FuelSink>(
     index: u32,
 ) -> Result<Vec<u8>, MeterError> {
     charge_scan_floor(port, site, element)?;
-    let value = port.host().site_entry(site, element, index);
-    charge_scan(port)?;
-    let value = refused(value)?;
+    let value = refused(port.host().site_entry(site, element, index))?;
     charge(port, value.len())?;
     Ok(value)
 }
@@ -383,9 +360,7 @@ pub fn site_entry_set<P: HostAccess + FuelSink>(
 ) -> Result<(), MeterError> {
     charge(port, value.len())?;
     charge_scan_floor(port, site, element)?;
-    let set = port.host().site_entry_set(site, element, index, value);
-    charge_scan(port)?;
-    refused(set)
+    refused(port.host().site_entry_set(site, element, index, value))
 }
 
 /// `state.site_insert`.
@@ -398,9 +373,7 @@ pub fn site_insert<P: HostAccess + FuelSink>(
 ) -> Result<(), MeterError> {
     charge(port, AMOUNT_BOUNDARY_BYTES + value.len())?;
     charge_scan_floor(port, site, element)?;
-    let inserted = port.host().site_insert(site, element, order, value);
-    charge_scan(port)?;
-    refused(inserted)
+    refused(port.host().site_insert(site, element, order, value))
 }
 
 /// `state.site_remove`.
@@ -411,9 +384,7 @@ pub fn site_remove<P: HostAccess + FuelSink>(
     index: u32,
 ) -> Result<(), MeterError> {
     charge_scan_floor(port, site, element)?;
-    let removed = port.host().site_remove(site, element, index);
-    charge_scan(port)?;
-    refused(removed)
+    refused(port.host().site_remove(site, element, index))
 }
 
 /// `math.mul_div`. The math functions reach no state, so they draw on the

@@ -116,9 +116,6 @@ impl KernelHost for Recorder {
     fn site_reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
         self.op(format!("site_reserve_take({site},{element})"), 17)
     }
-    fn take_scan_debt(&mut self) -> usize {
-        0
-    }
     fn scan_floor(&mut self, _site: u32, _element: u32) -> Result<usize, AbortReason> {
         Ok(0)
     }

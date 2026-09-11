@@ -644,11 +644,6 @@ impl KernelSession {
         answers: Vec<Answer>,
         fuel: u64,
     ) -> Result<(Receipt, OverlayStore), FinishError> {
-        assert_eq!(
-            self.ranges.owing(),
-            0,
-            "a host call reached a scan without charging what it lifted"
-        );
         // Value first, because a transaction that lost some has nothing
         // else worth judging. A bucket still carrying anything here was
         // debited from a cell and never put into one, whether the body
@@ -837,8 +832,8 @@ fn diff(store: &OverlayStore) -> StateDelta {
 #[cfg(test)]
 mod tests {
     use hyperscale_vm_types::{
-        AbortReason, Address, AddressClass, CollectionId, Effect, EffectTarget, Event, Mode, Moves,
-        Outcome, encode_amount,
+        AbortReason, Address, AddressClass, Effect, EffectTarget, Event, Mode, Moves, Outcome,
+        encode_amount,
     };
 
     use super::super::fixtures::{declared, key, session_holding, session_over};
@@ -996,24 +991,5 @@ mod tests {
         assert_eq!(session.take_lost_floor(), Some((full, 1)));
         assert_eq!(session.take_lost_floor(), None, "taken once");
         assert!(session.bucket(funds).is_ok(), "refused, so nothing moved");
-    }
-
-    #[test]
-    #[should_panic(expected = "without charging what it lifted")]
-    fn finishing_still_owing_for_a_scan_is_a_defect() {
-        let owner = Address::new([9; 31], AddressClass::Component);
-        let set = declared(&[Effect {
-            target: EffectTarget::Range {
-                owner,
-                collection: CollectionId([4; 16]),
-                lo: 0,
-                hi: u128::MAX,
-                cap: 4,
-            },
-            mode: Mode::Write { moves: Moves::Both },
-        }]);
-        let mut session = session_over(MemoryStore::new(), &set);
-        session.range_count(0, 0).unwrap();
-        let _ = session.finish(vec![], 0);
     }
 }

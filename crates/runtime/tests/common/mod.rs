@@ -252,10 +252,6 @@ impl KernelHost for Kernel {
         Ok(self.seat(Held::Amount(RESERVE)))
     }
 
-    fn take_scan_debt(&mut self) -> usize {
-        0
-    }
-
     fn scan_floor(&mut self, _site: u32, _element: u32) -> Result<usize, AbortReason> {
         Ok(0)
     }

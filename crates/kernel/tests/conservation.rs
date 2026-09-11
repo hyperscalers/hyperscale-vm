@@ -481,10 +481,6 @@ mod instances {
         session
             .range_put(0, 0, held, refiled)
             .expect("back it goes");
-        // The metered lane drains what a scan lifted after every call
-        // that can reach one; nothing meters this session, so what the
-        // two probes lifted is settled before finishing.
-        let _ = session.take_scan_debt();
         let (receipt, _) = session.finish(vec![], 0).expect("a receipt either way");
         receipt.outcome
     }

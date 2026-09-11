@@ -51,11 +51,12 @@ pub extern "C" fn mint(data: u32, id: u64) {
     replied(&[funds]);
 }
 
-/// File the arriving instances as holdings entries.
+/// File the arriving instances as holdings entries. An entry holds
+/// nothing: the instance's id is its order, and the slot's width is
+/// zero.
 #[unsafe(export_name = "deposit")]
 pub extern "C" fn deposit(holdings: u32, funds: u32) {
-    let value = [1u8];
-    unsafe { site_instance_put(holdings, 0, funds, at(value.as_ptr()), 1) };
+    unsafe { site_instance_put(holdings, 0, funds, 0, 0) };
     replied(&[]);
 }
 

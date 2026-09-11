@@ -9,8 +9,8 @@ use hyperscale_hbor::{
     Hbor, HborShape, ReadError, ShapeRegistry, ShapeTable, ShapeValue, TypeShape,
 };
 use hyperscale_vm_types::{
-    Address, CallTarget, ComponentAddr, Event, MAX_SLOT_WIDTH, NativeAddr, PackageAddr,
-    PrincipalAddr, ResourceAddr, SubstateKey,
+    AMOUNT_CELL_BYTES, Address, CallTarget, ComponentAddr, Event, MAX_SLOT_WIDTH, NativeAddr,
+    PackageAddr, PrincipalAddr, ResourceAddr, SubstateKey,
 };
 
 use crate::KERNEL_SLOT_BASE;
@@ -20,7 +20,7 @@ use crate::publish::{
     CheckedMetadata, CheckedSignature, MetadataError, SignatureError, check_signature, seals,
 };
 use crate::signature::MethodSignature;
-use crate::types::{SlotId, child_key};
+use crate::types::{MAX_VALUE_BYTES, SlotId, child_key};
 
 /// A published package's identity: the hash of its artifact, which covers
 /// the metadata section, so metadata is immutable with the package.
@@ -183,12 +183,46 @@ impl SlotWidths {
         &NONE
     }
 
-    /// The most bytes one leaf under `slot` may hold.
+    /// The most bytes one leaf under `slot` may hold: what the package
+    /// declared, or what the protocol's own band holds there, or the cap
+    /// for a slot neither knows.
     #[must_use]
     pub fn width_of(&self, slot: SlotId) -> u32 {
-        self.0.get(&slot).copied().unwrap_or(MAX_SLOT_WIDTH)
+        self.0
+            .get(&slot)
+            .copied()
+            .unwrap_or_else(|| protocol_width(slot))
     }
 }
+
+/// The width of a leaf in the protocol's own band, which every owner has
+/// and no package declares.
+///
+/// An amount cell is sixteen bytes; an instance entry holds nothing, its
+/// id being its order; a halt flag is a byte; a resource record is a
+/// kind and its display digits; a stored rule is an argument's width.
+/// The configuration leaf and an instance's data are records whose
+/// shapes belong to the package that wrote them, so they are bounded at
+/// the cap here, as is every slot outside the band.
+const fn protocol_width(slot: SlotId) -> u32 {
+    use crate::vocabulary::{AUTH, HALT, NF_VAULT, RESOURCE, VAULT};
+    match slot {
+        VAULT => AMOUNT_WIDTH,
+        NF_VAULT => 0,
+        HALT => 1,
+        RESOURCE => 2,
+        AUTH => RULE_WIDTH,
+        _ => MAX_SLOT_WIDTH,
+    }
+}
+
+/// An amount cell's width, stated in the type the table speaks.
+const AMOUNT_WIDTH: u32 = 16;
+const _: () = assert!(AMOUNT_WIDTH as usize == AMOUNT_CELL_BYTES);
+
+/// A stored rule's width: the widest byte argument a rule can arrive as.
+const RULE_WIDTH: u32 = 4096;
+const _: () = assert!(RULE_WIDTH as usize == MAX_VALUE_BYTES);
 
 impl PackageMetadata {
     /// The width of every slot this package declares.

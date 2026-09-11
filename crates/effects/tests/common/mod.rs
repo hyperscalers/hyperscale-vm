@@ -2,6 +2,8 @@
 //! instance world they resolve in.
 #![allow(dead_code, unused_imports)] // shared between test binaries; each uses a subset
 
+use std::collections::{BTreeMap, BTreeSet};
+
 pub use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestHash,
@@ -237,6 +239,16 @@ pub fn effect_set(effects: &[Effect]) -> EffectSet {
         set.insert(*effect).unwrap();
     }
     set
+}
+
+/// What a routing places on each shard, without the widths the slots
+/// stated: the targets and modes, which is what a shape case asserts.
+#[must_use]
+pub fn shapes(per_shard: &BTreeMap<ShardId, EffectSet>) -> BTreeMap<ShardId, BTreeSet<Effect>> {
+    per_shard
+        .iter()
+        .map(|(shard, set)| (*shard, set.iter().collect()))
+        .collect()
 }
 
 /// Extra methods for the over-approximation case: `withdraw_wide` declares

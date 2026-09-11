@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use common::{
     ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, auth, book, config_leaf, declared_vault,
-    effect_set, pkg, pool, quarantine, refused, resolver, shard_of, vault, wide_account_metadata,
-    world,
+    effect_set, pkg, pool, quarantine, refused, resolver, shapes, shard_of, vault,
+    wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
     AdmissionError, Composed, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
@@ -104,7 +104,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
             ]),
         ),
     ]);
-    assert_eq!(routing.per_shard, expected);
+    assert_eq!(shapes(&routing.per_shard), shapes(&expected));
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn swap_writes_both_reserves_and_reads_the_config() {
             ]),
         ),
     ]);
-    assert_eq!(routing.per_shard, expected);
+    assert_eq!(shapes(&routing.per_shard), shapes(&expected));
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
         .into_iter()
         .map(|(shard, effects)| (shard, effect_set(&effects)))
         .collect();
-    assert_eq!(routing.per_shard, expected);
+    assert_eq!(shapes(&routing.per_shard), shapes(&expected));
 }
 
 #[test]
@@ -377,7 +377,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
             ]),
         ),
     ]);
-    assert_eq!(routing.per_shard, expected);
+    assert_eq!(shapes(&routing.per_shard), shapes(&expected));
 }
 
 #[test]

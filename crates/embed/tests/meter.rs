@@ -30,8 +30,6 @@ type Log = Arc<Mutex<Vec<Step>>>;
 /// A host whose every operation answers a canned value and logs itself.
 struct StubHost {
     log: Log,
-    /// What the next scan ask reports as lifted.
-    scan_debt: usize,
     /// What the next floor ask reports as owed before the page.
     scan_floor: usize,
     /// Whether operations refuse instead of answering.
@@ -115,10 +113,6 @@ impl KernelHost for StubHost {
     fn site_reserve_take(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
         self.op("site_reserve_take", 1)
     }
-    fn take_scan_debt(&mut self) -> usize {
-        self.log.lock().unwrap().push(Host("take-scan-debt"));
-        std::mem::take(&mut self.scan_debt)
-    }
     fn scan_floor(&mut self, _site: u32, _element: u32) -> Result<usize, AbortReason> {
         let floor = std::mem::take(&mut self.scan_floor);
         self.op("scan-floor", floor)
@@ -191,12 +185,11 @@ struct Probe {
 }
 
 impl Probe {
-    fn new(scan_debt: usize) -> Self {
+    fn new() -> Self {
         let log = Log::default();
         Self {
             host: StubHost {
                 log: Arc::clone(&log),
-                scan_debt,
                 scan_floor: 0,
                 refuse: false,
             },
@@ -206,7 +199,7 @@ impl Probe {
     }
 
     fn refusing() -> Self {
-        let mut probe = Self::new(0);
+        let mut probe = Self::new();
         probe.host.refuse = true;
         probe
     }
@@ -329,26 +322,14 @@ fn every_function_charges_its_pinned_sequence() {
             |p| {
                 let _ = meter::site_instance_take(p, 0, 0, &[1, 2, 3]);
             },
-            vec![
-                Charge(24),
-                Host("scan-floor"),
-                Host("site_instance_take"),
-                Host("take-scan-debt"),
-                Charge(3),
-            ],
+            vec![Charge(24), Host("scan-floor"), Host("site_instance_take")],
         ),
         (
             "site_instance_put",
             |p| {
                 let _ = meter::site_instance_put(p, 0, 0, 1, vec![0; 5]);
             },
-            vec![
-                Charge(5),
-                Host("scan-floor"),
-                Host("site_instance_put"),
-                Host("take-scan-debt"),
-                Charge(3),
-            ],
+            vec![Charge(5), Host("scan-floor"), Host("site_instance_put")],
         ),
         (
             "bucket_take",
@@ -411,88 +392,49 @@ fn every_function_charges_its_pinned_sequence() {
             |p| {
                 let _ = meter::site_count(p, 0, 0);
             },
-            vec![
-                Host("scan-floor"),
-                Host("site_count"),
-                Host("take-scan-debt"),
-                Charge(3),
-            ],
+            vec![Host("scan-floor"), Host("site_count")],
         ),
         (
             "site_covered",
             |p| {
                 let _ = meter::site_covered(p, 0, 0);
             },
-            vec![
-                Host("scan-floor"),
-                Host("site_covered"),
-                Host("take-scan-debt"),
-                Charge(3),
-            ],
+            vec![Host("scan-floor"), Host("site_covered")],
         ),
         (
             "site_order",
             |p| {
                 let _ = meter::site_order(p, 0, 0, 0);
             },
-            vec![
-                Host("scan-floor"),
-                Host("site_order"),
-                Host("take-scan-debt"),
-                Charge(3),
-                Charge(AMOUNT),
-            ],
+            vec![Host("scan-floor"), Host("site_order"), Charge(AMOUNT)],
         ),
         (
             "site_entry",
             |p| {
                 let _ = meter::site_entry(p, 0, 0, 0);
             },
-            vec![
-                Host("scan-floor"),
-                Host("site_entry"),
-                Host("take-scan-debt"),
-                Charge(3),
-                Charge(9),
-            ],
+            vec![Host("scan-floor"), Host("site_entry"), Charge(9)],
         ),
         (
             "site_entry_set",
             |p| {
                 let _ = meter::site_entry_set(p, 0, 0, 0, vec![0; 5]);
             },
-            vec![
-                Charge(5),
-                Host("scan-floor"),
-                Host("site_entry_set"),
-                Host("take-scan-debt"),
-                Charge(3),
-            ],
+            vec![Charge(5), Host("scan-floor"), Host("site_entry_set")],
         ),
         (
             "site_insert",
             |p| {
                 let _ = meter::site_insert(p, 0, 0, 1, vec![0; 5]);
             },
-            vec![
-                Charge(AMOUNT + 5),
-                Host("scan-floor"),
-                Host("site_insert"),
-                Host("take-scan-debt"),
-                Charge(3),
-            ],
+            vec![Charge(AMOUNT + 5), Host("scan-floor"), Host("site_insert")],
         ),
         (
             "site_remove",
             |p| {
                 let _ = meter::site_remove(p, 0, 0, 0);
             },
-            vec![
-                Host("scan-floor"),
-                Host("site_remove"),
-                Host("take-scan-debt"),
-                Charge(3),
-            ],
+            vec![Host("scan-floor"), Host("site_remove")],
         ),
         (
             "mul_div",
@@ -564,7 +506,7 @@ fn every_function_charges_its_pinned_sequence() {
     ];
 
     for (name, run, expected) in cases {
-        let mut probe = Probe::new(3);
+        let mut probe = Probe::new();
         run(&mut probe);
         assert_eq!(probe.steps(), expected, "{name} charged off its pin");
     }
@@ -592,7 +534,6 @@ fn a_refusal_charges_no_result_bytes() {
     assert_eq!(probe.steps(), vec![Host("site_balance")]);
 
     let mut probe = Probe::refusing();
-    probe.host.scan_debt = 3;
     assert_eq!(
         meter::site_entry(&mut probe, 0, 0, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
@@ -604,7 +545,7 @@ fn a_refusal_charges_no_result_bytes() {
 fn exhaustion_stops_the_sequence_where_it_lands() {
     // An argument charge past the budget refuses before the operation
     // runs: the kernel is never asked.
-    let mut probe = Probe::new(0);
+    let mut probe = Probe::new();
     probe.remaining = Some(4);
     assert_eq!(
         meter::site_set(&mut probe, 0, 0, vec![0; 5]),
@@ -618,21 +559,15 @@ fn exhaustion_stops_the_sequence_where_it_lands() {
 /// kernel is asked what the walk costs and nothing else.
 #[test]
 fn the_scan_floor_is_paid_before_the_page() {
-    let mut probe = Probe::new(3);
+    let mut probe = Probe::new();
     probe.host.scan_floor = 7;
     assert_eq!(meter::site_count(&mut probe, 0, 0), Ok(2));
     assert_eq!(
         probe.steps(),
-        vec![
-            Host("scan-floor"),
-            Charge(7),
-            Host("site_count"),
-            Host("take-scan-debt"),
-            Charge(3),
-        ]
+        vec![Host("scan-floor"), Charge(7), Host("site_count"),]
     );
 
-    let mut probe = Probe::new(3);
+    let mut probe = Probe::new();
     probe.host.scan_floor = 7;
     probe.remaining = Some(6);
     assert_eq!(
@@ -644,7 +579,7 @@ fn the_scan_floor_is_paid_before_the_page() {
 
 #[test]
 fn the_math_error_classes_cross_unchanged() {
-    let mut probe = Probe::new(0);
+    let mut probe = Probe::new();
     assert_eq!(
         meter::mul_div(
             &mut probe,
@@ -655,7 +590,7 @@ fn the_math_error_classes_cross_unchanged() {
         ),
         Err(MeterError::Refused(MathError::DivideByZero.into()))
     );
-    let mut probe = Probe::new(0);
+    let mut probe = Probe::new();
     assert_eq!(
         meter::fraction_cmp(
             &mut probe,
