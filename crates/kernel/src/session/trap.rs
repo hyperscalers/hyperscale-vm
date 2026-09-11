@@ -204,9 +204,18 @@ pub enum SessionTrap {
     /// because an absolute resolves there.
     #[error("debit exceeds the cell's balance")]
     CellUnderflow,
-    /// A credit past the cell's own width, on the same terms.
+    /// A credit past the cell's own width, on the same terms — and
+    /// priced as the floor the fold's refusal of the same sum is, since
+    /// what the width could not hold is the state's condition and not
+    /// the body's: the session records the key and the amount for the
+    /// walk to name in the outcome.
     #[error("credit exceeds the cell's width")]
-    CellOverflow,
+    CellOverflow {
+        /// The cell that could not hold it.
+        key: SubstateKey,
+        /// The credit that did not fit.
+        amount: u128,
+    },
     /// An emission outside any invocation, so the kernel has no address to
     /// stamp — unreachable through a runner that enters every node.
     #[error("emission outside an invocation")]
@@ -278,7 +287,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::MalformedIdSet => Self::MalformedEdgeCell,
             SessionTrap::BadAmountCell(_) => Self::MalformedAmountCell,
             SessionTrap::CellUnderflow => Self::CellUnderflow,
-            SessionTrap::CellOverflow => Self::CellOverflow,
+            SessionTrap::CellOverflow { .. } => Self::CellOverflow,
             SessionTrap::NoInvocation => Self::EmissionOutsideInvocation,
             SessionTrap::EventTypeOutOfRange(_) => Self::EventTypeOutOfRange,
             SessionTrap::TooManyEvents => Self::EventCountExceeded,

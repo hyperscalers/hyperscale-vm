@@ -626,6 +626,7 @@ impl KernelSession {
             nullifiers: Vec::new(),
             fee: None,
             ranges: Ranges::default(),
+            lost_floor: None,
             invocation: None,
             events: Vec::new(),
             supply: SupplyDelta::default(),

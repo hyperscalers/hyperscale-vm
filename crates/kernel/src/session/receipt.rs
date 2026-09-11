@@ -843,6 +843,7 @@ mod tests {
 
     use super::super::fixtures::{declared, key, session_holding, session_over};
     use crate::modes::decode_amount;
+    use crate::session::SessionTrap;
     use crate::store::{MemoryStore, WorkingStore};
 
     #[test]
@@ -959,6 +960,42 @@ mod tests {
 
         let (receipt, _) = session.finish(vec![], 7).expect("finishes");
         assert_eq!(receipt.outcome, Outcome::Completed { answers: vec![] });
+    }
+
+    /// A credit the cell's width cannot hold is refused at the call
+    /// under an exclusive hold, and the session records the cell and
+    /// the amount so the walk prices it as the floor the fold would
+    /// have — one condition, one row, whichever hold met it.
+    #[test]
+    fn a_credit_past_the_width_is_refused_as_a_lost_floor() {
+        let (source, full) = (key(0xB3), key(0xB4));
+        let mut store = MemoryStore::new();
+        store.write(source, encode_amount(100).to_vec());
+        store.write(full, encode_amount(u128::MAX).to_vec());
+        let set = declared(&[
+            Effect {
+                target: EffectTarget::Point(source),
+                mode: Mode::Write { moves: Moves::Both },
+            },
+            Effect {
+                target: EffectTarget::Point(full),
+                mode: Mode::Write { moves: Moves::Both },
+            },
+        ]);
+        let mut session = session_holding(store, &set);
+        assert_eq!(session.take_lost_floor(), None);
+
+        let funds = session.cell_take(0, 0, 1).expect("the cell covers it");
+        assert_eq!(
+            session.cell_put(1, 0, funds),
+            Err(SessionTrap::CellOverflow {
+                key: full,
+                amount: 1
+            })
+        );
+        assert_eq!(session.take_lost_floor(), Some((full, 1)));
+        assert_eq!(session.take_lost_floor(), None, "taken once");
+        assert!(session.bucket(funds).is_ok(), "refused, so nothing moved");
     }
 
     #[test]

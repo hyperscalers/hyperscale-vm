@@ -149,6 +149,10 @@ pub struct KernelSession {
     fee: Option<FeeBurn>,
     /// The interval machinery: materialized scans, scan debt, write caps.
     ranges: Ranges,
+    /// The cell and amount a call-time refusal found no floor for, where
+    /// one did: what the walk names in the outcome when the trap it is
+    /// handed is priced as a lost race rather than a defect.
+    lost_floor: Option<(SubstateKey, u128)>,
     /// The instance whose method is executing, set by the runner as it
     /// enters each manifest node. The capability table is per transaction
     /// and positional, so the session has no other way to know whose

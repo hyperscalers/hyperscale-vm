@@ -322,6 +322,20 @@ fn settled(node: u32, call: &NodeCall, invoked: InvokeResult) -> Result<NodeSucc
             },
             invoked.fuel,
         )),
+        // A credit the cell's width could not hold is the same lost
+        // race the fold refuses a queued one as — the floor is the
+        // state's, not the body's — so it is priced as one, naming the
+        // cell and the amount the session recorded when it refused.
+        Invoked::Aborted(AbortReason::CellOverflow) => {
+            let mut session = session;
+            let outcome = session.take_lost_floor().map_or(
+                Outcome::UserError {
+                    reason: AbortReason::CellOverflow,
+                },
+                |(key, amount)| Outcome::Infeasible { key, amount },
+            );
+            Err(fail(session, outcome, invoked.fuel))
+        }
         // What a trapped invocation spent is what the meter's counter
         // gave up, exact at every ending: a block is paid for whole
         // before it runs, and exhaustion spends the counter whole, so a

@@ -488,22 +488,27 @@ struct Credited {
     funds_survive: bool,
     /// The class the kernel assigned, where the credit was refused.
     refusal: Option<AbortReason>,
+    /// The cell and amount the session recorded as a lost floor, where
+    /// the refusal is priced as one.
+    lost_floor: Option<(SubstateKey, u128)>,
 }
 
 /// What the session says about a credit once it settles.
 fn settled(
-    host: KernelSession,
+    mut host: KernelSession,
     key: SubstateKey,
     funds: u32,
     refusal: Option<AbortReason>,
 ) -> Credited {
     let funds_survive = host.bucket(funds).is_ok();
+    let lost_floor = host.take_lost_floor();
     let (receipt, _) = host.finish(vec![], 0).expect("the oracle is clean");
     Credited {
         cell: receipt.delta.cells.get(&key).cloned().flatten(),
         credit: receipt.delta.movements.get(&key).map(|m| m.credit),
         funds_survive,
         refusal,
+        lost_floor,
     }
 }
 
@@ -590,6 +595,10 @@ fn a_credit_past_the_cells_width_refuses_at_the_call() -> Result<()> {
     let fx = fixture();
     let overflowed = credited(&fx, "put-write", u128::MAX, false)?;
     assert_eq!(overflowed.refusal, Some(AbortReason::CellOverflow));
+    // Priced as the floor the fold refuses the same sum at: both
+    // engines' sessions recorded the cell and the credit for the walk
+    // to name.
+    assert_eq!(overflowed.lost_floor, Some((fx.vault, u128::MAX)));
     // Refused, so nothing moved and the value is still the kernel's to
     // account for.
     assert_eq!(overflowed.cell, None);

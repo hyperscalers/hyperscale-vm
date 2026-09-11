@@ -84,11 +84,14 @@ impl KernelSession {
         let amount = self.bucket_amount(funds)?;
         let key = match Self::settling(site, element, held, Op::Put)? {
             // The exclusive hold performs the read-modify-write, so a
-            // credit past the width an amount has is refused at the call.
+            // credit past the width an amount has is refused at the
+            // call — as the floor the fold refuses a queued one at, which
+            // is what the recorded key and amount let the walk say.
             Settlement::Immediate(key) => {
-                self.amount_cell(key)?
-                    .checked_add(amount)
-                    .ok_or(SessionTrap::CellOverflow)?;
+                if self.amount_cell(key)?.checked_add(amount).is_none() {
+                    self.lost_floor = Some((key, amount));
+                    return Err(SessionTrap::CellOverflow { key, amount });
+                }
                 key
             }
             // A credit answers this and a delta answers it too: what the
@@ -97,6 +100,12 @@ impl KernelSession {
         };
         self.store.queue_delta(key, DeltaOp::Add(amount))?;
         self.take_bucket(funds).map(|_| ())
+    }
+
+    /// The cell and amount the last call-time refusal found no floor
+    /// for, taken once.
+    pub const fn take_lost_floor(&mut self) -> Option<(SubstateKey, u128)> {
+        self.lost_floor.take()
     }
 
     /// When a movement through the capability just held moves, and
