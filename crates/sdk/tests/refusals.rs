@@ -485,6 +485,7 @@ fn the_macro_bounds_what_a_helper_may_be() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/helper_recursion.rs");
     refuse.compile_fail("tests/refusals/helper_return.rs");
+    refuse.compile_fail("tests/refusals/helper_try.rs");
     refuse.compile_fail("tests/refusals/helper_pattern_param.rs");
     refuse.compile_fail("tests/refusals/helper_accessor_name.rs");
     // The bounds are an inherent helper's; a trait impl's methods are the

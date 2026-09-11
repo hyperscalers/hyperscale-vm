@@ -112,8 +112,9 @@ fn combined(errors: Vec<syn::Error>) -> syn::Result<()> {
         .map_or(Ok(()), Err)
 }
 
-/// Refuses `return` inside a helper: a helper yields its tail, so an
-/// early return would return from whatever export it splices into. A
+/// Refuses `return` and `?` inside a helper: a helper yields its tail,
+/// so an early return would return from whatever export it splices
+/// into, and `?` is the same early return spelled on an error arm. A
 /// closure's `return` is the closure's own and a nested item's body is
 /// not the helper's, so neither is walked.
 struct Returns<'e> {
@@ -128,6 +129,15 @@ impl<'ast> Visit<'ast> for Returns<'_> {
              the export the helper splices into",
         ));
         syn::visit::visit_expr_return(self, ret);
+    }
+
+    fn visit_expr_try(&mut self, tried: &'ast syn::ExprTry) {
+        self.errors.push(syn::Error::new(
+            tried.question_token.span(),
+            "a helper yields its tail expression — a `?` here would return from \
+             the export the helper splices into",
+        ));
+        syn::visit::visit_expr_try(self, tried);
     }
 
     fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
