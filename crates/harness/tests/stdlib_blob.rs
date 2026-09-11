@@ -33,8 +33,9 @@ use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_sdk::state::Word;
 use hyperscale_vm_stdlib::{ACCOUNT_MODULE, SHIPPED as PROTOCOL, STAKING_MODULE};
 use hyperscale_vm_types::{
-    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, Mode, Moves,
-    ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Event, MAX_SLOT_WIDTH,
+    Mode, Moves, ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey, TxHash,
+    encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::Context;
@@ -531,27 +532,38 @@ fn closed_round() -> MemoryStore {
 /// interval a settlement reads.
 fn lottery_session() -> KernelSession {
     let mut declared = EffectSet::new();
-    for effect in [
-        Effect {
-            target: EffectTarget::Point(round_key()),
-            mode: Mode::Write { moves: Moves::Both },
-        },
-        Effect {
-            target: EffectTarget::Point(draw_key()),
-            mode: Mode::Write { moves: Moves::Both },
-        },
-        Effect {
-            target: EffectTarget::Range {
-                owner: LOTTERY,
-                collection: ticket_collection(),
-                lo: 0,
-                hi: u128::MAX,
-                cap: lottery::ROUND_CAP,
+    // The tickets are stated at their slot's width, an address, so the
+    // session declares what the committed blob's own metadata does.
+    for (effect, width) in [
+        (
+            Effect {
+                target: EffectTarget::Point(round_key()),
+                mode: Mode::Write { moves: Moves::Both },
             },
-            mode: Mode::Read,
-        },
+            MAX_SLOT_WIDTH,
+        ),
+        (
+            Effect {
+                target: EffectTarget::Point(draw_key()),
+                mode: Mode::Write { moves: Moves::Both },
+            },
+            MAX_SLOT_WIDTH,
+        ),
+        (
+            Effect {
+                target: EffectTarget::Range {
+                    owner: LOTTERY,
+                    collection: ticket_collection(),
+                    lo: 0,
+                    hi: u128::MAX,
+                    cap: lottery::ROUND_CAP,
+                },
+                mode: Mode::Read,
+            },
+            32,
+        ),
     ] {
-        declared.insert(effect).unwrap();
+        declared.insert_bounded(effect, width).unwrap();
     }
     KernelSession::materialize(
         OverlayStore::new(Arc::new(closed_round())),
@@ -607,6 +619,9 @@ fn dual_round() -> Result<(Receipt, u64)> {
     let tickets_rep = rep_of(
         &probe,
         &Capability::RangeRead(Interval {
+            // A ticket is the entrant's address, and an address is
+            // thirty-two bytes.
+            width: 32,
             owner: LOTTERY,
             collection: ticket_collection(),
             lo: 0,

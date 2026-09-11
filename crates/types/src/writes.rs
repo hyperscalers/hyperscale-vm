@@ -22,11 +22,27 @@ use hyperscale_hbor::{Hash32, Hasher, Hbor, to_vec};
 
 use crate::address::{Address, CollectionId, LocalKey, ResourceAddr, SubstateKey};
 use crate::amount::{amount_cell, read_amount};
+use crate::envelope::MAX_TX_BYTES_LEN;
 
 /// The bytes one committed cell value may carry — one bound for a cell
-/// wherever it travels, in a receipt or a provision. A wire bound; the
-/// bytes themselves are the storage bond's to price.
-pub const MAX_CELL_VALUE_LEN: usize = 2 * 1024 * 1024;
+/// wherever it travels, in a receipt or a provision.
+///
+/// A wire bound on the protocol's own cells, a package artifact the
+/// widest of them; a package's slots are held to their own declared
+/// widths, under [`MAX_SLOT_WIDTH`].
+pub const MAX_CELL_VALUE_LEN: usize = MAX_TX_BYTES_LEN;
+
+/// The most bytes one leaf of a declared slot may hold.
+///
+/// A slot states its width, derived from its leaf's shape where the
+/// shape is closed and declared beside it otherwise, and every write
+/// under the slot is held to it. The bound is what turns a declared
+/// entry cap into a declared byte count: a range over `cap` entries of
+/// a slot reads at most `cap` times this, known before anything runs.
+/// Sized so that a walk at the full width over a modest cap is the
+/// read a transaction may buy, and no larger: a leaf past it is chunked
+/// across leaves or published as an artifact.
+pub const MAX_SLOT_WIDTH: u32 = 16 * 1024;
 
 const DOMAIN_ENTRY: &[u8] = b"hyperscale-vm/entry-leaf";
 

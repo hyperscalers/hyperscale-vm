@@ -573,6 +573,7 @@ const OWN: &[&str] = &[
     "slot",
     "denomination",
     "holds",
+    "width",
     "state",
     "config",
     "name",
@@ -866,7 +867,7 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
 /// The markers whose reader scans structs, and the two field pins.
 const ON_A_STRUCT: &[&str] = &["state", "config", "event", "record", "resource"];
 const ON_A_METHOD: &[&str] = &["proves", "total", "name"];
-const ON_A_STATE_FIELD: &[&str] = &["slot", "holds", "denomination"];
+const ON_A_STATE_FIELD: &[&str] = &["slot", "holds", "denomination", "width"];
 
 fn marker_kinds_on_struct(
     item: &syn::ItemStruct,
@@ -951,6 +952,7 @@ fn marker_kinds_on_enum(item: &syn::ItemEnum) -> syn::Result<()> {
             "slot",
             "holds",
             "denomination",
+            "width",
         ],
     ) {
         return Err(syn::Error::new_spanned(

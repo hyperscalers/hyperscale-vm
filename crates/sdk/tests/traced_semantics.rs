@@ -9,8 +9,8 @@
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Clause, Declaration, EvalBudget, EvalInputs, Hash32, InstanceMeta, MAX_FOREACH_ELEMENTS,
-    ManifestHash, MethodSignature, ModeExpr, PackageHash, ParamType, PresentedGrants, TargetExpr,
-    TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
+    ManifestHash, MethodSignature, ModeExpr, PackageHash, ParamType, PresentedGrants, SlotWidths,
+    TargetExpr, TestHasher, Value, child_key, evaluate_declaration, evaluate_effects,
 };
 use hyperscale_vm_sdk::sym::{Addr, Bucket, Seq, Sym, U128, eq};
 use hyperscale_vm_sdk::{Blueprint, Trace};
@@ -56,6 +56,7 @@ fn declared(signature: &MethodSignature, args: &[Value], config: &[Value]) -> Ef
         node_index: 0,
         identity: identity(),
         grants: PresentedGrants::none(),
+        widths: SlotWidths::none(),
         budget: &budget,
     };
     evaluate_effects(&signature.effects, &inputs, &TestHasher)
@@ -74,6 +75,7 @@ fn evaluated(signature: &MethodSignature, args: &[Value], config: &[Value]) -> D
         node_index: 0,
         identity: identity(),
         grants: PresentedGrants::none(),
+        widths: SlotWidths::none(),
         budget: &budget,
     };
     evaluate_declaration(&signature.effects, &inputs, &TestHasher)

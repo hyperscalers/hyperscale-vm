@@ -28,6 +28,7 @@ mod ledger {
 
     #[state]
     struct Ledger {
+        #[width(1024)]
         latest: Cell<Option<Entry>>,
     }
 

@@ -33,6 +33,10 @@ use crate::supply::SupplyDelta;
 /// handle resolves at all, rather than in a second copy of the bounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Interval {
+    /// The most bytes one entry under the interval may hold: the slot's
+    /// declared width, which every write through the interval is held
+    /// to and which prices the walk the cap admits.
+    pub width: u32,
     /// The collection's owner.
     pub owner: Address,
     /// The collection's identity under the owner.
@@ -588,7 +592,11 @@ impl KernelSession {
             {
                 return Err(MaterializeError::MixedContents(access.effect.target));
             }
-            table.push(capability_for(access.effect, access.holds.is_some())?);
+            table.push(capability_for(
+                access.effect,
+                access.holds.is_some(),
+                declaration.set.width_of(&access.effect.target),
+            )?);
         }
         // One transaction may not declare both an exclusive write and a
         // commutative mode on the same cell: the receipt records
@@ -899,7 +907,7 @@ pub(super) const fn contents_of(target: EffectTarget) -> Contents {
 /// An entry is the width-one interval at its order — the same
 /// normalization the oracle's coverage walk applies — so a declared entry
 /// and a declared range reach the store through one shape.
-const fn interval_of(target: EffectTarget) -> Option<Interval> {
+const fn interval_of(target: EffectTarget, width: u32) -> Option<Interval> {
     match target {
         EffectTarget::Point(_) => None,
         EffectTarget::Entry {
@@ -907,6 +915,7 @@ const fn interval_of(target: EffectTarget) -> Option<Interval> {
             collection,
             order,
         } => Some(Interval {
+            width,
             owner,
             collection,
             lo: order,
@@ -920,6 +929,7 @@ const fn interval_of(target: EffectTarget) -> Option<Interval> {
             hi,
             cap,
         } => Some(Interval {
+            width,
             owner,
             collection,
             lo,
@@ -935,6 +945,7 @@ const fn interval_of(target: EffectTarget) -> Option<Interval> {
 pub(super) fn capability_for(
     effect: Effect,
     denominated: bool,
+    width: u32,
 ) -> Result<Capability, MaterializeError> {
     match (effect.target, effect.mode) {
         (EffectTarget::Point(key), Mode::Read) => Ok(if denominated {
@@ -971,7 +982,7 @@ pub(super) fn capability_for(
         // Point targets are spoken for above, so what is left is a
         // collection one — and the two spell the same interval, the mode
         // choosing only which capability carries it.
-        (target, mode @ (Mode::Read | Mode::Write { .. })) => interval_of(target)
+        (target, mode @ (Mode::Read | Mode::Write { .. })) => interval_of(target, width)
             .map(|interval| match (mode, denominated) {
                 (Mode::Write { moves }, true) => Capability::Instances { interval, moves },
                 (Mode::Write { .. }, false) => Capability::RangeWrite(interval),
@@ -990,8 +1001,8 @@ mod tests {
         Claim, Condition, Declaration, DeclaredAccess, JudgedLeaf, Rule, SlotRef, rule,
     };
     use hyperscale_vm_types::{
-        Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Moves, Presence,
-        ResourceAddr, encode_amount,
+        Address, AddressClass, CollectionId, Effect, EffectTarget, MAX_SLOT_WIDTH, Mode, Moves,
+        Presence, ResourceAddr, encode_amount,
     };
 
     use super::super::fixtures::{RESOURCE, declared, env, hash, holding, key, ord, tx};
@@ -1501,6 +1512,7 @@ mod tests {
                         mode: *mode,
                     },
                     true,
+                    MAX_SLOT_WIDTH,
                 );
                 assert_eq!(
                     !supports(&clause),

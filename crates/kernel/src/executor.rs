@@ -1047,8 +1047,9 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
         // declaration and handed capabilities for another.
         let mut folded = EffectSet::new();
         for access in &entry.declaration.ordered {
+            let width = entry.declaration.set.width_of(&access.effect.target);
             folded
-                .insert(access.effect)
+                .insert_bounded(access.effect, width)
                 .map_err(|_| BatchError::InconsistentDeclaration { tx: entry.tx })?;
         }
         if folded != entry.declaration.set {

@@ -395,8 +395,8 @@ impl KernelSession {
         index: u32,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
-        Self::check_value_len(value.len())?;
         let interval = self.write_interval(site, element)?;
+        Self::check_value_len(value.len(), interval.width)?;
         self.scan(site, element)?;
         let order = *indexed(&self.ranges.scans[&(site, element)].entries, index)
             .map(|(order, _)| order)?;
@@ -420,8 +420,8 @@ impl KernelSession {
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
-        Self::check_value_len(value.len())?;
         let interval = self.write_interval(site, element)?;
+        Self::check_value_len(value.len(), interval.width)?;
         if !interval.holds(order) {
             return Err(SessionTrap::OrderOutsideInterval);
         }
@@ -514,8 +514,8 @@ impl KernelSession {
         funds: u32,
         value: &[u8],
     ) -> Result<(), SessionTrap> {
-        Self::check_value_len(value.len())?;
         let interval = self.filing_interval(site, element)?;
+        Self::check_value_len(value.len(), interval.width)?;
         self.judge_credit(site, element, funds)?;
         let Held::Instances(ids) = self.bucket(funds)? else {
             return Err(SessionTrap::WrongEdgeKind);
@@ -569,7 +569,8 @@ mod tests {
 
     use hyperscale_vm_effects::Declaration;
     use hyperscale_vm_types::{
-        AMOUNT_CELL_BYTES, Address, AddressClass, CollectionId, Effect, EffectTarget, Mode, Moves,
+        AMOUNT_CELL_BYTES, Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget,
+        Mode, Moves,
     };
 
     use super::super::fixtures::{
@@ -1144,5 +1145,35 @@ mod tests {
                 })
             ));
         }
+    }
+
+    /// A written entry is held to the width its slot declared: what the
+    /// declaration priced is what a body may write, and a value past it
+    /// fails the transaction rather than entering the store.
+    #[test]
+    fn an_entry_past_its_slot_width_traps() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let mut set = EffectSet::new();
+        set.insert_bounded(
+            Effect {
+                target: EffectTarget::Range {
+                    owner,
+                    collection,
+                    lo: 0,
+                    hi: u128::MAX,
+                    cap: 4,
+                },
+                mode: Mode::Write { moves: Moves::Both },
+            },
+            4,
+        )
+        .unwrap();
+        let mut session = session_over(MemoryStore::new(), &set);
+        assert_eq!(
+            session.range_insert(0, 0, 1, vec![7; 5]),
+            Err(SessionTrap::CellValueTooLarge { len: 5, width: 4 })
+        );
+        assert_eq!(session.range_insert(0, 0, 1, vec![7; 4]), Ok(()));
     }
 }

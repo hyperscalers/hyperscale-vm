@@ -1,10 +1,10 @@
 state
   the protocol's own — config
-     16  bank — one leaf, holding u128, denominated in config.collateral
-     17  mark — one leaf, holding [u8; 32]
-     18  funding_charged — one leaf, holding [u8; 32]
-     19  funding_credited — one leaf, holding [u8; 32]
-     20  position — one leaf, holding position
+     16  bank — one leaf, holding u128, at most 16 bytes, denominated in config.collateral
+     17  mark — one leaf, holding [u8; 32], at most 32 bytes
+     18  funding_charged — one leaf, holding [u8; 32], at most 32 bytes
+     19  funding_credited — one leaf, holding [u8; 32], at most 32 bytes
+     20  position — one leaf, holding position, at most 128 bytes
 config
       0  collateral
       1  oracle

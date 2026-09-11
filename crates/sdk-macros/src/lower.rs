@@ -86,6 +86,9 @@ pub struct Field {
     /// it carries none; a `Cell<Vault>` has no key to be denominated by
     /// and states it here.
     pub denomination: Option<syn::Expr>,
+    /// The most bytes one leaf may hold, where the field states it
+    /// under `#[width(..)]`; a closed element derives its own.
+    pub width: Option<u32>,
 }
 
 /// One target a body opened a handle on.
@@ -4471,6 +4474,7 @@ mod tests {
             kind,
             element: Some(syn::parse_quote!(u64)),
             denomination: None,
+            width: None,
         };
         BTreeMap::from([
             ("noted".to_owned(), cell(10, FieldKind::Cell)),

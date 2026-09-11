@@ -9,8 +9,8 @@ use hyperscale_hbor::{
     Hbor, HborShape, ReadError, ShapeRegistry, ShapeTable, ShapeValue, TypeShape,
 };
 use hyperscale_vm_types::{
-    Address, CallTarget, ComponentAddr, Event, NativeAddr, PackageAddr, PrincipalAddr,
-    ResourceAddr, SubstateKey,
+    Address, CallTarget, ComponentAddr, Event, MAX_SLOT_WIDTH, NativeAddr, PackageAddr,
+    PrincipalAddr, ResourceAddr, SubstateKey,
 };
 
 use crate::KERNEL_SLOT_BASE;
@@ -151,11 +151,56 @@ pub struct SlotShape {
     pub kind: SlotKind,
     /// What one leaf holds.
     pub element: LeafForm,
+    /// The most bytes one leaf under the slot may hold.
+    ///
+    /// Derived from the element's shape where the shape is closed, and
+    /// declared beside the field otherwise; zero is no width at all,
+    /// which the publish gate refuses. Held to
+    /// [`MAX_SLOT_WIDTH`](hyperscale_vm_types::MAX_SLOT_WIDTH), and
+    /// what turns a declared entry cap into a declared byte count.
+    pub width: u32,
     /// The resource a declared vault holds, where the field's
     /// `#[holds(..)]` states one — the same expression the field's
     /// effects carry, so a consumer resolves the balance sheet against
     /// the instance's configuration.
     pub denomination: Option<Expr>,
+}
+
+/// The width of every declared slot of one package, for evaluation to
+/// stamp onto the targets a signature reaches.
+///
+/// A target names its slot, and the slot's width is what bounds the
+/// leaves under it; a slot the table does not hold — the protocol's own
+/// band, or a reach into another package — is bounded at the cap.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SlotWidths(BTreeMap<SlotId, u32>);
+
+impl SlotWidths {
+    /// No slots known: every target bounded at the cap.
+    #[must_use]
+    pub fn none() -> &'static Self {
+        static NONE: SlotWidths = SlotWidths(BTreeMap::new());
+        &NONE
+    }
+
+    /// The most bytes one leaf under `slot` may hold.
+    #[must_use]
+    pub fn width_of(&self, slot: SlotId) -> u32 {
+        self.0.get(&slot).copied().unwrap_or(MAX_SLOT_WIDTH)
+    }
+}
+
+impl PackageMetadata {
+    /// The width of every slot this package declares.
+    #[must_use]
+    pub fn slot_widths(&self) -> SlotWidths {
+        SlotWidths(
+            self.state
+                .iter()
+                .map(|(slot, shape)| (*slot, shape.width))
+                .collect(),
+        )
+    }
 }
 
 /// How a crate lists the packages it declares: each by the name its

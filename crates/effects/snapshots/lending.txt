@@ -1,12 +1,12 @@
 state
   the protocol's own — config
-     16  posted — one leaf, holding u128, denominated in config.collateral
-     17  reserves — one leaf, holding u128, denominated in config.debt
-     18  index — one leaf, holding [u8; 32]
-     19  collateral_price — one leaf, holding [u8; 32]
-     20  debt_price — one leaf, holding [u8; 32]
-     21  shares — one leaf, holding u128
-     22  accrued_at — one leaf, holding u64
+     16  posted — one leaf, holding u128, at most 16 bytes, denominated in config.collateral
+     17  reserves — one leaf, holding u128, at most 16 bytes, denominated in config.debt
+     18  index — one leaf, holding [u8; 32], at most 32 bytes
+     19  collateral_price — one leaf, holding [u8; 32], at most 32 bytes
+     20  debt_price — one leaf, holding [u8; 32], at most 32 bytes
+     21  shares — one leaf, holding u128, at most 16 bytes
+     22  accrued_at — one leaf, holding u64, at most 8 bytes
 config
       0  collateral
       1  debt

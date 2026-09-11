@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::address::{EffectTarget, SubstateKey};
 use crate::mode::{ConflictClass, Mode, ModeKind};
+use crate::writes::MAX_SLOT_WIDTH;
 
 /// A declared access: target plus mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -31,12 +32,26 @@ pub enum EffectConflict {
     ReserveOverflow,
 }
 
+/// What a set holds for one target: the modes declared on it, and the
+/// most bytes one leaf under it may hold.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Declared {
+    modes: BTreeSet<Mode>,
+    /// The leaf width, folded by minimum: a target inserted without one
+    /// is bounded at [`MAX_SLOT_WIDTH`], and a stated width lowers it.
+    width: u32,
+}
+
 /// A set of declared accesses with union semantics: identical effects
 /// dedup, and reserve amounts on the same target fold by summation, so the
 /// set carries the transaction's total declared demand per key.
+///
+/// Beside the modes, each target carries the width of the leaves it
+/// reaches, which is what bounds the bytes a declaration can read or
+/// write.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EffectSet {
-    by_target: BTreeMap<EffectTarget, BTreeSet<Mode>>,
+    by_target: BTreeMap<EffectTarget, Declared>,
 }
 
 impl EffectSet {
@@ -62,7 +77,27 @@ impl EffectSet {
     /// [`EffectConflict`] where the fold has no answer: a reserve total
     /// past `u128`.
     pub fn insert(&mut self, effect: Effect) -> Result<bool, EffectConflict> {
-        let modes = self.by_target.entry(effect.target).or_default();
+        self.insert_bounded(effect, MAX_SLOT_WIDTH)
+    }
+
+    /// [`insert`](Self::insert), with the width of the leaves the
+    /// target reaches. Widths fold by minimum, so a target stated at a
+    /// width and later inserted without one keeps the width.
+    ///
+    /// # Errors
+    ///
+    /// As [`insert`](Self::insert).
+    pub fn insert_bounded(&mut self, effect: Effect, width: u32) -> Result<bool, EffectConflict> {
+        let declared = self
+            .by_target
+            .entry(effect.target)
+            .or_insert_with(|| Declared {
+                modes: BTreeSet::new(),
+                width: MAX_SLOT_WIDTH,
+            });
+        let narrowed = width < declared.width;
+        declared.width = declared.width.min(width);
+        let modes = &mut declared.modes;
         if let Mode::Reserve { amount } = effect.mode {
             let existing = modes.iter().find_map(|mode| match mode {
                 Mode::Reserve { amount } => Some(*amount),
@@ -79,13 +114,22 @@ impl EffectSet {
                 return Ok(true);
             }
         }
-        Ok(modes.insert(effect.mode))
+        Ok(modes.insert(effect.mode) || narrowed)
+    }
+
+    /// The most bytes one leaf under `target` may hold, or
+    /// [`MAX_SLOT_WIDTH`] for a target the set does not hold.
+    #[must_use]
+    pub fn width_of(&self, target: &EffectTarget) -> u32 {
+        self.by_target
+            .get(target)
+            .map_or(MAX_SLOT_WIDTH, |declared| declared.width)
     }
 
     /// Every effect in the set, in canonical (target, mode) order.
     pub fn iter(&self) -> impl Iterator<Item = Effect> + '_ {
-        self.by_target.iter().flat_map(|(target, modes)| {
-            modes.iter().map(move |mode| Effect {
+        self.by_target.iter().flat_map(|(target, declared)| {
+            declared.modes.iter().map(move |mode| Effect {
                 target: *target,
                 mode: *mode,
             })
@@ -95,7 +139,10 @@ impl EffectSet {
     /// The number of (target, mode) pairs.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.by_target.values().map(BTreeSet::len).sum()
+        self.by_target
+            .values()
+            .map(|declared| declared.modes.len())
+            .sum()
     }
 
     /// Whether the set is empty.
@@ -114,8 +161,9 @@ impl EffectSet {
     pub fn provision_targets(&self) -> BTreeSet<EffectTarget> {
         self.by_target
             .iter()
-            .filter(|(_, modes)| {
-                modes
+            .filter(|(_, declared)| {
+                declared
+                    .modes
                     .iter()
                     .any(|mode| matches!(mode.kind(), ModeKind::Read | ModeKind::Write))
             })
@@ -128,7 +176,7 @@ impl EffectSet {
     pub fn contains(&self, effect: &Effect) -> bool {
         self.by_target
             .get(&effect.target)
-            .is_some_and(|modes| modes.contains(&effect.mode))
+            .is_some_and(|declared| declared.modes.contains(&effect.mode))
     }
 
     /// The first point target this set claims both exclusively and
@@ -152,12 +200,13 @@ impl EffectSet {
     /// where a target's modes are already gathered.
     #[must_use]
     pub fn self_conflicting(&self) -> Option<SubstateKey> {
-        self.by_target.iter().find_map(|(target, modes)| {
+        self.by_target.iter().find_map(|(target, declared)| {
             let EffectTarget::Point(key) = target else {
                 return None;
             };
             let claims = |class| {
-                modes
+                declared
+                    .modes
                     .iter()
                     .any(|mode| mode.kind().conflict_class() == class)
             };

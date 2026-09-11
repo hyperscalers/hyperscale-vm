@@ -928,9 +928,30 @@ mod selection {
 fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() {
     use hyperscale_vm_effects::{
         EvalBudget, EvalInputs, Expr, Hash32, InstanceMeta, ManifestHash, PackageHash,
-        PresentedGrants, SlotId, TargetExpr, TestHasher, Value, child_key, evaluate_effects,
+        PresentedGrants, SlotId, SlotWidths, TargetExpr, TestHasher, Value, child_key,
+        evaluate_effects,
     };
     use hyperscale_vm_types::{Address, AddressClass, EffectTarget};
+
+    /// Inputs over one call's arguments, at a fixed identity and with
+    /// nothing presented: what every evaluation below runs under.
+    fn inputs_over<'a>(
+        self_addr: Address,
+        args: &'a [Value],
+        record: &'a InstanceMeta,
+        budget: &'a EvalBudget,
+    ) -> EvalInputs<'a> {
+        EvalInputs {
+            self_addr,
+            args,
+            record,
+            node_index: 0,
+            identity: ManifestHash(Hash32([9; 32])),
+            grants: PresentedGrants::none(),
+            widths: SlotWidths::none(),
+            budget,
+        }
+    }
 
     let metadata = selection::blueprint().metadata();
     let vaults_slot = *metadata
@@ -966,15 +987,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
     for (paid, expected) in [(left, left), (right, right), (address(0x33), right)] {
         let args = [Value::Address(paid)];
         let budget = EvalBudget::default();
-        let inputs = EvalInputs {
-            self_addr,
-            args: &args,
-            record: &record,
-            node_index: 0,
-            identity: ManifestHash(Hash32([9; 32])),
-            grants: PresentedGrants::none(),
-            budget: &budget,
-        };
+        let inputs = inputs_over(self_addr, &args, &record, &budget);
         let set = evaluate_effects(&effects("either"), &inputs, &TestHasher).unwrap();
         let vaults: Vec<_> = [left, right, address(0x33)]
             .into_iter()
@@ -996,15 +1009,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
     // caller to the fallback instead of failing to route at all.
     let args = [Value::Address(right)];
     let budget = EvalBudget::default();
-    let inputs = EvalInputs {
-        self_addr,
-        args: &args,
-        record: &record,
-        node_index: 0,
-        identity: ManifestHash(Hash32([9; 32])),
-        grants: PresentedGrants::none(),
-        budget: &budget,
-    };
+    let inputs = inputs_over(self_addr, &args, &record, &budget);
     let set = evaluate_effects(&effects("routed"), &inputs, &TestHasher).unwrap();
     let fallback = EffectTarget::Point(child_key(
         &TestHasher,

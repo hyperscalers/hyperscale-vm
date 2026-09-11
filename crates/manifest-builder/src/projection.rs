@@ -16,7 +16,7 @@ use hyperscale_vm_effects::{
     ChainRecords, Claim, Clause, Constraint, EdgeContent, EvalBudget, EvalInputs, Expr,
     GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph,
     ManifestHash, MethodSignature, ParamType, PresentedGrants, ResourceGrants, ResourceMeta,
-    RuleLeaf, SealedLeaf, Value, evaluate_expr, founds_its_resource, keying_resource,
+    RuleLeaf, SealedLeaf, SlotWidths, Value, evaluate_expr, founds_its_resource, keying_resource,
 };
 use hyperscale_vm_types::{Address, CallTarget, ResourceAddr};
 
@@ -152,6 +152,7 @@ pub(crate) fn eval_inputs<'a>(
         node_index,
         identity: UNBOUND,
         grants: PresentedGrants::none(),
+        widths: SlotWidths::none(),
         budget,
     }
 }

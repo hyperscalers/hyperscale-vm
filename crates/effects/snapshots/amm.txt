@@ -1,7 +1,7 @@
 state
   the protocol's own — config, resource
-     16  reserves — a leaf per key, holding u128
-     17  supply — one leaf, holding u128
+     16  reserves — a leaf per key, holding u128, at most 16 bytes
+     17  supply — one leaf, holding u128, at most 16 bytes
 config
       0  x
       1  y

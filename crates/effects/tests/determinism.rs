@@ -10,7 +10,7 @@ use common::{ALICE, account, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
     EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32,
     InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash, PresentedGrants, Records, SlotId,
-    SlotRef, TestHasher, Value, admit, evaluate_expr, route,
+    SlotRef, SlotWidths, TestHasher, Value, admit, evaluate_expr, route,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, PrincipalAddr,
@@ -131,6 +131,7 @@ proptest! {
             node_index,
             identity: ManifestHash(Hash32(seed)),
             grants: PresentedGrants::none(),
+            widths: SlotWidths::none(),
             budget: &budget,
         };
         let first = evaluate_expr(&expr, &inputs, &TestHasher);

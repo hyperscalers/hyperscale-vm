@@ -14,14 +14,15 @@ use std::collections::BTreeMap;
 
 use hyperscale_hbor::Hbor;
 use hyperscale_vm_types::{
-    Address, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey, Mode, Moves,
-    ResourceAddr, SubstateKey, WrongClass,
+    Address, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey,
+    MAX_SLOT_WIDTH, Mode, Moves, ResourceAddr, SubstateKey, WrongClass,
 };
 
 use crate::claim::Claim;
 use crate::hash::{Hash32, Hasher};
 use crate::instance::InstanceMeta;
 use crate::manifest::{JudgedLeaf, ManifestHash};
+use crate::metadata::SlotWidths;
 use crate::resource::{
     GrantedBehaviour, GrantsExpr, GrantsResolveError, ResourceGrants, ResourceKind, ResourceMeta,
 };
@@ -941,6 +942,10 @@ pub struct EvalInputs<'a> {
     /// node in one tree, so what bounds a caller is the tree rather than
     /// whichever signature it happened to reach.
     pub budget: &'a EvalBudget,
+    /// The width of every slot the target package declares, stamped
+    /// onto each target the signature reaches. A slot the table does
+    /// not hold is bounded at the cap.
+    pub widths: &'a SlotWidths,
 }
 
 /// The granted rules an envelope presented, by the address each record
@@ -1574,7 +1579,7 @@ fn eval_clauses(
                 reach,
                 ..
             } => {
-                let target = eval_target(declared, inputs, hasher, bindings, budget)?;
+                let (target, width) = eval_target(declared, inputs, hasher, bindings, budget)?;
                 let mode = eval_mode(mode, inputs, hasher, bindings, budget)?;
                 budget.charge()?;
                 // Evaluated beside the key it belongs to and kept parallel
@@ -1590,7 +1595,7 @@ fn eval_clauses(
                 // where the declaration is.
                 let reached = eval_reach(*reach, declared, inputs, hasher, bindings, budget)?;
                 let effect = Effect { target, mode };
-                out.set.insert(effect)?;
+                out.set.insert_bounded(effect, width)?;
                 out.ordered.push(DeclaredAccess {
                     effect,
                     holds: held,
@@ -1812,7 +1817,7 @@ fn eval_condition(
     // evaluate, which is what lets the authored caps stand for both.
     rule.map_leaves(&mut |leaf| match leaf {
         RuleLeaf::Presence { target, expect } => Ok(JudgedLeaf::Presence {
-            target: eval_target(target, inputs, hasher, bindings, budget)?,
+            target: eval_target(target, inputs, hasher, bindings, budget)?.0,
             expect: *expect,
         }),
         RuleLeaf::Claim(expr) => {
@@ -1831,17 +1836,40 @@ fn eval_condition(
     .map(Some)
 }
 
+/// The width of the leaves a target reaches, read off the slot it
+/// names: a declared slot answers from the table, and a key derived
+/// any other way — the protocol's own band, a reach into another
+/// package — is bounded at the cap.
+fn width_of(target: &TargetExpr, inputs: &EvalInputs<'_>) -> u32 {
+    let slot = match target {
+        TargetExpr::Point(Expr::ChildKey { slot, .. })
+        | TargetExpr::Entry {
+            collection: slot, ..
+        }
+        | TargetExpr::Range {
+            collection: slot, ..
+        } => slot,
+        TargetExpr::Point(_) => return MAX_SLOT_WIDTH,
+    };
+    match slot {
+        SlotRef::Fixed(slot) => inputs.widths.width_of(*slot),
+        SlotRef::Reached(_) => MAX_SLOT_WIDTH,
+    }
+}
+
+/// A target and the width of the leaves it reaches.
 fn eval_target(
     target: &TargetExpr,
     inputs: &EvalInputs<'_>,
     hasher: &dyn Hasher,
     bindings: &[Value],
     budget: &Budget<'_>,
-) -> Result<EffectTarget, EvalError> {
-    match target {
+) -> Result<(EffectTarget, u32), EvalError> {
+    let width = width_of(target, inputs);
+    let evaluated = match target {
         TargetExpr::Point(expr) => {
             let key = as_key(&*eval_expr(expr, inputs, hasher, bindings, 0, budget)?)?;
-            Ok(EffectTarget::Point(key))
+            EffectTarget::Point(key)
         }
         TargetExpr::Entry {
             owner,
@@ -1854,11 +1882,11 @@ fn eval_target(
                 owner, collection, material, inputs, hasher, bindings, budget,
             )?;
             let order = as_u128(&*eval_expr(order, inputs, hasher, bindings, 0, budget)?)?;
-            Ok(EffectTarget::Entry {
+            EffectTarget::Entry {
                 owner,
                 collection,
                 order,
-            })
+            }
         }
         TargetExpr::Range {
             owner,
@@ -1878,15 +1906,16 @@ fn eval_target(
                 return Err(EvalError::InvalidRange);
             }
             let cap = as_cap(&*eval_expr(cap, inputs, hasher, bindings, 0, budget)?)?;
-            Ok(EffectTarget::Range {
+            EffectTarget::Range {
                 owner,
                 collection,
                 lo,
                 hi,
                 cap,
-            })
+            }
         }
-    }
+    };
+    Ok((evaluated, width))
 }
 
 /// Fold a target's slot and evaluated material into the collection
@@ -2578,7 +2607,7 @@ mod tests {
     use super::{
         Clause, EvalBudget, EvalError, EvalInputs, Expr, KERNEL_SLOT_BASE, MAX_CLAUSE_DEPTH,
         MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_PROVEN_PER_SIGNATURE, MAX_VALUE_ITEMS, ModeExpr,
-        NF_VAULT, PACKAGE_SLOT_BASE, SlotRef, TargetExpr, VAULT, evaluate_declaration,
+        NF_VAULT, PACKAGE_SLOT_BASE, SlotRef, SlotWidths, TargetExpr, VAULT, evaluate_declaration,
         evaluate_effects, evaluate_expr, fresh_id, fresh_local,
     };
     use crate::hash::{Hash32, TestHasher};
@@ -2721,6 +2750,7 @@ mod tests {
             node_index: 3,
             identity: ManifestHash(Hash32([9; 32])),
             grants: super::PresentedGrants::none(),
+            widths: SlotWidths::none(),
             budget: Box::leak(Box::new(EvalBudget::default())),
         }
     }
@@ -3474,6 +3504,7 @@ mod tests {
             node_index: 3,
             identity: ManifestHash(Hash32([9; 32])),
             grants: super::PresentedGrants::none(),
+            widths: SlotWidths::none(),
             budget: &budget,
         };
         let mut nodes = 0;

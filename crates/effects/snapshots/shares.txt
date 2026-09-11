@@ -1,7 +1,7 @@
 state
   the protocol's own — config, resource
-     16  pool — one leaf, holding u128, denominated in config.asset
-     17  supply — one leaf, holding u128
+     16  pool — one leaf, holding u128, at most 16 bytes, denominated in config.asset
+     17  supply — one leaf, holding u128, at most 16 bytes
 config
       0  asset
 resources

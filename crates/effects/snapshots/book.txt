@@ -1,8 +1,8 @@
 state
   the protocol's own — config
-     16  base — one leaf, holding u128, denominated in config.base
-     17  quote — one leaf, holding u128, denominated in config.quote
-     18  asks — an ordered collection, holding u128
+     16  base — one leaf, holding u128, at most 16 bytes, denominated in config.base
+     17  quote — one leaf, holding u128, at most 16 bytes, denominated in config.quote
+     18  asks — an ordered collection, holding u128, at most 16 bytes
 config
       0  base
       1  quote

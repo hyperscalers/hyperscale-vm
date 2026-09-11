@@ -276,7 +276,9 @@ mod tests {
         let mut union = EffectSet::new();
         for set in routing.per_shard.values() {
             for effect in set.iter() {
-                union.insert(effect).unwrap();
+                union
+                    .insert_bounded(effect, set.width_of(&effect.target))
+                    .unwrap();
             }
         }
         assert_eq!(declaration.set, union);

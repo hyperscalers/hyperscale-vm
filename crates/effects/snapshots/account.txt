@@ -1,11 +1,11 @@
 state
   the protocol's own — vault, auth, nf-vault
-     16  refused — a leaf per key, holding [u8; 1]
-     17  quarantine — a leaf per key, holding u128
-     18  recovery — one leaf, holding [u8]
-     19  confirmation — one leaf, holding [u8]
-     20  pending — one leaf, holding pending
-     21  delay_ms — one leaf, holding u64
+     16  refused — a leaf per key, holding [u8; 1], at most 1 bytes
+     17  quarantine — a leaf per key, holding u128, at most 16 bytes
+     18  recovery — one leaf, holding [u8], at most 4096 bytes
+     19  confirmation — one leaf, holding [u8], at most 4096 bytes
+     20  pending — one leaf, holding pending, at most 12352 bytes
+     21  delay_ms — one leaf, holding u64, at most 8 bytes
 events
       0  withdrawn
       1  deposited

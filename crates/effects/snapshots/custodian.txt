@@ -1,8 +1,8 @@
 state
   the protocol's own — config
-     16  till — one leaf, holding u128, denominated in config.asset
-     17  other_till — one leaf, holding u128, denominated in config.other
-     18  locker — an ordered collection, holding nothing, denominated in config.instances
+     16  till — one leaf, holding u128, at most 16 bytes, denominated in config.asset
+     17  other_till — one leaf, holding u128, at most 16 bytes, denominated in config.other
+     18  locker — an ordered collection, holding nothing, at most 0 bytes, denominated in config.instances
 config
       0  asset
       1  other

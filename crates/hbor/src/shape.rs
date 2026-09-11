@@ -217,6 +217,12 @@ struct Walked {
     /// sum would understate what a run costs and let a claimed length
     /// past the bytes that must pay for it.
     least: usize,
+    /// The most bytes any value of the shape occupies, or `None` where
+    /// a run or a text can grow without bound.
+    ///
+    /// Saturating like `least`, and for the same reason; `None` is
+    /// what a run answers, and it swallows every sum it enters.
+    most: Option<usize>,
 }
 
 impl Walked {
@@ -226,8 +232,14 @@ impl Walked {
             cost: 1,
             depth: 0,
             least: width,
+            most: Some(width),
         }
     }
+}
+
+/// `a + b`, where either side unbounded is an unbounded sum.
+fn most_sum(a: Option<usize>, b: Option<usize>) -> Option<usize> {
+    Some(a?.saturating_add(b?))
 }
 
 /// A table walked with what each of its names resolved to kept.
@@ -329,6 +341,23 @@ impl<'a> Resolution<'a> {
         self.walk(shape, budget).map(|walked| walked.least)
     }
 
+    /// The most bytes any value of `shape` can occupy, or `None` where
+    /// the shape holds a run or a text and so has no bound.
+    ///
+    /// What sizes a leaf's width from its type alone: a shape this
+    /// answers for needs no width declared beside it.
+    ///
+    /// # Errors
+    ///
+    /// [`ShapeFault`], as [`readable`](Self::readable).
+    pub fn max_encoded_len(
+        &mut self,
+        shape: &TypeShape,
+        budget: usize,
+    ) -> Result<Option<usize>, ShapeFault> {
+        self.walk(shape, budget).map(|walked| walked.most)
+    }
+
     /// The levels a shape spends, the frames the walk spends reaching
     /// them, and the fewest bytes it occupies, read off one another in
     /// one pass.
@@ -338,9 +367,11 @@ impl<'a> Resolution<'a> {
         };
         match shape {
             // A length with nothing under it, and the one-byte scalars.
-            TypeShape::Bool | TypeShape::U8 | TypeShape::I8 | TypeShape::Text => {
-                Ok(Walked::leaf(1))
-            }
+            TypeShape::Bool | TypeShape::U8 | TypeShape::I8 => Ok(Walked::leaf(1)),
+            TypeShape::Text => Ok(Walked {
+                most: None,
+                ..Walked::leaf(1)
+            }),
             TypeShape::U16 | TypeShape::I16 => Ok(Walked::leaf(2)),
             TypeShape::U32 | TypeShape::I32 => Ok(Walked::leaf(4)),
             TypeShape::U64 | TypeShape::I64 => Ok(Walked::leaf(8)),
@@ -357,6 +388,7 @@ impl<'a> Resolution<'a> {
                     cost: 1 + key.cost.max(value.cost),
                     depth: key.depth.max(value.depth) + 1,
                     least: 1,
+                    most: None,
                 })
             }
             // The discriminant byte, with `None` carrying nothing beside
@@ -367,6 +399,7 @@ impl<'a> Resolution<'a> {
                     cost: 1 + held.cost,
                     depth: held.depth + 1,
                     least: 1,
+                    most: held.most.map(|most| most.saturating_add(1)),
                 })
             }
             TypeShape::Tuple(elements) => self.under(elements.iter(), remaining),
@@ -388,6 +421,7 @@ impl<'a> Resolution<'a> {
                 let mut cost = 1usize;
                 let mut deepest = None::<usize>;
                 let mut lightest = None::<usize>;
+                let mut widest = Some(0usize);
                 for variant in variants {
                     let walked = self.walk(&variant.content, remaining)?;
                     cost = cost.max(1 + walked.cost);
@@ -395,11 +429,16 @@ impl<'a> Resolution<'a> {
                         Some(deepest.map_or(walked.depth, |seen: usize| seen.max(walked.depth)));
                     lightest =
                         Some(lightest.map_or(walked.least, |seen: usize| seen.min(walked.least)));
+                    widest = match (widest, walked.most) {
+                        (Some(seen), Some(most)) => Some(seen.max(most)),
+                        _ => None,
+                    };
                 }
                 Ok(Walked {
                     cost,
                     depth: deepest.unwrap_or(0),
                     least: lightest.unwrap_or(0).saturating_add(1),
+                    most: widest.map(|most| most.saturating_add(1)),
                 })
             }
             // The hop is a frame of its own; the name is not on the wire,
@@ -426,16 +465,19 @@ impl<'a> Resolution<'a> {
         let mut cost = 1usize;
         let mut deepest = None::<usize>;
         let mut least = 0usize;
+        let mut most = Some(0usize);
         for shape in shapes {
             let walked = self.walk(shape, remaining)?;
             cost = cost.max(1 + walked.cost);
             deepest = Some(deepest.map_or(walked.depth, |seen: usize| seen.max(walked.depth)));
             least = least.saturating_add(walked.least);
+            most = most_sum(most, walked.most);
         }
         Ok(Walked {
             cost,
             depth: deepest.map_or(0, |depth| depth + 1),
             least,
+            most,
         })
     }
 
@@ -450,6 +492,7 @@ impl<'a> Resolution<'a> {
             cost: 1 + walked.cost,
             depth: walked.depth + 1,
             least: 1,
+            most: None,
         })
     }
 

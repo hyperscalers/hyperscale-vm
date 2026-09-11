@@ -51,9 +51,7 @@ use hyperscale_vm_types::{
 // The emission caps and the event record are the shared vocabulary: the
 // same constants bound the kernel's emission here and the wire's decode in
 // the consensus workspace, so the two cannot drift.
-use hyperscale_vm_types::{
-    Event, MAX_CELL_VALUE_LEN, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
-};
+use hyperscale_vm_types::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX};
 pub use materialize::{Capability, Interval, MaterializeError, Settlement};
 use ranges::Ranges;
 pub use ranges::SCAN_SEEK_BYTES;
@@ -547,19 +545,19 @@ impl KernelSession {
         element: u32,
         value: Vec<u8>,
     ) -> Result<(), SessionTrap> {
-        Self::check_value_len(value.len())?;
         let key = self.acting_key(site, element, Op::Write)?;
+        let width = self.declared.width_of(&EffectTarget::Point(key));
+        Self::check_value_len(value.len(), width)?;
         Ok(self.store.write(key, value)?)
     }
 
-    /// The byte cap a written cell or entry value carries wherever it
-    /// travels, held at production the way an event payload's is — so an
-    /// oversized value fails the transaction that made it rather than
-    /// entering committed state a provision or a snap-sync import cannot
-    /// decode.
-    pub(crate) const fn check_value_len(len: usize) -> Result<(), SessionTrap> {
-        if len > MAX_CELL_VALUE_LEN {
-            return Err(SessionTrap::CellValueTooLarge(len));
+    /// A written cell or entry value held to the width its slot
+    /// declared, at production the way an event payload's cap is — so a
+    /// value past what the declaration priced fails the transaction that
+    /// wrote it rather than entering committed state past its bound.
+    pub(crate) const fn check_value_len(len: usize, width: u32) -> Result<(), SessionTrap> {
+        if len > width as usize {
+            return Err(SessionTrap::CellValueTooLarge { len, width });
         }
         Ok(())
     }
@@ -733,8 +731,8 @@ mod tests {
 
     use hyperscale_vm_types::{
         ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectTarget,
-        MAX_CELL_VALUE_LEN, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, Mode,
-        Moves, encode_amount,
+        MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX, MAX_SLOT_WIDTH, Mode, Moves,
+        encode_amount,
     };
 
     use super::fixtures::{declared, env, key, session_holding, session_over, tx};
@@ -798,6 +796,7 @@ mod tests {
             key(1),
             5,
             Interval {
+                width: MAX_SLOT_WIDTH,
                 owner: Address::new([9; 31], AddressClass::Component),
                 collection: CollectionId([4; 16]),
                 lo: 0,
@@ -912,11 +911,13 @@ mod tests {
                     mode: Mode::Write { moves },
                 },
                 true,
+                MAX_SLOT_WIDTH,
             )
             .expect("a denominated exclusive point materializes")
         };
         let interval = |moves| Capability::Instances {
             interval: Interval {
+                width: MAX_SLOT_WIDTH,
                 owner: Address::new([9; 31], AddressClass::Component),
                 collection: CollectionId([4; 16]),
                 lo: 0,
@@ -984,16 +985,21 @@ mod tests {
     /// provision or a snap-sync import could never decode.
     #[test]
     fn a_write_past_the_cell_cap_traps_at_production() {
+        let width = MAX_SLOT_WIDTH;
+        let len = width as usize + 1;
         assert_eq!(
-            KernelSession::check_value_len(MAX_CELL_VALUE_LEN + 1),
-            Err(SessionTrap::CellValueTooLarge(MAX_CELL_VALUE_LEN + 1)),
+            KernelSession::check_value_len(len, width),
+            Err(SessionTrap::CellValueTooLarge { len, width }),
         );
-        assert_eq!(KernelSession::check_value_len(MAX_CELL_VALUE_LEN), Ok(()));
-
-        let mut session = holding(Capability::Read(key(1)));
         assert_eq!(
-            session.write_cell_set(0, 0, vec![0u8; MAX_CELL_VALUE_LEN + 1]),
-            Err(SessionTrap::CellValueTooLarge(MAX_CELL_VALUE_LEN + 1)),
+            KernelSession::check_value_len(width as usize, width),
+            Ok(())
+        );
+
+        let mut session = holding(Capability::Write(key(1)));
+        assert_eq!(
+            session.write_cell_set(0, 0, vec![0u8; len]),
+            Err(SessionTrap::CellValueTooLarge { len, width }),
         );
     }
 

@@ -161,33 +161,7 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
         .ok_or_else(|| syn::Error::new(field.span(), "a state field must be named"))?
         .to_string();
 
-    let mut pinned = None;
-    let mut slot_attr = None;
-    let mut denomination = None;
-    let mut holds_attr = None;
-    for attr in &field.attrs {
-        if attr.path().is_ident("slot") {
-            if let Some(first) = slot_attr {
-                return Err(duplicate_attr(attr, first, "slot"));
-            }
-            let literal: syn::LitInt = attr.parse_args()?;
-            pinned = Some(literal.base10_parse::<u16>()?);
-            slot_attr = Some(attr);
-        }
-        if attr.path().is_ident("holds") {
-            if let Some(first) = holds_attr {
-                return Err(duplicate_attr(attr, first, "holds"));
-            }
-            denomination = Some(attr.parse_args::<syn::Expr>()?);
-            holds_attr = Some(attr);
-        }
-        if attr.path().is_ident("denomination") {
-            return Err(syn::Error::new(
-                attr.span(),
-                "what a vault holds is stated as `#[holds(..)]` — same grammar, the authoring name",
-            ));
-        }
-    }
+    let (pinned, denomination, width) = field_markers(field)?;
     // A slot an author does not pin is the next of the package's own, in
     // declaration order. Safe because a user package is immutable and its
     // instance addresses commit to its hash: reordering fields produces a
@@ -270,8 +244,52 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
             kind,
             element,
             denomination,
+            width,
         },
     ))
+}
+
+/// The markers a state field carries: a pinned slot, what it holds, and
+/// the width its leaves are held to.
+fn field_markers(field: &syn::Field) -> syn::Result<(Option<u16>, Option<syn::Expr>, Option<u32>)> {
+    let mut pinned = None;
+    let mut slot_attr = None;
+    let mut denomination = None;
+    let mut holds_attr = None;
+    let mut width = None;
+    let mut width_attr = None;
+    for attr in &field.attrs {
+        if attr.path().is_ident("width") {
+            if let Some(first) = width_attr {
+                return Err(duplicate_attr(attr, first, "width"));
+            }
+            let literal: syn::LitInt = attr.parse_args()?;
+            width = Some(literal.base10_parse::<u32>()?);
+            width_attr = Some(attr);
+        }
+        if attr.path().is_ident("slot") {
+            if let Some(first) = slot_attr {
+                return Err(duplicate_attr(attr, first, "slot"));
+            }
+            let literal: syn::LitInt = attr.parse_args()?;
+            pinned = Some(literal.base10_parse::<u16>()?);
+            slot_attr = Some(attr);
+        }
+        if attr.path().is_ident("holds") {
+            if let Some(first) = holds_attr {
+                return Err(duplicate_attr(attr, first, "holds"));
+            }
+            denomination = Some(attr.parse_args::<syn::Expr>()?);
+            holds_attr = Some(attr);
+        }
+        if attr.path().is_ident("denomination") {
+            return Err(syn::Error::new(
+                attr.span(),
+                "what a vault holds is stated as `#[holds(..)]` — same grammar, the authoring name",
+            ));
+        }
+    }
+    Ok((pinned, denomination, width))
 }
 
 /// Refuse a field in the protocol's own band.
@@ -320,6 +338,7 @@ pub fn accessors(config: Option<&syn::Ident>, serves: Serves) -> BTreeMap<String
         kind: FieldKind::Keyed,
         element: Some(syn::parse_quote!(::hyperscale_vm_sdk::state::Vault)),
         denomination: None,
+        width: None,
     };
     let mut cells = BTreeMap::from([(
         "auth".to_owned(),
@@ -330,6 +349,7 @@ pub fn accessors(config: Option<&syn::Ident>, serves: Serves) -> BTreeMap<String
                 ::core::option::Option<::hyperscale_vm_sdk::RuleBytes>
             )),
             denomination: None,
+            width: None,
         },
     )]);
     // The protocol balances are the principals': an instance package's
@@ -349,6 +369,7 @@ pub fn accessors(config: Option<&syn::Ident>, serves: Serves) -> BTreeMap<String
                 // value and is narrowed by a resource.
                 element: Some(syn::parse_quote!(::hyperscale_vm_sdk::state::NfVault)),
                 denomination: None,
+                width: None,
             },
         );
     }
@@ -363,6 +384,7 @@ pub fn accessors(config: Option<&syn::Ident>, serves: Serves) -> BTreeMap<String
                 kind: FieldKind::Config,
                 element: Some(syn::parse_quote!(#config)),
                 denomination: None,
+                width: None,
             },
         );
     }
@@ -543,6 +565,9 @@ pub fn state_table(
             };
             let element = field.element.as_ref()?;
             let slot = field.slot;
+            let width = field
+                .width
+                .map_or_else(|| quote!(None), |width| quote!(Some(#width)));
             // A field holding a configured resource carries it into the
             // table, so the balance sheet a consumer reads resolves
             // against the instance's configuration. An issued resource's
@@ -558,12 +583,14 @@ pub fn state_table(
                     #name,
                     ::hyperscale_vm_sdk::SlotKind::#kind,
                     #index,
+                    #width,
                 )));
             }
             Some(quote!(.slot::<#element>(
                 #slot,
                 #name,
                 ::hyperscale_vm_sdk::SlotKind::#kind,
+                #width,
             )))
         })
         .collect()

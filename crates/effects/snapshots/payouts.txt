@@ -1,6 +1,6 @@
 state
   the protocol's own — config
-     16  kept — one leaf, holding u128, denominated in config.asset
+     16  kept — one leaf, holding u128, at most 16 bytes, denominated in config.asset
 config
       0  asset
       1  protocol

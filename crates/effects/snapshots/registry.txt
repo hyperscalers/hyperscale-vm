@@ -1,5 +1,5 @@
 state
-     16  names — an unordered collection, holding u128
+     16  names — an unordered collection, holding u128, at most 16 bytes
 
 bind(u64, u128) — infallible
   declares

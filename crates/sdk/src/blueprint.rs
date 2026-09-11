@@ -8,10 +8,11 @@
 //!
 use std::collections::BTreeMap;
 
+use hyperscale_hbor::shape::Resolution;
 use hyperscale_hbor::{HborShape, ShapeRegistry, TypeShape};
 use hyperscale_vm_effects::{
-    Expr, MAX_EFFECTS_PER_SIGNATURE, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
-    SlotShape,
+    Expr, LeafForm, MAX_EFFECTS_PER_SIGNATURE, MAX_SHAPE_DEPTH, MethodSignature, PackageMetadata,
+    ParamType, SlotId, SlotKind, SlotShape,
 };
 
 use crate::state::LeafShape;
@@ -189,7 +190,39 @@ impl Builder {
         self
     }
 
-    /// Declare the slot `name` sits at, and what `T` its leaves hold.
+    /// The most bytes one leaf of `element` may hold: what a closed
+    /// shape derives, or what the field declared for an open one.
+    ///
+    /// Zero where neither answers, which the publish gate refuses: a
+    /// slot whose leaves nothing bounds is not one a declaration can
+    /// price.
+    ///
+    /// # Panics
+    ///
+    /// If a width is declared on a closed shape, which already states
+    /// its own: two statements of one figure is one the author has to
+    /// keep in step, and the derive is the one that cannot drift.
+    fn width_of(&self, name: &str, element: &LeafForm, declared: Option<u32>) -> u32 {
+        let derived = match element {
+            LeafForm::Bytes => None,
+            LeafForm::Value(shape) => Resolution::of(self.blueprint.types.types())
+                .max_encoded_len(shape, MAX_SHAPE_DEPTH)
+                .ok()
+                .flatten()
+                .and_then(|most| u32::try_from(most).ok()),
+        };
+        match (derived, declared) {
+            (Some(_), Some(_)) => {
+                panic!("slot {name} declares a width its closed shape already derives")
+            }
+            (Some(derived), None) => derived,
+            (None, Some(declared)) => declared,
+            (None, None) => 0,
+        }
+    }
+
+    /// Declare the slot `name` sits at, what `T` its leaves hold, and
+    /// the width the field declared where `T` does not derive one.
     ///
     /// The slot is the author's own number and the key of the table, so
     /// two fields at one slot are one leaf under two names — which the
@@ -197,13 +230,23 @@ impl Builder {
     ///
     /// # Panics
     ///
-    /// If two fields claim one slot.
+    /// If two fields claim one slot, or a width is declared on a shape
+    /// that derives its own.
     #[must_use]
-    pub fn slot<T: LeafShape>(mut self, slot: u16, name: &str, kind: SlotKind) -> Self {
+    pub fn slot<T: LeafShape>(
+        mut self,
+        slot: u16,
+        name: &str,
+        kind: SlotKind,
+        width: Option<u32>,
+    ) -> Self {
+        let element = T::leaf_form(&mut self.blueprint.types);
+        let width = self.width_of(name, &element, width);
         let declared = SlotShape {
             name: name.to_owned(),
             kind,
-            element: T::leaf_form(&mut self.blueprint.types),
+            element,
+            width,
             denomination: None,
         };
         let taken = self.blueprint.state.insert(SlotId(slot), declared);
@@ -224,7 +267,7 @@ impl Builder {
     ///
     /// # Panics
     ///
-    /// If two fields claim one slot.
+    /// As [`slot`](Self::slot).
     #[must_use]
     pub fn holds_config<T: LeafShape>(
         mut self,
@@ -232,11 +275,15 @@ impl Builder {
         name: &str,
         kind: SlotKind,
         config: u32,
+        width: Option<u32>,
     ) -> Self {
+        let element = T::leaf_form(&mut self.blueprint.types);
+        let width = self.width_of(name, &element, width);
         let declared = SlotShape {
             name: name.to_owned(),
             kind,
-            element: T::leaf_form(&mut self.blueprint.types),
+            element,
+            width,
             denomination: Some(Expr::Config(config)),
         };
         let taken = self.blueprint.state.insert(SlotId(slot), declared);

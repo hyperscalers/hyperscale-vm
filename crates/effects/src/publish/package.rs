@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Resolution, ShapeFault};
-use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES};
+use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES, MAX_SLOT_WIDTH};
 
 use super::bounds::{PlacedBounds, check_signature_bounds};
 use crate::dsl::{Clause, TargetExpr, slot_of};
@@ -40,6 +40,32 @@ pub enum MetadataError {
         /// What is past its bound, and where in the signature.
         #[source]
         source: PlacedBounds,
+    },
+    /// A slot declaring no width, so nothing bounds the bytes a leaf
+    /// under it may hold.
+    #[error("slot {slot:?} declares no width")]
+    SlotWidthUndeclared {
+        /// The slot without one.
+        slot: SlotId,
+    },
+    /// A slot wider than a leaf may be.
+    #[error("slot {slot:?} declares {width} bytes, past the {MAX_SLOT_WIDTH} a leaf may hold")]
+    SlotWidthTooWide {
+        /// The slot past the cap.
+        slot: SlotId,
+        /// What it declared.
+        width: u32,
+    },
+    /// A slot whose declared width is not the width its closed shape
+    /// derives, so one of the two is wrong.
+    #[error("slot {slot:?} declares {width} bytes, but its shape holds at most {derived}")]
+    SlotWidthDisagrees {
+        /// The slot whose two statements differ.
+        slot: SlotId,
+        /// What it declared.
+        width: u32,
+        /// What its shape derives.
+        derived: u32,
     },
     /// A declared type whose shape cannot be read.
     #[error("type {name:?}: {source}")]
@@ -187,15 +213,48 @@ fn check_table_agreement(metadata: &PackageMetadata) -> Result<(), MetadataError
         if !(PACKAGE_SLOT_BASE..KERNEL_SLOT_BASE).contains(&slot.0) {
             return Err(MetadataError::SlotOutsideBand { slot: *slot });
         }
-        let LeafForm::Value(shape) = &declared.element else {
-            continue;
-        };
-        resolved
-            .readable(shape, MAX_SHAPE_DEPTH)
-            .map_err(|source| MetadataError::Slot {
+        if declared.width > MAX_SLOT_WIDTH {
+            return Err(MetadataError::SlotWidthTooWide {
                 slot: *slot,
-                source,
-            })?;
+                width: declared.width,
+            });
+        }
+        let derived = match &declared.element {
+            LeafForm::Bytes => None,
+            LeafForm::Value(shape) => {
+                resolved
+                    .readable(shape, MAX_SHAPE_DEPTH)
+                    .map_err(|source| MetadataError::Slot {
+                        slot: *slot,
+                        source,
+                    })?;
+                resolved
+                    .max_encoded_len(shape, MAX_SHAPE_DEPTH)
+                    .map_err(|source| MetadataError::Slot {
+                        slot: *slot,
+                        source,
+                    })?
+                    .and_then(|most| u32::try_from(most).ok())
+            }
+        };
+        // A closed shape derives its width, which may be nothing at all
+        // for a leaf whose entry is its own key; the declared figure has
+        // to be that one, or a body could write past what the type
+        // holds. An open shape has to declare one, and zero is no
+        // declaration.
+        match derived {
+            Some(derived) if derived != declared.width => {
+                return Err(MetadataError::SlotWidthDisagrees {
+                    slot: *slot,
+                    width: declared.width,
+                    derived,
+                });
+            }
+            None if declared.width == 0 => {
+                return Err(MetadataError::SlotWidthUndeclared { slot: *slot });
+            }
+            _ => {}
+        }
     }
     check_slot_contents(metadata)
 }
@@ -519,6 +578,7 @@ mod tests {
                     name: "held".into(),
                     kind: SlotKind::Keyed,
                     element,
+                    width: 8,
                     denomination: None,
                 },
             ))
@@ -536,6 +596,64 @@ mod tests {
         assert_eq!(check_metadata(&holding(LeafForm::Bytes)), Ok(()));
     }
 
+    /// A slot's width is what turns a declared entry cap into a byte
+    /// count, so a slot that states none is refused; a closed shape
+    /// derives its own, including a leaf that holds nothing, and a
+    /// declaration that disagrees with the derivation is one of two
+    /// figures wrong; and no leaf is wider than a leaf may be.
+    #[test]
+    fn a_slot_is_held_to_one_width() {
+        let holding = |element, width| PackageMetadata {
+            state: std::iter::once((
+                SlotId(17),
+                SlotShape {
+                    name: "held".into(),
+                    kind: SlotKind::Keyed,
+                    element,
+                    width,
+                    denomination: None,
+                },
+            ))
+            .collect(),
+            ..PackageMetadata::default()
+        };
+        let slot = SlotId(17);
+        assert_eq!(
+            check_metadata(&holding(LeafForm::Bytes, 0)),
+            Err(MetadataError::SlotWidthUndeclared { slot })
+        );
+        assert_eq!(check_metadata(&holding(LeafForm::Bytes, 64)), Ok(()));
+        assert_eq!(
+            check_metadata(&holding(LeafForm::Bytes, MAX_SLOT_WIDTH + 1)),
+            Err(MetadataError::SlotWidthTooWide {
+                slot,
+                width: MAX_SLOT_WIDTH + 1,
+            })
+        );
+        let open = LeafForm::Value(TypeShape::Seq(Box::new(TypeShape::U8)));
+        assert_eq!(
+            check_metadata(&holding(open.clone(), 0)),
+            Err(MetadataError::SlotWidthUndeclared { slot })
+        );
+        assert_eq!(check_metadata(&holding(open, 64)), Ok(()));
+        assert_eq!(
+            check_metadata(&holding(LeafForm::Value(TypeShape::U64), 9)),
+            Err(MetadataError::SlotWidthDisagrees {
+                slot,
+                width: 9,
+                derived: 8,
+            })
+        );
+        assert_eq!(
+            check_metadata(&holding(LeafForm::Value(TypeShape::U64), 8)),
+            Ok(())
+        );
+        assert_eq!(
+            check_metadata(&holding(LeafForm::Value(TypeShape::Tuple(Vec::new())), 0)),
+            Ok(())
+        );
+    }
+
     /// The state table is what a package declares, and the protocol's
     /// own cells are declared by nobody — so a row for one is refused
     /// where the authoring macro refuses the field.
@@ -548,6 +666,7 @@ mod tests {
                     name: "held".into(),
                     kind: SlotKind::Cell,
                     element: LeafForm::Value(TypeShape::U64),
+                    width: 8,
                     denomination: None,
                 },
             ))

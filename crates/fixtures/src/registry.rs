@@ -52,6 +52,7 @@ pub fn metadata() -> PackageMetadata {
             name: "names".to_owned(),
             kind: SlotKind::Unordered,
             element: LeafForm::Value(TypeShape::U128),
+            width: 16,
             denomination: None,
         },
     );

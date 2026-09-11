@@ -8,10 +8,42 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hyperscale_hbor::shape::{MAX_SHAPE_DEPTH, Resolution};
 use hyperscale_hbor::{
-    DecodeError, Hbor, HborShape, ReadError, ShapeFault, ShapeField, ShapeTable, ShapeValue,
-    ShapeVariant, TypeShape, shape_of, to_vec,
+    DecodeError, Hbor, HborInfallible, HborShape, ReadError, ShapeFault, ShapeField, ShapeTable,
+    ShapeValue, ShapeVariant, TypeShape, shape_of, to_vec,
 };
+
+#[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
+#[hbor(infallible)]
+struct Closed {
+    a: u32,
+    b: [u8; 3],
+    c: Option<u64>,
+    d: (bool, u16),
+}
+
+/// A shape holding no run and no text has a widest value, and it is the
+/// figure the derive states for the type; a shape holding one has none.
+#[test]
+fn a_closed_shape_derives_the_width_the_type_states() {
+    let (shape, types) = shape_of::<Closed>();
+    assert_eq!(
+        Resolution::of(&types).max_encoded_len(&shape, MAX_SHAPE_DEPTH),
+        Ok(Some(<Closed as HborInfallible>::MAX_ENCODED_LEN))
+    );
+    let (shape, types) = shape_of::<Unit>();
+    assert_eq!(
+        Resolution::of(&types).max_encoded_len(&shape, MAX_SHAPE_DEPTH),
+        Ok(Some(0))
+    );
+    for (shape, types) in [shape_of::<Everything>(), shape_of::<Positional>()] {
+        assert_eq!(
+            Resolution::of(&types).max_encoded_len(&shape, MAX_SHAPE_DEPTH),
+            Ok(None)
+        );
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
 struct Inner {

@@ -565,6 +565,7 @@ impl Admission<'_> {
         let (bound, inputs) = self.bind_args(intent_index, local, node, signature, node_index)?;
 
         // Evaluate this node's projections over its bound inputs.
+        let widths = resolved.package.slot_widths();
         let eval_inputs = EvalInputs {
             self_addr: node.target.address(),
             args: &bound,
@@ -573,6 +574,7 @@ impl Admission<'_> {
             identity: self.identity,
             grants: self.grants,
             budget: self.budget,
+            widths: &widths,
         };
         check_denominations(signature, &bound, &eval_inputs, self.hasher, node_index)?;
         let node_outputs = project_outputs(signature, &eval_inputs, self.hasher, node_index)?;

@@ -935,6 +935,7 @@ impl<'a> Names<'a> {
                     name,
                     kind,
                     element,
+                    width,
                     denomination,
                 } = shape;
                 let holding = denomination
@@ -943,7 +944,7 @@ impl<'a> Names<'a> {
                     .unwrap_or_default();
                 let _ = writeln!(
                     out,
-                    "  {:>5}  {name} — {}, {}{holding}",
+                    "  {:>5}  {name} — {}, {}, at most {width} bytes{holding}",
                     slot.0,
                     slot_kind(*kind),
                     leaf_form(element)
@@ -2144,6 +2145,7 @@ mod tests {
                 name: "entries".to_owned(),
                 kind: SlotKind::Ordered,
                 element: LeafForm::Value(TypeShape::U128),
+                width: 16,
                 denomination: None,
             },
         );

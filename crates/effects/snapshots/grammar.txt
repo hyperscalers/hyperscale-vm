@@ -1,13 +1,13 @@
 state
   the protocol's own — config, resource, instance
-     16  entries — an ordered collection, holding u128
-     17  ledger — an ordered collection, holding u64
-     18  noted — one leaf, holding u64
-     19  flagged — one leaf, holding [u8; 1]
-     20  owed — a leaf per key, holding u64
-     21  fees — a leaf per key, holding u128
-     22  till — a leaf per key, holding u128
-     23  stowage — an ordered collection, holding nothing
+     16  entries — an ordered collection, holding u128, at most 16 bytes
+     17  ledger — an ordered collection, holding u64, at most 8 bytes
+     18  noted — one leaf, holding u64, at most 8 bytes
+     19  flagged — one leaf, holding [u8; 1], at most 1 bytes
+     20  owed — a leaf per key, holding u64, at most 8 bytes
+     21  fees — a leaf per key, holding u128, at most 16 bytes
+     22  till — a leaf per key, holding u128, at most 16 bytes
+     23  stowage — an ordered collection, holding nothing, at most 0 bytes
 config
       0  tiers
       1  fallback

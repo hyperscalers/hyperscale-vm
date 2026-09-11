@@ -87,10 +87,18 @@ pub mod account {
         /// before there is anything here to sweep.
         quarantine: Keyed<Vault>,
         /// Who may propose a replacement, and who may cancel one.
+        ///
+        /// A rule reaches the account as an argument, and an argument's
+        /// bytes are capped at four kibibytes; the cell is sized to
+        /// hold any rule that can be handed to it.
+        #[width(4096)]
         recovery: Cell<Option<RuleBytes>>,
         /// Who may enact one before its delay runs out.
+        #[width(4096)]
         confirmation: Cell<Option<RuleBytes>>,
-        /// The replacement waiting, where one is.
+        /// The replacement waiting, where one is: three rules at the
+        /// argument cap, their lengths, and two words.
+        #[width(12352)]
         pending: Cell<Option<Pending>>,
         /// How long a proposal waits when nothing confirms it.
         ///
