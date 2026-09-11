@@ -16,7 +16,8 @@ docker run --rm \
     --workdir /work \
     rust:1.96.0 \
     bash -euc '
-        rustup toolchain install nightly-2026-06-08 \
+        channel="$(sed -n "s/^channel = \"\(.*\)\"$/\1/p" guests/rust-toolchain.toml)"
+        rustup toolchain install "$channel" \
             --component rust-src --target wasm32-unknown-unknown
         cargo run --release --example regenerate_stdlib -p hyperscale-vm-harness
     '

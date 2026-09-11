@@ -48,40 +48,56 @@ pub const MAX_SHAPE_DEPTH: usize = 16;
 #[hbor(crate = crate)]
 pub enum TypeShape {
     /// One byte, `0` or `1`.
+    #[hbor(discriminant = 0)]
     Bool,
     /// An unsigned 8-bit integer. Every integer is little-endian at its
     /// own width and carries no length.
+    #[hbor(discriminant = 1)]
     U8,
     /// An unsigned 16-bit integer.
+    #[hbor(discriminant = 2)]
     U16,
     /// An unsigned 32-bit integer.
+    #[hbor(discriminant = 3)]
     U32,
     /// An unsigned 64-bit integer.
+    #[hbor(discriminant = 4)]
     U64,
     /// An unsigned 128-bit integer.
+    #[hbor(discriminant = 5)]
     U128,
     /// A signed 8-bit integer.
+    #[hbor(discriminant = 6)]
     I8,
     /// A signed 16-bit integer.
+    #[hbor(discriminant = 7)]
     I16,
     /// A signed 32-bit integer.
+    #[hbor(discriminant = 8)]
     I32,
     /// A signed 64-bit integer.
+    #[hbor(discriminant = 9)]
     I64,
     /// A signed 128-bit integer.
+    #[hbor(discriminant = 10)]
     I128,
     /// A length then that many bytes of UTF-8.
     ///
     /// Separate from a byte sequence because the validity is a decoding
     /// fact: bytes that are not UTF-8 are not a value of this shape.
+    #[hbor(discriminant = 11)]
     Text,
     /// Exactly this many bytes, with no length field of its own.
+    #[hbor(discriminant = 12)]
     ByteArray(u32),
     /// A length then that many elements.
+    #[hbor(discriminant = 13)]
     Seq(Box<Self>),
     /// A length then that many elements, strictly ascending.
+    #[hbor(discriminant = 14)]
     Set(Box<Self>),
     /// A length then that many key-value pairs, keys strictly ascending.
+    #[hbor(discriminant = 15)]
     Map {
         /// The key's shape.
         key: Box<Self>,
@@ -89,16 +105,21 @@ pub enum TypeShape {
         value: Box<Self>,
     },
     /// `0`, or `1` followed by the payload.
+    #[hbor(discriminant = 16)]
     Option(Box<Self>),
     /// Its elements in order, with nothing between them. Also what a
     /// tuple struct, a tuple variant, and a unit are.
+    #[hbor(discriminant = 17)]
     Tuple(Vec<Self>),
     /// Its fields in declaration order. The names are the whole reason a
     /// decoded position becomes a fact.
+    #[hbor(discriminant = 18)]
     Struct(Vec<ShapeField>),
     /// A one-byte discriminant then that variant's content.
+    #[hbor(discriminant = 19)]
     Enum(Vec<ShapeVariant>),
     /// A named type's definition, held once in the [`ShapeTable`].
+    #[hbor(discriminant = 20)]
     Ref(String),
 }
 
@@ -944,7 +965,7 @@ tuple!(A, B, C, D);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{assert_canonical_at_depth, from_slice_with_depth, to_vec_with_depth};
+    use crate::{assert_canonical_at_depth, from_slice_with_depth, to_vec, to_vec_with_depth};
 
     /// Every form the vocabulary admits, in one table, so a round-trip
     /// covers the whole of it rather than the forms a real type reaches.
@@ -1011,6 +1032,51 @@ mod tests {
         [("leaf".to_owned(), leaf), ("whole".to_owned(), whole)]
             .into_iter()
             .collect()
+    }
+
+    /// A shape's wire discriminants, pinned the way every other wire
+    /// enum's are: the metadata section, and so every package hash and
+    /// every instance address derived from one, folds these bytes.
+    #[test]
+    fn every_shape_keeps_its_wire_discriminant() {
+        let leaf = || Box::new(TypeShape::Bool);
+        let forms = [
+            (0, TypeShape::Bool),
+            (1, TypeShape::U8),
+            (2, TypeShape::U16),
+            (3, TypeShape::U32),
+            (4, TypeShape::U64),
+            (5, TypeShape::U128),
+            (6, TypeShape::I8),
+            (7, TypeShape::I16),
+            (8, TypeShape::I32),
+            (9, TypeShape::I64),
+            (10, TypeShape::I128),
+            (11, TypeShape::Text),
+            (12, TypeShape::ByteArray(1)),
+            (13, TypeShape::Seq(leaf())),
+            (14, TypeShape::Set(leaf())),
+            (
+                15,
+                TypeShape::Map {
+                    key: leaf(),
+                    value: leaf(),
+                },
+            ),
+            (16, TypeShape::Option(leaf())),
+            (17, TypeShape::Tuple(vec![])),
+            (18, TypeShape::Struct(vec![])),
+            (19, TypeShape::Enum(vec![])),
+            (20, TypeShape::Ref("leaf".into())),
+        ];
+        assert_eq!(forms.len(), 21, "one row per variant");
+        for (byte, shape) in forms {
+            assert_eq!(
+                to_vec(&shape).expect("a shape encodes")[0],
+                byte,
+                "{shape:?} moved off wire byte {byte}"
+            );
+        }
     }
 
     /// A member encoded twice is one member: refused by byte equality,
