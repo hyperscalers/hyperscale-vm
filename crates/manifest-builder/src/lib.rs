@@ -20,8 +20,8 @@
 //! Above the graph, an [`EnvelopeBuilder`] composes intents through the
 //! sockets they declare — ones the composer writes, and ones somebody
 //! else already signed — wiring an edge or a proof into each, and
-//! [`preflight()`] answers what the chain will make of the result before
-//! any of it is signed.
+//! [`preflight_tree()`] answers what the chain will make of the result
+//! before any of it is signed.
 //!
 //! The builder sits strictly on the client side of the trust boundary.
 //! It renders no judgement; admission re-derives every property it
@@ -48,7 +48,7 @@ pub use builder::{Bucket, BuildError, GraphBuilder, SocketRef};
 pub use envelope::{
     BindRefusal, EnvelopeBuilder, EnvelopeError, IntentBuilder, Offered, OpenSocket, Sockets,
 };
-pub use preflight::{Authority, PreflightError, Report, Required, preflight, preflight_tree};
+pub use preflight::{Authority, PreflightError, Report, Required, preflight_tree};
 pub use projection::graph_records;
 pub use render::{Names, render};
 pub use typed::{Answered, Evidence, Outputs, Proof, TypedBuilder, TypedError};

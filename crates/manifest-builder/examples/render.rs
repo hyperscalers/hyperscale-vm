@@ -6,15 +6,15 @@
 //! `cargo run -p hyperscale-vm-manifest-builder --example render`.
 
 use hyperscale_vm_effects::{
-    Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash, PrefixShardResolver, Records,
-    ResourceKind, TestHasher, Value, issued_resource,
+    EnvelopeTree, Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader, ManifestGraph,
+    PackageHash, PrefixShardResolver, Records, ResourceKind, TestHasher, Value, issued_resource,
 };
 use hyperscale_vm_fixtures::{amm, payouts};
 use hyperscale_vm_manifest_builder::{
-    Authority, Names, TypedBuilder, TypedError, preflight, render,
+    Authority, Names, TypedBuilder, TypedError, preflight_tree, render,
 };
 use hyperscale_vm_stdlib::{account, staking};
-use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr, SchemeId};
+use hyperscale_vm_types::{ComponentAddr, NetworkId, PrincipalAddr, ResourceAddr, SchemeId};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -200,9 +200,26 @@ fn main() {
     );
 }
 
-/// The preflight report, as a wallet would read it out.
+/// The preflight report, as a wallet would read it out: the graph under
+/// the header a wallet would sign it with, as the one intent of a tree.
 fn summarise(graph: &ManifestGraph, chain: &Records) {
-    let report = preflight(graph, ALICE, chain, &TestHasher, &SHARDS, NETWORK)
+    let tree = EnvelopeTree {
+        root: IntentDecl {
+            header: IntentHeader {
+                network: NetworkId(1),
+                validity_start_ms: 0,
+                validity_end_ms: 3_600_000,
+                discriminator: 0,
+            },
+            graph: graph.clone(),
+            sockets: Vec::new(),
+        },
+        root_bindings: Vec::new(),
+        subintents: Vec::new(),
+        instances: Vec::new(),
+        resources: Vec::new(),
+    };
+    let report = preflight_tree(&tree, ALICE, chain, &TestHasher, &SHARDS, NETWORK)
         .expect("the graph admits and routes");
     let names = vocabulary();
     let signers: Vec<String> = report

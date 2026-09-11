@@ -6,14 +6,13 @@
 //! checked against the same call made directly.
 
 use hyperscale_vm_effects::{
-    Claim, Clause, Constraint, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, IntentHeader,
-    MethodSignature, PackageHash, PackageMetadata, PrefixShardResolver, Records, ResourceGrants,
-    ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, Totality, Value, admit,
-    footprint, route,
+    Claim, Clause, Constraint, EnvelopeTree, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
+    IntentDecl, IntentHeader, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
+    PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
+    StoredRule, TestHasher, Totality, Value, admit, admit_tree, footprint, route_tree,
 };
 use hyperscale_vm_manifest_builder::{
-    Authority, EnvelopeBuilder, IntentBuilder, PreflightError, TypedBuilder, preflight,
-    preflight_tree,
+    Authority, EnvelopeBuilder, IntentBuilder, PreflightError, TypedBuilder, preflight_tree,
 };
 use hyperscale_vm_stdlib::{account, staking};
 use hyperscale_vm_types::{
@@ -82,6 +81,22 @@ fn world() -> Records {
 
 const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
 
+/// The degenerate tree a plain transaction is: one intent under the test
+/// header, no sockets, nothing bound.
+fn one_intent(graph: &ManifestGraph) -> EnvelopeTree {
+    EnvelopeTree {
+        root: IntentDecl {
+            header: TEST_HEADER,
+            graph: graph.clone(),
+            sockets: Vec::new(),
+        },
+        root_bindings: Vec::new(),
+        subintents: Vec::new(),
+        instances: Vec::new(),
+        resources: Vec::new(),
+    }
+}
+
 #[test]
 fn a_report_is_what_the_chain_derives() {
     let chain = world();
@@ -89,16 +104,27 @@ fn a_report_is_what_the_chain_derives() {
     let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
+    let tree = one_intent(&graph);
 
-    let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
 
     // Nothing new is computed here, so everything must equal the direct
     // call it composes.
-    let admitted = admit(&graph, ALICE, &chain, &TestHasher).unwrap();
-    let routing = route(&admitted, &SHARDS);
-    assert_eq!(report.identity(), admitted.identity());
-    assert_eq!(report.manifest(), admitted.manifest());
+    let identity = tree.hash(&TestHasher);
+    let admitted = admit_tree(&tree, ALICE, identity, &chain, &TestHasher).unwrap();
+    let routing = route_tree(&admitted, &SHARDS);
+    assert_eq!(report.identity(), identity);
+    assert_eq!(report.manifest(), admitted.admitted.manifest());
     assert_eq!(report.routing, routing);
+    // The identity is the tree's, header and all, which is what every
+    // fresh derivation and every signature binds to; the graph alone
+    // hashes to something the chain never admits.
+    assert_ne!(
+        report.identity(),
+        admit(&graph, ALICE, &chain, &TestHasher)
+            .unwrap()
+            .identity()
+    );
     assert_eq!(
         report.footprint(),
         routing
@@ -126,7 +152,15 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
     let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let report = preflight_tree(
+        &one_intent(&graph),
+        ALICE,
+        &chain,
+        &TestHasher,
+        &SHARDS,
+        NETWORK,
+    )
+    .unwrap();
 
     // Spending is the sender's; being paid is nobody's to refuse, so a
     // transfer composes under one signature — presented once, at the
@@ -146,7 +180,15 @@ fn the_operator_surface_is_the_badge_holders_custody() {
     let operator = account::present_badge(&mut b, OPERATOR, badge()).unwrap();
     b.presenting(operator, |b| pool().unjail(b, 42)).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(&graph, OPERATOR, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let report = preflight_tree(
+        &one_intent(&graph),
+        OPERATOR,
+        &chain,
+        &TestHasher,
+        &SHARDS,
+        NETWORK,
+    )
+    .unwrap();
 
     // A pool is owned by nobody, so its operator surface admits whoever
     // presents the pool's own badge: custody at the presentation, and
@@ -179,7 +221,15 @@ fn every_address_the_report_names_is_named_for_the_network() {
     let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let report = preflight_tree(
+        &one_intent(&graph),
+        ALICE,
+        &chain,
+        &TestHasher,
+        &SHARDS,
+        NETWORK,
+    )
+    .unwrap();
 
     for (address, text) in &report.named {
         assert_eq!(*text, address.to_text(NETWORK).unwrap());
@@ -190,7 +240,15 @@ fn every_address_the_report_names_is_named_for_the_network() {
         report.named.get(&ALICE.address()).map(String::as_str)
     );
     // A report on one network says nothing about another.
-    let elsewhere = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, "testnet").unwrap();
+    let elsewhere = preflight_tree(
+        &one_intent(&graph),
+        ALICE,
+        &chain,
+        &TestHasher,
+        &SHARDS,
+        "testnet",
+    )
+    .unwrap();
     assert_ne!(elsewhere.named, report.named);
 }
 
@@ -202,11 +260,18 @@ fn a_network_word_the_encoding_refuses_fails_once() {
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     assert!(matches!(
-        preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, "Main Net"),
+        preflight_tree(
+            &one_intent(&graph),
+            ALICE,
+            &chain,
+            &TestHasher,
+            &SHARDS,
+            "Main Net"
+        ),
         Err(PreflightError::Network(TextError::InvalidCharacter(_)))
     ));
     assert!(matches!(
-        preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, ""),
+        preflight_tree(&one_intent(&graph), ALICE, &chain, &TestHasher, &SHARDS, ""),
         Err(PreflightError::Network(TextError::IncompletePrefix))
     ));
 }

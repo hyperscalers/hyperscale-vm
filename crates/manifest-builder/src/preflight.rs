@@ -24,8 +24,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, Claim, EnvelopeTree, Hasher, JudgedLeaf, Manifest,
-    ManifestGraph, ManifestHash, Routing, Rule, ShardId, ShardResolver, SubintentRecord, admit,
-    admit_tree, footprint, route, route_tree,
+    ManifestHash, Routing, Rule, ShardId, ShardResolver, SubintentRecord, admit_tree, footprint,
+    route_tree,
 };
 use hyperscale_vm_types::{
     Address, CallTarget, EffectTarget, NetworkWord, Presence, PrincipalAddr, ResourceAddr,
@@ -294,8 +294,8 @@ pub struct Report {
     pub footprints: BTreeMap<ShardId, u64>,
     /// What naming each node requires of a signature, in node order.
     pub authority: Vec<Required>,
-    /// The nullifier record of every bound subintent, empty for a bare
-    /// graph.
+    /// The nullifier record of every bound subintent, empty where the
+    /// tree binds none.
     pub subintents: Vec<SubintentRecord>,
     /// Every address the report names, in this network's text form.
     pub named: BTreeMap<Address, String>,
@@ -391,32 +391,20 @@ impl Report {
     }
 }
 
-/// The whole verdict on a bare graph, before signing.
+/// The whole verdict on a composed envelope, before signing.
+///
+/// Only a tree, never a bare graph: every intent carries a signed header,
+/// so what the chain admits is always a tree and the identity every
+/// fresh derivation and every signature binds to is the tree's hash. A
+/// verdict on the graph alone would report keys the chain will not
+/// derive and withhold records the tree carries. One intent with no
+/// sockets is the degenerate tree a plain transaction is.
 ///
 /// # Errors
 ///
 /// [`PreflightError::Admission`] for a transaction the chain would
 /// refuse, and [`PreflightError::Network`] for a network word no address
 /// can be named under.
-pub fn preflight(
-    graph: &ManifestGraph,
-    composer: PrincipalAddr,
-    chain: &dyn ChainRecords,
-    hasher: &dyn Hasher,
-    shards: &dyn ShardResolver,
-    network: &str,
-) -> Result<Report, PreflightError> {
-    let admitted = admit(graph, composer, chain, hasher)?;
-    let routing = route(&admitted, shards);
-    report(admitted, routing, Vec::new(), network)
-}
-
-/// The same verdict on a composed envelope, whose subintent records name
-/// the nullifier each one spends.
-///
-/// # Errors
-///
-/// As [`preflight`].
 pub fn preflight_tree(
     tree: &EnvelopeTree,
     composer: PrincipalAddr,
@@ -431,7 +419,7 @@ pub fn preflight_tree(
     report(admitted.admitted, routing, admitted.subintents, network)
 }
 
-/// Assemble the report both entry points answer with.
+/// Assemble the report.
 fn report(
     admitted: Admitted,
     routing: Routing,
