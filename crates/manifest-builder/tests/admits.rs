@@ -103,9 +103,13 @@ proptest! {
     fn built_graphs_admit(transfers in prop::collection::vec(transfer(), 1..12)) {
         let chain = world();
         let mut b = GraphBuilder::new();
+        // One signature, one sign-in: every other account's is opened
+        // on the proof it minted, as a chained sign-in.
+        let signed_in = b.len();
+        let [] = b.call_signed(ACCOUNTS[0], "authorize", ());
         for t in &transfers {
             let sign_in = b.len();
-            let [] = b.call_signed(ACCOUNTS[t.from], "authorize", ());
+            let [] = b.call_bearing(ACCOUNTS[t.from], "authorize", (), signed_in);
             let [funds] = b.call_bearing(ACCOUNTS[t.from], "withdraw", (RES, t.amount), sign_in);
             let mut funds = funds.resource_is(RES);
             if let Some((min, max)) = t.bounds {

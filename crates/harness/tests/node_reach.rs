@@ -221,6 +221,7 @@ fn node(package: PackageHash, target: Address, export: &str, site: u32) -> NodeC
         answers: true,
         issues: Vec::new(),
         evidence: Vec::new(),
+        signed_in: None,
         requires: Vec::new(),
     }
 }

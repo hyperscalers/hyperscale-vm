@@ -21,7 +21,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::{HAND_AUTHORED, amm, book, lottery, nf, payouts, registry};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
-use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{CallTarget, ComponentAddr, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -223,8 +223,9 @@ fn the_empty_threshold_reaches_the_account() {
 }
 
 /// A chained sign-in composes and admits: the second authorize draws
-/// the first's proven claim from the enclosing scope, beside the
-/// intent's signature the rule arm always presents.
+/// the first's proven claim from the enclosing scope and presents
+/// nothing else — another party's stored rule is not one the intent's
+/// signature reaches.
 #[test]
 fn a_chained_sign_in_admits() {
     let graph = admits(|b| {
@@ -233,16 +234,40 @@ fn a_chained_sign_in_admits() {
         let funds = b.presenting(bob, |b| account::withdraw(b, BOB, BASE, 100))?;
         account::deposit(b, ALICE, funds)
     });
-    assert!(
-        graph.nodes[1].evidence.contains(&EvidenceRef::Node(0)),
-        "the scope's proof rides the chained sign-in: {:?}",
-        graph.nodes[1].evidence
+    assert_eq!(
+        graph.nodes[1].evidence,
+        BTreeSet::from([EvidenceRef::Node(0)]),
+        "the scope's proof alone rides the chained sign-in"
+    );
+}
+
+/// A sign-in at another party's account composed outside any scope is
+/// answered from the signer's own: the one claim the composer can make
+/// about a rule it cannot read, proven ahead of the call.
+#[test]
+fn a_sign_in_elsewhere_is_answered_from_the_signers_account() {
+    let graph = admits(|b| {
+        let bob = account::authorize(b, BOB)?;
+        let funds = b.presenting(bob, |b| account::withdraw(b, BOB, BASE, 100))?;
+        account::deposit(b, ALICE, funds)
+    });
+    assert_eq!(graph.nodes[0].target, CallTarget::from(ALICE));
+    assert_eq!(
+        graph.nodes[0].evidence,
+        BTreeSet::from([EvidenceRef::IntentSignature])
+    );
+    assert_eq!(graph.nodes[1].target, CallTarget::from(BOB));
+    assert_eq!(
+        graph.nodes[1].evidence,
+        BTreeSet::from([EvidenceRef::Node(0)])
     );
 }
 
 /// A stored rule can be a threshold, so a sign-in can take a set of
 /// proofs: a scope holding both carries every one to the gate, and the
-/// judgment against the stored rule stays where it always is.
+/// judgment against the stored rule stays where it always is. The two
+/// sign-ins elsewhere are each answered from the signer's account,
+/// proven once and cited twice.
 #[test]
 fn a_threshold_sign_in_composes() {
     let graph = admits(|b| {
@@ -252,11 +277,19 @@ fn a_threshold_sign_in_composes() {
         let funds = b.presenting(alice, |b| account::withdraw(b, ALICE, BASE, 100))?;
         account::deposit(b, BOB, funds)
     });
+    assert_eq!(
+        graph.nodes[1].evidence,
+        BTreeSet::from([EvidenceRef::Node(0)])
+    );
+    assert_eq!(
+        graph.nodes[2].evidence,
+        BTreeSet::from([EvidenceRef::Node(0)])
+    );
     assert!(
-        graph.nodes[2].evidence.contains(&EvidenceRef::Node(0))
-            && graph.nodes[2].evidence.contains(&EvidenceRef::Node(1)),
+        graph.nodes[3].evidence.contains(&EvidenceRef::Node(1))
+            && graph.nodes[3].evidence.contains(&EvidenceRef::Node(2)),
         "both proofs ride the threshold sign-in: {:?}",
-        graph.nodes[2].evidence
+        graph.nodes[3].evidence
     );
 }
 

@@ -36,8 +36,8 @@ use hyperscale_vm_types::{
 
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
-    AdmissionError, Admitted, IntentView, MAX_SOCKETS, admit_intents, check_instance_value_depth,
-    check_value_depth,
+    AdmissionError, Admitted, IntentView, MAX_SOCKETS, TargetAuthority, admit_intents,
+    check_instance_value_depth, check_value_depth,
 };
 use crate::claim::Claim;
 use crate::dsl::PresentedGrants;
@@ -983,6 +983,38 @@ pub fn admit_tree(
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<AdmittedTree, AdmissionError> {
+    admit_tree_with_authority(
+        tree,
+        composer,
+        identity,
+        chain,
+        hasher,
+        TargetAuthority::Required,
+    )
+}
+
+/// [`admit_tree`] with the target-authority rule made optional.
+///
+/// Only a preview waives it, and only when its caller asked to be shown
+/// what an envelope would do before its counterparties have signed: the
+/// signature is then admitted wherever it is presented, and the embedder
+/// drops the judgment it would fail.
+///
+/// # Errors
+///
+/// As [`admit_tree`].
+///
+/// # Panics
+///
+/// As [`admit_tree`].
+pub fn admit_tree_with_authority(
+    tree: &EnvelopeTree,
+    composer: PrincipalAddr,
+    identity: ManifestHash,
+    chain: &dyn ChainRecords,
+    hasher: &dyn Hasher,
+    authority: TargetAuthority,
+) -> Result<AdmittedTree, AdmissionError> {
     if tree.subintents.len() > MAX_SUBINTENTS {
         return Err(AdmissionError::TooManySubintents);
     }
@@ -1051,7 +1083,15 @@ pub fn admit_tree(
         .map(|meta| meta.address(hasher).address())
         .collect();
     let grants = PresentedGrants::from_presented(hasher, &tree.resources);
-    let admitted = admit_intents(&views, identity, &resolvable, &presented, &grants, hasher)?;
+    let admitted = admit_intents(
+        &views,
+        identity,
+        &resolvable,
+        &presented,
+        &grants,
+        hasher,
+        authority,
+    )?;
     Ok(AdmittedTree {
         admitted,
         subintents: records,

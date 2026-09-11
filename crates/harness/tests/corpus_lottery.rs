@@ -89,7 +89,7 @@ fn the_round_settles_on_the_entrant_its_sealed_draw_picks() {
     store.write(vault(BOB, RES_X), encode_amount(150).to_vec());
 
     let enter = |who: PrincipalAddr, stake: u128| {
-        graph(move |b| {
+        graph_signed(who, move |b| {
             let entrant = account::authorize(b, who)?;
             let funds = b.presenting(entrant, |b| account::withdraw(b, who, RES_X, stake))?;
             lottery_addr().enter(b, who, funds)
@@ -300,7 +300,7 @@ fn a_settlement_declines_a_page_that_did_not_cover_the_round() {
     }
 
     let enter = |who: PrincipalAddr| {
-        graph(move |b| {
+        graph_signed(who, move |b| {
             let entrant = account::authorize(b, who)?;
             let funds = b.presenting(entrant, |b| account::withdraw(b, who, RES_X, 100))?;
             lottery_addr().enter(b, who, funds)

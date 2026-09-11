@@ -306,7 +306,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
             },
         ],
     };
-    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
+    let admitted = admit(&graph, BOB, &chain, &TestHasher).expect("admits");
     let routing = route(&admitted, &resolver());
 
     let expected = BTreeMap::from([

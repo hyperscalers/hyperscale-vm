@@ -3,8 +3,8 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    Claim, Hash32, InstanceMeta, ManifestGraph, Records, RuleBytes, StoredRule, TestHasher, Value,
-    holdings_collection, never,
+    Claim, EvidenceRef, GraphNode, Hash32, InstanceMeta, ManifestGraph, Records, RuleBytes,
+    StoredRule, TestHasher, Value, holdings_collection, never,
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, vault};
@@ -25,13 +25,13 @@ fn a_refused_authorization_takes_its_consumers_with_it() {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
 
-    // Bob's signature behind Alice's sign-in: admission passes — the
-    // evidence is present, and whether it satisfies the target is the
-    // target's question — and the authorizing node's own gate refuses at
-    // execution, taking the whole transaction with it. This is what
-    // makes the minted proof sound with nothing checking it later: the
-    // withdrawal that would have spent on it never runs.
-    let graph = authorized_transfer_graph();
+    // Bob's own sign-in ahead of Alice's: admission passes — the
+    // evidence is present, and whether Bob's proof satisfies Alice's
+    // rule is her account's question — and the authorizing node's own
+    // gate refuses at execution, taking the whole transaction with it.
+    // This is what makes the minted proof sound with nothing checking
+    // it later: the withdrawal that would have spent on it never runs.
+    let graph = authorized_transfer_by(BOB);
     let (results, final_store) = run_both_signed(
         &world,
         &store,
@@ -41,7 +41,7 @@ fn a_refused_authorization_takes_its_consumers_with_it() {
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
+            condition: UnmetCondition::Satisfies { node: 1 },
         })]
     );
     assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 150);
@@ -90,12 +90,12 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
         "the retired key must not open the account"
     );
 
-    // Bob's signature carries Bob's identity, the stored rule admits
-    // it, and the minted proof opens Alice's guarded methods.
+    // Bob signs in at his own account, the stored rule admits the proof
+    // that minted, and Alice's sign-in opens her guarded methods.
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&transfer, TxHash(Hash32([0x53; 32])))],
+        &[(&authorized_transfer_by(BOB), TxHash(Hash32([0x53; 32])))],
         Some(BOB),
     );
     assert!(
@@ -110,7 +110,12 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     // than the guest's: `securify` declares a write requiring the cell
     // to be absent, so the shard holding it judges the door against
     // committed state and the body never runs.
-    let again = securify_graph(&StoredRule::claim(Claim::of_subject(BOB)));
+    let again = graph_signed(BOB, |b| {
+        let alice = account::authorize(b, ALICE)?;
+        b.presenting(alice, |b| {
+            account::securify_uniform(b, ALICE, &StoredRule::claim(Claim::of_subject(BOB)), DAY_MS)
+        })
+    });
     let (results, _) = run_both_signed(
         &world,
         &store,
@@ -123,8 +128,8 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(auth(ALICE)),
                 required: Presence::Absent,
-                // The securify, not the sign-in that precedes it.
-                node: Some(1),
+                // The securify, not the two sign-ins that precede it.
+                node: Some(2),
             },
         })],
         "a one-way door is a declared precondition, not a guest panic — and \
@@ -155,7 +160,7 @@ fn a_chained_sign_in_acts_two_rules_deep() {
 
     // The direct route refuses: Bob's own sign-in mints Bob's identity,
     // and the maker's rule admits only Alice's.
-    let direct = graph(|b| {
+    let direct = graph_signed(BOB, |b| {
         let bob = account::authorize(b, BOB)?;
         let maker = b.presenting(bob, |b| account::authorize(b, MAKER))?;
         let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, RES_X, 100))?;
@@ -175,7 +180,7 @@ fn a_chained_sign_in_acts_two_rules_deep() {
         "the maker's rule names Alice's account, not Bob's"
     );
 
-    let transfer = graph(|b| {
+    let transfer = graph_signed(BOB, |b| {
         let alice = account::authorize(b, ALICE)?;
         let maker = b.presenting(alice, |b| account::authorize(b, MAKER))?;
         let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, RES_X, 100))?;
@@ -194,6 +199,60 @@ fn a_chained_sign_in_acts_two_rules_deep() {
     );
     assert_eq!(amount_of(&store, vault(MAKER, RES_X)), 50);
     assert_eq!(amount_of(&store, vault(BOB, RES_X)), 100);
+}
+
+/// A retired key opens nothing anywhere. Alice's rule names Bob and the
+/// maker's names Alice: Alice's own key is refused at her sign-in, the
+/// one place a signature is judged, and handing that signature straight
+/// to the maker's stored rule is inadmissible however the rule reads,
+/// since a rule under anyone else's prefix takes a proof.
+#[test]
+fn a_retired_key_is_refused_at_its_own_sign_in_and_reaches_no_other() {
+    let world = world();
+    let store = chained_store();
+
+    // Composed: the maker's sign-in is answered from Alice's own
+    // account, which her key no longer opens.
+    let composed = graph(|b| {
+        let maker = account::authorize(b, MAKER)?;
+        let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, RES_X, 100))?;
+        account::deposit(b, BOB, funds)
+    });
+    assert_eq!(
+        composed.nodes[0].target,
+        ALICE.address(),
+        "the builder signs in at the signer's own account ahead of the maker's"
+    );
+    let (results, store) = run_both(&world, &store, &[(&composed, TxHash(Hash32([0x65; 32])))]);
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 0 },
+        })],
+        "the retired key is refused where a signature is judged, and nowhere later"
+    );
+
+    // Direct: the signature presented to the maker's rule itself never
+    // enters a block.
+    let direct = ManifestGraph {
+        nodes: vec![GraphNode {
+            target: MAKER.into(),
+            method: "authorize".into(),
+            args: vec![],
+            evidence: [EvidenceRef::IntentSignature].into(),
+        }],
+    };
+    let (results, _) = run_both_signed(
+        &world,
+        &store,
+        &[(&direct, TxHash(Hash32([0x66; 32])))],
+        Some(ALICE),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Inadmissible(0)],
+        "a signature reaches no rule but the signer's own"
+    );
 }
 
 /// A minted proof opens only its own account: presented at another's
@@ -284,20 +343,33 @@ fn recovered_store() -> MemoryStore {
     store
 }
 
+/// Each of Alice's role-gated moves, composed by `signer`: for anyone
+/// but Alice the builder signs them in at their own account first, and
+/// the move is the second node.
+fn cancel_by(signer: PrincipalAddr) -> ManifestGraph {
+    graph_signed(signer, |b| account::cancel(b, ALICE))
+}
+
+fn confirm_by(signer: PrincipalAddr) -> ManifestGraph {
+    graph_signed(signer, |b| account::confirm(b, ALICE))
+}
+
+fn freeze_by(signer: PrincipalAddr) -> ManifestGraph {
+    graph_signed(signer, |b| account::freeze(b, ALICE))
+}
+
 fn cancel_graph() -> ManifestGraph {
-    graph(|b| account::cancel(b, ALICE))
+    cancel_by(ALICE)
 }
 
 fn promote_graph() -> ManifestGraph {
     graph(|b| account::promote(b, ALICE))
 }
 
-fn confirm_graph() -> ManifestGraph {
-    graph(|b| account::confirm(b, ALICE))
-}
-
 /// Whether `signer` opens Alice's sign-in at `clock_ms`: the whole
-/// authorized transfer completes, or refuses at its authorize node.
+/// authorized transfer completes, or refuses at Alice's authorize node
+/// — the first node for Alice's own key, the second for anyone else,
+/// whose own sign-in precedes it.
 fn assert_acts(
     world: &Records,
     store: &MemoryStore,
@@ -306,7 +378,7 @@ fn assert_acts(
     admits: bool,
     tag: u8,
 ) {
-    let transfer = authorized_transfer_graph();
+    let transfer = authorized_transfer_by(signer);
     let (results, _) = run_both_at(
         world,
         store,
@@ -324,7 +396,9 @@ fn assert_acts(
         assert_eq!(
             results,
             vec![TxResult::Refused(Outcome::ConditionUnmet {
-                condition: UnmetCondition::Satisfies { node: 0 },
+                condition: UnmetCondition::Satisfies {
+                    node: u32::from(signer != ALICE),
+                },
             })],
             "the rule must refuse this signer at {clock_ms}"
         );
@@ -361,7 +435,7 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_graph(), TxHash(Hash32([0x61; 32])))],
+        &[(&propose_by(BOB), TxHash(Hash32([0x61; 32])))],
         Some(BOB),
     );
     let TxResult::Completed(receipt) = &results[0] else {
@@ -413,7 +487,7 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     let (results, after) = run_both_at(
         &world,
         &enacted,
-        &[(&cancel_graph(), TxHash(Hash32([0x68; 32])))],
+        &[(&cancel_by(BOB), TxHash(Hash32([0x68; 32])))],
         Some(BOB),
         at,
     );
@@ -443,7 +517,7 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_graph(), TxHash(Hash32([0x68; 32])))],
+        &[(&propose_by(BOB), TxHash(Hash32([0x68; 32])))],
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
@@ -466,7 +540,7 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&cancel_graph(), TxHash(Hash32([0x6E; 32])))],
+        &[(&cancel_by(BOB), TxHash(Hash32([0x6E; 32])))],
         Some(BOB),
     );
     let TxResult::Completed(receipt) = &results[0] else {
@@ -495,7 +569,7 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
     let (results, after) = run_both_signed(
         &world,
         &store,
-        &[(&confirm_graph(), TxHash(Hash32([0x6C; 32])))],
+        &[(&confirm_by(MAKER), TxHash(Hash32([0x6C; 32])))],
         Some(MAKER),
     );
     let TxResult::Completed(receipt) = &results[0] else {
@@ -521,7 +595,7 @@ fn recovery_rotates_a_hostile_primary_out() {
     let t0 = env().clock_ms;
 
     // Freeze first: the acting entry goes, everything else stands.
-    let freeze = graph(|b| account::freeze(b, ALICE));
+    let freeze = freeze_by(BOB);
     let (results, store) = run_both_signed(
         &world,
         &store,
@@ -561,7 +635,7 @@ fn recovery_rotates_a_hostile_primary_out() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_graph(), TxHash(Hash32([0x93; 32])))],
+        &[(&propose_by(BOB), TxHash(Hash32([0x93; 32])))],
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
@@ -593,12 +667,12 @@ fn a_freeze_keeps_the_proposal_it_finds_pending() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_graph(), TxHash(Hash32([0xA0; 32])))],
+        &[(&propose_by(BOB), TxHash(Hash32([0xA0; 32])))],
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
 
-    let freeze = graph(|b| account::freeze(b, ALICE));
+    let freeze = freeze_by(BOB);
     let (results, store) = run_both_signed(
         &world,
         &store,
@@ -649,7 +723,7 @@ fn a_freeze_after_maturity_strips_the_promoted_primary() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_graph(), TxHash(Hash32([0xA5; 32])))],
+        &[(&propose_by(BOB), TxHash(Hash32([0xA5; 32])))],
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
@@ -657,7 +731,7 @@ fn a_freeze_after_maturity_strips_the_promoted_primary() {
     // Past the instant, so Bob is primary by the read alone; his
     // recovery entry is the same rule, so he freezes his own primary.
     let at = t0 + DAY_MS;
-    let freeze = graph(|b| account::freeze(b, ALICE));
+    let freeze = freeze_by(BOB);
     let (results, store) = run_both_at(
         &world,
         &store,
@@ -702,7 +776,7 @@ fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_graph(), TxHash(Hash32([0x97; 32])))],
+        &[(&propose_by(BOB), TxHash(Hash32([0x97; 32])))],
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
@@ -717,7 +791,7 @@ fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&confirm_graph(), TxHash(Hash32([0x9A; 32])))],
+        &[(&confirm_by(MAKER), TxHash(Hash32([0x9A; 32])))],
         Some(MAKER),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
@@ -753,7 +827,7 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     let t0 = env().clock_ms;
 
     // Nothing pending, and the freeze lands anyway.
-    let freeze = graph(|b| account::freeze(b, ALICE));
+    let freeze = freeze_by(BOB);
     let (results, store) = run_both_signed(
         &world,
         &store,
@@ -782,7 +856,7 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     let (results, store) = run_both_at(
         &world,
         &store,
-        &[(&confirm_graph(), TxHash(Hash32([0xB4; 32])))],
+        &[(&confirm_by(MAKER), TxHash(Hash32([0xB4; 32])))],
         Some(MAKER),
         far,
     );
@@ -826,7 +900,7 @@ fn confirmation_enacts_a_proposal_early() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_graph(), TxHash(Hash32([0x6D; 32])))],
+        &[(&propose_by(BOB), TxHash(Hash32([0x6D; 32])))],
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
@@ -835,13 +909,13 @@ fn confirmation_enacts_a_proposal_early() {
     let (results, _) = run_both_signed(
         &world,
         &store,
-        &[(&confirm_graph(), TxHash(Hash32([0x6E; 32])))],
+        &[(&confirm_by(BOB), TxHash(Hash32([0x6E; 32])))],
         Some(BOB),
     );
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
+            condition: UnmetCondition::Satisfies { node: 1 },
         })],
         "recovery is not confirmation"
     );
@@ -849,7 +923,7 @@ fn confirmation_enacts_a_proposal_early() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&confirm_graph(), TxHash(Hash32([0x6F; 32])))],
+        &[(&confirm_by(MAKER), TxHash(Hash32([0x6F; 32])))],
         Some(MAKER),
     );
     let TxResult::Completed(receipt) = &results[0] else {
@@ -872,8 +946,9 @@ const HOUR_MS: u64 = 3_600_000;
 
 /// Propose Bob for all three rules, naming `delay_ms` as the wait every
 /// replacement after this one serves.
+/// Bob, as the recovery role, proposes himself under `delay_ms`.
 fn propose_at_delay(delay_ms: u64) -> ManifestGraph {
-    graph(|b| {
+    graph_signed(BOB, |b| {
         account::propose(
             b,
             ALICE,
@@ -975,14 +1050,14 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_graph(), TxHash(Hash32([0x72; 32])))],
+        &[(&propose_by(BOB), TxHash(Hash32([0x72; 32])))],
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
 
     // Replace it half a day later: one proposal, the fresh instant.
     let later = t0 + DAY_MS / 2;
-    let replace = graph(|b| {
+    let replace = graph_signed(BOB, |b| {
         account::propose(
             b,
             ALICE,
@@ -1047,17 +1122,18 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     );
 
     // And a stranger gets nothing from that: the key the absent cell
-    // admits is the account's own.
+    // admits is the account's own, and a stranger's sign-in reaches no
+    // cell of Alice's.
     let (results, _) = run_both_signed(
         &world,
         &virtual_store,
-        &[(&own_propose, TxHash(Hash32([0x75; 32])))],
+        &[(&propose_by(BOB), TxHash(Hash32([0x75; 32])))],
         Some(BOB),
     );
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
+            condition: UnmetCondition::Satisfies { node: 1 },
         })],
         "and the branch an absent cell meets names the account, not a caller"
     );
@@ -1071,7 +1147,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
     let badge = nf_resource();
     let gated = gated_by(badge.address(), 9);
     let operate_as = |who: PrincipalAddr, id: u64| {
-        graph(|b| {
+        graph_signed(who, |b| {
             let held = account::present_instance(b, who, badge, id)?;
             nf::operate(b, gated, held)
         })
@@ -1127,16 +1203,20 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
             },
         })
     );
+    let presented_by_bob = graph_signed(BOB, |b| {
+        let held = account::present_instance(b, ALICE, badge, id)?;
+        nf::operate(b, gated, held)
+    });
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&operate_as(ALICE, id), TxHash(Hash32([0x74; 32])))],
+        &[(&presented_by_bob, TxHash(Hash32([0x74; 32])))],
         Some(BOB),
     );
     assert_eq!(
         results[0],
         TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
+            condition: UnmetCondition::Satisfies { node: 1 },
         })
     );
 
@@ -1226,13 +1306,13 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
     let by_resource = gated_by(badge.address(), 9);
 
     let operate_instance = |who: PrincipalAddr, id: u64| {
-        graph_in(&world, |b| {
+        graph_signed_in(&world, who, |b| {
             let held = account::present_instance(b, who, badge, id)?;
             nf::operate_instance(b, by_instance_addr, held)
         })
     };
     let operate_resource = |who: PrincipalAddr, id: u64| {
-        graph_in(&world, |b| {
+        graph_signed_in(&world, who, |b| {
             let held = account::present_instance(b, who, badge, id)?;
             nf::operate(b, by_resource, held)
         })
@@ -1383,7 +1463,7 @@ fn a_fungible_badge_is_custody_while_the_vault_is_funded() {
 
     let gated = gated_by(RES_X.address(), 10);
     let operate_as = |who: PrincipalAddr| {
-        graph(|b| {
+        graph_signed(who, |b| {
             let held = account::present_badge(b, who, RES_X)?;
             nf::operate(b, gated, held)
         })

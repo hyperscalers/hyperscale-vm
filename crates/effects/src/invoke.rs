@@ -13,7 +13,9 @@
 //! actually returned. So a lowered argument is either a settled value, a
 //! table position, or an edge to read once its producer has run.
 
-use hyperscale_vm_types::{Address, ResourceAddr};
+use std::borrow::Cow;
+
+use hyperscale_vm_types::{Address, PrincipalAddr, ResourceAddr, SubstateKey};
 
 use crate::claim::Claim;
 use crate::manifest::{Bounds, JudgedLeaf};
@@ -185,15 +187,51 @@ pub struct NodeCall {
     /// admission and judged where every other actor question is — so a
     /// failed requirement aborts before any grant is reached.
     pub issues: Vec<IssuanceGrant>,
-    /// The claims this call presents, resolved from the signed evidence
-    /// the manifest node names.
+    /// The claims this call presents: what earlier nodes of its own
+    /// intent proved, resolved from the signed evidence the manifest
+    /// node names. Never the signer's identity — that is the sign-in.
     pub evidence: Vec<Claim>,
+    /// The principal signed in at this call, where the manifest node
+    /// presents its intent's signature. A signature signs in and does
+    /// nothing else: it reaches only a rule cell under the signer's own
+    /// prefix, answering it alone while the cell is unwritten and
+    /// standing as the signer's identity before the rule stored there.
+    /// A claim leaf, and a rule stored under anyone else's prefix, is
+    /// answered by `evidence` alone.
+    pub signed_in: Option<PrincipalAddr>,
     /// The authority conditions this node's declaration requires, each a
     /// judged rule over the call's presented evidence and the stored
     /// rules its cells hold. All must be satisfied — a claim leaf by the
     /// presented set alone, a stored leaf by the rule the named role
     /// selects at the cell, judged where the cell lives.
     pub requires: Vec<Rule<JudgedLeaf>>,
+}
+
+impl NodeCall {
+    /// The identity the sign-in lends to a rule stored at `cell`: the
+    /// signer's own, where the cell is under the signer's prefix, and
+    /// nothing anywhere else.
+    #[must_use]
+    pub fn signs_in_at(&self, cell: &SubstateKey) -> Option<Claim> {
+        self.signed_in
+            .filter(|signer| signer.address() == cell.owner)
+            .map(Claim::of_subject)
+    }
+
+    /// What a rule stored at `cell` is judged against: the proven
+    /// claims, and the signer's identity where the sign-in reaches the
+    /// cell.
+    #[must_use]
+    pub fn presented_at(&self, cell: &SubstateKey) -> Cow<'_, [Claim]> {
+        self.signs_in_at(cell).map_or_else(
+            || Cow::Borrowed(self.evidence.as_slice()),
+            |signer| {
+                let mut presented = self.evidence.clone();
+                presented.push(signer);
+                Cow::Owned(presented)
+            },
+        )
+    }
 }
 
 #[cfg(test)]

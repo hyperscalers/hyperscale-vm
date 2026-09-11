@@ -107,13 +107,16 @@ pub struct Node {
 pub enum JudgedLeaf {
     /// A claim the presented set must contain.
     Claim(Claim),
-    /// The rule stored at this cell, judged where the cell lives. An
+    /// The rule stored at this cell, judged where the cell lives, and
+    /// the one leaf a signature reaches. Under the signer's own prefix
+    /// the sign-in is judged here: an unwritten cell is governed by the
+    /// key the address derives from, so the sign-in alone answers it,
+    /// and a written one is judged with the signer's identity among the
+    /// presented — which is what stops admitting the bare key the moment
+    /// a rule naming someone else is stored. Under any other prefix an
     /// unwritten cell holds no rule, and no rule admits nobody: what
-    /// governs an address before anything is written there is the
-    /// package's own business, declared as a branch beside this leaf.
-    /// The account's absent-cell-and-self-claim branch is what makes a
-    /// key-derived address govern itself — and what stops admitting the
-    /// bare key the moment a rule is stored.
+    /// governs there before anything is written is the package's own
+    /// business, declared as a branch beside this leaf.
     Stored {
         /// The cell the rule lives in. The declaring method's own
         /// declared access, so it is provisioned wherever the call runs.

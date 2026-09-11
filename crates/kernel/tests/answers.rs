@@ -51,6 +51,7 @@ fn call(export: &str, answers: bool) -> NodeCall {
         answers,
         issues: Vec::new(),
         evidence: Vec::new(),
+        signed_in: None,
         requires: Vec::new(),
     }
 }

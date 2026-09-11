@@ -525,13 +525,15 @@ fn gated(
 
 /// Whether the call's presented claims satisfy a required rule.
 ///
-/// A claim leaf is a pure match against the presented set. A stored
+/// A claim leaf is a pure match against the proven claims. A stored
 /// leaf reads the cell the declaration provisioned and judges the rule
 /// the named role selects there — [`AuthCell::admits`], the same
 /// verdict a stored-rule gate reaches — so a declared rule reaches
 /// stored rules exactly one level deep, which is what `Rule<Claim>`
-/// guarantees by construction. Recursion is bounded by the rule caps
-/// the publish check held the tree to.
+/// guarantees by construction. The stored leaf is also the one leaf the
+/// call's sign-in reaches, and only under the signer's own prefix:
+/// [`NodeCall::signs_in_at`] says whether it does. Recursion is bounded
+/// by the rule caps the publish check held the tree to.
 ///
 /// `judged` carries the verdicts already reached in this node's
 /// judgment. A rule the caps admit has far more leaves than the cells
@@ -556,20 +558,26 @@ fn satisfies(
                 return Ok(*verdict);
             }
             let bytes = session.declared_cell(*cell)?;
-            // An unwritten cell holds no rule, and no rule admits nobody.
-            // What governs a cell before anything is written there is the
-            // package's own business, stated as a rule beside this one —
-            // so the kernel reads what is there and nothing else. Bytes
-            // that do not decode are not a rule either: the write path
-            // refuses such bytes, so a cell that cannot be read fails
-            // closed. A rule asking about a holding is the third way to
-            // be unreadable here: this judge holds the call's evidence
-            // and nothing about who holds what, so it fails closed with
-            // the other two rather than answering the part it can see.
-            let verdict = RuleBytes::rule_in_cell(&bytes)
-                .ok()
-                .and_then(|rule| rule.claims_only())
-                .is_some_and(|claims| claims.satisfied_by(&call.evidence));
+            // An unwritten cell under the signer's own prefix is governed
+            // by the key the address derives from, and the sign-in is the
+            // whole answer. Anywhere else an unwritten cell holds no rule,
+            // and no rule admits nobody: what governs a cell before
+            // anything is written there is the package's own business,
+            // stated as a rule beside this one — so the kernel reads what
+            // is there and nothing else. Bytes that do not decode are not
+            // a rule either, so a cell that cannot be read fails closed.
+            // A rule asking about a holding is the third way to be
+            // unreadable here: this judge holds the call's evidence and
+            // nothing about who holds what, so it fails closed with the
+            // other two rather than answering the part it can see.
+            let verdict = if bytes.is_empty() {
+                call.signs_in_at(cell).is_some()
+            } else {
+                RuleBytes::rule_in_cell(&bytes)
+                    .ok()
+                    .and_then(|rule| rule.claims_only())
+                    .is_some_and(|claims| claims.satisfied_by(&call.presented_at(cell)))
+            };
             judged.insert(*cell, verdict);
             Ok(verdict)
         }

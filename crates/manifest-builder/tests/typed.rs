@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{BuildError, TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
-use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{CallTarget, ComponentAddr, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -474,7 +474,8 @@ fn explicit_evidence_stands_alone_inside_a_scope() {
 
 /// A gate the signer cannot prove is answered by the scope that covers
 /// it: the pool's seal gates on its configured founder, the signer is
-/// somebody else, and the founder's sign-in rides the span.
+/// somebody else, and the founder's sign-in rides the span — itself
+/// opened on the signer's own sign-in, composed ahead of it.
 #[test]
 fn a_scope_covers_a_gate_the_signer_cannot_prove() {
     let chain = world();
@@ -488,10 +489,11 @@ fn a_scope_covers_a_gate_the_signer_cannot_prove() {
     .unwrap();
     let graph = b.build().unwrap();
 
-    let sealed = &graph.nodes[1];
+    assert_eq!(graph.nodes[0].target, CallTarget::from(BOB));
+    let sealed = &graph.nodes[2];
     assert_eq!(sealed.method, seal);
     assert!(
-        sealed.evidence.contains(&EvidenceRef::Node(0)),
+        sealed.evidence.contains(&EvidenceRef::Node(1)),
         "the founder's sign-in rides the seal: {:?}",
         sealed.evidence
     );

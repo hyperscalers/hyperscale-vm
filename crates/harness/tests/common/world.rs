@@ -652,7 +652,10 @@ pub fn execute_manifest(
         // reports it rather than failing: nothing about it is a defect
         // in the driver, and it is exactly the refusal a wallet hears
         // before it signs.
-        Err(AdmissionError::EvidenceUnsatisfied { node, .. }) => {
+        Err(
+            AdmissionError::EvidenceUnsatisfied { node, .. }
+            | AdmissionError::SignatureForGuarded { node },
+        ) => {
             return Ok((TxResult::Inadmissible(node), store));
         }
         Err(source) => return Err(WasmtimeError::new(source).context("admission")),
@@ -929,6 +932,16 @@ pub fn graph_in(
         .expect("every call types and every output is consumed")
 }
 
+/// As [`graph_in`], composed by `signer`.
+pub fn graph_signed_in(
+    world: &Records,
+    signer: PrincipalAddr,
+    write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
+) -> ManifestGraph {
+    TypedBuilder::compose(world, &TestHasher, signer, write)
+        .expect("every call types and every output is consumed")
+}
+
 /// As [`graph`], signed by somebody other than Alice — the registrar's
 /// own compositions, where the signer is what the recall's entry names.
 pub fn graph_signed(
@@ -950,7 +963,15 @@ pub fn transfer_graph() -> ManifestGraph {
 /// mints Alice's identity and the withdrawal presents that proof instead
 /// of the intent's signature.
 pub fn authorized_transfer_graph() -> ManifestGraph {
-    graph(|b| {
+    authorized_transfer_by(ALICE)
+}
+
+/// As [`authorized_transfer_graph`], composed by `signer`. For anyone
+/// but Alice the builder signs them in at their own account ahead of
+/// hers, so Alice's sign-in is the second node and her gate judges the
+/// proof that sign-in minted.
+pub fn authorized_transfer_by(signer: PrincipalAddr) -> ManifestGraph {
+    graph_signed(signer, |b| {
         let proof = account::authorize(b, ALICE)?;
         let funds = b
             .call_presenting(proof, ALICE, "withdraw", (RES_X, 100u128))?
@@ -964,7 +985,13 @@ pub fn authorized_transfer_graph() -> ManifestGraph {
 pub const DAY_MS: u64 = 86_400_000;
 
 pub fn propose_graph() -> ManifestGraph {
-    graph(|b| {
+    propose_by(ALICE)
+}
+
+/// Alice's recovery proposes Bob, composed by `signer`: the recovery
+/// role's own sign-in precedes the proposal for anyone but Alice.
+pub fn propose_by(signer: PrincipalAddr) -> ManifestGraph {
+    graph_signed(signer, |b| {
         account::propose(
             b,
             ALICE,
@@ -985,7 +1012,7 @@ pub fn swap_graph(min_out: u128) -> ManifestGraph {
 }
 
 pub fn fill_graph() -> ManifestGraph {
-    graph(|b| {
+    graph_signed(TAKER, |b| {
         let taker = account::authorize(b, TAKER)?;
         let payment = b.presenting(taker, |b| account::withdraw(b, TAKER, QUOTE, 100))?;
         let [bought, refund] = book().fill_asks(b, 3, 5, payment)?;

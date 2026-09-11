@@ -267,9 +267,10 @@ fn proof_graph() -> ManifestGraph {
     }
 }
 
-/// A proven claim resolves at admission to its producer's target — the
-/// same address set an intent signature would have produced for a
-/// virtual account, reached through the authorizing node instead.
+/// A proven claim resolves at admission to its producer's target,
+/// reached through the authorizing node — which itself presents no
+/// claim: the signature it carries is the sign-in, kept beside the
+/// proven set rather than in it.
 #[test]
 fn a_proven_claim_resolves_to_its_producers_target() {
     let chain = setup();
@@ -279,8 +280,8 @@ fn a_proven_claim_resolves_to_its_producers_target() {
     // method's own declared read names: what is stored there, or — while
     // nothing is — the identity that address itself derives. The guarded
     // withdrawal keeps the pure identity match.
-    let authorize = &admitted.manifest().nodes[0];
-    assert_eq!(authorize.evidence, vec![Claim::of_subject(ALICE)]);
+    assert_eq!(admitted.manifest().nodes[0].evidence, Vec::<Claim>::new());
+    assert_eq!(admitted.calls()[0].signed_in, Some(ALICE));
     let cell = child_key(&TestHasher, ALICE, AUTH, &[]);
     assert_eq!(
         admitted.calls()[0].requires,
@@ -418,20 +419,29 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
     (chain, custodian)
 }
 
+/// Alice signs in, presents at the custodian on her proof — its stored
+/// rule is the custodian's, which no signature reaches — and operates on
+/// what the custodian minted.
 fn custodian_graph(custodian: ComponentAddr) -> ManifestGraph {
     ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: custodian.into(),
-                method: "present".into(),
+                target: ALICE.into(),
+                method: "authorize".into(),
                 args: vec![],
                 evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: custodian.into(),
-                method: "operate".into(),
+                method: "present".into(),
                 args: vec![],
                 evidence: [EvidenceRef::Node(0)].into(),
+            },
+            GraphNode {
+                target: custodian.into(),
+                method: "operate".into(),
+                args: vec![],
+                evidence: [EvidenceRef::Node(1)].into(),
             },
         ],
     }
@@ -450,7 +460,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     );
     let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
-        admitted.calls()[0].requires,
+        admitted.calls()[1].requires,
         vec![Rule::Require(JudgedLeaf::Stored {
             cell: child_key(&TestHasher, custodian, AUTH, &[]),
         })],
@@ -469,14 +479,14 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
             })),
         "the badge-keyed vault's possession joins the union declaration"
     );
-    let operate = &admitted.manifest().nodes[1];
+    let operate = &admitted.manifest().nodes[2];
     assert_eq!(
         operate.evidence,
         vec![Claim::of_subject(badge)],
         "the proof presents the badge, not the producer's address"
     );
     assert_eq!(
-        admitted.calls()[1].requires,
+        admitted.calls()[2].requires,
         vec![Rule::Require(JudgedLeaf::Claim(Claim::of_subject(badge)))],
         "a gate naming a resource address wants the badge, by the class alone"
     );
@@ -488,7 +498,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
         custodian_world(&Presenting::Identity, vec![Value::Address(badge.address())]);
     let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
-        admitted.manifest().nodes[1].evidence,
+        admitted.manifest().nodes[2].evidence,
         vec![Claim::of_subject(custodian)]
     );
     // A badge that is not a resource address has nothing possessable
@@ -501,7 +511,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     );
     let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
-        admitted.manifest().nodes[1].evidence,
+        admitted.manifest().nodes[2].evidence,
         vec![Claim::of_instance(badge, 7), Claim::of_subject(badge),],
         "one instance held is the badge held, where possession was verified"
     );
@@ -667,7 +677,7 @@ fn an_unsatisfied_gate_reads_back_leaf_by_leaf() {
     chain.instances.create(&TestHasher, meta);
 
     let mut graph = custodian_graph(custodian);
-    graph.nodes[1].target = gatekeeper.into();
+    graph.nodes[2].target = gatekeeper.into();
     let refusal = admit(&graph, ALICE, &chain, &TestHasher)
         .expect_err("one badge does not meet a threshold of two");
     assert!(matches!(
@@ -1545,14 +1555,13 @@ proptest! {
     }
 }
 
-/// A `Requires` clause rides admission's single walk: the evaluated
-/// authority condition lands on the node's lowered call, the presence
-/// condition joins the union declaration, and the evidence policy reads
-/// the conditions — a stored leaf is what admits a signature as
-/// evidence, exactly as a stored-rule gate is.
-#[test]
-fn a_condition_lowers_to_the_call_and_the_union_declaration() {
-    use hyperscale_vm_effects::{JudgedLeaf, Rule, RuleLeaf};
+/// A component whose one method reads its own rule cell, requires the
+/// cell present, and is gated on "the configured principal, or whoever
+/// the stored rule admits" — the shape that mixes a claim leaf with a
+/// stored one. Published and instantiated on `chain`, configured with
+/// Alice; the instance address is returned.
+fn conditional_component(chain: &mut Records) -> ComponentAddr {
+    use hyperscale_vm_effects::RuleLeaf;
 
     let auth_cell = || Expr::ChildKey {
         owner: Box::new(Expr::SelfAddr),
@@ -1594,7 +1603,6 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
             ..MethodSignature::default()
         },
     );
-    let mut chain = setup();
     // Through the checked door: the composed signature check admits the
     // condition-carrying shape.
     chain
@@ -1608,8 +1616,20 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
     };
     let target = meta.address(&TestHasher);
     chain.instances.create(&TestHasher, meta);
+    target
+}
 
-    let graph = ManifestGraph {
+/// A signature reaches no rule but the signer's own. A component's
+/// stored rule is not the signer's, and the claim beside it is one a
+/// signature never answers — so the one shape that could have admitted
+/// a key the account has retired is refused at the door, and the same
+/// method admits the proof that account's own sign-in mints.
+#[test]
+fn a_signature_reaches_no_rule_but_the_signers_own() {
+    let mut chain = setup();
+    let target = conditional_component(&mut chain);
+
+    let signed = ManifestGraph {
         nodes: vec![GraphNode {
             target: target.into(),
             method: "act".into(),
@@ -1617,34 +1637,98 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
             evidence: [EvidenceRef::IntentSignature].into(),
         }],
     };
+    assert_eq!(
+        admit(&signed, ALICE, &chain, &TestHasher),
+        Err(AdmissionError::SignatureForGuarded { node: 0 })
+    );
+
+    let proven = ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE.into(),
+                method: "authorize".into(),
+                args: vec![],
+                evidence: [EvidenceRef::IntentSignature].into(),
+            },
+            GraphNode {
+                target: target.into(),
+                method: "act".into(),
+                args: vec![],
+                evidence: [EvidenceRef::Node(0)].into(),
+            },
+        ],
+    };
+    let admitted = admit(&proven, ALICE, &chain, &TestHasher).expect("admits");
+    // The sign-in stays the sign-in's: the account's call carries it
+    // and presents no claim, and the component's call presents the
+    // claim that sign-in proved.
+    assert_eq!(admitted.calls()[0].signed_in, Some(ALICE));
+    assert_eq!(admitted.calls()[0].evidence, Vec::<Claim>::new());
+    assert_eq!(admitted.calls()[1].signed_in, None);
+    assert_eq!(admitted.calls()[1].evidence, vec![Claim::of_subject(ALICE)]);
+}
+
+/// A `Requires` clause rides admission's single walk: the evaluated
+/// authority condition lands on the node's lowered call, and the
+/// presence condition joins the union declaration, each carrying the
+/// node whose frame states it.
+#[test]
+fn a_condition_lowers_to_the_call_and_the_union_declaration() {
+    use hyperscale_vm_effects::{JudgedLeaf, Rule};
+
+    let mut chain = setup();
+    let target = conditional_component(&mut chain);
+
+    let graph = ManifestGraph {
+        nodes: vec![
+            GraphNode {
+                target: ALICE.into(),
+                method: "authorize".into(),
+                args: vec![],
+                evidence: [EvidenceRef::IntentSignature].into(),
+            },
+            GraphNode {
+                target: target.into(),
+                method: "act".into(),
+                args: vec![],
+                evidence: [EvidenceRef::Node(0)].into(),
+            },
+        ],
+    };
     let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
 
     let key = child_key(&TestHasher, target, AUTH, &[]);
-    // The signature's own condition, then the instantiation fence
-    // admission puts on every component call — each carrying the node
-    // whose frame states it, which is what the union list would
+    // The condition's own presence requirement, then the instantiation
+    // fence admission puts on every component call — each carrying the
+    // node whose frame states it, which is what the union list would
     // otherwise have lost.
+    let conditions: Vec<&Condition> = admitted
+        .declaration()
+        .conditions
+        .iter()
+        .filter(|condition| condition.node == Some(1))
+        .collect();
     assert_eq!(
-        admitted.declaration().conditions,
+        conditions,
         vec![
-            Condition {
+            &Condition {
                 rule: Rule::Require(JudgedLeaf::Presence {
                     target: EffectTarget::Point(key),
                     expect: Presence::Present,
                 }),
-                node: Some(0),
+                node: Some(1),
             },
-            Condition {
+            &Condition {
                 rule: Rule::Require(JudgedLeaf::Presence {
                     target: EffectTarget::Point(child_key(&TestHasher, target, CONFIG, &[])),
                     expect: Presence::Present,
                 }),
-                node: Some(0),
+                node: Some(1),
             },
         ]
     );
     assert_eq!(
-        admitted.calls()[0].requires,
+        admitted.calls()[1].requires,
         vec![Rule::CountOf {
             count: 1,
             rules: vec![
@@ -1653,9 +1737,6 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
             ],
         }]
     );
-    // The signature was admissible as evidence because the declaration
-    // reads a stored rule; the presented identity is the signer's.
-    assert_eq!(admitted.calls()[0].evidence, vec![Claim::of_subject(ALICE)]);
 }
 
 /// What a call must present is a property of the declaration it
@@ -1701,20 +1782,30 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     let settler = meta.address(&TestHasher);
     chain.instances.create(&TestHasher, meta);
 
+    // Alice's sign-in ahead of the settler, whose stored rule is its
+    // own and takes a proof.
     let call = |guarded: bool, evidence: BTreeSet<EvidenceRef>| ManifestGraph {
-        nodes: vec![GraphNode {
-            target: settler.into(),
-            method: "settle".into(),
-            args: vec![GraphArg::Literal(Value::U64(u64::from(guarded)))],
-            evidence,
-        }],
+        nodes: vec![
+            GraphNode {
+                target: ALICE.into(),
+                method: "authorize".into(),
+                args: vec![],
+                evidence: [EvidenceRef::IntentSignature].into(),
+            },
+            GraphNode {
+                target: settler.into(),
+                method: "settle".into(),
+                args: vec![GraphArg::Literal(Value::U64(u64::from(guarded)))],
+                evidence,
+            },
+        ],
     };
 
     // The guard fires: the condition is there, so a proof is required and
-    // the signature answers for it.
+    // the sign-in's proof answers for it.
     assert!(
         admit(
-            &call(true, [EvidenceRef::IntentSignature].into()),
+            &call(true, [EvidenceRef::Node(0)].into()),
             ALICE,
             &chain,
             &TestHasher
@@ -1723,7 +1814,7 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     );
     assert_eq!(
         admit(&call(true, BTreeSet::new()), ALICE, &chain, &TestHasher),
-        Err(AdmissionError::MissingEvidence { node: 0 })
+        Err(AdmissionError::MissingEvidence { node: 1 })
     );
 
     // The guard does not fire: the frame carries no condition, so the
@@ -1732,12 +1823,12 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     assert!(admit(&call(false, BTreeSet::new()), ALICE, &chain, &TestHasher).is_ok());
     assert_eq!(
         admit(
-            &call(false, [EvidenceRef::IntentSignature].into()),
+            &call(false, [EvidenceRef::Node(0)].into()),
             ALICE,
             &chain,
             &TestHasher
         ),
-        Err(AdmissionError::UnexpectedEvidence { node: 0 })
+        Err(AdmissionError::UnexpectedEvidence { node: 1 })
     );
 }
 

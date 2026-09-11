@@ -560,10 +560,13 @@ impl MethodSignature {
                 .any(|clause| matches!(clause, Clause::Effect { reach: Some(_), .. }))
     }
 
-    /// Whether judging this method reads a stored rule — which is what
-    /// admits a signature as evidence: a signature signs in, and whether
-    /// the key behind it still holds its account's authority is the
-    /// stored rule's own question.
+    /// Whether judging this method reads a stored rule — the one leaf a
+    /// signature reaches: a signature signs in, and whether the key
+    /// behind it still holds its account's authority is the stored
+    /// rule's own question. Which rule the sign-in answers is the cell
+    /// owner's: only one under the signer's prefix, so a builder
+    /// presents the signature to the signer's own target and a proof
+    /// anywhere else.
     #[must_use]
     pub fn reads_a_rule(&self) -> bool {
         self.required_rules()

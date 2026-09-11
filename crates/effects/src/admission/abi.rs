@@ -5,7 +5,7 @@
 //! representation the boundary carries it in. `publish/abi.rs` asks
 //! the same question of a signature; this is its evaluated twin.
 
-use hyperscale_vm_types::{Address, ResourceAddr};
+use hyperscale_vm_types::{Address, PrincipalAddr, ResourceAddr};
 
 use super::AdmissionError;
 use crate::claim::Claim;
@@ -28,6 +28,7 @@ pub(super) struct CallBinding<'a> {
     pub(super) node_inputs: &'a [NodeInput],
     pub(super) node_outputs: &'a [(ResourceAddr, EdgeContent)],
     pub(super) evidence: &'a [Claim],
+    pub(super) signed_in: Option<PrincipalAddr>,
     pub(super) requires: Vec<Rule<JudgedLeaf>>,
     /// The resource this node issues, already derived where its entries
     /// were injected — so the address a rule was resolved against and
@@ -134,6 +135,7 @@ pub(super) fn lower_call(
         node_inputs,
         node_outputs,
         evidence,
+        signed_in,
         requires,
         issues,
         inputs,
@@ -205,6 +207,7 @@ pub(super) fn lower_call(
         answers: signature.answers,
         issues,
         evidence: evidence.to_vec(),
+        signed_in,
         requires,
     })
 }

@@ -22,7 +22,7 @@ const BOOK_BASE: SlotId = SlotId(<book::Base as VaultField>::SLOT);
 const BOOK_QUOTE: SlotId = SlotId(<book::Quote as VaultField>::SLOT);
 
 fn place_graph() -> ManifestGraph {
-    graph(|b| {
+    graph_signed(MAKER, |b| {
         let maker = account::authorize(b, MAKER)?;
         let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, BASE, 50))?;
         book().place_ask(b, 3, funds)
@@ -44,7 +44,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
     };
 
     // A maker escrowing quote where the book escrows base.
-    let wrong_ask = graph(|b| {
+    let wrong_ask = graph_signed(MAKER, |b| {
         let maker = account::authorize(b, MAKER)?;
         let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, QUOTE, 50))?;
         book().place_ask(b, 3, funds)
@@ -59,7 +59,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
     );
 
     // A taker paying base where the book is paid in quote.
-    let wrong_fill = graph(|b| {
+    let wrong_fill = graph_signed(TAKER, |b| {
         let taker = account::authorize(b, TAKER)?;
         let payment = b.presenting(taker, |b| account::withdraw(b, TAKER, BASE, 100))?;
         let [bought, refund] = book().fill_asks(b, 3, 5, payment)?;
@@ -241,7 +241,7 @@ fn a_finer_tick_prices_between_two_integers_on_both_runtimes() {
         encode_amount(100).to_vec(),
     );
 
-    let fill = graph(|b| {
+    let fill = graph_signed(TAKER, |b| {
         let taker = account::authorize(b, TAKER)?;
         let payment = b.presenting(taker, |b| account::withdraw(b, TAKER, QUOTE, 60))?;
         let [bought, change] = fine_book().fill_asks(b, 1, 9, payment)?;

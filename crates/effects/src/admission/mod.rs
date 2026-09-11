@@ -274,6 +274,20 @@ impl Admitted {
     }
 }
 
+/// Whether admission holds a gated node to its target's authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TargetAuthority {
+    /// The rule as the chain applies it.
+    Required,
+    /// Every gated node is treated as carrying its target's authority:
+    /// the intent's signature is admitted wherever it is presented, and
+    /// the judgment it would fail is the embedder's to drop. A preview
+    /// grant only, for answering what an envelope would do before the
+    /// accounts it touches have signed for it; nothing on a commit path
+    /// admits under it.
+    Assumed,
+}
+
 /// Admit a graph: check well-formedness, linearity, and type agreement
 /// against package metadata, and lower it to the routing manifest.
 ///
@@ -333,6 +347,7 @@ pub fn admit_presenting(
         &BTreeSet::new(),
         grants,
         hasher,
+        TargetAuthority::Required,
     )
 }
 
@@ -346,6 +361,7 @@ pub(crate) fn admit_intents(
     presented: &BTreeSet<Address>,
     grants: &PresentedGrants,
     hasher: &dyn Hasher,
+    authority: TargetAuthority,
 ) -> Result<Admitted, AdmissionError> {
     let total: usize = intents.iter().map(|view| view.graph.nodes.len()).sum();
     if total > MAX_MANIFEST_NODES {
@@ -364,6 +380,7 @@ pub(crate) fn admit_intents(
         presented,
         grants,
         hasher,
+        authority,
         flat_of: &flat_of,
         budget: &budget,
         outputs: Vec::with_capacity(total),
@@ -455,6 +472,9 @@ struct Admission<'a> {
     presented: &'a BTreeSet<Address>,
     grants: &'a PresentedGrants,
     hasher: &'a dyn Hasher,
+    /// Whether a signature is held to the one leaf it reaches, or
+    /// admitted wherever a preview presents it.
+    authority: TargetAuthority,
     /// What admitting this envelope has spent, across every node the
     /// interleaved order holds. One meter for the tree, because a caller
     /// composes the tree and admission runs before any fee is assured.
@@ -582,7 +602,7 @@ impl Admission<'_> {
         // entry open to everyone. Both are conditions the frame simply
         // does not carry, and demanding a proof for one nothing will
         // consume is the refusal a caller could never satisfy.
-        let evidence =
+        let (evidence, signed_in) =
             self.resolve_evidence(intent_index, local_index, node, &frame, node_index)?;
         // The frame's handles occupy the run of the capability table
         // starting here, so the offset is taken before the frame is
@@ -613,6 +633,7 @@ impl Admission<'_> {
                 node_inputs: &inputs,
                 node_outputs: &node_outputs,
                 evidence: &evidence,
+                signed_in,
                 requires,
                 issues,
                 inputs: &eval_inputs,
@@ -1037,7 +1058,9 @@ impl Admission<'_> {
         Ok((value, input))
     }
 
-    /// Resolve the node's presented evidence against its own intent.
+    /// Resolve the node's presented evidence against its own intent:
+    /// the claims earlier nodes proved, and the principal its signature
+    /// signs in, kept apart because the judge treats them apart.
     ///
     /// A proof is scoped to the intent that produced it — a signature
     /// proof to the intent whose signature, a node proof to the intent
@@ -1050,31 +1073,37 @@ impl Admission<'_> {
         node: &GraphNode,
         frame: &Declaration,
         node_index: u32,
-    ) -> Result<Vec<Claim>, AdmissionError> {
+    ) -> Result<(Vec<Claim>, Option<PrincipalAddr>), AdmissionError> {
         let intent = &self.intents[intent_index];
         let local = u32::try_from(local_index).map_err(|_| AdmissionError::TooManyNodes)?;
         let required = judged_here(frame);
         check_evidence_presence(&required, node, node_index)?;
         let mut evidence = Vec::with_capacity(node.evidence.len());
+        let mut signed_in = None;
         for reference in &node.evidence {
             match reference {
                 EvidenceRef::IntentSignature => {
-                    // A signature signs in; a proof acts. Whether the
-                    // key behind this proof still holds its account's
-                    // authority is the account's rule, so the only
-                    // gates it may reach are the ones that read a rule
-                    // — the sign-in, and the recovery surface.
-                    let reads_a_rule = required.iter().any(|rule| {
-                        rule.leaves()
-                            .any(|leaf| matches!(leaf, JudgedLeaf::Stored { .. }))
-                    });
-                    if !reads_a_rule {
-                        return Err(AdmissionError::SignatureForGuarded { node: node_index });
-                    }
+                    // A signature signs in; a proof acts. The one thing
+                    // a signature answers is a rule cell under its
+                    // signer's own prefix — unwritten, the key the
+                    // address derives from governs it; written, the
+                    // rule there is judged with the signer among the
+                    // presented. A claim a declaration names, and a rule
+                    // stored under anyone else's prefix, takes a proof:
+                    // which is what keeps a key its account has retired
+                    // from standing in for that account anywhere.
                     let signer = intent
                         .signer
                         .ok_or(AdmissionError::UnsignedEvidence { node: node_index })?;
-                    evidence.push(Claim::of_subject(signer));
+                    let reaches = required.iter().any(|rule| {
+                        rule.leaves().any(|leaf| {
+                            matches!(leaf, JudgedLeaf::Stored { cell } if cell.owner == signer.address())
+                        })
+                    });
+                    if !reaches && self.authority == TargetAuthority::Required {
+                        return Err(AdmissionError::SignatureForGuarded { node: node_index });
+                    }
+                    signed_in = Some(signer);
                 }
                 EvidenceRef::Node(producer) => {
                     // An earlier node of the same intent, whose proven
@@ -1171,7 +1200,7 @@ impl Admission<'_> {
             }
         }
         judge_presented(&required, &evidence, node_index)?;
-        Ok(evidence)
+        Ok((evidence, signed_in))
     }
 }
 

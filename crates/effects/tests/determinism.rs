@@ -13,7 +13,8 @@ use hyperscale_vm_effects::{
     SlotRef, TestHasher, Value, admit, evaluate_expr, route,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, ResourceAddr,
+    Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, PrincipalAddr,
+    ResourceAddr,
 };
 use proptest::collection::vec;
 use proptest::option;
@@ -147,7 +148,10 @@ proptest! {
         let resource = Address::new([resource_byte; 31], AddressClass::Resource);
         let mut chain = Records::new();
         chain.packages.publish_unchecked(pkg("account"), account::metadata());
-        let sender = instance(&mut chain.instances, "account", 0, sender_byte);
+        chain.instances.serve_principals(pkg("account"));
+        // The sender signs, so it is a principal: the one target a
+        // signature signs in at.
+        let sender = PrincipalAddr::new([sender_byte; 31]);
         let recipient = instance(&mut chain.instances, "account", 1, recipient_byte);
         let graph = ManifestGraph {
             nodes: vec![
@@ -177,7 +181,7 @@ proptest! {
                 },
             ],
         };
-        let admitted = admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+        let admitted = admit(&graph, sender, &chain, &TestHasher).unwrap();
         let first = route(&admitted, &resolver());
         let second = route(&admitted, &resolver());
         assert_eq!(first, second);
@@ -202,11 +206,11 @@ proptest! {
         let resource = Address::new([resource_byte; 31], AddressClass::Resource);
         let mut chain = Records::new();
         chain.packages.publish_unchecked(pkg("account"), account::metadata());
-        // Each instance sits at the address its own record derives, so
-        // distinct salt lanes are what keep the sender and any generated
-        // recipient apart — no address is picked.
+        chain.instances.serve_principals(pkg("account"));
+        // The recipient sits at the address its own record derives, and
+        // the sender is the signing principal: no address is picked.
         let recipient = instance(&mut chain.instances, "account", 1, recipient_byte);
-        let sender = instance(&mut chain.instances, "account", 0, 0);
+        let sender = ALICE;
         let graph = ManifestGraph {
             nodes: vec![
                 GraphNode {

@@ -169,7 +169,16 @@ const POOL_VAULT: SlotId = SlotId(<staking::Pool as VaultField>::SLOT);
 /// signature it names and every edge carries the resource that signature
 /// declares — neither of which is written out below.
 fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -> ManifestGraph {
-    TypedBuilder::compose(&world(), &TestHasher, ALICE, write)
+    graph_as(ALICE, write)
+}
+
+/// As [`graph`], composed by `signer` — the operator's own compositions,
+/// whose sign-in is the operator's.
+fn graph_as(
+    signer: PrincipalAddr,
+    write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
+) -> ManifestGraph {
+    TypedBuilder::compose(&world(), &TestHasher, signer, write)
         .expect("every call types and every output is consumed")
 }
 
@@ -244,7 +253,7 @@ fn validator_leaf(pool: impl Into<Address>, validator: u64) -> SubstateKey {
 /// The method is a parameter because the tests below are about two of
 /// them behaving alike, which is not a shape a wrapper per method has.
 fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
-    graph(|b| {
+    graph_as(OPERATOR, |b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         b.call_presenting(operator, pool(), method, (validator,))?
             .none()
@@ -252,7 +261,7 @@ fn operator_graph(method: &str, validator: u64) -> ManifestGraph {
 }
 
 fn register_graph(validator: u64) -> ManifestGraph {
-    graph(|b| {
+    graph_as(OPERATOR, |b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         b.presenting(operator, |b| {
             pool().register_validator(b, validator, PUBKEY, POSSESSION_PROOF)
@@ -603,7 +612,7 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
 /// record of each mark it issues, and minting the owner badge it comes
 /// up holding — filed in the founder's own account.
 fn bring_up_graph() -> ManifestGraph {
-    graph(|b| instantiate(b, OPERATOR, pool().into(), ()))
+    graph_as(OPERATOR, |b| instantiate(b, OPERATOR, pool().into(), ()))
 }
 
 /// The same bring-up, written out — the sign-in, the seal, the deposit.
@@ -614,7 +623,7 @@ fn bring_up_graph() -> ManifestGraph {
 /// against the untyped call rather than a generated wrapper, because the
 /// point is what a caller composing it by hand would have to write.
 fn hand_written_bring_up() -> ManifestGraph {
-    graph(|b| {
+    graph_as(OPERATOR, |b| {
         let founder = account::authorize(b, OPERATOR)?;
         let badge = b
             .call_presenting(founder, pool(), "instantiate", ())?
@@ -827,7 +836,7 @@ fn cast_payload() -> Vec<u8> {
 }
 
 fn cast_graph() -> ManifestGraph {
-    graph(|b| {
+    graph_as(OPERATOR, |b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         b.presenting(operator, |b| {
             pool().cast_param_vote(b, SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT)
@@ -858,7 +867,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
     let mut store = operator_store();
     store.write(vote_leaf(pool()), cast_payload());
 
-    let cleared = graph(|b| {
+    let cleared = graph_as(OPERATOR, |b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         b.presenting(operator, |b| pool().clear_param_vote(b))
     });

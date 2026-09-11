@@ -952,7 +952,8 @@ fn two_bindings_cannot_consume_one_output() {
     let mut tree = composed_tree(100);
     let mut second = tree.subintents[0].clone();
     second.signer = second_signer;
-    second.decl.graph.nodes[1] = withdraw(BOB, RES_Y, 11);
+    second.decl.graph.nodes[0] = authorize(second_signer);
+    second.decl.graph.nodes[1] = withdraw(second_signer, RES_Y, 11);
     tree.subintents.push(second);
     let identity = tree.hash(&TestHasher);
     let result = admit_tree(&tree, ALICE, identity, &chain, &TestHasher);

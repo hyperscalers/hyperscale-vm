@@ -163,12 +163,13 @@ pub enum TypedError {
         /// The method called.
         method: String,
     },
-    /// A guarded call composed without a proof, naming no claim the
-    /// composer could prove from the signer's own account — admission's
+    /// A gated call on another party's target composed without a proof,
+    /// naming nothing the composer could prove from the signer's own
+    /// account — admission's
     /// [`SignatureForGuarded`](hyperscale_vm_effects::AdmissionError::SignatureForGuarded)
-    /// verdict, reached at the call site. A signature signs in through
-    /// an authorizing method; what it proves there is what a guarded
-    /// method takes.
+    /// verdict, reached at the call site. A signature signs in at the
+    /// signer's own account; what it proves there is what any other
+    /// gate takes.
     #[error("`{method}` takes a proven claim; a signature only signs in")]
     SignatureForGuarded {
         /// The method called.
@@ -819,6 +820,24 @@ impl<'a> TypedBuilder<'a> {
         Ok(proven)
     }
 
+    /// What a call to another party's stored rule presents where the
+    /// caller spelled nothing: the signer's own sign-in, composed ahead
+    /// of the call. The rule's contents are state the composer cannot
+    /// read, and the signer's identity is the one claim it can prove
+    /// about itself — so this is the chained sign-in, and the rule
+    /// decides at the call whether that identity is one it names.
+    /// Inside a scope the scope answers, as for any gate.
+    fn rule_proofs(&mut self, method: &str, scoped: &[Proof]) -> Result<Vec<Proof>, TypedError> {
+        if !scoped.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.present(Claim::of_subject(self.signer))
+            .map(|proof| vec![proof])
+            .ok_or_else(|| TypedError::SignatureForGuarded {
+                method: method.to_owned(),
+            })
+    }
+
     /// The claims this call proves, filed on the [`Proof`] handed back
     /// so a scope's coverage can be judged without re-resolving the
     /// call. All `None` for a call that proves nothing.
@@ -973,19 +992,26 @@ impl<'a> TypedBuilder<'a> {
         } else {
             Vec::new()
         };
-        // A signature signs in, so it reaches only a gate that reads a
-        // rule; a claim a declaration names takes a proof — and what the
-        // gate names that the signer's own account can prove is proven
-        // ahead of the call, exactly as injected requirements are. Only
-        // a gate whose every claim is beyond both the composer's reach
-        // and the enclosing scopes' refuses, and proving nothing appends
-        // nothing, so the refusal leaves the graph as it was.
-        let gated: Vec<Proof> =
-            if signature.requires_evidence() && proofs.is_empty() && !signature.reads_a_rule() {
-                self.gate_proofs(signature, target, meta, &values, &known, method, &scoped)?
+        // A signature signs in, so it reaches only a rule cell under the
+        // signer's own prefix: the signer's own target. Everything else
+        // takes a proof — a claim a declaration names is proven from the
+        // signer's account where the gate names something it can prove,
+        // and another party's stored rule is answered with the signer's
+        // own sign-in, the one claim the composer can make about a rule
+        // it cannot read. Proven ahead of the call, exactly as injected
+        // requirements are; only a gate nothing can answer refuses, and
+        // proving nothing appends nothing, so the refusal leaves the
+        // graph as it was.
+        let signs_in = signature.reads_a_rule() && target.address() == self.signer.address();
+        let gated: Vec<Proof> = if signature.requires_evidence() && proofs.is_empty() && !signs_in {
+            if signature.reads_a_rule() {
+                self.rule_proofs(method, &scoped)?
             } else {
-                Vec::new()
-            };
+                self.gate_proofs(signature, target, meta, &values, &known, method, &scoped)?
+            }
+        } else {
+            Vec::new()
+        };
         let earned = if proofs.is_empty() {
             wanted
                 .iter()
@@ -1032,13 +1058,13 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            // A method reading a rule takes the intent's signature, and
-            // what its movements earned rides beside it — the stored
-            // rule answers the sign-in, never the claim a moved
-            // resource demands. A guarded method presents what the walk
-            // above proved of its gate, and was refused there if that
-            // was nothing.
-            (true, []) if signature.reads_a_rule() => iter::once(EvidenceRef::IntentSignature)
+            // The signer's own rule-reading method takes the intent's
+            // signature, and what its movements earned rides beside it —
+            // the stored rule answers the sign-in, never the claim a
+            // moved resource demands. Any other gated method presents
+            // what the walk above proved for it, and was refused there
+            // if that was nothing.
+            (true, []) if signs_in => iter::once(EvidenceRef::IntentSignature)
                 .chain(earned.iter().map(|proof| proof.reference()))
                 .collect(),
             (true, []) => gated

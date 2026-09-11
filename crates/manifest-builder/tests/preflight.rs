@@ -146,7 +146,7 @@ fn the_operator_surface_is_the_badge_holders_custody() {
     let operator = account::present_badge(&mut b, OPERATOR, badge()).unwrap();
     b.presenting(operator, |b| pool().unjail(b, 42)).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight(&graph, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let report = preflight(&graph, OPERATOR, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
 
     // A pool is owned by nobody, so its operator surface admits whoever
     // presents the pool's own badge: custody at the presentation, and
