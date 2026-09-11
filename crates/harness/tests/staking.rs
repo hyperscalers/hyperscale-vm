@@ -228,6 +228,29 @@ fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
     );
 }
 
+/// The unstake half of the same pin: the pool takes back its own stake
+/// units and nothing else, so units in any other resource are refused
+/// at admission naming the unit.
+#[test]
+fn an_unstake_in_the_wrong_resource_is_refused_at_admission() {
+    let world = world();
+    let tree = single_intent(graph(|b| {
+        let funds = account::withdraw(b, ALICE, XRD, 40)?;
+        pool().unstake(b, funds)
+    }));
+    let identity = tree.hash(&TestHasher);
+    let refused = admit_tree(&tree, ALICE, identity, &world, &TestHasher)
+        .expect_err("the pool takes back its stake units and this hands it the staked resource");
+
+    assert!(
+        matches!(
+            refused,
+            AdmissionError::WrongDenomination { param: 0, expected, .. } if expected == unit()
+        ),
+        "the refusal names the stake unit: {refused:?}"
+    );
+}
+
 /// The control: the same delegation in the pool's own resource admits.
 #[test]
 fn a_delegation_in_the_pools_own_resource_admits() -> Result<()> {

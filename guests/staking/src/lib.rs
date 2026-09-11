@@ -18,6 +18,11 @@
 //! reading it puts every delegator on one cell. Rewards are what would
 //! move that rate, and there are none to move it yet.
 //!
+//! Principal has no exit yet either. Unstaking destroys the units and
+//! emits the fact; nothing debits the pool's vault, and what the beacon
+//! matures the withdrawal into is a cumulative nothing here reads. Until
+//! the payout is built, what is delegated stays delegated.
+//!
 //! The validator record is per validator rather than a set, so two
 //! operator actions on two validators commute. It is written once and
 //! never cleared, which is the beacon's own rule for a validator id —
