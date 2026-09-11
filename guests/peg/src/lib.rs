@@ -144,8 +144,7 @@ pub mod peg {
         /// a window that quoted a number it would then decline to honour
         /// would be answering a question nobody asked.
         pub fn quote(&self, amount: Quantity) -> Result<Quantity, Error> {
-            let payout = self.quoted(amount)?;
-            Ok(payout)
+            self.quoted(amount)
         }
 
         /// What `handed_in` fetches at the posted deviation, or the
