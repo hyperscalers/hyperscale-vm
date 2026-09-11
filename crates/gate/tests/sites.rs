@@ -68,10 +68,10 @@ fn spreading(abi: Vec<AbiParam>) -> PackageMetadata {
 #[test]
 fn a_site_parameter_is_held_to_its_width() {
     // A site crosses as its index, and a derived value as a scalar or a
-    // register's length: an `i32` takes either, and which it is the
-    // kernel judges at every operation. What the export type does say
-    // is the width, so a handle bound to a scalar parameter is refused
-    // where every other capability parameter's mismatch is.
+    // register's length; which `i32` a site's is the kernel judges at
+    // every operation. What the export type does say is the width, so a
+    // handle bound to a scalar parameter is refused where every other
+    // capability parameter's mismatch is.
     let artifact = attach_metadata(
         &taking(None),
         &spreading(vec![AbiParam::Handle { clause: 0, site: 0 }]),
@@ -82,16 +82,24 @@ fn a_site_parameter_is_held_to_its_width() {
     assert!(refused.message.contains("capability handle"), "{refused}");
 
     // The same binding fills a parameter of its own width, and so does a
-    // derived value of either width.
+    // derived value: the id set crosses through a register, so the
+    // `i32` takes it and the scalar does not.
     for (module, abi) in [
         (
             taking(Some("site")),
             vec![AbiParam::Handle { clause: 0, site: 0 }],
         ),
         (taking(Some("site")), vec![AbiParam::Derived(Expr::Arg(0))]),
-        (taking(None), vec![AbiParam::Derived(Expr::Arg(0))]),
     ] {
         let artifact = attach_metadata(&module, &spreading(abi)).expect("attaches");
         assert!(admit_package(&artifact).is_ok());
     }
+    let artifact = attach_metadata(
+        &taking(None),
+        &spreading(vec![AbiParam::Derived(Expr::Arg(0))]),
+    )
+    .expect("attaches");
+    let refused = admit_package(&artifact).expect_err("an id set cannot fill a scalar");
+    assert_eq!(refused.method.as_deref(), Some("m"), "{refused}");
+    assert!(refused.message.contains("crosses as I32"), "{refused}");
 }

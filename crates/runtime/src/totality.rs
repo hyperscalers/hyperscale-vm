@@ -100,8 +100,11 @@ const DISCHARGED: &[(&str, &str)] = &[
     // A get reads the cell its handle names; materialization is the
     // whole of what it needs.
     ("state", "site-get"),
-    // A set stores the bytes it is handed with no judgment at the call;
-    // what a receipt may carry is judged at its own boundary.
+    // A set stores the bytes it is handed with one judgment at the
+    // call: a value past the cell cap is refused as `CellValueTooLarge`.
+    // No declaration discharges that, so the grant's review does — a
+    // total body writes payloads whose width its own code fixes. What a
+    // receipt may carry is judged at its own boundary.
     ("state", "site-set"),
     // A clear ends a leaf the handle already holds exclusively; there
     // is nothing to judge that materialization did not.
@@ -152,10 +155,11 @@ pub enum TotalityError {
     /// the compiler having proven there is none.
     #[error("the body can reach `unreachable`")]
     Unreachable,
-    /// An integer division or remainder whose divisor is not a non-zero
-    /// literal. Division by zero faults, and only a constant divisor
-    /// rules it out where the scan can see.
-    #[error("integer division by a value the scan cannot prove non-zero")]
+    /// An integer division or remainder whose divisor is not a literal
+    /// the operator cannot fault on. Division by zero faults on every
+    /// arm, and signed division by `-1` faults on the width's minimum;
+    /// only a constant divisor rules either out where the scan can see.
+    #[error("integer division by a value the scan cannot prove safe")]
     DivisionByUnprovenDivisor,
     /// An indirect call, which faults on a null table slot or a mismatched
     /// signature. It also hides the callee, so the transitive body the
@@ -182,10 +186,20 @@ pub enum TotalityError {
 /// Whether `body` stays inside the vocabulary that has no faulting member.
 ///
 /// The divisor rule is a peephole: an integer division is admitted when
-/// the operator immediately before it pushed a non-zero constant, which is
-/// the shape a division by a fixed denominator compiles to. Anything else
-/// — a divisor read from memory, computed, or passed in — is refused,
-/// since the scan has no way to know it is non-zero.
+/// the operator immediately before it pushed a constant it cannot fault
+/// on — non-zero, and for a signed quotient not `-1` either, since
+/// `INT_MIN / -1` overflows the width — which is the shape a division by
+/// a fixed denominator compiles to. Anything else — a divisor read from
+/// memory, computed, or passed in — is refused, since the scan has no
+/// way to know what it holds.
+///
+/// A body that passes has a static fuel ceiling up to its memory
+/// traffic: the meter prices `memory.copy`, `memory.fill` and
+/// `memory.grow` by the bytes they move and the pages they add, at run
+/// time, so what bounds those is the linear-memory judgment the module
+/// documents rather than anything counted here. A total body's memory
+/// is pre-sized by the boundary and the bytes it moves are registers
+/// the kernel already holds.
 ///
 /// # Errors
 ///
@@ -212,7 +226,7 @@ pub fn check_body(body: &FunctionBody<'_>) -> Result<(), TotalityError> {
             | Operator::I64DivU
             | Operator::I64RemS
             | Operator::I64RemU
-                if !divisor_is_non_zero(previous.as_ref()) =>
+                if !divisor_cannot_fault(&op, previous.as_ref()) =>
             {
                 return Err(TotalityError::DivisionByUnprovenDivisor);
             }
@@ -449,11 +463,17 @@ impl<'a> Module<'a> {
     }
 }
 
-/// Whether the operator that pushed the divisor proves it non-zero.
-const fn divisor_is_non_zero(previous: Option<&Operator<'_>>) -> bool {
+/// Whether the operator that pushed the divisor proves `op` cannot fault
+/// on it.
+///
+/// A non-zero literal rules out the zero divisor every arm faults on.
+/// A signed quotient has one more: `INT_MIN / -1` does not fit the width
+/// and traps, where the signed remainder by `-1` is zero and does not.
+const fn divisor_cannot_fault(op: &Operator<'_>, previous: Option<&Operator<'_>>) -> bool {
+    let signed_quotient = matches!(op, Operator::I32DivS | Operator::I64DivS);
     match previous {
-        Some(Operator::I32Const { value }) => *value != 0,
-        Some(Operator::I64Const { value }) => *value != 0,
+        Some(Operator::I32Const { value }) => *value != 0 && !(signed_quotient && *value == -1),
+        Some(Operator::I64Const { value }) => *value != 0 && !(signed_quotient && *value == -1),
         _ => false,
     }
 }
@@ -501,6 +521,26 @@ mod tests {
             check("i32.const 6 local.get 0 i32.div_s drop"),
             Err(TotalityError::DivisionByUnprovenDivisor),
         );
+    }
+
+    /// `-1` is non-zero and still faults a signed quotient at the width's
+    /// minimum, so the signed quotient arms refuse it; the signed
+    /// remainder by `-1` is zero, and the unsigned arms read the same
+    /// bits as a large divisor, so those stay admitted.
+    #[test]
+    fn a_signed_quotient_by_minus_one_is_refused_for_overflowing() {
+        assert_eq!(
+            check("i32.const 6 i32.const -1 i32.div_s drop"),
+            Err(TotalityError::DivisionByUnprovenDivisor),
+        );
+        assert_eq!(
+            check("i64.const 6 i64.const -1 i64.div_s drop"),
+            Err(TotalityError::DivisionByUnprovenDivisor),
+        );
+        assert_eq!(check("i32.const 6 i32.const -1 i32.rem_s drop"), Ok(()));
+        assert_eq!(check("i64.const 6 i64.const -1 i64.rem_s drop"), Ok(()));
+        assert_eq!(check("i32.const 6 i32.const -1 i32.div_u drop"), Ok(()));
+        assert_eq!(check("i64.const 6 i64.const -1 i64.rem_u drop"), Ok(()));
     }
 
     #[test]

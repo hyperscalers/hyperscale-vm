@@ -21,7 +21,7 @@ use std::fmt;
 
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
-    AbiParam, Clause, MethodSignature, PackageMetadata, Totality,
+    AbiParam, Clause, Expr, MethodSignature, PackageMetadata, ParamType, Totality, Value,
     attach_metadata as attach_canonical, check_signature, metadata_section, presents_a_held_badge,
     seals, supports,
 };
@@ -393,12 +393,99 @@ fn check_abi_against_export(
                 }
             }
             // A derived value crosses as a scalar or as a register's
-            // length, and which is a fact about the expression the
-            // runtime holds the call to; either width is a value.
-            AbiParam::Derived(_) => {}
+            // length, and which is a fact about the expression. Where
+            // its shape fixes the kind, the width is held here; where
+            // it does not, the runtime holds the call to it.
+            AbiParam::Derived(expr) => {
+                if let Some(width) = derived_width(expr, &signature.params)
+                    && width != *param
+                {
+                    return Err(GateError::new(format!(
+                        "ABI parameter {position} derives a value that \
+                         crosses as {width:?}, but the export takes {param:?}"
+                    )));
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// The core width a derived value crosses at, where the expression's
+/// shape fixes it.
+///
+/// A `u64` crosses as an `i64`; everything else with an ABI shape
+/// crosses through a register and is an `i32`. What fixes the kind is
+/// the expression's own constructor — a length, a fresh id, a key, a
+/// judgment — or the declared type of the argument it reads. A
+/// configuration field, a loop binding, a projection out of a table or
+/// tuple and a selection whose arms disagree carry no static kind, and
+/// answer nothing rather than a guess.
+fn derived_width(expr: &Expr, params: &[ParamType]) -> Option<CoreType> {
+    let scalar = |is_u64: bool| Some(if is_u64 { CoreType::I64 } else { CoreType::I32 });
+    match expr {
+        Expr::Literal(value) => match value {
+            Value::U64(_) => scalar(true),
+            Value::Bool(_)
+            | Value::U128(_)
+            | Value::U256(_)
+            | Value::Address(_)
+            | Value::Bytes(_)
+            | Value::List(_) => scalar(false),
+            Value::Key(_) | Value::Bucket { .. } | Value::Tuple(_) => None,
+        },
+        Expr::Arg(index) => match params.get(usize::try_from(*index).ok()?)? {
+            ParamType::U64 => scalar(true),
+            ParamType::U128
+            | ParamType::U256
+            | ParamType::Bytes
+            | ParamType::BytesExact(_)
+            | ParamType::Address
+            | ParamType::CallTarget
+            | ParamType::Principal
+            | ParamType::Component
+            | ParamType::Package
+            | ParamType::Resource
+            | ParamType::Rule
+            | ParamType::Ids => scalar(false),
+            ParamType::Bucket | ParamType::NfBucket => None,
+        },
+        Expr::Len(_) | Expr::FreshId { .. } => scalar(true),
+        Expr::SelfAddr
+        | Expr::SelfRecord
+        | Expr::ResourceOf(_)
+        | Expr::IdsOf(_)
+        | Expr::List(_)
+        | Expr::SelfResource { .. }
+        | Expr::OrderKey { .. }
+        | Expr::Pack { .. }
+        | Expr::Not(_)
+        | Expr::And(..)
+        | Expr::Or(..)
+        | Expr::Eq(..)
+        | Expr::Lt(..)
+        | Expr::Contains { .. } => scalar(false),
+        // A sum is over one width on both sides, so either operand names
+        // it.
+        Expr::Add(left, right) => {
+            derived_width(left, params).or_else(|| derived_width(right, params))
+        }
+        Expr::If {
+            then, otherwise, ..
+        } => {
+            let then = derived_width(then, params)?;
+            (derived_width(otherwise, params)? == then).then_some(then)
+        }
+        Expr::Config(_)
+        | Expr::Binding(_)
+        | Expr::Field(..)
+        | Expr::Only(_)
+        | Expr::Tuple(_)
+        | Expr::NfBucket { .. }
+        | Expr::Lookup { .. }
+        | Expr::ChildKey { .. }
+        | Expr::FreshKey { .. } => None,
+    }
 }
 
 #[cfg(test)]
@@ -902,5 +989,55 @@ mod tests {
         }
         let artifact = attach_metadata(&borrow_export, &sound).expect("attaches");
         assert!(admit_package(&artifact).is_ok());
+    }
+
+    /// A derived binding whose expression fixes its kind is held to the
+    /// width that kind crosses at; one whose kind only evaluation settles
+    /// is left to the runtime.
+    #[test]
+    fn a_derived_binding_is_held_to_the_width_its_kind_crosses_at() {
+        let register_export = parse_str(
+            r#"(module
+                 (memory (export "memory") 1 1)
+                 (func (export "m") (param i32))
+                 (func (export "instantiate")))"#,
+        )
+        .expect("the module assembles");
+        let deriving = |param: ParamType, expr: Expr| {
+            let mut metadata = declaring(&["m"]);
+            let signature = metadata.methods.get_mut("m").expect("declared");
+            signature.params = vec![param];
+            signature.abi = vec![AbiParam::Derived(expr)];
+            metadata
+        };
+
+        // A `u64` argument crosses as an `i64`, which a register
+        // parameter cannot take, and the other way round.
+        let scalar = deriving(ParamType::U64, Expr::Arg(0));
+        let artifact = attach_metadata(&register_export, &scalar).expect("attaches");
+        let refused = admit_package(&artifact).expect_err("a scalar needs an i64");
+        assert!(refused.to_string().contains("crosses as I64"), "{refused}");
+        let artifact = attach_metadata(&scalar_export(), &scalar).expect("attaches");
+        assert!(admit_package(&artifact).is_ok());
+
+        let address = deriving(ParamType::Address, Expr::Arg(0));
+        let artifact = attach_metadata(&scalar_export(), &address).expect("attaches");
+        let refused = admit_package(&artifact).expect_err("an address needs a register");
+        assert!(refused.to_string().contains("crosses as I32"), "{refused}");
+
+        // A length is a `u64` whatever it counts.
+        let counted = deriving(ParamType::Ids, Expr::Len(Box::new(Expr::Arg(0))));
+        let artifact = attach_metadata(&register_export, &counted).expect("attaches");
+        assert!(admit_package(&artifact).is_err());
+        let artifact = attach_metadata(&scalar_export(), &counted).expect("attaches");
+        assert!(admit_package(&artifact).is_ok());
+
+        // A configuration field has no static kind, so either width
+        // admits here and the runtime holds the call to it.
+        let configured = deriving(ParamType::U64, Expr::Config(0));
+        for export in [register_export, scalar_export()] {
+            let artifact = attach_metadata(&export, &configured).expect("attaches");
+            assert!(admit_package(&artifact).is_ok());
+        }
     }
 }
