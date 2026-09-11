@@ -19,7 +19,7 @@ instantiate() — infallible
   declares
       0  requires self.config is absent
       1  write self.config
-  exports  handle for clause 1, self.record
+  exports  handle for clause 1, self.record, config.price
 
 pass(bucket) — fallible
   takes    arg0 carrying config.asset

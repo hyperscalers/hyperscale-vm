@@ -56,7 +56,7 @@ instantiate() — fallible
   declares
       0  requires self.config is absent
       1  write self.config
-  exports  handle for clause 1, self.record, config.collateral, config.debt, config.liquidation_threshold, config.ltv
+  exports  handle for clause 1, self.record, config.ltv, config.liquidation_threshold, config.growth_per_period, config.collateral, config.debt
 
 liquidate(u64) — fallible
   declares

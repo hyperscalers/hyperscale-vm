@@ -1398,9 +1398,11 @@ rate_hbor!(SignedFixed, to_le_bytes, from_le_bytes);
 ///
 /// The type a stored fee, ratio or factor takes. Its range is checked
 /// where the value *enters state*, not where the arithmetic later reads
-/// it: a pool created with a fee above one is a pool that should not
-/// exist, and refusing the swap instead leaves it created, bricked, and
-/// holding funds.
+/// it: the constructors refuse a value past one, and the bring-up reads
+/// every bounded slot back, so a configuration a raw manifest wrote past
+/// the range traps where the component becomes actual. A pool created
+/// with a fee above one is a pool that should not exist, and refusing
+/// the swap instead would leave it created, bricked, and holding funds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct UnitFixed(u128);
 

@@ -1535,6 +1535,7 @@ fn lower_methods(
     if matches!(serves, client::Serves::Instances) {
         let (seal, authored) = instantiate_method(
             declared.resources,
+            declared.config_fields,
             instantiation_gate(items)?,
             bring_up.as_ref(),
         )?;
@@ -1591,9 +1592,23 @@ pub(crate) const INSTANTIATE: &str = "instantiate";
 /// so a gate on the body would be a second spelling of one answer.
 fn instantiate_method(
     resources: &[Resource],
+    config_fields: &[(String, syn::Type)],
     gate: Option<&syn::Attribute>,
     authored: Option<&syn::ImplItemFn>,
 ) -> syn::Result<(syn::ImplItemFn, Range<usize>)> {
+    // Every slot whose cell reading can refuse is read once, here, so a
+    // record no constructor wrote — a bounded number past one, a packed
+    // integer at the wrong width — traps where the component becomes
+    // actual rather than in the first method that consults it, with the
+    // instance created and holding funds.
+    let checked: Vec<TokenStream2> = config_fields
+        .iter()
+        .filter(|(_, ty)| refuses_a_wrong_cell(ty))
+        .map(|(name, _)| {
+            let field = syn::Ident::new(name, Span::call_site());
+            quote!(let _ = self.config().#field;)
+        })
+        .collect();
     let records = resources.iter().map(|resource| {
         let name = syn::Ident::new(&resource.name, Span::call_site());
         let stated = match resource.kind {
@@ -1666,9 +1681,10 @@ fn instantiate_method(
         (None, false) => (quote!(-> #yields), supply),
     };
     // Where the authored statements sit among the seal's own: after the
-    // seal and the records, before the supply. The lowering holds the
-    // kernel-issuance spellings to the statements outside this window.
-    let first_authored = 1 + resources.len();
+    // seal, the records and the slot reads, before the supply. The
+    // lowering holds the kernel-issuance spellings to the statements
+    // outside this window.
+    let first_authored = 1 + resources.len() + checked.len();
     let authored_window = first_authored..first_authored + statements.len();
     let name = syn::Ident::new(INSTANTIATE, Span::call_site());
     let seal = syn::parse_quote!(
@@ -1677,11 +1693,30 @@ fn instantiate_method(
         pub fn #name(&mut self, #(#params),*) #returns {
             self.__seal();
             #(#records)*
+            #(#checked)*
             #(#statements)*
             #tail
         }
     );
     Ok((seal, authored_window))
+}
+
+/// Whether a configuration slot of this type is one its cell reading
+/// can refuse: the bounded number, which has a range, and the rates and
+/// packed integers, which have a width. An address is rebuilt from its
+/// bytes and refuses on its own; a scalar and a flag cross as values
+/// with no cell to read.
+fn refuses_a_wrong_cell(ty: &syn::Type) -> bool {
+    [
+        "UnitFixed",
+        "Fixed",
+        "SignedFixed",
+        "u128",
+        "Quantity",
+        "OrderKey",
+    ]
+    .iter()
+    .any(|name| is_named(ty, name))
 }
 
 /// The success side of a `Result<T, E>` return type, where `ty` is one.

@@ -331,9 +331,26 @@ impl Cellular for RuleBytes {
     }
 }
 
+/// The sixteen little-endian bytes every packed integer cell holds.
+///
+/// An unwritten leaf reads as zero, which is the value zero rather than
+/// a state a body has to tell apart from it. A cell of any other width
+/// was never written through this impl — a defect in state on the same
+/// terms a malformed rate cell is — and reading it as zero would hand a
+/// body a balance of nothing and let the transaction commit on it.
+fn packed(cell: &[u8], what: &str) -> u128 {
+    if cell.is_empty() {
+        return 0;
+    }
+    let bytes: [u8; 16] = cell
+        .try_into()
+        .unwrap_or_else(|_| panic!("{what} cell holds sixteen bytes, not {}", cell.len()));
+    u128::from_le_bytes(bytes)
+}
+
 impl Cellular for u128 {
     fn from_cell(cell: &[u8]) -> Self {
-        cell.try_into().map_or(0, Self::from_le_bytes)
+        packed(cell, "a packed integer")
     }
 
     fn to_cell(&self) -> Vec<u8> {
@@ -352,7 +369,7 @@ impl LeafShape for OrderKey {
 /// chance to do arithmetic on it, not a byte from the leaf.
 impl Cellular for OrderKey {
     fn from_cell(cell: &[u8]) -> Self {
-        Self::from_bits(cell.try_into().map_or(0, u128::from_le_bytes))
+        Self::from_bits(packed(cell, "an order key"))
     }
 
     fn to_cell(&self) -> Vec<u8> {
@@ -371,7 +388,7 @@ impl Cellular for Quantity {
     /// held: the tag is the guest's and erases here, where a cell is a
     /// width and nothing else.
     fn from_cell(cell: &[u8]) -> Self {
-        Self::from_subunits(cell.try_into().map_or(0, u128::from_le_bytes))
+        Self::from_subunits(packed(cell, "an amount"))
     }
 
     fn to_cell(&self) -> Vec<u8> {
@@ -457,13 +474,15 @@ impl Cellular for UnitFixed {
     /// # Panics
     ///
     /// On a cell of any other width, or one holding a value above one.
-    /// The range is checked where the value enters state, so a cell that
-    /// fails either test was never written through a constructor — a
-    /// defect in state rather than in the call that found it, on the
-    /// same terms a malformed address is, and the trap is the
-    /// deterministic answer to it. An unwritten leaf reads as zero,
-    /// which is the value zero rather than a state a body has to tell
-    /// apart from it.
+    /// The range is checked where the value enters state — the
+    /// constructors refuse past one, and the bring-up reads every
+    /// bounded slot back so a raw configuration past the range traps
+    /// where the component becomes actual — so a cell that fails either
+    /// test later was never written through a constructor: a defect in
+    /// state rather than in the call that found it, on the same terms a
+    /// malformed address is, and the trap is the deterministic answer
+    /// to it. An unwritten leaf reads as zero, which is the value zero
+    /// rather than a state a body has to tell apart from it.
     fn from_cell(cell: &[u8]) -> Self {
         if cell.is_empty() {
             return Self::ZERO;
@@ -490,7 +509,13 @@ impl LeafShape for u64 {
 
 impl Cellular for u64 {
     fn from_cell(cell: &[u8]) -> Self {
-        cell.try_into().map_or(0, Self::from_le_bytes)
+        if cell.is_empty() {
+            return 0;
+        }
+        let bytes: [u8; 8] = cell
+            .try_into()
+            .unwrap_or_else(|_| panic!("a counter cell holds eight bytes, not {}", cell.len()));
+        Self::from_le_bytes(bytes)
     }
 
     fn to_cell(&self) -> Vec<u8> {
@@ -2542,8 +2567,8 @@ impl From<u128> for OrderKey {
 #[cfg(test)]
 mod tests {
     use super::{
-        Cellular, Fixed, LeafForm, LeafShape, ShapeRegistry, SignedFixed, TypeShape, UnitFixed,
-        Wide,
+        Cellular, Fixed, LeafForm, LeafShape, OrderKey, Quantity, ShapeRegistry, SignedFixed,
+        TypeShape, UnitFixed, Wide,
     };
 
     /// A dimension, for the rates that need two of them.
@@ -2595,5 +2620,36 @@ mod tests {
         }
         let above_one = (UnitFixed::ONE.scaled() + 1).to_le_bytes();
         assert!(std::panic::catch_unwind(|| UnitFixed::from_cell(&above_one)).is_err());
+    }
+
+    /// A packed integer's leaf is its width or nothing: an unwritten
+    /// leaf is the value zero, and a cell somebody wrote at the wrong
+    /// width is a defect reading it as zero would let a transaction
+    /// commit on.
+    #[test]
+    fn a_packed_integer_cell_is_its_width_or_nothing_at_all() {
+        assert_eq!(u128::from_cell(&[]), 0);
+        assert_eq!(Quantity::from_cell(&[]), Quantity::ZERO);
+        assert_eq!(OrderKey::from_cell(&[]), OrderKey::from_bits(0));
+        assert_eq!(u64::from_cell(&[]), 0);
+        assert_eq!(u128::from_cell(&7u128.to_cell()), 7);
+        assert_eq!(u64::from_cell(&7u64.to_cell()), 7);
+
+        for width in [1, 8, 15, 17, 32] {
+            let cell = vec![0u8; width];
+            assert!(
+                std::panic::catch_unwind(|| u128::from_cell(&cell)).is_err(),
+                "{width} bytes is not a packed integer"
+            );
+            assert!(std::panic::catch_unwind(|| Quantity::from_cell(&cell)).is_err());
+            assert!(std::panic::catch_unwind(|| OrderKey::from_cell(&cell)).is_err());
+        }
+        for width in [1, 7, 9, 16] {
+            let cell = vec![0u8; width];
+            assert!(
+                std::panic::catch_unwind(|| u64::from_cell(&cell)).is_err(),
+                "{width} bytes is not a counter"
+            );
+        }
     }
 }

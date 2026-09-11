@@ -26,7 +26,7 @@ instantiate() — fallible
   declares
       0  requires self.config is absent
       1  write self.config
-  exports  handle for clause 1, self.record, config.base, config.quote, config.tick
+  exports  handle for clause 1, self.record, config.tick, config.base, config.quote
 
 place-ask(u64, bucket) — fallible
   takes    arg1 carrying config.base

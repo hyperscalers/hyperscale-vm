@@ -17,7 +17,7 @@ instantiate() — fallible
   declares
       0  requires self.config is absent
       1  write self.config
-  exports  handle for clause 1, self.record, config.stable, config.reserve
+  exports  handle for clause 1, self.record, config.band, config.stable, config.reserve
 
 post-deviation(u256) — infallible
   declares

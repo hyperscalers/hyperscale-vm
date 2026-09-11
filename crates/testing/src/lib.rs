@@ -367,7 +367,7 @@ impl Chain {
         package: PackageHash,
         config: impl ConfigValues,
     ) -> ComponentAddr {
-        let address = self.register(package, config.values());
+        let address = self.derive_raw(package, config);
         let seals = self
             .records
             .packages
@@ -422,6 +422,14 @@ impl Chain {
     ///
     /// This tier's answer to what an envelope's presented record is: the
     /// target resolves before any call against it is typed.
+    /// Register an instance of `package` under `config` as raw slot
+    /// values, and answer its address, bringing nothing up: what a
+    /// bring-up over a configuration no typed client would have written
+    /// does is the test's to observe through [`Self::bring_up`].
+    pub fn derive_raw(&mut self, package: PackageHash, config: impl ConfigValues) -> ComponentAddr {
+        self.register(package, config.values())
+    }
+
     fn register(&mut self, package: PackageHash, config: Vec<Value>) -> ComponentAddr {
         self.created += 1;
         let meta = InstanceMeta {
