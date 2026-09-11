@@ -161,15 +161,13 @@ pub mod peg {
         fn quoted(&self, handed_in: Quantity) -> Result<Quantity, Error> {
             let (distance, way) = self.deviation.get().split();
             if distance > band(self.config().band) {
-                Err(Error::OutsideBand)
-            } else {
-                let payout = payout(handed_in, distance, way);
-                if payout.is_zero() {
-                    Err(Error::NothingRedeemed)
-                } else {
-                    Ok(payout)
-                }
+                return Err(Error::OutsideBand);
             }
+            let payout = payout(handed_in, distance, way);
+            if payout.is_zero() {
+                return Err(Error::NothingRedeemed);
+            }
+            Ok(payout)
         }
     }
 

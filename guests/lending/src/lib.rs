@@ -244,10 +244,9 @@ pub mod lending {
         /// period's terms.
         fn carried(&self, now: u64) -> Result<(), Error> {
             if stale(self.accrued_at.get(), now) {
-                Err(Error::IndexStale)
-            } else {
-                Ok(())
+                return Err(Error::IndexStale);
             }
+            Ok(())
         }
 
         /// Draw debt against the collateral posted.
