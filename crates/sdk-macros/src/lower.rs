@@ -2122,9 +2122,27 @@ impl<'a> Lowerer<'a> {
     // ---- expressions ----------------------------------------------------
 
     /// Walk `expr` and take only its guest code.
+    ///
+    /// The one place a value's kind is dropped, so the one place a
+    /// handle can slip out of the walk's sight: a handle here is being
+    /// handed to something the walk does not model — a free call, an
+    /// index, a struct field, a match — from which it would come back
+    /// opaque and operate on the kernel undeclared.
     fn code(&mut self, expr: &syn::Expr) -> TokenStream {
         let eval = self.expr(expr);
+        self.refuse_laundering(expr.span(), &eval);
         self.value(eval.code)
+    }
+
+    /// Refuse a handle in a position the walk does not model.
+    fn refuse_laundering(&mut self, span: Span, eval: &Eval) {
+        if matches!(eval.val, Val::Handle(_)) {
+            self.error(
+                span,
+                "a handle reaches the kernel, so it cannot be passed to a call the walk \
+                 does not model — operate through it where it was opened",
+            );
+        }
     }
 
     /// An `if`, read as a selection where it is one and as control flow
@@ -3046,6 +3064,9 @@ impl<'a> Lowerer<'a> {
                 code: Code::Term(call.span(), term),
             };
         }
+        for (arg, eval) in call.args.iter().zip(&evals) {
+            self.refuse_laundering(arg.span(), eval);
+        }
         let func = self.code(&call.func);
         let args: Vec<_> = evals
             .into_iter()
@@ -3639,6 +3660,9 @@ impl<'a> Lowerer<'a> {
         evals: Vec<Eval>,
         call: &syn::ExprMethodCall,
     ) -> TokenStream {
+        for (arg, eval) in call.args.iter().zip(&evals) {
+            self.refuse_laundering(arg.span(), eval);
+        }
         let receiver_code = self.value(receiver.code.clone());
         let receiver_code = if block_form(&call.receiver) {
             quote!((#receiver_code))

@@ -1319,7 +1319,7 @@ impl Site {
 /// commutative, `reserve` conditional. That is the whole reason the
 /// vocabulary is closed — the declaration is read off which of these a
 /// body calls.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct Slot<T> {
     handle: Handle,
     _value: core::marker::PhantomData<fn() -> T>,
@@ -1937,7 +1937,7 @@ impl<T> Unordered<T> {
 /// and the entry's own order is what picks it out — which is why an entry
 /// carries the order beside the handle where a [`Slot`] carries only the
 /// handle.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct Entry<T> {
     handle: Handle,
     order: OrderKey,
@@ -2024,7 +2024,7 @@ impl Interval<NfVault> {
 }
 
 /// An open handle on a declared interval.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct Interval<T> {
     handle: Handle,
     _value: core::marker::PhantomData<fn() -> T>,

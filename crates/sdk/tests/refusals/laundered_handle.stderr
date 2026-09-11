@@ -1,0 +1,25 @@
+error: a handle reaches the kernel, so it cannot be passed to a call the walk does not model — operate through it where it was opened
+  --> tests/refusals/laundered_handle.rs:24:26
+   |
+24 |             let _ = Some(wrapped).unwrap().balance();
+   |                          ^^^^^^^
+
+error: a handle reaches the kernel, so it cannot be passed to a call the walk does not model — operate through it where it was opened
+  --> tests/refusals/laundered_handle.rs:27:34
+   |
+27 |             let _ = Clone::clone(&borrowed).balance();
+   |                                  ^
+
+error: a handle reaches the kernel, so it cannot be passed to a call the walk does not model — operate through it where it was opened
+  --> tests/refusals/laundered_handle.rs:30:45
+   |
+30 |             let _ = core::convert::identity(passed).balance();
+   |                                             ^^^^^^
+
+error[E0277]: the trait bound `Slot<Vault>: Clone` is not satisfied
+  --> tests/refusals/laundered_handle.rs:27:34
+   |
+27 |             let _ = Clone::clone(&borrowed).balance();
+   |                     ------------ ^^^^^^^^^ the trait `Clone` is not implemented for `Slot<Vault>`
+   |                     |
+   |                     required by a bound introduced by this call
