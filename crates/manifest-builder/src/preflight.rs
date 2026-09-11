@@ -357,12 +357,13 @@ impl Report {
 
     /// Every signature the transaction certainly needs: what its nodes'
     /// declared access requires, plus the signer of every bound
-    /// subintent. A rule-judged node contributes its target's own key —
-    /// the identity that satisfies the rule while nothing is stored; a
-    /// securified target's stored rules name their signers in state,
-    /// which no report reads; and a threshold below its width leaves the
-    /// choice with the holder, so only a conjunction's branches
-    /// contribute.
+    /// subintent. A rule-judged node contributes its target's own key,
+    /// which is the identity that satisfies the rule while nothing is
+    /// stored and a guess once something is: a securified target's
+    /// stored rule names its signers in state, which no report reads,
+    /// so the key named here may open nothing. A threshold below its
+    /// width leaves the choice with the holder, so only a conjunction's
+    /// branches contribute.
     #[must_use]
     pub fn signers(&self) -> BTreeSet<PrincipalAddr> {
         let mut signers: BTreeSet<PrincipalAddr> =
