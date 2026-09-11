@@ -160,7 +160,11 @@
 //! carrying a produced value edge, which the tail's exact output list
 //! cannot absorb. A *private* method is not a call at all: it splices
 //! into each caller before the walk, so shared judgment is written once
-//! and every caller declares the reads it makes. Reassigning a local
+//! and every caller declares the reads it makes. Its exits are its own —
+//! a `return` or a `?` inside it leaves the helper, never the export —
+//! but a helper that exits early is a body rather than a value, so what
+//! it hands back is not a key, a handle or a bucket: guard in one helper
+//! and compute in another. Reassigning a local
 //! forgets what it held, so a key used after a conditional reassignment
 //! is refused at the use site. One handle declares one mode: a read
 //! beside a movement, or a second reservation, is refused where it is

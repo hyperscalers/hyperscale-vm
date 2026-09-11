@@ -485,13 +485,17 @@ fn the_macro_bounds_the_tuple_arities() {
 
 /// A private method is an inlining site: its body substitutes where it
 /// is called, under the caller's own declaration walk. The bounds are
-/// what substitution needs — no cycle, no early `return`, plain-name
-/// parameters, and a name no accessor owns.
+/// what substitution needs — no cycle, plain-name parameters, a name no
+/// accessor owns, and a nameable return type where the body exits early.
 #[test]
 fn the_macro_bounds_what_a_helper_may_be() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/helper_recursion.rs");
-    refuse.compile_fail("tests/refusals/helper_return.rs");
+    // A helper's exits are its own: a `return` leaves the helper, and
+    // what it may carry is what an export's may — never an output.
+    refuse.pass("tests/refusals/helper_return.rs");
+    refuse.compile_fail("tests/refusals/helper_return_output.rs");
+    refuse.compile_fail("tests/refusals/helper_impl_return.rs");
     refuse.compile_fail("tests/refusals/helper_try.rs");
     refuse.compile_fail("tests/refusals/helper_pattern_param.rs");
     refuse.compile_fail("tests/refusals/helper_accessor_name.rs");

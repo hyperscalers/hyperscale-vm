@@ -1461,6 +1461,121 @@ fn a_helper_splices_as_the_inline_spelling() {
     );
 }
 
+/// Two exports with one judgment: an early `return` spelled where it is
+/// used, and the same `return` inside a helper. A helper's exits are its
+/// own, so the export splicing it declares what the inline spelling
+/// declares and answers with what the helper returned.
+#[blueprint]
+mod guarded {
+    use hyperscale_vm_sdk::state::{Cell, Quantity};
+
+    #[error]
+    enum Error {
+        Empty,
+    }
+
+    #[state]
+    struct Guarded {
+        held: Cell<Quantity>,
+    }
+
+    impl Guarded {
+        /// The judgment spelled where it is used.
+        pub fn spelled(&mut self) -> Result<Quantity, Error> {
+            let held = self.held.get();
+            if held.is_zero() {
+                return Err(Error::Empty);
+            }
+            Ok(held)
+        }
+
+        /// The same judgment, in a helper that exits early.
+        pub fn factored(&mut self) -> Result<Quantity, Error> {
+            let held = self.poll()?;
+            Ok(held)
+        }
+
+        fn poll(&self) -> Result<Quantity, Error> {
+            let held = self.held.get();
+            if held.is_zero() {
+                return Err(Error::Empty);
+            }
+            Ok(held)
+        }
+    }
+}
+
+/// An early exit in a helper leaves the helper, and the export declares
+/// the reads the helper makes as its own.
+#[test]
+fn a_helper_that_exits_early_splices_as_the_inline_spelling() {
+    let metadata = guarded::blueprint().metadata();
+    let method = |name: &str| &metadata.methods[name];
+    assert_eq!(
+        method("spelled").effects,
+        method("factored").effects,
+        "one judgment, one declaration"
+    );
+    assert!(
+        !method("factored").effects.is_empty(),
+        "the spliced body declares its read"
+    );
+    assert_eq!(
+        method("spelled").answers,
+        method("factored").answers,
+        "the export answers with what the helper returned"
+    );
+}
+
+/// Two exports taking one bucket: the take spelled at the tail, and the
+/// same take as the tail of a helper without an early exit. The helper
+/// splices bare, so its produced edge is the export's declared output.
+#[blueprint]
+mod teller {
+    use hyperscale_vm_sdk::ResourceAddr;
+    use hyperscale_vm_sdk::state::{Bucket, Keyed, Quantity, Vault};
+
+    #[state]
+    struct Teller {
+        till: Keyed<Vault>,
+    }
+
+    impl Teller {
+        /// The take spelled at the tail.
+        pub fn spelled(&mut self, resource: ResourceAddr) -> Bucket {
+            self.till.at(resource).take(Quantity::from_subunits(1))
+        }
+
+        /// The same take, as a helper's tail.
+        pub fn factored(&mut self, resource: ResourceAddr) -> Bucket {
+            self.pull(resource)
+        }
+
+        fn pull(&mut self, resource: ResourceAddr) -> Bucket {
+            self.till.at(resource).take(Quantity::from_subunits(1))
+        }
+    }
+}
+
+/// A helper without an exit is read where the call stood: a bucket it
+/// takes is the caller's output.
+#[test]
+fn a_helper_without_an_exit_hands_its_take_to_the_caller() {
+    let metadata = teller::blueprint().metadata();
+    let method = |name: &str| &metadata.methods[name];
+    assert_eq!(
+        method("spelled").outputs,
+        method("factored").outputs,
+        "one take, one output"
+    );
+    assert_eq!(method("factored").outputs.len(), 1, "the take is declared");
+    assert_eq!(
+        method("spelled").effects,
+        method("factored").effects,
+        "and the reservation behind it"
+    );
+}
+
 /// A named vault field is the denominated cell: the ops land on the
 /// field, and the resource its `#[holds(..)]` states is the leaf's own
 /// key — the same addressing a keyed family reaches through its key.

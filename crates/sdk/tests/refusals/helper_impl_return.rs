@@ -11,12 +11,12 @@ mod contract {
 
     impl Contract {
         pub fn drain(&mut self) -> Quantity {
-            self.poll()
+            self.poll().into()
         }
 
-        // A helper's exits are its own: spliced into `drain`, this
-        // `return` leaves `poll`, and `drain` yields what it returned.
-        fn poll(&self) -> Quantity {
+        // A helper that exits early hands its result through a binding
+        // typed at its return type, and `impl Trait` cannot type one.
+        fn poll(&self) -> impl Into<Quantity> {
             if self.held.get().is_zero() {
                 return Quantity::ZERO;
             }

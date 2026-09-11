@@ -1,0 +1,5 @@
+error: a helper that exits early hands its result through a binding typed at its return type, which `impl Trait` cannot annotate — name the type
+  --> tests/refusals/helper_impl_return.rs:19:27
+   |
+19 |         fn poll(&self) -> impl Into<Quantity> {
+   |                           ^^^^

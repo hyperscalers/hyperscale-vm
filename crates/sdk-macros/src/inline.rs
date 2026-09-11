@@ -6,20 +6,27 @@
 //! `self` left as `self`. The spliced whole lowers under the ordinary
 //! walk, so admissibility does not move — what is refused inline is
 //! refused spliced, at the helper's own spans.
+//!
+//! A helper's exits are its own. A body with no early exit substitutes
+//! bare, so its tail is read where the call stood: a key it computes is
+//! still derived, and a bucket it takes is still the caller's output.
+//! A body with a `return` or a `?` substitutes as a labelled block
+//! typed at the helper's return type, its exits rewritten into breaks
+//! to that label — control flow, which the walk reads as a body and
+//! never as a value.
 
 use std::collections::BTreeMap;
 
 use proc_macro2::Span;
 use quote::format_ident;
 use syn::spanned::Spanned;
-use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
 
 use crate::lower::{Field, is_self};
 
 /// The state impls' private methods by name, each held to the bounds
 /// splicing needs: a name no accessor owns, plain-ident parameters, and
-/// a body that yields its tail rather than `return`ing.
+/// a return type the exit shape can annotate where the body exits early.
 pub fn helpers(
     items: &[syn::Item],
     state_name: &syn::Ident,
@@ -71,10 +78,21 @@ pub fn helpers(
                     ));
                 }
             }
-            Returns {
-                errors: &mut errors,
+            // Judged here rather than at a call, so a helper nothing
+            // calls is held to the same bounds as one every export uses.
+            let mut body = method.block.clone();
+            let exits = Rewriter::rewrite(&exit_label(0), &mut errors, &mut body);
+            if exits
+                && let syn::ReturnType::Type(_, ty) = &method.sig.output
+                && matches!(**ty, syn::Type::ImplTrait(_))
+            {
+                errors.push(syn::Error::new(
+                    ty.span(),
+                    "a helper that exits early hands its result through a binding typed \
+                     at its return type, which `impl Trait` cannot annotate — name the \
+                     type",
+                ));
             }
-            .visit_block(&method.block);
             found.insert(name, method.clone());
         }
     }
@@ -112,37 +130,70 @@ fn combined(errors: Vec<syn::Error>) -> syn::Result<()> {
         .map_or(Ok(()), Err)
 }
 
-/// Refuses `return` and `?` inside a helper: a helper yields its tail,
-/// so an early return would return from whatever export it splices
-/// into, and `?` is the same early return spelled on an error arm. A
+/// The label a spliced body's exits break to, numbered by the round
+/// that spliced it so nested splices cannot capture each other's.
+fn exit_label(round: usize) -> syn::Lifetime {
+    syn::Lifetime::new(&format!("'__inline{round}"), Span::call_site())
+}
+
+/// Rewrites a helper body's early exits into exits of the labelled
+/// block it splices as: `return e` becomes `break 'label e`. A `?` is
+/// the same early return spelled on an error arm and is refused. A
 /// closure's `return` is the closure's own and a nested item's body is
 /// not the helper's, so neither is walked.
-struct Returns<'e> {
+struct Rewriter<'e> {
+    label: &'e syn::Lifetime,
+    /// Whether the body had an exit to rewrite, which is what decides
+    /// its splice shape.
+    rewrote: bool,
     errors: &'e mut Vec<syn::Error>,
 }
 
-impl<'ast> Visit<'ast> for Returns<'_> {
-    fn visit_expr_return(&mut self, ret: &'ast syn::ExprReturn) {
-        self.errors.push(syn::Error::new(
-            ret.span(),
-            "a helper yields its tail expression — a `return` here would return from \
-             the export the helper splices into",
-        ));
-        syn::visit::visit_expr_return(self, ret);
+impl<'e> Rewriter<'e> {
+    /// Rewrite `body` in place; whether it had any exit to rewrite.
+    fn rewrite(
+        label: &'e syn::Lifetime,
+        errors: &'e mut Vec<syn::Error>,
+        body: &mut syn::Block,
+    ) -> bool {
+        let mut rewriter = Self {
+            label,
+            rewrote: false,
+            errors,
+        };
+        rewriter.visit_block_mut(body);
+        rewriter.rewrote
+    }
+}
+
+impl VisitMut for Rewriter<'_> {
+    fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
+        if matches!(expr, syn::Expr::Closure(_)) {
+            return;
+        }
+        syn::visit_mut::visit_expr_mut(self, expr);
+        match expr {
+            syn::Expr::Return(ret) => {
+                self.rewrote = true;
+                *expr = syn::Expr::Break(syn::ExprBreak {
+                    attrs: std::mem::take(&mut ret.attrs),
+                    break_token: syn::Token![break](ret.return_token.span),
+                    label: Some(self.label.clone()),
+                    expr: ret.expr.take(),
+                });
+            }
+            syn::Expr::Try(tried) => {
+                self.errors.push(syn::Error::new(
+                    tried.question_token.span(),
+                    "a helper yields its tail expression — a `?` here would return from \
+                     the export the helper splices into",
+                ));
+            }
+            _ => {}
+        }
     }
 
-    fn visit_expr_try(&mut self, tried: &'ast syn::ExprTry) {
-        self.errors.push(syn::Error::new(
-            tried.question_token.span(),
-            "a helper yields its tail expression — a `?` here would return from \
-             the export the helper splices into",
-        ));
-        syn::visit::visit_expr_try(self, tried);
-    }
-
-    fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
-
-    fn visit_item(&mut self, _: &'ast syn::Item) {}
+    fn visit_item_mut(&mut self, _: &mut syn::Item) {}
 }
 
 struct Inliner<'a> {
@@ -228,7 +279,15 @@ impl Inliner<'_> {
             ));
             return None;
         }
+        // This round's label is fixed before the body is entered: the
+        // exits rewritten here are this helper's, against this helper's
+        // return type, and the calls spliced under them take rounds of
+        // their own.
+        let round = self.fresh;
+        self.fresh += 1;
+        let label = exit_label(round);
         let mut body = helper.block.clone();
+        let exits = Rewriter::rewrite(&label, &mut self.errors, &mut body);
         self.stack.push((name.to_owned(), call.method.span()));
         self.visit_block_mut(&mut body);
         self.stack.pop();
@@ -237,8 +296,6 @@ impl Inliner<'_> {
         // does, so `helper(b, a)` cannot read a parameter where the
         // caller's own name was meant. A straight `let` keeps a key
         // derivable through the hop; the parameter rebinding is another.
-        let round = self.fresh;
-        self.fresh += 1;
         let mut stmts: Vec<syn::Stmt> = Vec::new();
         let mut bound: Vec<syn::Ident> = Vec::new();
         for (index, arg) in call.args.iter().enumerate() {
@@ -251,10 +308,146 @@ impl Inliner<'_> {
             let ident = &param.ident;
             stmts.push(syn::parse_quote!(let #mutability #ident = #fresh;));
         }
-        stmts.append(&mut body.stmts);
+        if exits {
+            // The binding's type is what lets an exit's value infer —
+            // `Err(From::from(e))` under a caller's `?` has no other
+            // anchor — and the block behind it is control flow the walk
+            // reads as a body.
+            let result = format_ident!("__inline{}", round);
+            let ty: syn::Type = match &helper.sig.output {
+                syn::ReturnType::Default => syn::parse_quote!(()),
+                syn::ReturnType::Type(_, ty) => (**ty).clone(),
+            };
+            stmts.push(syn::parse_quote!(let #result: #ty = #label: #body;));
+            stmts.push(syn::Stmt::Expr(syn::parse_quote!(#result), None));
+        } else {
+            stmts.append(&mut body.stmts);
+        }
         Some(syn::Block {
             brace_token: body.brace_token,
             stmts,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::ToTokens;
+
+    use super::*;
+
+    /// The `pub` method of `source`'s `impl Contract`, spliced.
+    fn spliced(source: &str) -> String {
+        let file: syn::File = syn::parse_str(source).expect("the fixture parses");
+        let state = syn::Ident::new("Contract", Span::call_site());
+        let helpers = helpers(&file.items, &state, &BTreeMap::new())
+            .unwrap_or_else(|error| panic!("the helpers are admitted: {error}"));
+        let export = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Impl(block) => Some(&block.items),
+                _ => None,
+            })
+            .flatten()
+            .find_map(|item| match item {
+                syn::ImplItem::Fn(method) if matches!(method.vis, syn::Visibility::Public(_)) => {
+                    Some(method)
+                }
+                _ => None,
+            })
+            .expect("the fixture has an export");
+        splice(export, &helpers)
+            .expect("the export splices")
+            .block
+            .to_token_stream()
+            .to_string()
+    }
+
+    #[test]
+    fn a_body_without_an_exit_splices_bare() {
+        let out = spliced(
+            "impl Contract {
+                pub fn drain(&mut self) -> u64 { self.poll(1) }
+                fn poll(&self, floor: u64) -> u64 { self.held + floor }
+            }",
+        );
+        assert!(!out.contains("__inline0 :"), "no labelled block: {out}");
+        assert!(
+            out.contains("let floor = __inline0_0 ;"),
+            "the parameter rebinds: {out}"
+        );
+        assert!(
+            out.contains("self . held + floor }"),
+            "the tail is read in place: {out}"
+        );
+    }
+
+    #[test]
+    fn a_body_with_an_exit_splices_as_a_labelled_typed_block() {
+        let out = spliced(
+            "impl Contract {
+                pub fn drain(&mut self) -> u64 { self.poll(1) }
+                fn poll(&self, floor: u64) -> u64 {
+                    if self.held == 0 { return floor; }
+                    self.held
+                }
+            }",
+        );
+        assert!(
+            out.contains("let __inline0 : u64 = '__inline0 : {"),
+            "the block is typed at the return type and labelled: {out}"
+        );
+        assert!(
+            out.contains("break '__inline0 floor ;"),
+            "the return breaks: {out}"
+        );
+        assert!(
+            out.ends_with("; __inline0 } }"),
+            "the binding is the tail: {out}"
+        );
+    }
+
+    #[test]
+    fn a_closure_keeps_its_own_return() {
+        let out = spliced(
+            "impl Contract {
+                pub fn drain(&mut self) -> u64 { self.poll() }
+                fn poll(&self) -> u64 { let f = |x: u64| { return x; }; f(self.held) }
+            }",
+        );
+        assert!(
+            out.contains("return x ;"),
+            "the closure's return stands: {out}"
+        );
+        assert!(
+            !out.contains("'__inline"),
+            "and it is not an exit of the helper: {out}"
+        );
+    }
+
+    #[test]
+    fn nested_splices_break_to_their_own_labels() {
+        let out = spliced(
+            "impl Contract {
+                pub fn drain(&mut self) -> u64 { self.outer() }
+                fn outer(&self) -> u64 {
+                    if self.held == 0 { return 0; }
+                    self.inner()
+                }
+                fn inner(&self) -> u64 {
+                    if self.held == 1 { return 1; }
+                    self.held
+                }
+            }",
+        );
+        assert!(
+            out.contains("break '__inline0 0 ;"),
+            "outer exits to round 0: {out}"
+        );
+        assert!(
+            out.contains("break '__inline1 1 ;"),
+            "inner exits to round 1: {out}"
+        );
     }
 }
