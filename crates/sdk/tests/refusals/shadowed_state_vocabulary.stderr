@@ -1,0 +1,5 @@
+error: `Cell` is a name the macro matches by a type's last path segment, so a local `Cell` would silently bind as the vocabulary's — rename it
+ --> tests/refusals/shadowed_state_vocabulary.rs:7:12
+  |
+7 |     struct Cell<T>(T);
+  |            ^^^^

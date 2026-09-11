@@ -670,10 +670,11 @@ fn check_marker_kinds(
 /// Refuse a local item whose name the macro matches by last path
 /// segment.
 ///
-/// Parameter kinds, widening, and the `Result` detection all read a
-/// type's final segment, so a module-local `Bucket` or a `Result` alias
-/// would silently bind as the vocabulary's — the one mismatch the walk
-/// cannot see, closed here at the item that would cause it.
+/// Parameter kinds, widening, the `Result` detection and the state
+/// field kinds all read a type's final segment, so a module-local
+/// `Bucket`, a `Result` alias or a `Cell` of the author's own would
+/// silently bind as the vocabulary's — the one mismatch the walk cannot
+/// see, closed here at the item that would cause it.
 fn check_vocabulary_shadows(items: &[syn::Item]) -> syn::Result<()> {
     const MATCHED: &[&str] = &[
         "Address",
@@ -694,6 +695,16 @@ fn check_vocabulary_shadows(items: &[syn::Item]) -> syn::Result<()> {
         "Rule",
         "RuleBytes",
         "Result",
+        "Cell",
+        "Keyed",
+        "Ordered",
+        "Unordered",
+        "Vault",
+        "NfVault",
+        "Instances",
+        "Config",
+        "Option",
+        "Seal",
     ];
     for item in items {
         if let syn::Item::Use(item) = item {

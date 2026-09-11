@@ -1,0 +1,5 @@
+error: `Cell` is a name the macro matches by a type's last path segment, so aliasing `Vault` to it would silently bind as the vocabulary's — drop the rename
+ --> tests/refusals/aliased_state_vocabulary.rs:8:44
+  |
+8 |     use hyperscale_vm_sdk::state::Vault as Cell;
+  |                                            ^^^^

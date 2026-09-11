@@ -525,4 +525,8 @@ fn the_macro_refuses_a_shadowed_vocabulary_name() {
     // A `use … as` rename reaches the same shadow the last-segment match
     // would miss, so it is refused at the alias.
     refuse.compile_fail("tests/refusals/aliased_vocabulary.rs");
+    // The state field kinds are matched the same way, so a local `Cell`
+    // or a `Vault` renamed to one is refused at the same place.
+    refuse.compile_fail("tests/refusals/shadowed_state_vocabulary.rs");
+    refuse.compile_fail("tests/refusals/aliased_state_vocabulary.rs");
 }
