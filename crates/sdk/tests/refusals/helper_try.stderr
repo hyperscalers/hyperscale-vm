@@ -1,5 +1,0 @@
-error: a helper yields its tail expression — a `?` here would return from the export the helper splices into
-  --> tests/refusals/helper_try.rs:27:62
-   |
-27 |             let rest = held.try_sub(held).ok_or(Error::Empty)?;
-   |                                                              ^
