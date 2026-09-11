@@ -380,6 +380,11 @@ impl Quantity {
     /// This quantity moved to a whole multiple of `step`.
     ///
     /// A zero step is no quantization and returns the quantity unchanged.
+    ///
+    /// # Panics
+    ///
+    /// Rounding up past the amount width, which is a defect for the same
+    /// reason a sum past it is: the multiple would not fit the ledger.
     #[must_use]
     pub const fn round_to_multiple(self, step: Self, rounding: Rounding) -> Self {
         if step.0 == 0 {
@@ -389,7 +394,11 @@ impl Quantity {
         match rounding {
             Rounding::Down => Self(floor),
             Rounding::Up if floor == self.0 => self,
-            Rounding::Up => Self(floor + step.0),
+            Rounding::Up => Self(
+                floor
+                    .checked_add(step.0)
+                    .expect("a quantization within the amount width"),
+            ),
         }
     }
 
@@ -1638,6 +1647,24 @@ mod tests {
             q(350),
             "no step is no quantization"
         );
+    }
+
+    #[test]
+    fn rounding_up_stays_within_the_amount_width() {
+        let step = q(100);
+        let top = q(u128::MAX).round_to_multiple(step, Rounding::Down);
+        assert_eq!(top.round_to_multiple(step, Rounding::Up), top);
+        assert_eq!(
+            (top - q(1)).round_to_multiple(step, Rounding::Up),
+            top,
+            "the last whole multiple below the width is reachable"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "a quantization within the amount width")]
+    fn rounding_up_past_the_amount_width_is_a_defect() {
+        let _ = q(u128::MAX - 1).round_to_multiple(q(100), Rounding::Up);
     }
 
     /// A stored rate converts back to the exact fraction it stands for,
