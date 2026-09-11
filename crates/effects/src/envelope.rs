@@ -330,6 +330,18 @@ pub struct EnvelopeTree {
 }
 
 impl EnvelopeTree {
+    /// How many nodes the tree lowers to: the root's and every bound
+    /// subintent's, which is the count of compute ceilings an envelope
+    /// around it signs.
+    #[must_use]
+    pub fn node_count(&self) -> usize {
+        self.subintents
+            .iter()
+            .fold(self.root.graph.nodes.len(), |total, subintent| {
+                total + subintent.decl.graph.nodes.len()
+            })
+    }
+
     /// The tree's own identity — the fallback for callers that sign
     /// nothing beyond the tree. A protocol envelope signing more (fee
     /// terms, validity windows) derives its identity from

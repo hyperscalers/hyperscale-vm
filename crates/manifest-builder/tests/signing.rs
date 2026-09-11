@@ -100,10 +100,12 @@ fn world() -> Records {
     chain
 }
 
-const fn terms() -> Terms {
+/// Terms for the two-node transfer every test here composes.
+fn terms() -> Terms {
     Terms {
         max_fee: 1_000,
-        gas_limit: 1_000_000,
+        gas_limits: vec![500_000, 500_000],
+        priority_bp: 0,
         validity_start_ms: 0,
         validity_end_ms: 60_000,
         message: Vec::new(),

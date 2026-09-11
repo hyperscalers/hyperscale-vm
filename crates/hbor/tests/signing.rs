@@ -47,7 +47,8 @@ struct Envelope {
     subintent_sigs: Vec<SubintentSig>,
     fee_payer: [u8; 16],
     max_fee: u128,
-    gas_limit: u64,
+    gas_limits: Vec<u64>,
+    priority_bp: u32,
     validity_start_ms: u64,
     validity_end_ms: u64,
     #[hbor(max = MAX_MESSAGE)]
@@ -68,7 +69,8 @@ fn envelope_preimage_by_hand(envelope: &Envelope) -> Result<Vec<u8>, EncodeError
     encoder.nested(&envelope.subintent_sigs)?;
     encoder.nested(&envelope.fee_payer)?;
     encoder.nested(&envelope.max_fee)?;
-    encoder.nested(&envelope.gas_limit)?;
+    encoder.nested(&envelope.gas_limits)?;
+    encoder.nested(&envelope.priority_bp)?;
     encoder.nested(&envelope.validity_start_ms)?;
     encoder.nested(&envelope.validity_end_ms)?;
     bounded::check_encoded_len("message", envelope.message.len(), MAX_MESSAGE)?;
@@ -85,7 +87,8 @@ fn sample() -> Envelope {
         }],
         fee_payer: [0x33; 16],
         max_fee: 1_000_000,
-        gas_limit: 500_000,
+        gas_limits: vec![300_000, 200_000],
+        priority_bp: 250,
         validity_start_ms: 1_700_000_000_000,
         validity_end_ms: 1_700_000_060_000,
         message: b"hello".to_vec(),
@@ -135,12 +138,13 @@ fn unsigned_fields_leave_the_preimage_but_not_the_wire() {
 #[test]
 fn every_signed_field_changes_the_preimage() {
     let base = sample().signing_bytes().unwrap();
-    let mutate: [FieldEdit; 8] = [
+    let mutate: [FieldEdit; 9] = [
         ("body", |e| e.body = Body::Publish(vec![1, 2, 3])),
         ("subintent_sigs", |e| e.subintent_sigs.clear()),
         ("fee_payer", |e| e.fee_payer = [0x77; 16]),
         ("max_fee", |e| e.max_fee += 1),
-        ("gas_limit", |e| e.gas_limit += 1),
+        ("gas_limits", |e| e.gas_limits[1] += 1),
+        ("priority_bp", |e| e.priority_bp += 1),
         ("validity_start_ms", |e| e.validity_start_ms += 1),
         ("validity_end_ms", |e| e.validity_end_ms += 1),
         ("message", |e| e.message.push(b'!')),

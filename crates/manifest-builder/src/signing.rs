@@ -25,8 +25,11 @@ use hyperscale_vm_types::{
 pub struct Terms {
     /// The most the signer will pay to have this transaction carried.
     pub max_fee: u128,
-    /// The signed execution ceiling, in fuel.
-    pub gas_limit: u64,
+    /// The signed compute ceilings, in fuel: one per node of the lowered
+    /// manifest, in node order. A publish carries one.
+    pub gas_limits: Vec<u64>,
+    /// The signed priority, in basis points over the table price.
+    pub priority_bp: u32,
     /// When the transaction may be included: the inclusive start of the
     /// window, in weighted-time milliseconds.
     pub validity_start_ms: u64,
@@ -59,7 +62,8 @@ pub fn wrap(
         subintent_sigs,
         fee_payer: payer,
         max_fee: terms.max_fee,
-        gas_limit: terms.gas_limit,
+        gas_limits: terms.gas_limits,
+        priority_bp: terms.priority_bp,
         validity_start_ms: terms.validity_start_ms,
         validity_end_ms: terms.validity_end_ms,
         message: terms.message,
@@ -88,7 +92,8 @@ pub fn wrap_publish(
         subintent_sigs: Vec::new(),
         fee_payer: payer,
         max_fee: terms.max_fee,
-        gas_limit: terms.gas_limit,
+        gas_limits: terms.gas_limits,
+        priority_bp: terms.priority_bp,
         validity_start_ms: terms.validity_start_ms,
         validity_end_ms: terms.validity_end_ms,
         message: terms.message,

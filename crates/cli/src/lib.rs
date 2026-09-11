@@ -412,7 +412,8 @@ pub fn publish_envelope(
         network,
         Terms {
             max_fee: 0,
-            gas_limit: 0,
+            gas_limits: vec![0],
+            priority_bp: 0,
             validity_start_ms: 0,
             validity_end_ms: 0,
             message: Vec::new(),

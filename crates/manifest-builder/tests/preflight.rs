@@ -16,8 +16,8 @@ use hyperscale_vm_manifest_builder::{
 };
 use hyperscale_vm_stdlib::{account, staking};
 use hyperscale_vm_types::{
-    Address, AddressClass, NetworkId, PrincipalAddr, ResourceAddr, SchemeId, TextError,
-    declared_work, signature_work,
+    Address, AddressClass, MAX_GAS_LIMIT, NetworkId, PrincipalAddr, ResourceAddr, SchemeId,
+    TermsRefusal, TextError, declared_work, gas_limit_total, signature_work,
 };
 
 /// Any network; these tests only need every intent to name the same one.
@@ -134,12 +134,13 @@ fn a_report_is_what_the_chain_derives() {
         "the reservation is taken once against every shard's declaration"
     );
     assert_eq!(
-        report.declared_work(7_000, &[SchemeId::ED25519]),
+        report.declared_work(&[4_000, 3_000], &[SchemeId::ED25519]),
         declared_work(report.footprint(), 7_000, signature_work(SchemeId::ED25519)),
+        "the compute term is the sum over the nodes"
     );
     assert!(
-        report.declared_work(7_000, &[SchemeId::ED25519, SchemeId::ED25519])
-            > report.declared_work(7_000, &[SchemeId::ED25519]),
+        report.declared_work(&[4_000, 3_000], &[SchemeId::ED25519, SchemeId::ED25519])
+            > report.declared_work(&[4_000, 3_000], &[SchemeId::ED25519]),
         "a second signature is a second verification to pay for"
     );
     assert_eq!(report.shards().count(), routing.per_shard.len());
@@ -306,6 +307,89 @@ fn a_composition_names_every_signer_it_needs() {
     assert_eq!(report.subintents[0].signer, BOB);
     // The nullifier the composition would spend, named before signing.
     assert_eq!(report.identity(), tree.hash(&TestHasher));
+}
+
+/// The compute column indexes the lowered order, so a subintent's nodes
+/// sit where the bound tree put them; the column sums to the terms'
+/// total, and so does its fold per intent.
+#[test]
+fn the_compute_column_sums_to_the_terms_and_splits_per_intent() {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+
+    let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
+    let paid_x = root.export(funds);
+    account::deposit(&mut root, ALICE, taken).unwrap();
+
+    let mut sub = env.subintent(BOB, TEST_HEADER);
+    let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
+    let funds = account::withdraw(&mut sub, BOB, RES_Y, 10).unwrap();
+    let paid_y = sub.export(funds);
+    account::deposit(&mut sub, BOB, taken).unwrap();
+
+    let wants_y = env.seal(root).unwrap().one().unwrap();
+    let wants_x = env.seal(sub).unwrap().one().unwrap();
+    env.bind(wants_y, paid_y).unwrap();
+    env.bind(wants_x, paid_x).unwrap();
+    let tree = env.build().unwrap();
+
+    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let nodes = report.manifest().nodes.len();
+    assert_eq!(nodes, tree.node_count());
+    let gas_limits: Vec<u64> = (1..=nodes as u64).map(|node| node * 1_000).collect();
+
+    let column = report.compute(&gas_limits).unwrap();
+    assert_eq!(
+        column.iter().map(|row| row.ceiling).collect::<Vec<_>>(),
+        gas_limits,
+        "the column is the terms, in node order"
+    );
+    let total = gas_limit_total(&gas_limits);
+    assert_eq!(
+        report.declared_work(&gas_limits, &[SchemeId::ED25519]),
+        declared_work(report.footprint(), total, signature_work(SchemeId::ED25519)),
+    );
+
+    let by_intent = report.compute_by_intent(&gas_limits).unwrap();
+    assert_eq!(by_intent.len(), 2, "the root and one subintent");
+    assert_eq!(by_intent.values().sum::<u64>(), total);
+    // The subintent's nodes are the ones whose intent is the bound
+    // declaration's hash; their ceilings are the positions the lowered
+    // order gave them, not a contiguous run at either end.
+    let sub_hash = report.subintents[0].subintent;
+    let sub_nodes: Vec<u32> = column
+        .iter()
+        .filter(|row| row.intent == sub_hash)
+        .map(|row| row.node)
+        .collect();
+    assert_eq!(sub_nodes.len(), tree.subintents[0].decl.graph.nodes.len());
+    assert!(
+        sub_nodes.iter().any(|node| *node > 0),
+        "the interleave puts a subintent node after a root node"
+    );
+    assert_eq!(
+        by_intent[&sub_hash],
+        sub_nodes
+            .iter()
+            .map(|node| gas_limits[*node as usize])
+            .sum::<u64>()
+    );
+
+    // One ceiling short, or one over, is the derivation's refusal.
+    assert_eq!(
+        report.compute(&gas_limits[..nodes - 1]),
+        Err(TermsRefusal::CeilingArity {
+            nodes,
+            ceilings: nodes - 1,
+        })
+    );
+    let mut heavy = gas_limits;
+    heavy[0] = MAX_GAS_LIMIT;
+    assert!(matches!(
+        report.compute(&heavy),
+        Err(TermsRefusal::CeilingSum { .. })
+    ));
 }
 
 /// The party whose approval the note's own entry names.

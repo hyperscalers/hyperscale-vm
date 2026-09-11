@@ -458,6 +458,9 @@ pub enum AbortReason {
     /// receipt says which fence answered.
     #[hbor(discriminant = 73)]
     HandleOutsideFrame,
+    /// A lowered call at a node the batch bound no compute ceiling for.
+    #[hbor(discriminant = 74)]
+    MissingCeiling,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -756,6 +759,7 @@ mod tests {
             (71, AbortReason::OutsideScope),
             (72, AbortReason::CrossingKeyRepeated),
             (73, AbortReason::HandleOutsideFrame),
+            (74, AbortReason::MissingCeiling),
         ];
         for (byte, reason) in classes {
             assert_eq!(

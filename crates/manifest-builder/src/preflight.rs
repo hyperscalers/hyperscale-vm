@@ -29,7 +29,8 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_types::{
     Address, CallTarget, EffectTarget, NetworkWord, Presence, PrincipalAddr, ResourceAddr,
-    SchemeId, SubstateKey, TextError, declared_work, price, signature_work,
+    SchemeId, SubintentHash, SubstateKey, TermsRefusal, TextError, admit_ceilings, declared_work,
+    gas_limit_total, price, signature_work,
 };
 
 /// Why a transaction could not be preflighted.
@@ -278,6 +279,18 @@ fn authority_of(rule: &Rule<JudgedLeaf>, evidence: &[Claim]) -> Authority {
     }
 }
 
+/// One manifest node's compute ceiling, beside the intent whose node it
+/// is: one row of the report's compute column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeCompute {
+    /// The manifest node, in the order the walk meters them.
+    pub node: u32,
+    /// The signed intent the node came from.
+    pub intent: SubintentHash,
+    /// The ceiling the composer would sign for it, in fuel.
+    pub ceiling: u64,
+}
+
 /// Everything a holder can know before signing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
@@ -329,30 +342,74 @@ impl Report {
             .fold(0, |total, shard| total.saturating_add(*shard))
     }
 
-    /// What this transaction costs a block at `gas_limit` under
+    /// What this transaction costs a block at `gas_limits` under
     /// `schemes`: the fixed carry charge, the footprint it declares, the
-    /// ceiling it would sign for its own execution, and what the
-    /// signatures it will carry cost to check.
+    /// compute it would sign for its nodes, and what the signatures it
+    /// will carry cost to check.
     ///
     /// `schemes` names one entry per signature the envelope will bind —
     /// the composer's and each bound subintent signer's. Neither it nor
-    /// the ceiling can be read off the graph: both are the signer's own
-    /// choices, so both are asked for here rather than reported.
+    /// the ceilings can be read off the graph: both are the composer's
+    /// own choices, so both are asked for here rather than reported.
     #[must_use]
-    pub fn declared_work(&self, gas_limit: u64, schemes: &[SchemeId]) -> u64 {
+    pub fn declared_work(&self, gas_limits: &[u64], schemes: &[SchemeId]) -> u64 {
         let signatures = schemes.iter().fold(0u64, |total, scheme| {
             total.saturating_add(signature_work(*scheme))
         });
-        declared_work(self.footprint(), gas_limit, signatures)
+        declared_work(self.footprint(), gas_limit_total(gas_limits), signatures)
     }
 
-    /// What this transaction will be charged, in quanta, at `gas_limit`
+    /// What this transaction will be charged, in quanta, at `gas_limits`
     /// under `schemes`: [`Self::declared_work`] at the protocol's rate.
-    /// The figure a signed ceiling has to cover, or admission refuses
-    /// the envelope.
+    /// The figure a signed fee ceiling has to cover, or admission
+    /// refuses the envelope.
     #[must_use]
-    pub fn price(&self, gas_limit: u64, schemes: &[SchemeId]) -> u128 {
-        price(self.declared_work(gas_limit, schemes))
+    pub fn price(&self, gas_limits: &[u64], schemes: &[SchemeId]) -> u128 {
+        price(self.declared_work(gas_limits, schemes))
+    }
+
+    /// The compute column: each node's ceiling from `gas_limits`, in node
+    /// order, beside the intent it belongs to — so a composer reads what
+    /// each bound intent's nodes would cost them under the ceilings they
+    /// are about to sign.
+    ///
+    /// # Errors
+    ///
+    /// [`TermsRefusal`] where `gas_limits` is not one per node or sums
+    /// past the bound: the refusal the derivation would give the signed
+    /// envelope, given here before it is signed.
+    pub fn compute(&self, gas_limits: &[u64]) -> Result<Vec<NodeCompute>, TermsRefusal> {
+        admit_ceilings(gas_limits, self.manifest().nodes.len())?;
+        Ok(self
+            .admitted
+            .origins()
+            .iter()
+            .zip(gas_limits)
+            .enumerate()
+            .map(|(index, (origin, ceiling))| NodeCompute {
+                node: u32::try_from(index).unwrap_or(u32::MAX),
+                intent: origin.intent,
+                ceiling: *ceiling,
+            })
+            .collect())
+    }
+
+    /// The compute column folded per intent: what each signed intent's
+    /// nodes would cost the composer, keyed by the intent.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::compute`].
+    pub fn compute_by_intent(
+        &self,
+        gas_limits: &[u64],
+    ) -> Result<BTreeMap<SubintentHash, u64>, TermsRefusal> {
+        let mut by_intent = BTreeMap::new();
+        for row in self.compute(gas_limits)? {
+            let total: &mut u64 = by_intent.entry(row.intent).or_default();
+            *total = total.saturating_add(row.ceiling);
+        }
+        Ok(by_intent)
     }
 
     /// Every signature the transaction certainly needs: what its nodes'

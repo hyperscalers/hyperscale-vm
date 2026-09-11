@@ -254,21 +254,23 @@ fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
 /// A transaction that spends its signed ceiling aborts the same way on
 /// both runtimes, and applies nothing.
 ///
-/// The budget is per transaction, not per invocation: a manifest's nodes
-/// draw from one allowance, so what the sender declared bounds the whole
-/// transaction rather than each of its calls. Exhaustion is the sender's
-/// own defect and prices as one — and the reason is fixed here rather
-/// than taken from the trap, because each engine words its own and the
-/// classification is consensus content.
+/// The ceiling is per node: each of a manifest's nodes is metered
+/// against what the sender signed for it, so a starved node aborts the
+/// transaction whatever its siblings were given. Exhaustion is the
+/// sender's own defect and prices as one — and the reason is fixed here
+/// rather than taken from the trap, because each engine words its own
+/// and the classification is consensus content.
 #[test]
 fn a_transaction_that_spends_its_gas_limit_aborts_on_both_runtimes() -> Result<()> {
     let world = world();
     let (entry, _) = batch_entry(&world, &composed_tree(ALICE, 100), ALICE)?;
 
-    // Enough to enter the guest and not enough to leave it. The figure
-    // is between the two and moves with the code: below it the walk
-    // refuses before the invocation, above it the whole tree settles.
-    let starved = entry.with_gas_limit(1000);
+    // Enough to enter the guest and not enough to leave it, at every
+    // node. The figure is between the two and moves with the code: below
+    // it the walk refuses before the invocation, above it the whole tree
+    // settles.
+    let nodes = entry.calls().len();
+    let starved = entry.with_gas_limits(vec![1000; nodes]);
     let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&starved));
 
     match &outcome.receipts[&starved.tx].outcome {

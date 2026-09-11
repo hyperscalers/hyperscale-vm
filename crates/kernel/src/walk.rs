@@ -38,9 +38,9 @@ pub struct GuestCall<'a> {
     pub export: &'a str,
     /// The arguments, in the export's own order.
     pub args: &'a [GuestArg<'a>],
-    /// What is left of the transaction's signed ceiling. The backend
-    /// meters this invocation against it, so a manifest's nodes share one
-    /// budget rather than each getting the whole of it.
+    /// The node's own signed ceiling. The backend meters this invocation
+    /// against it and nothing else: a manifest's nodes each carry their
+    /// own, so one node's slack is never another's to spend.
     pub fuel_budget: u64,
 }
 
@@ -644,12 +644,11 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
         };
         let mut outputs: Vec<Vec<Option<u32>>> = Vec::with_capacity(calls.len());
         let mut answers: Vec<Answer> = Vec::new();
+        // What the walk has consumed so far: the receipt's report, not a
+        // budget. Each node is metered against its own signed ceiling.
         let mut fuel = 0u64;
         for (index, call) in calls.iter().enumerate() {
             let node = u32::try_from(index).unwrap_or(u32::MAX);
-            // One budget across the manifest: each node is metered
-            // against what its predecessors left.
-            let remaining = entry.gas_limit.saturating_sub(fuel);
             // A node another shard runs is not invoked here. What stands
             // in for it is the value that arrived, which costs no fuel,
             // reaches no gate, judges no signed bound and takes no
@@ -665,7 +664,13 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                     Err(failure) => return failure.into_result(fuel),
                 }
             }
-            match self.invoke_node(node, call, &outputs, remaining, session) {
+            // A node without a ceiling is a batch composed against some
+            // other call list: the derivation holds every envelope to one
+            // ceiling per node, so this is the composer's defect.
+            let Some(ceiling) = entry.ceiling(index) else {
+                return composition_defect(session, AbortReason::MissingCeiling).into_result(fuel);
+            };
+            match self.invoke_node(node, call, &outputs, ceiling, session) {
                 Ok((returned, produced, answered, consumed)) => {
                     session = returned;
                     session.leave_invocation();

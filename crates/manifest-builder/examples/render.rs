@@ -23,8 +23,9 @@ const TOKEN: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const USDC: ResourceAddr = ResourceAddr::new([0xE2; 31]);
 const NETWORK: &str = "mainnet";
 const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
-/// A ceiling a sender might sign for; the report prices against it.
-const GAS_LIMIT: u64 = 50_000;
+/// A ceiling a sender might sign for each node; the report prices
+/// against one per node of the lowered manifest.
+const NODE_CEILING: u64 = 50_000;
 
 /// A quarter, at the scale a bounded configuration number holds.
 const QUARTER: u128 = 1_000_000_000_000_000_000 / 4;
@@ -239,9 +240,10 @@ fn summarise(graph: &ManifestGraph, chain: &Records) {
         report.footprint(),
         report.footprints.len()
     );
+    let gas_limits = vec![NODE_CEILING; report.manifest().nodes.len()];
     println!(
-        "   work       {} at a {GAS_LIMIT} gas ceiling, signed under ed25519",
-        report.declared_work(GAS_LIMIT, &[SchemeId::ED25519])
+        "   work       {} at a {NODE_CEILING} fuel ceiling per node, signed under ed25519",
+        report.declared_work(&gas_limits, &[SchemeId::ED25519])
     );
     for required in report.unsatisfiable() {
         let reason = match required.authority {

@@ -119,10 +119,10 @@ pub const fn signature_work(scheme: SchemeId) -> u64 {
 }
 
 /// The work a transaction declares before it runs: the fixed carry
-/// charge, the footprint it claims, the fuel ceiling it signed, and what
+/// charge, the footprint it claims, the compute it signed for, and what
 /// its signatures cost to carry and check.
 ///
-/// The ceiling enters at [`FUEL_WEIGHT`] because that is what the fuel
+/// The compute enters at [`FUEL_WEIGHT`] because that is what the fuel
 /// it stands for will cost — so this bounds the [`work_units`] the same
 /// transaction can go on to attest, which is what lets an embedder hold
 /// a reservation against it and release the reservation later without
@@ -133,14 +133,15 @@ pub const fn signature_work(scheme: SchemeId) -> u64 {
 /// alone: verification is admission's cost, paid before an execution
 /// exists to attest anything.
 ///
-/// `gas_limit` is the sender's own number and is bounded by the
-/// embedder, not here; a ceiling large enough to saturate this is one
-/// the embedder should already have refused.
+/// `compute` is the sum of the envelope's per-node ceilings, held to
+/// [`MAX_GAS_LIMIT`](crate::MAX_GAS_LIMIT) at derivation rather than
+/// here; a figure large enough to saturate this is one the derivation
+/// already refused.
 #[must_use]
-pub const fn declared_work(footprint: u64, gas_limit: u64, signatures: u64) -> u64 {
+pub const fn declared_work(footprint: u64, compute: u64, signatures: u64) -> u64 {
     TX_UNITS
         .saturating_add(FOOTPRINT_WEIGHT.saturating_mul(footprint))
-        .saturating_add(FUEL_WEIGHT.saturating_mul(gas_limit))
+        .saturating_add(FUEL_WEIGHT.saturating_mul(compute))
         .saturating_add(signatures)
 }
 

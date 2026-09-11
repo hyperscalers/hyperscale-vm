@@ -31,7 +31,8 @@ struct Envelope {
     subintent_sigs: Vec<SubintentSig>,
     fee_payer: [u8; 16],
     max_fee: u128,
-    gas_limit: u64,
+    gas_limits: Vec<u64>,
+    priority_bp: u32,
     validity_start_ms: u64,
     validity_end_ms: u64,
     #[hbor(max = MAX_MESSAGE)]
@@ -46,9 +47,9 @@ const BODY: usize = 0;
 const SUBINTENT_SIGS: usize = 1;
 const FEE_PAYER: usize = 2;
 const MAX_FEE: usize = 3;
-const GAS_LIMIT: usize = 4;
-const MESSAGE: usize = 7;
-const FIELD_COUNT: usize = 10;
+const GAS_LIMITS: usize = 4;
+const MESSAGE: usize = 8;
+const FIELD_COUNT: usize = 11;
 
 fn sample() -> Envelope {
     Envelope {
@@ -59,7 +60,8 @@ fn sample() -> Envelope {
         }],
         fee_payer: [0x33; 16],
         max_fee: 1_000_000,
-        gas_limit: 500_000,
+        gas_limits: vec![300_000, 200_000],
+        priority_bp: 250,
         validity_start_ms: 1_700_000_000_000,
         validity_end_ms: 1_700_000_060_000,
         message: b"hello".to_vec(),
@@ -82,7 +84,7 @@ fn leaf_order_is_declaration_order() {
     );
     assert_eq!(leaves[FEE_PAYER], to_vec(&envelope.fee_payer).unwrap());
     assert_eq!(leaves[MAX_FEE], to_vec(&envelope.max_fee).unwrap());
-    assert_eq!(leaves[GAS_LIMIT], to_vec(&envelope.gas_limit).unwrap());
+    assert_eq!(leaves[GAS_LIMITS], to_vec(&envelope.gas_limits).unwrap());
     assert_eq!(leaves[MESSAGE], to_vec(&envelope.message).unwrap());
 }
 
@@ -121,7 +123,7 @@ fn a_proof_carries_one_field_and_a_path() {
         &proof
     ));
 
-    // Four levels for ten leaves, and nothing else.
+    // Four levels for eleven leaves, and nothing else.
     assert_eq!(proof.siblings.len(), 4);
     assert_eq!(proof.leaf_count, FIELD_COUNT);
 }
@@ -131,20 +133,22 @@ fn an_altered_field_fails_against_the_root() {
     let hasher = TestHasher;
     let envelope = sample();
     let root = envelope.merkle_root(&hasher).unwrap();
-    let proof = envelope.prove(&hasher, GAS_LIMIT).unwrap().unwrap();
+    let proof = envelope.prove(&hasher, GAS_LIMITS).unwrap().unwrap();
 
     assert!(verify(
         &hasher,
         Envelope::MERKLE_DOMAIN,
         root,
-        &to_vec(&envelope.gas_limit).unwrap(),
+        &to_vec(&envelope.gas_limits).unwrap(),
         &proof
     ));
+    let mut raised = envelope.gas_limits;
+    raised[1] += 1;
     assert!(!verify(
         &hasher,
         Envelope::MERKLE_DOMAIN,
         root,
-        &to_vec(&(envelope.gas_limit + 1)).unwrap(),
+        &to_vec(&raised).unwrap(),
         &proof
     ));
 }
@@ -173,7 +177,11 @@ fn every_field_is_covered_by_the_root() {
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
-    altered.gas_limit += 1;
+    altered.gas_limits[1] += 1;
+    assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
+
+    let mut altered = sample();
+    altered.priority_bp += 1;
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();

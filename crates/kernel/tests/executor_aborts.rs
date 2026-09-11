@@ -344,7 +344,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
         judges: OwnerSet::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
-        gas_limit: u64::MAX,
+        gas_limits: Vec::new(),
     }
 }
 
@@ -415,7 +415,7 @@ fn sharing_tx(id: u8) -> BatchTx {
         applies: OwnerSet::whole(),
         judges: OwnerSet::whole(),
         env: env(),
-        gas_limit: u64::MAX,
+        gas_limits: Vec::new(),
     }
 }
 
@@ -445,7 +445,7 @@ fn nullifier_and_shared_tx(id: u8) -> BatchTx {
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         fee: None,
         env: env(),
-        gas_limit: u64::MAX,
+        gas_limits: Vec::new(),
     }
 }
 
@@ -594,7 +594,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         fee: None,
         env: env(),
-        gas_limit: u64::MAX,
+        gas_limits: Vec::new(),
     };
     let refused = execute_batch(
         Arc::new(MemoryStore::new()),
@@ -651,7 +651,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
         judges: OwnerSet::whole(),
         nullifiers: vec![],
         env: env(),
-        gas_limit: u64::MAX,
+        gas_limits: Vec::new(),
     };
     let refused = execute_batch(
         Arc::new(MemoryStore::new()),

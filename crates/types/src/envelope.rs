@@ -2,10 +2,11 @@
 //!
 //! The envelope carries the bound tree — the composer's root graph plus
 //! every signed subintent — as canonical bytes, beside the signing-time
-//! choices no node can derive: the fee payer, the fee ceiling and gas
-//! limit, the validity window, a capped optional message, and the
-//! network the composer means it for. The composer signs the whole
-//! envelope, so distinct submissions differ in signed content.
+//! choices no node can derive: the fee payer, the fee ceiling, one
+//! compute ceiling per manifest node, the priority multiplier, the
+//! validity window, a capped optional message, and the network the
+//! composer means it for. The composer signs the whole envelope, so
+//! distinct submissions differ in signed content.
 //!
 //! The tree stays opaque here: its vocabulary and codec live with the
 //! effect machinery, and treating it as signed bytes is what keeps this
@@ -21,6 +22,7 @@ use hyperscale_hbor::{EncodeError, Hash32, Hbor, HborSigned};
 
 use crate::address::PrincipalAddr;
 use crate::amount::Quanta;
+use crate::execution::MAX_MANIFEST_NODES;
 use crate::scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId};
 use crate::work::signature_work;
 
@@ -75,6 +77,25 @@ pub const CROSSING_GRACE_MS: u64 = 1_500_000;
 /// A wire bound on the decode; the signatures themselves are priced,
 /// per scheme, by [`signature_work`].
 pub const MAX_SUBINTENTS: usize = 32;
+
+/// The most compute one envelope may sign for, in fuel, summed over its
+/// per-node ceilings.
+///
+/// A thirty-second of a block's compute: an execution window of 125 ms
+/// on four cores at 2 G fuel/s is a thousand million fuel a block, and
+/// one envelope may own that much of it and no more. Held at
+/// derivation, where the lowered node count is known, so the sum a
+/// block reserves is a figure the protocol chose rather than one the
+/// sender did.
+pub const MAX_GAS_LIMIT: u64 = 32_000_000;
+
+/// The most a composer may raise their fee by for inclusion, in basis
+/// points over the table price: ten times base.
+///
+/// Held at derivation like the ceilings. The multiplier decides which
+/// transactions a block holds and never the order they run in, so a
+/// figure past this buys nothing the ceiling does not already.
+pub const MAX_PRIORITY_BP: u32 = 100_000;
 
 /// A signed subintent's identity: the hash of its declaration.
 ///
@@ -192,7 +213,7 @@ pub enum TransactionBody {
 /// hash of that preimage is also the identity fresh derivations root at:
 /// distinct signed envelopes never mint the same fresh key.
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
-#[hbor(signing_domain = "hyperscale-vm-envelope-v1")]
+#[hbor(signing_domain = "hyperscale-vm-envelope-v2")]
 pub struct TransactionEnvelope {
     /// The call graph or the package.
     pub body: TransactionBody,
@@ -203,8 +224,21 @@ pub struct TransactionEnvelope {
     pub fee_payer: PrincipalAddr,
     /// The signed fee ceiling, in quanta of the protocol resource.
     pub max_fee: Quanta,
-    /// The signed execution gas limit.
-    pub gas_limit: u64,
+    /// The signed compute ceilings, in fuel: one per node of the lowered
+    /// manifest, in the order the walk indexes nodes, so a subintent's
+    /// nodes sit at the positions the bound tree gives them. A publish
+    /// carries one. The sum is held to [`MAX_GAS_LIMIT`] and the count
+    /// to the manifest's, both at derivation.
+    ///
+    /// The composer's, not the subintent signers': whoever pays sets the
+    /// ceilings. A subintent's signer fixes what their nodes do, and the
+    /// composer fixes what they may cost.
+    #[hbor(max = MAX_MANIFEST_NODES)]
+    pub gas_limits: Vec<u64>,
+    /// The signed priority, in basis points over the table price, held
+    /// to [`MAX_PRIORITY_BP`] at derivation. Burned with the rest of the
+    /// fee; decides inclusion and never order.
+    pub priority_bp: u32,
     /// The signed validity window's inclusive start, in weighted-time
     /// milliseconds. The wire's range form must mirror the window.
     pub validity_start_ms: u64,
@@ -294,13 +328,113 @@ impl TransactionEnvelope {
                 total.saturating_add(signature_work(sig.scheme))
             })
     }
+
+    /// The compute this envelope signs for whole: the sum of its
+    /// per-node ceilings.
+    #[must_use]
+    pub fn gas_limit_total(&self) -> u64 {
+        gas_limit_total(&self.gas_limits)
+    }
+
+    /// Whether the signed terms fit a manifest of `nodes` lowered nodes:
+    /// one ceiling per node, the sum under [`MAX_GAS_LIMIT`], the
+    /// priority under [`MAX_PRIORITY_BP`]. A publish lowers to one node.
+    ///
+    /// # Errors
+    ///
+    /// The first term that does not fit.
+    pub fn admit_terms(&self, nodes: usize) -> Result<(), TermsRefusal> {
+        admit_ceilings(&self.gas_limits, nodes)?;
+        if self.priority_bp > MAX_PRIORITY_BP {
+            return Err(TermsRefusal::PriorityTooHigh {
+                priority_bp: self.priority_bp,
+            });
+        }
+        Ok(())
+    }
 }
+
+/// The sum of per-node ceilings, saturating: what an envelope buys in
+/// compute whole.
+#[must_use]
+pub fn gas_limit_total(gas_limits: &[u64]) -> u64 {
+    gas_limits
+        .iter()
+        .fold(0u64, |total, ceiling| total.saturating_add(*ceiling))
+}
+
+/// Whether `gas_limits` fits a manifest of `nodes` lowered nodes: one
+/// ceiling per node, and a sum under [`MAX_GAS_LIMIT`].
+///
+/// # Errors
+///
+/// [`TermsRefusal::CeilingArity`] when the count is not the manifest's,
+/// [`TermsRefusal::CeilingSum`] when the sum is past the bound.
+pub fn admit_ceilings(gas_limits: &[u64], nodes: usize) -> Result<(), TermsRefusal> {
+    if gas_limits.len() != nodes {
+        return Err(TermsRefusal::CeilingArity {
+            nodes,
+            ceilings: gas_limits.len(),
+        });
+    }
+    let total = gas_limit_total(gas_limits);
+    if total > MAX_GAS_LIMIT {
+        return Err(TermsRefusal::CeilingSum { total });
+    }
+    Ok(())
+}
+
+/// A signed term the derivation refuses an envelope for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TermsRefusal {
+    /// The ceilings do not index the lowered manifest one to one.
+    CeilingArity {
+        /// The manifest's node count.
+        nodes: usize,
+        /// The ceilings the envelope carries.
+        ceilings: usize,
+    },
+    /// The ceilings sum past [`MAX_GAS_LIMIT`].
+    CeilingSum {
+        /// The sum, saturating.
+        total: u64,
+    },
+    /// The priority is past [`MAX_PRIORITY_BP`].
+    PriorityTooHigh {
+        /// The signed figure.
+        priority_bp: u32,
+    },
+}
+
+impl fmt::Display for TermsRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CeilingArity { nodes, ceilings } => write!(
+                f,
+                "the envelope signs {ceilings} compute ceilings against {nodes} manifest nodes"
+            ),
+            Self::CeilingSum { total } => write!(
+                f,
+                "the compute ceilings sum to {total} fuel, past the {MAX_GAS_LIMIT} the protocol admits"
+            ),
+            Self::PriorityTooHigh { priority_bp } => write!(
+                f,
+                "the priority of {priority_bp} basis points is past the {MAX_PRIORITY_BP} the protocol admits"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TermsRefusal {}
 
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::{HborSigned, assert_canonical, to_vec};
 
-    use super::{NetworkId, PrincipalAddr, SubintentSig, TransactionBody, TransactionEnvelope};
+    use super::{
+        MAX_GAS_LIMIT, MAX_PRIORITY_BP, NetworkId, PrincipalAddr, SubintentSig, TermsRefusal,
+        TransactionBody, TransactionEnvelope,
+    };
     use crate::{SchemeId, signature_work};
 
     fn sample() -> TransactionEnvelope {
@@ -313,7 +447,8 @@ mod tests {
             }],
             fee_payer: PrincipalAddr::new([0x33; 31]),
             max_fee: 1_000_000,
-            gas_limit: 500_000,
+            gas_limits: vec![300_000, 200_000],
+            priority_bp: 250,
             validity_start_ms: 1_700_000_000_000,
             validity_end_ms: 1_700_000_060_000,
             message: b"hello".to_vec(),
@@ -437,5 +572,91 @@ mod tests {
             call.signing_bytes().unwrap(),
             publish.signing_bytes().unwrap()
         );
+    }
+
+    /// The ceilings and the priority are signed content each: moving
+    /// one node's ceiling, or the priority alone, moves the preimage.
+    #[test]
+    fn every_ceiling_and_the_priority_are_signed() {
+        let base = sample().signing_bytes().unwrap();
+        let mut one_node = sample();
+        one_node.gas_limits[1] += 1;
+        assert_ne!(one_node.signing_bytes().unwrap(), base);
+        let mut priority = sample();
+        priority.priority_bp += 1;
+        assert_ne!(priority.signing_bytes().unwrap(), base);
+    }
+
+    #[test]
+    fn the_total_is_the_sum_over_nodes() {
+        assert_eq!(sample().gas_limit_total(), 500_000);
+        let mut saturating = sample();
+        saturating.gas_limits = vec![u64::MAX, 1];
+        assert_eq!(saturating.gas_limit_total(), u64::MAX);
+    }
+
+    /// One ceiling per lowered node, no more and no fewer.
+    #[test]
+    fn a_ceiling_count_off_the_manifest_is_refused() {
+        let envelope = sample();
+        assert_eq!(envelope.admit_terms(2), Ok(()));
+        assert_eq!(
+            envelope.admit_terms(3),
+            Err(TermsRefusal::CeilingArity {
+                nodes: 3,
+                ceilings: 2,
+            })
+        );
+        assert_eq!(
+            envelope.admit_terms(1),
+            Err(TermsRefusal::CeilingArity {
+                nodes: 1,
+                ceilings: 2,
+            })
+        );
+    }
+
+    /// The bound is on the sum, so two nodes each under it can still be
+    /// refused together, and the sum is judged saturating.
+    #[test]
+    fn a_sum_past_the_ceiling_is_refused() {
+        let mut envelope = sample();
+        envelope.gas_limits = vec![MAX_GAS_LIMIT / 2 + 1, MAX_GAS_LIMIT / 2];
+        assert_eq!(
+            envelope.admit_terms(2),
+            Err(TermsRefusal::CeilingSum {
+                total: MAX_GAS_LIMIT + 1,
+            })
+        );
+        envelope.gas_limits = vec![MAX_GAS_LIMIT / 2, MAX_GAS_LIMIT / 2];
+        assert_eq!(envelope.admit_terms(2), Ok(()));
+        envelope.gas_limits = vec![u64::MAX, u64::MAX];
+        assert_eq!(
+            envelope.admit_terms(2),
+            Err(TermsRefusal::CeilingSum { total: u64::MAX })
+        );
+    }
+
+    #[test]
+    fn a_priority_past_the_ceiling_is_refused() {
+        let mut envelope = sample();
+        envelope.priority_bp = MAX_PRIORITY_BP;
+        assert_eq!(envelope.admit_terms(2), Ok(()));
+        envelope.priority_bp = MAX_PRIORITY_BP + 1;
+        assert_eq!(
+            envelope.admit_terms(2),
+            Err(TermsRefusal::PriorityTooHigh {
+                priority_bp: MAX_PRIORITY_BP + 1,
+            })
+        );
+    }
+
+    /// A publish lowers to one node and carries one ceiling.
+    #[test]
+    fn a_publish_carries_one_ceiling() {
+        let mut publish = sample();
+        publish.body = TransactionBody::Publish(vec![9]);
+        publish.gas_limits = vec![0];
+        assert_eq!(publish.admit_terms(1), Ok(()));
     }
 }

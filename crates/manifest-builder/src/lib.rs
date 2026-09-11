@@ -48,7 +48,7 @@ pub use builder::{Bucket, BuildError, GraphBuilder, SocketRef};
 pub use envelope::{
     BindRefusal, EnvelopeBuilder, EnvelopeError, IntentBuilder, Offered, OpenSocket, Sockets,
 };
-pub use preflight::{Authority, PreflightError, Report, Required, preflight_tree};
+pub use preflight::{Authority, NodeCompute, PreflightError, Report, Required, preflight_tree};
 pub use projection::graph_records;
 pub use render::{Names, render};
 pub use typed::{Answered, Evidence, Outputs, Proof, TypedBuilder, TypedError};

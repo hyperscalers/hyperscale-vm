@@ -229,7 +229,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         nullifiers: vec![nullifier_record(SUBINTENT, signed_nullifier())],
         fee: None,
         env: env(),
-        gas_limit: u64::MAX,
+        gas_limits: Vec::new(),
     }
 }
 

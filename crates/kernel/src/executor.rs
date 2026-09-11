@@ -116,13 +116,15 @@ pub struct BatchTx {
     /// inputs anchor to the transaction, and every replica passes the
     /// same ones.
     pub env: EnvInputs,
-    /// The signed execution ceiling, in fuel.
+    /// The signed compute ceilings, in fuel: one per manifest node, in
+    /// node order, read through [`Self::ceiling`].
     ///
-    /// Per transaction, not per invocation: a manifest's nodes draw from
-    /// one budget, so what the sender declared bounds what the whole
-    /// transaction can consume rather than what each of its calls can.
-    /// Exhaustion is the sender's own defect and prices as one.
-    pub gas_limit: u64,
+    /// Per node, not per transaction: a node is metered against its own
+    /// ceiling and nothing else, so a shard running one node of a
+    /// divided manifest reserves that node's figure and a node's slack
+    /// is never another's to spend. Exhaustion is the sender's own
+    /// defect and prices as one.
+    pub gas_limits: Vec<u64>,
 }
 
 impl BatchTx {
@@ -146,7 +148,7 @@ impl BatchTx {
             applies: OwnerSet::whole(),
             judges: OwnerSet::whole(),
             env,
-            gas_limit: u64::MAX,
+            gas_limits: Vec::new(),
         }
     }
 
@@ -191,13 +193,28 @@ impl BatchTx {
         self
     }
 
-    /// Bind the signed execution ceiling. Unset means unbounded, which is
-    /// what an in-crate fixture wants and what no embedder should leave
-    /// it at: the envelope always carries one.
+    /// Bind the signed compute ceilings, one per manifest node in node
+    /// order. Unset means every node unbounded, which is what an in-crate
+    /// fixture wants and what no embedder should leave it at: the
+    /// envelope always carries one per node.
     #[must_use]
-    pub const fn with_gas_limit(mut self, gas_limit: u64) -> Self {
-        self.gas_limit = gas_limit;
+    pub fn with_gas_limits(mut self, gas_limits: Vec<u64>) -> Self {
+        self.gas_limits = gas_limits;
         self
+    }
+
+    /// The signed ceiling `node` is metered against.
+    ///
+    /// Unbounded while no ceilings are bound. `None` where ceilings are
+    /// bound and this node has none: a batch composed against some other
+    /// call list, which the walk refuses as its composer's defect rather
+    /// than metering the node at nothing and pricing the sender for it.
+    #[must_use]
+    pub fn ceiling(&self, node: usize) -> Option<u64> {
+        if self.gas_limits.is_empty() {
+            return Some(u64::MAX);
+        }
+        self.gas_limits.get(node).copied()
     }
 
     /// Bind the invocations the manifest walk performs. An entry
