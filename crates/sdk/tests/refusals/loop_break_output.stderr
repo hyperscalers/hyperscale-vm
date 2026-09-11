@@ -1,0 +1,5 @@
+error: a produced edge must leave through the tail expression — the declared outputs are exact, and a `break` carries its value to a loop or a block the declaration reads as one value
+  --> tests/refusals/loop_break_output.rs:16:17
+   |
+16 |                 break self.till.at(a).take(Quantity::from_subunits(1));
+   |                 ^^^^^

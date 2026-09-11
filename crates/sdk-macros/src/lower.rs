@@ -2633,8 +2633,23 @@ impl<'a> Lowerer<'a> {
                 let limits = &range.limits;
                 Eval::plain(quote!(#start #limits #end))
             }
+            // A break's value is its loop's or its block's, read where
+            // that is read — so a plain value leaves through it freely,
+            // and only a produced edge cannot: the declared outputs are
+            // the tail's exact list, and an edge leaving elsewhere is
+            // out of the declaration's sight.
             syn::Expr::Break(brk) => {
-                let value = brk.expr.as_ref().map(|value| self.code(value));
+                let value = brk.expr.as_ref().map(|value| {
+                    if !self.returned(value).outputs.is_empty() {
+                        self.error(
+                            brk.span(),
+                            "a produced edge must leave through the tail expression — the \
+                             declared outputs are exact, and a `break` carries its value \
+                             to a loop or a block the declaration reads as one value",
+                        );
+                    }
+                    self.code(value)
+                });
                 let label = &brk.label;
                 Eval::plain(quote!(break #label #value))
             }
