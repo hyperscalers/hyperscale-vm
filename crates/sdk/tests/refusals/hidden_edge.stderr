@@ -1,0 +1,5 @@
+error: this tail hands back 0 value edges where the return type names 1 — the walk reads an edge only from a take, a division, or a bucket the method was handed, spelled at the tail; one inside a call, a helper that exits early, or a `Result` the tail does not spell as `Ok(..)` is out of its sight
+  --> tests/refusals/hidden_edge.rs:22:13
+   |
+22 |             self.pull(resource)
+   |             ^^^^

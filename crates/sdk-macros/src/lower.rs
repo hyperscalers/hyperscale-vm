@@ -585,7 +585,7 @@ impl Eval {
 
 /// Split a block into its statements and its tail expression, if it has
 /// one. The tail is where a method's produced value edges are named.
-fn split_tail(block: &syn::Block) -> (&[syn::Stmt], Option<&syn::Expr>) {
+pub fn split_tail(block: &syn::Block) -> (&[syn::Stmt], Option<&syn::Expr>) {
     match block.stmts.split_last() {
         Some((syn::Stmt::Expr(expr, None), rest)) => (rest, Some(expr)),
         _ => (&block.stmts, None),

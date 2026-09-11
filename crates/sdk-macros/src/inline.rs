@@ -380,8 +380,11 @@ impl Inliner<'_> {
         } else {
             stmts.append(&mut body.stmts);
         }
+        // The block stands where the call stood, and says so: a refusal
+        // the walk raises at the block as a whole lands on the call the
+        // author wrote, while anything inside keeps the helper's spans.
         Some(syn::Block {
-            brace_token: body.brace_token,
+            brace_token: syn::token::Brace(call.span()),
             stmts,
         })
     }

@@ -158,7 +158,8 @@
 //! on — a *published* method of one's own component included, since each
 //! method declares only its own body's accesses — and an early `return`
 //! carrying a produced value edge, which the tail's exact output list
-//! cannot absorb. A *private* method is not a call at all: it splices
+//! cannot absorb, or an edge the tail hides inside a call or a fallible
+//! value it does not spell as `Ok(..)`. A *private* method is not a call at all: it splices
 //! into each caller before the walk, so shared judgment is written once
 //! and every caller declares the reads it makes. Its exits are its own —
 //! a `return` or a `?` inside it leaves the helper, never the export —
@@ -1172,26 +1173,68 @@ fn total_attr(method: &syn::ImplItemFn) -> Option<&syn::Attribute> {
 /// second time to decide which was which is the classification that
 /// drifts from the one that declared the outputs.
 fn answered(method: &syn::ImplItemFn, at: usize) -> Option<syn::Type> {
+    match payload(method)? {
+        syn::Type::Tuple(tuple) => tuple.elems.into_iter().nth(at),
+        one => Some(one),
+    }
+}
+
+/// What a method's return type says it hands back on success: the type
+/// itself, or the success arm of the `Result` it wears.
+fn payload(method: &syn::ImplItemFn) -> Option<syn::Type> {
     let syn::ReturnType::Type(_, ty) = &method.sig.output else {
         return None;
     };
-    let held = match &**ty {
+    match &**ty {
         syn::Type::Path(path) if path.path.segments.last()?.ident == "Result" => {
             let syn::PathArguments::AngleBracketed(args) = &path.path.segments.last()?.arguments
             else {
                 return None;
             };
             match args.args.first()? {
-                syn::GenericArgument::Type(held) => held.clone(),
-                _ => return None,
+                syn::GenericArgument::Type(held) => Some(held.clone()),
+                _ => None,
             }
         }
-        other => other.clone(),
-    };
-    match held {
-        syn::Type::Tuple(tuple) => tuple.elems.into_iter().nth(at),
-        one => Some(one),
+        other => Some(other.clone()),
     }
+}
+
+/// How many value edges the return type names: each `Bucket` or
+/// `NfBucket` in the success payload, tuple or single.
+fn declared_edges(method: &syn::ImplItemFn) -> usize {
+    let edge = |ty: &syn::Type| is_named(ty, "Bucket") || is_named(ty, "NfBucket");
+    match payload(method) {
+        Some(syn::Type::Tuple(tuple)) => tuple.elems.iter().filter(|ty| edge(ty)).count(),
+        Some(one) => usize::from(edge(&one)),
+        None => 0,
+    }
+}
+
+/// The edges the return type names are the edges the tail hands back in
+/// the walk's sight. An edge inside a call, a helper that exits early, or
+/// a fallible value the tail does not spell as `Ok(..)` is one the
+/// declaration would omit — the artifact would then hand a bucket where
+/// its signature promised none, and the failure would surface as a
+/// generated encoding that no bucket implements.
+fn check_edges_visible(method: &syn::ImplItemFn, lowered: &lower::Lowered) -> syn::Result<()> {
+    let named = declared_edges(method);
+    let found = lowered.outputs.len();
+    if named == found {
+        return Ok(());
+    }
+    let span = lower::split_tail(&method.block)
+        .1
+        .map_or_else(|| method.sig.output.span(), Spanned::span);
+    Err(syn::Error::new(
+        span,
+        format!(
+            "this tail hands back {found} value edges where the return type names {named} — \
+             the walk reads an edge only from a take, a division, or a bucket the method \
+             was handed, spelled at the tail; one inside a call, a helper that exits early, \
+             or a `Result` the tail does not spell as `Ok(..)` is out of its sight"
+        ),
+    ))
 }
 
 /// The error arm a method's return type carries, which is the whole of
@@ -1312,6 +1355,7 @@ fn lower_method(
                 })
         })?;
     check_gate_shape(&gate, &lowered, method)?;
+    check_edges_visible(method, &lowered)?;
 
     let declining = declined_with(method);
     if let Some(arm) = &declining {

@@ -1,7 +1,13 @@
-error[E0599]: `hyperscale_vm_sdk::state::Interval<()>` is not an iterator
-  --> tests/refusals/nf_ops_on_unit.rs:20:40
+error: this tail hands back 0 value edges where the return type names 1 — the walk reads an edge only from a take, a division, or a bucket the method was handed, spelled at the tail; one inside a call, a helper that exits early, or a `Result` the tail does not spell as `Ok(..)` is out of its sight
+  --> tests/refusals/nf_ops_on_unit.rs:22:13
    |
-20 |             self.seen.of(7u64).whole().take(ids)
+22 |             self.seen.of(7u64).whole().take(ids)
+   |             ^^^^
+
+error[E0599]: `hyperscale_vm_sdk::state::Interval<()>` is not an iterator
+  --> tests/refusals/nf_ops_on_unit.rs:22:40
+   |
+22 |             self.seen.of(7u64).whole().take(ids)
    |                                        ^^^^ `hyperscale_vm_sdk::state::Interval<()>` is not an iterator
    |
   ::: src/state.rs
