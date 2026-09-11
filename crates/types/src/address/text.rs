@@ -149,12 +149,18 @@ impl Address {
             .map_err(|bytes: Vec<u8>| TextError::WrongLength(bytes.len()))?;
         let address = Self::from_bytes(bytes)?;
 
+        // The class word carries no underscore, so the first one ends
+        // it; a network word carrying another would name a string
+        // `to_text` refuses, and text to address to text would not be
+        // the identity.
         let (class, network) = prefix
             .split_once('_')
             .ok_or(TextError::IncompletePrefix)
             .and_then(|(class, network)| {
                 if network.is_empty() {
                     Err(TextError::IncompletePrefix)
+                } else if network.contains('_') {
+                    Err(TextError::InvalidCharacter('_'))
                 } else {
                     Ok((class, network))
                 }
@@ -462,6 +468,13 @@ mod tests {
         );
         assert_eq!(
             address.to_text("a_b"),
+            Err(TextError::InvalidCharacter('_'))
+        );
+        // And the decoder refuses the same word, so text to address to
+        // text is the identity wherever the first leg reads at all.
+        let underscored = encode("account_a_b", &to_words(&address.to_bytes())).unwrap();
+        assert_eq!(
+            Address::from_text(&underscored),
             Err(TextError::InvalidCharacter('_'))
         );
         // 52 data words plus six of checksum leave a bounded prefix.

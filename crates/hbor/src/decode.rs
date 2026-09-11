@@ -38,6 +38,21 @@ impl<'a> Decoder<'a> {
         self.input.len() - self.cursor
     }
 
+    /// How many bytes have been read.
+    #[must_use]
+    pub const fn position(&self) -> usize {
+        self.cursor
+    }
+
+    /// The bytes read since `start`, which a caller took from
+    /// [`Self::position`] before reading a value: the value's own
+    /// encoding, exactly, since nothing outside a value's bytes
+    /// describes it.
+    #[must_use]
+    pub fn consumed(&self, start: usize) -> &'a [u8] {
+        &self.input[start..self.cursor]
+    }
+
     /// Read one byte.
     ///
     /// # Errors

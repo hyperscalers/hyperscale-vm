@@ -534,6 +534,20 @@ pub enum ReadError {
     Malformed(#[from] DecodeError),
 }
 
+/// Refuse a set or map that encodes one member twice.
+///
+/// Byte equality is the oracle: the encoding is canonical, so equal
+/// members have equal bytes and unequal members do not, whatever their
+/// type. Sorted by bytes rather than by the type's own order, which the
+/// reader does not know and does not need for this.
+fn refuse_duplicates(mut spans: Vec<&[u8]>) -> Result<(), DecodeError> {
+    spans.sort_unstable();
+    if spans.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(DecodeError::UnsortedKeys);
+    }
+    Ok(())
+}
+
 impl TypeShape {
     /// Read one complete value of this shape from `bytes`.
     ///
@@ -543,11 +557,14 @@ impl TypeShape {
     ///
     /// Checked is everything the shape can know — every width, every
     /// length minimal and payable by the bytes that remain, text valid
-    /// UTF-8, every discriminant declared, and no byte unaccounted for.
-    /// Not checked is the ascent of a set's or a map's keys: that order
-    /// is the element type's own, and a shape carries structure rather
-    /// than a comparison. A reader rejecting on a guess at it would
-    /// refuse payloads the chain accepted.
+    /// UTF-8, every discriminant declared, no byte unaccounted for, and
+    /// no member of a set or key of a map encoded twice: under canonicity
+    /// one value has one encoding, so two members with the same bytes
+    /// are one member, which the type-erased reader can see without
+    /// knowing the type. Not checked is the ascent of those keys: that
+    /// order is the element type's own, and a shape carries structure
+    /// rather than a comparison. A reader rejecting on a guess at it
+    /// would refuse payloads the chain accepted.
     ///
     /// So `read` is not a canonicity gate, where the codec is: two byte
     /// strings differing only in the order of a set's or a map's members
@@ -626,34 +643,13 @@ impl TypeShape {
             Self::ByteArray(width) => Ok(ShapeValue::ByteArray(
                 decoder.read_slice(*width as usize)?.to_vec(),
             )),
-            Self::Seq(element) | Self::Set(element) => {
-                let len = Self::run_length(decoder, resolution, element)?;
-                let mut read = Vec::with_capacity(decoder.reserve_hint::<ShapeValue>(len));
-                for _ in 0..len {
-                    read.push(element.read_from(decoder, resolution)?);
-                }
-                Ok(if matches!(self, Self::Seq(_)) {
-                    ShapeValue::Seq(read)
-                } else {
-                    ShapeValue::Set(read)
-                })
+            Self::Seq(element) => {
+                Self::read_run(decoder, resolution, element, false).map(ShapeValue::Seq)
             }
-            Self::Map { key, value } => {
-                let pair = resolution
-                    .cached_min_len(key)?
-                    .saturating_add(resolution.cached_min_len(value)?);
-                if pair == 0 {
-                    return Err(ShapeFault::ZeroWidth.into());
-                }
-                let len = decoder.read_len(pair)?;
-                let mut pairs =
-                    Vec::with_capacity(decoder.reserve_hint::<(ShapeValue, ShapeValue)>(len));
-                for _ in 0..len {
-                    let read = key.read_from(decoder, resolution)?;
-                    pairs.push((read, value.read_from(decoder, resolution)?));
-                }
-                Ok(ShapeValue::Map(pairs))
+            Self::Set(element) => {
+                Self::read_run(decoder, resolution, element, true).map(ShapeValue::Set)
             }
+            Self::Map { key, value } => Self::read_map(decoder, resolution, key, value),
             Self::Option(held) => match decoder.read_u8()? {
                 0 => Ok(ShapeValue::Option(None)),
                 1 => held
@@ -694,6 +690,53 @@ impl TypeShape {
                 .ok_or_else(|| ShapeFault::Unresolved(name.clone()))?
                 .read_from(decoder, resolution),
         }
+    }
+
+    /// A run of `element`s; `distinct` refuses one encoded twice.
+    fn read_run(
+        decoder: &mut Decoder<'_>,
+        resolution: &mut Resolution<'_>,
+        element: &Self,
+        distinct: bool,
+    ) -> Result<Vec<ShapeValue>, ReadError> {
+        let len = Self::run_length(decoder, resolution, element)?;
+        let mut read = Vec::with_capacity(decoder.reserve_hint::<ShapeValue>(len));
+        let mut spans = Vec::new();
+        for _ in 0..len {
+            let start = decoder.position();
+            read.push(element.read_from(decoder, resolution)?);
+            if distinct {
+                spans.push(decoder.consumed(start));
+            }
+        }
+        refuse_duplicates(spans)?;
+        Ok(read)
+    }
+
+    /// The pairs of a map, no key encoded twice.
+    fn read_map(
+        decoder: &mut Decoder<'_>,
+        resolution: &mut Resolution<'_>,
+        key: &Self,
+        value: &Self,
+    ) -> Result<ShapeValue, ReadError> {
+        let pair = resolution
+            .cached_min_len(key)?
+            .saturating_add(resolution.cached_min_len(value)?);
+        if pair == 0 {
+            return Err(ShapeFault::ZeroWidth.into());
+        }
+        let len = decoder.read_len(pair)?;
+        let mut pairs = Vec::with_capacity(decoder.reserve_hint::<(ShapeValue, ShapeValue)>(len));
+        let mut spans = Vec::with_capacity(pairs.capacity());
+        for _ in 0..len {
+            let start = decoder.position();
+            let read = key.read_from(decoder, resolution)?;
+            spans.push(decoder.consumed(start));
+            pairs.push((read, value.read_from(decoder, resolution)?));
+        }
+        refuse_duplicates(spans)?;
+        Ok(ShapeValue::Map(pairs))
     }
 
     /// How many elements a run claims, bounded by what the bytes could
@@ -968,6 +1011,33 @@ mod tests {
         [("leaf".to_owned(), leaf), ("whole".to_owned(), whole)]
             .into_iter()
             .collect()
+    }
+
+    /// A member encoded twice is one member: refused by byte equality,
+    /// which canonicity makes a faithful oracle for a reader that knows
+    /// no type. The order of members is the type's own and still not
+    /// the reader's to judge.
+    #[test]
+    fn a_duplicate_member_is_refused_and_an_unsorted_one_is_not() {
+        let types = ShapeTable::default();
+        let set = TypeShape::Set(Box::new(TypeShape::U8));
+        assert!(set.read(&[2, 5, 3], &types).is_ok());
+        assert_eq!(
+            set.read(&[2, 5, 5], &types),
+            Err(ReadError::Malformed(DecodeError::UnsortedKeys))
+        );
+        let map = TypeShape::Map {
+            key: Box::new(TypeShape::U8),
+            value: Box::new(TypeShape::U8),
+        };
+        assert!(map.read(&[2, 5, 0, 3, 0], &types).is_ok());
+        assert_eq!(
+            map.read(&[2, 5, 0, 5, 1], &types),
+            Err(ReadError::Malformed(DecodeError::UnsortedKeys))
+        );
+        // A sequence is a sequence: repeats are what it holds.
+        let seq = TypeShape::Seq(Box::new(TypeShape::U8));
+        assert!(seq.read(&[2, 5, 5], &types).is_ok());
     }
 
     #[test]

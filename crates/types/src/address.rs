@@ -179,6 +179,10 @@ pub enum AddressClass {
     /// kind it is, and the rules its issuer sealed into it. What may be
     /// done with it is the rules' answer, not the namespace's.
     Resource,
+    /// A protocol-defined role. The role is what the address names; the
+    /// code behind it moves with the protocol version, which is the one
+    /// upgrade channel a package address deliberately lacks.
+    Native,
     /// A resource whose sealed rules restrict a movement anyone could
     /// otherwise make.
     ///
@@ -188,14 +192,11 @@ pub enum AddressClass {
     /// let through a movement the rules forbid, and this byte is the
     /// only thing that answers it without a lookup.
     Restricted,
-    /// A protocol-defined role. The role is what the address names; the
-    /// code behind it moves with the protocol version, which is the one
-    /// upgrade channel a package address deliberately lacks.
-    Native,
 }
 
 impl AddressClass {
-    /// Every class, in declaration order.
+    /// Every class, in declaration order — which is tag order, so the
+    /// derived ordering and the byte on the wire agree.
     ///
     /// The one list a walk over the classes reads.
     pub const ALL: [Self; 6] = [
@@ -203,8 +204,8 @@ impl AddressClass {
         Self::Component,
         Self::Package,
         Self::Resource,
-        Self::Restricted,
         Self::Native,
+        Self::Restricted,
     ];
 
     /// The trailing byte naming this class.
@@ -902,6 +903,17 @@ mod tests {
         let mut tags: Vec<u8> = AddressClass::ALL.iter().map(|class| class.tag()).collect();
         tags.sort_unstable();
         assert_eq!(tags, vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+    }
+
+    /// The derived ordering is the tag's, so a class sorted anywhere —
+    /// a map keyed by class, a listing — comes out in the order the wire
+    /// byte gives it.
+    #[test]
+    fn class_order_is_tag_order() {
+        for pair in AddressClass::ALL.windows(2) {
+            assert!(pair[0] < pair[1]);
+            assert!(pair[0].tag() < pair[1].tag());
+        }
     }
 
     #[test]
