@@ -15,8 +15,8 @@ use hyperscale_vm_kernel::{
     decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome,
-    PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, MAX_EVENT_BYTES_PER_TX,
+    Mode, Moves, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// Any expiry; these tests never reach one.
@@ -345,6 +345,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
         nullifiers: vec![nullifier_record(SUBINTENT, nullifier())],
         env: env(),
         gas_limits: Vec::new(),
+        event_bytes: MAX_EVENT_BYTES_PER_TX,
     }
 }
 
@@ -416,6 +417,7 @@ fn sharing_tx(id: u8) -> BatchTx {
         judges: OwnerSet::whole(),
         env: env(),
         gas_limits: Vec::new(),
+        event_bytes: MAX_EVENT_BYTES_PER_TX,
     }
 }
 
@@ -446,6 +448,7 @@ fn nullifier_and_shared_tx(id: u8) -> BatchTx {
         fee: None,
         env: env(),
         gas_limits: Vec::new(),
+        event_bytes: MAX_EVENT_BYTES_PER_TX,
     }
 }
 
@@ -595,6 +598,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
         fee: None,
         env: env(),
         gas_limits: Vec::new(),
+        event_bytes: MAX_EVENT_BYTES_PER_TX,
     };
     let refused = execute_batch(
         Arc::new(MemoryStore::new()),
@@ -652,6 +656,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
         nullifiers: vec![],
         env: env(),
         gas_limits: Vec::new(),
+        event_bytes: MAX_EVENT_BYTES_PER_TX,
     };
     let refused = execute_batch(
         Arc::new(MemoryStore::new()),

@@ -36,7 +36,7 @@ use std::thread;
 use hyperscale_vm_effects::{Declaration, NodeCall, SubintentRecord};
 use hyperscale_vm_types::{
     AbortReason, Address, Answer, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget,
-    Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
+    MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
 use crate::escrow::{Departure, Disposal, Disposition, EscrowDelta, LegPlan};
@@ -125,6 +125,10 @@ pub struct BatchTx {
     /// is never another's to spend. Exhaustion is the sender's own
     /// defect and prices as one.
     pub gas_limits: Vec<u64>,
+    /// The most bytes the receipt's events may carry between them: the
+    /// sum of what the calls' packages declare one call may emit, which
+    /// the declaration priced as retention.
+    pub event_bytes: usize,
 }
 
 impl BatchTx {
@@ -149,7 +153,17 @@ impl BatchTx {
             judges: OwnerSet::whole(),
             env,
             gas_limits: Vec::new(),
+            event_bytes: MAX_EVENT_BYTES_PER_TX,
         }
+    }
+
+    /// Bind the event bound. Unset means the wire cap, which is what an
+    /// in-crate fixture wants and what no embedder should leave it at:
+    /// every call's package declares one.
+    #[must_use]
+    pub const fn with_event_bytes(mut self, event_bytes: usize) -> Self {
+        self.event_bytes = event_bytes;
+        self
     }
 
     /// Bind what this execution does.
@@ -970,6 +984,7 @@ fn run_group<R: GuestRunner>(
                     .with_applies(entry.applies.clone())
                     .with_nullifiers(entry.nullifiers.clone())
                     .with_fee(entry.fee)
+                    .with_event_bytes(entry.event_bytes)
             }
             Err(defect) => {
                 receipts.push((entry.tx, abort_receipt(defect.into(), 0)));

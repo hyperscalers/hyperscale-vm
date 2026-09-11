@@ -349,6 +349,7 @@ mod tests {
     fn metadata_rides_the_artifact_and_comes_back_canonical() {
         let mut metadata = PackageMetadata::default();
         metadata.events.push("transferred".to_owned());
+        metadata.event_bytes = 64;
         metadata.types.insert(
             "transferred".to_owned(),
             TypeShape::Struct(vec![ShapeField {

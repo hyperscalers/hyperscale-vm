@@ -17,8 +17,8 @@ use hyperscale_vm_kernel::{
     OwnerSet, RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement, Moves, Outcome,
-    PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, MAX_EVENT_BYTES_PER_TX, Mode,
+    Movement, Moves, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// `batch` with every entry applying `applies`.
@@ -230,6 +230,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         fee: None,
         env: env(),
         gas_limits: Vec::new(),
+        event_bytes: MAX_EVENT_BYTES_PER_TX,
     }
 }
 

@@ -35,7 +35,7 @@
 
 use hyperscale_vm_sdk::blueprint;
 
-#[blueprint]
+#[blueprint(event_bytes = 2048)]
 pub mod staking {
     use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, Vault};
     use hyperscale_vm_sdk::{Address, ResourceAddr};

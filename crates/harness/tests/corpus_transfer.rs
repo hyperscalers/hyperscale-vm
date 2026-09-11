@@ -117,6 +117,7 @@ fn mirror_metadata() -> PackageMetadata {
         },
     );
     metadata.events = vec!["withdrawn".into(), "deposited".into()];
+    metadata.event_bytes = 512;
     metadata
 }
 

@@ -286,6 +286,7 @@ mod tests {
             .methods
             .insert("another".into(), MethodSignature::default());
         metadata.events = vec!["withdrawn".into(), "deposited".into()];
+        metadata.event_bytes = 64;
         metadata.types = metadata
             .events
             .iter()
@@ -346,6 +347,7 @@ mod tests {
         struct Forged {
             methods: Vec<(String, MethodSignature)>,
             events: Vec<String>,
+            event_bytes: u32,
             errors: Vec<String>,
             types: ShapeTable,
             config: Vec<String>,
@@ -367,6 +369,7 @@ mod tests {
                         .map(|name| ((*name).to_owned(), MethodSignature::default()))
                         .collect(),
                     events: Vec::new(),
+                    event_bytes: 0,
                     errors: Vec::new(),
                     types: ShapeTable::new(),
                     config: Vec::new(),
@@ -501,6 +504,7 @@ mod tests {
                     .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
                     .collect(),
                 events: named,
+                event_bytes: 64,
                 ..PackageMetadata::default()
             }
         };
@@ -533,6 +537,7 @@ mod tests {
                 .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
                 .collect(),
             events: named,
+            event_bytes: 64,
             ..PackageMetadata::default()
         };
         let bytes = encode_unchecked(&over);

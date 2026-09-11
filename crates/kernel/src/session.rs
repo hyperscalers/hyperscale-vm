@@ -51,9 +51,7 @@ use hyperscale_vm_types::{
 // The emission caps and the event record are the shared vocabulary: the
 // same constants bound the kernel's emission here and the wire's decode in
 // the consensus workspace, so the two cannot drift.
-use hyperscale_vm_types::{
-    Event, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
-};
+use hyperscale_vm_types::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX};
 pub use materialize::{Capability, Interval, MaterializeError, Settlement};
 use ranges::Ranges;
 pub use ranges::SCAN_SEEK_BYTES;
@@ -161,6 +159,10 @@ pub struct KernelSession {
     /// Events emitted so far, kept until the outcome is known: an abort
     /// discards them, so nothing an aborted transaction said survives.
     events: Vec<Event>,
+    /// The most bytes the events may carry between them: what the
+    /// transaction's calls declared through their packages, which the
+    /// declaration priced as retention.
+    event_bytes: usize,
     /// What each capability's cell holds, by the same rep the capability
     /// table uses; `None` where the cell holds no value.
     ///
@@ -252,6 +254,16 @@ impl KernelSession {
     #[must_use]
     pub fn with_nullifiers(mut self, nullifiers: Vec<SubintentRecord>) -> Self {
         self.nullifiers = nullifiers;
+        self
+    }
+
+    /// Bound the event bytes the receipt may carry: the sum of what the
+    /// transaction's calls declared through their packages. Unset means
+    /// the wire cap, which is what an in-crate fixture wants and what no
+    /// embedder should leave it at.
+    #[must_use]
+    pub const fn with_event_bytes(mut self, event_bytes: usize) -> Self {
+        self.event_bytes = event_bytes;
         self
     }
 
@@ -691,7 +703,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`]: no invocation to attribute it to, a type past
     /// [`MAX_EVENT_TYPES`], a count or payload past its cap, or the
-    /// transaction's event bytes past [`MAX_EVENT_BYTES_PER_TX`] between
+    /// transaction's event bytes past what its calls declared between
     /// them. The caps trap rather than truncate, so what a transaction
     /// emitted is either entirely in its receipt or the transaction did
     /// not complete.
@@ -706,12 +718,12 @@ impl KernelSession {
         if self.events.len() >= MAX_EVENTS_PER_TX {
             return Err(SessionTrap::TooManyEvents);
         }
-        // The byte cap is the priced one: a manifest naming a package
-        // with events enters it whole into its declared retention, so
-        // what the receipt may carry is what the declaration paid for.
+        // The byte bound is the priced one: each call's package declares
+        // what a call may emit, the declaration enters the sum into its
+        // retention, and what the receipt may carry is what was paid for.
         let carried: usize = self.events.iter().map(|event| event.payload.len()).sum();
-        if carried.saturating_add(payload.len()) > MAX_EVENT_BYTES_PER_TX {
-            return Err(SessionTrap::EventBytesExceeded);
+        if carried.saturating_add(payload.len()) > self.event_bytes {
+            return Err(SessionTrap::EventBytesExceeded(self.event_bytes));
         }
         self.events.push(Event {
             emitter,
@@ -990,11 +1002,11 @@ mod tests {
         assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::NoInvocation));
     }
 
-    /// The bytes a transaction's events carry between them are capped
-    /// below what the count and payload caps would admit together, and
-    /// the cap traps at the emit that crosses it.
+    /// The bytes a transaction's events carry between them are bounded
+    /// by what its calls declared — the wire cap where nothing was bound
+    /// — and the bound traps at the emit that crosses it.
     #[test]
-    fn event_bytes_past_the_transaction_cap_trap() {
+    fn event_bytes_past_the_declared_bound_trap() {
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
         session.enter_invocation(Address::new([7; 31], AddressClass::Component));
         let full = MAX_EVENT_BYTES_PER_TX / MAX_EVENT_PAYLOAD_BYTES;
@@ -1003,10 +1015,20 @@ mod tests {
         }
         assert_eq!(
             session.emit(0, vec![0u8; 1]),
-            Err(SessionTrap::EventBytesExceeded)
+            Err(SessionTrap::EventBytesExceeded(MAX_EVENT_BYTES_PER_TX))
         );
         // An empty payload adds no bytes and still fits under the count.
         session.emit(0, Vec::new()).unwrap();
+
+        // A declared bound binds below the cap.
+        let mut bounded = session_over(MemoryStore::new(), &declared(&[])).with_event_bytes(100);
+        bounded.enter_invocation(Address::new([7; 31], AddressClass::Component));
+        bounded.emit(0, vec![0u8; 60]).unwrap();
+        bounded.emit(0, vec![0u8; 40]).unwrap();
+        assert_eq!(
+            bounded.emit(0, vec![0u8; 1]),
+            Err(SessionTrap::EventBytesExceeded(100))
+        );
     }
 
     /// A written value past the cell cap traps at production. The guard

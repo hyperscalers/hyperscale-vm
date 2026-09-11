@@ -7,8 +7,7 @@
 
 use hyperscale_vm_types::math::MathError;
 use hyperscale_vm_types::{
-    AbortReason, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENTS_PER_TX, ResourceAddr,
-    SubstateKey,
+    AbortReason, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENTS_PER_TX, ResourceAddr, SubstateKey,
 };
 
 use super::{Capability, Op};
@@ -229,9 +228,9 @@ pub enum SessionTrap {
     /// An event payload past the per-event byte cap.
     #[error("event payload of {0} bytes past the cap of {MAX_EVENT_PAYLOAD_BYTES}")]
     EventPayloadTooLarge(usize),
-    /// The transaction's event bytes past what one may emit between them.
-    #[error("event bytes past the transaction's cap of {MAX_EVENT_BYTES_PER_TX}")]
-    EventBytesExceeded,
+    /// The transaction's event bytes past what its calls declared.
+    #[error("event bytes past the {0} the transaction's calls declared")]
+    EventBytesExceeded(usize),
     /// A written cell or entry value past the width its slot declared.
     #[error("cell value of {len} bytes past the slot's width of {width}")]
     CellValueTooLarge {
@@ -300,7 +299,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::EventTypeOutOfRange(_) => Self::EventTypeOutOfRange,
             SessionTrap::TooManyEvents => Self::EventCountExceeded,
             SessionTrap::EventPayloadTooLarge(_) => Self::EventPayloadTooLarge,
-            SessionTrap::EventBytesExceeded => Self::EventBytesExceeded,
+            SessionTrap::EventBytesExceeded(_) => Self::EventBytesExceeded,
             SessionTrap::CellValueTooLarge { .. } => Self::CellValueTooLarge,
             SessionTrap::ShareAboveOne => Self::ShareAboveOne,
             SessionTrap::WrongResource { .. } => Self::WrongResource,

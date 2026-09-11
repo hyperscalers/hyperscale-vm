@@ -17,6 +17,7 @@ events
       4  validator-unjailed
       5  param-vote-cast
       6  param-vote-cleared
+  a call emits at most 2048 bytes
 types
   param-vote = { split_bytes: u64, impound_epochs: u64, activate_at: u64 }
   param-vote-cast = (param-vote)

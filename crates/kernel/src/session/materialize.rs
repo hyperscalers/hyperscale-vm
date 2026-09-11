@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{Condition, Declaration, JudgedLeaf, Rule};
 use hyperscale_vm_types::{
-    Address, CollectionId, Effect, EffectTarget, Mode, Moves, Presence, ResourceAddr, SubstateKey,
-    TxHash,
+    Address, CollectionId, Effect, EffectTarget, MAX_EVENT_BYTES_PER_TX, Mode, Moves, Presence,
+    ResourceAddr, SubstateKey, TxHash,
 };
 
 use super::buckets::Buckets;
@@ -637,6 +637,7 @@ impl KernelSession {
             lost_floor: None,
             invocation: None,
             events: Vec::new(),
+            event_bytes: MAX_EVENT_BYTES_PER_TX,
             supply: SupplyDelta::default(),
             escrow: EscrowDelta::default(),
             crossings: BTreeMap::new(),

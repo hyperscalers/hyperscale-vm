@@ -8,6 +8,7 @@ events
       0  entered
       1  closed
       2  settled
+  a call emits at most 1024 bytes
 errors
       0  round-truncated
       1  not-yet-drawn

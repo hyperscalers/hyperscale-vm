@@ -4,7 +4,7 @@
 //! the macro has an opinion.
 use hyperscale_vm_sdk::blueprint;
 
-#[blueprint]
+#[blueprint(event_bytes = 256)]
 mod contract {
     use hyperscale_vm_sdk::state::Cell;
 

@@ -9,6 +9,7 @@ state
 events
       0  withdrawn
       1  deposited
+  a call emits at most 512 bytes
 types
   deposited = { amount: u128 }
   pending = { effective_at_ms: u64, primary: [u8], recovery: [u8], confirmation: [u8], delay_ms: u64 }

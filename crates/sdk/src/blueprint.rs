@@ -63,6 +63,7 @@ impl Method {
 pub struct Blueprint {
     methods: BTreeMap<String, Method>,
     events: Vec<String>,
+    event_bytes: u32,
     errors: Vec<String>,
     types: ShapeRegistry,
     state: BTreeMap<SlotId, SlotShape>,
@@ -99,6 +100,7 @@ impl Blueprint {
                 .map(|(name, m)| (name.clone(), m.signature.clone()))
                 .collect(),
             events: self.events.clone(),
+            event_bytes: self.event_bytes,
             errors: self.errors.clone(),
             types: self.types.types().clone(),
             state: self.state.clone(),
@@ -176,6 +178,15 @@ impl Builder {
             panic!("an event is a type the package declares, and describes as one");
         };
         self.blueprint.events.push(name);
+        self
+    }
+
+    /// Bound what one call into the package may emit, in bytes between
+    /// its events: what a declaration prices a call's events at and what
+    /// the kernel meters emits against.
+    #[must_use]
+    pub const fn event_bytes(mut self, bytes: u32) -> Self {
+        self.blueprint.event_bytes = bytes;
         self
     }
 

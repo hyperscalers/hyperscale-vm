@@ -269,6 +269,12 @@ pub struct PackageMetadata {
     /// what lets a consumer name what it read, and it can only mean one
     /// thing because a package is content-addressed and immutable.
     pub events: Vec<String>,
+    /// The most bytes one call into the package may emit between its
+    /// events: what a declaration prices a call's events at and what the
+    /// kernel meters a transaction's emits against, summed over its
+    /// calls. Zero for a package that declares no events, which the
+    /// publish gate holds it to either way.
+    pub event_bytes: u32,
     /// The package's error names, in the index order a declined
     /// invocation's code refers to.
     ///
@@ -566,6 +572,7 @@ mod tests {
         let hash = PackageHash(Hash32([2; 32]));
         let mut record = PackageMetadata::default();
         record.events.push("paid".into());
+        record.event_bytes = 64;
         let refusal = MetadataCache::new()
             .publish(hash, record)
             .expect_err("an event with no shape opens to nothing");

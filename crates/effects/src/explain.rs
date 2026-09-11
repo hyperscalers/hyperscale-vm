@@ -966,6 +966,13 @@ impl<'a> Names<'a> {
             }
         }
         name_table("events", &self.metadata.events, out);
+        if self.metadata.event_bytes != 0 {
+            let _ = writeln!(
+                out,
+                "  a call emits at most {} bytes",
+                self.metadata.event_bytes
+            );
+        }
         name_table("errors", &self.metadata.errors, out);
         if !self.metadata.types.is_empty() {
             out.push_str("types\n");
@@ -2136,6 +2143,7 @@ mod tests {
         let mut metadata = PackageMetadata {
             config: vec!["x".to_owned(), "y".to_owned()],
             events: vec!["traded".to_owned()],
+            event_bytes: 64,
             errors: vec!["underfunded".to_owned()],
             ..PackageMetadata::default()
         };

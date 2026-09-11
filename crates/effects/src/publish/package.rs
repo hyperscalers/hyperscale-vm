@@ -10,7 +10,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Resolution, ShapeFault};
-use hyperscale_vm_types::{MAX_ERROR_CODES, MAX_EVENT_TYPES, MAX_SLOT_WIDTH};
+use hyperscale_vm_types::{
+    MAX_ERROR_CODES, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_TYPES, MAX_SLOT_WIDTH,
+};
 
 use super::bounds::{PlacedBounds, check_signature_bounds};
 use crate::dsl::{Clause, TargetExpr, slot_of};
@@ -25,6 +27,17 @@ pub enum MetadataError {
     /// An event table longer than the index an emitted event can carry.
     #[error("event table names {0} types, past the {MAX_EVENT_TYPES} an event index can reach")]
     EventTable(usize),
+    /// An event table with no bound on what a call may emit.
+    #[error("the package declares events and no event bytes a call may emit")]
+    EventBytesUndeclared,
+    /// A bound on emits from a package that declares no events.
+    #[error("the package declares {0} event bytes and no events")]
+    EventBytesWithoutEvents(u32),
+    /// A bound past what one transaction may emit at all.
+    #[error(
+        "the package declares {0} event bytes a call, past the {MAX_EVENT_BYTES_PER_TX} a transaction may emit"
+    )]
+    EventBytesTooHigh(u32),
     /// An error table longer than the index a declined code can carry.
     #[error("error table names {0} codes, past the {MAX_ERROR_CODES} a declined code can reach")]
     ErrorTable(usize),
@@ -174,7 +187,8 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataError> {
             source,
         })?;
     }
-    check_table_agreement(metadata)
+    check_table_agreement(metadata)?;
+    check_event_bound(metadata)
 }
 
 /// The three table caps: what an index into each can reach.
@@ -189,6 +203,20 @@ const fn check_table_caps(metadata: &PackageMetadata) -> Result<(), MetadataErro
         return Err(MetadataError::ConfigTable(metadata.config.len()));
     }
     Ok(())
+}
+
+/// The event bound reads with the event table: a package that emits
+/// states what one call may, one that does not states nothing, and no
+/// call may emit more than a transaction may carry.
+const fn check_event_bound(metadata: &PackageMetadata) -> Result<(), MetadataError> {
+    match (metadata.events.is_empty(), metadata.event_bytes) {
+        (false, 0) => Err(MetadataError::EventBytesUndeclared),
+        (true, bytes) if bytes != 0 => Err(MetadataError::EventBytesWithoutEvents(bytes)),
+        (_, bytes) if bytes as usize > MAX_EVENT_BYTES_PER_TX => {
+            Err(MetadataError::EventBytesTooHigh(bytes))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Whether the tables, read together, say one thing: every event has a
@@ -532,6 +560,7 @@ mod tests {
     fn an_event_with_no_shape_is_refused() {
         let named = |types: ShapeTable| PackageMetadata {
             events: vec!["moved".into()],
+            event_bytes: 64,
             types,
             ..PackageMetadata::default()
         };
@@ -555,6 +584,7 @@ mod tests {
     fn one_name_at_two_event_indices_is_refused() {
         let metadata = PackageMetadata {
             events: vec!["moved".into(), "moved".into()],
+            event_bytes: 64,
             types: one("moved", TypeShape::U64),
             ..PackageMetadata::default()
         };

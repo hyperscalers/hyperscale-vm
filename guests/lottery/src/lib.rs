@@ -40,7 +40,7 @@
 
 use hyperscale_vm_sdk::blueprint;
 
-#[blueprint]
+#[blueprint(event_bytes = 1024)]
 pub mod lottery {
     use hyperscale_vm_sdk::Address;
     use hyperscale_vm_sdk::state::{

@@ -1137,7 +1137,7 @@ fn a_valueless_narrowing_is_a_key_not_a_denomination() {
 /// prologues narrow the rebuilt address, so this binary compiling is the
 /// native half of the pin and the derived kind below is the declared
 /// half.
-#[blueprint]
+#[blueprint(event_bytes = 256)]
 mod noted {
     use hyperscale_vm_sdk::ResourceAddr;
     use hyperscale_vm_sdk::state::{Bucket, Keyed, Quantity, Vault};

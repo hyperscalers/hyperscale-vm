@@ -19,7 +19,7 @@
 
 use hyperscale_vm_sdk::blueprint;
 
-#[blueprint(principals)]
+#[blueprint(principals, event_bytes = 512)]
 pub mod account {
     use hyperscale_vm_sdk::state::{
         Bucket, Cell, Ids, Keyed, NfBucket, Quantity, RuleBytes, Vault, clock_ms, destroy,
