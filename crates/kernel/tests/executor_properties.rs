@@ -204,7 +204,7 @@ fn declared_of(spec: &TxSpec) -> EffectSet {
                 },
             },
         };
-        set.insert(effect)
+        set.insert_at_cap(effect)
             .expect("amounts stay well under the fold");
     }
     set
@@ -473,7 +473,7 @@ fn portable_declared(claims: &[PortableClaim]) -> EffectSet {
                 mode: Mode::Reserve { amount },
             },
         };
-        set.insert(effect).expect("bounded reserve amounts");
+        set.insert_at_cap(effect).expect("bounded reserve amounts");
     }
     set
 }
@@ -593,7 +593,7 @@ proptest! {
             moved.insert(tx(index), (key, *debit));
             let mut declared = EffectSet::new();
             declared
-                .insert(Effect {
+                .insert_at_cap(Effect {
                     target: EffectTarget::Point(key),
                     mode: Mode::Delta { moves: Moves::Both },
                 })
@@ -605,7 +605,7 @@ proptest! {
         let mut reading = EffectSet::new();
         for index in 0..CELLS {
             reading
-                .insert(Effect {
+                .insert_at_cap(Effect {
                     target: EffectTarget::Point(cell(index)),
                     mode: Mode::Read,
                 })

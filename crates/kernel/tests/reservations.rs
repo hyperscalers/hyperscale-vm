@@ -77,7 +77,8 @@ fn session(held: u128, reserves: &[u128]) -> (KernelSession, u32) {
 
     let mut set = EffectSet::new();
     for declared in &ordered {
-        set.insert(declared.effect).expect("the clauses fold");
+        set.insert_at_cap(declared.effect)
+            .expect("the clauses fold");
     }
 
     let mut store = MemoryStore::new();
@@ -209,7 +210,8 @@ fn a_take_and_a_delta_spend_the_two_halves_of_one_cell() {
     ];
     let mut set = EffectSet::new();
     for declared in &ordered {
-        set.insert(declared.effect).expect("the clauses fold");
+        set.insert_at_cap(declared.effect)
+            .expect("the clauses fold");
     }
     let mut store = MemoryStore::new();
     store.write(source, encode_amount(100).to_vec());
@@ -288,7 +290,8 @@ fn a_transactions_own_reservation_floors_its_own_delta() {
     ];
     let mut set = EffectSet::new();
     for declared in &ordered {
-        set.insert(declared.effect).expect("the clauses fold");
+        set.insert_at_cap(declared.effect)
+            .expect("the clauses fold");
     }
     let mut store = MemoryStore::new();
     store.write(source, encode_amount(100).to_vec());

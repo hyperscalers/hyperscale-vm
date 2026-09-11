@@ -82,7 +82,7 @@ fn session() -> KernelSession {
     ];
     let mut declared = EffectSet::default();
     for effect in effects {
-        declared.insert(effect).expect("the set takes it");
+        declared.insert_at_cap(effect).expect("the set takes it");
     }
     // Both cells hold value: one an interval of instances, one a balance.
     KernelSession::materialize(

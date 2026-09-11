@@ -44,7 +44,9 @@ fn collection() -> CollectionId {
 fn session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
     let mut declared = EffectSet::new();
     for effect in effects {
-        declared.insert(effect).expect("the effect set takes it");
+        declared
+            .insert_at_cap(effect)
+            .expect("the effect set takes it");
     }
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
@@ -64,7 +66,9 @@ fn session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
 fn value_session(store: MemoryStore, effects: Vec<Effect>) -> KernelSession {
     let mut declared = EffectSet::new();
     for effect in effects {
-        declared.insert(effect).expect("the effect set takes it");
+        declared
+            .insert_at_cap(effect)
+            .expect("the effect set takes it");
     }
     let declaration = Declaration::from_set(declared).denominated(|_| Some(RESOURCE));
     KernelSession::materialize(

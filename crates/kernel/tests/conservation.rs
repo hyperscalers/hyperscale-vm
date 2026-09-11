@@ -64,7 +64,7 @@ mod through_the_session {
             mode: Mode::Delta { moves: Moves::Both },
         };
         let mut set = EffectSet::new();
-        set.insert(moving).expect("one cell");
+        set.insert_at_cap(moving).expect("one cell");
         let declaration = Declaration::from_set(set).denominated(|_| Some(UNIT));
         let mut session = KernelSession::materialize(
             OverlayStore::new(Arc::new(store)),
@@ -279,7 +279,7 @@ mod through_the_session {
             mode: Mode::Write { moves: Moves::Both },
         };
         let mut set = EffectSet::new();
-        set.insert(writing).expect("one cell");
+        set.insert_at_cap(writing).expect("one cell");
         let declaration = Declaration::from_set(set).denominated(|_| Some(UNIT));
         let session = KernelSession::materialize(
             OverlayStore::new(Arc::new(MemoryStore::new())),
@@ -340,7 +340,7 @@ mod through_the_session {
         let cells = [vault(1, UNIT.address()), drained, vault(3, UNIT.address())];
         let mut set = EffectSet::new();
         for cell in cells {
-            set.insert(Effect {
+            set.insert_at_cap(Effect {
                 target: EffectTarget::Point(cell),
                 mode: Mode::Delta { moves: Moves::Both },
             })
@@ -448,7 +448,7 @@ mod instances {
             mode: Mode::Write { moves: Moves::Both },
         };
         let mut set = EffectSet::new();
-        set.insert(interval).expect("one interval");
+        set.insert_at_cap(interval).expect("one interval");
         let mut store = MemoryStore::new();
         store.entry_write(HOLDER, collection, u128::from(ORDER), filed.to_vec());
 

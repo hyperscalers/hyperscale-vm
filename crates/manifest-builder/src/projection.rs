@@ -137,7 +137,11 @@ pub(crate) fn typed_values(
 }
 
 /// The inputs a construction-time evaluation runs under: the caller's
-/// own meter, an [`UNBOUND`] identity, nothing presented.
+/// own meter, an [`UNBOUND`] identity, nothing presented, and no slot
+/// widths, because nothing here folds an effect set — outputs, claims
+/// and gates are projected, never declared. A projection that came to
+/// build a declaration would have to resolve the package's own table
+/// first, or every target it stamped would price at the cap.
 pub(crate) fn eval_inputs<'a>(
     self_addr: Address,
     values: &'a [Value],

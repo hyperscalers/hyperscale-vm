@@ -1586,7 +1586,7 @@ mod tests {
                 .map(|(index, effects)| {
                     let mut declared = EffectSet::new();
                     for effect in effects {
-                        declared.insert(*effect).expect("unit reserve amounts");
+                        declared.insert_at_cap(*effect).expect("unit reserve amounts");
                     }
                     BatchTx::new(
                         TxHash(Hash32([u8::try_from(index).expect("small batch"); 32])),

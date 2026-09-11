@@ -773,7 +773,8 @@ impl Admission<'_> {
             target: leaf,
             mode: Mode::Read,
         };
-        if frame.set.insert(effect)? {
+        let width = frame.set.width_of(&leaf);
+        if frame.set.insert_bounded(effect, width)? {
             frame.ordered.push(DeclaredAccess {
                 effect,
                 holds: None,

@@ -91,7 +91,7 @@ fn fixture() -> Fixture {
     let mut declared = EffectSet::new();
     for key in [kept, prowled] {
         declared
-            .insert(Effect {
+            .insert_at_cap(Effect {
                 target: EffectTarget::Point(key),
                 mode: Mode::Delta { moves: Moves::Both },
             })

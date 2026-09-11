@@ -94,7 +94,7 @@ fn moving(set: EffectSet) -> Declaration {
 fn declared(effects: &[Effect]) -> Declaration {
     let mut set = EffectSet::new();
     for effect in effects {
-        set.insert(*effect).unwrap();
+        set.insert_at_cap(*effect).unwrap();
     }
     moving(set)
 }

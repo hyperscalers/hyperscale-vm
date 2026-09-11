@@ -725,7 +725,7 @@ pub const fn point(key: SubstateKey, mode: Mode) -> Effect {
 pub fn set(effects: &[Effect]) -> EffectSet {
     let mut set = EffectSet::new();
     for effect in effects {
-        set.insert(*effect).unwrap();
+        set.insert_at_cap(*effect).unwrap();
     }
     set
 }

@@ -132,7 +132,7 @@ fn session(mode: Mode, funded: u128) -> KernelSession {
 
     let mut declared = EffectSet::new();
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(vault()),
             mode,
         })
@@ -179,7 +179,7 @@ fn two_cells() -> KernelSession {
     let mut declared = EffectSet::new();
     for slot in [16u16, 17] {
         declared
-            .insert(Effect {
+            .insert_at_cap(Effect {
                 target: EffectTarget::Point(child_key(&TestHasher, OWNER, SlotId(slot), &[])),
                 mode: Mode::Write { moves: Moves::Both },
             })

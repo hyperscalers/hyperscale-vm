@@ -131,25 +131,25 @@ fn transfer_session() -> KernelSession {
     let recipient = child_key(&TestHasher, RECIPIENT, SlotId(1), &[]);
     let mut declared = EffectSet::new();
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(sender),
             mode: Mode::Reserve { amount: AMOUNT },
         })
         .unwrap();
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(recipient),
             mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(quarantine_key()),
             mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(refused_key()),
             mode: Mode::Read,
         })

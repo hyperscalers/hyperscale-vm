@@ -57,7 +57,7 @@ fn cell_of(owner: Address) -> SubstateKey {
 fn declaring(key: SubstateKey, conditions: Vec<Rule<JudgedLeaf>>) -> Declaration {
     let conditions = conditions.into_iter().map(Condition::declared).collect();
     let mut set = EffectSet::new();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(key),
         mode: Mode::Read,
     })

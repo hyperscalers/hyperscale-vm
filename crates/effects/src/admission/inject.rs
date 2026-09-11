@@ -558,7 +558,12 @@ fn declare_read(frame: &mut Declaration, target: EffectTarget) {
     // carries it, and the condition beside it asks the same question. The
     // set answers whether it moved, which is the question — a read can
     // only fail to be novel, never to be inserted.
-    if frame.set.insert(effect).is_ok_and(|novel| novel) {
+    let width = frame.set.width_of(&target);
+    if frame
+        .set
+        .insert_bounded(effect, width)
+        .is_ok_and(|novel| novel)
+    {
         frame.ordered.push(DeclaredAccess {
             effect,
             holds: None,

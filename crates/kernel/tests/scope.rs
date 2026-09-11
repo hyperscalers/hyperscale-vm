@@ -99,7 +99,7 @@ fn present(byte: u8) -> Rule<JudgedLeaf> {
 fn declared(effects: &[Effect], conditions: Vec<Condition>) -> Declaration {
     let mut set = EffectSet::new();
     for effect in effects {
-        set.insert(*effect).unwrap();
+        set.insert_at_cap(*effect).unwrap();
     }
     let mut declaration = Declaration::from_set(set).denominated(|effect| {
         matches!(effect.mode, Mode::Delta { .. } | Mode::Reserve { .. }).then_some(RESOURCE)

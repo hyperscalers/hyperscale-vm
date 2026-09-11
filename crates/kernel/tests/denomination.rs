@@ -78,7 +78,7 @@ fn try_session(denominations: &[Option<ResourceAddr>]) -> Result<KernelSession, 
     ];
     let mut set = EffectSet::new();
     for effect in &ordered {
-        set.insert(*effect).expect("two distinct cells");
+        set.insert_at_cap(*effect).expect("two distinct cells");
     }
     KernelSession::materialize(
         OverlayStore::new(Arc::new(MemoryStore::new())),
@@ -138,7 +138,7 @@ fn every_producer_stamps_what_its_source_held() {
     ];
     let mut set = EffectSet::new();
     for effect in &ordered {
-        set.insert(*effect).expect("four distinct cells");
+        set.insert_at_cap(*effect).expect("four distinct cells");
     }
     let mut store = MemoryStore::new();
     for key in [absolute, reserved] {
@@ -222,7 +222,8 @@ fn every_instance_producer_stamps_what_its_source_held() {
     let ordered = vec![interval(X), interval(Y)];
     let mut set = EffectSet::new();
     for effect in &ordered {
-        set.insert(*effect).expect("two distinct collections");
+        set.insert_at_cap(*effect)
+            .expect("two distinct collections");
     }
     let mut store = MemoryStore::new();
     for order in [10u128, 20] {

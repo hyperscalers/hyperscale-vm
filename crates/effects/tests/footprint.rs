@@ -65,7 +65,7 @@ fn set_of(effects: &[Effect]) -> EffectSet {
     for effect in effects {
         // A folded reserve amount can overflow; such a set is not one a
         // sender can hold, so it is not one the price has to describe.
-        if declared.insert(*effect).is_err() {
+        if declared.insert_at_cap(*effect).is_err() {
             break;
         }
     }
@@ -164,7 +164,7 @@ proptest! {
     ) {
         let declared = set_of(&effects);
         let mut grown = declared.clone();
-        if grown.insert(extra).is_ok() {
+        if grown.insert_at_cap(extra).is_ok() {
             assert!(footprint(&grown) >= footprint(&declared));
         }
     }

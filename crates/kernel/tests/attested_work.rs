@@ -89,17 +89,17 @@ fn owned_by(byte: u8) -> OwnerSet {
 /// recipient.
 fn transfer_declared(amount: u128) -> EffectSet {
     let mut set = EffectSet::new();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(cell(PAYER_BYTE)),
         mode: Mode::Reserve { amount },
     })
     .unwrap();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(cell(RECIPIENT_BYTE)),
         mode: Mode::Delta { moves: Moves::Both },
     })
     .unwrap();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Range {
             owner: Address::new([RECIPIENT_BYTE; 31], AddressClass::Component),
             collection: CollectionId([4; 16]),
@@ -335,7 +335,7 @@ fn a_range_is_charged_its_declared_width_through_the_locality_filter() {
         },
         mode: Mode::Write { moves: Moves::Both },
     };
-    wide.insert(range).unwrap();
+    wide.insert_at_cap(range).unwrap();
 
     let recipient_side = owned_by(RECIPIENT_BYTE);
     assert_eq!(recipient_side.footprint(&wide), effect_units(range));
@@ -389,7 +389,7 @@ fn every_abort_path_out_of_the_batch_carries_a_footprint() {
     );
     let mut declared = transfer_declared(100);
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(nullifier),
             mode: Mode::Write { moves: Moves::Both },
         })
@@ -456,12 +456,12 @@ fn a_completion_flipped_at_apply_drops_its_fuel_but_keeps_its_declaration() {
 /// the committed floor, which is where a contested cell flips its loser.
 fn delta_transfer_declared() -> EffectSet {
     let mut set = EffectSet::new();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(cell(PAYER_BYTE)),
         mode: Mode::Delta { moves: Moves::Out },
     })
     .unwrap();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(cell(RECIPIENT_BYTE)),
         mode: Mode::Delta { moves: Moves::In },
     })
@@ -508,14 +508,14 @@ fn a_dependent_of_a_flipped_completion_flips_with_it() {
     let watched = cell(0xD1);
     let mut observed = delta_transfer_declared();
     observed
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(watched),
             mode: Mode::Read,
         })
         .unwrap();
     let mut dependent = EffectSet::new();
     dependent
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(watched),
             mode: Mode::Write { moves: Moves::Both },
         })
@@ -568,20 +568,20 @@ fn a_group_mate_out_of_the_flipped_ones_reach_survives() {
     let bridge = cell(0xD2);
     let mut linking = EffectSet::new();
     linking
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(cell(PAYER_BYTE)),
             mode: Mode::Read,
         })
         .unwrap();
     linking
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(bridge),
             mode: Mode::Read,
         })
         .unwrap();
     let mut apart = EffectSet::new();
     apart
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(bridge),
             mode: Mode::Write { moves: Moves::Both },
         })

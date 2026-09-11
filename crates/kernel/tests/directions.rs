@@ -47,7 +47,8 @@ fn session(mode: Mode) -> KernelSession {
     }];
     let mut set = EffectSet::new();
     for declared in &ordered {
-        set.insert(declared.effect).expect("one clause folds");
+        set.insert_at_cap(declared.effect)
+            .expect("one clause folds");
     }
     let mut store = MemoryStore::new();
     store.write(cell(), encode_amount(100).to_vec());

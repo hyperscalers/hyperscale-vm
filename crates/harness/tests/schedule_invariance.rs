@@ -96,13 +96,13 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
         let sender = vault(owner);
         let mut declared = EffectSet::new();
         declared
-            .insert(Effect {
+            .insert_at_cap(Effect {
                 target: EffectTarget::Point(sender),
                 mode: Mode::Reserve { amount },
             })
             .unwrap();
         declared
-            .insert(Effect {
+            .insert_at_cap(Effect {
                 target: EffectTarget::Point(recipient),
                 mode: Mode::Delta { moves: Moves::Both },
             })
@@ -119,7 +119,7 @@ fn fixture() -> (MemoryStore, Vec<BatchTx>, BTreeMap<TxHash, Shape>) {
     for id in [0x44u8, 0x55] {
         let mut declared = EffectSet::new();
         declared
-            .insert(Effect {
+            .insert_at_cap(Effect {
                 target: EffectTarget::Point(rmw_cell()),
                 mode: Mode::Write { moves: Moves::Both },
             })

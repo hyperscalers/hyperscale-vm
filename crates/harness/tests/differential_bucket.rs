@@ -152,7 +152,7 @@ fn fixture() -> Fixture {
             mode: Mode::Write { moves: Moves::Both },
         },
     ] {
-        declared.insert(effect).unwrap();
+        declared.insert_at_cap(effect).unwrap();
     }
 
     Fixture {
@@ -1041,7 +1041,7 @@ fn peeking() -> KernelSession {
         mode: Mode::Read,
     };
     let mut declared = EffectSet::default();
-    declared.insert(read).expect("the set takes it");
+    declared.insert_at_cap(read).expect("the set takes it");
     materialize(&store, &declared, &[Some(RESOURCE)], tx(), env())
 }
 

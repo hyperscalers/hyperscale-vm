@@ -80,12 +80,12 @@ fn cell(byte: u8) -> SubstateKey {
 
 fn transfer_declared(amount: u128) -> EffectSet {
     let mut set = EffectSet::new();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(cell(PAYER_BYTE)),
         mode: Mode::Reserve { amount },
     })
     .unwrap();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(cell(RECIPIENT_BYTE)),
         mode: Mode::Delta { moves: Moves::Both },
     })
@@ -212,7 +212,7 @@ fn signed_nullifier() -> SubstateKey {
 fn committing_envelope(id: u8, amount: u128) -> BatchTx {
     let mut declared = transfer_declared(amount);
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(signed_nullifier()),
             mode: Mode::Write { moves: Moves::Both },
         })
@@ -408,14 +408,14 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
 /// threaded.
 fn remote_movement_batch() -> Vec<BatchTx> {
     let mut read = EffectSet::new();
-    read.insert(Effect {
+    read.insert_at_cap(Effect {
         target: EffectTarget::Point(cell(PAYER_BYTE)),
         mode: Mode::Read,
     })
     .unwrap();
     let mut moved = EffectSet::new();
     moved
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(cell(PAYER_BYTE)),
             mode: Mode::Delta { moves: Moves::Both },
         })

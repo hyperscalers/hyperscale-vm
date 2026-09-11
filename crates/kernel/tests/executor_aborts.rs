@@ -65,7 +65,7 @@ fn cell(byte: u8) -> SubstateKey {
 
 fn point(key: SubstateKey, mode: Mode) -> EffectSet {
     let mut set = EffectSet::new();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(key),
         mode,
     })
@@ -74,7 +74,7 @@ fn point(key: SubstateKey, mode: Mode) -> EffectSet {
 }
 
 fn with_delta(mut set: EffectSet, key: SubstateKey) -> EffectSet {
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(key),
         mode: Mode::Delta { moves: Moves::Both },
     })
@@ -398,7 +398,7 @@ fn racing_nullifier_writers_commit_exactly_once() {
 /// writers' group without competing for the subintent itself.
 fn sharing_tx(id: u8) -> BatchTx {
     let mut set = EffectSet::default();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(cell(0x5A)),
         mode: Mode::Write { moves: Moves::Both },
     })
@@ -423,12 +423,12 @@ fn sharing_tx(id: u8) -> BatchTx {
 /// members of the group conflict pairwise and run in canonical order.
 fn nullifier_and_shared_tx(id: u8) -> BatchTx {
     let mut set = EffectSet::default();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(nullifier()),
         mode: Mode::Write { moves: Moves::Both },
     })
     .unwrap();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(cell(0x5A)),
         mode: Mode::Write { moves: Moves::Both },
     })

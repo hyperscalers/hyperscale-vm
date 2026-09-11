@@ -126,11 +126,11 @@ impl Routing {
         self.per_shard
             .entry(shard)
             .or_default()
-            .insert(effect)
+            .insert_at_cap(effect)
             .expect("only reserve amounts fold, and this is a write");
         self.declaration
             .set
-            .insert(effect)
+            .insert_at_cap(effect)
             .expect("only reserve amounts fold, and this is a write");
         self.declaration.ordered.push(DeclaredAccess {
             reach: None,

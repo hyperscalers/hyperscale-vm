@@ -98,25 +98,25 @@ fn session() -> KernelSession {
     let (refused, quarantine) = recipient_cells();
     let mut declared = EffectSet::new();
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(sender),
             mode: Mode::Reserve { amount: AMOUNT },
         })
         .unwrap();
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(recipient),
             mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(quarantine),
             mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
     declared
-        .insert(Effect {
+        .insert_at_cap(Effect {
             target: EffectTarget::Point(refused),
             mode: Mode::Read,
         })

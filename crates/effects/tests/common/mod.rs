@@ -236,7 +236,7 @@ pub fn auth(owner: impl Into<Address>) -> SubstateKey {
 pub fn effect_set(effects: &[Effect]) -> EffectSet {
     let mut set = EffectSet::new();
     for effect in effects {
-        set.insert(*effect).unwrap();
+        set.insert_at_cap(*effect).unwrap();
     }
     set
 }

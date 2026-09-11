@@ -63,8 +63,16 @@ impl EffectSet {
         }
     }
 
-    /// Add one effect, folding what two clauses on one target mean
-    /// together: reserve amounts sum, and presence requirements meet.
+    /// Add one effect at the width of the leaves its target reaches,
+    /// folding what two clauses on one target mean together: reserve
+    /// amounts sum, presence requirements meet, and widths take the
+    /// narrower.
+    ///
+    /// Every insert states a width or a source, because a fold that
+    /// could leave one unstated would widen its target to the cap and
+    /// price every walk over it as the widest leaf there is; the two
+    /// folds that once did were found by a transaction running out of
+    /// gas on a page of addresses.
     ///
     /// Answers whether the set moved. A caller keeping an ordered view
     /// beside the set needs that and cannot get it from the error: the
@@ -76,17 +84,6 @@ impl EffectSet {
     ///
     /// [`EffectConflict`] where the fold has no answer: a reserve total
     /// past `u128`.
-    pub fn insert(&mut self, effect: Effect) -> Result<bool, EffectConflict> {
-        self.insert_bounded(effect, MAX_SLOT_WIDTH)
-    }
-
-    /// [`insert`](Self::insert), with the width of the leaves the
-    /// target reaches. Widths fold by minimum, so a target stated at a
-    /// width and later inserted without one keeps the width.
-    ///
-    /// # Errors
-    ///
-    /// As [`insert`](Self::insert).
     pub fn insert_bounded(&mut self, effect: Effect, width: u32) -> Result<bool, EffectConflict> {
         let declared = self
             .by_target
@@ -119,14 +116,25 @@ impl EffectSet {
 
     /// [`insert_bounded`](Self::insert_bounded) at the width `source`
     /// holds the target at: how a set folded from another keeps what the
-    /// other stated, since a fold that inserted plainly would widen every
-    /// target back to the cap.
+    /// other stated.
     ///
     /// # Errors
     ///
-    /// As [`insert`](Self::insert).
+    /// As [`insert_bounded`](Self::insert_bounded).
     pub fn insert_from(&mut self, effect: Effect, source: &Self) -> Result<bool, EffectConflict> {
         self.insert_bounded(effect, source.width_of(&effect.target))
+    }
+
+    /// [`insert_bounded`](Self::insert_bounded) at the cap, for a target
+    /// whose slot nobody can name: a cell the kernel reaches by key
+    /// rather than through a declaration, or a set a test builds by
+    /// hand. A declaration evaluated from a signature never lands here.
+    ///
+    /// # Errors
+    ///
+    /// As [`insert_bounded`](Self::insert_bounded).
+    pub fn insert_at_cap(&mut self, effect: Effect) -> Result<bool, EffectConflict> {
+        self.insert_bounded(effect, MAX_SLOT_WIDTH)
     }
 
     /// The most bytes one leaf under `target` may hold, or
@@ -260,7 +268,7 @@ mod tests {
         let mut set = EffectSet::new();
         assert_eq!(set.width_of(&read.target), MAX_SLOT_WIDTH);
         set.insert_bounded(read, 40).unwrap();
-        set.insert(read).unwrap();
+        set.insert_at_cap(read).unwrap();
         assert_eq!(set.width_of(&read.target), 40);
         assert!(
             set.insert_bounded(read, 8).unwrap(),
@@ -287,7 +295,7 @@ mod tests {
             (3, Mode::Delta { moves: Moves::Both }),
             (4, Mode::Reserve { amount: 5 }),
         ] {
-            set.insert(Effect {
+            set.insert_at_cap(Effect {
                 target: target(byte),
                 mode,
             })
@@ -302,13 +310,13 @@ mod tests {
         // read is what needs the value.
         let mut mixed = EffectSet::new();
         mixed
-            .insert(Effect {
+            .insert_at_cap(Effect {
                 target: target(3),
                 mode: Mode::Read,
             })
             .unwrap();
         mixed
-            .insert(Effect {
+            .insert_at_cap(Effect {
                 target: target(3),
                 mode: Mode::Delta { moves: Moves::Both },
             })
@@ -338,7 +346,7 @@ mod tests {
         let set_of = |modes: &[Mode]| {
             let mut set = EffectSet::new();
             for mode in modes {
-                set.insert(Effect {
+                set.insert_at_cap(Effect {
                     target: EffectTarget::Point(cell),
                     mode: *mode,
                 })
@@ -375,7 +383,7 @@ mod tests {
             Mode::Delta { moves: Moves::Both },
         ] {
             ranges
-                .insert(Effect {
+                .insert_at_cap(Effect {
                     target: EffectTarget::Range {
                         owner: Address::new([1; 31], AddressClass::Component),
                         collection: CollectionId([3; 16]),
@@ -394,22 +402,22 @@ mod tests {
     fn effect_set_folds_reserves_and_dedups() {
         let target = target(1);
         let mut set = EffectSet::new();
-        set.insert(Effect {
+        set.insert_at_cap(Effect {
             target,
             mode: Mode::Reserve { amount: 100 },
         })
         .unwrap();
-        set.insert(Effect {
+        set.insert_at_cap(Effect {
             target,
             mode: Mode::Reserve { amount: 50 },
         })
         .unwrap();
-        set.insert(Effect {
+        set.insert_at_cap(Effect {
             target,
             mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
-        set.insert(Effect {
+        set.insert_at_cap(Effect {
             target,
             mode: Mode::Delta { moves: Moves::Both },
         })
@@ -424,7 +432,7 @@ mod tests {
             mode: Mode::Delta { moves: Moves::Both },
         }));
 
-        let overflow = set.insert(Effect {
+        let overflow = set.insert_at_cap(Effect {
             target,
             mode: Mode::Reserve { amount: u128::MAX },
         });

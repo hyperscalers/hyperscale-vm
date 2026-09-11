@@ -64,7 +64,7 @@ fn cell(byte: u8) -> SubstateKey {
 
 fn point(key: SubstateKey, mode: Mode) -> EffectSet {
     let mut set = EffectSet::new();
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(key),
         mode,
     })
@@ -74,7 +74,7 @@ fn point(key: SubstateKey, mode: Mode) -> EffectSet {
 
 fn reserve_and_delta(sender: SubstateKey, amount: u128, recipient: SubstateKey) -> EffectSet {
     let mut set = point(sender, Mode::Reserve { amount });
-    set.insert(Effect {
+    set.insert_at_cap(Effect {
         target: EffectTarget::Point(recipient),
         mode: Mode::Delta { moves: Moves::Both },
     })

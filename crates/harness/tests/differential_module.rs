@@ -135,7 +135,7 @@ fn fixture() -> Fixture {
             mode: Mode::Write { moves: Moves::Both },
         },
     ] {
-        declared.insert(effect).unwrap();
+        declared.insert_at_cap(effect).unwrap();
     }
     Fixture {
         declared,

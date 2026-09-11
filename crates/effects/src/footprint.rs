@@ -364,9 +364,11 @@ mod tests {
     fn a_set_totals_its_effects() {
         let mut declared = EffectSet::new();
         declared
-            .insert(effect(point(1), Mode::Write { moves: Moves::Both }))
+            .insert_at_cap(effect(point(1), Mode::Write { moves: Moves::Both }))
             .unwrap();
-        declared.insert(effect(range(0, 1023), Mode::Read)).unwrap();
+        declared
+            .insert_at_cap(effect(range(0, 1023), Mode::Read))
+            .unwrap();
         assert_eq!(
             footprint(&declared),
             effect_units(effect(point(1), Mode::Write { moves: Moves::Both }))

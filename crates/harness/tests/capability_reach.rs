@@ -103,7 +103,7 @@ fn fixture() -> Fixture {
             mode: Mode::Write { moves: Moves::Both },
         },
     ] {
-        declared.insert(effect).expect("the set takes it");
+        declared.insert_at_cap(effect).expect("the set takes it");
     }
 
     Fixture {
