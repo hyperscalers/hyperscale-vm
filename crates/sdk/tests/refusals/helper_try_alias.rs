@@ -9,6 +9,8 @@ mod contract {
         Empty,
     }
 
+    type Fallible<T> = Result<T, Error>;
+
     #[state]
     struct Contract {
         held: Cell<Quantity>,
@@ -20,10 +22,9 @@ mod contract {
             Ok(rest)
         }
 
-        // A helper's exits are its own: spliced into `drain`, this `?`
-        // leaves `poll` on the error arm, and `drain`'s own `?` is what
-        // carries the refusal on.
-        fn poll(&self) -> Result<Quantity, Error> {
+        // A `?` is rewritten against the carrier the return type spells,
+        // and an alias spells neither.
+        fn poll(&self) -> Fallible<Quantity> {
             let held = self.held.get();
             let rest = held.try_sub(held).ok_or(Error::Empty)?;
             Ok(rest)

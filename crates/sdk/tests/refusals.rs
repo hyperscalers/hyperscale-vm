@@ -491,12 +491,15 @@ fn the_macro_bounds_the_tuple_arities() {
 fn the_macro_bounds_what_a_helper_may_be() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/helper_recursion.rs");
-    // A helper's exits are its own: a `return` leaves the helper, and
-    // what it may carry is what an export's may — never an output.
+    // A helper's exits are its own: a `return` or a `?` leaves the
+    // helper, and what a `return` may carry is what an export's may —
+    // never an output. A `?` unwinds through the carrier the return type
+    // spells, which an alias does not.
     refuse.pass("tests/refusals/helper_return.rs");
+    refuse.pass("tests/refusals/helper_try.rs");
     refuse.compile_fail("tests/refusals/helper_return_output.rs");
     refuse.compile_fail("tests/refusals/helper_impl_return.rs");
-    refuse.compile_fail("tests/refusals/helper_try.rs");
+    refuse.compile_fail("tests/refusals/helper_try_alias.rs");
     refuse.compile_fail("tests/refusals/helper_pattern_param.rs");
     refuse.compile_fail("tests/refusals/helper_accessor_name.rs");
     // The bounds are an inherent helper's; a trait impl's methods are the

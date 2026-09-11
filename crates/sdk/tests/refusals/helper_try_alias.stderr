@@ -1,0 +1,5 @@
+error: a helper's `?` is rewritten against a return type spelled `Result` or `Option` — an alias hides which
+  --> tests/refusals/helper_try_alias.rs:29:62
+   |
+29 |             let rest = held.try_sub(held).ok_or(Error::Empty)?;
+   |                                                              ^

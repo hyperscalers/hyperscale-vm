@@ -1527,6 +1527,67 @@ fn a_helper_that_exits_early_splices_as_the_inline_spelling() {
     );
 }
 
+/// Two exports with one `?`: spelled where it is used, and inside a
+/// helper — which reaches it through a second helper unwinding an
+/// `Option`. Each `?` leaves the helper it is written in, and the export
+/// declares what the inline spelling declares.
+#[blueprint]
+mod tried {
+    use hyperscale_vm_sdk::state::{Cell, Quantity};
+
+    #[error]
+    enum Error {
+        Short,
+    }
+
+    #[state]
+    struct Tried {
+        held: Cell<Quantity>,
+    }
+
+    impl Tried {
+        /// The `?` spelled where it is used.
+        pub fn spelled(&mut self, want: Quantity) -> Result<Quantity, Error> {
+            let rest = self.held.get().try_sub(want).ok_or(Error::Short)?;
+            Ok(rest)
+        }
+
+        /// The same `?`, two helpers down.
+        pub fn factored(&mut self, want: Quantity) -> Result<Quantity, Error> {
+            let rest = self.rest(want)?;
+            Ok(rest)
+        }
+
+        fn rest(&self, want: Quantity) -> Result<Quantity, Error> {
+            let rest = self.remaining(want).ok_or(Error::Short)?;
+            Ok(rest)
+        }
+
+        fn remaining(&self, want: Quantity) -> Option<Quantity> {
+            let rest = self.held.get().try_sub(want)?;
+            Some(rest)
+        }
+    }
+}
+
+/// A `?` in a helper unwinds the helper, through whichever carrier the
+/// helper returns, and the caller declares the reads it made.
+#[test]
+fn a_helper_that_tries_splices_as_the_inline_spelling() {
+    let metadata = tried::blueprint().metadata();
+    let method = |name: &str| &metadata.methods[name];
+    assert_eq!(
+        method("spelled").effects,
+        method("factored").effects,
+        "one read, one declaration"
+    );
+    assert!(
+        !method("factored").effects.is_empty(),
+        "the spliced bodies declare their read"
+    );
+    assert_eq!(method("spelled").answers, method("factored").answers);
+}
+
 /// Two exports taking one bucket: the take spelled at the tail, and the
 /// same take as the tail of a helper without an early exit. The helper
 /// splices bare, so its produced edge is the export's declared output.

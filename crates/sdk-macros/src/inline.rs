@@ -81,7 +81,7 @@ pub fn helpers(
             // Judged here rather than at a call, so a helper nothing
             // calls is held to the same bounds as one every export uses.
             let mut body = method.block.clone();
-            let exits = Rewriter::rewrite(&exit_label(0), &mut errors, &mut body);
+            let exits = Rewriter::rewrite(&exit_label(0), &method.sig, &mut errors, &mut body);
             if exits
                 && let syn::ReturnType::Type(_, ty) = &method.sig.output
                 && matches!(**ty, syn::Type::ImplTrait(_))
@@ -136,13 +136,37 @@ fn exit_label(round: usize) -> syn::Lifetime {
     syn::Lifetime::new(&format!("'__inline{round}"), Span::call_site())
 }
 
+/// The carrier a helper's `?` unwinds through, read off its declared
+/// return type's last segment — the two names are reserved, so the
+/// segment is honest, and an alias over either spells neither.
+#[derive(Clone, Copy)]
+enum Carrier {
+    Result,
+    Option,
+}
+
+fn carrier(output: &syn::ReturnType) -> Option<Carrier> {
+    let syn::ReturnType::Type(_, ty) = output else {
+        return None;
+    };
+    let syn::Type::Path(path) = &**ty else {
+        return None;
+    };
+    match path.path.segments.last()?.ident.to_string().as_str() {
+        "Result" => Some(Carrier::Result),
+        "Option" => Some(Carrier::Option),
+        _ => None,
+    }
+}
+
 /// Rewrites a helper body's early exits into exits of the labelled
-/// block it splices as: `return e` becomes `break 'label e`. A `?` is
-/// the same early return spelled on an error arm and is refused. A
-/// closure's `return` is the closure's own and a nested item's body is
-/// not the helper's, so neither is walked.
+/// block it splices as: `return e` becomes `break 'label e`, and `x?`
+/// becomes the match its carrier desugars to, breaking on the failing
+/// arm. A closure's `return` is the closure's own and a nested item's
+/// body is not the helper's, so neither is walked.
 struct Rewriter<'e> {
     label: &'e syn::Lifetime,
+    carrier: Option<Carrier>,
     /// Whether the body had an exit to rewrite, which is what decides
     /// its splice shape.
     rewrote: bool,
@@ -150,14 +174,17 @@ struct Rewriter<'e> {
 }
 
 impl<'e> Rewriter<'e> {
-    /// Rewrite `body` in place; whether it had any exit to rewrite.
+    /// Rewrite `body` in place against the helper's signature; whether
+    /// it had any exit to rewrite.
     fn rewrite(
         label: &'e syn::Lifetime,
+        sig: &syn::Signature,
         errors: &'e mut Vec<syn::Error>,
         body: &mut syn::Block,
     ) -> bool {
         let mut rewriter = Self {
             label,
+            carrier: carrier(&sig.output),
             rewrote: false,
             errors,
         };
@@ -172,22 +199,52 @@ impl VisitMut for Rewriter<'_> {
             return;
         }
         syn::visit_mut::visit_expr_mut(self, expr);
+        let label = self.label;
         match expr {
             syn::Expr::Return(ret) => {
                 self.rewrote = true;
                 *expr = syn::Expr::Break(syn::ExprBreak {
                     attrs: std::mem::take(&mut ret.attrs),
                     break_token: syn::Token![break](ret.return_token.span),
-                    label: Some(self.label.clone()),
+                    label: Some(label.clone()),
                     expr: ret.expr.take(),
                 });
             }
             syn::Expr::Try(tried) => {
-                self.errors.push(syn::Error::new(
-                    tried.question_token.span(),
-                    "a helper yields its tail expression — a `?` here would return from \
-                     the export the helper splices into",
-                ));
+                // Spanned at the `?`, so a carrier the value cannot
+                // convert into reads as rustc's error on the author's
+                // own token. The exit's value is parenthesized because a
+                // leading `::` after a break label parses as the start
+                // of a labelled loop.
+                let span = tried.question_token.span();
+                let Some(carrier) = self.carrier else {
+                    self.errors.push(syn::Error::new(
+                        span,
+                        "a helper's `?` is rewritten against a return type spelled \
+                         `Result` or `Option` — an alias hides which",
+                    ));
+                    return;
+                };
+                self.rewrote = true;
+                let inner = &tried.expr;
+                *expr = match carrier {
+                    Carrier::Result => syn::parse_quote_spanned!(span =>
+                        match #inner {
+                            ::core::result::Result::Ok(v) => v,
+                            ::core::result::Result::Err(e) => {
+                                break #label (::core::result::Result::Err(
+                                    ::core::convert::From::from(e)
+                                ))
+                            }
+                        }
+                    ),
+                    Carrier::Option => syn::parse_quote_spanned!(span =>
+                        match #inner {
+                            ::core::option::Option::Some(v) => v,
+                            ::core::option::Option::None => break #label (::core::option::Option::None),
+                        }
+                    ),
+                };
             }
             _ => {}
         }
@@ -287,7 +344,7 @@ impl Inliner<'_> {
         self.fresh += 1;
         let label = exit_label(round);
         let mut body = helper.block.clone();
-        let exits = Rewriter::rewrite(&label, &mut self.errors, &mut body);
+        let exits = Rewriter::rewrite(&label, &helper.sig, &mut self.errors, &mut body);
         self.stack.push((name.to_owned(), call.method.span()));
         self.visit_block_mut(&mut body);
         self.stack.pop();
@@ -423,6 +480,28 @@ mod tests {
         assert!(
             !out.contains("'__inline"),
             "and it is not an exit of the helper: {out}"
+        );
+    }
+
+    #[test]
+    fn a_try_unwinds_through_the_declared_carrier() {
+        let out = spliced(
+            "impl Contract {
+                pub fn drain(&mut self) -> Result<u64, E> { let r = self.poll()?; Ok(r) }
+                fn poll(&self) -> Result<u64, E> { let held = self.held()?; Ok(held) }
+            }",
+        );
+        assert!(
+            out.contains("match self . held () { :: core :: result :: Result :: Ok (v) => v ,"),
+            "the success arm is the value: {out}"
+        );
+        assert!(
+            out.contains("break '__inline0 (:: core :: result :: Result :: Err (:: core :: convert :: From :: from (e)))"),
+            "the error arm exits the helper, converted: {out}"
+        );
+        assert!(
+            out.contains("let r = { let __inline0 : Result < u64 , E >"),
+            "and the caller's own `?` stands: {out}"
         );
     }
 
