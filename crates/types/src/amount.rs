@@ -7,6 +7,15 @@
 //! and a second copy of this rule is a second chance to disagree about
 //! what a balance is.
 
+/// A count of the smallest indivisible unit of a resource.
+///
+/// The kernel holds every amount as an integer of this unit; what one
+/// whole of a resource is shown as is the resource record's
+/// `display_digits`, a rendering fact and never a protocol one. Named
+/// where a figure is a price or a fee, so the unit is legible at the
+/// site that states it.
+pub type Quanta = u128;
+
 /// The width of a fungible-amount cell.
 pub const AMOUNT_CELL_BYTES: usize = 16;
 

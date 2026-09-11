@@ -877,7 +877,7 @@ impl ResourceMeta {
 /// that beyond legibility: the empty grant table is what makes this
 /// unmintable.
 #[must_use]
-pub fn xrd(hasher: &dyn Hasher) -> ResourceAddr {
+pub fn protocol_resource(hasher: &dyn Hasher) -> ResourceAddr {
     resource_address(
         hasher,
         genesis_publisher(hasher),
@@ -1038,15 +1038,15 @@ mod tests {
     #[test]
     fn record_keys_separate_by_issuer_and_resource() {
         let publisher = genesis_publisher(&TestHasher);
-        let xrd = super::xrd(&TestHasher);
+        let protocol = super::protocol_resource(&TestHasher);
         let other_issuer = Address::new([7; 31], AddressClass::Component);
         let other_resource = Address::new([8; 31], AddressClass::Resource);
 
-        let key = resource_record_key(&TestHasher, publisher, xrd);
+        let key = resource_record_key(&TestHasher, publisher, protocol);
         assert_eq!(key.owner, publisher.address(), "records live at the issuer");
         assert_ne!(
             key,
-            resource_record_key(&TestHasher, other_issuer, xrd),
+            resource_record_key(&TestHasher, other_issuer, protocol),
             "another issuer is another cell"
         );
         assert_ne!(

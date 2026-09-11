@@ -106,7 +106,7 @@ pub use resource::{
     GrantedBehaviour, GrantsExpr, GrantsResolveError, MAX_RESOURCE_MATERIAL_PARTS,
     RECORD_WIRE_DEPTH, ReachedCell, ResourceGrants, ResourceKind, ResourceMeta, ResourceRecord,
     granting_issued_resource, holdings_collection, holdings_entry, holdings_range,
-    instance_data_key, issued_resource, resource_record_key, xrd,
+    instance_data_key, issued_resource, protocol_resource, resource_record_key,
 };
 pub use route::{FrameDeclaration, PrefixShardResolver, Routing, ShardResolver, route};
 pub use rule::{

@@ -33,7 +33,7 @@ const VAULT: SlotId = SlotId(1);
 
 const VICTIM: PrincipalAddr = PrincipalAddr::new([0x11; 31]);
 const ATTACKER: PrincipalAddr = PrincipalAddr::new([0x22; 31]);
-const XRD: Address = Address::new([0xE1; 31], AddressClass::Resource);
+const TOKEN: Address = Address::new([0xE1; 31], AddressClass::Resource);
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -48,7 +48,7 @@ fn vault_of(owner: impl Into<Address>) -> SubstateKey {
         &TestHasher,
         owner,
         VAULT,
-        &[Value::Address(XRD).canonical_bytes()],
+        &[Value::Address(TOKEN).canonical_bytes()],
     )
 }
 
@@ -71,7 +71,7 @@ fn predator() -> PackageMetadata {
                 target: TargetExpr::Point(Expr::ChildKey {
                     owner: Box::new(Expr::Arg(0)),
                     slot: SlotRef::Fixed(VAULT),
-                    material: vec![Expr::Literal(Value::Address(XRD))],
+                    material: vec![Expr::Literal(Value::Address(TOKEN))],
                 }),
                 mode: ModeExpr::Delta { moves: Moves::Both },
                 denomination: None,

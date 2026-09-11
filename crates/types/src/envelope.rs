@@ -20,6 +20,7 @@ use hyperscale_hbor::hash::Hasher;
 use hyperscale_hbor::{EncodeError, Hash32, Hbor, HborSigned};
 
 use crate::address::PrincipalAddr;
+use crate::amount::Quanta;
 use crate::scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId};
 use crate::work::signature_work;
 
@@ -200,8 +201,8 @@ pub struct TransactionEnvelope {
     pub subintent_sigs: Vec<SubintentSig>,
     /// The fee-paying account — the composer's.
     pub fee_payer: PrincipalAddr,
-    /// The signed fee ceiling, in fee units.
-    pub max_fee: u128,
+    /// The signed fee ceiling, in quanta of the protocol resource.
+    pub max_fee: Quanta,
     /// The signed execution gas limit.
     pub gas_limit: u64,
     /// The signed validity window's inclusive start, in weighted-time

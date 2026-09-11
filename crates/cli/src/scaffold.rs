@@ -139,28 +139,28 @@ fn first_test(module: &str) -> String {
          #[hyperscale_vm_testing::test]\n\
          fn a_deposit_lands_in_the_vault(chain: &mut Chain) {{\n\
          \x20   let alice = principal(1);\n\
-         \x20   let xrd = resource(0xE1);\n\
+         \x20   let token = resource(0xE1);\n\
          \n\
          \x20   chain.publish(package!({module}::{module}));\n\
          \x20   let instance = chain.instantiate::<{state}>(principal(1), ());\n\
-         \x20   chain.credit(alice, xrd, 100);\n\
+         \x20   chain.credit(alice, token, 100);\n\
          \n\
          \x20   chain\n\
          \x20       .transact(alice, |b| {{\n\
-         \x20           let funds = account::withdraw(b, alice, xrd, 40)?;\n\
+         \x20           let funds = account::withdraw(b, alice, token, 40)?;\n\
          \x20           instance.deposit(b, funds)\n\
          \x20       }})\n\
          \x20       .expect_completed();\n\
-         \x20   assert_eq!(chain.balance(alice, xrd), 60);\n\
+         \x20   assert_eq!(chain.balance(alice, token), 60);\n\
          \n\
          \x20   // And back out, so the till answers for what it took.\n\
          \x20   chain\n\
          \x20       .transact(alice, |b| {{\n\
-         \x20           let back = instance.withdraw(b, xrd, 40u128)?;\n\
+         \x20           let back = instance.withdraw(b, token, 40u128)?;\n\
          \x20           account::deposit(b, alice, back)\n\
          \x20       }})\n\
          \x20       .expect_completed();\n\
-         \x20   assert_eq!(chain.balance(alice, xrd), 100);\n\
+         \x20   assert_eq!(chain.balance(alice, token), 100);\n\
          }}\n"
     )
 }

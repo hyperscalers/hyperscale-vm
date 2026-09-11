@@ -48,7 +48,7 @@ const TEST_HEADER: IntentHeader = IntentHeader {
 /// The borrower.
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 /// What the pool lends.
-const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+const TOKEN: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
 const fn env() -> EnvInputs {
     EnvInputs::unsealed(3_000)
@@ -66,7 +66,7 @@ fn world() -> Records {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("flashloan"),
-        config: vec![Value::Address(XRD.address())],
+        config: vec![Value::Address(TOKEN.address())],
         salt: Hash32([2; 32]),
     }
 }
@@ -127,8 +127,8 @@ fn funded_store() -> MemoryStore {
             .to_cell()
             .expect("a record encodes"),
     );
-    seed_vault(&mut store, pool_addr(), XRD, 1_000);
-    seed_vault(&mut store, ALICE, XRD, 100);
+    seed_vault(&mut store, pool_addr(), TOKEN, 1_000);
+    seed_vault(&mut store, ALICE, TOKEN, 100);
     store
 }
 
@@ -176,7 +176,7 @@ fn a_repaid_loan_commits_on_both_runtimes() -> Result<()> {
     let borrowed = graph(|b| {
         let [loan, debt] = pool().draw(b, 100)?;
         account::deposit(b, ALICE, loan)?;
-        let funds = account::withdraw(b, ALICE, XRD, 100)?;
+        let funds = account::withdraw(b, ALICE, TOKEN, 100)?;
         pool().repay(b, funds, debt)
     });
     let entry = batch_entry(&world, &intent(borrowed), ALICE)?;
@@ -192,8 +192,8 @@ fn a_repaid_loan_commits_on_both_runtimes() -> Result<()> {
 
     // The pool is whole, the borrower is where they started, and no
     // vault anywhere holds an obligation — there is no cell for one.
-    assert_eq!(amount_of(&end, vault(pool_addr(), XRD)), 1_000);
-    assert_eq!(amount_of(&end, vault(ALICE, XRD)), 100);
+    assert_eq!(amount_of(&end, vault(pool_addr(), TOKEN)), 1_000);
+    assert_eq!(amount_of(&end, vault(ALICE, TOKEN)), 100);
     assert_eq!(amount_of(&end, vault(ALICE, debt())), 0);
     Ok(())
 }
@@ -294,7 +294,7 @@ fn a_repayment_that_falls_short_declines_on_an_arm_of_the_method() -> Result<()>
     let short = graph(|b| {
         let [loan, debt] = pool().draw(b, 100)?;
         account::deposit(b, ALICE, loan)?;
-        let funds = account::withdraw(b, ALICE, XRD, 60)?;
+        let funds = account::withdraw(b, ALICE, TOKEN, 60)?;
         pool().repay(b, funds, debt)
     });
     let entry = batch_entry(&world, &intent(short), ALICE)?;
@@ -309,7 +309,7 @@ fn a_repayment_that_falls_short_declines_on_an_arm_of_the_method() -> Result<()>
 
     // A decline is an abort, so nothing the graph did stands: the loan
     // is back where it started and the obligation was never burned.
-    assert_eq!(amount_of(&end, vault(pool_addr(), XRD)), 1_000);
-    assert_eq!(amount_of(&end, vault(ALICE, XRD)), 100);
+    assert_eq!(amount_of(&end, vault(pool_addr(), TOKEN)), 1_000);
+    assert_eq!(amount_of(&end, vault(ALICE, TOKEN)), 100);
     Ok(())
 }

@@ -26,7 +26,7 @@ use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, Claim, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType,
     RuleBytes, RuleExpr, RuleLeaf, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Totality,
-    Value, xrd as protocol_xrd,
+    Value, protocol_resource,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Code, Package, account, principal, resource};
@@ -45,8 +45,8 @@ const TREASURE: ResourceAddr = resource(0xE7);
 const POT: SlotId = SlotId(16);
 
 /// The protocol fee resource, which no package in this world issues.
-fn xrd() -> Address {
-    protocol_xrd(&TestHasher).into()
+fn protocol() -> Address {
+    protocol_resource(&TestHasher).into()
 }
 
 fn own(slot: SlotId, material: Vec<Expr>) -> TargetExpr {
@@ -88,14 +88,14 @@ fn counterfeiter() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
-            outputs: vec![Expr::Literal(Value::Address(xrd()))],
+            outputs: vec![Expr::Literal(Value::Address(protocol()))],
             abi: vec![
                 AbiParam::Handle { clause: 0, site: 0 },
                 AbiParam::Derived(Expr::Arg(0)),
             ],
             effects: vec![write(
-                own(VAULT, vec![Expr::Literal(Value::Address(xrd()))]),
-                Some(Box::new(Expr::Literal(Value::Address(xrd())))),
+                own(VAULT, vec![Expr::Literal(Value::Address(protocol()))]),
+                Some(Box::new(Expr::Literal(Value::Address(protocol())))),
             )],
             ..MethodSignature::default()
         },
@@ -140,7 +140,7 @@ fn a_package_cannot_assign_itself_a_balance() {
         forge,
     ));
     let mint = chain.instantiate_raw(ATTACKER, package, ());
-    chain.credit(VICTIM, xrd(), 1_000);
+    chain.credit(VICTIM, protocol(), 1_000);
 
     let outcome = chain.transact(ATTACKER, |b| {
         let funds = b.call(mint, "forge", (1_000_000_000_u64,))?.one()?;
@@ -148,9 +148,9 @@ fn a_package_cannot_assign_itself_a_balance() {
     });
 
     assert_eq!(outcome.aborted(), Some(AbortReason::HandleWrongMode));
-    assert_eq!(chain.balance(ATTACKER, xrd()), 0, "nothing arrived");
+    assert_eq!(chain.balance(ATTACKER, protocol()), 0, "nothing arrived");
     assert_eq!(
-        chain.balance(VICTIM, xrd()),
+        chain.balance(VICTIM, protocol()),
         1_000,
         "the victim is untouched"
     );

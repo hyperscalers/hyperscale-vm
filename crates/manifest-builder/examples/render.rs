@@ -19,7 +19,7 @@ use hyperscale_vm_types::{ComponentAddr, NetworkId, PrincipalAddr, ResourceAddr,
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
 const OPERATOR: PrincipalAddr = PrincipalAddr::new([0x30; 31]);
-const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+const TOKEN: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const USDC: ResourceAddr = ResourceAddr::new([0xE2; 31]);
 const NETWORK: &str = "mainnet";
 const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
@@ -43,14 +43,14 @@ fn instance(package: &str, config: Vec<Value>) -> InstanceMeta {
 
 fn pair() -> Vec<Value> {
     vec![
-        Value::Address(XRD.address()),
+        Value::Address(TOKEN.address()),
         Value::Address(USDC.address()),
     ]
 }
 
 fn operated() -> Vec<Value> {
     vec![
-        Value::Address(XRD.address()),
+        Value::Address(TOKEN.address()),
         Value::Address(OPERATOR.address()),
     ]
 }
@@ -65,7 +65,7 @@ fn stake_pool() -> staking::Staking {
 
 fn splitter_config() -> Vec<Value> {
     vec![
-        Value::Address(XRD.address()),
+        Value::Address(TOKEN.address()),
         Value::U128(QUARTER),
         Value::U128(QUARTER),
         Value::U128(2 * QUARTER),
@@ -123,7 +123,7 @@ fn vocabulary() -> Names {
         .with(pool(), "pool")
         .with(stake_pool(), "stake_pool")
         .with(splitter(), "splitter")
-        .with(XRD, "xrd")
+        .with(TOKEN, "token")
         .with(USDC, "usdc")
         .with(units(), "stake_units")
 }
@@ -140,14 +140,14 @@ fn main() {
         (
             "a transfer",
             build(&|b| {
-                let funds = account::withdraw(b, ALICE, XRD, 100)?;
+                let funds = account::withdraw(b, ALICE, TOKEN, 100)?;
                 account::deposit(b, BOB, funds)
             }),
         ),
         (
             "a swap",
             build(&|b| {
-                let funds = account::withdraw(b, ALICE, XRD, 100)?;
+                let funds = account::withdraw(b, ALICE, TOKEN, 100)?;
                 let proceeds = pool().swap(b, funds, 90)?;
                 account::deposit(b, ALICE, proceeds)
             }),
@@ -156,7 +156,7 @@ fn main() {
             "a split, with the change routed by policy",
             build(&|b| {
                 b.rest_to(ALICE);
-                let funds = account::withdraw(b, ALICE, XRD, 100)?;
+                let funds = account::withdraw(b, ALICE, TOKEN, 100)?;
                 let [taken, _change] =
                     payouts::Payouts::at(splitter()).in_lots(b, funds, 30u128)?;
                 account::deposit(b, BOB, taken.min(30))
@@ -165,7 +165,7 @@ fn main() {
         (
             "a delegation, and the operator surface beside it",
             build(&|b| {
-                let funds = account::withdraw(b, ALICE, XRD, 1_000)?;
+                let funds = account::withdraw(b, ALICE, TOKEN, 1_000)?;
                 let position = stake_pool().stake(b, funds)?;
                 account::deposit(b, ALICE, position)?;
                 // The operator surface is the configured operator's, so

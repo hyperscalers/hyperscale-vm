@@ -36,7 +36,7 @@ pub use address::{
     LEAF_KEY_BYTES, LocalKey, NativeAddr, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr,
     SWEEP_BUCKET_BYTES, SWEEP_BUCKET_SHIFT, SubstateKey, SweepBucket, WrongClass,
 };
-pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};
+pub use amount::{AMOUNT_CELL_BYTES, Quanta, amount_cell, encode_amount, read_amount};
 pub use effect::{Effect, EffectConflict, EffectSet};
 pub use envelope::{
     ARTIFACT_GRACE_MS, CROSSING_GRACE_MS, MAX_MESSAGE_LEN, MAX_SUBINTENTS, MAX_TX_BYTES_LEN,
@@ -55,8 +55,8 @@ pub use scheme::{
 };
 pub use seeds::{Drawn, SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded};
 pub use work::{
-    AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, VERIFY_WEIGHT, WORK_PER_ATTO,
-    declared_work, price_attos, signature_work, work_units,
+    AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, TX_UNITS, VERIFY_WEIGHT, WORK_PER_QUANTUM,
+    declared_work, price, signature_work, work_units,
 };
 pub use writes::{
     Compose, EntryKey, EntryLeaf, MAX_CELL_VALUE_LEN, Movement, OverDebit, SettledCells,

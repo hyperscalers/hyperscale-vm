@@ -817,7 +817,7 @@ mod tests {
                 "resource/minted = 35e2ddac0061bd4baedfd4c17865b7fdb9c43ff09bcdc667577a354a98e7a104",
                 "resource/minted-nf = ce323aed0de4701b5e19461095919d188c93222c950ac229058846d5fe9c3604",
                 "native/genesis-publisher = 6d1236624522c3f1332ef8e17ace07f875ead2e7f8ecd4f9a32a39d13c2c5205",
-                "resource/xrd = 25147b7a63227c9bf8ce275d2a7c7f99fc08084bca07e0ec6af617e60661ce04",
+                "resource/protocol = 25147b7a63227c9bf8ce275d2a7c7f99fc08084bca07e0ec6af617e60661ce04",
             ]
         );
     }

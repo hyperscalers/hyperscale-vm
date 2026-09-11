@@ -13,7 +13,7 @@ use hyperscale_vm_testing::{
 use venue_guest::venue;
 
 const ALICE: PrincipalAddr = principal(0xA1);
-const XRD: ResourceAddr = resource(0xE1);
+const TOKEN: ResourceAddr = resource(0xE1);
 /// What the door charges, in subunits of its configured asset.
 const PRICE: u128 = 10;
 
@@ -26,7 +26,7 @@ fn world(chain: &mut Chain) -> (venue::client::Venue, venue::client::Venue) {
         let door = chain.instantiate::<venue::client::Venue>(
             ALICE,
             venue::client::Terms {
-                asset: XRD,
+                asset: TOKEN,
                 price: PRICE,
                 // The door admits nobody itself; its role is the pass.
                 door: ALICE.address(),
@@ -35,12 +35,12 @@ fn world(chain: &mut Chain) -> (venue::client::Venue, venue::client::Venue) {
         let hall = chain.instantiate::<venue::client::Venue>(
             ALICE,
             venue::client::Terms {
-                asset: XRD,
+                asset: TOKEN,
                 price: PRICE,
                 door: door.address().into(),
             },
         );
-        chain.credit(ALICE, XRD, 100);
+        chain.credit(ALICE, TOKEN, 100);
         (door, hall)
     })
 }
@@ -51,7 +51,7 @@ fn a_paid_pass_admits_its_holder(chain: &mut Chain) {
     let (door, hall) = world(chain);
 
     let outcome = chain.transact(ALICE, |b| {
-        let payment = account::withdraw(b, ALICE, XRD, PRICE)?;
+        let payment = account::withdraw(b, ALICE, TOKEN, PRICE)?;
         let pass = door.pass(b, payment)?;
         b.presenting(pass, |b| hall.enter(b))
     });
@@ -59,7 +59,7 @@ fn a_paid_pass_admits_its_holder(chain: &mut Chain) {
 
     assert_eq!(outcome.answer(), 1, "the hall counted the entry");
     assert_eq!(chain.balance_of(door, venue::client::Till), PRICE);
-    assert_eq!(chain.balance(ALICE, XRD), 90);
+    assert_eq!(chain.balance(ALICE, TOKEN), 90);
 }
 
 /// A short payment declines the prover, and the decline fails the
@@ -70,19 +70,19 @@ fn a_short_payment_declines_the_whole_transaction(chain: &mut Chain) {
 
     chain
         .transact(ALICE, |b| {
-            let payment = account::withdraw(b, ALICE, XRD, PRICE - 1)?;
+            let payment = account::withdraw(b, ALICE, TOKEN, PRICE - 1)?;
             let pass = door.pass(b, payment)?;
             b.presenting(pass, |b| hall.enter(b))
         })
         .expect_declined(venue::Error::Short);
 
-    assert_eq!(chain.balance(ALICE, XRD), 100, "a decline moves nothing");
+    assert_eq!(chain.balance(ALICE, TOKEN), 100, "a decline moves nothing");
     assert_eq!(chain.balance_of(door, venue::client::Till), 0);
 
     // The paid composition after it answers one: the declined entry was
     // never counted, so nothing downstream survived its evidence.
     let outcome = chain.transact(ALICE, |b| {
-        let payment = account::withdraw(b, ALICE, XRD, PRICE)?;
+        let payment = account::withdraw(b, ALICE, TOKEN, PRICE)?;
         let pass = door.pass(b, payment)?;
         b.presenting(pass, |b| hall.enter(b))
     });

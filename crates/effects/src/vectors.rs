@@ -13,7 +13,7 @@ use hyperscale_vm_types::{Address, AddressClass, SchemeId};
 
 use crate::hash::{Hash32, Hasher};
 use crate::metadata::PackageHash;
-use crate::resource::{ResourceKind, xrd};
+use crate::resource::{ResourceKind, protocol_resource};
 use crate::types::{
     component_address, config_hash, genesis_publisher, package_address, principal_address,
     resource_address,
@@ -63,7 +63,7 @@ pub fn address_vectors(hasher: &dyn Hasher) -> Vec<(&'static str, Address)> {
             .into(),
         ),
         ("native/genesis-publisher", genesis_publisher(hasher).into()),
-        ("resource/xrd", xrd(hasher).into()),
+        ("resource/protocol", protocol_resource(hasher).into()),
     ]
 }
 
@@ -101,6 +101,6 @@ pub fn expected_classes() -> Vec<(&'static str, AddressClass)> {
         ("resource/minted", AddressClass::Resource),
         ("resource/minted-nf", AddressClass::Resource),
         ("native/genesis-publisher", AddressClass::Native),
-        ("resource/xrd", AddressClass::Resource),
+        ("resource/protocol", AddressClass::Resource),
     ]
 }

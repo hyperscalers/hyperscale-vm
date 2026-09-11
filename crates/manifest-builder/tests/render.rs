@@ -16,7 +16,7 @@ use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr, TextError}
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
-const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+const TOKEN: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const USDC: ResourceAddr = ResourceAddr::new([0xE2; 31]);
 const NETWORK: &str = "mainnet";
 /// A quarter, at the scale a bounded configuration number holds.
@@ -36,7 +36,7 @@ fn instance(package: &str, config: Vec<Value>) -> InstanceMeta {
 
 fn pair() -> Vec<Value> {
     vec![
-        Value::Address(XRD.address()),
+        Value::Address(TOKEN.address()),
         Value::Address(USDC.address()),
     ]
 }
@@ -47,7 +47,7 @@ fn pool() -> amm::Amm {
 
 fn splitter_config() -> Vec<Value> {
     vec![
-        Value::Address(XRD.address()),
+        Value::Address(TOKEN.address()),
         Value::U128(QUARTER),
         Value::U128(QUARTER),
         Value::U128(2 * QUARTER),
@@ -84,7 +84,7 @@ fn vocabulary() -> Names {
         .with(BOB, "bob")
         .with(pool(), "pool")
         .with(splitter(), "splitter")
-        .with(XRD, "xrd")
+        .with(TOKEN, "token")
         .with(USDC, "usdc")
 }
 
@@ -92,7 +92,7 @@ fn vocabulary() -> Names {
 fn a_swap_reads_as_the_surface_syntax_names_it() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let funds = account::withdraw(&mut b, ALICE, XRD, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, TOKEN, 100).unwrap();
     let proceeds = pool().swap(&mut b, funds, 1).unwrap();
     account::deposit(&mut b, ALICE, proceeds).unwrap();
     let graph = b.build().unwrap();
@@ -102,8 +102,8 @@ fn a_swap_reads_as_the_surface_syntax_names_it() {
     assert_eq!(
         render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
         "alice.authorize();\n\
-         let xrd = alice.withdraw(@xrd, 100);\n\
-         let usdc = pool.swap(xrd, 1);\n\
+         let token = alice.withdraw(@token, 100);\n\
+         let usdc = pool.swap(token, 1);\n\
          alice.deposit(usdc);\n"
     );
 }
@@ -112,7 +112,7 @@ fn a_swap_reads_as_the_surface_syntax_names_it() {
 fn an_unnamed_address_renders_as_itself_and_types_its_binding() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let funds = account::withdraw(&mut b, ALICE, XRD, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, TOKEN, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
 
@@ -121,12 +121,12 @@ fn an_unnamed_address_renders_as_itself_and_types_its_binding() {
     // binding falls back to a positional name carrying its type.
     let alice = ALICE.address().to_text(NETWORK).unwrap();
     let bob = BOB.address().to_text(NETWORK).unwrap();
-    let xrd = XRD.address().to_text(NETWORK).unwrap();
+    let token = TOKEN.address().to_text(NETWORK).unwrap();
     assert_eq!(
         text,
         format!(
             "{alice}.authorize();\n\
-             let v1: {xrd} = {alice}.withdraw(@{xrd}, 100);\n\
+             let v1: {token} = {alice}.withdraw(@{token}, 100);\n\
              {bob}.deposit(v1);\n"
         )
     );
@@ -136,7 +136,7 @@ fn an_unnamed_address_renders_as_itself_and_types_its_binding() {
 fn a_split_binds_both_halves_and_numbers_the_repeat() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let funds = account::withdraw(&mut b, ALICE, XRD, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, TOKEN, 100).unwrap();
     let [taken, rest] = payouts::Payouts::at(splitter())
         .in_lots(&mut b, funds, 30u128)
         .unwrap();
@@ -150,10 +150,10 @@ fn a_split_binds_both_halves_and_numbers_the_repeat() {
     assert_eq!(
         render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
         "alice.authorize();\n\
-         let xrd = alice.withdraw(@xrd, 100);\n\
-         let xrd2, xrd3 = splitter.in-lots(xrd, 30);\n\
-         bob.deposit(xrd2{>= 1});\n\
-         alice.deposit(xrd3);\n"
+         let token = alice.withdraw(@token, 100);\n\
+         let token2, token3 = splitter.in-lots(token, 30);\n\
+         bob.deposit(token2{>= 1});\n\
+         alice.deposit(token3);\n"
     );
 }
 
@@ -162,8 +162,8 @@ fn a_graph_renders_without_any_metadata_at_all() {
     let chain = world();
     let mut b = GraphBuilder::new();
     let [] = b.call_signed(ALICE, "authorize", ());
-    let [funds] = b.call_bearing(ALICE, "withdraw", (XRD, 100u128), 0);
-    let [] = b.call(BOB, "deposit", (funds.resource_is(XRD),));
+    let [funds] = b.call_bearing(ALICE, "withdraw", (TOKEN, 100u128), 0);
+    let [] = b.call(BOB, "deposit", (funds.resource_is(TOKEN),));
     let graph = b.build().unwrap();
 
     // An empty world: no target resolves, so no output type is evaluated
@@ -174,16 +174,16 @@ fn a_graph_renders_without_any_metadata_at_all() {
     assert_eq!(
         text,
         "alice.authorize();\n\
-         let v1 = alice.withdraw(@xrd, 100);\n\
-         bob.deposit(v1{is xrd});\n"
+         let v1 = alice.withdraw(@token, 100);\n\
+         bob.deposit(v1{is token});\n"
     );
     // The same graph against the real world types the binding instead,
     // and the assertion stops being worth printing twice.
     assert_eq!(
         render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
         "alice.authorize();\n\
-         let xrd = alice.withdraw(@xrd, 100);\n\
-         bob.deposit(xrd);\n"
+         let token = alice.withdraw(@token, 100);\n\
+         bob.deposit(token);\n"
     );
 }
 
@@ -191,7 +191,7 @@ fn a_graph_renders_without_any_metadata_at_all() {
 fn a_socket_renders_as_the_opening_it_is() {
     let chain = world();
     let mut b = GraphBuilder::new();
-    let [funds] = b.call(ALICE, "withdraw", (XRD, 100u128));
+    let [funds] = b.call(ALICE, "withdraw", (TOKEN, 100u128));
     let _ = b.export(funds);
     let mut graph = b.build().unwrap();
     // The socket reference arrives the way one reaches a renderer: in a
@@ -213,7 +213,7 @@ fn a_socket_renders_as_the_opening_it_is() {
 fn a_network_word_the_encoding_refuses_fails_here_too() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let funds = account::withdraw(&mut b, ALICE, XRD, 100).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, TOKEN, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     assert!(matches!(

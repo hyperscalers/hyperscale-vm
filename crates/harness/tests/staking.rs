@@ -52,7 +52,7 @@ const TEST_HEADER: IntentHeader = IntentHeader {
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 /// The resource a delegation is denominated in.
-const XRD: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+const TOKEN: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 /// The resource this pool issues against delegations — derived from the
 /// pool, not configured, which is what the signature's `SelfResource`
 /// evaluates to.
@@ -150,7 +150,7 @@ fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: staking_pkg(),
         config: vec![
-            Value::Address(XRD.address()),
+            Value::Address(TOKEN.address()),
             Value::Address(OPERATOR.address()),
         ],
         salt: Hash32([2; 32]),
@@ -182,11 +182,11 @@ fn graph_as(
         .expect("every call types and every output is consumed")
 }
 
-/// `alice.withdraw(XRD) -> pool.stake -> alice.deposit(units)`: the
+/// `alice.withdraw(TOKEN) -> pool.stake -> alice.deposit(units)`: the
 /// delegation goes in and the position comes back as an ordinary balance.
 fn stake_graph(amount: u128) -> ManifestGraph {
     graph(|b| {
-        let funds = account::withdraw(b, ALICE, XRD, amount)?;
+        let funds = account::withdraw(b, ALICE, TOKEN, amount)?;
         let units = pool().stake(b, funds)?;
         account::deposit(b, ALICE, units)
     })
@@ -222,7 +222,7 @@ fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
     assert!(
         matches!(
             refused,
-            AdmissionError::WrongDenomination { param: 0, expected, .. } if expected == XRD.address()
+            AdmissionError::WrongDenomination { param: 0, expected, .. } if expected == TOKEN.address()
         ),
         "the refusal names the staked resource: {refused:?}"
     );
@@ -235,7 +235,7 @@ fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
 fn an_unstake_in_the_wrong_resource_is_refused_at_admission() {
     let world = world();
     let tree = single_intent(graph(|b| {
-        let funds = account::withdraw(b, ALICE, XRD, 40)?;
+        let funds = account::withdraw(b, ALICE, TOKEN, 40)?;
         pool().unstake(b, funds)
     }));
     let identity = tree.hash(&TestHasher);
@@ -319,10 +319,10 @@ fn batch_entry(world: &Records, tree: &EnvelopeTree, composer: PrincipalAddr) ->
     Ok(BatchTx::new(TxHash(identity.0), declaration, env()).with_calls(routing.calls))
 }
 
-fn seeded_store(xrd: u128, units: u128) -> MemoryStore {
+fn seeded_store(token: u128, units: u128) -> MemoryStore {
     let mut store = MemoryStore::new();
     seal_pool(&mut store);
-    seed_vault(&mut store, ALICE, XRD, xrd);
+    seed_vault(&mut store, ALICE, TOKEN, token);
     if units > 0 {
         seed_vault(&mut store, ALICE, unit(), units);
     }
@@ -358,7 +358,7 @@ fn a_delegation_to_an_unsealed_pool_is_refused_where_the_leaf_lives() -> Result<
         resource_record_key(&TestHasher, pool(), unit()),
         UNIT_RECORD.to_cell().unwrap(),
     );
-    seed_vault(&mut store, ALICE, XRD, 150);
+    seed_vault(&mut store, ALICE, TOKEN, 150);
 
     let (outcome, end) = run_both(&store, std::slice::from_ref(&entry));
     assert!(
@@ -374,8 +374,11 @@ fn a_delegation_to_an_unsealed_pool_is_refused_where_the_leaf_lives() -> Result<
         "refused as the unmet presence: {:?}",
         outcome.receipts[&entry.tx].outcome,
     );
-    assert_eq!(amount_of(&end, vault(ALICE, XRD)), 150);
-    assert_eq!(amount_of(&end, declared_vault(pool(), POOL_VAULT, XRD)), 0);
+    assert_eq!(amount_of(&end, vault(ALICE, TOKEN)), 150);
+    assert_eq!(
+        amount_of(&end, declared_vault(pool(), POOL_VAULT, TOKEN)),
+        0
+    );
     assert_eq!(amount_of(&end, vault(ALICE, unit())), 0);
     Ok(())
 }
@@ -390,9 +393,9 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
 
     // The delegation left the delegator and reached the pool.
-    assert_eq!(amount_of(&end, vault(ALICE, XRD)), 50);
+    assert_eq!(amount_of(&end, vault(ALICE, TOKEN)), 50);
     assert_eq!(
-        amount_of(&end, declared_vault(pool(), POOL_VAULT, XRD)),
+        amount_of(&end, declared_vault(pool(), POOL_VAULT, TOKEN)),
         100
     );
     // The position came back as an ordinary balance, at par.
@@ -425,8 +428,11 @@ fn returned_units_are_destroyed_and_the_pool_says_what_it_owes() -> Result<()> {
     assert_eq!(receipt.supply.burned(unit()), 40);
     // Nothing came back either: the release leg is a later method, so the
     // delegator holds no claim on the pool's vault yet.
-    assert_eq!(amount_of(&end, vault(ALICE, XRD)), 0);
-    assert_eq!(amount_of(&end, declared_vault(pool(), POOL_VAULT, XRD)), 0);
+    assert_eq!(amount_of(&end, vault(ALICE, TOKEN)), 0);
+    assert_eq!(
+        amount_of(&end, declared_vault(pool(), POOL_VAULT, TOKEN)),
+        0
+    );
 
     let unstaked = receipt
         .events

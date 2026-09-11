@@ -41,6 +41,7 @@
 //! nothing — the one failure mode that looks like ordinary data rather
 //! than like an error.
 
+use crate::amount::Quanta;
 use crate::scheme::SchemeId;
 
 /// Work units charged per unit of consumed fuel.
@@ -143,18 +144,18 @@ pub const fn declared_work(footprint: u64, gas_limit: u64, signatures: u64) -> u
         .saturating_add(signatures)
 }
 
-/// Work units per atto of the protocol resource: the rate a declared
+/// Work units per quantum of the protocol resource: the rate a declared
 /// price is settled at.
 ///
 /// The one figure that turns the scalar above into a fee, and a
 /// placeholder like the weights it divides: what a unit of work costs
 /// is set against measured baselines rather than chosen here. Sized so
 /// that a minimal transaction — [`TX_UNITS`] and a modest ceiling —
-/// prices in the tens of attos, inside the ceilings every fixture
+/// prices in the tens of quanta, inside the ceilings every fixture
 /// already signs and the balances it funds.
-pub const WORK_PER_ATTO: u64 = 100_000;
+pub const WORK_PER_QUANTUM: u64 = 100_000;
 
-/// What `work` costs in attos: the declared price, rounded up so no
+/// What `work` costs in quanta: the declared price, rounded up so no
 /// transaction that declares anything is carried for nothing.
 ///
 /// A pure function of the work, which is a pure function of signed
@@ -162,31 +163,31 @@ pub const WORK_PER_ATTO: u64 = 100_000;
 /// anything runs, and a participant that measures only its own legs
 /// bills the same as one that ran the whole.
 #[must_use]
-pub const fn price_attos(work: u64) -> u128 {
-    (work as u128).div_ceil(WORK_PER_ATTO as u128)
+pub const fn price(work: u64) -> Quanta {
+    (work as u128).div_ceil(WORK_PER_QUANTUM as u128)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         AUTH_BYTE_WEIGHT, FOOTPRINT_WEIGHT, FUEL_WEIGHT, SchemeId, TX_UNITS, VERIFY_WEIGHT,
-        WORK_PER_ATTO, declared_work, price_attos, signature_work, work_units,
+        WORK_PER_QUANTUM, declared_work, price, signature_work, work_units,
     };
 
     /// A price is never zero for work that is not, rounds up at the
     /// rate, and never falls as the work rises.
     #[test]
     fn a_price_rounds_up_and_is_monotone() {
-        assert_eq!(price_attos(0), 0);
-        assert_eq!(price_attos(1), 1);
-        assert_eq!(price_attos(WORK_PER_ATTO), 1);
-        assert_eq!(price_attos(WORK_PER_ATTO + 1), 2);
+        assert_eq!(price(0), 0);
+        assert_eq!(price(1), 1);
+        assert_eq!(price(WORK_PER_QUANTUM), 1);
+        assert_eq!(price(WORK_PER_QUANTUM + 1), 2);
         assert_eq!(
-            price_attos(u64::MAX),
-            u128::from(u64::MAX).div_ceil(u128::from(WORK_PER_ATTO))
+            price(u64::MAX),
+            u128::from(u64::MAX).div_ceil(u128::from(WORK_PER_QUANTUM))
         );
         for work in [0, 1, 999, 1_000_000, u64::from(u32::MAX)] {
-            assert!(price_attos(work + 1) >= price_attos(work));
+            assert!(price(work + 1) >= price(work));
         }
     }
 
