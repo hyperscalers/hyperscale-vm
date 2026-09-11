@@ -14,8 +14,8 @@
 //! hand.
 
 use hyperscale_vm_effects::{
-    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
-    admit,
+    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, Records,
+    TestHasher, Value, admit, route,
 };
 use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{GraphBuilder, TypedBuilder};
@@ -124,7 +124,17 @@ proptest! {
             }
         }
         let graph = b.build().expect("every output is consumed");
-        admit(&graph, ACCOUNTS[0], &chain, &TestHasher).expect("a built graph admits");
+        let admitted = admit(&graph, ACCOUNTS[0], &chain, &TestHasher).expect("a built graph admits");
+
+        // Routing purity over generated graphs: the same signed graph
+        // against the same content-addressed metadata admits to the
+        // same identity and routes to the same sets, on a fresh chain
+        // as on this one.
+        let again = admit(&graph, ACCOUNTS[0], &world(), &TestHasher).expect("admits again");
+        prop_assert!(again.identity() == admitted.identity());
+        prop_assert!(again.manifest() == admitted.manifest());
+        let shards = PrefixShardResolver { bits: 2 };
+        prop_assert!(route(&admitted, &shards) == route(&again, &shards));
     }
 
     #[test]

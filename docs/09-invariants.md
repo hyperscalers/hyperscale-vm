@@ -32,11 +32,11 @@ Cell-level facts: who owns a leaf, what it costs, and what it holds. The quantit
 
 ## Value — [03 §6–7](03-objects-and-state.md)
 
-Three scopes of one property: VALUE-3 conserves value inside a transaction, VALUE-2 across the participants of one, VALUE-1 across a reshape. INV-VM-OBJ-3 conserves the cells it rests in, and is what closes the gap a linear edge alone leaves open — without it a body could assign itself a balance and debit it through the ordinary movement, producing an edge VALUE-3 would find well-formed.
+Two scopes of one property: VALUE-3 conserves value inside a transaction, VALUE-2 across the participants of one. A third, across a reshape, was VALUE-1, retired below: there is no accumulator to compose, because supply is a fold over receipts and nothing keeps the running figure. INV-VM-OBJ-3 conserves the cells it rests in, and is what closes the gap a linear edge alone leaves open — without it a body could assign itself a balance and debit it through the ordinary movement, producing an edge VALUE-3 would find well-formed.
 
 | ID | Class | Property |
 |---|---|---|
-| **INV-VM-VALUE-1** | Determinism | **Reshape-clean accumulators.** The per-shard supply ledger's value under split/merge composition equals its value had the reshape not occurred; composing two children's ledgers yields exactly the parent's, so reshape neither creates, loses, nor double-counts any accumulated supply. It is the one accumulator with a compose law; a future stdlib accumulator joins this entry by defining and testing its own. [03 §5](03-objects-and-state.md) |
+| **INV-VM-VALUE-1** | Retired | **Reshape-clean accumulators.** Struck; see [Retired invariants](#retired-invariants). |
 | **INV-VM-VALUE-2** | Safety | **Conservation.** For every transaction and every resource, what its value holdings gained equals what they lost, once a mint counts as a loss and a burn as a gain — an amount cell's movements and an instance's presence alike. Checked where the whole transaction is visible and before anything is promoted, so every participant of a cross-shard transaction reaches the same verdict off the same receipt; a transaction that fails it aborts alone, charges nobody, and leaves its batch running. The global statement — per-shard totals plus in-flight movements sum to minted-minus-burned — is a consequence of the history rather than a quantity anything keeps. [03 §6](03-objects-and-state.md) |
 | **INV-VM-VALUE-3** | Safety | **Value linearity.** Value in flight exists only as a handle the kernel produced, and every producer is the kernel's own — an edge routed to a call, a debit against a declared cell, an issue a declaration granted — so a guest has no way to bring one into being. Between production and settlement it is neither duplicated nor lost: a committing transaction leaves no value held, and a body that lets go of value is refused at the boundary. The property is the kernel's alone, held without trusting either engine's canonical ABI to be right about which handle is which. [03 §6](03-objects-and-state.md) |
 
@@ -90,7 +90,9 @@ Requirements the engine's design places on any host. Their enforcement lives in 
 
 ## Retired invariants
 
-None yet. A property that stops holding is struck here with what replaced it, rather than being removed from its family: an ID that once appeared in a commit message, a model, or a host document must always resolve to something.
+A property that stops holding is struck here with what replaced it, rather than being removed from its family: an ID that once appeared in a commit message, a model, or a host document must always resolve to something.
+
+- **INV-VM-VALUE-1 — Reshape-clean accumulators.** Stated that the per-shard supply ledger composes exactly across a split or merge. There is no such ledger: supply is not a cell and nothing keeps its running figure — what a receipt records is the pair of totals its transaction minted and burned, and chain-wide supply is a fold over receipts, which no reshape can disturb because a reshape moves no receipt. What the entry was protecting is stated by VALUE-2, the per-transaction conservation fold, and the statement in [03 §6](03-objects-and-state.md) that the global figure is a consequence of the history rather than a quantity anything keeps. A future accumulator with a compose law earns a new entry; this number is not reused.
 
 ## Notes for the verification effort
 

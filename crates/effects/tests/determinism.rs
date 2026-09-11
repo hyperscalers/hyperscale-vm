@@ -196,6 +196,13 @@ proptest! {
             target: EffectTarget::Point(vault(recipient, resource)),
             mode: Mode::Delta { moves: Moves::In },
         }));
+        // The vaults' checks against the resource's own configuration
+        // are locked reads: content-addressed, resolved locally, and
+        // adding no participant — so whichever shard the resource lands
+        // on, only the two accounts' shards route.
+        let participants: BTreeSet<_> = first.per_shard.keys().copied().collect();
+        let accounts: BTreeSet<_> = [shard_of(sender), shard_of(recipient)].into();
+        assert_eq!(participants, accounts);
     }
 
     #[test]

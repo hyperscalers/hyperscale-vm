@@ -36,6 +36,8 @@ Scheduling compatibility (two in-flight transactions touching the same key):
 | `reserve` | ✗ | ✓ | ✓ | ✓ | ✗ |
 | `write` | ✗ | ✓ | ✗ | ✗ | ✗ |
 
+The `locked` row is the design's rather than the code's. A locked read declares no effect at all — the data is content-addressed, so every node resolves it locally and the object read is no participant (INV-VM-ACCESS-3) — which is why `ModeKind` has four kinds and the compatibility relation the footprint weights is four by four. The row is tabulated so the lattice states where such a read sits, compatible with everything; nothing declares it.
+
 **A clause says when it is declared at all.** A clause carries an optional *guard* — a predicate over the same call inputs its keys are computed from — and a clause whose guard does not hold contributes nothing: not to the effect set, not to the contention set, not to the shards the transaction routes to. A method that writes one of two cells therefore declares, locks and routes to exactly the one it will write.
 
 A guard rather than a nesting block, because an ABI binding names a top-level clause index: an `if` around three accesses is three clauses carrying one condition each, and `if a { if b { … } }` guards on the conjunction, so clause indices and clause depth both mean what they meant. What the guest is handed is the *verdict*, as a `bool` parameter bound to that clause — the declaration's own evaluation rather than a second copy of the condition, so the two cannot disagree. The handle the clause would have backed is still a parameter, because an export's signature cannot lose one to a branch; it is seated at a rep no capability occupies, and reaching it is a body whose control flow diverges from what it was told, which aborts by its own name.
