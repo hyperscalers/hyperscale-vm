@@ -9,7 +9,7 @@
 //! lattice says `Write` subsumes `Read`.
 //!
 //! That is the same argument the kernel's import surface makes in
-//! `hyperscale:kernel/state`, one level up: there is one resource type per
+//! `kernel/state`, one level up: there is one resource type per
 //! mode, so an undeclared mode has no handle type to arrive in. These types
 //! are the Rust-facing shadow of that surface, which is why the vocabulary
 //! is closed rather than merely conventional.
@@ -18,7 +18,7 @@
 //!
 //! Each handle holds the index the kernel materialized it at, and what
 //! turns that index into a call is which of the two this build is:
-//! `crate::guest` borrows the kernel resource an import takes, and
+//! `crate::guest` calls the import that takes the handle, and
 //! [`crate::host`] reaches the session an engine installed. One body,
 //! two resolutions, and nothing between them that an author writes.
 //!
@@ -70,7 +70,7 @@ use hyperscale_vm_types::{
     ResourceAddr,
 };
 
-#[cfg(not(component))]
+#[cfg(not(guest_build))]
 use crate::host;
 pub use crate::num::{
     Fixed, NumError, Quantity, Rate, Ratio, Rounding, Sign, SignedFixed, UnitFixed, Wide,
@@ -310,7 +310,7 @@ impl LeafShape for u128 {
 }
 
 /// How a rule crosses as an argument: the bytes themselves, since a
-/// `list<u8>` is already the world's own framing and what the bytes mean
+/// byte register is already the boundary's own framing and what the bytes mean
 /// is settled where the rule is judged.
 ///
 /// Not what a cell of one holds, which is the one place this vocabulary
@@ -843,11 +843,11 @@ pub use crate::handle::Handle;
 /// duplicated here would let a body spend one edge twice and be told
 /// about it, if at all, by a borrow error against generated code. What
 /// makes the two halves agree is that value is linear in both.
-#[cfg_attr(not(component), derive(Debug, PartialEq, Eq))]
+#[cfg_attr(not(guest_build), derive(Debug, PartialEq, Eq))]
 pub struct Bucket {
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     rep: u32,
-    #[cfg(component)]
+    #[cfg(guest_build)]
     handle: crate::guest::BucketHandle,
 }
 
@@ -858,14 +858,14 @@ impl Bucket {
     /// hold value are to be handed some, to take some from a cell the
     /// method declared, and to mint some, and none of them is a
     /// constructor a body can reach.
-    #[cfg(component)]
+    #[cfg(guest_build)]
     #[must_use]
     pub const fn held(handle: crate::guest::BucketHandle) -> Self {
         Self { handle }
     }
 
     /// The handle the kernel holds this value behind.
-    #[cfg(component)]
+    #[cfg(guest_build)]
     #[must_use]
     pub fn into_handle(self) -> crate::guest::BucketHandle {
         self.handle
@@ -877,14 +877,14 @@ impl Bucket {
     /// the guest's own constructor is: the ways to hold value are to be
     /// handed some, to take some from a declared cell, and to mint
     /// some, and none of them is a constructor a body can reach.
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     #[must_use]
     pub const fn at(rep: u32) -> Self {
         Self { rep }
     }
 
     /// The table position the kernel holds this value at.
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     #[must_use]
     pub const fn rep(&self) -> u32 {
         self.rep
@@ -909,9 +909,9 @@ impl Bucket {
     pub fn take(&mut self, quantity: Quantity) -> Self {
         let amount = quantity.subunits();
         let _ = amount;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return Self::held(crate::guest::bucket_take(&self.handle, amount));
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return Self::at(host::bucket_take(self.rep, amount));
     }
 
@@ -938,9 +938,9 @@ impl Bucket {
     pub fn split(mut self, share: Ratio) -> (Self, Self) {
         let (num, den) = share.terms();
         let _ = (num, den);
-        #[cfg(component)]
+        #[cfg(guest_build)]
         let part = Self::held(crate::guest::bucket_split(&self.handle, num, den));
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         let part = Self::at(host::bucket_split(self.rep, num, den));
         let _ = &mut self;
         (part, self)
@@ -986,9 +986,9 @@ impl Bucket {
     #[allow(clippy::needless_pass_by_value)] // a merge consumes what it takes
     pub fn put(&mut self, other: Self) {
         let _ = &other;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::bucket_put(&self.handle, other.into_handle());
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::bucket_put(self.rep, other.rep());
     }
 
@@ -1000,9 +1000,9 @@ impl Bucket {
     /// cannot produce any.
     #[must_use]
     pub fn quantity(&self) -> Quantity {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return Quantity::from_subunits(crate::guest::bucket_amount(&self.handle));
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return Quantity::from_subunits(host::bucket_amount(self.rep));
     }
 }
@@ -1017,7 +1017,7 @@ impl Bucket {
 /// is cheaper than a receipt reporting it. What it carries instead of
 /// the amount surface is the instance-oriented one: its resource, and a
 /// merge with its own kind.
-#[cfg_attr(not(component), derive(Debug, PartialEq, Eq))]
+#[cfg_attr(not(guest_build), derive(Debug, PartialEq, Eq))]
 pub struct NfBucket(Bucket);
 
 impl NfBucket {
@@ -1025,14 +1025,14 @@ impl NfBucket {
     ///
     /// Called by generated code, never by an author, on the terms
     /// [`Bucket::held`] states.
-    #[cfg(component)]
+    #[cfg(guest_build)]
     #[must_use]
     pub const fn held(handle: crate::guest::BucketHandle) -> Self {
         Self(Bucket::held(handle))
     }
 
     /// The handle the kernel holds these instances behind.
-    #[cfg(component)]
+    #[cfg(guest_build)]
     #[must_use]
     pub fn into_handle(self) -> crate::guest::BucketHandle {
         self.0.into_handle()
@@ -1040,14 +1040,14 @@ impl NfBucket {
 
     /// The edge the kernel holds at `rep`, on the terms [`Bucket::at`]
     /// states.
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     #[must_use]
     pub const fn at(rep: u32) -> Self {
         Self(Bucket::at(rep))
     }
 
     /// The table position the kernel holds these instances at.
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     #[must_use]
     pub const fn rep(&self) -> u32 {
         self.0.rep()
@@ -1302,9 +1302,9 @@ impl Site {
     #[must_use]
     #[inline(always)]
     pub fn len(&self) -> u32 {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::site_len(self.rep);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::site_len(self.rep);
     }
 
@@ -1324,9 +1324,9 @@ impl Site {
     #[must_use]
     #[inline(always)]
     pub fn declared(&self, index: u32) -> bool {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::site_declared(self.rep, index);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::site_declared(self.rep, index);
     }
 
@@ -1371,9 +1371,9 @@ impl<T: Cellular> Slot<T> {
     #[must_use]
     #[inline(always)]
     pub fn get(&self) -> T {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return T::from_cell(&crate::guest::cell_get(self.handle));
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return T::from_cell(&host::cell_get(self.handle));
     }
 
@@ -1382,9 +1382,9 @@ impl<T: Cellular> Slot<T> {
     #[inline(always)]
     pub fn set(&mut self, value: T) {
         let _ = &value;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::cell_set(self.handle, &value.to_cell());
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::cell_set(self.handle, &value.to_cell());
     }
 }
@@ -1404,9 +1404,9 @@ impl<T: Record> Slot<Option<T>> {
     /// End a leaf the declaration required to be there.
     #[inline(always)]
     pub fn retire(&mut self) {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::cell_clear(self.handle);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::cell_clear(self.handle);
     }
 
@@ -1510,18 +1510,18 @@ impl Slot<Option<Seal>> {
     /// Seal this cell on the epoch now running.
     #[inline(always)]
     pub fn seal(&mut self) {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         crate::guest::cell_seal(self.handle);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         host::cell_seal(self.handle);
     }
 
     /// Take a second seal, where this cell already holds one.
     #[inline(always)]
     pub fn reseal(&mut self) {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         crate::guest::cell_seal(self.handle);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         host::cell_seal(self.handle);
     }
 
@@ -1533,9 +1533,9 @@ impl Slot<Option<Seal>> {
     #[must_use]
     #[inline(always)]
     pub fn open(&self) -> Drawn {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         let drawn = crate::guest::cell_open_seal(self.handle);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         let drawn = host::cell_open_seal(self.handle);
         match drawn {
             WireDrawn::Pending => Drawn::Pending,
@@ -1757,9 +1757,9 @@ impl Slot<Vault> {
     #[must_use]
     #[inline(always)]
     pub fn balance(&self) -> Quantity {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return Quantity::from_subunits(crate::guest::cell_balance(self.handle));
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return Quantity::from_subunits(host::cell_balance(self.handle));
     }
 
@@ -1771,9 +1771,9 @@ impl Slot<Vault> {
     #[allow(clippy::needless_pass_by_value)] // the credit consumes the edge; off host nothing runs
     pub fn put(&mut self, funds: Bucket) {
         let _ = &funds;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::cell_put(self.handle, funds.into_handle());
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::cell_put(self.handle, funds.rep());
     }
 
@@ -1786,9 +1786,9 @@ impl Slot<Vault> {
     pub fn take(&mut self, quantity: Quantity) -> Bucket {
         let amount = quantity.subunits();
         let _ = amount;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return Bucket::held(crate::guest::cell_take(self.handle, amount));
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return Bucket::at(host::cell_take(self.handle, amount));
     }
 
@@ -1842,9 +1842,9 @@ impl Slot<Vault> {
     #[inline(always)]
     pub fn reserve(&mut self, quantity: Quantity) -> Bucket {
         let _ = quantity;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return Bucket::held(crate::guest::reserve_take(self.handle));
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return Bucket::at(host::reserve_take(self.handle));
     }
 }
@@ -1988,9 +1988,9 @@ impl<T: Cellular> Entry<T> {
     #[must_use]
     #[inline(always)]
     pub fn get(&self) -> T {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return T::from_cell(&crate::guest::entry_at(self.handle, self.order));
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return T::from_cell(&host::entry_at(self.handle, self.order));
     }
 
@@ -2000,9 +2000,9 @@ impl<T: Cellular> Entry<T> {
     #[inline(always)]
     pub fn set(&mut self, value: T) {
         let _ = &value;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::entry_insert(self.handle, self.order, &value.to_cell());
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::entry_insert(self.handle, self.order, &value.to_cell());
     }
 }
@@ -2021,9 +2021,9 @@ impl Interval<NfVault> {
     #[allow(clippy::needless_pass_by_value)] // the filing consumes the edge; off host nothing runs
     pub fn file(&mut self, funds: NfBucket) {
         let _ = &funds;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::entry_put(self.handle, funds.into_handle(), &[]);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::entry_put(self.handle, funds.rep(), &[]);
     }
 
@@ -2041,9 +2041,9 @@ impl Interval<NfVault> {
     #[inline(always)]
     pub fn take(&mut self, ids: Ids) -> NfBucket {
         let _ = &ids;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return NfBucket::held(crate::guest::entry_take(self.handle, ids.named()));
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return NfBucket::at(host::entry_take(self.handle, ids.named()));
     }
 }
@@ -2071,9 +2071,9 @@ impl<T> Interval<T> {
     #[must_use]
     #[inline(always)]
     pub fn count(&self) -> u32 {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::entry_count(self.handle);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::entry_count(self.handle);
     }
 
@@ -2088,9 +2088,9 @@ impl<T> Interval<T> {
     #[must_use]
     #[inline(always)]
     pub fn covered(&self) -> bool {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::entry_covered(self.handle);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::entry_covered(self.handle);
     }
 
@@ -2141,9 +2141,9 @@ impl<T> Interval<T> {
     #[inline(always)]
     pub fn order(&self, index: u32) -> OrderKey {
         let _ = index;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::entry_order(self.handle, index);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::entry_order(self.handle, index);
     }
 }
@@ -2155,9 +2155,9 @@ impl<T: Cellular> Interval<T> {
     #[inline(always)]
     pub fn entry(&self, index: u32) -> T {
         let _ = index;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return T::from_cell(&crate::guest::entry_get(self.handle, index));
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return T::from_cell(&host::entry_get(self.handle, index));
     }
 
@@ -2176,9 +2176,9 @@ impl<T: Cellular> Interval<T> {
     #[inline(always)]
     pub fn set(&mut self, index: u32, value: T) {
         let _ = (index, &value);
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::entry_set(self.handle, index, &value.to_cell());
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::entry_set(self.handle, index, &value.to_cell());
     }
 
@@ -2187,9 +2187,9 @@ impl<T: Cellular> Interval<T> {
     #[inline(always)]
     pub fn insert(&mut self, order: OrderKey, value: T) {
         let _ = (order, &value);
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::entry_insert(self.handle, order, &value.to_cell());
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::entry_insert(self.handle, order, &value.to_cell());
     }
 
@@ -2197,9 +2197,9 @@ impl<T: Cellular> Interval<T> {
     #[inline(always)]
     pub fn remove(&mut self, index: u32) {
         let _ = index;
-        #[cfg(component)]
+        #[cfg(guest_build)]
         return crate::guest::entry_remove(self.handle, index);
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         return host::entry_remove(self.handle, index);
     }
 }
@@ -2214,9 +2214,9 @@ impl<T: Cellular> Interval<T> {
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
 pub fn take_reservation(handle: Handle) -> Bucket {
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return Bucket::held(crate::guest::reserve_take(handle));
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return Bucket::at(host::reserve_take(handle));
 }
 
@@ -2233,9 +2233,9 @@ pub fn take_reservation(handle: Handle) -> Bucket {
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
 pub fn mint_granted(grant: u32, quantity: Quantity) -> Bucket {
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return Bucket::held(crate::guest::mint(grant, quantity.subunits()));
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return Bucket::at(host::mint(grant, quantity.subunits()));
 }
 
@@ -2255,9 +2255,9 @@ pub fn mint_granted(grant: u32, quantity: Quantity) -> Bucket {
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
 pub fn mint_nf_granted(grant: u32, id: u64) -> NfBucket {
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return NfBucket::held(crate::guest::mint_instances(grant, &[id]));
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return NfBucket::at(host::mint_instances(grant, &[id]));
 }
 
@@ -2272,9 +2272,9 @@ pub fn mint_nf_granted(grant: u32, id: u64) -> NfBucket {
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
 pub fn file_instance(handle: Handle) {
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return crate::guest::cell_set(handle, &[1]);
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return host::cell_set(handle, &[1]);
 }
 
@@ -2354,9 +2354,9 @@ pub fn recall_instances(holder: Address, slot: u64, resource: ResourceAddr, ids:
 #[allow(clippy::inline_always, clippy::needless_pass_by_value)]
 pub fn take_instances(handle: Handle, ids: Ids) -> NfBucket {
     let _ = &ids;
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return NfBucket::held(crate::guest::entry_take(handle, ids.named()));
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return NfBucket::at(host::entry_take(handle, ids.named()));
 }
 
@@ -2371,9 +2371,9 @@ pub fn take_instances(handle: Handle, ids: Ids) -> NfBucket {
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
 pub fn raise_halt(handle: Handle) {
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return crate::guest::cell_set(handle, &[1]);
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return host::cell_set(handle, &[1]);
 }
 
@@ -2382,9 +2382,9 @@ pub fn raise_halt(handle: Handle) {
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
 pub fn clear_halt(handle: Handle) {
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return crate::guest::cell_clear(handle);
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return host::cell_clear(handle);
 }
 
@@ -2402,9 +2402,9 @@ pub fn clear_halt(handle: Handle) {
 #[inline(always)] // one import behind a cfg both targets resolve at compile time
 #[allow(clippy::inline_always)]
 pub fn clear_instance(handle: Handle) {
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return crate::guest::cell_clear(handle);
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return host::cell_clear(handle);
 }
 
@@ -2419,9 +2419,9 @@ pub fn clear_instance(handle: Handle) {
 #[allow(clippy::inline_always, clippy::needless_pass_by_value)]
 pub fn burn_granted(funds: Bucket) {
     let _ = &funds;
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return crate::guest::burn(funds.into_handle());
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return host::burn(funds.rep());
 }
 
@@ -2440,9 +2440,9 @@ pub fn burn_granted(funds: Bucket) {
 #[allow(clippy::inline_always, clippy::needless_pass_by_value)]
 pub fn destroy(funds: Bucket) {
     let _ = &funds;
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return crate::guest::burn(funds.into_handle());
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return host::burn(funds.rep());
 }
 
@@ -2456,9 +2456,9 @@ pub fn destroy(funds: Bucket) {
 #[allow(clippy::inline_always, clippy::needless_pass_by_value)]
 pub fn destroy_nf(funds: NfBucket) {
     let _ = &funds;
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return crate::guest::burn(funds.into_handle());
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return host::burn(funds.rep());
 }
 
@@ -2473,9 +2473,9 @@ pub fn destroy_nf(funds: NfBucket) {
 #[allow(clippy::inline_always, clippy::needless_pass_by_value)]
 pub fn burn_nf_granted(funds: NfBucket) {
     let _ = &funds;
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return crate::guest::burn(funds.into_handle());
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return host::burn(funds.rep());
 }
 
@@ -2492,9 +2492,9 @@ pub fn fresh_id() -> u64 {
 /// what separates it from a wall clock a body must never read.
 #[must_use]
 pub fn clock_ms() -> u64 {
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return crate::guest::clock_ms();
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return host::clock_ms();
 }
 
@@ -2506,9 +2506,9 @@ pub fn clock_ms() -> u64 {
 #[must_use]
 pub fn hash(data: &[u8]) -> Vec<u8> {
     let _ = data;
-    #[cfg(component)]
+    #[cfg(guest_build)]
     return crate::guest::hash(data);
-    #[cfg(not(component))]
+    #[cfg(not(guest_build))]
     return host::hash(data);
 }
 

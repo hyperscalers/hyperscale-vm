@@ -10,8 +10,8 @@
 //! than taken from the package that would benefit from it.
 //!
 //! There is no third the scan must find. A method that can decline says
-//! so in its own signature — the `result<_, u32>` error arm is the
-//! declared refusal channel, and the gate reads a totality claim against
+//! so in its own signature — the `i32` it returns is the declared
+//! refusal channel, and the gate reads a totality claim against
 //! it — so declining is a fact the vocabulary already states. What no
 //! signature states is trapping, and that is the whole of what the scan
 //! answers.
@@ -99,37 +99,37 @@ use crate::profile;
 const DISCHARGED: &[(&str, &str)] = &[
     // A get reads the cell its handle names; materialization is the
     // whole of what it needs.
-    ("state", "site-get"),
+    ("state", "site_get"),
     // A set stores the bytes it is handed with one judgment at the
     // call: a value past the cell cap is refused as `CellValueTooLarge`.
     // No declaration discharges that, so the grant's review does — a
     // total body writes payloads whose width its own code fixes. What a
     // receipt may carry is judged at its own boundary.
-    ("state", "site-set"),
+    ("state", "site_set"),
     // A clear ends a leaf the handle already holds exclusively; there
     // is nothing to judge that materialization did not.
-    ("state", "site-clear"),
+    ("state", "site_clear"),
     // A denominated cell holds an amount: value enters one only through
     // movements, so the read cannot meet bytes — a cell that did would
     // be a defect in state, not a refusal the call can reach.
-    ("state", "site-balance"),
+    ("state", "site_balance"),
     // What an edge carries is the edge's own fact.
-    ("state", "bucket-amount"),
+    ("state", "bucket_amount"),
     // A credit of conserved value: the cell's denomination was judged at
     // admission against what the edge carries, and supply linearity
     // bounds any balance plus any bucket at the accumulator's width — a
     // sum past it would need value no mint ever created. Refused at the
     // call for an exclusive hold and at the fold for a movement, and
     // neither refusal is one this leg can reach.
-    ("state", "site-put"),
+    ("state", "site_put"),
     // A count takes no index, so there is no bound to fall outside; the
     // coverage question is answered from the same page and its probe.
-    ("state", "site-count"),
-    ("state", "site-covered"),
+    ("state", "site_count"),
+    ("state", "site_covered"),
     // Total on every input; the arithmetic that refuses a divisor or a
     // width stays out, because those are runtime values no declaration
     // speaks about.
-    ("math", "geometric-mean"),
+    ("math", "geometric_mean"),
     // Environment reads with no failure mode at all.
     ("env", "clock"),
     ("crypto", "hash"),
@@ -335,7 +335,7 @@ fn discharged_import(module: &str, name: &str) -> bool {
     };
     interface == "abi"
         || DISCHARGED.contains(&(interface, name))
-        || (interface == "state" && name == "bucket-drop")
+        || (interface == "state" && name == "bucket_drop")
 }
 
 /// A module's function space, indexed the way calls index it.
@@ -628,7 +628,7 @@ mod tests {
     fn a_collector_is_set_aside_and_the_entry_is_not() {
         let collector = parse_str(
             r#"(module
-                 (import "hyperscale:kernel/abi" "take" (func $take (param i32)))
+                 (import "kernel/abi" "take" (func $take (param i32)))
                  (func $entry call $collect)
                  (func $collect call $alloc (i32.const 0) call $take)
                  (func $alloc unreachable)
@@ -639,7 +639,7 @@ mod tests {
 
         let by_hand = parse_str(
             r#"(module
-                 (import "hyperscale:kernel/abi" "take" (func $take (param i32)))
+                 (import "kernel/abi" "take" (func $take (param i32)))
                  (func $entry call $alloc (i32.const 0) call $take)
                  (func $alloc unreachable)
                  (export "deposit" (func $entry)))"#,
@@ -668,16 +668,15 @@ mod tests {
     /// discharge it.
     #[test]
     fn a_bare_modules_import_call_is_refused() {
-        let module = parse_str(
-            r#"(module (import "hyperscale:kernel/env" "clock" (func)) (func $entry call 0))"#,
-        )
-        .expect("valid wat");
+        let module =
+            parse_str(r#"(module (import "kernel/env" "clock" (func)) (func $entry call 0))"#)
+                .expect("valid wat");
         // The import occupies index 0, so the defined entry is index 1 —
         // the shift the walk has to get right to find any body at all.
         assert_eq!(
             check_reachable(&module, 1),
             Err(TotalityError::FaultingHostCall(
-                "hyperscale:kernel/env/clock".to_string()
+                "kernel/env/clock".to_string()
             )),
         );
         // And one nobody calls is not the entry's problem: the verdict is
@@ -690,15 +689,15 @@ mod tests {
     /// A module importing `math` under `module`, with `deposit` calling
     /// the import `name` names and nothing else.
     fn math_caller(module: &str, name: &str) -> Vec<u8> {
-        let call = if name == "mul-div" {
+        let call = if name == "mul_div" {
             "(call $md (i32.const 0) (i32.const 32) (i32.const 64) (i32.const 0) (i32.const 96))"
         } else {
             "(call $gm (i32.const 0) (i32.const 32) (i32.const 64))"
         };
         parse_str(format!(
             r#"(module
-                 (import "{module}" "mul-div" (func $md (param i32 i32 i32 i32 i32)))
-                 (import "{module}" "geometric-mean" (func $gm (param i32 i32 i32)))
+                 (import "{module}" "mul_div" (func $md (param i32 i32 i32 i32 i32)))
+                 (import "{module}" "geometric_mean" (func $gm (param i32 i32 i32)))
                  (func $run {call})
                  (export "deposit" (func $run)))"#
         ))
@@ -712,9 +711,9 @@ mod tests {
     #[test]
     fn a_faulting_host_call_denies_the_mark() {
         assert_eq!(
-            check_method(&math_caller("hyperscale:kernel/math", "mul-div"), "deposit"),
+            check_method(&math_caller("kernel/math", "mul_div"), "deposit"),
             Err(TotalityError::FaultingHostCall(
-                "hyperscale:kernel/math/mul-div".to_string()
+                "kernel/math/mul_div".to_string()
             )),
         );
     }
@@ -728,10 +727,7 @@ mod tests {
     #[test]
     fn a_total_host_call_keeps_the_mark() {
         assert_eq!(
-            check_method(
-                &math_caller("hyperscale:kernel/math", "geometric-mean"),
-                "deposit"
-            ),
+            check_method(&math_caller("kernel/math", "geometric_mean"), "deposit"),
             Ok(()),
         );
     }
@@ -742,9 +738,9 @@ mod tests {
     #[test]
     fn an_import_outside_the_kernel_is_refused_all_the_same() {
         assert_eq!(
-            check_method(&math_caller("k", "geometric-mean"), "deposit"),
+            check_method(&math_caller("k", "geometric_mean"), "deposit"),
             Err(TotalityError::FaultingHostCall(
-                "k/geometric-mean".to_string()
+                "k/geometric_mean".to_string()
             )),
         );
     }
@@ -757,7 +753,7 @@ mod tests {
     fn a_refusable_state_op_denies_the_mark() {
         let module = parse_str(
             r#"(module
-                 (import "hyperscale:kernel/state" "bucket-take"
+                 (import "kernel/state" "bucket_take"
                    (func $take (param i32 i32) (result i32)))
                  (func $run (call $take (i32.const 0) (i32.const 16)) drop)
                  (export "deposit" (func $run)))"#,
@@ -766,7 +762,7 @@ mod tests {
         assert_eq!(
             check_method(&module, "deposit"),
             Err(TotalityError::FaultingHostCall(
-                "hyperscale:kernel/state/bucket-take".to_string()
+                "kernel/state/bucket_take".to_string()
             )),
         );
     }

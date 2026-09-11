@@ -16,7 +16,7 @@ use super::materialize::Capability;
 
 /// One operation a body performs through a handle.
 ///
-/// Named for what the body does rather than for the world function that
+/// Named for what the body does rather than for the kernel import that
 /// carries it: two functions reaching the same store effect through
 /// different modes are one operation asked of two capabilities.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -272,7 +272,7 @@ impl U512 {
     /// Digit-by-digit in base four — two bits of the radicand consumed
     /// per iteration, 256 iterations, no division. The root of a 512-bit
     /// value fits 256 bits, which is what makes this the shape
-    /// `geometric-mean` wants.
+    /// `geometric_mean` wants.
     #[must_use]
     fn isqrt(self) -> U256 {
         let mut root = U256::ZERO;

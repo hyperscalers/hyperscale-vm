@@ -32,9 +32,9 @@ pub mod writes;
 
 pub use address::text::{NetworkWord, TextError};
 pub use address::{
-    ADDRESS_WORDS, Address, AddressClass, CallTarget, CollectionId, ComponentAddr, EffectTarget,
-    InvalidAddress, LEAF_KEY_BYTES, LocalKey, NativeAddr, NotCallable, PackageAddr, PrincipalAddr,
-    ResourceAddr, SWEEP_BUCKET_BYTES, SWEEP_BUCKET_SHIFT, SubstateKey, SweepBucket, WrongClass,
+    Address, AddressClass, CallTarget, CollectionId, ComponentAddr, EffectTarget, InvalidAddress,
+    LEAF_KEY_BYTES, LocalKey, NativeAddr, NotCallable, PackageAddr, PrincipalAddr, ResourceAddr,
+    SWEEP_BUCKET_BYTES, SWEEP_BUCKET_SHIFT, SubstateKey, SweepBucket, WrongClass,
 };
 pub use amount::{AMOUNT_CELL_BYTES, amount_cell, encode_amount, read_amount};
 pub use effect::{Effect, EffectConflict, EffectSet};

@@ -123,9 +123,9 @@ fn bytes_cross_through_the_registers() {
     (local $len i32)
     ;; the payload register, collected at 0
     i32.const 2 i32.const 0 call $arg
-    ;; site-set(b, 0, payload)
+    ;; site_set(b, 0, payload)
     local.get $b i32.const 0 i32.const 0 local.get $payload call $site_set
-    ;; site-get(a, 0), taken at 256
+    ;; site_get(a, 0), taken at 256
     local.get $a i32.const 0 call $site_get local.set $len
     i32.const 256 call $take
     ;; hash(what was taken) at 512, emitted under type 7
@@ -196,16 +196,16 @@ fn value_moves_through_handles() {
     assert_eq!(
         kernel.calls,
         [
-            "site-balance(2,0)",
-            "site-take(2,0,30)",
-            "bucket-amount(2)",
-            "bucket-take(2,10)",
-            "bucket-put(0,3)",
-            "site-put(2,0,0)",
+            "site_balance(2,0)",
+            "site_take(2,0,30)",
+            "bucket_amount(2)",
+            "bucket_take(2,10)",
+            "bucket_put(0,3)",
+            "site_put(2,0,0)",
             "mint(0,7)",
             "burn(4)",
-            "bucket-drop(2)",
-            "site-reserve-take(2,0)",
+            "bucket_drop(2)",
+            "site_reserve_take(2,0)",
         ]
     );
 }
@@ -371,12 +371,12 @@ fn math_seals_and_the_clock_answer_in_place() {
         }
         limbs
     };
-    assert_eq!(wide(64), [6, 0, 0, 0], "mul-div");
-    assert_eq!(wide(96), [6, 0, 0, 0], "geometric-mean");
-    assert_eq!(wide(128), [18, 0, 0, 0], "fraction-compose numerator");
-    assert_eq!(wide(160), [18, 0, 0, 0], "fraction-compose denominator");
+    assert_eq!(wide(64), [6, 0, 0, 0], "mul_div");
+    assert_eq!(wide(96), [6, 0, 0, 0], "geometric_mean");
+    assert_eq!(wide(128), [18, 0, 0, 0], "fraction_compose numerator");
+    assert_eq!(wide(160), [18, 0, 0, 0], "fraction_compose denominator");
     assert_eq!(&answer[192..196], &0u32.to_le_bytes(), "3/6 < 6/3");
-    assert_ne!(wide(224), [0; 4], "fixed-pow wrote something");
+    assert_ne!(wide(224), [0; 4], "fixed_pow wrote something");
     assert_eq!(&answer[256..260], &1u32.to_le_bytes(), "ready");
     assert_eq!(&answer[260..292], &[0xA5; 32], "the word");
     assert_eq!(&answer[292..300], &CLOCK_MS.to_le_bytes());
@@ -436,13 +436,13 @@ fn instances_file_into_an_interval_and_come_back_out() {
         kernel
             .calls
             .iter()
-            .any(|call| call == "mint-instances(0,[5, 7])")
+            .any(|call| call == "mint_instances(0,[5, 7])")
     );
     assert!(
         kernel
             .calls
             .iter()
-            .any(|call| call == "site-instance-put(1,0,2,[97, 98, 99])")
+            .any(|call| call == "site_instance_put(1,0,2,[97, 98, 99])")
     );
 }
 
@@ -454,13 +454,13 @@ fn an_import_outside_the_table_does_not_link() {
     let mut linker = Linker::<Invoking<Kernel>>::new(&engine);
     add_kernel_imports(&mut linker).expect("the imports register");
     let unknown = format!(
-        "(module\n{}  (import \"{STATE}\" \"site-forget\" (func))\n  (memory (export \"memory\") 1 1))",
+        "(module\n{}  (import \"{STATE}\" \"site_forget\" (func))\n  (memory (export \"memory\") 1 1))",
         every_import()
     );
     let module = Module::new(&engine, parse_str(unknown).expect("parses")).expect("compiles");
     assert!(linker.instantiate_pre(&module).is_err());
     let retyped = format!(
-        "(module\n  (import \"{STATE}\" \"site-get\" (func (param i32 i32) (result i64)))\n  \
+        "(module\n  (import \"{STATE}\" \"site_get\" (func (param i32 i32) (result i64)))\n  \
          (memory (export \"memory\") 1 1))"
     );
     let module = Module::new(&engine, parse_str(retyped).expect("parses")).expect("compiles");

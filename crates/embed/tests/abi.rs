@@ -46,22 +46,22 @@ impl Recorder {
 
 impl KernelHost for Recorder {
     fn site_len(&mut self, site: u32) -> Result<u32, AbortReason> {
-        self.op(format!("site-len({site})"), 4)
+        self.op(format!("site_len({site})"), 4)
     }
     fn site_declared(&mut self, site: u32, element: u32) -> Result<bool, AbortReason> {
-        self.op(format!("site-declared({site},{element})"), true)
+        self.op(format!("site_declared({site},{element})"), true)
     }
     fn site_get(&mut self, site: u32, element: u32) -> Result<Vec<u8>, AbortReason> {
-        self.op(format!("site-get({site},{element})"), b"cell".to_vec())
+        self.op(format!("site_get({site},{element})"), b"cell".to_vec())
     }
     fn site_set(&mut self, site: u32, element: u32, value: Vec<u8>) -> Result<(), AbortReason> {
-        self.op(format!("site-set({site},{element},{value:?})"), ())
+        self.op(format!("site_set({site},{element},{value:?})"), ())
     }
     fn site_clear(&mut self, site: u32, element: u32) -> Result<(), AbortReason> {
-        self.op(format!("site-clear({site},{element})"), ())
+        self.op(format!("site_clear({site},{element})"), ())
     }
     fn site_balance(&mut self, site: u32, element: u32) -> Result<u128, AbortReason> {
-        self.op(format!("site-balance({site},{element})"), AMOUNT)
+        self.op(format!("site_balance({site},{element})"), AMOUNT)
     }
     fn burn(&mut self, funds: u32) -> Result<(), AbortReason> {
         self.op(format!("burn({funds})"), ())
@@ -70,7 +70,7 @@ impl KernelHost for Recorder {
         self.op(format!("mint({grant},{amount:#x})"), 11)
     }
     fn mint_instances(&mut self, grant: u32, ids: &[u64]) -> Result<u32, AbortReason> {
-        self.op(format!("mint-instances({grant},{ids:?})"), 12)
+        self.op(format!("mint_instances({grant},{ids:?})"), 12)
     }
     fn site_instance_take(
         &mut self,
@@ -78,7 +78,7 @@ impl KernelHost for Recorder {
         element: u32,
         ids: &[u64],
     ) -> Result<u32, AbortReason> {
-        self.op(format!("site-instance-take({site},{element},{ids:?})"), 13)
+        self.op(format!("site_instance_take({site},{element},{ids:?})"), 13)
     }
     fn site_instance_put(
         &mut self,
@@ -88,33 +88,33 @@ impl KernelHost for Recorder {
         value: Vec<u8>,
     ) -> Result<(), AbortReason> {
         self.op(
-            format!("site-instance-put({site},{element},{funds},{value:?})"),
+            format!("site_instance_put({site},{element},{funds},{value:?})"),
             (),
         )
     }
     fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
-        self.op(format!("bucket-take({rep},{amount:#x})"), 14)
+        self.op(format!("bucket_take({rep},{amount:#x})"), 14)
     }
     fn bucket_split(&mut self, rep: u32, num: U256, den: U256) -> Result<u32, AbortReason> {
         self.op(
-            format!("bucket-split({rep},{:?},{:?})", num.limbs(), den.limbs()),
+            format!("bucket_split({rep},{:?},{:?})", num.limbs(), den.limbs()),
             15,
         )
     }
     fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), AbortReason> {
-        self.op(format!("bucket-put({rep},{other})"), ())
+        self.op(format!("bucket_put({rep},{other})"), ())
     }
     fn bucket_amount(&mut self, rep: u32) -> Result<u128, AbortReason> {
-        self.op(format!("bucket-amount({rep})"), AMOUNT)
+        self.op(format!("bucket_amount({rep})"), AMOUNT)
     }
     fn site_put(&mut self, site: u32, element: u32, funds: u32) -> Result<(), AbortReason> {
-        self.op(format!("site-put({site},{element},{funds})"), ())
+        self.op(format!("site_put({site},{element},{funds})"), ())
     }
     fn site_take(&mut self, site: u32, element: u32, amount: u128) -> Result<u32, AbortReason> {
-        self.op(format!("site-take({site},{element},{amount:#x})"), 16)
+        self.op(format!("site_take({site},{element},{amount:#x})"), 16)
     }
     fn site_reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
-        self.op(format!("site-reserve-take({site},{element})"), 17)
+        self.op(format!("site_reserve_take({site},{element})"), 17)
     }
     fn take_scan_debt(&mut self) -> usize {
         0
@@ -123,16 +123,16 @@ impl KernelHost for Recorder {
         Ok(0)
     }
     fn site_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
-        self.op(format!("site-count({site},{element})"), 3)
+        self.op(format!("site_count({site},{element})"), 3)
     }
     fn site_covered(&mut self, site: u32, element: u32) -> Result<bool, AbortReason> {
-        self.op(format!("site-covered({site},{element})"), false)
+        self.op(format!("site_covered({site},{element})"), false)
     }
     fn site_order(&mut self, site: u32, element: u32, index: u32) -> Result<u128, AbortReason> {
-        self.op(format!("site-order({site},{element},{index})"), AMOUNT)
+        self.op(format!("site_order({site},{element},{index})"), AMOUNT)
     }
     fn site_entry(&mut self, site: u32, element: u32, index: u32) -> Result<Vec<u8>, AbortReason> {
-        self.op(format!("site-entry({site},{element},{index})"), vec![])
+        self.op(format!("site_entry({site},{element},{index})"), vec![])
     }
     fn site_entry_set(
         &mut self,
@@ -142,7 +142,7 @@ impl KernelHost for Recorder {
         value: Vec<u8>,
     ) -> Result<(), AbortReason> {
         self.op(
-            format!("site-entry-set({site},{element},{index},{value:?})"),
+            format!("site_entry_set({site},{element},{index},{value:?})"),
             (),
         )
     }
@@ -154,24 +154,24 @@ impl KernelHost for Recorder {
         value: Vec<u8>,
     ) -> Result<(), AbortReason> {
         self.op(
-            format!("site-insert({site},{element},{order:#x},{value:?})"),
+            format!("site_insert({site},{element},{order:#x},{value:?})"),
             (),
         )
     }
     fn site_remove(&mut self, site: u32, element: u32, index: u32) -> Result<(), AbortReason> {
-        self.op(format!("site-remove({site},{element},{index})"), ())
+        self.op(format!("site_remove({site},{element},{index})"), ())
     }
     fn bucket_drop(&mut self, rep: u32) -> Result<(), AbortReason> {
-        self.op(format!("bucket-drop({rep})"), ())
+        self.op(format!("bucket_drop({rep})"), ())
     }
     fn clock_ms(&self) -> u64 {
         0xDEAD_BEEF_0000_0001
     }
     fn site_seal(&mut self, site: u32, element: u32) -> Result<(), AbortReason> {
-        self.op(format!("site-seal({site},{element})"), ())
+        self.op(format!("site_seal({site},{element})"), ())
     }
     fn site_open_seal(&mut self, site: u32, element: u32) -> Result<Drawn, AbortReason> {
-        self.op(format!("site-open-seal({site},{element})"), self.drawn)
+        self.op(format!("site_open_seal({site},{element})"), self.drawn)
     }
     fn hash(&self, data: &[u8]) -> [u8; 32] {
         self.calls.lock().unwrap().push(format!("hash({data:?})"));
@@ -183,7 +183,7 @@ impl KernelHost for Recorder {
 }
 
 /// The boundary over a recording host, unbounded fuel, and the registers
-/// `lower` built.
+/// `place` built.
 struct Port {
     host: Recorder,
     calls: Calls,
@@ -195,7 +195,7 @@ struct Port {
 impl Port {
     fn new(args: &[GuestArg<'_>]) -> (Self, Vec<CoreValue>) {
         let calls = Calls::default();
-        let (values, registers) = abi::lower(args).expect("bounded");
+        let (values, registers) = abi::place(args).expect("bounded");
         let port = Self {
             host: Recorder {
                 calls: Arc::clone(&calls),
@@ -277,7 +277,7 @@ const fn address() -> Address {
 /// Scalars flatten in place; every register argument flattens to its
 /// byte length and fills the register at its own position.
 #[test]
-fn lower_flattens_scalars_and_fills_registers_by_position() {
+fn place_flattens_scalars_and_fills_registers_by_position() {
     let args = [
         GuestArg::Site { site: 3 },
         GuestArg::Bool(true),
@@ -398,7 +398,7 @@ fn a_variable_length_result_waits_in_the_answer_register() {
     abi::take(&mut port, 10).expect("the register");
     assert_eq!(&port.mem[10..14], b"cell");
     assert_eq!(abi::take(&mut port, 10), Err(VIOLATION));
-    assert_eq!(port.calls(), ["site-get(1,2)"]);
+    assert_eq!(port.calls(), ["site_get(1,2)"]);
 }
 
 /// Zero bytes fill the register the same as any other length.
@@ -482,13 +482,13 @@ fn an_amount_is_sixteen_bytes_low_then_high() {
     assert_eq!(
         port.calls(),
         [
-            format!("site-take(1,2,{amount})"),
-            format!("bucket-take(5,{amount})"),
+            format!("site_take(1,2,{amount})"),
+            format!("bucket_take(5,{amount})"),
             format!("mint(0,{amount})"),
-            format!("site-insert(1,2,{amount},[100, 97, 116, 97])"),
-            "site-balance(1,2)".to_owned(),
-            "bucket-amount(5)".to_owned(),
-            "site-order(1,2,0)".to_owned(),
+            format!("site_insert(1,2,{amount},[100, 97, 116, 97])"),
+            "site_balance(1,2)".to_owned(),
+            "bucket_amount(5)".to_owned(),
+            "site_order(1,2,0)".to_owned(),
         ]
     );
 }
@@ -503,10 +503,10 @@ fn a_wide_is_four_limbs_and_the_enums_are_their_codes() {
     port.mem[64..96].copy_from_slice(&limb_bytes(U256::from_u128(3)));
 
     assert_eq!(abi::bucket_split(&mut port, 5, 0, 32), Ok(15));
-    assert_eq!(port.calls(), ["bucket-split(5,[1, 2, 3, 4],[6, 0, 0, 0])"]);
+    assert_eq!(port.calls(), ["bucket_split(5,[1, 2, 3, 4],[6, 0, 0, 0])"]);
 
     // 6 * 3 / 3 = 6, held whole.
-    abi::mul_div(&mut port, 32, 64, 64, ROUNDING_DOWN, 128).expect("mul-div");
+    abi::mul_div(&mut port, 32, 64, 64, ROUNDING_DOWN, 128).expect("mul_div");
     assert_eq!(&port.mem[128..160], &limb_bytes(U256::from_u128(6)));
     abi::mul_div(&mut port, 32, 64, 64, ROUNDING_UP, 128).expect("up");
     assert_eq!(
@@ -571,8 +571,8 @@ fn ids_cross_as_counted_little_endian_words() {
     assert_eq!(
         port.calls(),
         [
-            "mint-instances(0,[5, 18446744073709551615])",
-            "site-instance-take(1,2,[5])"
+            "mint_instances(0,[5, 18446744073709551615])",
+            "site_instance_take(1,2,[5])"
         ]
     );
 }
@@ -605,13 +605,13 @@ fn byte_arguments_reach_the_host_as_written() {
     assert_eq!(
         port.calls(),
         [
-            "site-set(1,2,[97, 98])",
-            "site-entry-set(1,2,3,[98])",
-            "site-instance-put(1,2,9,[])",
+            "site_set(1,2,[97, 98])",
+            "site_entry_set(1,2,3,[98])",
+            "site_instance_put(1,2,9,[])",
             "emit(4,[97, 98])",
-            "site-declared(1,2)",
-            "site-covered(1,2)",
-            "bucket-drop(8)",
+            "site_declared(1,2)",
+            "site_covered(1,2)",
+            "bucket_drop(8)",
         ]
     );
 }

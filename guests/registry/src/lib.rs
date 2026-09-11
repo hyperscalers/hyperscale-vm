@@ -6,22 +6,22 @@
 //! at the kernel's own types, the byte registers collected by hand, and
 //! the reply made where the export ends.
 
-#[link(wasm_import_module = "hyperscale:kernel/abi")]
+#[link(wasm_import_module = "kernel/abi")]
 unsafe extern "C" {
     fn arg(index: u32, ptr: u32);
     fn take(ptr: u32);
     fn reply(ptr: u32, count: u32);
 }
 
-#[link(wasm_import_module = "hyperscale:kernel/state")]
+#[link(wasm_import_module = "kernel/state")]
 unsafe extern "C" {
-    #[link_name = "site-count"]
+    #[link_name = "site_count"]
     fn site_count(site: u32, element: u32) -> u32;
-    #[link_name = "site-entry"]
+    #[link_name = "site_entry"]
     fn site_entry(site: u32, element: u32, index: u32) -> u32;
-    #[link_name = "site-insert"]
+    #[link_name = "site_insert"]
     fn site_insert(site: u32, element: u32, order: u32, ptr: u32, len: u32);
-    #[link_name = "site-remove"]
+    #[link_name = "site_remove"]
     fn site_remove(site: u32, element: u32, index: u32);
 }
 

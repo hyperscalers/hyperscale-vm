@@ -1,6 +1,6 @@
 //! What a generated `client` wrapper is written against.
 //!
-//! `#[blueprint]` emits a `client` module beside the component and the
+//! `#[blueprint]` emits a `client` module beside the exports and the
 //! dispatch, and those wrappers name a builder, a proof, the argument
 //! traits and — for a package whose instances are created — a handle
 //! over the address one sits at. A guest crate depends on this crate and

@@ -86,7 +86,7 @@ pub enum CallArg {
         /// Which of the producer's outputs the edge carries.
         output: u32,
     },
-    /// A clause's own guard verdict, as the export's `bool`.
+    /// A clause's own guard verdict, as the `i32` flag the export takes.
     Bool(bool),
     /// A 64-bit scalar the signature derived from the node's inputs.
     U64(u64),
@@ -158,7 +158,7 @@ pub struct NodeCall {
     /// stamped with.
     pub target: Address,
     /// The guest export to invoke. A method's name is its export name —
-    /// a publish refuses metadata naming a method the component does not
+    /// a publish refuses metadata naming a method the module does not
     /// export under exactly that name.
     pub export: String,
     /// One entry per exported parameter, in the export's own order.

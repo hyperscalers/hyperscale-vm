@@ -9,8 +9,8 @@ pub enum GuestArg<'a> {
     ///
     /// A plain access is a site of one element and a `for-each` site is
     /// as wide as its loop mapped over, so nothing about a handle
-    /// parameter differs between them — which is what leaves the world
-    /// one resource to lend and one rep space to lend it from.
+    /// parameter differs between them — which is what leaves the kernel
+    /// one handle kind to lend and one rep space to lend it from.
     Site {
         /// The position the session assigned in its site table.
         site: u32,
@@ -19,11 +19,11 @@ pub enum GuestArg<'a> {
     Bool(bool),
     /// A 64-bit scalar.
     U64(u64),
-    /// An address, as the world's own record.
+    /// An address: thirty-two bytes through an input register.
     Address(Address),
-    /// A `list<u8>` argument.
+    /// A byte string, through an input register.
     Bytes(&'a [u8]),
-    /// A `list<u64>` of non-fungible instance ids.
+    /// Non-fungible instance ids, through an input register.
     ///
     /// Its own kind rather than the bytes a framing would make of it:
     /// what an id set is crosses as what it is, and the encoding stays

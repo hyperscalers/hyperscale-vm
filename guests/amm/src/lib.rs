@@ -1,8 +1,7 @@
 //! The constant-product pool, as one module.
 //!
-//! Nothing here is written twice: the declaration routing reads, the WIT
-//! world, the ABI binding and the executing component all come out of the
-//! bodies below.
+//! Nothing here is written twice: the declaration routing reads, the ABI
+//! binding and the executing module all come out of the bodies below.
 //!
 //! The curve is written the way it denominates. `y * dx` is a product of
 //! Y-units and X-units, which measures nothing and overflows for any pool

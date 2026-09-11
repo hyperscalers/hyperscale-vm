@@ -1,7 +1,7 @@
 //! The trace-subset oracle, fuzzed.
 //!
 //! Arbitrary cell contents, reservation amounts, range bounds, book
-//! entries, and call sequences drive the kernel-world guest through one
+//! entries, and call sequences drive the kernel guest through one
 //! session per runtime. The seeded lanes fix these axes and call one
 //! export per session; this lane composes them. Both lanes must agree on
 //! every outcome, the access log, and the fuel, and `finish` must find

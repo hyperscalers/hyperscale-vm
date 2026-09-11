@@ -57,7 +57,7 @@ fn a_conforming_module_is_admitted_and_its_exports_read() {
     assert_eq!(exports.len(), 3, "the memory is not an export shape");
 }
 
-/// An import the kernel does not define is outside the world, whatever
+/// An import the kernel does not define is outside the kernel table, whatever
 /// its module; one the kernel defines at another type is refused by
 /// name.
 #[test]
@@ -70,25 +70,25 @@ fn imports_are_held_to_the_kernel_table() {
     ));
 
     let unknown_name = format!(
-        "(module\n  (import \"{STATE}\" \"site-forget\" (func (param i32)))\n  \
+        "(module\n  (import \"{STATE}\" \"site_forget\" (func (param i32)))\n  \
          (memory (export \"memory\") 1 1))"
     );
     assert!(matches!(
         refused(&unknown_name),
-        ProfileError::ForbiddenImport(name) if name == format!("{STATE}/site-forget")
+        ProfileError::ForbiddenImport(name) if name == format!("{STATE}/site_forget")
     ));
 
     let retyped = format!(
-        "(module\n  (import \"{STATE}\" \"site-get\" (func (param i32 i32) (result i64)))\n  \
+        "(module\n  (import \"{STATE}\" \"site_get\" (func (param i32 i32) (result i64)))\n  \
          (memory (export \"memory\") 1 1))"
     );
-    assert!(boundary(&retyped).contains("site-get"));
+    assert!(boundary(&retyped).contains("site_get"));
 
     let extra_param = format!(
-        "(module\n  (import \"{STATE}\" \"site-len\" (func (param i32 i32) (result i32)))\n  \
+        "(module\n  (import \"{STATE}\" \"site_len\" (func (param i32 i32) (result i32)))\n  \
          (memory (export \"memory\") 1 1))"
     );
-    assert!(boundary(&extra_param).contains("site-len"));
+    assert!(boundary(&extra_param).contains("site_len"));
 
     let not_a_function = format!(
         "(module\n  (import \"{STATE}\" \"table\" (table 1 1 funcref))\n  \
@@ -98,7 +98,7 @@ fn imports_are_held_to_the_kernel_table() {
 
     let one_import = format!(
         "(module\n{}  (memory (export \"memory\") 1 1))",
-        import_wat(STATE, "site-len", &[CoreType::I32], &[CoreType::I32])
+        import_wat(STATE, "site_len", &[CoreType::I32], &[CoreType::I32])
     );
     validate_module(&parse_str(one_import).expect("parses")).expect("a subset is admitted");
 }

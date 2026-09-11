@@ -106,14 +106,6 @@ impl fmt::Debug for LocalKey {
     }
 }
 
-/// The world's `address` record field names, in byte order.
-///
-/// The four 64-bit little-endian words a 32-byte address flattens to at
-/// the call boundary. One definition, consumed by the WIT generator that
-/// declares the record and by every lowering that writes one, so a
-/// rename cannot leave the two disagreeing at run time.
-pub const ADDRESS_WORDS: [&str; 4] = ["a", "b", "c", "d"];
-
 /// A full JMT leaf key: owner prefix followed by the local half.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 pub struct SubstateKey {

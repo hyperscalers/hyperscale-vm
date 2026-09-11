@@ -306,7 +306,7 @@ pub enum DeclarationError {
         /// The slot named.
         slot: u16,
     },
-    /// A mode and target pairing the world hands out no handle for.
+    /// A mode and target pairing the kernel hands out no handle for.
     ///
     /// Every declared access is a capability a body borrows, and which
     /// one is a function of the target's shape and the mode: a leaf is
@@ -759,7 +759,7 @@ fn judge_outputs(outputs: &[Expr]) -> Result<(), DeclarationError> {
 }
 
 /// Judge one access clause: whose prefix it names, which cell under that
-/// prefix, whether the world hands out a handle for reaching it that way,
+/// prefix, whether the kernel hands out a handle for reaching it that way,
 /// what that cell holds, and what it requires of the leaf.
 ///
 /// Ordered as an author would want to hear it. A clause reaching a
@@ -823,7 +823,7 @@ fn judge_access(clause: u32, access: &Clause, flat: &[&Clause]) -> Result<(), De
         _ => None,
     });
     protocol_shape(clause, target, mode, denomination, requires)?;
-    // And whether the world hands out anything for this pairing at all.
+    // And whether the kernel hands out anything for this pairing at all.
     // Asked of the clause through the same function routing asks, so
     // publish refuses exactly what materialization could not have built.
     if !supports(access) {
@@ -2161,7 +2161,7 @@ mod tests {
     /// A declaration states an access some execution can hold, or it does
     /// not publish.
     ///
-    /// The world hands out one handle per declared access and reads its
+    /// The kernel hands out one handle per declared access and reads its
     /// type off the target's shape and the mode. A pairing it has no
     /// handle for is a clause every call aborts at — and the gate that
     /// exists to answer an author is the place to say so, rather than

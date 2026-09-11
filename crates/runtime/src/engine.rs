@@ -6,8 +6,9 @@
 //! by the meter's pass, so what a receipt reports is a fact about the
 //! bytes and never about the version of the engine that ran them. The
 //! profile's disabled proposals are disabled here as defense in depth
-//! behind the deploy validator, and NaN canonicalization is enabled even
-//! though the profile bans floats.
+//! behind the deploy validator — garbage collection and exceptions are
+//! not compiled into the engine at all — and NaN canonicalization is
+//! enabled even though the profile bans floats.
 
 use wasmtime::{Config, Engine, Result, Strategy};
 
@@ -27,8 +28,6 @@ pub fn blessed_config() -> Config {
     config.wasm_threads(false);
     config.wasm_tail_call(false);
     config.wasm_memory64(false);
-    config.wasm_gc(false);
-    config.wasm_exceptions(false);
     config.wasm_extended_const(false);
     config.wasm_multi_memory(false);
     config.wasm_stack_switching(false);

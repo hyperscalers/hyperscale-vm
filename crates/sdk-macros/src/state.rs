@@ -478,7 +478,7 @@ pub fn parse_state(
 /// `#[state]` states the slots a package's keys sit under, and a package
 /// with no state of its own has none to state — so the attribute is
 /// optional and the macro writes the struct its module name implies. A
-/// stated one is held to that name: the world a package publishes under
+/// stated one is held to that name: the name a package publishes under
 /// is the module's, so a struct named anything else is one thing an
 /// author holds under two names with nothing keeping them in step.
 pub fn state_struct(items: &mut Vec<syn::Item>, module: &syn::Ident) -> syn::Result<syn::Ident> {

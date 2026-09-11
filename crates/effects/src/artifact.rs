@@ -1,6 +1,6 @@
 //! The metadata section of a publishable artifact.
 //!
-//! Effect metadata rides the component as a wasm custom section, so the
+//! Effect metadata rides the module as a wasm custom section, so the
 //! code and the signatures it declares are one content-addressed artifact
 //! and cannot drift apart. This module owns the section's name, its
 //! payload codec — canonical HBOR of [`PackageMetadata`], decoded at the
@@ -27,7 +27,7 @@ const DOMAIN_DECLARATION: &[u8] = b"hyperscale-vm/declaration";
 /// The section id wasm reserves for custom sections.
 const CUSTOM_SECTION_ID: u8 = 0;
 
-/// The magic and version word every module and component opens with.
+/// The magic and version word every module opens with.
 const WASM_MAGIC: [u8; 4] = *b"\0asm";
 const PREAMBLE_LEN: usize = 8;
 
@@ -128,7 +128,7 @@ pub fn decode_metadata(bytes: &[u8]) -> Result<PackageMetadata, ArtifactError> {
     Ok(metadata)
 }
 
-/// Attach `metadata` to a component artifact as its metadata section.
+/// Attach `metadata` to a module as its metadata section.
 ///
 /// The result is the publishable artifact: same code, one section longer,
 /// and a different content address.
@@ -160,7 +160,7 @@ pub fn attach_metadata(
     Ok(out)
 }
 
-/// The effect metadata a component artifact declares, if it declares any.
+/// The effect metadata a module declares, if it declares any.
 ///
 /// # Errors
 ///

@@ -10,7 +10,7 @@
 //! are invisible to the first, charged whether the call then succeeds or
 //! refuses, because the page was read either way.
 //!
-//! The functions here are that supplement: one per world function, each
+//! The functions here are that supplement: one per kernel import, each
 //! owning its prices *and* the order they interleave with the host
 //! operation, over two capabilities an engine adapts to — [`FuelSink`],
 //! the budget, and [`HostAccess`], the kernel behind the call. Shared
@@ -36,9 +36,9 @@ pub const FUEL_PER_BOUNDARY_BYTE: u64 = 1;
 
 /// What an amount costs at the boundary.
 ///
-/// The width it has, not the width it travels in: a flat record copies
-/// nothing through linear memory, and pricing it at zero would make a
-/// movement's fee turn on the encoding rather than on the value crossing.
+/// The width it has, whatever it travels in: pricing it by its encoding
+/// would make a movement's fee turn on the encoding rather than on the
+/// value crossing.
 pub const AMOUNT_BOUNDARY_BYTES: usize = 16;
 
 /// What a wide word costs at the boundary: the width it has.
@@ -124,7 +124,7 @@ fn charge_scan<P: HostAccess + FuelSink>(port: &mut P) -> Result<(), MeterError>
     charge(port, lifted)
 }
 
-/// `state.site-len`.
+/// `state.site_len`.
 ///
 /// Nothing crosses the boundary but the count itself, which every host
 /// call already carries the cost of.
@@ -132,7 +132,7 @@ pub fn site_len<P: HostAccess + FuelSink>(port: &mut P, site: u32) -> Result<u32
     refused(port.host().site_len(site))
 }
 
-/// `state.site-declared`.
+/// `state.site_declared`.
 pub fn site_declared<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -141,7 +141,7 @@ pub fn site_declared<P: HostAccess + FuelSink>(
     refused(port.host().site_declared(site, element))
 }
 
-/// `state.site-get`.
+/// `state.site_get`.
 pub fn site_get<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -152,7 +152,7 @@ pub fn site_get<P: HostAccess + FuelSink>(
     Ok(value)
 }
 
-/// `state.site-set`.
+/// `state.site_set`.
 pub fn site_set<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -163,7 +163,7 @@ pub fn site_set<P: HostAccess + FuelSink>(
     refused(port.host().site_set(site, element, value))
 }
 
-/// `state.site-clear`. Nothing crosses the boundary, so nothing is
+/// `state.site_clear`. Nothing crosses the boundary, so nothing is
 /// charged for crossing it — the leaf's removal is the store's work,
 /// which the write capability was already provisioned for.
 pub fn site_clear<P: HostAccess + FuelSink>(
@@ -186,7 +186,7 @@ pub fn mint<P: HostAccess + FuelSink>(
     refused(port.host().mint(grant, amount))
 }
 
-/// `state.site-balance`: one figure, whichever of the two value modes
+/// `state.site_balance`: one figure, whichever of the two value modes
 /// that answer it is held.
 pub fn site_balance<P: HostAccess + FuelSink>(
     port: &mut P,
@@ -203,7 +203,7 @@ pub fn burn<P: HostAccess + FuelSink>(port: &mut P, funds: u32) -> Result<(), Me
     refused(port.host().burn(funds))
 }
 
-/// `state.mint-instances`.
+/// `state.mint_instances`.
 pub fn mint_instances<P: HostAccess + FuelSink>(
     port: &mut P,
     grant: u32,
@@ -213,7 +213,7 @@ pub fn mint_instances<P: HostAccess + FuelSink>(
     refused(port.host().mint_instances(grant, ids))
 }
 
-/// `state.site-instance-take`.
+/// `state.site_instance_take`.
 pub fn site_instance_take<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -227,7 +227,7 @@ pub fn site_instance_take<P: HostAccess + FuelSink>(
     refused(taken)
 }
 
-/// `state.site-instance-put`. Asks the store what each order already holds
+/// `state.site_instance_put`. Asks the store what each order already holds
 /// before filing it, so it pays for the seeks like a take does.
 pub fn site_instance_put<P: HostAccess + FuelSink>(
     port: &mut P,
@@ -243,7 +243,7 @@ pub fn site_instance_put<P: HostAccess + FuelSink>(
     refused(filed)
 }
 
-/// `state.bucket-take`.
+/// `state.bucket_take`.
 pub fn bucket_take<P: HostAccess + FuelSink>(
     port: &mut P,
     bucket: u32,
@@ -253,7 +253,7 @@ pub fn bucket_take<P: HostAccess + FuelSink>(
     refused(port.host().bucket_take(bucket, amount))
 }
 
-/// `state.bucket-split`.
+/// `state.bucket_split`.
 pub fn bucket_split<P: HostAccess + FuelSink>(
     port: &mut P,
     bucket: u32,
@@ -264,7 +264,7 @@ pub fn bucket_split<P: HostAccess + FuelSink>(
     refused(port.host().bucket_split(bucket, num, den))
 }
 
-/// `state.bucket-put`.
+/// `state.bucket_put`.
 pub fn bucket_put<P: HostAccess + FuelSink>(
     port: &mut P,
     bucket: u32,
@@ -273,7 +273,7 @@ pub fn bucket_put<P: HostAccess + FuelSink>(
     refused(port.host().bucket_put(bucket, other))
 }
 
-/// `state.bucket-amount`.
+/// `state.bucket_amount`.
 pub fn bucket_amount<P: HostAccess + FuelSink>(
     port: &mut P,
     bucket: u32,
@@ -283,13 +283,13 @@ pub fn bucket_amount<P: HostAccess + FuelSink>(
     Ok(amount)
 }
 
-/// `state.bucket-drop`. Nothing crosses: the kernel decides what a
+/// `state.bucket_drop`. Nothing crosses: the kernel decides what a
 /// dropped handle means on its own account.
 pub fn bucket_drop<P: HostAccess + FuelSink>(port: &mut P, bucket: u32) -> Result<(), MeterError> {
     refused(port.host().bucket_drop(bucket))
 }
 
-/// `state.site-put`.
+/// `state.site_put`.
 pub fn site_put<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -299,7 +299,7 @@ pub fn site_put<P: HostAccess + FuelSink>(
     refused(port.host().site_put(site, element, funds))
 }
 
-/// `state.site-take`.
+/// `state.site_take`.
 pub fn site_take<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -310,7 +310,7 @@ pub fn site_take<P: HostAccess + FuelSink>(
     refused(port.host().site_take(site, element, amount))
 }
 
-/// `state.site-reserve-take`.
+/// `state.site_reserve_take`.
 pub fn site_reserve_take<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -319,7 +319,7 @@ pub fn site_reserve_take<P: HostAccess + FuelSink>(
     refused(port.host().site_reserve_take(site, element))
 }
 
-/// `state.site-count`.
+/// `state.site_count`.
 pub fn site_count<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -331,7 +331,7 @@ pub fn site_count<P: HostAccess + FuelSink>(
     refused(count)
 }
 
-/// `state.site-covered`.
+/// `state.site_covered`.
 pub fn site_covered<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -343,7 +343,7 @@ pub fn site_covered<P: HostAccess + FuelSink>(
     refused(covered)
 }
 
-/// `state.site-order`.
+/// `state.site_order`.
 pub fn site_order<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -358,7 +358,7 @@ pub fn site_order<P: HostAccess + FuelSink>(
     Ok(order)
 }
 
-/// `state.site-entry`.
+/// `state.site_entry`.
 pub fn site_entry<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -373,7 +373,7 @@ pub fn site_entry<P: HostAccess + FuelSink>(
     Ok(value)
 }
 
-/// `state.site-entry-set`.
+/// `state.site_entry_set`.
 pub fn site_entry_set<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -388,7 +388,7 @@ pub fn site_entry_set<P: HostAccess + FuelSink>(
     refused(set)
 }
 
-/// `state.site-insert`.
+/// `state.site_insert`.
 pub fn site_insert<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -403,7 +403,7 @@ pub fn site_insert<P: HostAccess + FuelSink>(
     refused(inserted)
 }
 
-/// `state.site-remove`.
+/// `state.site_remove`.
 pub fn site_remove<P: HostAccess + FuelSink>(
     port: &mut P,
     site: u32,
@@ -416,7 +416,7 @@ pub fn site_remove<P: HostAccess + FuelSink>(
     refused(removed)
 }
 
-/// `math.mul-div`. The math functions reach no state, so they draw on the
+/// `math.mul_div`. The math functions reach no state, so they draw on the
 /// budget alone: the shared implementation answers, the meter prices the
 /// operands and the result at the width they have.
 pub fn mul_div(
@@ -430,13 +430,13 @@ pub fn mul_div(
     math::mul_div(a, b, c, rounding).map_err(|error| MeterError::Refused(error.into()))
 }
 
-/// `math.geometric-mean`.
+/// `math.geometric_mean`.
 pub fn geometric_mean(sink: &mut impl FuelSink, a: U256, b: U256) -> Result<U256, MeterError> {
     charge(sink, WIDE_BOUNDARY_BYTES * 3)?;
     Ok(math::geometric_mean(a, b))
 }
 
-/// `math.fraction-compose`.
+/// `math.fraction_compose`.
 pub fn fraction_compose(
     sink: &mut impl FuelSink,
     an: U256,
@@ -448,7 +448,7 @@ pub fn fraction_compose(
     math::fraction_compose(an, ad, bn, bd).map_err(|error| MeterError::Refused(error.into()))
 }
 
-/// `math.fraction-cmp`.
+/// `math.fraction_cmp`.
 pub fn fraction_cmp(
     sink: &mut impl FuelSink,
     an: U256,
@@ -460,7 +460,7 @@ pub fn fraction_cmp(
     math::fraction_cmp(an, ad, bn, bd).map_err(|error| MeterError::Refused(error.into()))
 }
 
-/// `math.fixed-pow`.
+/// `math.fixed_pow`.
 pub fn fixed_pow(
     sink: &mut impl FuelSink,
     base: U256,
@@ -471,7 +471,7 @@ pub fn fixed_pow(
     math::fixed_pow(base, exp, rounding).map_err(|error| MeterError::Refused(error.into()))
 }
 
-/// `state.site-seal`.
+/// `state.site_seal`.
 ///
 /// Priced as the epoch it stores, on the same terms as the set it is:
 /// the leaf is eight bytes whatever epoch it names.
@@ -488,7 +488,7 @@ pub fn site_seal<P: HostAccess + FuelSink>(
     charge(port, size_of::<u64>())
 }
 
-/// `state.site-open-seal`.
+/// `state.site_open_seal`.
 ///
 /// Priced as the word it answers: the resolve is a lookup and a digest
 /// over a fixed preimage, so what crosses the boundary is the whole of

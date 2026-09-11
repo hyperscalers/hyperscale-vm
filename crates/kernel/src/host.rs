@@ -8,7 +8,7 @@
 //!
 //! Written against the session itself rather than a wrapper, so an
 //! embedder hands its store the session and takes the same value back.
-//! Each method here is named for the world function an engine reached it
+//! Each method here is named for the kernel import an engine reached it
 //! through, and each body calls the session operation that answers it —
 //! which is what makes the two vocabularies meet in exactly one file.
 
@@ -21,7 +21,7 @@ use crate::session::{KernelSession, SessionTrap};
 /// A session refusal, narrowed to the class the boundary transports.
 ///
 /// Typed to [`SessionTrap`] rather than to anything an [`AbortReason`]
-/// converts from. Where a world function and the session operation behind
+/// converts from. Where a kernel import and the session operation behind
 /// it share a name, a body that resolved to the trait method instead
 /// would recur forever — and would type-check, because a class converts
 /// from itself. Spelling the conversion here leaves only the session's

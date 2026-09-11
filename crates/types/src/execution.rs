@@ -162,10 +162,11 @@ pub enum AbortReason {
     /// free-form one.
     #[hbor(discriminant = 9)]
     TrapOutsideProfile,
-    /// A canonical-ABI violation: an unknown or wrongly typed handle,
-    /// borrows still live at return, a call that would re-enter.
+    /// A boundary violation: an argument outside linear memory, a register
+    /// misused, an import the kernel does not define, a call at the wrong
+    /// arity or type, a module exporting no memory.
     ///
-    /// One variant rather than four because the blessed engine surfaces
+    /// One variant rather than several because the blessed engine surfaces
     /// most of these as an error that does not resolve to a trap kind. A
     /// finer vocabulary would be one the two runtimes could not populate
     /// identically, which is the divergence this type exists to exclude.
@@ -308,7 +309,7 @@ pub enum AbortReason {
     /// through and the handle bytes are written to, over one leaf.
     #[hbor(discriminant = 45)]
     MixedContents,
-    /// A declared mode and target combination the world cannot hand out.
+    /// A declared mode and target combination the kernel cannot hand out.
     #[hbor(discriminant = 46)]
     EffectUnsupported,
     /// One transaction declaring an exclusive and a commutative mode on
@@ -331,14 +332,14 @@ pub enum AbortReason {
     /// An authority gate whose declared cell could not be read.
     #[hbor(discriminant = 54)]
     AuthorityCellUnreadable,
-    /// An export whose returned blob does not split into the edges its
-    /// signature declared.
+    /// An export whose reply does not match the edges its signature
+    /// declared.
     #[hbor(discriminant = 55)]
     BadReturnShape,
-    /// A component that exports no function of the invoked name.
+    /// A module that exports no function of the invoked name.
     #[hbor(discriminant = 56)]
     ExportMissing,
-    /// The component would not instantiate.
+    /// The module would not instantiate.
     #[hbor(discriminant = 57)]
     InstantiationFailed,
     /// No compiled code for the called package.

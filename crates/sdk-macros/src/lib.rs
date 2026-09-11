@@ -3,7 +3,7 @@
 //! Applied to a module, so the macro sees the component's state, its
 //! configuration, and every method together — which is what lets a body
 //! written as ordinary Rust yield the access declaration routing needs
-//! *and* the component that executes it, without the author writing
+//! *and* the module that executes it, without the author writing
 //! either.
 //!
 //! ```ignore
@@ -185,7 +185,7 @@
 //! emission cannot write — a `for-each`, whose handle count depends on
 //! configuration, or an unordered entry, which sits at a hash the kernel
 //! derives — is a compile error on the guest build alone. The declaration
-//! still stands, and the package's component is then written the long way:
+//! still stands, and the package's module is then written the long way:
 //! the publish gate judges artifacts, never authorship.
 //!
 //! # Order is wire-visible, and why that is safe
@@ -255,7 +255,7 @@ use crate::role::Role;
 use crate::state::{accessors, distinct_band, parse_state, state_struct, state_table};
 
 /// Derive a contract's package from its module: the declaration routing
-/// reads, and the component that executes it.
+/// reads, and the module that executes it.
 ///
 /// See the crate docs for the shape and for what the lowering refuses.
 ///
@@ -1114,7 +1114,7 @@ fn decline_impls(items: &[syn::Item]) -> TokenStream2 {
                 }
             }
             // Off the artifact: a name is for whoever reads a receipt,
-            // and the component crosses the boundary with the code alone.
+            // and the module crosses the boundary with the code alone.
             #[automatically_derived]
             #[cfg(not(target_arch = "wasm32"))]
             impl ::hyperscale_vm_sdk::DeclinesAs for #name {
@@ -2175,9 +2175,9 @@ fn module_allows(attrs: &mut Vec<syn::Attribute>, role: Role) {
     }
 }
 
-/// The component this package publishes, and its native dispatch.
+/// The exports this package publishes, and its native dispatch.
 ///
-/// A reader builds no component: the declaration and the calling surface
+/// A reader builds no exports: the declaration and the calling surface
 /// the same text yields are what it came for, and it runs the bodies
 /// through the dispatch rather than through wasm.
 fn executing(methods: &[Lowered], role: Role) -> (TokenStream2, TokenStream2) {
@@ -2400,7 +2400,7 @@ fn expand(
     let state_table = state_table(&fields, &config_fields);
     let config_table = config_fields.iter().map(|(name, _)| quote!(.config(#name)));
 
-    let (component, dispatch) = executing(&methods, role);
+    let (exports, dispatch) = executing(&methods, role);
 
     // Before the markers are stripped: `encode_declared` reads them, and
     // what it pushes has to survive the strip that follows.
@@ -2446,7 +2446,7 @@ fn expand(
         Some(serves),
     )));
     items.push(syn::Item::Verbatim(declines_impls));
-    items.push(syn::Item::Verbatim(component));
+    items.push(syn::Item::Verbatim(exports));
     items.push(syn::Item::Verbatim(dispatch));
     items.push(syn::Item::Verbatim(quote!(#reading #client)));
 

@@ -210,9 +210,9 @@ fn account_guest(foreign: Option<u32>) -> Vec<u8> {
     let text = format!(
         r#"
 (module
-  (import "{STATE}" "site-get" (func $site_get (param i32 i32) (result i32)))
-  (import "{STATE}" "site-reserve-take" (func $reserve_take (param i32 i32) (result i32)))
-  (import "{STATE}" "site-put" (func $site_put (param i32 i32 i32)))
+  (import "{STATE}" "site_get" (func $site_get (param i32 i32) (result i32)))
+  (import "{STATE}" "site_reserve_take" (func $reserve_take (param i32 i32) (result i32)))
+  (import "{STATE}" "site_put" (func $site_put (param i32 i32 i32)))
   (import "{ABI}" "take" (func $take (param i32)))
   (import "{ABI}" "reply" (func $reply (param i32 i32)))
   (import "{EVENTS}" "emit" (func $emit (param i32 i32 i32)))

@@ -2,7 +2,7 @@
 //!
 //! A package's text yields two readings: the declaration routing consumes
 //! and the calls a client composes, which any consumer may need, and the
-//! component the package publishes, which only the crate that publishes
+//! module the package publishes, which only the crate that publishes
 //! it can build. Both come out of one walk — that is what keeps them
 //! agreeing — but a crate that publishes nothing has no use for the
 //! second and no kernel to bind it against.
@@ -20,11 +20,11 @@ use quote::quote;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     /// A crate that reads packages. The declaration and the call surface
-    /// stand on every target, and no component is emitted.
+    /// stand on every target, and no module is emitted.
     Reader,
     /// A crate that publishes this package. Both halves are emitted, and
     /// the target picks between them: the artifact build gets the
-    /// component, and every other build of the same crate — its tests
+    /// module, and every other build of the same crate — its tests
     /// above all — reads the declaration like any other consumer.
     Publisher,
 }

@@ -33,7 +33,7 @@ members = [
 
 [workspace.dependencies]
 # The contract SDK. `#[blueprint]` is what authors this package: the
-# declaration on a host build, the component on a guest one.
+# declaration on a host build, the module on a guest one.
 hyperscale-vm-sdk = { path = "../crates/sdk", features = ["guest"] }
 # The author's chain: publish, seed, call, assert.
 hyperscale-vm-testing = { path = "../crates/testing" }

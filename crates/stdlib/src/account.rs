@@ -1,7 +1,7 @@
 //! The fungible account: the package every principal answers.
 //!
 //! The declaration is the package's own: `metadata()` traces the module
-//! the component is built from, so the signatures a caller routes on,
+//! the artifact is built from, so the signatures a caller routes on,
 //! the code that executes them and the wrappers a client calls them
 //! through are all read off one text.
 //!

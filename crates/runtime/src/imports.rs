@@ -54,7 +54,7 @@ impl<H> Invoking<H> {
         self.host
     }
 
-    /// Begins one call: its registers, as [`abi::lower`] built them,
+    /// Begins one call: its registers, as [`abi::place`] built them,
     /// and the instance's memory and counter.
     pub(crate) fn begin(&mut self, registers: Registers, memory: Memory, counter: Global) {
         self.registers = registers;
@@ -180,151 +180,151 @@ pub fn add_kernel_imports<H: KernelHost + 'static>(linker: &mut Linker<Invoking<
     import!(linker, ABI, "reply", reply(ptr: u32, count: u32));
     import!(linker, ABI, "answer", answer(ptr: u32, len: u32));
 
-    import!(linker, STATE, "site-len", site_len(site: u32) -> u32);
+    import!(linker, STATE, "site_len", site_len(site: u32) -> u32);
     import!(
         linker,
         STATE,
-        "site-declared",
+        "site_declared",
         site_declared(site: u32, element: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "site-get",
+        "site_get",
         site_get(site: u32, element: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "site-set",
+        "site_set",
         site_set(site: u32, element: u32, ptr: u32, len: u32)
     );
     import!(
         linker,
         STATE,
-        "site-seal",
+        "site_seal",
         site_seal(site: u32, element: u32)
     );
     import!(
         linker,
         STATE,
-        "site-open-seal",
+        "site_open_seal",
         site_open_seal(site: u32, element: u32, out: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "site-clear",
+        "site_clear",
         site_clear(site: u32, element: u32)
     );
     import!(
         linker,
         STATE,
-        "site-balance",
+        "site_balance",
         site_balance(site: u32, element: u32, out: u32)
     );
     import!(
         linker,
         STATE,
-        "site-take",
+        "site_take",
         site_take(site: u32, element: u32, amount: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "site-put",
+        "site_put",
         site_put(site: u32, element: u32, funds: u32)
     );
     import!(
         linker,
         STATE,
-        "site-reserve-take",
+        "site_reserve_take",
         site_reserve_take(site: u32, element: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "site-count",
+        "site_count",
         site_count(site: u32, element: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "site-covered",
+        "site_covered",
         site_covered(site: u32, element: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "site-order",
+        "site_order",
         site_order(site: u32, element: u32, index: u32, out: u32)
     );
     import!(
         linker,
         STATE,
-        "site-entry",
+        "site_entry",
         site_entry(site: u32, element: u32, index: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "site-entry-set",
+        "site_entry_set",
         site_entry_set(site: u32, element: u32, index: u32, ptr: u32, len: u32)
     );
     import!(
         linker,
         STATE,
-        "site-insert",
+        "site_insert",
         site_insert(site: u32, element: u32, order: u32, ptr: u32, len: u32)
     );
     import!(
         linker,
         STATE,
-        "site-remove",
+        "site_remove",
         site_remove(site: u32, element: u32, index: u32)
     );
     import!(
         linker,
         STATE,
-        "site-instance-take",
+        "site_instance_take",
         site_instance_take(site: u32, element: u32, ids: u32, count: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "site-instance-put",
+        "site_instance_put",
         site_instance_put(site: u32, element: u32, funds: u32, ptr: u32, len: u32)
     );
     import!(
         linker,
         STATE,
-        "bucket-take",
+        "bucket_take",
         bucket_take(bucket: u32, amount: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "bucket-split",
+        "bucket_split",
         bucket_split(bucket: u32, num: u32, den: u32) -> u32
     );
     import!(
         linker,
         STATE,
-        "bucket-put",
+        "bucket_put",
         bucket_put(bucket: u32, other: u32)
     );
     import!(
         linker,
         STATE,
-        "bucket-amount",
+        "bucket_amount",
         bucket_amount(bucket: u32, out: u32)
     );
-    import!(linker, STATE, "bucket-drop", bucket_drop(bucket: u32));
+    import!(linker, STATE, "bucket_drop", bucket_drop(bucket: u32));
     import!(linker, STATE, "mint", mint(grant: u32, amount: u32) -> u32);
     import!(
         linker,
         STATE,
-        "mint-instances",
+        "mint_instances",
         mint_instances(grant: u32, ids: u32, count: u32) -> u32
     );
     import!(linker, STATE, "burn", burn(funds: u32));
@@ -332,31 +332,31 @@ pub fn add_kernel_imports<H: KernelHost + 'static>(linker: &mut Linker<Invoking<
     import!(
         linker,
         MATH,
-        "mul-div",
+        "mul_div",
         mul_div(a: u32, b: u32, c: u32, r: u32, out: u32)
     );
     import!(
         linker,
         MATH,
-        "geometric-mean",
+        "geometric_mean",
         geometric_mean(a: u32, b: u32, out: u32)
     );
     import!(
         linker,
         MATH,
-        "fraction-compose",
+        "fraction_compose",
         fraction_compose(an: u32, ad: u32, bn: u32, bd: u32, out_num: u32, out_den: u32)
     );
     import!(
         linker,
         MATH,
-        "fraction-cmp",
+        "fraction_cmp",
         fraction_cmp(an: u32, ad: u32, bn: u32, bd: u32) -> u32
     );
     import!(
         linker,
         MATH,
-        "fixed-pow",
+        "fixed_pow",
         fixed_pow(base: u32, exp: u32, r: u32, out: u32)
     );
 
@@ -384,9 +384,9 @@ pub fn add_kernel_imports<H: KernelHost + 'static>(linker: &mut Linker<Invoking<
     Ok(())
 }
 
-/// The core values an invocation's arguments lower to, as the engine's.
-pub(crate) fn lowered(args: &[GuestArg<'_>]) -> Result<(Vec<Val>, Registers)> {
-    let (values, registers) = abi::lower(args).map_err(fault)?;
+/// An invocation's arguments as the engine's core values, with the registers filled.
+pub(crate) fn placed(args: &[GuestArg<'_>]) -> Result<(Vec<Val>, Registers)> {
+    let (values, registers) = abi::place(args).map_err(fault)?;
     let values = values
         .into_iter()
         .map(|value| match value {

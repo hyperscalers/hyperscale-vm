@@ -2,7 +2,7 @@
 //! pool operates, and the one governance vote it holds.
 //!
 //! The declaration is the package's own: `metadata()` traces the module
-//! the component is built from, so the signatures a caller routes on and
+//! the artifact is built from, so the signatures a caller routes on and
 //! the code that executes them, and the handle a client calls it
 //! through, are all read off one text. What stays here is the roles a
 //! consumer keys by, which a signature does not supply.

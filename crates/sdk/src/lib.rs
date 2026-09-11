@@ -3,10 +3,10 @@
 //! Two halves of one vocabulary. Read rather than run, [`state`] is what
 //! `#[blueprint]` traces a body through to get back exactly the
 //! [`hyperscale_vm_effects::MethodSignature`] routing needs, against the
-//! real evaluator rather than a model of it. Compiled as the component a
+//! real evaluator rather than a model of it. Compiled as the module a
 //! package publishes, the same types are the calls — the `guest` module
-//! binds `hyperscale:kernel` once, and each accessor is the import its
-//! mode names. It compiles only on a component build, so it is not in
+//! binds `kernel` once, and each accessor is the import its
+//! mode names. It compiles only on the guest build, so it is not in
 //! these docs.
 //!
 //! Which of the two a build gets is the compiling crate's own answer: the
@@ -16,7 +16,7 @@
 //!
 //! One vocabulary rather than two is the whole of it: a body cannot reach
 //! state except through these types, so the declaration a reader derives
-//! and the calls the component makes are read off the same text.
+//! and the calls the module makes are read off the same text.
 //!
 //! # The shape
 //!
@@ -130,8 +130,8 @@
 //!
 //! # Why a wrong declaration is not a safety problem
 //!
-//! `hyperscale:kernel/state` has no open-cell-by-key import. Every
-//! accessor takes a `borrow` the kernel materialized, and what that
+//! `kernel/state` has no open-cell-by-key import. Every
+//! accessor takes a handle the kernel materialized, and what that
 //! handle may do is the capability's answer, held by the kernel at every
 //! operation rather than carried by the handle's type. A method that
 //! under-declares does not get an unchecked access — it gets a handle
@@ -149,12 +149,12 @@
 pub use hyperscale_hbor as hbor;
 
 pub mod blueprint;
-#[cfg(not(component))]
+#[cfg(not(guest_build))]
 pub mod client;
-#[cfg(component)]
+#[cfg(guest_build)]
 pub mod guest;
 pub mod handle;
-#[cfg(not(component))]
+#[cfg(not(guest_build))]
 pub mod host;
 pub mod num;
 pub mod state;
@@ -212,7 +212,7 @@ pub trait Declines {
 /// the code, and what a test names a decline by.
 ///
 /// Implemented by `#[blueprint]` for every `#[error]` enum, off the
-/// artifact — a name is for whoever reads a receipt, and the component
+/// artifact — a name is for whoever reads a receipt, and the module
 /// crosses the boundary with the code alone.
 pub trait DeclinesAs: Sized {
     /// The kebab-case name the error table holds for this variant.
@@ -230,7 +230,7 @@ pub use hyperscale_vm_effects::{
 ///
 /// Which halves this yields is the compiling crate's own: a crate that
 /// publishes the package says so with the `guest` feature and gets the
-/// executing component beside the declaration, and every other consumer
+/// executing module beside the declaration, and every other consumer
 /// gets the declaration and the call surface on whatever target it is
 /// built for.
 #[cfg(all(feature = "macros", not(feature = "guest")))]
@@ -261,9 +261,9 @@ pub use trace::{Access, Interval, Leaf, Requirement, Trace};
 #[must_use]
 pub fn narrowed<T: TryFrom<Address>>(address: Address) -> T {
     T::try_from(address).unwrap_or_else(|_| {
-        #[cfg(component)]
+        #[cfg(guest_build)]
         ::core::arch::wasm32::unreachable();
-        #[cfg(not(component))]
+        #[cfg(not(guest_build))]
         panic!("a wrong-class address reached a narrowed binding")
     })
 }

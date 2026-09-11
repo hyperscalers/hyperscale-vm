@@ -1,7 +1,7 @@
 //! The fee splitter: revenue in, three configured shares out.
 //!
 //! The declaration is the package's own: `metadata()` traces the module
-//! the component is built from, so the signatures a caller routes on and
+//! the artifact is built from, so the signatures a caller routes on and
 //! the code that executes them, and the handle a client calls it
 //! through, are all read off one text.
 //!

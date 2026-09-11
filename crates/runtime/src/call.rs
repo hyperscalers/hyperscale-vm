@@ -12,7 +12,7 @@ use wasmtime::{Error, Instance, Result, Store, Val};
 
 use crate::abort::{CallError, classify, host_trap};
 use crate::budget::{counter, remaining};
-use crate::imports::{Invoking, lowered};
+use crate::imports::{Invoking, placed};
 
 /// How an invocation ended, as the artifact's own result type says it can.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,7 +67,7 @@ pub fn call_export<H: KernelHost + 'static>(
     let memory = instance
         .get_memory(&mut *store, MEMORY)
         .ok_or_else(|| host_trap(AbortReason::AbiViolation))?;
-    let (params, registers) = lowered(args)?;
+    let (params, registers) = placed(args)?;
     let counter = counter(&mut *store, instance);
     store.data_mut().begin(registers, memory, counter);
     let arity = func.ty(&*store).results().len();

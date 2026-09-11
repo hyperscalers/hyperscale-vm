@@ -9,7 +9,7 @@
 //! Here rather than beside either party, because both are written to by
 //! more than one of them. Three callers reach the host surface — the
 //! blessed engine through its linker, the reference interpreter through
-//! its canon dispatch, and the SDK's native accessors — and a surface
+//! its import dispatch, and the SDK's native accessors — and a surface
 //! stated once per caller is a surface that drifts. What an engine may
 //! not do is word a refusal of its own or infer a handle's mode from the
 //! export it happens to be calling; both are decided here, upstream of

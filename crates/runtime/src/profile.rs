@@ -104,6 +104,6 @@ pub const MAX_CALL_CHAIN_BYTES: usize = MAX_WASM_STACK_BYTES - HOST_FRAME_RESERV
 /// compile time — it is the only crate that can see both constants.
 pub const MAX_CALL_CHAIN_FRAMES: usize = 256;
 
-/// The prefix every kernel import module carries: `hyperscale:kernel/state`,
-/// `hyperscale:kernel/env`, and so on.
-pub const KERNEL_IMPORT_PREFIX: &str = "hyperscale:kernel/";
+/// The prefix every kernel import module carries: `kernel/state`,
+/// `kernel/env`, and so on.
+pub const KERNEL_IMPORT_PREFIX: &str = "kernel/";

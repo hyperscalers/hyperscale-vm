@@ -64,12 +64,12 @@ fn guest() -> String {
     format!(
         r#"
 (module
-  (import "{MATH}" "mul-div" (func $mul_div (param i32 i32 i32 i32 i32)))
-  (import "{MATH}" "geometric-mean" (func $geometric_mean (param i32 i32 i32)))
-  (import "{MATH}" "fraction-compose"
+  (import "{MATH}" "mul_div" (func $mul_div (param i32 i32 i32 i32 i32)))
+  (import "{MATH}" "geometric_mean" (func $geometric_mean (param i32 i32 i32)))
+  (import "{MATH}" "fraction_compose"
     (func $fraction_compose (param i32 i32 i32 i32 i32 i32)))
-  (import "{MATH}" "fraction-cmp" (func $fraction_cmp (param i32 i32 i32 i32) (result i32)))
-  (import "{MATH}" "fixed-pow" (func $fixed_pow (param i32 i32 i32 i32)))
+  (import "{MATH}" "fraction_cmp" (func $fraction_cmp (param i32 i32 i32 i32) (result i32)))
+  (import "{MATH}" "fixed_pow" (func $fixed_pow (param i32 i32 i32 i32)))
   (import "{ABI}" "answer" (func $answer (param i32 i32)))
   (import "{ABI}" "reply" (func $reply (param i32 i32)))
   (memory (export "{MEMORY}") 1 1)
@@ -88,7 +88,7 @@ fn guest() -> String {
 
   ;; `a * b / c`, the operands at 0, 32 and 64, the result at 96, its
   ;; low limb answered.
-  (func (export "mul-div") (param $a i64) (param $b i64) (param $c i64) (param $r i64)
+  (func (export "mul_div") (param $a i64) (param $b i64) (param $c i64) (param $r i64)
     (call $wide (i32.const 0) (local.get $a))
     (call $wide (i32.const 32) (local.get $b))
     (call $wide (i32.const 64) (local.get $c))
@@ -97,7 +97,7 @@ fn guest() -> String {
     (call $done (i32.const 96)))
 
   ;; The second limb of the same call, so a result past 64 bits is visible.
-  (func (export "mul-div-high") (param $a i64) (param $b i64) (param $c i64)
+  (func (export "mul_div-high") (param $a i64) (param $b i64) (param $c i64)
     (call $wide (i32.const 0) (local.get $a))
     (call $wide (i32.const 32) (local.get $b))
     (call $wide (i32.const 64) (local.get $c))
@@ -213,14 +213,14 @@ fn operands_cross_at_the_width_the_boundary_states() {
     // The whole risk this lane covers: if either engine read a `wide` at
     // any width but the four limbs the guest wrote, an operand would be
     // read from the bytes beside it and this would not be seven.
-    assert_eq!(value("mul-div", &[21, 2, 6, 0]), 7);
+    assert_eq!(value("mul_div", &[21, 2, 6, 0]), 7);
 }
 
 #[test]
 fn rounding_direction_crosses_as_a_tag() {
-    assert_eq!(value("mul-div", &[7, 1, 2, 0]), 3);
-    assert_eq!(value("mul-div", &[7, 1, 2, 1]), 4);
-    assert_eq!(value("mul-div", &[8, 1, 2, 1]), 4);
+    assert_eq!(value("mul_div", &[7, 1, 2, 0]), 3);
+    assert_eq!(value("mul_div", &[7, 1, 2, 1]), 4);
+    assert_eq!(value("mul_div", &[8, 1, 2, 1]), 4);
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn an_out_of_range_rounding_tag_aborts_identically() {
     // code. Neither engine may resolve it to a direction: both refuse
     // it as the guest's violation, before any host body runs.
     assert_eq!(
-        refusal("mul-div", &[21, 2, 6, 2]),
+        refusal("mul_div", &[21, 2, 6, 2]),
         AbortReason::AbiViolation
     );
 }
@@ -240,7 +240,7 @@ fn the_product_is_held_past_the_operand_width() {
     // `(2^64 - 1) * (2^64 - 1) / 1` needs both limbs of the result, so a
     // result written one limb wide would lose the high half.
     assert_eq!(
-        value("mul-div-high", &[u64::MAX, u64::MAX, 1]),
+        value("mul_div-high", &[u64::MAX, u64::MAX, 1]),
         u64::MAX - 1
     );
 }
@@ -248,7 +248,7 @@ fn the_product_is_held_past_the_operand_width() {
 #[test]
 fn a_zero_divisor_refuses_identically() {
     assert_eq!(
-        refusal("mul-div", &[1, 1, 0, 0]),
+        refusal("mul_div", &[1, 1, 0, 0]),
         AbortReason::MathDivideByZero
     );
 }

@@ -1,7 +1,7 @@
 //! The native half of what `#[blueprint]` emits.
 //!
 //! One package, called through the dispatch the macro generates rather
-//! than through the component it also generates — so what is under test
+//! than through the exports it also generates — so what is under test
 //! is the binding walk, the body it wraps, and how each of the three ways
 //! an invocation can end comes back.
 

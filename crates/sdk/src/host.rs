@@ -2,7 +2,7 @@
 //!
 //! The counterpart of `crate::guest`: the same operations, resolved to
 //! a [`KernelHost`] the caller installed instead of to the imports a
-//! component links. What a body is written in does not change, which is
+//! module links. What a body is written in does not change, which is
 //! the whole point — the accessors in [`crate::state`] pick one of these
 //! two, and the text between them is the author's.
 //!
@@ -14,8 +14,8 @@
 //! written. So [`with_kernel`] installs one for the duration of an
 //! invocation and takes it back afterwards.
 //!
-//! That is sound because an invocation cannot nest. The kernel's world
-//! has no call import — a manifest's nodes are walked one at a time by
+//! That is sound because an invocation cannot nest. The kernel's import
+//! table has no call — a manifest's nodes are walked one at a time by
 //! the kernel itself, and a body reaches another package by returning,
 //! never by calling — so there is never a second kernel wanting the slot
 //! a first one holds. [`with_kernel`] refuses rather than assumes it: a
@@ -309,7 +309,7 @@ const fn narrowed(value: math::U256) -> Wide {
 ///
 /// The native lane reaches the same functions the two engines do, rather
 /// than a second implementation beside them: what a guest calls through
-/// `hyperscale:kernel/math` and what an author's fast lane calls here are
+/// `kernel/math` and what an author's fast lane calls here are
 /// one body, so the lane cannot disagree with the artifact about money.
 ///
 /// # Panics

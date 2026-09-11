@@ -87,7 +87,7 @@ impl fmt::Display for GateError {
 
 impl std::error::Error for GateError {}
 
-/// Attach `metadata` to a component artifact as its metadata section.
+/// Attach `metadata` to a module as its metadata section.
 ///
 /// The result is the publishable artifact: same code, one section longer,
 /// and a different content address.
@@ -103,7 +103,7 @@ pub fn attach_metadata(artifact: &[u8], metadata: &PackageMetadata) -> Result<Ve
     attach_canonical(artifact, metadata).map_err(|error| GateError::new(error.to_string()))
 }
 
-/// The effect metadata a component artifact declares, if it declares any.
+/// The effect metadata a module declares, if it declares any.
 ///
 /// # Errors
 ///
@@ -123,10 +123,10 @@ pub fn extract_metadata(artifact: &[u8]) -> Result<Option<PackageMetadata>, Gate
 /// clears the deterministic profile, it declares a metadata section at
 /// all, the section decodes canonically and within the bounds the
 /// vocabulary fixes, every method it describes is a function the
-/// component actually exports, and each method's ABI binding agrees with
+/// module actually exports, and each method's ABI binding agrees with
 /// that export's own type — same arity, a capability handle where the
-/// export takes a borrowed `site`, a bucket's amount where it takes
-/// bytes. Whether a signature
+/// export takes a borrowed `site`, a bucket rep where it takes a value
+/// edge. Whether a signature
 /// over-approximates the code it describes is a compiler's judgement,
 /// and this is not one — an under-declaration is harmless because the
 /// capability gate never materialises a handle the declaration did not
@@ -145,7 +145,7 @@ pub fn extract_metadata(artifact: &[u8]) -> Result<Option<PackageMetadata>, Gate
 /// # Errors
 ///
 /// [`GateError`] on an artifact outside the profile, an absent or
-/// non-canonical metadata section, a declared method the component does
+/// non-canonical metadata section, a declared method the module does
 /// not export, an ABI binding the export's type cannot honour, or a
 /// claim to totality, which only [`admit_protocol_package`] grants.
 pub fn admit_package(artifact: &[u8]) -> Result<PackageMetadata, GateError> {
@@ -270,8 +270,8 @@ fn judge_seal(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), 
 /// different things follow from that, one per provenance.
 ///
 /// **A publisher cannot claim it at all.** What stands behind the mark is
-/// a scan with documented gaps — linear memory taken as safe, the ABI's
-/// allocator set aside — and both are open in the direction an author who
+/// a scan with documented gaps — linear memory taken as safe, the register
+/// collectors set aside — and both are open in the direction an author who
 /// wanted the mark would push. Provenance cannot be read off the bytes,
 /// since an artifact claiming to be protocol code looks exactly like one
 /// that is, so it rides the entry point rather than an allowlist. The
@@ -501,7 +501,7 @@ mod tests {
     use super::{admit_protocol_package, *};
 
     /// A module exporting one no-argument function per name.
-    fn component_exporting(names: &[&str]) -> Vec<u8> {
+    fn module_exporting(names: &[&str]) -> Vec<u8> {
         use std::fmt::Write as _;
 
         // Every published package brings its components up through a
@@ -555,7 +555,7 @@ mod tests {
     /// declaring several is otherwise unactionable.
     #[test]
     fn an_unresolvable_abi_binding_refuses_at_publish() {
-        let component = component_exporting(&["m"]);
+        let module = module_exporting(&["m"]);
         let mut metadata = declaring(&["m"]);
         metadata
             .methods
@@ -564,14 +564,14 @@ mod tests {
             // The signature declares no effect clauses, so there is no
             // clause 0 for a handle to name.
             .abi = vec![AbiParam::Handle { clause: 0, site: 0 }];
-        let artifact = attach_metadata(&component, &metadata).expect("attaches");
+        let artifact = attach_metadata(&module, &metadata).expect("attaches");
 
         let refused = admit_package(&artifact).expect_err("an unresolvable binding refuses");
         assert_eq!(refused.method.as_deref(), Some("m"), "{refused}");
 
         // The same artifact with nothing bound admits, so the refusal is
         // the binding and not the shape.
-        let sound = attach_metadata(&component, &declaring(&["m"])).expect("attaches");
+        let sound = attach_metadata(&module, &declaring(&["m"])).expect("attaches");
         assert!(admit_package(&sound).is_ok());
     }
 
@@ -616,15 +616,15 @@ mod tests {
     }
 
     #[test]
-    fn a_publish_admits_metadata_the_component_backs() {
-        let component = component_exporting(&["deposit", "withdraw"]);
+    fn a_publish_admits_metadata_the_module_backs() {
+        let module = module_exporting(&["deposit", "withdraw"]);
         let metadata = declaring(&["deposit", "withdraw"]);
-        let artifact = attach_metadata(&component, &metadata).expect("attaches");
+        let artifact = attach_metadata(&module, &metadata).expect("attaches");
         assert_eq!(admit_package(&artifact).expect("admits"), metadata);
 
-        // Declaring fewer methods than the component exports is fine:
+        // Declaring fewer methods than the module exports is fine:
         // an export nothing declares is an export nothing can call.
-        let partial = attach_metadata(&component, &declaring(&["deposit"])).expect("attaches");
+        let partial = attach_metadata(&module, &declaring(&["deposit"])).expect("attaches");
         assert!(admit_package(&partial).is_ok());
     }
 
@@ -637,7 +637,7 @@ mod tests {
     /// as public and leave the gate agreeing.
     #[test]
     fn a_publish_admits_the_accessibility_the_package_declares() {
-        let component = component_exporting(&["deposit", "withdraw"]);
+        let module = module_exporting(&["deposit", "withdraw"]);
         let mut metadata = declaring(&["deposit", "withdraw"]);
         metadata
             .methods
@@ -648,7 +648,7 @@ mod tests {
                 guard: None,
                 rule: RuleExpr::claim(Expr::SelfAddr),
             });
-        let artifact = attach_metadata(&component, &metadata).expect("attaches");
+        let artifact = attach_metadata(&module, &metadata).expect("attaches");
 
         let admitted = admit_package(&artifact).expect("admits");
         assert!(admitted.methods["withdraw"].requires_evidence());
@@ -658,14 +658,14 @@ mod tests {
         // content-addressed with the code, so nothing can republish the
         // same address under a weaker claim.
         let public =
-            attach_metadata(&component, &declaring(&["deposit", "withdraw"])).expect("attaches");
+            attach_metadata(&module, &declaring(&["deposit", "withdraw"])).expect("attaches");
         assert_ne!(artifact, public);
     }
 
     /// A module whose one export declines: the refusal channel over a
     /// method producing nothing, which is the shape a `Fallible` mark is
     /// judged against.
-    fn component_declining(name: &str) -> Vec<u8> {
+    fn module_declining(name: &str) -> Vec<u8> {
         parse_str(&*format!(
             "(module\n  (memory (export \"memory\") 1 1)\n  \
              (func (export \"{name}\") (result i32) i32.const 0)\n  \
@@ -683,7 +683,7 @@ mod tests {
     /// themselves differently and be judged differently.
     #[test]
     fn a_totality_mark_the_export_type_contradicts_refuses_at_publish() {
-        let declining = component_declining("swap");
+        let declining = module_declining("swap");
         let mut fallible = PackageMetadata::default();
         fallible.methods.insert("instantiate".into(), sealing());
         fallible.methods.insert(
@@ -708,26 +708,23 @@ mod tests {
 
         // And the converse: an arm-free export marked as declining.
         let overstated =
-            attach_metadata(&component_exporting(&["swap"]), &fallible).expect("attaches");
+            attach_metadata(&module_exporting(&["swap"]), &fallible).expect("attaches");
         let error = admit_package(&overstated).expect_err("there is no arm to describe");
         assert!(error.to_string().contains("cannot decline"), "{error}");
     }
 
     #[test]
-    fn a_publish_refuses_a_method_the_component_does_not_export() {
-        let component = component_exporting(&["deposit"]);
+    fn a_publish_refuses_a_method_the_module_does_not_export() {
+        let module = module_exporting(&["deposit"]);
         let artifact =
-            attach_metadata(&component, &declaring(&["deposit", "withdraw"])).expect("attaches");
+            attach_metadata(&module, &declaring(&["deposit", "withdraw"])).expect("attaches");
         let refused = admit_package(&artifact).expect_err("refuses");
         assert!(refused.to_string().contains("withdraw"), "{refused}");
 
-        // The name has to match exactly — a component export is looked
+        // The name has to match exactly — a module export is looked
         // up by the name a manifest node writes.
-        let renamed = attach_metadata(
-            &component_exporting(&["deposit2"]),
-            &declaring(&["deposit"]),
-        )
-        .expect("attaches");
+        let renamed = attach_metadata(&module_exporting(&["deposit2"]), &declaring(&["deposit"]))
+            .expect("attaches");
         assert!(admit_package(&renamed).is_err());
     }
 
@@ -744,7 +741,7 @@ mod tests {
         let mut sealless = declaring(&["deposit"]);
         sealless.methods.remove("instantiate");
         let artifact =
-            attach_metadata(&component_exporting(&["deposit"]), &sealless).expect("attaches");
+            attach_metadata(&module_exporting(&["deposit"]), &sealless).expect("attaches");
         let refused = admit_package(&artifact).expect_err("its components could never be called");
         assert!(
             refused.to_string().contains("configuration leaf"),
@@ -753,9 +750,8 @@ mod tests {
 
         // The same package, with the seal its components come up
         // through.
-        let artifact =
-            attach_metadata(&component_exporting(&["deposit"]), &declaring(&["deposit"]))
-                .expect("attaches");
+        let artifact = attach_metadata(&module_exporting(&["deposit"]), &declaring(&["deposit"]))
+            .expect("attaches");
         assert!(admit_package(&artifact).is_ok());
 
         // The protocol's own account declares no seal and wants none: a
@@ -809,8 +805,8 @@ mod tests {
     fn a_publish_refuses_an_artifact_that_declares_nothing() {
         // No signatures, no deploy: an artifact without the section is
         // refused rather than published with an empty table.
-        let component = component_exporting(&["deposit"]);
-        assert!(admit_package(&component).is_err());
+        let module = module_exporting(&["deposit"]);
+        assert!(admit_package(&module).is_err());
         // And one whose section is not parseable as an artifact at all.
         assert!(admit_package(&with_section(1, b"code")).is_err());
     }

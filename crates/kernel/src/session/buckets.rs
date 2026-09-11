@@ -60,7 +60,7 @@ impl Held {
 }
 
 /// Value held on the executing body's behalf, indexed by the rep a
-/// guest's `own<bucket>` handle names.
+/// guest's bucket handle names.
 ///
 /// Its own rep space, beside the capability table rather than inside it:
 /// a bucket carries value and confers no state access, and a capability

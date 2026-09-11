@@ -8,21 +8,21 @@
 //! at the kernel's own types, the id register collected by hand, and the
 //! reply made where the export ends.
 
-#[link(wasm_import_module = "hyperscale:kernel/abi")]
+#[link(wasm_import_module = "kernel/abi")]
 unsafe extern "C" {
     fn arg(index: u32, ptr: u32);
     fn reply(ptr: u32, count: u32);
 }
 
-#[link(wasm_import_module = "hyperscale:kernel/state")]
+#[link(wasm_import_module = "kernel/state")]
 unsafe extern "C" {
-    #[link_name = "site-set"]
+    #[link_name = "site_set"]
     fn site_set(site: u32, element: u32, ptr: u32, len: u32);
-    #[link_name = "mint-instances"]
+    #[link_name = "mint_instances"]
     fn mint_instances(grant: u32, ids: u32, count: u32) -> u32;
-    #[link_name = "site-instance-put"]
+    #[link_name = "site_instance_put"]
     fn site_instance_put(site: u32, element: u32, funds: u32, ptr: u32, len: u32);
-    #[link_name = "site-instance-take"]
+    #[link_name = "site_instance_take"]
     fn site_instance_take(site: u32, element: u32, ids: u32, count: u32) -> u32;
     fn burn(funds: u32);
 }

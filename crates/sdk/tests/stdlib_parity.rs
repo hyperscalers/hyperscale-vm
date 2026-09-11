@@ -443,9 +443,9 @@ fn assert_parity(traced: &Blueprint, authored: &PackageMetadata, package: &str) 
         // Everything a body and its gates determine, compared field by
         // field. The ABI binding is deliberately not among them: a trace
         // sees which handles a body opened and in what order, never the
-        // component's exported parameter list, which is authored beside
-        // the WIT. What validates the binding is the publish check,
-        // against the export type in the artifact itself.
+        // module's exported parameter list. What validates the binding is
+        // the publish check, against the export's core type in the
+        // artifact itself.
         assert_eq!(got.params, signature.params, "{package}::{name} params");
         assert_eq!(got.outputs, signature.outputs, "{package}::{name} outputs");
         assert_eq!(

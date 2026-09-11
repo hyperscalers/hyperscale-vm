@@ -1012,7 +1012,7 @@ fn discarded(fx: &Fixture, held: u128) -> Result<(Invocation, Option<u128>)> {
 static PEEK_WAT: LazyLock<String> = LazyLock::new(|| {
     format!(
         r#"(module
-  (import "{STATE}" "site-balance" (func $balance (param i32 i32 i32)))
+  (import "{STATE}" "site_balance" (func $balance (param i32 i32 i32)))
   (import "{ABI}" "answer" (func $answer (param i32 i32)))
   (import "{ABI}" "reply" (func $reply (param i32 i32)))
   (memory (export "{MEMORY}") 1 1)

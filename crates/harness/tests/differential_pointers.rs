@@ -117,11 +117,11 @@ fn guest() -> String {
     format!(
         r#"
 (module
-  (import "{STATE}" "site-instance-take"
+  (import "{STATE}" "site_instance_take"
     (func $site_instance_take (param i32 i32 i32 i32) (result i32)))
-  (import "{STATE}" "site-balance" (func $site_balance (param i32 i32 i32)))
-  (import "{STATE}" "site-entry" (func $site_entry (param i32 i32 i32) (result i32)))
-  (import "{STATE}" "site-set" (func $site_set (param i32 i32 i32 i32)))
+  (import "{STATE}" "site_balance" (func $site_balance (param i32 i32 i32)))
+  (import "{STATE}" "site_entry" (func $site_entry (param i32 i32 i32) (result i32)))
+  (import "{STATE}" "site_set" (func $site_set (param i32 i32 i32 i32)))
   (import "{ABI}" "arg" (func $arg (param i32 i32)))
   (import "{ABI}" "take" (func $take (param i32)))
   (import "{ABI}" "reply" (func $reply (param i32 i32)))

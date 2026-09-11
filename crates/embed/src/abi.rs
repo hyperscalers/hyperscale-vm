@@ -81,17 +81,17 @@ pub const ORDERING_EQUAL: u32 = 1;
 pub const ORDERING_GREATER: u32 = 2;
 
 /// The import namespaces, as core `(module, name)` module halves.
-pub const STATE: &str = "hyperscale:kernel/state";
+pub const STATE: &str = "kernel/state";
 /// The wide arithmetic namespace.
-pub const MATH: &str = "hyperscale:kernel/math";
+pub const MATH: &str = "kernel/math";
 /// The environment namespace.
-pub const ENV: &str = "hyperscale:kernel/env";
+pub const ENV: &str = "kernel/env";
 /// The cryptography namespace.
-pub const CRYPTO: &str = "hyperscale:kernel/crypto";
+pub const CRYPTO: &str = "kernel/crypto";
 /// The events namespace.
-pub const EVENTS: &str = "hyperscale:kernel/events";
+pub const EVENTS: &str = "kernel/events";
 /// The register namespace: [`arg`], [`take`], [`reply`] and [`answer`].
-pub const ABI: &str = "hyperscale:kernel/abi";
+pub const ABI: &str = "kernel/abi";
 
 /// The one memory a guest exports, by name.
 pub const MEMORY: &str = "memory";
@@ -149,7 +149,7 @@ pub struct Reply {
 
 /// The register file of one invocation.
 ///
-/// Built by [`lower`] with the input registers filled, threaded through
+/// Built by [`place`] with the input registers filled, threaded through
 /// the call beside the host, and read back for what the guest replied.
 #[derive(Debug, Default)]
 pub struct Registers {
@@ -277,7 +277,7 @@ pub const fn returns(declines: bool) -> &'static [CoreType] {
 ///
 /// An ABI violation where an argument is too wide for a register: the
 /// kernel bounds every value it assembles, so this is a defect.
-pub fn lower(args: &[GuestArg<'_>]) -> Result<(Vec<CoreValue>, Registers), MeterError> {
+pub fn place(args: &[GuestArg<'_>]) -> Result<(Vec<CoreValue>, Registers), MeterError> {
     let mut values = Vec::with_capacity(args.len());
     let mut inputs = Vec::with_capacity(args.len());
     for arg in args {
@@ -396,7 +396,7 @@ const fn ordering(value: Ordering) -> u32 {
     }
 }
 
-// ---- hyperscale:kernel/abi -------------------------------------------------
+// ---- kernel/abi -------------------------------------------------
 
 /// `abi.arg`: collect input register `index` at `ptr`.
 ///
@@ -465,9 +465,9 @@ pub fn answer<P: Boundary>(port: &mut P, ptr: u32, len: u32) -> Result<(), Meter
     Ok(())
 }
 
-// ---- hyperscale:kernel/state ---------------------------------------------
+// ---- kernel/state ---------------------------------------------
 
-/// `state.site-len`.
+/// `state.site_len`.
 ///
 /// # Errors
 ///
@@ -476,7 +476,7 @@ pub fn site_len<P: Boundary>(port: &mut P, site: u32) -> Result<u32, MeterError>
     meter::site_len(port, site)
 }
 
-/// `state.site-declared`.
+/// `state.site_declared`.
 ///
 /// # Errors
 ///
@@ -489,7 +489,7 @@ pub fn site_declared<P: Boundary>(
     meter::site_declared(port, site, element).map(u32::from)
 }
 
-/// `state.site-get`: fills the answer register and returns its length.
+/// `state.site_get`: fills the answer register and returns its length.
 ///
 /// # Errors
 ///
@@ -499,7 +499,7 @@ pub fn site_get<P: Boundary>(port: &mut P, site: u32, element: u32) -> Result<u3
     port.registers().fill_answer(value)
 }
 
-/// `state.site-set`.
+/// `state.site_set`.
 ///
 /// # Errors
 ///
@@ -515,7 +515,7 @@ pub fn site_set<P: Boundary>(
     meter::site_set(port, site, element, value)
 }
 
-/// `state.site-seal`.
+/// `state.site_seal`.
 ///
 /// # Errors
 ///
@@ -524,7 +524,7 @@ pub fn site_seal<P: Boundary>(port: &mut P, site: u32, element: u32) -> Result<(
     meter::site_seal(port, site, element)
 }
 
-/// `state.site-open-seal`: the tag, with the word at `out` when ready.
+/// `state.site_open_seal`: the tag, with the word at `out` when ready.
 ///
 /// # Errors
 ///
@@ -546,7 +546,7 @@ pub fn site_open_seal<P: Boundary>(
     }
 }
 
-/// `state.site-clear`.
+/// `state.site_clear`.
 ///
 /// # Errors
 ///
@@ -555,7 +555,7 @@ pub fn site_clear<P: Boundary>(port: &mut P, site: u32, element: u32) -> Result<
     meter::site_clear(port, site, element)
 }
 
-/// `state.site-balance`: the amount at `out`.
+/// `state.site_balance`: the amount at `out`.
 ///
 /// # Errors
 ///
@@ -570,7 +570,7 @@ pub fn site_balance<P: Boundary>(
     write_amount(port, out, held)
 }
 
-/// `state.site-take`.
+/// `state.site_take`.
 ///
 /// # Errors
 ///
@@ -585,7 +585,7 @@ pub fn site_take<P: Boundary>(
     meter::site_take(port, site, element, amount)
 }
 
-/// `state.site-put`.
+/// `state.site_put`.
 ///
 /// # Errors
 ///
@@ -599,7 +599,7 @@ pub fn site_put<P: Boundary>(
     meter::site_put(port, site, element, funds)
 }
 
-/// `state.site-reserve-take`.
+/// `state.site_reserve_take`.
 ///
 /// # Errors
 ///
@@ -612,7 +612,7 @@ pub fn site_reserve_take<P: Boundary>(
     meter::site_reserve_take(port, site, element)
 }
 
-/// `state.site-count`.
+/// `state.site_count`.
 ///
 /// # Errors
 ///
@@ -621,7 +621,7 @@ pub fn site_count<P: Boundary>(port: &mut P, site: u32, element: u32) -> Result<
     meter::site_count(port, site, element)
 }
 
-/// `state.site-covered`.
+/// `state.site_covered`.
 ///
 /// # Errors
 ///
@@ -630,7 +630,7 @@ pub fn site_covered<P: Boundary>(port: &mut P, site: u32, element: u32) -> Resul
     meter::site_covered(port, site, element).map(u32::from)
 }
 
-/// `state.site-order`: the order key at `out`.
+/// `state.site_order`: the order key at `out`.
 ///
 /// # Errors
 ///
@@ -646,7 +646,7 @@ pub fn site_order<P: Boundary>(
     write_amount(port, out, order)
 }
 
-/// `state.site-entry`: fills the answer register and returns its length.
+/// `state.site_entry`: fills the answer register and returns its length.
 ///
 /// # Errors
 ///
@@ -661,7 +661,7 @@ pub fn site_entry<P: Boundary>(
     port.registers().fill_answer(value)
 }
 
-/// `state.site-entry-set`.
+/// `state.site_entry_set`.
 ///
 /// # Errors
 ///
@@ -678,7 +678,7 @@ pub fn site_entry_set<P: Boundary>(
     meter::site_entry_set(port, site, element, index, value)
 }
 
-/// `state.site-insert`.
+/// `state.site_insert`.
 ///
 /// # Errors
 ///
@@ -696,7 +696,7 @@ pub fn site_insert<P: Boundary>(
     meter::site_insert(port, site, element, order, value)
 }
 
-/// `state.site-remove`.
+/// `state.site_remove`.
 ///
 /// # Errors
 ///
@@ -710,7 +710,7 @@ pub fn site_remove<P: Boundary>(
     meter::site_remove(port, site, element, index)
 }
 
-/// `state.site-instance-take`: `count` ids at `ids`, eight bytes each.
+/// `state.site_instance_take`: `count` ids at `ids`, eight bytes each.
 ///
 /// # Errors
 ///
@@ -726,7 +726,7 @@ pub fn site_instance_take<P: Boundary>(
     meter::site_instance_take(port, site, element, &ids)
 }
 
-/// `state.site-instance-put`.
+/// `state.site_instance_put`.
 ///
 /// # Errors
 ///
@@ -743,7 +743,7 @@ pub fn site_instance_put<P: Boundary>(
     meter::site_instance_put(port, site, element, funds, value)
 }
 
-/// `state.bucket-take`.
+/// `state.bucket_take`.
 ///
 /// # Errors
 ///
@@ -753,7 +753,7 @@ pub fn bucket_take<P: Boundary>(port: &mut P, bucket: u32, amount: u32) -> Resul
     meter::bucket_take(port, bucket, amount)
 }
 
-/// `state.bucket-split`.
+/// `state.bucket_split`.
 ///
 /// # Errors
 ///
@@ -769,7 +769,7 @@ pub fn bucket_split<P: Boundary>(
     meter::bucket_split(port, bucket, num, den)
 }
 
-/// `state.bucket-put`.
+/// `state.bucket_put`.
 ///
 /// # Errors
 ///
@@ -778,7 +778,7 @@ pub fn bucket_put<P: Boundary>(port: &mut P, bucket: u32, other: u32) -> Result<
     meter::bucket_put(port, bucket, other)
 }
 
-/// `state.bucket-amount`: the amount at `out`.
+/// `state.bucket_amount`: the amount at `out`.
 ///
 /// # Errors
 ///
@@ -788,7 +788,7 @@ pub fn bucket_amount<P: Boundary>(port: &mut P, bucket: u32, out: u32) -> Result
     write_amount(port, out, amount)
 }
 
-/// `state.bucket-drop`.
+/// `state.bucket_drop`.
 ///
 /// # Errors
 ///
@@ -807,7 +807,7 @@ pub fn mint<P: Boundary>(port: &mut P, grant: u32, amount: u32) -> Result<u32, M
     meter::mint(port, grant, amount)
 }
 
-/// `state.mint-instances`: `count` ids at `ids`, eight bytes each.
+/// `state.mint_instances`: `count` ids at `ids`, eight bytes each.
 ///
 /// # Errors
 ///
@@ -831,9 +831,9 @@ pub fn burn<P: Boundary>(port: &mut P, funds: u32) -> Result<(), MeterError> {
     meter::burn(port, funds)
 }
 
-// ---- hyperscale:kernel/math ----------------------------------------------
+// ---- kernel/math ----------------------------------------------
 
-/// `math.mul-div`: the result at `out`.
+/// `math.mul_div`: the result at `out`.
 ///
 /// # Errors
 ///
@@ -855,7 +855,7 @@ pub fn mul_div<P: Boundary>(
     write_wide(port, out, result)
 }
 
-/// `math.geometric-mean`: the result at `out`.
+/// `math.geometric_mean`: the result at `out`.
 ///
 /// # Errors
 ///
@@ -871,7 +871,7 @@ pub fn geometric_mean<P: Boundary>(
     write_wide(port, out, result)
 }
 
-/// `math.fraction-compose`: the numerator at `out_num`, the denominator
+/// `math.fraction_compose`: the numerator at `out_num`, the denominator
 /// at `out_den`.
 ///
 /// # Errors
@@ -894,7 +894,7 @@ pub fn fraction_compose<P: Boundary>(
     write_wide(port, out_den, den)
 }
 
-/// `math.fraction-cmp`.
+/// `math.fraction_cmp`.
 ///
 /// # Errors
 ///
@@ -911,7 +911,7 @@ pub fn fraction_cmp<P: Boundary>(
     meter::fraction_cmp(port, an, ad, bn, bd).map(ordering)
 }
 
-/// `math.fixed-pow`: the result at `out`.
+/// `math.fixed_pow`: the result at `out`.
 ///
 /// # Errors
 ///
@@ -928,7 +928,7 @@ pub fn fixed_pow<P: Boundary>(
     write_wide(port, out, result)
 }
 
-// ---- hyperscale:kernel/env, crypto, events --------------------------------
+// ---- kernel/env, crypto, events --------------------------------
 
 /// `env.clock`.
 pub fn clock<P: Boundary>(port: &mut P) -> u64 {
@@ -973,44 +973,44 @@ pub const IMPORTS: &[(&str, &str, &[CoreType], &[CoreType])] = {
         (ABI, "take", &[I32], &[]),
         (ABI, "reply", &[I32, I32], &[]),
         (ABI, "answer", &[I32, I32], &[]),
-        (STATE, "site-len", &[I32], &[I32]),
-        (STATE, "site-declared", &[I32, I32], &[I32]),
-        (STATE, "site-get", &[I32, I32], &[I32]),
-        (STATE, "site-set", &[I32, I32, I32, I32], &[]),
-        (STATE, "site-seal", &[I32, I32], &[]),
-        (STATE, "site-open-seal", &[I32, I32, I32], &[I32]),
-        (STATE, "site-clear", &[I32, I32], &[]),
-        (STATE, "site-balance", &[I32, I32, I32], &[]),
-        (STATE, "site-take", &[I32, I32, I32], &[I32]),
-        (STATE, "site-put", &[I32, I32, I32], &[]),
-        (STATE, "site-reserve-take", &[I32, I32], &[I32]),
-        (STATE, "site-count", &[I32, I32], &[I32]),
-        (STATE, "site-covered", &[I32, I32], &[I32]),
-        (STATE, "site-order", &[I32, I32, I32, I32], &[]),
-        (STATE, "site-entry", &[I32, I32, I32], &[I32]),
-        (STATE, "site-entry-set", &[I32, I32, I32, I32, I32], &[]),
-        (STATE, "site-insert", &[I32, I32, I32, I32, I32], &[]),
-        (STATE, "site-remove", &[I32, I32, I32], &[]),
-        (STATE, "site-instance-take", &[I32, I32, I32, I32], &[I32]),
-        (STATE, "site-instance-put", &[I32, I32, I32, I32, I32], &[]),
-        (STATE, "bucket-take", &[I32, I32], &[I32]),
-        (STATE, "bucket-split", &[I32, I32, I32], &[I32]),
-        (STATE, "bucket-put", &[I32, I32], &[]),
-        (STATE, "bucket-amount", &[I32, I32], &[]),
-        (STATE, "bucket-drop", &[I32], &[]),
+        (STATE, "site_len", &[I32], &[I32]),
+        (STATE, "site_declared", &[I32, I32], &[I32]),
+        (STATE, "site_get", &[I32, I32], &[I32]),
+        (STATE, "site_set", &[I32, I32, I32, I32], &[]),
+        (STATE, "site_seal", &[I32, I32], &[]),
+        (STATE, "site_open_seal", &[I32, I32, I32], &[I32]),
+        (STATE, "site_clear", &[I32, I32], &[]),
+        (STATE, "site_balance", &[I32, I32, I32], &[]),
+        (STATE, "site_take", &[I32, I32, I32], &[I32]),
+        (STATE, "site_put", &[I32, I32, I32], &[]),
+        (STATE, "site_reserve_take", &[I32, I32], &[I32]),
+        (STATE, "site_count", &[I32, I32], &[I32]),
+        (STATE, "site_covered", &[I32, I32], &[I32]),
+        (STATE, "site_order", &[I32, I32, I32, I32], &[]),
+        (STATE, "site_entry", &[I32, I32, I32], &[I32]),
+        (STATE, "site_entry_set", &[I32, I32, I32, I32, I32], &[]),
+        (STATE, "site_insert", &[I32, I32, I32, I32, I32], &[]),
+        (STATE, "site_remove", &[I32, I32, I32], &[]),
+        (STATE, "site_instance_take", &[I32, I32, I32, I32], &[I32]),
+        (STATE, "site_instance_put", &[I32, I32, I32, I32, I32], &[]),
+        (STATE, "bucket_take", &[I32, I32], &[I32]),
+        (STATE, "bucket_split", &[I32, I32, I32], &[I32]),
+        (STATE, "bucket_put", &[I32, I32], &[]),
+        (STATE, "bucket_amount", &[I32, I32], &[]),
+        (STATE, "bucket_drop", &[I32], &[]),
         (STATE, "mint", &[I32, I32], &[I32]),
-        (STATE, "mint-instances", &[I32, I32, I32], &[I32]),
+        (STATE, "mint_instances", &[I32, I32, I32], &[I32]),
         (STATE, "burn", &[I32], &[]),
-        (MATH, "mul-div", &[I32, I32, I32, I32, I32], &[]),
-        (MATH, "geometric-mean", &[I32, I32, I32], &[]),
+        (MATH, "mul_div", &[I32, I32, I32, I32, I32], &[]),
+        (MATH, "geometric_mean", &[I32, I32, I32], &[]),
         (
             MATH,
-            "fraction-compose",
+            "fraction_compose",
             &[I32, I32, I32, I32, I32, I32],
             &[],
         ),
-        (MATH, "fraction-cmp", &[I32, I32, I32, I32], &[I32]),
-        (MATH, "fixed-pow", &[I32, I32, I32, I32], &[]),
+        (MATH, "fraction_cmp", &[I32, I32, I32, I32], &[I32]),
+        (MATH, "fixed_pow", &[I32, I32, I32, I32], &[]),
         (ENV, "clock", &[], &[I64]),
         (CRYPTO, "hash", &[I32, I32, I32], &[]),
         (EVENTS, "emit", &[I32, I32, I32], &[]),

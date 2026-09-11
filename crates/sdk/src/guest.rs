@@ -1,7 +1,7 @@
 //! The kernel imports a contract body executes against.
 //!
 //! [`state`](crate::state) is the Rust-facing shadow of
-//! `hyperscale:kernel/state`; this is where the shadow meets the
+//! `kernel/state`; this is where the shadow meets the
 //! boundary. The imports are declared here once, at the core types the
 //! kernel defines them at, so a package that drifted from the boundary
 //! could not link.
@@ -38,7 +38,7 @@ pub use crate::handle::Handle;
 use crate::num::{Rounding, Wide};
 use crate::state::OrderKey;
 
-#[link(wasm_import_module = "hyperscale:kernel/abi")]
+#[link(wasm_import_module = "kernel/abi")]
 unsafe extern "C" {
     #[link_name = "arg"]
     fn abi_arg(index: u32, ptr: u32);
@@ -50,93 +50,93 @@ unsafe extern "C" {
     fn abi_answer(ptr: u32, len: u32);
 }
 
-#[link(wasm_import_module = "hyperscale:kernel/state")]
+#[link(wasm_import_module = "kernel/state")]
 unsafe extern "C" {
-    #[link_name = "site-len"]
+    #[link_name = "site_len"]
     fn state_site_len(site: u32) -> u32;
-    #[link_name = "site-declared"]
+    #[link_name = "site_declared"]
     fn state_site_declared(site: u32, element: u32) -> u32;
-    #[link_name = "site-get"]
+    #[link_name = "site_get"]
     fn state_site_get(site: u32, element: u32) -> u32;
-    #[link_name = "site-set"]
+    #[link_name = "site_set"]
     fn state_site_set(site: u32, element: u32, ptr: u32, len: u32);
-    #[link_name = "site-seal"]
+    #[link_name = "site_seal"]
     fn state_site_seal(site: u32, element: u32);
-    #[link_name = "site-open-seal"]
+    #[link_name = "site_open_seal"]
     fn state_site_open_seal(site: u32, element: u32, out: u32) -> u32;
-    #[link_name = "site-clear"]
+    #[link_name = "site_clear"]
     fn state_site_clear(site: u32, element: u32);
-    #[link_name = "site-balance"]
+    #[link_name = "site_balance"]
     fn state_site_balance(site: u32, element: u32, out: u32);
-    #[link_name = "site-take"]
+    #[link_name = "site_take"]
     fn state_site_take(site: u32, element: u32, amount: u32) -> u32;
-    #[link_name = "site-put"]
+    #[link_name = "site_put"]
     fn state_site_put(site: u32, element: u32, funds: u32);
-    #[link_name = "site-reserve-take"]
+    #[link_name = "site_reserve_take"]
     fn state_site_reserve_take(site: u32, element: u32) -> u32;
-    #[link_name = "site-count"]
+    #[link_name = "site_count"]
     fn state_site_count(site: u32, element: u32) -> u32;
-    #[link_name = "site-covered"]
+    #[link_name = "site_covered"]
     fn state_site_covered(site: u32, element: u32) -> u32;
-    #[link_name = "site-order"]
+    #[link_name = "site_order"]
     fn state_site_order(site: u32, element: u32, index: u32, out: u32);
-    #[link_name = "site-entry"]
+    #[link_name = "site_entry"]
     fn state_site_entry(site: u32, element: u32, index: u32) -> u32;
-    #[link_name = "site-entry-set"]
+    #[link_name = "site_entry_set"]
     fn state_site_entry_set(site: u32, element: u32, index: u32, ptr: u32, len: u32);
-    #[link_name = "site-insert"]
+    #[link_name = "site_insert"]
     fn state_site_insert(site: u32, element: u32, order: u32, ptr: u32, len: u32);
-    #[link_name = "site-remove"]
+    #[link_name = "site_remove"]
     fn state_site_remove(site: u32, element: u32, index: u32);
-    #[link_name = "site-instance-take"]
+    #[link_name = "site_instance_take"]
     fn state_site_instance_take(site: u32, element: u32, ids: u32, count: u32) -> u32;
-    #[link_name = "site-instance-put"]
+    #[link_name = "site_instance_put"]
     fn state_site_instance_put(site: u32, element: u32, funds: u32, ptr: u32, len: u32);
-    #[link_name = "bucket-take"]
+    #[link_name = "bucket_take"]
     fn state_bucket_take(bucket: u32, amount: u32) -> u32;
-    #[link_name = "bucket-split"]
+    #[link_name = "bucket_split"]
     fn state_bucket_split(bucket: u32, num: u32, den: u32) -> u32;
-    #[link_name = "bucket-put"]
+    #[link_name = "bucket_put"]
     fn state_bucket_put(bucket: u32, other: u32);
-    #[link_name = "bucket-amount"]
+    #[link_name = "bucket_amount"]
     fn state_bucket_amount(bucket: u32, out: u32);
-    #[link_name = "bucket-drop"]
+    #[link_name = "bucket_drop"]
     fn state_bucket_drop(bucket: u32);
     #[link_name = "mint"]
     fn state_mint(grant: u32, amount: u32) -> u32;
-    #[link_name = "mint-instances"]
+    #[link_name = "mint_instances"]
     fn state_mint_instances(grant: u32, ids: u32, count: u32) -> u32;
     #[link_name = "burn"]
     fn state_burn(funds: u32);
 }
 
-#[link(wasm_import_module = "hyperscale:kernel/math")]
+#[link(wasm_import_module = "kernel/math")]
 unsafe extern "C" {
-    #[link_name = "mul-div"]
+    #[link_name = "mul_div"]
     fn math_mul_div(a: u32, b: u32, c: u32, r: u32, out: u32);
-    #[link_name = "geometric-mean"]
+    #[link_name = "geometric_mean"]
     fn math_geometric_mean(a: u32, b: u32, out: u32);
-    #[link_name = "fraction-compose"]
+    #[link_name = "fraction_compose"]
     fn math_fraction_compose(an: u32, ad: u32, bn: u32, bd: u32, out_num: u32, out_den: u32);
-    #[link_name = "fraction-cmp"]
+    #[link_name = "fraction_cmp"]
     fn math_fraction_cmp(an: u32, ad: u32, bn: u32, bd: u32) -> u32;
-    #[link_name = "fixed-pow"]
+    #[link_name = "fixed_pow"]
     fn math_fixed_pow(base: u32, exp: u32, r: u32, out: u32);
 }
 
-#[link(wasm_import_module = "hyperscale:kernel/env")]
+#[link(wasm_import_module = "kernel/env")]
 unsafe extern "C" {
     #[link_name = "clock"]
     fn env_clock() -> u64;
 }
 
-#[link(wasm_import_module = "hyperscale:kernel/crypto")]
+#[link(wasm_import_module = "kernel/crypto")]
 unsafe extern "C" {
     #[link_name = "hash"]
     fn crypto_hash(ptr: u32, len: u32, out: u32);
 }
 
-#[link(wasm_import_module = "hyperscale:kernel/events")]
+#[link(wasm_import_module = "kernel/events")]
 unsafe extern "C" {
     #[link_name = "emit"]
     fn events_emit(event_type: u32, ptr: u32, len: u32);

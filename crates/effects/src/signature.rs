@@ -200,7 +200,7 @@ pub enum AbiParam {
     /// exist until that node runs.
     Bucket(u32),
     /// Whether the clause this names was declared: the guard's own
-    /// verdict, as a `bool` the export takes.
+    /// verdict, as the `i32` flag the export takes.
     ///
     /// Answered from [`Declaration::clause_taken`], which the evaluation
     /// routing already ran has recorded — so the guest branches on the

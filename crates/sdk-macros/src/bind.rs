@@ -35,8 +35,8 @@ pub enum Carries {
     Flag,
 }
 
-/// One export parameter: what the world calls it, and what a target has
-/// to bind for the body to read it.
+/// One export parameter: its name, and what a target has to bind for
+/// the body to read it.
 pub struct Binding {
     /// What the parameter carries across the boundary.
     pub param: Shape,
@@ -48,7 +48,7 @@ pub struct Binding {
 
 /// How the guest reads the value carrying `need`.
 ///
-/// A `u64` crosses as itself, an address as the world's record and an id
+/// A `u64` crosses as itself, an address as its thirty-two bytes and an id
 /// set as the ids it is; everything else crosses as the kernel's cell
 /// representation and is decoded through [`Cellular`], which is the same
 /// vocabulary a substate value uses.

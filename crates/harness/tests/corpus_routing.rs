@@ -4,9 +4,7 @@
 
 use hyperscale_vm_effects::{LegRole, ManifestGraph};
 use hyperscale_vm_fixtures::{lottery, nf};
-use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_stdlib::account;
-use wasmtime::Result;
 
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
@@ -394,22 +392,4 @@ fn a_named_instance_inside_a_core_is_not_what_refuses_it() {
         star.roles.iter().all(|slot| *slot == LegRole::Core),
         "no leg means no edge for the exclusion to touch",
     );
-}
-
-/// The kernel surface is the import table the SDK links against, and no
-/// package carries a description of its own.
-///
-/// A package that held one would compile against a boundary nothing
-/// holds it to; what is left to assert is that none reappeared.
-#[test]
-fn no_guest_vendors_its_own_kernel_surface() -> Result<()> {
-    for guest in std::fs::read_dir(repo_root().join("guests"))? {
-        let guest = guest?.path();
-        assert!(
-            !guest.join("wit").exists(),
-            "{} vendors a boundary description of its own",
-            guest.display()
-        );
-    }
-    Ok(())
 }

@@ -51,22 +51,22 @@ impl StubHost {
 
 impl KernelHost for StubHost {
     fn site_len(&mut self, _site: u32) -> Result<u32, AbortReason> {
-        self.op("site-len", 0)
+        self.op("site_len", 0)
     }
     fn site_declared(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
-        self.op("site-declared", true)
+        self.op("site_declared", true)
     }
     fn site_get(&mut self, _site: u32, _element: u32) -> Result<Vec<u8>, AbortReason> {
-        self.op("site-get", vec![0; 5])
+        self.op("site_get", vec![0; 5])
     }
     fn site_set(&mut self, _site: u32, _element: u32, _value: Vec<u8>) -> Result<(), AbortReason> {
-        self.op("site-set", ())
+        self.op("site_set", ())
     }
     fn site_clear(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
-        self.op("site-clear", ())
+        self.op("site_clear", ())
     }
     fn site_balance(&mut self, _site: u32, _element: u32) -> Result<u128, AbortReason> {
-        self.op("site-balance", 7)
+        self.op("site_balance", 7)
     }
     fn burn(&mut self, _funds: u32) -> Result<(), AbortReason> {
         self.op("burn", ())
@@ -75,7 +75,7 @@ impl KernelHost for StubHost {
         self.op("mint", 1)
     }
     fn mint_instances(&mut self, _grant: u32, _ids: &[u64]) -> Result<u32, AbortReason> {
-        self.op("mint-instances", 1)
+        self.op("mint_instances", 1)
     }
     fn site_instance_take(
         &mut self,
@@ -83,7 +83,7 @@ impl KernelHost for StubHost {
         _element: u32,
         _ids: &[u64],
     ) -> Result<u32, AbortReason> {
-        self.op("site-instance-take", 1)
+        self.op("site_instance_take", 1)
     }
     fn site_instance_put(
         &mut self,
@@ -92,28 +92,28 @@ impl KernelHost for StubHost {
         _funds: u32,
         _v: Vec<u8>,
     ) -> Result<(), AbortReason> {
-        self.op("site-instance-put", ())
+        self.op("site_instance_put", ())
     }
     fn bucket_take(&mut self, _rep: u32, _amount: u128) -> Result<u32, AbortReason> {
-        self.op("bucket-take", 1)
+        self.op("bucket_take", 1)
     }
     fn bucket_split(&mut self, _rep: u32, _num: U256, _den: U256) -> Result<u32, AbortReason> {
-        self.op("bucket-split", 1)
+        self.op("bucket_split", 1)
     }
     fn bucket_put(&mut self, _rep: u32, _other: u32) -> Result<(), AbortReason> {
-        self.op("bucket-put", ())
+        self.op("bucket_put", ())
     }
     fn bucket_amount(&mut self, _rep: u32) -> Result<u128, AbortReason> {
-        self.op("bucket-amount", 7)
+        self.op("bucket_amount", 7)
     }
     fn site_put(&mut self, _site: u32, _element: u32, _funds: u32) -> Result<(), AbortReason> {
-        self.op("site-put", ())
+        self.op("site_put", ())
     }
     fn site_take(&mut self, _site: u32, _element: u32, _amount: u128) -> Result<u32, AbortReason> {
-        self.op("site-take", 1)
+        self.op("site_take", 1)
     }
     fn site_reserve_take(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
-        self.op("site-reserve-take", 1)
+        self.op("site_reserve_take", 1)
     }
     fn take_scan_debt(&mut self) -> usize {
         self.log.lock().unwrap().push(Host("take-scan-debt"));
@@ -124,13 +124,13 @@ impl KernelHost for StubHost {
         self.op("scan-floor", floor)
     }
     fn site_count(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
-        self.op("site-count", 2)
+        self.op("site_count", 2)
     }
     fn site_covered(&mut self, _site: u32, _element: u32) -> Result<bool, AbortReason> {
-        self.op("site-covered", true)
+        self.op("site_covered", true)
     }
     fn site_order(&mut self, _site: u32, _element: u32, _index: u32) -> Result<u128, AbortReason> {
-        self.op("site-order", 7)
+        self.op("site_order", 7)
     }
     fn site_entry(
         &mut self,
@@ -138,7 +138,7 @@ impl KernelHost for StubHost {
         _element: u32,
         _index: u32,
     ) -> Result<Vec<u8>, AbortReason> {
-        self.op("site-entry", vec![0; 9])
+        self.op("site_entry", vec![0; 9])
     }
     fn site_entry_set(
         &mut self,
@@ -147,7 +147,7 @@ impl KernelHost for StubHost {
         _i: u32,
         _value: Vec<u8>,
     ) -> Result<(), AbortReason> {
-        self.op("site-entry-set", ())
+        self.op("site_entry_set", ())
     }
     fn site_insert(
         &mut self,
@@ -156,22 +156,22 @@ impl KernelHost for StubHost {
         _o: u128,
         _v: Vec<u8>,
     ) -> Result<(), AbortReason> {
-        self.op("site-insert", ())
+        self.op("site_insert", ())
     }
     fn site_remove(&mut self, _site: u32, _element: u32, _index: u32) -> Result<(), AbortReason> {
-        self.op("site-remove", ())
+        self.op("site_remove", ())
     }
     fn bucket_drop(&mut self, _rep: u32) -> Result<(), AbortReason> {
-        self.op("bucket-drop", ())
+        self.op("bucket_drop", ())
     }
     fn clock_ms(&self) -> u64 {
         0
     }
     fn site_seal(&mut self, _site: u32, _element: u32) -> Result<(), AbortReason> {
-        self.op("site-seal", ())
+        self.op("site_seal", ())
     }
     fn site_open_seal(&mut self, _site: u32, _element: u32) -> Result<Drawn, AbortReason> {
-        self.log.lock().unwrap().push(Host("site-open-seal"));
+        self.log.lock().unwrap().push(Host("site_open_seal"));
         Ok(Drawn::Ready([0; 32]))
     }
     fn hash(&self, _data: &[u8]) -> [u8; 32] {
@@ -248,39 +248,39 @@ fn every_function_charges_its_pinned_sequence() {
     // operation and its refusal, exactly once each.
     let cases: Vec<Case> = vec![
         (
-            "site-get",
+            "site_get",
             |p| {
                 let _ = meter::site_get(p, 0, 0);
             },
-            vec![Host("site-get"), Charge(5)],
+            vec![Host("site_get"), Charge(5)],
         ),
         (
-            "site-seal",
+            "site_seal",
             |p| {
                 let _ = meter::site_seal(p, 0, 0);
             },
-            vec![Host("site-seal"), Charge(8)],
+            vec![Host("site_seal"), Charge(8)],
         ),
         (
-            "site-open-seal",
+            "site_open_seal",
             |p| {
                 let _ = meter::site_open_seal(p, 0, 0);
             },
-            vec![Host("site-open-seal"), Charge(32)],
+            vec![Host("site_open_seal"), Charge(32)],
         ),
         (
-            "site-set",
+            "site_set",
             |p| {
                 let _ = meter::site_set(p, 0, 0, vec![0; 5]);
             },
-            vec![Charge(5), Host("site-set")],
+            vec![Charge(5), Host("site_set")],
         ),
         (
-            "site-clear",
+            "site_clear",
             |p| {
                 let _ = meter::site_clear(p, 0, 0);
             },
-            vec![Host("site-clear")],
+            vec![Host("site_clear")],
         ),
         (
             "mint",
@@ -290,18 +290,18 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Charge(AMOUNT), Host("mint")],
         ),
         (
-            "site-balance",
+            "site_balance",
             |p| {
                 let _ = meter::site_balance(p, 0, 0);
             },
-            vec![Host("site-balance"), Charge(AMOUNT)],
+            vec![Host("site_balance"), Charge(AMOUNT)],
         ),
         (
-            "site-take",
+            "site_take",
             |p| {
                 let _ = meter::site_take(p, 0, 0, 1);
             },
-            vec![Charge(AMOUNT), Host("site-take")],
+            vec![Charge(AMOUNT), Host("site_take")],
         ),
         (
             "burn",
@@ -311,191 +311,191 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Host("burn")],
         ),
         (
-            "bucket-drop",
+            "bucket_drop",
             |p| {
                 let _ = meter::bucket_drop(p, 1);
             },
-            vec![Host("bucket-drop")],
+            vec![Host("bucket_drop")],
         ),
         (
-            "mint-instances",
+            "mint_instances",
             |p| {
                 let _ = meter::mint_instances(p, 0, &[1, 2, 3]);
             },
-            vec![Charge(24), Host("mint-instances")],
+            vec![Charge(24), Host("mint_instances")],
         ),
         (
-            "site-instance-take",
+            "site_instance_take",
             |p| {
                 let _ = meter::site_instance_take(p, 0, 0, &[1, 2, 3]);
             },
             vec![
                 Charge(24),
                 Host("scan-floor"),
-                Host("site-instance-take"),
+                Host("site_instance_take"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
         ),
         (
-            "site-instance-put",
+            "site_instance_put",
             |p| {
                 let _ = meter::site_instance_put(p, 0, 0, 1, vec![0; 5]);
             },
             vec![
                 Charge(5),
                 Host("scan-floor"),
-                Host("site-instance-put"),
+                Host("site_instance_put"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
         ),
         (
-            "bucket-take",
+            "bucket_take",
             |p| {
                 let _ = meter::bucket_take(p, 0, 1);
             },
-            vec![Charge(AMOUNT), Host("bucket-take")],
+            vec![Charge(AMOUNT), Host("bucket_take")],
         ),
         (
-            "bucket-split",
+            "bucket_split",
             |p| {
                 let _ = meter::bucket_split(p, 0, U256::from(1u128), U256::from(2u128));
             },
-            vec![Charge(WIDE * 2), Host("bucket-split")],
+            vec![Charge(WIDE * 2), Host("bucket_split")],
         ),
         (
-            "bucket-put",
+            "bucket_put",
             |p| {
                 let _ = meter::bucket_put(p, 0, 1);
             },
-            vec![Host("bucket-put")],
+            vec![Host("bucket_put")],
         ),
         (
-            "bucket-amount",
+            "bucket_amount",
             |p| {
                 let _ = meter::bucket_amount(p, 0);
             },
-            vec![Host("bucket-amount"), Charge(AMOUNT)],
+            vec![Host("bucket_amount"), Charge(AMOUNT)],
         ),
         (
-            "site-put",
+            "site_put",
             |p| {
                 let _ = meter::site_put(p, 0, 0, 1);
             },
-            vec![Host("site-put")],
+            vec![Host("site_put")],
         ),
         (
-            "site-len",
+            "site_len",
             |p| {
                 let _ = meter::site_len(p, 0);
             },
-            vec![Host("site-len")],
+            vec![Host("site_len")],
         ),
         (
-            "site-declared",
+            "site_declared",
             |p| {
                 let _ = meter::site_declared(p, 0, 0);
             },
-            vec![Host("site-declared")],
+            vec![Host("site_declared")],
         ),
         (
-            "site-reserve-take",
+            "site_reserve_take",
             |p| {
                 let _ = meter::site_reserve_take(p, 0, 0);
             },
-            vec![Host("site-reserve-take")],
+            vec![Host("site_reserve_take")],
         ),
         (
-            "site-count",
+            "site_count",
             |p| {
                 let _ = meter::site_count(p, 0, 0);
             },
             vec![
                 Host("scan-floor"),
-                Host("site-count"),
+                Host("site_count"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
         ),
         (
-            "site-covered",
+            "site_covered",
             |p| {
                 let _ = meter::site_covered(p, 0, 0);
             },
             vec![
                 Host("scan-floor"),
-                Host("site-covered"),
+                Host("site_covered"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
         ),
         (
-            "site-order",
+            "site_order",
             |p| {
                 let _ = meter::site_order(p, 0, 0, 0);
             },
             vec![
                 Host("scan-floor"),
-                Host("site-order"),
+                Host("site_order"),
                 Host("take-scan-debt"),
                 Charge(3),
                 Charge(AMOUNT),
             ],
         ),
         (
-            "site-entry",
+            "site_entry",
             |p| {
                 let _ = meter::site_entry(p, 0, 0, 0);
             },
             vec![
                 Host("scan-floor"),
-                Host("site-entry"),
+                Host("site_entry"),
                 Host("take-scan-debt"),
                 Charge(3),
                 Charge(9),
             ],
         ),
         (
-            "site-entry-set",
+            "site_entry_set",
             |p| {
                 let _ = meter::site_entry_set(p, 0, 0, 0, vec![0; 5]);
             },
             vec![
                 Charge(5),
                 Host("scan-floor"),
-                Host("site-entry-set"),
+                Host("site_entry_set"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
         ),
         (
-            "site-insert",
+            "site_insert",
             |p| {
                 let _ = meter::site_insert(p, 0, 0, 1, vec![0; 5]);
             },
             vec![
                 Charge(AMOUNT + 5),
                 Host("scan-floor"),
-                Host("site-insert"),
+                Host("site_insert"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
         ),
         (
-            "site-remove",
+            "site_remove",
             |p| {
                 let _ = meter::site_remove(p, 0, 0, 0);
             },
             vec![
                 Host("scan-floor"),
-                Host("site-remove"),
+                Host("site_remove"),
                 Host("take-scan-debt"),
                 Charge(3),
             ],
         ),
         (
-            "mul-div",
+            "mul_div",
             |p| {
                 let _ = meter::mul_div(
                     p,
@@ -508,14 +508,14 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Charge(WIDE * 4)],
         ),
         (
-            "geometric-mean",
+            "geometric_mean",
             |p| {
                 let _ = meter::geometric_mean(p, U256::from(1u128), U256::from(2u128));
             },
             vec![Charge(WIDE * 3)],
         ),
         (
-            "fraction-compose",
+            "fraction_compose",
             |p| {
                 let _ = meter::fraction_compose(
                     p,
@@ -528,7 +528,7 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Charge(WIDE * 6)],
         ),
         (
-            "fraction-cmp",
+            "fraction_cmp",
             |p| {
                 let _ = meter::fraction_cmp(
                     p,
@@ -541,7 +541,7 @@ fn every_function_charges_its_pinned_sequence() {
             vec![Charge(WIDE * 4)],
         ),
         (
-            "fixed-pow",
+            "fixed_pow",
             |p| {
                 let _ = meter::fixed_pow(p, U256::from(1u128), 2, Rounding::Down);
             },
@@ -582,14 +582,14 @@ fn a_refusal_charges_no_result_bytes() {
         meter::site_get(&mut probe, 0, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
-    assert_eq!(probe.steps(), vec![Host("site-get")]);
+    assert_eq!(probe.steps(), vec![Host("site_get")]);
 
     let mut probe = Probe::refusing();
     assert_eq!(
         meter::site_balance(&mut probe, 0, 0),
         Err(MeterError::Refused(AbortReason::CellUnderflow))
     );
-    assert_eq!(probe.steps(), vec![Host("site-balance")]);
+    assert_eq!(probe.steps(), vec![Host("site_balance")]);
 
     let mut probe = Probe::refusing();
     probe.host.scan_debt = 3;
@@ -626,7 +626,7 @@ fn the_scan_floor_is_paid_before_the_page() {
         vec![
             Host("scan-floor"),
             Charge(7),
-            Host("site-count"),
+            Host("site_count"),
             Host("take-scan-debt"),
             Charge(3),
         ]

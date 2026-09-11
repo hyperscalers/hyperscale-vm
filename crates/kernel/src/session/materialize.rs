@@ -372,7 +372,7 @@ impl Capability {
 /// before any guest execution.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum MaterializeError {
-    /// A declared mode/target combination the world cannot yet hand out.
+    /// A declared mode/target combination the kernel cannot yet hand out.
     #[error("no capability form for {0:?}")]
     Unsupported(Box<Effect>),
     /// A declared presence condition the committed leaf does not meet.
@@ -929,7 +929,7 @@ const fn interval_of(target: EffectTarget) -> Option<Interval> {
     }
 }
 
-/// The capability form of one declared effect: the world-design mapping.
+/// The capability form of one declared effect: the kernel's mapping.
 /// Entry targets are degenerate one-entry intervals, so collection access
 /// needs exactly two resource shapes.
 pub(super) fn capability_for(

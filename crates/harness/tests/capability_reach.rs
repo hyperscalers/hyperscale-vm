@@ -141,8 +141,8 @@ fn guest(site: u32) -> Vec<u8> {
     let text = format!(
         r#"
 (module
-  (import "{STATE}" "site-get" (func $site_get (param i32 i32) (result i32)))
-  (import "{STATE}" "site-set" (func $site_set (param i32 i32 i32 i32)))
+  (import "{STATE}" "site_get" (func $site_get (param i32 i32) (result i32)))
+  (import "{STATE}" "site_set" (func $site_set (param i32 i32 i32 i32)))
   (import "{ABI}" "answer" (func $answer (param i32 i32)))
   (import "{ABI}" "reply" (func $reply (param i32 i32)))
   (memory (export "{MEMORY}") 1 1)

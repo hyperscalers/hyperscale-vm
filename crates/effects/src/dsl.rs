@@ -641,7 +641,7 @@ impl TargetExpr {
     }
 }
 
-/// Whether the world hands out a handle for this clause at all.
+/// Whether the kernel hands out a handle for this clause at all.
 ///
 /// A `for-each` clause yields `false`: naming one as a handle parameter
 /// is a deterministic refusal at materialization, so there is nothing

@@ -4,9 +4,9 @@
 use hyperscale_vm_types::math::U256;
 use hyperscale_vm_types::{AbortReason, Drawn};
 
-/// The kernel's operations, one per world function, as reps and bytes.
+/// The kernel's operations, one per kernel import, as reps and bytes.
 ///
-/// Named for the world functions themselves, so the correspondence
+/// Named for the imports themselves, so the correspondence
 /// between what a guest imports, what the meter prices and what the
 /// host answers is one name rather than three.
 ///
@@ -309,7 +309,7 @@ pub trait KernelHost: Send {
     ///
     /// The boundary routes a dropped bucket here and the host decides
     /// what it means. Delivery is the property a bucket has and a value
-    /// type cannot be given: a record can carry an amount, and it cannot
+    /// type cannot be given: a plain value can carry an amount, and it cannot
     /// notice being forgotten.
     ///
     /// # Errors

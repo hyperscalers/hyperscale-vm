@@ -52,33 +52,33 @@ const VERDICTS: &[(&str, Verdict)] = &[
     // do: each reaches both directions through one declared access, and
     // which of them the capability carries changes when the debit is
     // judged rather than what it moves.
-    ("site-take", BothDirections),
-    ("site-put", BothDirections),
+    ("site_take", BothDirections),
+    ("site_put", BothDirections),
     // A reservation is a conditional decrement, and the only mode whose
     // direction the declaration carries.
-    ("site-reserve-take", ByMode),
+    ("site_reserve_take", ByMode),
     // Instances move both ways through an interval, whose slot admits
     // read and write and says nothing about which.
-    ("site-instance-take", BothDirections),
-    ("site-instance-put", BothDirections),
+    ("site_instance_take", BothDirections),
+    ("site_instance_put", BothDirections),
     // In flight between a producer and a consumer.
-    ("bucket-take", InFlight),
-    ("bucket-split", InFlight),
-    ("bucket-put", InFlight),
+    ("bucket_take", InFlight),
+    ("bucket_split", InFlight),
+    ("bucket_put", InFlight),
     // Supply, under the resource's own entries — and the entry each
     // reaches is the direction it takes, so a burn-only declaration is
     // never asked who may mint. `burn` names no grant because a bucket
     // carries the resource it holds, which is what lets one call serve
     // the issuer retiring its own and a holder retiring somebody else's.
     ("mint", OwnBehaviour),
-    ("mint-instances", OwnBehaviour),
+    ("mint_instances", OwnBehaviour),
     ("burn", OwnBehaviour),
 ];
 
 /// The imports through which no bucket's ownership crosses: reads,
 /// writes of bytes, the register collects, arithmetic, and the
-/// environment. A bucket's amount is read through `bucket-amount` and
-/// its slot released through `bucket-drop`, and neither changes who
+/// environment. A bucket's amount is read through `bucket_amount` and
+/// its slot released through `bucket_drop`, and neither changes who
 /// controls what it carries.
 ///
 /// Enumerated so that a new import has to be filed under one list or
@@ -88,28 +88,28 @@ const NOT_CARRYING: &[&str] = &[
     "take",
     "reply",
     "answer",
-    "site-len",
-    "site-declared",
-    "site-get",
-    "site-set",
-    "site-seal",
-    "site-open-seal",
-    "site-clear",
-    "site-balance",
-    "site-count",
-    "site-covered",
-    "site-order",
-    "site-entry",
-    "site-entry-set",
-    "site-insert",
-    "site-remove",
-    "bucket-amount",
-    "bucket-drop",
-    "mul-div",
-    "geometric-mean",
-    "fraction-compose",
-    "fraction-cmp",
-    "fixed-pow",
+    "site_len",
+    "site_declared",
+    "site_get",
+    "site_set",
+    "site_seal",
+    "site_open_seal",
+    "site_clear",
+    "site_balance",
+    "site_count",
+    "site_covered",
+    "site_order",
+    "site_entry",
+    "site_entry_set",
+    "site_insert",
+    "site_remove",
+    "bucket_amount",
+    "bucket_drop",
+    "mul_div",
+    "geometric_mean",
+    "fraction_compose",
+    "fraction_cmp",
+    "fixed_pow",
     "clock",
     "hash",
     "emit",
@@ -157,7 +157,7 @@ fn only_a_reservation_carries_its_direction() {
         .filter(|(_, verdict)| *verdict == ByMode)
         .map(|(name, _)| *name)
         .collect();
-    assert_eq!(directional, vec!["site-reserve-take"]);
+    assert_eq!(directional, vec!["site_reserve_take"]);
 
     // And every other cell-bearing call is bidirectional through one
     // access, which is why both requirements are injected there.

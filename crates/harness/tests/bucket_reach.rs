@@ -136,8 +136,8 @@ fn keeper() -> Vec<u8> {
     let text = format!(
         r#"
 (module
-  (import "{STATE}" "site-take" (func $site_take (param i32 i32 i32) (result i32)))
-  (import "{STATE}" "site-put" (func $site_put (param i32 i32 i32)))
+  (import "{STATE}" "site_take" (func $site_take (param i32 i32 i32) (result i32)))
+  (import "{STATE}" "site_put" (func $site_put (param i32 i32 i32)))
   (import "{ABI}" "reply" (func $reply (param i32 i32)))
   (memory (export "{MEMORY}") 1 1)
 
@@ -166,9 +166,9 @@ fn prowler(foreign: u32) -> Vec<u8> {
     let text = format!(
         r#"
 (module
-  (import "{STATE}" "site-take" (func $site_take (param i32 i32 i32) (result i32)))
-  (import "{STATE}" "site-put" (func $site_put (param i32 i32 i32)))
-  (import "{STATE}" "bucket-put" (func $bucket_put (param i32 i32)))
+  (import "{STATE}" "site_take" (func $site_take (param i32 i32 i32) (result i32)))
+  (import "{STATE}" "site_put" (func $site_put (param i32 i32 i32)))
+  (import "{STATE}" "bucket_put" (func $bucket_put (param i32 i32)))
   (import "{ABI}" "reply" (func $reply (param i32 i32)))
   (memory (export "{MEMORY}") 1 1)
 

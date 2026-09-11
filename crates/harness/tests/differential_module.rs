@@ -270,8 +270,8 @@ fn figures_agree() -> Result<()> {
     else {
         panic!("{:?}", ended.result);
     };
-    assert_eq!(&answer[64..72], &6u64.to_le_bytes(), "mul-div");
-    assert_eq!(&answer[96..104], &6u64.to_le_bytes(), "geometric-mean");
+    assert_eq!(&answer[64..72], &6u64.to_le_bytes(), "mul_div");
+    assert_eq!(&answer[96..104], &6u64.to_le_bytes(), "geometric_mean");
     assert_eq!(&answer[128..136], &4_242u64.to_le_bytes(), "clock");
     dual.finish()?;
     Ok(())

@@ -19,7 +19,7 @@ use wat::parse_str;
 const RES: Address = Address::new([0xE1; 31], AddressClass::Resource);
 
 /// A module exporting `m(c: site, amount: u64)`.
-fn component() -> Vec<u8> {
+fn module() -> Vec<u8> {
     parse_str(
         r#"
 (module
@@ -85,7 +85,7 @@ fn writing(slot: SlotId, material: Vec<Expr>) -> PackageMetadata {
 }
 
 fn verdict(metadata: &PackageMetadata) -> Result<(), String> {
-    let artifact = attach_metadata(&component(), metadata).expect("attaches");
+    let artifact = attach_metadata(&module(), metadata).expect("attaches");
     admit_package(&artifact)
         .map(|_| ())
         .map_err(|error| error.to_string())

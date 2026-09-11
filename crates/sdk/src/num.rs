@@ -24,7 +24,7 @@
 //! # One implementation, three callers
 //!
 //! The arithmetic is the host's. On the guest it is
-//! `hyperscale:kernel/math`; on the native lane it is the same functions
+//! `kernel/math`; on the native lane it is the same functions
 //! called directly. So an author's fast lane, the blessed engine and the
 //! reference interpreter do not agree about money — they share one body.
 //!
@@ -41,9 +41,9 @@ use hyperscale_hbor::{Hbor, HborDecode, HborEncode, HborShape, HborWidth};
 // One alias rather than a branch per call site: the two modules expose
 // the same five functions under the same names, because they stand for
 // one implementation reached two ways.
-#[cfg(component)]
+#[cfg(guest_build)]
 use crate::guest as arith;
-#[cfg(not(component))]
+#[cfg(not(guest_build))]
 use crate::host as arith;
 
 /// The scale a stored rate is quantized to: `10^36`.

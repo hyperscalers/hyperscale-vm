@@ -176,7 +176,7 @@ pub enum TransactionBody {
     /// The bound envelope tree, canonically encoded; the effect
     /// vocabulary owns the encoding.
     Call(#[hbor(max = MAX_TX_BYTES_LEN)] Vec<u8>),
-    /// A component artifact to publish under the composer's own prefix,
+    /// A module to publish under the composer's own prefix,
     /// its effect metadata section included. Content addressing covers
     /// the whole artifact, so the code and the signatures it declares
     /// cannot drift apart.
@@ -244,7 +244,7 @@ impl TransactionEnvelope {
         }
     }
 
-    /// The component artifact, for a publish.
+    /// The module, for a publish.
     #[must_use]
     pub fn artifact(&self) -> Option<&[u8]> {
         match &self.body {

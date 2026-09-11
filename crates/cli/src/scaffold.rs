@@ -83,12 +83,12 @@ fn pascal(module: &str) -> String {
 }
 
 /// The package itself: one module, whose bodies are the declaration and
-/// the component both.
+/// the artifact both.
 fn library(module: &str) -> String {
     let state = pascal(module);
     format!(
         "//! A package: one module, from which the declaration routing reads\n\
-         //! and the component that executes it are both derived.\n\
+         //! and the artifact that executes it are both derived.\n\
          \n\
          use hyperscale_vm_sdk::blueprint;\n\
          \n\

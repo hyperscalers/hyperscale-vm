@@ -3,7 +3,7 @@
 //! What a body does, at the speed of a function call and with a
 //! backtrace when it goes wrong. What it does *not* prove is anything a
 //! network would charge for or refuse over: there is no fuel here, no
-//! canonical-ABI copy accounting, and no profile validator. So this lane
+//! boundary copy accounting, and no profile validator. So this lane
 //! answers whether a contract is right and never whether it is
 //! admissible — which is why the one that answers the second question
 //! runs the same tests.

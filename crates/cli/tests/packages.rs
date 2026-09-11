@@ -77,12 +77,12 @@ fn every_package_crate_derives_its_declaration_through_the_command() {
     }
 }
 
-/// Every derived package builds to a component the gate admits against
-/// the declaration the same module produced.
+/// Every derived package builds to a module the gate admits against
+/// the declaration the same source produced.
 ///
-/// No hand-written WIT and no hand-written `AbiParam` anywhere in them:
-/// the world is synthesised from the bodies, the binding is the export's
-/// own parameter list, and the gate compares them.
+/// No hand-written `AbiParam` anywhere in them: the binding is the
+/// export's own parameter list, and the gate compares it with the
+/// declaration.
 #[test]
 fn a_derived_package_admits_against_its_own_declaration() {
     for (package, provenance) in PACKAGES {

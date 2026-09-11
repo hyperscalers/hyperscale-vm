@@ -97,37 +97,37 @@ impl Kernel {
 
 impl KernelHost for Kernel {
     fn site_len(&mut self, site: u32) -> Result<u32, AbortReason> {
-        self.note(format!("site-len({site})"));
+        self.note(format!("site_len({site})"));
         self.site(site).map(|_| 1)
     }
 
     fn site_declared(&mut self, site: u32, element: u32) -> Result<bool, AbortReason> {
-        self.note(format!("site-declared({site},{element})"));
+        self.note(format!("site_declared({site},{element})"));
         self.site(site).map(|_| element == 0)
     }
 
     fn site_get(&mut self, site: u32, element: u32) -> Result<Vec<u8>, AbortReason> {
-        self.note(format!("site-get({site},{element})"));
+        self.note(format!("site_get({site},{element})"));
         let index = self.site(site)?;
         Ok(self.values[index].clone())
     }
 
     fn site_set(&mut self, site: u32, element: u32, value: Vec<u8>) -> Result<(), AbortReason> {
-        self.note(format!("site-set({site},{element},{value:?})"));
+        self.note(format!("site_set({site},{element},{value:?})"));
         let index = self.site(site)?;
         self.values[index] = value;
         Ok(())
     }
 
     fn site_clear(&mut self, site: u32, element: u32) -> Result<(), AbortReason> {
-        self.note(format!("site-clear({site},{element})"));
+        self.note(format!("site_clear({site},{element})"));
         let index = self.site(site)?;
         self.values[index].clear();
         Ok(())
     }
 
     fn site_balance(&mut self, site: u32, element: u32) -> Result<u128, AbortReason> {
-        self.note(format!("site-balance({site},{element})"));
+        self.note(format!("site_balance({site},{element})"));
         let index = self.site(site)?;
         Ok(self.balances[index])
     }
@@ -145,7 +145,7 @@ impl KernelHost for Kernel {
     }
 
     fn mint_instances(&mut self, grant: u32, ids: &[u64]) -> Result<u32, AbortReason> {
-        self.note(format!("mint-instances({grant},{ids:?})"));
+        self.note(format!("mint_instances({grant},{ids:?})"));
         Ok(self.seat(Held::Ids(ids.to_vec())))
     }
 
@@ -155,7 +155,7 @@ impl KernelHost for Kernel {
         element: u32,
         ids: &[u64],
     ) -> Result<u32, AbortReason> {
-        self.note(format!("site-instance-take({site},{element},{ids:?})"));
+        self.note(format!("site_instance_take({site},{element},{ids:?})"));
         let index = self.site(site)?;
         for id in ids {
             let at = self.entries[index]
@@ -175,7 +175,7 @@ impl KernelHost for Kernel {
         value: Vec<u8>,
     ) -> Result<(), AbortReason> {
         self.note(format!(
-            "site-instance-put({site},{element},{funds},{value:?})"
+            "site_instance_put({site},{element},{funds},{value:?})"
         ));
         let index = self.site(site)?;
         let ids = self.ids(funds)?;
@@ -188,7 +188,7 @@ impl KernelHost for Kernel {
     }
 
     fn bucket_take(&mut self, rep: u32, amount: u128) -> Result<u32, AbortReason> {
-        self.note(format!("bucket-take({rep},{amount})"));
+        self.note(format!("bucket_take({rep},{amount})"));
         let held = self.amount(rep)?;
         let left = held.checked_sub(amount).ok_or(AbortReason::CellUnderflow)?;
         self.buckets[rep as usize] = Held::Amount(left);
@@ -197,7 +197,7 @@ impl KernelHost for Kernel {
 
     fn bucket_split(&mut self, rep: u32, num: U256, den: U256) -> Result<u32, AbortReason> {
         self.note(format!(
-            "bucket-split({rep},{:?},{:?})",
+            "bucket_split({rep},{:?},{:?})",
             num.limbs(),
             den.limbs()
         ));
@@ -214,7 +214,7 @@ impl KernelHost for Kernel {
     }
 
     fn bucket_put(&mut self, rep: u32, other: u32) -> Result<(), AbortReason> {
-        self.note(format!("bucket-put({rep},{other})"));
+        self.note(format!("bucket_put({rep},{other})"));
         let into = self.amount(rep)?;
         let from = self.amount(other)?;
         self.buckets[rep as usize] = Held::Amount(into + from);
@@ -223,12 +223,12 @@ impl KernelHost for Kernel {
     }
 
     fn bucket_amount(&mut self, rep: u32) -> Result<u128, AbortReason> {
-        self.note(format!("bucket-amount({rep})"));
+        self.note(format!("bucket_amount({rep})"));
         self.amount(rep)
     }
 
     fn site_put(&mut self, site: u32, element: u32, funds: u32) -> Result<(), AbortReason> {
-        self.note(format!("site-put({site},{element},{funds})"));
+        self.note(format!("site_put({site},{element},{funds})"));
         let index = self.site(site)?;
         let amount = self.amount(funds)?;
         self.balances[index] += amount;
@@ -237,7 +237,7 @@ impl KernelHost for Kernel {
     }
 
     fn site_take(&mut self, site: u32, element: u32, amount: u128) -> Result<u32, AbortReason> {
-        self.note(format!("site-take({site},{element},{amount})"));
+        self.note(format!("site_take({site},{element},{amount})"));
         let index = self.site(site)?;
         let left = self.balances[index]
             .checked_sub(amount)
@@ -247,7 +247,7 @@ impl KernelHost for Kernel {
     }
 
     fn site_reserve_take(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
-        self.note(format!("site-reserve-take({site},{element})"));
+        self.note(format!("site_reserve_take({site},{element})"));
         self.site(site)?;
         Ok(self.seat(Held::Amount(RESERVE)))
     }
@@ -261,18 +261,18 @@ impl KernelHost for Kernel {
     }
 
     fn site_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
-        self.note(format!("site-count({site},{element})"));
+        self.note(format!("site_count({site},{element})"));
         let index = self.site(site)?;
         Ok(u32::try_from(self.entries[index].len()).expect("few entries"))
     }
 
     fn site_covered(&mut self, site: u32, element: u32) -> Result<bool, AbortReason> {
-        self.note(format!("site-covered({site},{element})"));
+        self.note(format!("site_covered({site},{element})"));
         self.site(site).map(|_| true)
     }
 
     fn site_order(&mut self, site: u32, element: u32, index: u32) -> Result<u128, AbortReason> {
-        self.note(format!("site-order({site},{element},{index})"));
+        self.note(format!("site_order({site},{element},{index})"));
         let at = self.site(site)?;
         self.entries[at]
             .get(index as usize)
@@ -281,7 +281,7 @@ impl KernelHost for Kernel {
     }
 
     fn site_entry(&mut self, site: u32, element: u32, index: u32) -> Result<Vec<u8>, AbortReason> {
-        self.note(format!("site-entry({site},{element},{index})"));
+        self.note(format!("site_entry({site},{element},{index})"));
         let at = self.site(site)?;
         self.entries[at]
             .get(index as usize)
@@ -297,7 +297,7 @@ impl KernelHost for Kernel {
         value: Vec<u8>,
     ) -> Result<(), AbortReason> {
         self.note(format!(
-            "site-entry-set({site},{element},{index},{value:?})"
+            "site_entry_set({site},{element},{index},{value:?})"
         ));
         let at = self.site(site)?;
         let entry = self.entries[at]
@@ -314,7 +314,7 @@ impl KernelHost for Kernel {
         order: u128,
         value: Vec<u8>,
     ) -> Result<(), AbortReason> {
-        self.note(format!("site-insert({site},{element},{order},{value:?})"));
+        self.note(format!("site_insert({site},{element},{order},{value:?})"));
         let at = self.site(site)?;
         self.entries[at].retain(|(existing, _)| *existing != order);
         self.entries[at].push((order, value));
@@ -323,7 +323,7 @@ impl KernelHost for Kernel {
     }
 
     fn site_remove(&mut self, site: u32, element: u32, index: u32) -> Result<(), AbortReason> {
-        self.note(format!("site-remove({site},{element},{index})"));
+        self.note(format!("site_remove({site},{element},{index})"));
         let at = self.site(site)?;
         if (index as usize) < self.entries[at].len() {
             self.entries[at].remove(index as usize);
@@ -334,7 +334,7 @@ impl KernelHost for Kernel {
     }
 
     fn bucket_drop(&mut self, rep: u32) -> Result<(), AbortReason> {
-        self.note(format!("bucket-drop({rep})"));
+        self.note(format!("bucket_drop({rep})"));
         if (rep as usize) < self.buckets.len() {
             self.retire(rep);
             Ok(())
@@ -348,14 +348,14 @@ impl KernelHost for Kernel {
     }
 
     fn site_seal(&mut self, site: u32, element: u32) -> Result<(), AbortReason> {
-        self.note(format!("site-seal({site},{element})"));
+        self.note(format!("site_seal({site},{element})"));
         let at = self.site(site)?;
         self.sealed[at] = true;
         Ok(())
     }
 
     fn site_open_seal(&mut self, site: u32, element: u32) -> Result<Drawn, AbortReason> {
-        self.note(format!("site-open-seal({site},{element})"));
+        self.note(format!("site_open_seal({site},{element})"));
         self.site(site)?;
         Ok(self.drawn)
     }

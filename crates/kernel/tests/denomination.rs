@@ -181,8 +181,8 @@ fn every_producer_stamps_what_its_source_held() {
 
     for (name, funds) in [
         ("write-take", from_absolute),
-        ("bucket-take", split),
-        ("bucket-split", share),
+        ("bucket_take", split),
+        ("bucket_split", share),
         ("delta-take", from_commutative),
         ("reserve-take", from_reserved),
     ] {
@@ -259,7 +259,7 @@ fn every_instance_producer_stamps_what_its_source_held() {
     }]);
     let minted = session.mint_instances(0, &[99]).expect("the grant mints");
 
-    for (name, funds) in [("range-take", taken), ("mint-instances", minted)] {
+    for (name, funds) in [("range-take", taken), ("mint_instances", minted)] {
         assert_eq!(
             session
                 .range_put(1, 0, funds, &[1])
