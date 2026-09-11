@@ -372,12 +372,14 @@ pub fn star_at(
 /// else is in the core, every write-free node is — all of them, so which
 /// one bears the verdict is never a pick.
 ///
-/// **A leg beside the core is the core's.** An attesting node on a core
-/// shard, an inbound leg on a core shard feeding a core node, an
-/// outbound leg on a core shard fed by one: each runs in the core member
-/// and is replicated where the core is, so nothing is departed between a
-/// producer and a consumer that run together. A leg on a core shard that
-/// crosses to somewhere else stays a leg.
+/// **A leg on a core shard is the core's.** Every leg whose home is a
+/// core shard runs in the core member and is replicated where the core
+/// is: an attesting node, an inbound leg whose crossing the core then
+/// issues, an outbound leg whose crossing the core then claims. Nothing
+/// is departed between a producer and a consumer that run together, and
+/// no shard is both the core's and a leg's — a leg left beside the core
+/// would settle its own crossing on a shard whose verdict the core
+/// already gave, a member neither side of the star names.
 fn settle(legs: &[LegShape], homes: &[ShardId]) -> Vec<LegRole> {
     let mut settled: Vec<LegRole> = legs.iter().map(|node| node.role).collect();
     for (index, node) in legs.iter().enumerate() {
@@ -404,62 +406,20 @@ fn settle(legs: &[LegShape], homes: &[ShardId]) -> Vec<LegRole> {
         }
     }
 
+    // The core set is read once: folding a leg whose home is already in
+    // it adds no shard, so one pass settles every role.
     let core: BTreeSet<ShardId> = settled
         .iter()
         .zip(homes)
         .filter(|(role, _)| **role == LegRole::Core)
         .map(|(_, home)| *home)
         .collect();
-    let consumers = consumers_of(legs);
-    // Beside the core is a relation on settled roles, so it is a least
-    // fixpoint and not one pass: a leg whose only neighbour folds in the
-    // same pass is beside the core once that neighbour has. Read against
-    // a snapshot instead, such a leg keeps its role while its neighbour
-    // becomes the core's — and on a multi-shard core the edge between
-    // them is then a crossing the shard running both ends never departs
-    // and the others wait on forever.
-    //
-    // It terminates because a node folds only where its own home is
-    // already in the core set, so the set never grows and each pass can
-    // only turn roles into `Core`.
-    loop {
-        let mut folded = false;
-        for index in 0..settled.len() {
-            if settled[index] == LegRole::Core || !core.contains(&homes[index]) {
-                continue;
-            }
-            let node = u32::try_from(index).unwrap_or(u32::MAX);
-            let is_core = |other: u32| settled.get(other as usize) == Some(&LegRole::Core);
-            let beside_the_core = match settled[index] {
-                LegRole::Attesting => true,
-                LegRole::Inbound => consumers
-                    .iter()
-                    .any(|(&(source, _), &consumer)| source == node && is_core(consumer)),
-                LegRole::Outbound => legs[index].edges.iter().any(|edge| is_core(edge.source)),
-                LegRole::Core => continue,
-            };
-            if beside_the_core {
-                settled[index] = LegRole::Core;
-                folded = true;
-            }
-        }
-        if !folded {
-            break;
+    for (role, home) in settled.iter_mut().zip(homes) {
+        if core.contains(home) {
+            *role = LegRole::Core;
         }
     }
     settled
-}
-
-/// Every `(source, output)` edge's consumer.
-fn consumers_of(legs: &[LegShape]) -> BTreeMap<(u32, u32), u32> {
-    (0u32..)
-        .zip(legs)
-        .flat_map(|(index, leg)| {
-            leg.edges
-                .iter()
-                .map(move |edge| ((edge.source, edge.output), index))
-        })
-        .collect()
 }
 
 /// The node's settled role. A node past the manifest is core, the
@@ -1496,13 +1456,10 @@ mod tests {
         assert!(star.decomposes);
     }
 
-    /// Beside the core is a relation on *settled* roles, so folding it is
-    /// a fixpoint rather than one pass: a leg whose only consumer folds
-    /// in the same pass is the core's too.
-    ///
-    /// Judged against a snapshot the leg keeps its role while its
-    /// consumer becomes the core's, and on a multi-shard core the edge
-    /// between them is then a crossing — one the shard running both ends
+    /// Every leg on a core shard folds, whatever it feeds: a top-up
+    /// beside the first venue feeding the route's sink is the core's
+    /// along with the sink. Left a leg, the edge between them would be a
+    /// crossing on a multi-shard core — one the shard running both ends
     /// never departs, and one the core's other shards wait on for good.
     #[test]
     fn a_leg_whose_consumer_folds_beside_the_core_folds_with_it() {
@@ -1550,6 +1507,38 @@ mod tests {
             vec![0],
             "only the caller's leg crosses: nothing departs between two nodes the core runs",
         );
+    }
+
+    /// An outbound leg on a core shard is the core's even when what
+    /// feeds it is a leg elsewhere: the crossing is then one the core
+    /// claims rather than a delivery, so the shard is never both the
+    /// core's and a delivery's.
+    #[test]
+    fn a_sink_beside_the_core_fed_from_off_it_is_the_cores() {
+        let venue = Address::new([0x91; 31], AddressClass::Component);
+        let caller = Address::new([0x11; 31], AddressClass::Component);
+        let mut beside = [0x22; 31];
+        beside[0] = 0x91;
+        let recipient = Address::new(beside, AddressClass::Component);
+        assert_ne!(resolver().shard_of(caller), resolver().shard_of(venue));
+        assert_eq!(resolver().shard_of(venue), resolver().shard_of(recipient));
+        let legs = vec![
+            leg(venue, LegRole::Core, &[], 0),
+            leg(caller, LegRole::Inbound, &[], 1),
+            leg(recipient, LegRole::Outbound, &[(1, 0)], 2),
+        ];
+        let star = placed(&legs);
+        assert_eq!(
+            star.roles,
+            vec![LegRole::Core, LegRole::Inbound, LegRole::Core],
+            "the sink beside the venue is the core's; the caller's leg stays a leg",
+        );
+        assert_eq!(star.edges.len(), 1, "the caller's leg crosses once");
+        assert!(
+            !star.edges[0].delivers,
+            "and the core claims it rather than a delivery"
+        );
+        assert!(star.decomposes);
     }
 
     /// A declaration reaching a party that runs nothing would leave that

@@ -174,8 +174,8 @@ struct Shape {
 ///
 /// One table rather than an assertion bolted onto each behavioural test,
 /// because what earns its place here is the *contrast* between the rows:
-/// the same classifier has to call a transfer a star with a leg either
-/// side, a venue call a star whose core is the venue alone, a
+/// the same classifier has to call a transfer a star with a delivery
+/// beyond its core, a venue call a star whose core is the venue alone, a
 /// self-governing account nothing at all, and a restricted deposit a core
 /// of its own. A row on its own would say little; the set is the
 /// falsifier.
@@ -189,13 +189,14 @@ struct Shape {
 fn every_pattern_takes_the_star_its_shape_implies() {
     let world = world();
     let shapes = vec![
-        // A core with a leg either side and no venue between them. The
+        // A core issuing one delivery and no venue between them. The
         // sign-in is the only node that commits nothing *and* has nothing
-        // beside it in the core, so it bears the verdict.
+        // beside it in the core, so it bears the verdict; the withdrawal
+        // on its shard is the core's with it, so the core issues.
         Shape {
             name: "transfer",
             graph: transfer_graph(),
-            roles: vec![LegRole::Core, LegRole::Inbound, LegRole::Outbound],
+            roles: vec![LegRole::Core, LegRole::Core, LegRole::Outbound],
             core: 1,
             edges: 1,
             decomposes: true,
