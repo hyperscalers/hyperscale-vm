@@ -349,7 +349,15 @@ mod tests {
     fn metadata_rides_the_artifact_and_comes_back_canonical() {
         let mut metadata = PackageMetadata::default();
         metadata.events.push("transferred".to_owned());
-        metadata.event_bytes = 64;
+        // A declared event has a method that may emit it, which the
+        // door checks on the way back out.
+        metadata.methods.insert(
+            "transfer".to_owned(),
+            MethodSignature {
+                event_bytes: 64,
+                ..MethodSignature::default()
+            },
+        );
         metadata.types.insert(
             "transferred".to_owned(),
             TypeShape::Struct(vec![ShapeField {

@@ -9,7 +9,6 @@ state
 events
       0  withdrawn
       1  deposited
-  a call emits at most 512 bytes
 types
   deposited = { amount: u128 }
   pending = { effective_at_ms: u64, primary: [u8], recovery: [u8], confirmation: [u8], delay_ms: u64 }
@@ -53,6 +52,7 @@ confirm() — infallible
   exports  handles for clauses 0–4
 
 deposit(bucket) — total
+  emits    at most 64 bytes
   declares
       0  read self.refused[resource-of(arg0)]
       1  credit self.quarantine[resource-of(arg0)]
@@ -129,6 +129,7 @@ sweep(resource-address, u128) — infallible
   exports  handle for clause 1
 
 withdraw(resource-address, u128) — infallible
+  emits    at most 64 bytes
   declares
       0  requires claim self
       1  reserve arg1 self.vault[arg0]

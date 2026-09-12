@@ -1,28 +1,28 @@
-resource restricted:a0cafcb1cebb4b83a7b351469c226975576709a943d4769f1bc579fd13d39606  fungible
-  issued by  component:02b21847984e39ea1c48f2bc5dc89a86ad7779d4b4616774eeb019de73923c02
+resource restricted:dbc404854e0eaebc5fc97ca9cc4759ac2e4656e904b7e6724c23ee9f148fab06  fungible
+  issued by  component:2ba32b63be07f54df764b3adff146e8c926c96bb4da080f9774fc4554ed4eb02
   class      restricted — an entry here can stop a movement of it, so a transfer presents this record
   mint       the issuer's own code, which proves nothing to itself
-  withdraw   the moving party holds any instance of restricted:2f080ebf136a197fefd3b8d4e4e4d2ce57d9cf6fb0ada1124ee11f4ad5114a06 — heard before any body runs
-  deposit    the moving party holds any instance of restricted:2f080ebf136a197fefd3b8d4e4e4d2ce57d9cf6fb0ada1124ee11f4ad5114a06 — heard before any body runs
+  withdraw   the moving party holds any instance of restricted:f916dd59edfe7991d0ce8b957e86ed4fbb6ad1621e2479fb324323ff03e76e06 — heard before any body runs
+  deposit    the moving party holds any instance of restricted:f916dd59edfe7991d0ce8b957e86ed4fbb6ad1621e2479fb324323ff03e76e06 — heard before any body runs
   halt       approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
   recall     approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
 
-resource restricted:eb11041a257ce1f732d3dba0330fe690e05be87b7e7d2878a7ff895a07dc0906  fungible
-  issued by  component:02b21847984e39ea1c48f2bc5dc89a86ad7779d4b4616774eeb019de73923c02
+resource restricted:8f7f8b4dde37adc5b293d952012a3b417cbe81b80c55d6d03e8005617375e306  fungible
+  issued by  component:2ba32b63be07f54df764b3adff146e8c926c96bb4da080f9774fc4554ed4eb02
   class      restricted — an entry here can stop a movement of it, so a transfer presents this record
   mint       the issuer's own code, which proves nothing to itself
   withdraw   approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
   deposit    approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
   recall     approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
 
-resource resource:f4c029b3828cc34cb7745544a0fd2e01088308bbe66421617358edc005544104  fungible
-  issued by  component:02b21847984e39ea1c48f2bc5dc89a86ad7779d4b4616774eeb019de73923c02
+resource resource:92716e09cd2bc47e72be2feb8877d4806b4190eca59d9cd90623be844e8f8204  fungible
+  issued by  component:2ba32b63be07f54df764b3adff146e8c926c96bb4da080f9774fc4554ed4eb02
   class      plain — nothing here can stop a movement, so a transfer pays for none of it
   mint       the issuer's own code, which proves nothing to itself
   recall     approval on account:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101 — heard before it is a transaction
 
-resource restricted:2f080ebf136a197fefd3b8d4e4e4d2ce57d9cf6fb0ada1124ee11f4ad5114a06  non-fungible
-  issued by  component:02b21847984e39ea1c48f2bc5dc89a86ad7779d4b4616774eeb019de73923c02
+resource restricted:f916dd59edfe7991d0ce8b957e86ed4fbb6ad1621e2479fb324323ff03e76e06  non-fungible
+  issued by  component:2ba32b63be07f54df764b3adff146e8c926c96bb4da080f9774fc4554ed4eb02
   class      restricted — an entry here can stop a movement of it, so a transfer presents this record
   mint       the issuer's own code, which proves nothing to itself
   withdraw   nobody, ever

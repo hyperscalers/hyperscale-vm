@@ -163,7 +163,7 @@ fn transfer_session() -> KernelSession {
         TxHash(Hash32([0x77; 32])),
         EnvInputs::unsealed(77),
     );
-    session.enter_invocation(SENDER);
+    session.enter_invocation(SENDER, 1_024);
     session
 }
 
@@ -196,7 +196,7 @@ fn one_transfer(
     let funds = reps[0];
 
     let mut session = store.into_data().into_host();
-    session.enter_invocation(RECIPIENT);
+    session.enter_invocation(RECIPIENT, 1_024);
     let recipient_key = child_key(&TestHasher, RECIPIENT, SlotId(1), &[]);
     let recipient_rep = rep_where(&session, |c| {
         *c == Capability::Delta {

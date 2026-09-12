@@ -121,6 +121,19 @@ pub struct FeeBurn {
     pub amount: u128,
 }
 
+/// What the node now running may emit, and what it has emitted.
+///
+/// A budget per frame rather than per transaction: the bound is the
+/// called method's own declaration, so two nodes of one manifest never
+/// share one.
+#[derive(Clone, Copy, Debug, Default)]
+struct NodeEvents {
+    /// The bound the node's method declared.
+    bound: usize,
+    /// Bytes emitted in this frame so far.
+    carried: usize,
+}
+
 /// The per-transaction kernel session.
 #[derive(Debug)]
 pub struct KernelSession {
@@ -159,10 +172,16 @@ pub struct KernelSession {
     /// Events emitted so far, kept until the outcome is known: an abort
     /// discards them, so nothing an aborted transaction said survives.
     events: Vec<Event>,
-    /// The most bytes the events may carry between them: what the
-    /// transaction's calls declared through their packages, which the
-    /// declaration priced as retention.
-    event_bytes: usize,
+    /// The most bytes the node now running may emit, and what it has
+    /// emitted so far.
+    ///
+    /// Per node rather than per transaction: the method a node calls
+    /// declares what one call into it may emit, the declaration prices
+    /// that figure, and a node's slack is never another's to spend. Set
+    /// as the frame opens, so a method that declares nothing may emit
+    /// nothing.
+    node_events: NodeEvents,
+
     /// What each capability's cell holds, by the same rep the capability
     /// table uses; `None` where the cell holds no value.
     ///
@@ -254,16 +273,6 @@ impl KernelSession {
     #[must_use]
     pub fn with_nullifiers(mut self, nullifiers: Vec<SubintentRecord>) -> Self {
         self.nullifiers = nullifiers;
-        self
-    }
-
-    /// Bound the event bytes the receipt may carry: the sum of what the
-    /// transaction's calls declared through their packages. Unset means
-    /// the wire cap, which is what an in-crate fixture wants and what no
-    /// embedder should leave it at.
-    #[must_use]
-    pub const fn with_event_bytes(mut self, event_bytes: usize) -> Self {
-        self.event_bytes = event_bytes;
         self
     }
 
@@ -676,8 +685,12 @@ impl KernelSession {
     /// The runner calls this as it walks each manifest node, since the
     /// node names its target and the session does not; what it then
     /// binds and lends is the whole of what the frame can name.
-    pub fn enter_invocation(&mut self, emitter: Address) {
+    pub fn enter_invocation(&mut self, emitter: Address, event_bytes: usize) {
         self.invocation = Some(emitter);
+        self.node_events = NodeEvents {
+            bound: event_bytes,
+            carried: 0,
+        };
         // Issuance is one node's, granted from that node's own
         // declaration, so entering the next one starts from nothing —
         // and so does reach, which is the frame's rather than the
@@ -718,13 +731,15 @@ impl KernelSession {
         if self.events.len() >= MAX_EVENTS_PER_TX {
             return Err(SessionTrap::TooManyEvents);
         }
-        // The byte bound is the priced one: each call's package declares
-        // what a call may emit, the declaration enters the sum into its
-        // retention, and what the receipt may carry is what was paid for.
-        let carried: usize = self.events.iter().map(|event| event.payload.len()).sum();
-        if carried.saturating_add(payload.len()) > self.event_bytes {
-            return Err(SessionTrap::EventBytesExceeded(self.event_bytes));
+        // The byte bound is the priced one: the method this node calls
+        // declares what one call into it may emit, the declaration enters
+        // that figure into its retention, and what the receipt may carry
+        // is what was paid for.
+        let carried = self.node_events.carried.saturating_add(payload.len());
+        if carried > self.node_events.bound {
+            return Err(SessionTrap::EventBytesExceeded(self.node_events.bound));
         }
+        self.node_events.carried = carried;
         self.events.push(Event {
             emitter,
             event_type,
@@ -979,7 +994,7 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
         assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::NoInvocation));
 
-        session.enter_invocation(Address::new([7; 31], AddressClass::Component));
+        session.enter_invocation(Address::new([7; 31], AddressClass::Component), 1_024);
         assert_eq!(
             session.emit(MAX_EVENT_TYPES, Vec::new()),
             Err(SessionTrap::EventTypeOutOfRange(MAX_EVENT_TYPES)),
@@ -1002,13 +1017,15 @@ mod tests {
         assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::NoInvocation));
     }
 
-    /// The bytes a transaction's events carry between them are bounded
-    /// by what its calls declared — the wire cap where nothing was bound
-    /// — and the bound traps at the emit that crosses it.
+    /// The bytes a frame's events carry are bounded by what the method
+    /// it runs declared, and the bound traps at the emit that crosses
+    /// it. A second frame starts from its own figure, not from what the
+    /// first left.
     #[test]
     fn event_bytes_past_the_declared_bound_trap() {
+        let emitter = Address::new([7; 31], AddressClass::Component);
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
-        session.enter_invocation(Address::new([7; 31], AddressClass::Component));
+        session.enter_invocation(emitter, MAX_EVENT_BYTES_PER_TX);
         let full = MAX_EVENT_BYTES_PER_TX / MAX_EVENT_PAYLOAD_BYTES;
         for _ in 0..full {
             session.emit(0, vec![0u8; MAX_EVENT_PAYLOAD_BYTES]).unwrap();
@@ -1020,15 +1037,18 @@ mod tests {
         // An empty payload adds no bytes and still fits under the count.
         session.emit(0, Vec::new()).unwrap();
 
-        // A declared bound binds below the cap.
-        let mut bounded = session_over(MemoryStore::new(), &declared(&[])).with_event_bytes(100);
-        bounded.enter_invocation(Address::new([7; 31], AddressClass::Component));
+        // A declared bound binds below the cap, and the next frame's own
+        // figure is what it spends.
+        let mut bounded = session_over(MemoryStore::new(), &declared(&[]));
+        bounded.enter_invocation(emitter, 100);
         bounded.emit(0, vec![0u8; 60]).unwrap();
         bounded.emit(0, vec![0u8; 40]).unwrap();
         assert_eq!(
             bounded.emit(0, vec![0u8; 1]),
             Err(SessionTrap::EventBytesExceeded(100))
         );
+        bounded.enter_invocation(emitter, 100);
+        bounded.emit(0, vec![0u8; 100]).unwrap();
     }
 
     /// A written value past the cell cap traps at production. The guard

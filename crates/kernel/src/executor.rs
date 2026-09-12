@@ -125,10 +125,15 @@ pub struct BatchTx {
     /// is never another's to spend. Exhaustion is the sender's own
     /// defect and prices as one.
     pub gas_limits: Vec<u64>,
-    /// The most bytes the receipt's events may carry between them: the
-    /// sum of what the calls' packages declare one call may emit, which
-    /// the declaration priced as retention.
-    pub event_bytes: usize,
+    /// The most bytes each node may emit, in node order: what the
+    /// method it calls declares, which the declaration priced as
+    /// retention.
+    ///
+    /// Per node for the reason the ceilings are, and read through
+    /// [`Self::event_bound`]: a method that emits states its own figure,
+    /// so a node's slack is never another's to spend and a method that
+    /// states nothing may emit nothing.
+    pub event_bytes: Vec<u32>,
 }
 
 impl BatchTx {
@@ -153,17 +158,29 @@ impl BatchTx {
             judges: OwnerSet::whole(),
             env,
             gas_limits: Vec::new(),
-            event_bytes: MAX_EVENT_BYTES_PER_TX,
+            event_bytes: Vec::new(),
         }
     }
 
-    /// Bind the event bound. Unset means the wire cap, which is what an
-    /// in-crate fixture wants and what no embedder should leave it at:
-    /// every call's package declares one.
+    /// Bind what each node may emit, in node order.
     #[must_use]
-    pub const fn with_event_bytes(mut self, event_bytes: usize) -> Self {
+    pub fn with_event_bytes(mut self, event_bytes: Vec<u32>) -> Self {
         self.event_bytes = event_bytes;
         self
+    }
+
+    /// The bound `node` emits under.
+    ///
+    /// The wire cap while no bounds are bound, which is what an in-crate
+    /// fixture wants and what no embedder should leave it at. `None`
+    /// where bounds are bound and this node has none, on
+    /// [`Self::ceiling`]'s terms.
+    #[must_use]
+    pub fn event_bound(&self, node: usize) -> Option<usize> {
+        if self.event_bytes.is_empty() {
+            return Some(MAX_EVENT_BYTES_PER_TX);
+        }
+        self.event_bytes.get(node).map(|bytes| *bytes as usize)
     }
 
     /// Bind what this execution does.
@@ -984,7 +1001,6 @@ fn run_group<R: GuestRunner>(
                     .with_applies(entry.applies.clone())
                     .with_nullifiers(entry.nullifiers.clone())
                     .with_fee(entry.fee)
-                    .with_event_bytes(entry.event_bytes)
             }
             Err(defect) => {
                 receipts.push((entry.tx, abort_receipt(defect.into(), 0)));

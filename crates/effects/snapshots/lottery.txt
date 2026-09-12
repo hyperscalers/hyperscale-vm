@@ -8,7 +8,6 @@ events
       0  entered
       1  closed
       2  settled
-  a call emits at most 1024 bytes
 errors
       0  round-truncated
       1  not-yet-drawn
@@ -22,12 +21,14 @@ types
   settled = (outcome)
 
 close() — infallible
+  emits    at most 8 bytes
   declares
       0  requires self.round is absent
       1  write self.round
   exports  handle for clause 1
 
 enter(address, bucket) — infallible
+  emits    at most 64 bytes
   declares
       0  requires self.round is absent
       1  read self.round
@@ -42,6 +43,7 @@ instantiate() — infallible
   exports  handle for clause 1, self.record
 
 reopen() — fallible
+  emits    at most 8 bytes
   declares
       0  requires self.outcome is absent
       1  read self.outcome
@@ -50,6 +52,7 @@ reopen() — fallible
   exports  handle for clause 1, handle for clause 3
 
 settle(u64) — fallible
+  emits    at most 128 bytes
   declares
       0  requires self.round is present
       1  write self.round

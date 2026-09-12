@@ -65,7 +65,7 @@ fn keys() -> (SubstateKey, SubstateKey) {
 /// Enter the account whose method runs next. Emission is stamped from
 /// here, so the caller driving the sequence is what supplies it.
 fn entering(mut host: KernelSession, who: Address) -> KernelSession {
-    host.enter_invocation(who);
+    host.enter_invocation(who, 1_024);
     host
 }
 

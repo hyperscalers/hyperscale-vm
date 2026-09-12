@@ -852,9 +852,9 @@ mod tests {
             Address::new([0x22; 31], AddressClass::Component),
         );
 
-        session.enter_invocation(first);
+        session.enter_invocation(first, 1_024);
         session.emit(3, b"one".to_vec()).unwrap();
-        session.enter_invocation(second);
+        session.enter_invocation(second, 1_024);
         session.emit(4, b"two".to_vec()).unwrap();
 
         let (receipt, _) = session.finish(vec![], 0).unwrap();
@@ -886,7 +886,7 @@ mod tests {
         }]);
         let mut session = session_over(MemoryStore::new(), &set);
 
-        session.enter_invocation(Address::new([9; 31], AddressClass::Component));
+        session.enter_invocation(Address::new([9; 31], AddressClass::Component), 1_024);
         let site = session.bind_site(vec![Some(0)]);
         session.emit(1, b"paid".to_vec()).unwrap();
         session.delta_sub(site, 0, 1).unwrap();

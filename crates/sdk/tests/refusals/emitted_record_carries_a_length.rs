@@ -4,7 +4,7 @@
 //! the macro has an opinion.
 use hyperscale_vm_sdk::blueprint;
 
-#[blueprint(event_bytes = 256)]
+#[blueprint]
 mod contract {
     use hyperscale_vm_sdk::state::Cell;
 
@@ -23,6 +23,7 @@ mod contract {
     }
 
     impl Contract {
+        #[event_bytes(256)]
         pub fn count(&mut self, n: u64) {
             let tally = Tally {
                 count: n,

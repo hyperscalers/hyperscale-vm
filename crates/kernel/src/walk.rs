@@ -121,6 +121,7 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
         call: &NodeCall,
         outputs: &[Vec<Option<u32>>],
         fuel_budget: u64,
+        event_bytes: usize,
         session: KernelSession,
     ) -> Result<NodeSuccess, NodeFailure> {
         // The gate and the signed bounds are the walk's own judgment
@@ -133,7 +134,7 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
         // the whole transaction, and what tells it whose call is running
         // is what the frame is lent from here on: the sites bound and the
         // edges lent below are the whole of what the body can name.
-        session.enter_invocation(call.target);
+        session.enter_invocation(call.target, event_bytes);
 
         let mut args = Vec::with_capacity(call.args.len());
         for arg in &call.args {
@@ -664,13 +665,15 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                     Err(failure) => return failure.into_result(fuel),
                 }
             }
-            // A node without a ceiling is a batch composed against some
-            // other call list: the derivation holds every envelope to one
-            // ceiling per node, so this is the composer's defect.
-            let Some(ceiling) = entry.ceiling(index) else {
+            // A node without a ceiling or an event bound is a batch
+            // composed against some other call list: the derivation holds
+            // every envelope to one of each per node, so this is the
+            // composer's defect.
+            let (Some(ceiling), Some(emits)) = (entry.ceiling(index), entry.event_bound(index))
+            else {
                 return composition_defect(session, AbortReason::MissingCeiling).into_result(fuel);
             };
-            match self.invoke_node(node, call, &outputs, ceiling, session) {
+            match self.invoke_node(node, call, &outputs, ceiling, emits, session) {
                 Ok((returned, produced, answered, consumed)) => {
                     session = returned;
                     session.leave_invocation();

@@ -17,7 +17,6 @@ events
       4  validator-unjailed
       5  param-vote-cast
       6  param-vote-cleared
-  a call emits at most 2048 bytes
 types
   param-vote = { split_bytes: u64, impound_epochs: u64, activate_at: u64 }
   param-vote-cast = (param-vote)
@@ -30,18 +29,21 @@ types
   validator-unjailed = { validator_id: u64 }
 
 cast-param-vote(u64, u64, u64) — infallible
+  emits    at most 64 bytes
   declares
       0  requires claim self-issued(non-fungible["owner-badge"])
       1  write self.vote
   exports  handle for clause 1, arg0, arg1, arg2
 
 clear-param-vote() — infallible
+  emits    at most 8 bytes
   declares
       0  requires claim self-issued(non-fungible["owner-badge"])
       1  write self.vote
   exports  handle for clause 1
 
 deactivate-validator(u64) — infallible
+  emits    at most 32 bytes
   declares
       0  requires claim self-issued(non-fungible["owner-badge"])
       1  requires self.validators[arg0] is present
@@ -64,6 +66,7 @@ instantiate() — infallible
   exports  handle for clause 2, handle for clause 4, handle for clause 6, handle for clause 8, self.record
 
 register-validator(u64, [u8; 48], [u8; 96]) — infallible
+  emits    at most 256 bytes
   declares
       0  requires claim self-issued(non-fungible["owner-badge"])
       1  requires self.validators[arg0] is absent
@@ -71,6 +74,7 @@ register-validator(u64, [u8; 48], [u8; 96]) — infallible
   exports  handle for clause 2, arg1, arg0, arg2
 
 stake(bucket) — infallible
+  emits    at most 64 bytes
   takes    arg0 carrying config.staked_resource
   mints    "stake-unit" fungible
   declares
@@ -79,6 +83,7 @@ stake(bucket) — infallible
   exports  handle for clause 0, edge arg0
 
 unjail(u64) — infallible
+  emits    at most 32 bytes
   declares
       0  requires claim self-issued(non-fungible["owner-badge"])
       1  requires self.validators[arg0] is present
@@ -86,6 +91,7 @@ unjail(u64) — infallible
   exports  arg0
 
 unstake(bucket) — infallible
+  emits    at most 64 bytes
   takes    arg0 carrying self-issued(fungible["stake-unit"])
   burns    "stake-unit" fungible
   exports  edge arg0

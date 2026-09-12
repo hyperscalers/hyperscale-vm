@@ -332,6 +332,7 @@ pub fn declaration(
     gate: &TokenStream,
     declines: bool,
     total: bool,
+    emits: Option<&syn::LitInt>,
     grants: &TokenStream,
 ) -> TokenStream {
     // One draw per call site: the entry key derived from a fresh id and
@@ -378,6 +379,7 @@ pub fn declaration(
     let fallible = declines.then(|| quote!(__t.fallible();));
     let answers = lowered.answer.is_some().then(|| quote!(__t.answers();));
     let total = total.then(|| quote!(__t.total();));
+    let emits = emits.map(|bytes| quote!(__t.emits(#bytes);));
     quote!(
         |__t: &mut ::hyperscale_vm_sdk::Trace| {
             #grants
@@ -386,6 +388,7 @@ pub fn declaration(
             #fallible
             #total
             #answers
+            #emits
             #(#nodes)*
             #(#outputs)*
             #(#denominations)*

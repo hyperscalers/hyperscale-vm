@@ -355,7 +355,7 @@ enum Took {
 fn both(fx: &Fixture, take: Take) -> Result<(Took, KernelSession)> {
     let build = || {
         let mut host = session_of(fx);
-        host.enter_invocation(ISSUER);
+        host.enter_invocation(ISSUER, 1_024);
         if take.granted() {
             host.grant_issuance(vec![IssuanceGrant {
                 resource: ISSUED,

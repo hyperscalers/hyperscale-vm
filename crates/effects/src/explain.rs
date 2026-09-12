@@ -966,13 +966,6 @@ impl<'a> Names<'a> {
             }
         }
         name_table("events", &self.metadata.events, out);
-        if self.metadata.event_bytes != 0 {
-            let _ = writeln!(
-                out,
-                "  a call emits at most {} bytes",
-                self.metadata.event_bytes
-            );
-        }
         name_table("errors", &self.metadata.errors, out);
         if !self.metadata.types.is_empty() {
             out.push_str("types\n");
@@ -995,6 +988,7 @@ impl<'a> Names<'a> {
             denominations,
             effects,
             abi,
+            event_bytes,
         } = signature;
         let kinds: Vec<String> = params
             .iter()
@@ -1010,6 +1004,9 @@ impl<'a> Names<'a> {
             out.push_str(", answers");
         }
         out.push('\n');
+        if *event_bytes != 0 {
+            let _ = writeln!(out, "  emits    at most {event_bytes} bytes");
+        }
 
         for (position, denomination) in denominations.iter().enumerate() {
             let Some(resource) = denomination else {
@@ -1634,6 +1631,7 @@ fn signature_exprs(signature: &MethodSignature) -> Vec<&Expr> {
         denominations,
         effects,
         abi,
+        event_bytes: _,
     } = signature;
     let mut exprs: Vec<&Expr> = Vec::new();
     exprs.extend(denominations.iter().flatten());
@@ -2143,7 +2141,6 @@ mod tests {
         let mut metadata = PackageMetadata {
             config: vec!["x".to_owned(), "y".to_owned()],
             events: vec!["traded".to_owned()],
-            event_bytes: 64,
             errors: vec!["underfunded".to_owned()],
             ..PackageMetadata::default()
         };

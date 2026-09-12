@@ -179,6 +179,7 @@ mod tests {
             issues: Vec::new(),
             destroys: Vec::new(),
             abi: vec![AbiParam::Guard(0)],
+            event_bytes: 64,
             params: vec![
                 ParamType::U64,
                 ParamType::U128,
@@ -286,7 +287,6 @@ mod tests {
             .methods
             .insert("another".into(), MethodSignature::default());
         metadata.events = vec!["withdrawn".into(), "deposited".into()];
-        metadata.event_bytes = 64;
         metadata.types = metadata
             .events
             .iter()
@@ -347,7 +347,6 @@ mod tests {
         struct Forged {
             methods: Vec<(String, MethodSignature)>,
             events: Vec<String>,
-            event_bytes: u32,
             errors: Vec<String>,
             types: ShapeTable,
             config: Vec<String>,
@@ -369,7 +368,6 @@ mod tests {
                         .map(|name| ((*name).to_owned(), MethodSignature::default()))
                         .collect(),
                     events: Vec::new(),
-                    event_bytes: 0,
                     errors: Vec::new(),
                     types: ShapeTable::new(),
                     config: Vec::new(),
@@ -504,7 +502,16 @@ mod tests {
                     .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
                     .collect(),
                 events: named,
-                event_bytes: 64,
+                // A declared event has a method that may emit it, which
+                // the door checks beside the table's length.
+                methods: std::iter::once((
+                    "moves".to_owned(),
+                    MethodSignature {
+                        event_bytes: 64,
+                        ..MethodSignature::default()
+                    },
+                ))
+                .collect(),
                 ..PackageMetadata::default()
             }
         };
@@ -537,7 +544,6 @@ mod tests {
                 .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
                 .collect(),
             events: named,
-            event_bytes: 64,
             ..PackageMetadata::default()
         };
         let bytes = encode_unchecked(&over);

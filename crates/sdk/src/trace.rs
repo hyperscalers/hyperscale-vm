@@ -99,6 +99,7 @@ pub struct Trace {
     totality: Totality,
     /// Whether the method hands back a value beside its edges.
     answers: bool,
+    event_bytes: u32,
 }
 
 impl Trace {
@@ -122,6 +123,7 @@ impl Trace {
             destroys: Vec::new(),
             totality: Totality::Infallible,
             answers: false,
+            event_bytes: 0,
         }
     }
 
@@ -703,6 +705,16 @@ impl Trace {
         self.answers = true;
     }
 
+    /// Record the most bytes one call into this method may emit between
+    /// its events.
+    ///
+    /// What the declaration prices the call's events at and what the
+    /// kernel meters the node against, so a method that states nothing
+    /// may emit nothing.
+    pub const fn emits(&mut self, bytes: u32) {
+        self.event_bytes = bytes;
+    }
+
     /// Record the total mark: no refusal, and no partial operation
     /// anywhere the body reaches.
     ///
@@ -1020,6 +1032,7 @@ impl Trace {
             denominations,
             outputs: self.outputs,
             answers: self.answers,
+            event_bytes: self.event_bytes,
             worst_case: self.worst_case,
             abi,
             issues: self.issues,
@@ -1275,6 +1288,7 @@ pub(crate) struct Recorded {
     pub(crate) clauses: Vec<Clause>,
     pub(crate) outputs: Vec<Expr>,
     pub(crate) answers: bool,
+    pub(crate) event_bytes: u32,
     pub(crate) denominations: Vec<Option<Expr>>,
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,

@@ -185,7 +185,7 @@ fn guest(site: u32) -> Vec<u8> {
 /// the site the frame reaches the cell at.
 fn framed(fx: &Fixture, handed: u32) -> (KernelSession, u32) {
     let mut session = session(fx);
-    session.enter_invocation(INSTANCE);
+    session.enter_invocation(INSTANCE, 1_024);
     let site = session.bind_site(vec![Some(handed)]);
     (session, site)
 }

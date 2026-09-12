@@ -300,7 +300,7 @@ fn author(attr: TokenStream, item: TokenStream, role: Role) -> TokenStream {
     let module = syn::parse_macro_input!(item as syn::ItemMod);
     let recovered = module.clone();
     let attr = TokenStream2::from(attr);
-    match terms(&attr).and_then(|terms| expand(module, terms, role)) {
+    match serves(&attr).and_then(|serves| expand(module, serves, role)) {
         Ok(tokens) => tokens.into(),
         Err(error) => refused(recovered, role, &error).into(),
     }
@@ -378,67 +378,21 @@ fn refused(mut module: syn::ItemMod, role: Role, error: &syn::Error) -> TokenStr
 /// binds to every principal address by class. That is not something the
 /// module could be read for — a principal's address folds in no package
 /// hash — so it is stated.
-/// What `#[blueprint(...)]` says about the package as a whole.
-struct BlueprintTerms {
-    serves: client::Serves,
-    /// The most event bytes one call into the package may emit, where
-    /// the package declares events.
-    event_bytes: Option<syn::LitInt>,
-}
-
-/// One term of the attribute: `principals`, or `event_bytes = N`.
-enum BlueprintTerm {
-    Principals,
-    EventBytes(syn::LitInt),
-}
-
-impl syn::parse::Parse for BlueprintTerm {
-    fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
-        let ident: syn::Ident = input.parse()?;
-        if ident == "principals" {
-            return Ok(Self::Principals);
-        }
-        if ident == "event_bytes" {
-            input.parse::<syn::Token![=]>()?;
-            return Ok(Self::EventBytes(input.parse()?));
-        }
+fn serves(attr: &TokenStream2) -> syn::Result<client::Serves> {
+    if attr.is_empty() {
+        return Ok(client::Serves::Instances);
+    }
+    let ident: syn::Ident = syn::parse2(attr.clone())?;
+    if ident == "principals" {
+        Ok(client::Serves::Principals)
+    } else {
         Err(syn::Error::new(
             ident.span(),
-            "`#[blueprint]` takes `principals`, `event_bytes = N`, or nothing — the first is \
-             the package an instance registry serves to every principal address by class, \
-             and no other package can be one; the second bounds what one call into an \
-             event-emitting package may emit",
+            "`#[blueprint]` takes `principals` or nothing — the first is the package an \
+             instance registry serves to every principal address by class, and no other \
+             package can be one",
         ))
     }
-}
-
-fn terms(attr: &TokenStream2) -> syn::Result<BlueprintTerms> {
-    let mut terms = BlueprintTerms {
-        serves: client::Serves::Instances,
-        event_bytes: None,
-    };
-    if attr.is_empty() {
-        return Ok(terms);
-    }
-    let parsed = syn::parse::Parser::parse2(
-        syn::punctuated::Punctuated::<BlueprintTerm, syn::Token![,]>::parse_terminated,
-        attr.clone(),
-    )?;
-    for term in parsed {
-        match term {
-            BlueprintTerm::Principals => terms.serves = client::Serves::Principals,
-            BlueprintTerm::EventBytes(bytes) => {
-                if terms.event_bytes.is_some() {
-                    return Err(syn::Error::new_spanned(
-                        bytes,
-                        "`event_bytes` is stated once",
-                    ));
-                }
-                terms.event_bytes = Some(bytes);
-            }
-        }
-    }
-    Ok(terms)
 }
 
 /// A Rust name as the protocol spells it: the published form of a method,
@@ -630,6 +584,7 @@ const OWN: &[&str] = &[
     "requires",
     "proves",
     "total",
+    "event_bytes",
 ];
 
 /// The attributes that name a gate, whose method may have no body of
@@ -912,7 +867,7 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
 
 /// The markers whose reader scans structs, and the two field pins.
 const ON_A_STRUCT: &[&str] = &["state", "config", "event", "record", "resource"];
-const ON_A_METHOD: &[&str] = &["proves", "total", "name"];
+const ON_A_METHOD: &[&str] = &["proves", "total", "name", "event_bytes"];
 const ON_A_STATE_FIELD: &[&str] = &["slot", "holds", "denomination", "width"];
 
 fn marker_kinds_on_struct(
@@ -1211,6 +1166,36 @@ fn total_attr(method: &syn::ImplItemFn) -> Option<&syn::Attribute> {
         .find(|attr| attr.path().is_ident("total"))
 }
 
+/// The most bytes `#[event_bytes(N)]` says one call into this method may
+/// emit, and nothing where it says nothing.
+///
+/// Per method, because that is where the emission is written: a package
+/// declaring events has methods that emit and methods that do not, and a
+/// caller pays for the one it calls. A method that states nothing may
+/// emit nothing, which the kernel holds it to.
+fn event_bytes_attr(method: &syn::ImplItemFn) -> syn::Result<Option<syn::LitInt>> {
+    let Some(attr) = method
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("event_bytes"))
+    else {
+        return Ok(None);
+    };
+    let bytes: syn::LitInt = attr.parse_args().map_err(|_| {
+        syn::Error::new_spanned(
+            attr,
+            "`#[event_bytes(N)]` takes the byte count one call into this method may emit",
+        )
+    })?;
+    if bytes.base10_parse::<u32>()? == 0 {
+        return Err(syn::Error::new_spanned(
+            bytes,
+            "a method bounded at nothing emits nothing — drop the attribute instead",
+        ));
+    }
+    Ok(Some(bytes))
+}
+
 /// The type a method answers with, at the tail position the lowering
 /// took it from.
 ///
@@ -1316,6 +1301,9 @@ fn declined_with(method: &syn::ImplItemFn) -> Option<syn::Type> {
 /// One public method, lowered to its declaration and its two executing
 /// halves.
 struct Lowered {
+    /// Whether the method bounds what it may emit, which only a method
+    /// that emits does.
+    emits: bool,
     /// The `.method(…)` builder call.
     declaration: TokenStream2,
     /// The export and the `impl Guest` body behind it.
@@ -1453,11 +1441,13 @@ fn lower_method(
         }
     }
     let total = claim.is_some();
+    let emits = event_bytes_attr(method)?;
     let closure = emit::declaration(
         &lowered,
         &gate_calls(&gate, &lowered, serves),
         declining.is_some(),
         total,
+        emits.as_ref(),
         &grant_registrations(declared.resources),
     );
     let declaration = quote!(
@@ -1498,6 +1488,7 @@ fn lower_method(
         params,
     };
     Ok(Lowered {
+        emits: emits.is_some(),
         declaration,
         guest,
         host,
@@ -2380,13 +2371,9 @@ fn vault_markers(
 #[allow(clippy::too_many_lines)] // linear assembly: parse, check, then emit
 fn expand(
     mut module: syn::ItemMod,
-    terms: BlueprintTerms,
+    serves: client::Serves,
     role: Role,
 ) -> syn::Result<TokenStream2> {
-    let BlueprintTerms {
-        serves,
-        event_bytes,
-    } = terms;
     let span = module.span();
     let module_name = module.ident.clone();
     let Some((_, items)) = &mut module.content else {
@@ -2405,25 +2392,6 @@ fn expand(
     let config_fields = config_slots(items, config_name.as_ref());
     check_config_width(config_name.as_ref(), config_fields.len())?;
     let events = event_names(items)?;
-    // The bound is what a declaration prices a call's events at and
-    // what the kernel meters emits against, so a package that emits
-    // states it and one that does not has nothing to state.
-    match (&event_bytes, events.is_empty()) {
-        (None, false) => {
-            return Err(syn::Error::new(
-                span,
-                "a blueprint that declares events states `event_bytes = N` in its attribute: \
-                 the most bytes one call into it may emit between its events",
-            ));
-        }
-        (Some(bytes), true) => {
-            return Err(syn::Error::new_spanned(
-                bytes,
-                "nothing here emits — `event_bytes` bounds the events a blueprint declares",
-            ));
-        }
-        _ => {}
-    }
     let errors = error_names(items)?;
     let declines: BTreeSet<String> = error_enums(items)
         .map(|item| item.ident.to_string())
@@ -2447,6 +2415,28 @@ fn expand(
         declines: &declines,
     };
     let methods = lower_methods(items, &state_name, &declared, serves)?;
+    // The two tables read together: an event nothing may emit is a name
+    // that means nothing, and a method bounded to emit in a package that
+    // declares no event has nothing to emit. The publish gate says the
+    // same of the metadata; saying it here puts the error on the line
+    // rather than on a package.
+    match (events.is_empty(), methods.iter().any(|m| m.emits)) {
+        (false, false) => {
+            return Err(syn::Error::new(
+                span,
+                "a blueprint that declares events has a method that may emit one: mark it \
+                 `#[event_bytes(N)]` with the most bytes one call into it may emit",
+            ));
+        }
+        (true, true) => {
+            return Err(syn::Error::new(
+                span,
+                "nothing here is an event — `#[event_bytes]` bounds the events a blueprint \
+                 declares",
+            ));
+        }
+        _ => {}
+    }
     let calls: Vec<_> = methods.iter().map(|m| &m.client).collect();
     let slots: BTreeMap<String, u16> = fields
         .iter()
@@ -2467,7 +2457,6 @@ fn expand(
 
     let declarations = methods.iter().map(|m| &m.declaration);
     let event_table = events.iter().map(|(ident, _)| quote!(.event::<#ident>()));
-    let event_bound = event_bytes.iter().map(|bytes| quote!(.event_bytes(#bytes)));
     let error_table = errors.iter().map(|name| quote!(.error(#name)));
     let state_table = state_table(&fields, &config_fields);
     let config_table = config_fields.iter().map(|(name, _)| quote!(.config(#name)));
@@ -2504,7 +2493,7 @@ fn expand(
             ::hyperscale_vm_sdk::Blueprint::builder()
                 #(#declarations)*
                 #(#event_table)*
-            #(#event_bound)*
+
                 #(#error_table)*
                 #(#stored_table)*
                 #(#state_table)*

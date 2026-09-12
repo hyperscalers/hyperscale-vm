@@ -113,11 +113,11 @@ fn mirror_metadata() -> PackageMetadata {
                     denomination: Some(Box::new(resource_of_arg0())),
                 },
             ],
+            event_bytes: 512,
             ..MethodSignature::default()
         },
     );
     metadata.events = vec!["withdrawn".into(), "deposited".into()];
-    metadata.event_bytes = 512;
     metadata
 }
 

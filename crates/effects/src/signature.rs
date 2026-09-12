@@ -446,6 +446,18 @@ pub struct MethodSignature {
     /// Authored beside the signature and content-addressed with the code,
     /// so the binding cannot drift from the ABI it describes.
     pub abi: Vec<AbiParam>,
+    /// The most bytes one call into this method may emit between its
+    /// events: what a declaration prices the call's events at, and what
+    /// the kernel meters the node against.
+    ///
+    /// Per method rather than per package, because that is where a
+    /// caller's cost is decided: a package declaring events has methods
+    /// that emit and methods that do not, and a flat package figure
+    /// charges a transfer for the emissions of a method it never calls.
+    /// Zero for a method that emits nothing, which the publish gate and
+    /// the kernel hold it to alike — a method stating nothing may emit
+    /// nothing.
+    pub event_bytes: u32,
 }
 
 impl MethodSignature {

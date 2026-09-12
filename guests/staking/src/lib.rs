@@ -35,7 +35,7 @@
 
 use hyperscale_vm_sdk::blueprint;
 
-#[blueprint(event_bytes = 2048)]
+#[blueprint]
 pub mod staking {
     use hyperscale_vm_sdk::state::{Bucket, Cell, Keyed, Quantity, Vault};
     use hyperscale_vm_sdk::{Address, ResourceAddr};
@@ -154,6 +154,7 @@ pub mod staking {
 
     impl Staking {
         /// Delegate `funds`, taking stake units at par.
+        #[event_bytes(64)]
         pub fn stake(&mut self, funds: Bucket) -> Bucket {
             // The amount is the kernel's own cell width, which is what
             // the handle carries, so neither end reformats a number it
@@ -172,6 +173,7 @@ pub mod staking {
         /// event — the same answer this pool gives to every aggregate,
         /// and the one that keeps two delegators leaving at once from
         /// contending on a total neither of them reads.
+        #[event_bytes(64)]
         pub fn unstake(&mut self, units: Bucket) {
             let returned = units.quantity();
             StakeUnit::burn(units);
@@ -180,6 +182,7 @@ pub mod staking {
 
         /// Take on a validator, recording the key the pool registered.
         #[requires(issued(OwnerBadge))]
+        #[event_bytes(256)]
         pub fn register_validator(
             &mut self,
             validator_id: u64,
@@ -201,6 +204,7 @@ pub mod staking {
 
         /// Stand a validator down.
         #[requires(issued(OwnerBadge))]
+        #[event_bytes(32)]
         pub fn deactivate_validator(&mut self, validator_id: u64) {
             // Holding the leaf is the whole of the access: the
             // declaration says the pool operates this validator, and the
@@ -211,6 +215,7 @@ pub mod staking {
 
         /// Ask for a validator to be unjailed.
         #[requires(issued(OwnerBadge))]
+        #[event_bytes(32)]
         pub fn unjail(&mut self, validator_id: u64) {
             self.validators.at(validator_id).exclusive();
             ValidatorUnjailed { validator_id }.emit();
@@ -218,6 +223,7 @@ pub mod staking {
 
         /// Cast the pool's governance vote, replacing any it held.
         #[requires(issued(OwnerBadge))]
+        #[event_bytes(64)]
         pub fn cast_param_vote(&mut self, split_bytes: u64, impound_epochs: u64, activate_at: u64) {
             // The pool holds one vote, so a cast replaces rather than
             // adds. What it keeps is what it voted for, which is the only
@@ -233,6 +239,7 @@ pub mod staking {
 
         /// Withdraw the pool's governance vote.
         #[requires(issued(OwnerBadge))]
+        #[event_bytes(8)]
         pub fn clear_param_vote(&mut self) {
             self.vote.set(None);
             ParamVoteCleared.emit();

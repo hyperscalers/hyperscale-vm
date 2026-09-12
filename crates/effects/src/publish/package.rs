@@ -27,15 +27,15 @@ pub enum MetadataError {
     /// An event table longer than the index an emitted event can carry.
     #[error("event table names {0} types, past the {MAX_EVENT_TYPES} an event index can reach")]
     EventTable(usize),
-    /// An event table with no bound on what a call may emit.
-    #[error("the package declares events and no event bytes a call may emit")]
+    /// An event table no method may emit against.
+    #[error("the package declares events and no method that may emit one")]
     EventBytesUndeclared,
-    /// A bound on emits from a package that declares no events.
-    #[error("the package declares {0} event bytes and no events")]
-    EventBytesWithoutEvents(u32),
+    /// A method bounded to emit in a package that declares no events.
+    #[error("the package bounds a method's emissions and declares no events")]
+    EventBytesWithoutEvents,
     /// A bound past what one transaction may emit at all.
     #[error(
-        "the package declares {0} event bytes a call, past the {MAX_EVENT_BYTES_PER_TX} a transaction may emit"
+        "a method declares {0} event bytes, past the {MAX_EVENT_BYTES_PER_TX} a transaction may emit"
     )]
     EventBytesTooHigh(u32),
     /// An error table longer than the index a declined code can carry.
@@ -188,7 +188,7 @@ pub fn check_metadata(metadata: &PackageMetadata) -> Result<(), MetadataError> {
         })?;
     }
     check_table_agreement(metadata)?;
-    check_event_bound(metadata)
+    check_event_bounds(metadata)
 }
 
 /// The three table caps: what an index into each can reach.
@@ -205,16 +205,26 @@ const fn check_table_caps(metadata: &PackageMetadata) -> Result<(), MetadataErro
     Ok(())
 }
 
-/// The event bound reads with the event table: a package that emits
-/// states what one call may, one that does not states nothing, and no
-/// call may emit more than a transaction may carry.
-const fn check_event_bound(metadata: &PackageMetadata) -> Result<(), MetadataError> {
-    match (metadata.events.is_empty(), metadata.event_bytes) {
-        (false, 0) => Err(MetadataError::EventBytesUndeclared),
-        (true, bytes) if bytes != 0 => Err(MetadataError::EventBytesWithoutEvents(bytes)),
-        (_, bytes) if bytes as usize > MAX_EVENT_BYTES_PER_TX => {
-            Err(MetadataError::EventBytesTooHigh(bytes))
+/// The event bounds read with the event table: a package that emits has
+/// a method that may, one that does not has none, and no call may emit
+/// more than a transaction may carry.
+///
+/// Per method, so a package's emissions are priced where they are
+/// authored. The package-wide half is a sanity check between the two
+/// tables — a declared event nothing may emit is a table that means
+/// nothing, and a bound with no event behind it is a charge for
+/// something the package cannot do.
+fn check_event_bounds(metadata: &PackageMetadata) -> Result<(), MetadataError> {
+    let mut emits = false;
+    for signature in metadata.methods.values() {
+        if signature.event_bytes as usize > MAX_EVENT_BYTES_PER_TX {
+            return Err(MetadataError::EventBytesTooHigh(signature.event_bytes));
         }
+        emits |= signature.event_bytes != 0;
+    }
+    match (metadata.events.is_empty(), emits) {
+        (false, false) => Err(MetadataError::EventBytesUndeclared),
+        (true, true) => Err(MetadataError::EventBytesWithoutEvents),
         _ => Ok(()),
     }
 }
@@ -487,6 +497,19 @@ mod tests {
         }
     }
 
+    /// One method bounded to emit `bytes`, so a package declaring
+    /// events has one that may.
+    fn emitting(bytes: u32) -> BTreeMap<String, MethodSignature> {
+        std::iter::once((
+            "moves".to_owned(),
+            MethodSignature {
+                event_bytes: bytes,
+                ..MethodSignature::default()
+            },
+        ))
+        .collect()
+    }
+
     /// One entry's table, for a shape whose whole content is its own.
     fn one(name: &str, shape: TypeShape) -> ShapeTable {
         std::iter::once((name.to_owned(), shape)).collect()
@@ -560,7 +583,7 @@ mod tests {
     fn an_event_with_no_shape_is_refused() {
         let named = |types: ShapeTable| PackageMetadata {
             events: vec!["moved".into()],
-            event_bytes: 64,
+            methods: emitting(64),
             types,
             ..PackageMetadata::default()
         };
@@ -584,7 +607,7 @@ mod tests {
     fn one_name_at_two_event_indices_is_refused() {
         let metadata = PackageMetadata {
             events: vec!["moved".into(), "moved".into()],
-            event_bytes: 64,
+            methods: emitting(64),
             types: one("moved", TypeShape::U64),
             ..PackageMetadata::default()
         };
