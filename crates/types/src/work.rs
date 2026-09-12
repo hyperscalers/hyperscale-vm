@@ -9,16 +9,12 @@
 //! of scan-heavy transactions saturates disk while compute idles, and
 //! no scalar can see it — and the fee is the table-weighted sum.
 //!
-//! Every figure on the declared side is a pure function of signed
-//! content and published metadata, so every participant of a
-//! cross-shard transaction reaches one vector and one price before
-//! anything runs. Nothing measured enters it.
-//!
-//! The attested side is one scalar still: what an execution consumed
-//! under the engine's schedule, reported in the local receipt. An
-//! aborted execution attests its footprint alone; `vm_kernel`'s receipt
-//! constructor is where that rule is applied, because the outcome is
-//! what selects it and the outcome lives there.
+//! Every figure is a pure function of signed content and published
+//! metadata, so every participant of a cross-shard transaction reaches
+//! one vector and one price before anything runs. Nothing measured
+//! enters it: what an execution consumed is reported in its receipt and
+//! prices nothing, since a figure an engine measured about itself is one
+//! a shard could inflate to raise its own emission weight.
 //!
 //! Every weight is a placeholder: what one unit costs is set against
 //! measured baselines rather than chosen here, and the table is a
@@ -31,12 +27,6 @@ use hyperscale_hbor::Hbor;
 use crate::amount::Quanta;
 use crate::scheme::SchemeId;
 
-/// Work units charged per unit of consumed fuel.
-pub const FUEL_WEIGHT: u64 = 1;
-
-/// Work units charged per unit of declared footprint.
-pub const FOOTPRINT_WEIGHT: u64 = 1;
-
 /// Fuel one ed25519-equivalent signature verification costs, the unit
 /// [`verify_weight`](crate::SchemeSpec::verify_weight) counts in.
 ///
@@ -44,19 +34,6 @@ pub const FOOTPRINT_WEIGHT: u64 = 1;
 /// exists, and it enters the compute dimension in fuel like the rest:
 /// fifty microseconds of a core at the rate the limits derive from.
 pub const VERIFY_WEIGHT: u64 = 100_000;
-
-/// The work a single execution attests: its fuel and its footprint under
-/// one schedule.
-///
-/// Pass `0` for `fuel` when the execution did not complete — see the
-/// module docs for why that is a determinism requirement rather than a
-/// pricing choice.
-#[must_use]
-pub const fn work_units(fuel: u64, footprint: u64) -> u64 {
-    FUEL_WEIGHT
-        .saturating_mul(fuel)
-        .saturating_add(FOOTPRINT_WEIGHT.saturating_mul(footprint))
-}
 
 /// The compute verifying one signature under `scheme` costs, in fuel.
 ///
@@ -483,9 +460,8 @@ const fn stepped_row(prev: u64, utilization: Utilization) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BASIS_POINTS, DeclaredWork, FOOTPRINT_WEIGHT, FUEL_WEIGHT, FiveWay, PriceBounds,
-        PriceTable, SchemeId, Utilization, VERIFY_WEIGHT, WORK_PER_QUANTUM, signature_bytes,
-        signature_compute, work_units,
+        BASIS_POINTS, DeclaredWork, FiveWay, PriceBounds, PriceTable, SchemeId, Utilization,
+        VERIFY_WEIGHT, WORK_PER_QUANTUM, signature_bytes, signature_compute,
     };
 
     const fn only(compute: u64) -> DeclaredWork {
@@ -855,47 +831,5 @@ mod tests {
             ceiling: widened().floor,
         };
         assert!(!crossed.well_formed());
-    }
-
-    #[test]
-    fn both_attested_components_are_priced() {
-        // Neither term is silently dropped: moving either one alone moves
-        // the total. A weight set to zero would make one half of the
-        // quantity unobservable, which is the failure the components on
-        // the receipt exist to make visible.
-        assert!(work_units(1, 0) > work_units(0, 0));
-        assert!(work_units(0, 1) > work_units(0, 0));
-    }
-
-    #[test]
-    fn attested_work_is_monotone_in_both_components() {
-        for fuel in [0, 1, 1_000, u64::from(u32::MAX)] {
-            for footprint in [0, 1, 1_000, u64::from(u32::MAX)] {
-                assert!(work_units(fuel + 1, footprint) >= work_units(fuel, footprint));
-                assert!(work_units(fuel, footprint + 1) >= work_units(fuel, footprint));
-            }
-        }
-    }
-
-    #[test]
-    fn an_aborts_work_is_its_footprint_alone() {
-        // The shape the kernel's abort rule depends on: dropping the fuel
-        // term leaves the footprint term intact rather than zeroing the
-        // quantity.
-        let footprint = 640;
-        assert_eq!(
-            work_units(0, footprint),
-            FOOTPRINT_WEIGHT.saturating_mul(footprint)
-        );
-        assert!(work_units(0, footprint) > 0);
-    }
-
-    #[test]
-    fn the_attested_ceiling_reads_as_the_ceiling() {
-        // Never wraps: at the top the total pins rather than restarting
-        // near zero, so a saturated shard cannot read as an idle one.
-        assert_eq!(work_units(u64::MAX, u64::MAX), u64::MAX);
-        assert_eq!(work_units(u64::MAX, 1), u64::MAX);
-        assert_eq!(FUEL_WEIGHT.saturating_mul(u64::MAX), u64::MAX);
     }
 }

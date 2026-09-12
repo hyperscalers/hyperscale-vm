@@ -48,7 +48,6 @@ use crate::session::{
 };
 use crate::store::{Baseline, Fault, StoreError, Substates, WorkingStore};
 use crate::supply::SupplyDelta;
-use crate::work::Work;
 
 /// One transaction of a batch: its identity and its routed effect set.
 #[derive(Clone, Debug)]
@@ -526,52 +525,9 @@ pub struct BatchOutcome {
     /// receipt is the outbound effect record, filtered at apply rather
     /// than at derivation.
     pub receipts: BTreeMap<TxHash, Receipt>,
-    /// Per-transaction attested work, keyed alongside the receipts and
-    /// covering every one of them, whatever the verdict.
-    ///
-    /// This shard's share, so unlike a receipt it is *expected* to differ
-    /// between the participants of one transaction — see [`Work`].
-    pub work: BTreeMap<TxHash, Work>,
     /// The end state: the given base untouched, with the batch's full
     /// delta in the overlay's committed layer.
     pub store: OverlayStore,
-}
-
-/// Price every receipt the batch produced, in one pass over the finished
-/// map.
-///
-/// Deliberately not threaded through the construction sites. A receipt
-/// leaves this executor by a lot of routes — two refusals before any group
-/// runs, four abort exits inside one, the session's own refusals in
-/// `finish`, the completed path, and the apply-time flip from completed to
-/// infeasible — and a work term missing at any of them would not fail, it
-/// would under-report. Derived once, at the end, from the finished verdict
-/// and the declaration behind it, there is no site left to forget.
-///
-/// Running after `apply_receipts` is what makes the flip free: a completed
-/// transaction that lost its floor is already infeasible here, so it drops
-/// its fuel term without anything having to notice that it changed.
-fn attest_work(batch: &[BatchTx], receipts: &BTreeMap<TxHash, Receipt>) -> BTreeMap<TxHash, Work> {
-    let entries: BTreeMap<TxHash, &BatchTx> = batch.iter().map(|entry| (entry.tx, entry)).collect();
-    receipts
-        .iter()
-        .map(|(tx, receipt)| {
-            // Every receipt came from a batch entry, so the lookup holds;
-            // a declaration that vanished would be a kernel defect, and
-            // pricing it at zero states that rather than guessing.
-            let footprint = entries
-                .get(tx)
-                .map_or(0, |entry| entry.applies.footprint(&entry.declaration.set));
-            (
-                *tx,
-                Work::attest(
-                    matches!(receipt.outcome, Outcome::Completed { .. }),
-                    receipt.fuel,
-                    footprint,
-                ),
-            )
-        })
-        .collect()
 }
 
 fn declared_reservations(declared: &EffectSet) -> Vec<(SubstateKey, u128)> {
@@ -1266,12 +1222,7 @@ pub fn execute_batch<R: GuestRunner>(
     apply_receipts(&mut store, batch, &groups, &runnable, &mut receipts)?;
     store.merge_active();
 
-    let work = attest_work(batch, &receipts);
-    Ok(BatchOutcome {
-        receipts,
-        work,
-        store,
-    })
+    Ok(BatchOutcome { receipts, store })
 }
 
 /// Every owner: what a receipt no entry stands behind would apply,

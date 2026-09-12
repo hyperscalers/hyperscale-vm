@@ -33,7 +33,6 @@ pub mod session;
 pub mod store;
 pub mod supply;
 pub mod walk;
-pub mod work;
 
 pub use escrow::{
     Arrival, Crossed, Departure, Disposal, Disposition, EdgeAction, EscrowDelta, LegPlan,
@@ -58,4 +57,3 @@ pub use store::{
 };
 pub use supply::SupplyDelta;
 pub use walk::{GuestBackend, GuestCall, InvokeResult, ManifestWalk};
-pub use work::Work;
