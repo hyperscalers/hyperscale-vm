@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{Admitted, ShardId, explain_refusal};
 use hyperscale_vm_kernel::{
-    Baseline, BatchTx, DeltaMap, ExecutionMode, GuestBackend, ManifestWalk, Substates,
+    Baseline, BatchTx, ExecutionMode, GuestBackend, ManifestWalk, OwnerSet, Substates,
     execute_batch,
 };
 use hyperscale_vm_types::{
@@ -124,8 +124,16 @@ pub struct Report {
     /// ending, including a trap — what a guest did to itself has no
     /// declaration to explain.
     pub refusal: Option<String>,
-    /// What moved, per cell.
-    pub movements: DeltaMap<SubstateKey, Movement>,
+    /// What moved, per cell, in key order.
+    ///
+    /// Read under whole locality, because the report answers what the
+    /// transaction does: which shard applies which part of it is a
+    /// question about commitment, not about resources.
+    pub movements: Vec<(SubstateKey, Movement)>,
+    /// What settled against a reservation, per cell, as the debits they
+    /// are. The other half of what moved: a reader adding one without
+    /// the other reports a balance that never existed.
+    pub settles: Vec<(SubstateKey, Movement)>,
     /// What the transaction said happened, in emission order.
     pub events: Vec<Event>,
     /// Fuel each node spent, in node order.
@@ -194,7 +202,8 @@ pub fn preview(
                 answers: Vec::new(),
             },
             refusal: Some("the engine could not run this transaction's code".to_owned()),
-            movements: DeltaMap::default(),
+            movements: Vec::new(),
+            settles: Vec::new(),
             events: Vec::new(),
             spent: Vec::new(),
             ceilings: Vec::new(),
@@ -207,16 +216,20 @@ pub fn preview(
                 answers: Vec::new(),
             },
             refusal: Some("the batch returned no receipt for this transaction".to_owned()),
-            movements: DeltaMap::default(),
+            movements: Vec::new(),
+            settles: Vec::new(),
             events: Vec::new(),
             spent: Vec::new(),
             ceilings: Vec::new(),
             anchors,
         };
     };
+    let whole = OwnerSet::whole();
+    let moved = receipt.delta.owned(&whole);
     Report {
         refusal: refusal_text(admitted, &receipt.outcome),
-        movements: receipt.delta.movements.clone(),
+        movements: moved.movements().collect(),
+        settles: moved.settles().collect(),
         events: receipt.events.clone(),
         ceilings: receipt
             .fuel_by_node
