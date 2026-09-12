@@ -26,6 +26,8 @@
 //! throughout, so a wrapped figure never reads as a shard that did
 //! almost nothing.
 
+use hyperscale_hbor::Hbor;
+
 use crate::amount::Quanta;
 use crate::scheme::SchemeId;
 
@@ -93,7 +95,7 @@ pub const fn signature_bytes(scheme: SchemeId) -> u64 {
 /// the signed transaction alone, and what is declared is what is charged
 /// on every outcome. A block caps each dimension on its own content and
 /// a [`PriceTable`] weighs them into one fee.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 pub struct DeclaredWork {
     /// Fuel: the sum of the per-node ceilings the composer signed, plus
     /// the verification of every signature the envelope binds.
@@ -163,6 +165,17 @@ impl DeclaredWork {
 /// A basis point's denominator: the unit a priority is stated in.
 pub const BASIS_POINTS: u32 = 10_000;
 
+/// The resolution every row of a [`PriceTable`] is stated in: thousandths
+/// of a fuel-equivalent.
+///
+/// The rows are ratios, and the controller moves them by eighths — so a
+/// row stated as a small integer could not move at all. An eighth of one
+/// is nothing, and compute is the row the ratios are taken against, so
+/// without this the one dimension the table calls its unit would be the
+/// one price governance could never retune. Nothing costs more for it:
+/// [`WORK_PER_QUANTUM`] carries the same factor.
+pub const PRICE_RESOLUTION: u64 = 1_000;
+
 /// Work units per quantum of the protocol resource: the rate a weighted
 /// vector is settled at.
 ///
@@ -172,7 +185,7 @@ pub const BASIS_POINTS: u32 = 10_000;
 /// that a transfer — two ceilings and a signature — prices in the tens
 /// of quanta, inside the ceilings every fixture signs and the balances
 /// it funds.
-pub const WORK_PER_QUANTUM: u64 = 100_000;
+pub const WORK_PER_QUANTUM: u64 = 100_000 * PRICE_RESOLUTION;
 
 /// The weight of each dimension, in fuel-equivalents per unit.
 ///
@@ -182,7 +195,7 @@ pub const WORK_PER_QUANTUM: u64 = 100_000;
 /// placement is the protocol's choice and reshape moves it, so a
 /// per-shard price would bill a sender for a placement they did not
 /// pick.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 pub struct PriceTable {
     /// Per unit of fuel.
     pub compute: u64,
@@ -203,11 +216,11 @@ impl PriceTable {
     /// lock contention that no other row sees, and a retained byte held
     /// and gossiped by every validator for the horizon.
     pub const GENESIS: Self = Self {
-        compute: 1,
-        read_bytes: 10,
-        write_bytes: 50,
-        footprint: 1_000,
-        retention: 20,
+        compute: PRICE_RESOLUTION,
+        read_bytes: 10 * PRICE_RESOLUTION,
+        write_bytes: 50 * PRICE_RESOLUTION,
+        footprint: 1_000 * PRICE_RESOLUTION,
+        retention: 20 * PRICE_RESOLUTION,
     };
 
     /// The vector under this table, in fuel-equivalents: the weighted
@@ -239,11 +252,206 @@ impl PriceTable {
     }
 }
 
+/// The floor and ceiling each row of a [`PriceTable`] moves between.
+///
+/// Governance's half of the price: pools vote the bounds as they vote
+/// any other parameter, and the level inside them is the controller's,
+/// moved once per epoch by what the network actually declared. So a
+/// vote decides how far a price may ever travel and demand decides
+/// where inside that it sits — neither alone can price a block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+pub struct PriceBounds {
+    /// The lowest each row may reach.
+    pub floor: PriceTable,
+    /// The highest each row may reach.
+    pub ceiling: PriceTable,
+}
+
+impl PriceBounds {
+    /// The bounds the chain is born with: an eighth of the genesis
+    /// table and eight times it, so a row can travel two orders between
+    /// them and a network that never votes still has a working
+    /// controller.
+    pub const GENESIS: Self = Self {
+        floor: PriceTable {
+            compute: PRICE_RESOLUTION / 8,
+            read_bytes: 10 * PRICE_RESOLUTION / 8,
+            write_bytes: 50 * PRICE_RESOLUTION / 8,
+            footprint: 1_000 * PRICE_RESOLUTION / 8,
+            retention: 20 * PRICE_RESOLUTION / 8,
+        },
+        ceiling: PriceTable {
+            compute: 8 * PRICE_RESOLUTION,
+            read_bytes: 80 * PRICE_RESOLUTION,
+            write_bytes: 400 * PRICE_RESOLUTION,
+            footprint: 8_000 * PRICE_RESOLUTION,
+            retention: 160 * PRICE_RESOLUTION,
+        },
+    };
+
+    /// Whether every row admits a level at all: a positive floor, since
+    /// a free dimension is one nothing bounds, and a ceiling no lower
+    /// than it.
+    #[must_use]
+    pub const fn well_formed(&self) -> bool {
+        self.floor.compute > 0
+            && self.floor.read_bytes > 0
+            && self.floor.write_bytes > 0
+            && self.floor.footprint > 0
+            && self.floor.retention > 0
+            && self.ceiling.compute >= self.floor.compute
+            && self.ceiling.read_bytes >= self.floor.read_bytes
+            && self.ceiling.write_bytes >= self.floor.write_bytes
+            && self.ceiling.footprint >= self.floor.footprint
+            && self.ceiling.retention >= self.floor.retention
+    }
+
+    /// `table` with every row brought inside these bounds.
+    ///
+    /// Named for what it produces rather than `clamp`, which on an
+    /// `Ord` type is the standard library's and takes the receiver by
+    /// value — so the inherent one would be shadowed at every call.
+    ///
+    /// What a vote that narrows the bounds does to a level already
+    /// outside them: the level moves at the next fold rather than the
+    /// vote, so the two rails stay independent.
+    #[must_use]
+    pub const fn inside(&self, table: PriceTable) -> PriceTable {
+        PriceTable {
+            compute: clamp_row(table.compute, self.floor.compute, self.ceiling.compute),
+            read_bytes: clamp_row(
+                table.read_bytes,
+                self.floor.read_bytes,
+                self.ceiling.read_bytes,
+            ),
+            write_bytes: clamp_row(
+                table.write_bytes,
+                self.floor.write_bytes,
+                self.ceiling.write_bytes,
+            ),
+            footprint: clamp_row(
+                table.footprint,
+                self.floor.footprint,
+                self.ceiling.footprint,
+            ),
+            retention: clamp_row(
+                table.retention,
+                self.floor.retention,
+                self.ceiling.retention,
+            ),
+        }
+    }
+}
+
+/// One row inside its own bounds. The ceiling wins a pair that crosses,
+/// which `well_formed` refuses at the vote and this cannot assume.
+const fn clamp_row(level: u64, floor: u64, ceiling: u64) -> u64 {
+    if level < floor {
+        floor
+    } else if level > ceiling {
+        ceiling
+    } else {
+        level
+    }
+}
+
+/// What one dimension's blocks declared against what they could have.
+///
+/// A ratio kept as a pair rather than divided, so the controller stays
+/// in integers: `used` is the sum of the declared shares the epoch's
+/// blocks reserved, `capacity` the per-block cap times the blocks that
+/// reserved anything.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Utilization {
+    /// What the epoch's blocks declared in this dimension.
+    pub used: u128,
+    /// What they could have declared: the cap times the block count.
+    pub capacity: u128,
+}
+
+impl PriceTable {
+    /// This table one epoch on, under `utilization` and inside `bounds`.
+    ///
+    /// Each row moves by its own dimension's use and by nothing else:
+    /// `next = prev × (1 + (u − ½) / 4)`, so a saturated epoch raises a
+    /// row by an eighth and an idle one lowers it by the same, with the
+    /// half-full point standing still. The quarter and the half are
+    /// placeholders like the weights.
+    ///
+    /// Rounding goes toward `prev`, so a row at rest cannot ratchet on
+    /// integer division alone, and a dimension whose epoch had no
+    /// capacity at all — no shard reserved anything — holds where it is
+    /// rather than reading as idle.
+    #[must_use]
+    pub const fn stepped(&self, utilization: &FiveWay, bounds: &PriceBounds) -> Self {
+        bounds.inside(Self {
+            compute: stepped_row(self.compute, utilization.compute),
+            read_bytes: stepped_row(self.read_bytes, utilization.read_bytes),
+            write_bytes: stepped_row(self.write_bytes, utilization.write_bytes),
+            footprint: stepped_row(self.footprint, utilization.footprint),
+            retention: stepped_row(self.retention, utilization.retention),
+        })
+    }
+}
+
+/// One [`Utilization`] per dimension: an epoch's reading of the network.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FiveWay {
+    /// Fuel declared against fuel available.
+    pub compute: Utilization,
+    /// Read bytes declared against read bytes available.
+    pub read_bytes: Utilization,
+    /// Write bytes declared against write bytes available.
+    pub write_bytes: Utilization,
+    /// Footprint declared against footprint available.
+    pub footprint: Utilization,
+    /// Retained bytes declared against retained bytes available.
+    pub retention: Utilization,
+}
+
+/// One row stepped: `prev × (7 × capacity + 2 × used) / (8 × capacity)`,
+/// which is `prev × (1 + (u − ½) / 4)` cleared of its fractions.
+///
+/// An epoch with no capacity holds the row where it is: there was no
+/// reading, and treating one as idle would walk every price down through
+/// a network's quiet spell.
+const fn stepped_row(prev: u64, utilization: Utilization) -> u64 {
+    let Utilization { used, capacity } = utilization;
+    if capacity == 0 {
+        return prev;
+    }
+    // Saturating at the cap: a block cannot declare past its own budget,
+    // so a figure that does is a defect rather than a reading, and the
+    // controller answers it as full rather than as unbounded demand.
+    let used = if used > capacity { capacity } else { used };
+    let numerator = (prev as u128).saturating_mul(7 * capacity + 2 * used);
+    let denominator = 8 * capacity;
+    // Toward `prev`: a row moving up truncates, a row moving down takes
+    // the ceiling, so neither direction drifts on the division alone.
+    let next = if 2 * used >= capacity {
+        numerator / denominator
+    } else {
+        numerator.div_ceil(denominator)
+    };
+    // A row is bounded far below this, so the pin is unreachable — but
+    // the arithmetic above widens to `u128` and a narrowing cast that
+    // wrapped would read a saturated row as a free one.
+    if next > u64::MAX as u128 {
+        u64::MAX
+    } else {
+        #[allow(clippy::cast_possible_truncation)] // guarded on the line above
+        {
+            next as u64
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        BASIS_POINTS, DeclaredWork, FOOTPRINT_WEIGHT, FUEL_WEIGHT, PriceTable, SchemeId,
-        VERIFY_WEIGHT, WORK_PER_QUANTUM, signature_bytes, signature_compute, work_units,
+        BASIS_POINTS, DeclaredWork, FOOTPRINT_WEIGHT, FUEL_WEIGHT, FiveWay, PriceBounds,
+        PriceTable, SchemeId, Utilization, VERIFY_WEIGHT, WORK_PER_QUANTUM, signature_bytes,
+        signature_compute, work_units,
     };
 
     const fn only(compute: u64) -> DeclaredWork {
@@ -253,15 +461,30 @@ mod tests {
         }
     }
 
+    /// A vector whose weighted sum under `table` is `units` work units,
+    /// stated in the one dimension the ratios are taken against.
+    ///
+    /// Written through the table rather than as a fuel figure, because
+    /// the compute row is a price like any other: a test that assumed
+    /// one unit of fuel weighed one work unit would be pinning the row's
+    /// current value rather than the arithmetic around it.
+    fn worth(table: &PriceTable, units: u64) -> DeclaredWork {
+        assert_eq!(units % table.compute, 0, "a whole number of fuel units");
+        only(units / table.compute)
+    }
+
     /// A price is never zero for work that is not, rounds up at the
     /// rate, and never falls as the work rises.
     #[test]
     fn a_price_rounds_up_and_is_monotone() {
         let table = PriceTable::GENESIS;
         assert_eq!(table.price(&DeclaredWork::ZERO, 0), 0);
-        assert_eq!(table.price(&only(1), 0), 1);
-        assert_eq!(table.price(&only(WORK_PER_QUANTUM), 0), 1);
-        assert_eq!(table.price(&only(WORK_PER_QUANTUM + 1), 0), 2);
+        assert_eq!(table.price(&only(1), 0), 1, "anything at all costs one");
+        assert_eq!(table.price(&worth(&table, WORK_PER_QUANTUM), 0), 1);
+        assert_eq!(
+            table.price(&worth(&table, WORK_PER_QUANTUM + table.compute), 0),
+            2
+        );
         for work in [0, 1, 999, 1_000_000, u64::from(u32::MAX)] {
             assert!(table.price(&only(work + 1), 0) >= table.price(&only(work), 0));
         }
@@ -313,7 +536,7 @@ mod tests {
     #[test]
     fn a_priority_raises_the_price_proportionally() {
         let table = PriceTable::GENESIS;
-        let work = only(10 * WORK_PER_QUANTUM);
+        let work = worth(&table, 10 * WORK_PER_QUANTUM);
         assert_eq!(table.price(&work, 0), 10);
         assert_eq!(table.price(&work, BASIS_POINTS), 20);
         assert_eq!(table.price(&work, BASIS_POINTS / 2), 15);
@@ -408,6 +631,144 @@ mod tests {
             DeclaredWork::signature(SchemeId(u16::MAX)),
             DeclaredWork::ZERO
         );
+    }
+
+    /// A saturated epoch raises a row by an eighth, an idle one lowers
+    /// it by the same, and a half-full one leaves it alone. Each row
+    /// reads its own dimension and no other.
+    #[test]
+    fn the_controller_steps_a_row_by_its_own_dimension() {
+        let bounds = PriceBounds {
+            floor: PriceTable {
+                compute: 1,
+                read_bytes: 1,
+                write_bytes: 1,
+                footprint: 1,
+                retention: 1,
+            },
+            ceiling: PriceTable {
+                compute: u64::MAX,
+                read_bytes: u64::MAX,
+                write_bytes: u64::MAX,
+                footprint: u64::MAX,
+                retention: u64::MAX,
+            },
+        };
+        let level = PriceTable {
+            compute: 800,
+            read_bytes: 800,
+            write_bytes: 800,
+            footprint: 800,
+            retention: 800,
+        };
+        let only_compute = |used, capacity| FiveWay {
+            compute: Utilization { used, capacity },
+            ..FiveWay::default()
+        };
+
+        let full = level.stepped(&only_compute(100, 100), &bounds);
+        assert_eq!(full.compute, 900, "a saturated row rises by an eighth");
+        assert_eq!(
+            (
+                full.read_bytes,
+                full.write_bytes,
+                full.footprint,
+                full.retention
+            ),
+            (800, 800, 800, 800),
+            "a dimension with no reading holds where it is"
+        );
+
+        let idle = level.stepped(&only_compute(0, 100), &bounds);
+        assert_eq!(idle.compute, 700, "an idle row falls by an eighth");
+
+        let half = level.stepped(&only_compute(50, 100), &bounds);
+        assert_eq!(half.compute, 800, "the half-full point stands still");
+    }
+
+    /// A row at rest stays at rest however many epochs pass: rounding
+    /// toward the previous level is what keeps integer division from
+    /// walking a price on its own.
+    #[test]
+    fn a_row_at_the_target_does_not_drift() {
+        let bounds = PriceBounds::GENESIS;
+        let mut level = PriceTable::GENESIS;
+        let steady = |cap: u64| Utilization {
+            used: u128::from(cap) / 2,
+            capacity: u128::from(cap),
+        };
+        let reading = FiveWay {
+            compute: steady(1_000),
+            read_bytes: steady(1_000),
+            write_bytes: steady(1_000),
+            footprint: steady(1_000),
+            retention: steady(1_000),
+        };
+        for _ in 0..64 {
+            level = level.stepped(&reading, &bounds);
+        }
+        assert_eq!(level, PriceTable::GENESIS);
+    }
+
+    /// A row walks to its bound and stops there, whichever way it is
+    /// driven, and never leaves the interval a vote fixed.
+    #[test]
+    fn a_row_stops_at_the_bound_it_reaches() {
+        let bounds = PriceBounds::GENESIS;
+        let saturated = FiveWay {
+            compute: Utilization {
+                used: 1,
+                capacity: 1,
+            },
+            ..FiveWay::default()
+        };
+        let idle = FiveWay {
+            compute: Utilization {
+                used: 0,
+                capacity: 1,
+            },
+            ..FiveWay::default()
+        };
+        let mut up = PriceTable::GENESIS;
+        let mut down = PriceTable::GENESIS;
+        for _ in 0..256 {
+            up = up.stepped(&saturated, &bounds);
+            down = down.stepped(&idle, &bounds);
+        }
+        assert_eq!(up.compute, bounds.ceiling.compute);
+        assert_eq!(down.compute, bounds.floor.compute);
+        assert_eq!(
+            up.stepped(&saturated, &bounds).compute,
+            bounds.ceiling.compute,
+            "a row at its bound stays"
+        );
+    }
+
+    /// The bounds are what a vote decides, and a level outside them is
+    /// brought in at the next fold rather than at the vote.
+    #[test]
+    fn the_bounds_admit_a_level_and_clamp_one_outside_them() {
+        assert!(PriceBounds::GENESIS.well_formed());
+        assert!(
+            PriceBounds::GENESIS.inside(PriceTable::GENESIS) == PriceTable::GENESIS,
+            "the genesis level sits inside the genesis bounds"
+        );
+        let free = PriceBounds {
+            floor: PriceTable {
+                compute: 0,
+                ..PriceTable::GENESIS
+            },
+            ceiling: PriceBounds::GENESIS.ceiling,
+        };
+        assert!(
+            !free.well_formed(),
+            "a free dimension is bounded by nothing"
+        );
+        let crossed = PriceBounds {
+            floor: PriceBounds::GENESIS.ceiling,
+            ceiling: PriceBounds::GENESIS.floor,
+        };
+        assert!(!crossed.well_formed());
     }
 
     #[test]
