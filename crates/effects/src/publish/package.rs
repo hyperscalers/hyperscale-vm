@@ -33,11 +33,12 @@ pub enum MetadataError {
     /// A method bounded to emit in a package that declares no events.
     #[error("the package bounds a method's emissions and declares no events")]
     EventBytesWithoutEvents,
-    /// A bound past what one transaction may emit at all.
+    /// A method whose events come to more than one transaction may emit
+    /// at all.
     #[error(
-        "a method declares {0} event bytes, past the {MAX_EVENT_BYTES_PER_TX} a transaction may emit"
+        "a method's events come to {0} bytes, past the {MAX_EVENT_BYTES_PER_TX} a transaction may emit"
     )]
-    EventBytesTooHigh(u32),
+    EventBytesTooHigh(usize),
     /// A method names an event index the package's table does not hold,
     /// or names one twice.
     #[error("method {method} emits event {index}, which its package does not declare once")]
@@ -300,7 +301,7 @@ fn check_event_bounds(metadata: &PackageMetadata) -> Result<(), MetadataError> {
             derived = derived.saturating_add(most);
         }
         if derived > MAX_EVENT_BYTES_PER_TX {
-            return Err(MetadataError::EventBytesTooHigh(signature.event_bytes));
+            return Err(MetadataError::EventBytesTooHigh(derived));
         }
         if u64::from(signature.event_bytes) != derived as u64 {
             return Err(MetadataError::EventBytesDisagrees {
