@@ -430,7 +430,12 @@ fn role_at(roles: &[LegRole], node: u32) -> LegRole {
 
 /// The shards that run `node`: every core shard for a core node, its
 /// home for a leg.
-fn running_at<S: Ord + Copy>(
+///
+/// Only meaningful for a shape that divides. One that runs whole runs
+/// every node on every participant, and [`Star::decomposes`] is what
+/// tells the two apart.
+#[must_use]
+pub fn running_at<S: Ord + Copy>(
     roles: &[LegRole],
     homes: &[S],
     core: &BTreeSet<S>,
