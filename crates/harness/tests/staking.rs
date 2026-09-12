@@ -855,20 +855,36 @@ fn vote_leaf(pool: impl Into<Address>) -> SubstateKey {
 /// The parameters a cast carries, in the order the guest lays them out.
 const SPLIT_BYTES: u64 = 9_000;
 const IMPOUND_EPOCHS: u64 = 30;
+/// An even band: the price rows stay where the reference table put them,
+/// which is what a vote that is not about price says.
+const PRICE_BAND_BP: u64 = 10_000;
 const ACTIVATE_AT: u64 = 12;
 
 fn cast_payload() -> Vec<u8> {
-    let mut payload = SPLIT_BYTES.to_le_bytes().to_vec();
-    payload.extend_from_slice(&IMPOUND_EPOCHS.to_le_bytes());
-    payload.extend_from_slice(&ACTIVATE_AT.to_le_bytes());
-    payload
+    [
+        SPLIT_BYTES,
+        IMPOUND_EPOCHS,
+        PRICE_BAND_BP,
+        PRICE_BAND_BP,
+        ACTIVATE_AT,
+    ]
+    .iter()
+    .flat_map(|field| field.to_le_bytes())
+    .collect()
 }
 
 fn cast_graph() -> ManifestGraph {
     graph_as(OPERATOR, |b| {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         b.presenting(operator, |b| {
-            pool().cast_param_vote(b, SPLIT_BYTES, IMPOUND_EPOCHS, ACTIVATE_AT)
+            pool().cast_param_vote(
+                b,
+                SPLIT_BYTES,
+                IMPOUND_EPOCHS,
+                PRICE_BAND_BP,
+                PRICE_BAND_BP,
+                ACTIVATE_AT,
+            )
         })
     })
 }

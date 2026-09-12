@@ -133,6 +133,18 @@ pub mod staking {
     struct ParamVote {
         split_bytes: u64,
         impound_epochs: u64,
+        /// How far each price row may travel from the reference table,
+        /// in basis points: the low end of the band.
+        ///
+        /// A band rather than a figure per row, because what a row is
+        /// worth against the others is measurement and how far it may
+        /// move from that is policy — and a pool can say "between an
+        /// eighth and eight times" where it could not name a
+        /// fuel-equivalent for a retained byte. An even band pins every
+        /// row, which is what a chain with nothing measured runs.
+        price_floor_bp: u64,
+        /// The high end of the same band.
+        price_ceiling_bp: u64,
         activate_at: u64,
     }
 
@@ -224,13 +236,22 @@ pub mod staking {
         /// Cast the pool's governance vote, replacing any it held.
         #[requires(issued(OwnerBadge))]
         #[event_bytes(64)]
-        pub fn cast_param_vote(&mut self, split_bytes: u64, impound_epochs: u64, activate_at: u64) {
+        pub fn cast_param_vote(
+            &mut self,
+            split_bytes: u64,
+            impound_epochs: u64,
+            price_floor_bp: u64,
+            price_ceiling_bp: u64,
+            activate_at: u64,
+        ) {
             // The pool holds one vote, so a cast replaces rather than
             // adds. What it keeps is what it voted for, which is the only
             // copy the pool itself can read back.
             let vote = ParamVote {
                 split_bytes,
                 impound_epochs,
+                price_floor_bp,
+                price_ceiling_bp,
                 activate_at,
             };
             self.vote.set(Some(vote.clone()));

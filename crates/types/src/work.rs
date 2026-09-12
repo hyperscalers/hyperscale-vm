@@ -279,10 +279,26 @@ impl PriceBounds {
     /// controller is what takes over inside whatever interval that vote
     /// opens. Until one does, the price is what genesis fixed, which is
     /// what a network with nothing measured yet should charge.
-    pub const GENESIS: Self = Self {
-        floor: PriceTable::GENESIS,
-        ceiling: PriceTable::GENESIS,
-    };
+    pub const GENESIS: Self = Self::band(BASIS_POINTS, BASIS_POINTS);
+
+    /// The genesis table scaled by `floor_bp` and `ceiling_bp` basis
+    /// points: the interval a vote opens, stated as a band around the
+    /// reference rather than as ten absolute figures.
+    ///
+    /// Per row in storage and a band on the wire, because the two
+    /// answer different questions. What the rows are worth relative to
+    /// each other is calibration, settled by measurement; how far any of
+    /// them may travel from that is policy, and a voter can say "between
+    /// an eighth and eight times" where they could not meaningfully name
+    /// a fuel-equivalent for retention. A later vote form can set a row
+    /// on its own without moving anything stored.
+    #[must_use]
+    pub const fn band(floor_bp: u32, ceiling_bp: u32) -> Self {
+        Self {
+            floor: scaled(floor_bp),
+            ceiling: scaled(ceiling_bp),
+        }
+    }
 
     /// Whether every row admits a level at all: a positive floor, since
     /// a free dimension is one nothing bounds, and a ceiling no lower
@@ -335,6 +351,29 @@ impl PriceBounds {
                 self.ceiling.retention,
             ),
         }
+    }
+}
+
+/// The genesis table at `bp` basis points of itself, saturating: a row
+/// that would overflow pins rather than wrapping into a free dimension.
+const fn scaled(bp: u32) -> PriceTable {
+    const fn row(level: u64, bp: u32) -> u64 {
+        let scaled = (level as u128) * (bp as u128) / (BASIS_POINTS as u128);
+        if scaled > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            #[allow(clippy::cast_possible_truncation)] // guarded on the line above
+            {
+                scaled as u64
+            }
+        }
+    }
+    PriceTable {
+        compute: row(PriceTable::GENESIS.compute, bp),
+        read_bytes: row(PriceTable::GENESIS.read_bytes, bp),
+        write_bytes: row(PriceTable::GENESIS.write_bytes, bp),
+        footprint: row(PriceTable::GENESIS.footprint, bp),
+        retention: row(PriceTable::GENESIS.retention, bp),
     }
 }
 
@@ -741,18 +780,8 @@ mod tests {
 
     /// An interval a vote opened, an eighth of the genesis table to
     /// eight times it: what the controller is given room to move in.
-    fn widened() -> PriceBounds {
-        let scaled = |by: u64, div: u64| PriceTable {
-            compute: PriceTable::GENESIS.compute * by / div,
-            read_bytes: PriceTable::GENESIS.read_bytes * by / div,
-            write_bytes: PriceTable::GENESIS.write_bytes * by / div,
-            footprint: PriceTable::GENESIS.footprint * by / div,
-            retention: PriceTable::GENESIS.retention * by / div,
-        };
-        PriceBounds {
-            floor: scaled(1, 8),
-            ceiling: scaled(8, 1),
-        }
+    const fn widened() -> PriceBounds {
+        PriceBounds::band(BASIS_POINTS / 8, BASIS_POINTS * 8)
     }
 
     /// The chain is born with the controller pinned: every row's
@@ -775,6 +804,29 @@ mod tests {
             PriceTable::GENESIS.stepped(&saturated, &widened()).compute
                 > PriceTable::GENESIS.compute,
             "a widened interval is what lets the controller move"
+        );
+    }
+
+    /// A band is the interval a vote states, and the reference point is
+    /// the genesis table: an even band pins every row, and a wider one
+    /// opens every row by the same proportion.
+    #[test]
+    fn a_band_opens_every_row_around_the_reference() {
+        assert_eq!(
+            PriceBounds::band(BASIS_POINTS, BASIS_POINTS),
+            PriceBounds::GENESIS
+        );
+        let open = PriceBounds::band(BASIS_POINTS / 2, BASIS_POINTS * 2);
+        assert_eq!(open.floor.compute, PriceTable::GENESIS.compute / 2);
+        assert_eq!(open.ceiling.retention, PriceTable::GENESIS.retention * 2);
+        assert!(open.well_formed());
+        assert!(
+            !PriceBounds::band(0, BASIS_POINTS).well_formed(),
+            "a band reaching zero prices a dimension at nothing"
+        );
+        assert!(
+            !PriceBounds::band(BASIS_POINTS * 2, BASIS_POINTS).well_formed(),
+            "a band whose ends cross names no level"
         );
     }
 
