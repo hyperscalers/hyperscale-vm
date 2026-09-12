@@ -105,7 +105,7 @@ pub mod lottery {
 
     impl Lottery {
         /// Take a ticket for `who`, staking `funds` into the pot.
-        #[event_bytes(64)]
+        #[emits(Entered)]
         pub fn enter(&mut self, who: Address, funds: Bucket) {
             // Only while the round is open, and read rather than held:
             // what stops a late entrant is the seal being there, and
@@ -125,7 +125,7 @@ pub mod lottery {
         /// with: the seal takes no argument at all — the kernel stamps
         /// the epoch — so whoever closes the round chooses when it
         /// closes and not what it draws.
-        #[event_bytes(8)]
+        #[emits(Closed)]
         pub fn close(&mut self) {
             self.round.seal();
             Closed.emit();
@@ -143,7 +143,7 @@ pub mod lottery {
         /// caller waiting for a word they liked better cannot get one.
         /// The branch below is what turns that refusal into an error a
         /// caller can read.
-        #[event_bytes(8)]
+        #[emits(Closed)]
         pub fn reopen(&mut self) -> Result<(), Error> {
             // A settled round is over, and resealing one would leave a
             // seal nothing will ever open again.
@@ -170,7 +170,7 @@ pub mod lottery {
         /// was, so a second settlement is infeasible against a round
         /// that already has one, refused where the declaration is judged
         /// rather than by anything here.
-        #[event_bytes(128)]
+        #[emits(Settled)]
         pub fn settle(&mut self, cap: u64) -> Result<(), Error> {
             let draw = match self.round.open() {
                 Drawn::Pending => return Err(Error::NotYetDrawn),

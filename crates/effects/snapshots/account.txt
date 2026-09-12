@@ -52,7 +52,7 @@ confirm() — infallible
   exports  handles for clauses 0–4
 
 deposit(bucket) — total
-  emits    at most 64 bytes
+  emits    deposited — at most 16 bytes
   declares
       0  read self.refused[resource-of(arg0)]
       1  credit self.quarantine[resource-of(arg0)]
@@ -129,7 +129,7 @@ sweep(resource-address, u128) — infallible
   exports  handle for clause 1
 
 withdraw(resource-address, u128) — infallible
-  emits    at most 64 bytes
+  emits    withdrawn — at most 16 bytes
   declares
       0  requires claim self
       1  reserve arg1 self.vault[arg0]

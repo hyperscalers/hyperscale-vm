@@ -99,7 +99,7 @@ pub struct Trace {
     totality: Totality,
     /// Whether the method hands back a value beside its edges.
     answers: bool,
-    event_bytes: u32,
+    emits: Vec<String>,
 }
 
 impl Trace {
@@ -123,7 +123,7 @@ impl Trace {
             destroys: Vec::new(),
             totality: Totality::Infallible,
             answers: false,
-            event_bytes: 0,
+            emits: Vec::new(),
         }
     }
 
@@ -705,14 +705,13 @@ impl Trace {
         self.answers = true;
     }
 
-    /// Record the most bytes one call into this method may emit between
-    /// its events.
+    /// Record that this method may emit the event named `event`.
     ///
-    /// What the declaration prices the call's events at and what the
-    /// kernel meters the node against, so a method that states nothing
-    /// may emit nothing.
-    pub const fn emits(&mut self, bytes: u32) {
-        self.event_bytes = bytes;
+    /// The name, never a byte figure: an event encodes infallibly, so
+    /// its widest encoding is something the shape table knows and the
+    /// blueprint derives. What the author states is which events.
+    pub fn emits(&mut self, event: &str) {
+        self.emits.push(event.to_owned());
     }
 
     /// Record the total mark: no refusal, and no partial operation
@@ -1032,7 +1031,7 @@ impl Trace {
             denominations,
             outputs: self.outputs,
             answers: self.answers,
-            event_bytes: self.event_bytes,
+            emits: self.emits,
             worst_case: self.worst_case,
             abi,
             issues: self.issues,
@@ -1288,7 +1287,7 @@ pub(crate) struct Recorded {
     pub(crate) clauses: Vec<Clause>,
     pub(crate) outputs: Vec<Expr>,
     pub(crate) answers: bool,
-    pub(crate) event_bytes: u32,
+    pub(crate) emits: Vec<String>,
     pub(crate) denominations: Vec<Option<Expr>>,
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,

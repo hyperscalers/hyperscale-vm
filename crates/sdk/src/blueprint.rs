@@ -21,6 +21,10 @@ use crate::trace::Trace;
 /// One method: what routing reads, plus what the guest bridge needs.
 #[derive(Clone, Debug)]
 pub struct Method {
+    /// The events this method's body may emit, by the name the package
+    /// registers them under. Resolved to indices and priced when the
+    /// blueprint builds its metadata.
+    emits: Vec<String>,
     signature: MethodSignature,
     worst_case: usize,
 }
@@ -89,14 +93,70 @@ impl Blueprint {
         self.methods.iter().map(|(k, v)| (k.as_str(), v))
     }
 
+    /// `named`'s events as the signature carries them — their indices in
+    /// the package's table, and the widest they encode to between them.
+    ///
+    /// An event encodes infallibly, so every event shape is closed and
+    /// the figure always exists. The publish gate derives it again and
+    /// refuses a package whose two answers differ.
+    fn emitted(&self, method: &str, named: &[String]) -> (Vec<u32>, u32) {
+        let mut resolution = Resolution::of(self.types.types());
+        let mut indices = Vec::with_capacity(named.len());
+        let mut bytes = 0usize;
+        for event in named {
+            let index = self
+                .events
+                .iter()
+                .position(|declared| declared == event)
+                .unwrap_or_else(|| {
+                    panic!("`{method}` emits `{event}`, which the package does not declare")
+                });
+            let shape = self
+                .types
+                .types()
+                .get(event)
+                .unwrap_or_else(|| panic!("`{event}` registers a shape when it is declared"));
+            let most = resolution
+                .max_encoded_len(shape, MAX_SHAPE_DEPTH)
+                .unwrap_or_else(|fault| panic!("`{event}`'s shape walks: {fault}"))
+                .unwrap_or_else(|| {
+                    panic!("`{event}` has no widest encoding — an event encodes infallibly")
+                });
+            indices.push(u32::try_from(index).expect("an event table under the index cap"));
+            bytes = bytes.saturating_add(most);
+        }
+        indices.sort_unstable();
+        (
+            indices,
+            u32::try_from(bytes).expect("an event bound under the transaction cap"),
+        )
+    }
+
     /// The package metadata routing reads — the whole point of the trace.
+    ///
+    /// Each method's events are resolved here rather than where it was
+    /// traced: an event registers its shape when the blueprint declares
+    /// it, which may be after the method that emits it was recorded.
+    ///
+    /// # Panics
+    ///
+    /// If a method names an event the package never declared, or one
+    /// whose shape has no widest encoding. Both are authoring defects
+    /// the publish gate would refuse; panicking here names the method
+    /// rather than leaving a package that cannot publish.
     #[must_use]
     pub fn metadata(&self) -> PackageMetadata {
         PackageMetadata {
             methods: self
                 .methods
                 .iter()
-                .map(|(name, m)| (name.clone(), m.signature.clone()))
+                .map(|(name, m)| {
+                    let mut signature = m.signature.clone();
+                    let (emits, bytes) = self.emitted(name, &m.emits);
+                    signature.emits = emits;
+                    signature.event_bytes = bytes;
+                    (name.clone(), signature)
+                })
                 .collect(),
             events: self.events.clone(),
             errors: self.errors.clone(),
@@ -147,8 +207,13 @@ impl Builder {
                 answers: recorded.answers,
                 denominations: recorded.denominations,
                 effects: recorded.clauses,
-                event_bytes: recorded.event_bytes,
+                // Resolved against the event table at `metadata`, since
+                // a method may trace before the events it names are
+                // registered.
+                emits: Vec::new(),
+                event_bytes: 0,
             },
+            emits: recorded.emits,
             worst_case: recorded.worst_case,
         };
         let taken = self.blueprint.methods.insert(name.to_owned(), method);

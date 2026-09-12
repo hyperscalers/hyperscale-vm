@@ -179,7 +179,8 @@ mod tests {
             issues: Vec::new(),
             destroys: Vec::new(),
             abi: vec![AbiParam::Guard(0)],
-            event_bytes: 64,
+            emits: Vec::new(),
+            event_bytes: 0,
             params: vec![
                 ParamType::U64,
                 ParamType::U128,
@@ -292,6 +293,13 @@ mod tests {
             .iter()
             .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
             .collect();
+        // A declared event has a method that may emit it; the empty
+        // shape encodes to nothing, so the bound is nothing.
+        metadata
+            .methods
+            .get_mut("m")
+            .expect("the method under test")
+            .emits = vec![0, 1];
 
         let bytes = encode_metadata(&metadata).expect("encodes");
         assert_eq!(decode_metadata(&bytes).expect("decodes"), metadata);
@@ -507,7 +515,7 @@ mod tests {
                 methods: std::iter::once((
                     "moves".to_owned(),
                     MethodSignature {
-                        event_bytes: 64,
+                        emits: vec![0],
                         ..MethodSignature::default()
                     },
                 ))

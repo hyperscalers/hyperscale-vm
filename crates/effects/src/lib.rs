@@ -84,9 +84,9 @@ pub use hyperscale_vm_types::{
     ABSENT_REP, AbortReason, Address, AddressClass, Answer, BASIS_POINTS, DeclaredWork, EntryKey,
     EntryLeaf, Event, FOOTPRINT_WEIGHT, FUEL_WEIGHT, LegRole, LegShape, MAX_ANSWER_BYTES,
     MAX_ARTIFACT_BYTES, MAX_CALL_BYTES, MAX_CELL_VALUE_LEN, MAX_ERROR_CODES,
-    MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
-    MAX_MANIFEST_NODES, Outcome, PriceTable, ProtocolHasher, SettledWrites, StateWrites,
-    SubintentHash, TxHash, VERIFY_WEIGHT, ValueEdge, entry_leaf_key, signature_bytes,
+    MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENT_TYPES_PER_METHOD,
+    MAX_EVENTS_PER_TX, MAX_MANIFEST_NODES, Outcome, PriceTable, ProtocolHasher, SettledWrites,
+    StateWrites, SubintentHash, TxHash, VERIFY_WEIGHT, ValueEdge, entry_leaf_key, signature_bytes,
     signature_compute, work_units,
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};

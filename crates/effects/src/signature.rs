@@ -2,7 +2,9 @@
 //! about its parameters and its ABI binding.
 
 use hyperscale_hbor::Hbor;
-use hyperscale_vm_types::{CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{
+    CallTarget, ComponentAddr, MAX_EVENT_TYPES_PER_METHOD, PackageAddr, PrincipalAddr, ResourceAddr,
+};
 
 use crate::dsl::{Clause, Expr, ModeExpr};
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
@@ -446,17 +448,30 @@ pub struct MethodSignature {
     /// Authored beside the signature and content-addressed with the code,
     /// so the binding cannot drift from the ABI it describes.
     pub abi: Vec<AbiParam>,
-    /// The most bytes one call into this method may emit between its
+    /// The events one call into this method may emit, by the index an
+    /// emitted event carries. Ascending and distinct.
+    ///
+    /// What the author states, and what [`event_bytes`](Self::event_bytes)
+    /// is derived from: an event encodes infallibly into a stack buffer,
+    /// so its shape is closed and its widest encoding is a figure the
+    /// table already knows. The author says which events, never how many
+    /// bytes.
+    #[hbor(max = MAX_EVENT_TYPES_PER_METHOD)]
+    pub emits: Vec<u32>,
+    /// The most bytes one call into this method may emit between those
     /// events: what a declaration prices the call's events at, and what
     /// the kernel meters the node against.
+    ///
+    /// Derived from [`emits`](Self::emits) rather than declared — the
+    /// publish gate refuses a figure that disagrees with the shapes, on
+    /// the terms a slot's width is held to — and carried beside them so
+    /// the kernel meters without walking a shape per call.
     ///
     /// Per method rather than per package, because that is where a
     /// caller's cost is decided: a package declaring events has methods
     /// that emit and methods that do not, and a flat package figure
     /// charges a transfer for the emissions of a method it never calls.
-    /// Zero for a method that emits nothing, which the publish gate and
-    /// the kernel hold it to alike — a method stating nothing may emit
-    /// nothing.
+    /// Zero for a method that emits nothing.
     pub event_bytes: u32,
 }
 

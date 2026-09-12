@@ -38,6 +38,41 @@ pub enum MetadataError {
         "a method declares {0} event bytes, past the {MAX_EVENT_BYTES_PER_TX} a transaction may emit"
     )]
     EventBytesTooHigh(u32),
+    /// A method names an event index the package's table does not hold,
+    /// or names one twice.
+    #[error("method {method} emits event {index}, which its package does not declare once")]
+    EmitsUnknownEvent {
+        /// The method naming it.
+        method: String,
+        /// The index it named.
+        index: u32,
+    },
+    /// A method's stated event bytes are not what its events encode to.
+    #[error("method {method} declares {declared} event bytes and its events encode to {derived}")]
+    EventBytesDisagrees {
+        /// The method whose figure disagrees.
+        method: String,
+        /// What it declared.
+        declared: u32,
+        /// What its events derive to.
+        derived: usize,
+    },
+    /// An event whose shape has no widest encoding — an open shape,
+    /// which the infallible-encoding bound on an event's payload is
+    /// what otherwise keeps out.
+    #[error("event {name} has no widest encoding, so nothing bounds what a call emitting it costs")]
+    EventShapeOpen {
+        /// The event whose shape is open.
+        name: String,
+    },
+    /// An event's shape faulted on the walk that measures it.
+    #[error("event {name}: {source}")]
+    Event {
+        /// The event whose shape faulted.
+        name: String,
+        /// The fault.
+        source: ShapeFault,
+    },
     /// An error table longer than the index a declined code can carry.
     #[error("error table names {0} codes, past the {MAX_ERROR_CODES} a declined code can reach")]
     ErrorTable(usize),
@@ -215,12 +250,65 @@ const fn check_table_caps(metadata: &PackageMetadata) -> Result<(), MetadataErro
 /// nothing, and a bound with no event behind it is a charge for
 /// something the package cannot do.
 fn check_event_bounds(metadata: &PackageMetadata) -> Result<(), MetadataError> {
+    let mut resolved = Resolution::of(&metadata.types);
     let mut emits = false;
-    for signature in metadata.methods.values() {
-        if signature.event_bytes as usize > MAX_EVENT_BYTES_PER_TX {
+    for (name, signature) in &metadata.methods {
+        // Every index names an event the package declares: one past the
+        // table indexes a shape nobody registered, and a repeat would
+        // charge one event's bytes twice.
+        let mut seen = BTreeSet::new();
+        for index in &signature.emits {
+            let event = metadata.events.get(*index as usize).ok_or_else(|| {
+                MetadataError::EmitsUnknownEvent {
+                    method: name.clone(),
+                    index: *index,
+                }
+            })?;
+            if !seen.insert(event) {
+                return Err(MetadataError::EmitsUnknownEvent {
+                    method: name.clone(),
+                    index: *index,
+                });
+            }
+        }
+        emits |= !signature.emits.is_empty();
+
+        // An event encodes infallibly into a stack buffer, so its shape
+        // is closed and the widest encoding is a figure the table
+        // already holds. The author names the events; the bytes are
+        // derived, and a declaration that disagrees is refused on the
+        // terms a slot's width is.
+        let mut derived = 0usize;
+        for index in &signature.emits {
+            let event = &metadata.events[*index as usize];
+            let shape =
+                metadata
+                    .types
+                    .get(event)
+                    .ok_or_else(|| MetadataError::EventWithoutShape {
+                        name: event.clone(),
+                    })?;
+            let most = resolved
+                .max_encoded_len(shape, MAX_SHAPE_DEPTH)
+                .map_err(|source| MetadataError::Event {
+                    name: event.clone(),
+                    source,
+                })?
+                .ok_or_else(|| MetadataError::EventShapeOpen {
+                    name: event.clone(),
+                })?;
+            derived = derived.saturating_add(most);
+        }
+        if derived > MAX_EVENT_BYTES_PER_TX {
             return Err(MetadataError::EventBytesTooHigh(signature.event_bytes));
         }
-        emits |= signature.event_bytes != 0;
+        if u64::from(signature.event_bytes) != derived as u64 {
+            return Err(MetadataError::EventBytesDisagrees {
+                method: name.clone(),
+                declared: signature.event_bytes,
+                derived,
+            });
+        }
     }
     match (metadata.events.is_empty(), emits) {
         (false, false) => Err(MetadataError::EventBytesUndeclared),
@@ -497,12 +585,13 @@ mod tests {
         }
     }
 
-    /// One method bounded to emit `bytes`, so a package declaring
-    /// events has one that may.
+    /// One method emitting the package's first event at `bytes`, so a
+    /// package declaring events has one that may emit them.
     fn emitting(bytes: u32) -> BTreeMap<String, MethodSignature> {
         std::iter::once((
             "moves".to_owned(),
             MethodSignature {
+                emits: vec![0],
                 event_bytes: bytes,
                 ..MethodSignature::default()
             },
@@ -581,9 +670,11 @@ mod tests {
     /// shape under it is a promise nothing keeps.
     #[test]
     fn an_event_with_no_shape_is_refused() {
+        // The empty shape encodes to nothing, so the method that emits
+        // it is bounded at nothing too.
         let named = |types: ShapeTable| PackageMetadata {
             events: vec!["moved".into()],
-            methods: emitting(64),
+            methods: emitting(0),
             types,
             ..PackageMetadata::default()
         };
@@ -607,7 +698,7 @@ mod tests {
     fn one_name_at_two_event_indices_is_refused() {
         let metadata = PackageMetadata {
             events: vec!["moved".into(), "moved".into()],
-            methods: emitting(64),
+            methods: emitting(8),
             types: one("moved", TypeShape::U64),
             ..PackageMetadata::default()
         };

@@ -975,6 +975,29 @@ impl<'a> Names<'a> {
         }
     }
 
+    /// What a method may emit, and the most it can cost: the events by
+    /// name, since an index is what the wire carries and not what a
+    /// reader wants.
+    fn emissions(&self, emits: &[u32], event_bytes: u32, out: &mut String) {
+        if emits.is_empty() {
+            return;
+        }
+        let named: Vec<&str> = emits
+            .iter()
+            .map(|index| {
+                self.metadata
+                    .events
+                    .get(*index as usize)
+                    .map_or("?", String::as_str)
+            })
+            .collect();
+        let _ = writeln!(
+            out,
+            "  emits    {} — at most {event_bytes} bytes",
+            named.join(", ")
+        );
+    }
+
     /// One method: what it takes, what it declares, and what it hands
     /// back.
     fn method(&self, name: &str, signature: &MethodSignature, out: &mut String) {
@@ -988,6 +1011,7 @@ impl<'a> Names<'a> {
             denominations,
             effects,
             abi,
+            emits,
             event_bytes,
         } = signature;
         let kinds: Vec<String> = params
@@ -1004,9 +1028,7 @@ impl<'a> Names<'a> {
             out.push_str(", answers");
         }
         out.push('\n');
-        if *event_bytes != 0 {
-            let _ = writeln!(out, "  emits    at most {event_bytes} bytes");
-        }
+        self.emissions(emits, *event_bytes, out);
 
         for (position, denomination) in denominations.iter().enumerate() {
             let Some(resource) = denomination else {
@@ -1631,6 +1653,7 @@ fn signature_exprs(signature: &MethodSignature) -> Vec<&Expr> {
         denominations,
         effects,
         abi,
+        emits: _,
         event_bytes: _,
     } = signature;
     let mut exprs: Vec<&Expr> = Vec::new();

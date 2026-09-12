@@ -584,7 +584,7 @@ const OWN: &[&str] = &[
     "requires",
     "proves",
     "total",
-    "event_bytes",
+    "emits",
 ];
 
 /// The attributes that name a gate, whose method may have no body of
@@ -867,7 +867,7 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
 
 /// The markers whose reader scans structs, and the two field pins.
 const ON_A_STRUCT: &[&str] = &["state", "config", "event", "record", "resource"];
-const ON_A_METHOD: &[&str] = &["proves", "total", "name", "event_bytes"];
+const ON_A_METHOD: &[&str] = &["proves", "total", "name", "emits"];
 const ON_A_STATE_FIELD: &[&str] = &["slot", "holds", "denomination", "width"];
 
 fn marker_kinds_on_struct(
@@ -1166,34 +1166,50 @@ fn total_attr(method: &syn::ImplItemFn) -> Option<&syn::Attribute> {
         .find(|attr| attr.path().is_ident("total"))
 }
 
-/// The most bytes `#[event_bytes(N)]` says one call into this method may
-/// emit, and nothing where it says nothing.
+/// The events `#[emits(A, B)]` says one call into this method may emit,
+/// as the package spells them.
 ///
 /// Per method, because that is where the emission is written: a package
 /// declaring events has methods that emit and methods that do not, and a
-/// caller pays for the one it calls. A method that states nothing may
-/// emit nothing, which the kernel holds it to.
-fn event_bytes_attr(method: &syn::ImplItemFn) -> syn::Result<Option<syn::LitInt>> {
+/// caller pays for the one it calls. Names rather than a byte figure —
+/// an event encodes infallibly, so what one costs is something the shape
+/// table already knows and nobody should be retyping.
+fn emits_attr(method: &syn::ImplItemFn) -> syn::Result<Vec<String>> {
     let Some(attr) = method
         .attrs
         .iter()
-        .find(|attr| attr.path().is_ident("event_bytes"))
+        .find(|attr| attr.path().is_ident("emits"))
     else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
-    let bytes: syn::LitInt = attr.parse_args().map_err(|_| {
-        syn::Error::new_spanned(
-            attr,
-            "`#[event_bytes(N)]` takes the byte count one call into this method may emit",
+    let named = attr
+        .parse_args_with(
+            syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
         )
-    })?;
-    if bytes.base10_parse::<u32>()? == 0 {
+        .map_err(|_| {
+            syn::Error::new_spanned(
+                attr,
+                "`#[emits(A, B)]` names the events one call into this method may emit",
+            )
+        })?;
+    if named.is_empty() {
         return Err(syn::Error::new_spanned(
-            bytes,
-            "a method bounded at nothing emits nothing — drop the attribute instead",
+            attr,
+            "a method emitting nothing carries no `#[emits]` — drop the attribute instead",
         ));
     }
-    Ok(Some(bytes))
+    let mut published = Vec::with_capacity(named.len());
+    for event in named {
+        let name = kebab(&event.to_string());
+        if published.contains(&name) {
+            return Err(syn::Error::new_spanned(
+                event,
+                "an event named twice would price its bytes twice",
+            ));
+        }
+        published.push(name);
+    }
+    Ok(published)
 }
 
 /// The type a method answers with, at the tail position the lowering
@@ -1441,13 +1457,13 @@ fn lower_method(
         }
     }
     let total = claim.is_some();
-    let emits = event_bytes_attr(method)?;
+    let emits = emits_attr(method)?;
     let closure = emit::declaration(
         &lowered,
         &gate_calls(&gate, &lowered, serves),
         declining.is_some(),
         total,
-        emits.as_ref(),
+        &emits,
         &grant_registrations(declared.resources),
     );
     let declaration = quote!(
@@ -1488,7 +1504,7 @@ fn lower_method(
         params,
     };
     Ok(Lowered {
-        emits: emits.is_some(),
+        emits: !emits.is_empty(),
         declaration,
         guest,
         host,
@@ -2425,13 +2441,13 @@ fn expand(
             return Err(syn::Error::new(
                 span,
                 "a blueprint that declares events has a method that may emit one: mark it \
-                 `#[event_bytes(N)]` with the most bytes one call into it may emit",
+                 `#[emits(Event)]` with the events one call into it may emit",
             ));
         }
         (true, true) => {
             return Err(syn::Error::new(
                 span,
-                "nothing here is an event — `#[event_bytes]` bounds the events a blueprint \
+                "nothing here is an event — `#[emits]` names the events a blueprint \
                  declares",
             ));
         }

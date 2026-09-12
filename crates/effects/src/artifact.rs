@@ -354,7 +354,10 @@ mod tests {
         metadata.methods.insert(
             "transfer".to_owned(),
             MethodSignature {
-                event_bytes: 64,
+                emits: vec![0],
+                // What the shape below encodes to, which the door
+                // derives again on the way back out.
+                event_bytes: 16,
                 ..MethodSignature::default()
             },
         );

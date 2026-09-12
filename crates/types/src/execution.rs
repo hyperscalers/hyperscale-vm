@@ -90,6 +90,16 @@ pub const MAX_ANSWER_BYTES: usize = MAX_EVENT_PAYLOAD_BYTES;
 /// index, checked without resolving it. A wire bound on the index.
 pub const MAX_EVENT_TYPES: u32 = 1024;
 
+/// The bound on the events one method may declare it emits.
+///
+/// A decode cap on a signature's own table, sized well above what a
+/// method plausibly emits — a handful of kinds, where the package's
+/// whole table may run to a thousand. What it stops is a signature
+/// naming more event kinds than its package has, which a decoder would
+/// otherwise allocate for before the gate reads a byte of the table
+/// they index into.
+pub const MAX_EVENT_TYPES_PER_METHOD: usize = 32;
+
 /// The error codes one package may declare. A wire bound on the code.
 ///
 /// The bound on a returned code, checked the same way an event index is

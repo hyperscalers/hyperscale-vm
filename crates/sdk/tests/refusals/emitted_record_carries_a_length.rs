@@ -23,7 +23,7 @@ mod contract {
     }
 
     impl Contract {
-        #[event_bytes(256)]
+        #[emits(Tallied)]
         pub fn count(&mut self, n: u64) {
             let tally = Tally {
                 count: n,

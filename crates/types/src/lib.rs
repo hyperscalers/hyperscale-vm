@@ -47,7 +47,7 @@ pub use envelope::{
 pub use execution::{
     ABSENT_REP, AbortReason, Answer, Event, MAX_ANSWER_BYTES, MAX_CROSSINGS_PER_TX,
     MAX_ERROR_CODES, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
-    MAX_EVENTS_PER_TX, MAX_MANIFEST_NODES, Outcome, UnmetCondition,
+    MAX_EVENT_TYPES_PER_METHOD, MAX_EVENTS_PER_TX, MAX_MANIFEST_NODES, Outcome, UnmetCondition,
 };
 pub use hashing::ProtocolHasher;
 pub use legs::{LegRole, LegShape, ValueEdge};

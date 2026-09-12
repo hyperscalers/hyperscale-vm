@@ -116,7 +116,7 @@ pub mod account {
         /// body ran, so there is no requested amount left to check it
         /// against and no way for the two to differ.
         #[requires(self)]
-        #[event_bytes(64)]
+        #[emits(Withdrawn)]
         pub fn withdraw(&mut self, resource: ResourceAddr, amount: Quantity) -> Bucket {
             let funds = self.vault(resource).reserve(amount);
             Withdrawn {
@@ -142,7 +142,7 @@ pub mod account {
         /// entry that declines aborts the transfer at admission, before
         /// anything lands here to be swept, so the two never meet.
         #[total]
-        #[event_bytes(64)]
+        #[emits(Deposited)]
         pub fn deposit(&mut self, funds: Bucket) {
             // The credits come last because one of them consumes the
             // edge: value is linear, so every read of what crossed — the
