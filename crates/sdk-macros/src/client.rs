@@ -304,6 +304,7 @@ fn wrapper(method: &Method, serves: Serves) -> TokenStream2 {
         ///
         /// Any refusal the call does not type against the method's own
         /// declaration.
+        #[allow(clippy::too_many_arguments)] // the method's own arity, plus the builder seam
         pub fn #name(
             #receiver
             builder: &mut #builder<'_>,
