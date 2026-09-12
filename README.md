@@ -28,6 +28,7 @@ Rust implementation of the Hyperscale VM: an execution engine built for a sharde
 | [`kernel`](crates/kernel) | The object model and mode semantics: the substate store with access recording, structural ownership, the delta/reserve execution semantics, supply accumulators, and the trace-subset oracle |
 | [`manifest-builder`](crates/manifest-builder) | Typed client-side manifest construction |
 | [`meter`](crates/meter) | The fuel meter: the pass that makes a module count its own fuel, and the schedule it counts by |
+| [`preview`](crates/preview) | Run a transaction whole against the state it declares and report what a receipt would say: the per-node fuel, the ceilings a composer signs over it, and the anchors it read |
 | [`ref`](crates/ref) | The reference interpreter of the profile: the executable spec, independently written, differentially tested against the blessed engine |
 | [`runtime`](crates/runtime) | The blessed-engine embedding: wasmtime configuration, the deploy-time profile validator, admission through the meter, the kernel imports, and the boundary copy supplement |
 | [`sdk`](crates/sdk) | The guest-side authoring surface |

@@ -721,6 +721,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyperscale-vm-preview"
+version = "0.1.0"
+dependencies = [
+ "hyperscale-vm-effects",
+ "hyperscale-vm-kernel",
+ "hyperscale-vm-types",
+]
+
+[[package]]
 name = "hyperscale-vm-ref"
 version = "0.1.0"
 dependencies = [

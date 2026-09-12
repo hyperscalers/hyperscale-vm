@@ -13,6 +13,7 @@ members = [
     "crates/kernel",
     "crates/manifest-builder",
     "crates/meter",
+    "crates/preview",
     "crates/ref",
     "crates/runtime",
     "crates/sdk",

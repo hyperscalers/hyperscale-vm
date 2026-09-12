@@ -1,0 +1,17 @@
+[package]
+name = "hyperscale-vm-preview"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Run a transaction against the state it declares and report what a receipt would say"
+
+[dependencies]
+hyperscale-vm-effects.workspace = true
+hyperscale-vm-kernel.workspace = true
+hyperscale-vm-types.workspace = true
+
+[dev-dependencies]
+hyperscale-vm-effects = { workspace = true, features = ["testing"] }
+
+[lints]
+workspace = true
