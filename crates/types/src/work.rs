@@ -268,25 +268,20 @@ pub struct PriceBounds {
 }
 
 impl PriceBounds {
-    /// The bounds the chain is born with: an eighth of the genesis
-    /// table and eight times it, so a row can travel two orders between
-    /// them and a network that never votes still has a working
-    /// controller.
+    /// The bounds the chain is born with: the genesis table on both
+    /// sides, so every row starts pinned where it is.
+    ///
+    /// A degenerate interval rather than a wide one, because every
+    /// weight in the table is a placeholder until calibration and a
+    /// controller turned loose on uncalibrated weights would walk a
+    /// price somewhere nobody chose. Widening a row is a governance act
+    /// — the same vote that would retune the weight it prices — and the
+    /// controller is what takes over inside whatever interval that vote
+    /// opens. Until one does, the price is what genesis fixed, which is
+    /// what a network with nothing measured yet should charge.
     pub const GENESIS: Self = Self {
-        floor: PriceTable {
-            compute: PRICE_RESOLUTION / 8,
-            read_bytes: 10 * PRICE_RESOLUTION / 8,
-            write_bytes: 50 * PRICE_RESOLUTION / 8,
-            footprint: 1_000 * PRICE_RESOLUTION / 8,
-            retention: 20 * PRICE_RESOLUTION / 8,
-        },
-        ceiling: PriceTable {
-            compute: 8 * PRICE_RESOLUTION,
-            read_bytes: 80 * PRICE_RESOLUTION,
-            write_bytes: 400 * PRICE_RESOLUTION,
-            footprint: 8_000 * PRICE_RESOLUTION,
-            retention: 160 * PRICE_RESOLUTION,
-        },
+        floor: PriceTable::GENESIS,
+        ceiling: PriceTable::GENESIS,
     };
 
     /// Whether every row admits a level at all: a positive floor, since
@@ -691,7 +686,7 @@ mod tests {
     /// walking a price on its own.
     #[test]
     fn a_row_at_the_target_does_not_drift() {
-        let bounds = PriceBounds::GENESIS;
+        let bounds = widened();
         let mut level = PriceTable::GENESIS;
         let steady = |cap: u64| Utilization {
             used: u128::from(cap) / 2,
@@ -714,7 +709,7 @@ mod tests {
     /// driven, and never leaves the interval a vote fixed.
     #[test]
     fn a_row_stops_at_the_bound_it_reaches() {
-        let bounds = PriceBounds::GENESIS;
+        let bounds = widened();
         let saturated = FiveWay {
             compute: Utilization {
                 used: 1,
@@ -744,6 +739,45 @@ mod tests {
         );
     }
 
+    /// An interval a vote opened, an eighth of the genesis table to
+    /// eight times it: what the controller is given room to move in.
+    fn widened() -> PriceBounds {
+        let scaled = |by: u64, div: u64| PriceTable {
+            compute: PriceTable::GENESIS.compute * by / div,
+            read_bytes: PriceTable::GENESIS.read_bytes * by / div,
+            write_bytes: PriceTable::GENESIS.write_bytes * by / div,
+            footprint: PriceTable::GENESIS.footprint * by / div,
+            retention: PriceTable::GENESIS.retention * by / div,
+        };
+        PriceBounds {
+            floor: scaled(1, 8),
+            ceiling: scaled(8, 1),
+        }
+    }
+
+    /// The chain is born with the controller pinned: every row's
+    /// interval is a point, so no utilization moves a price until a vote
+    /// opens one.
+    #[test]
+    fn the_genesis_bounds_hold_every_row_where_it_is() {
+        let saturated = FiveWay {
+            compute: Utilization {
+                used: 1,
+                capacity: 1,
+            },
+            ..FiveWay::default()
+        };
+        assert_eq!(
+            PriceTable::GENESIS.stepped(&saturated, &PriceBounds::GENESIS),
+            PriceTable::GENESIS
+        );
+        assert!(
+            PriceTable::GENESIS.stepped(&saturated, &widened()).compute
+                > PriceTable::GENESIS.compute,
+            "a widened interval is what lets the controller move"
+        );
+    }
+
     /// The bounds are what a vote decides, and a level outside them is
     /// brought in at the next fold rather than at the vote.
     #[test]
@@ -758,15 +792,15 @@ mod tests {
                 compute: 0,
                 ..PriceTable::GENESIS
             },
-            ceiling: PriceBounds::GENESIS.ceiling,
+            ceiling: widened().ceiling,
         };
         assert!(
             !free.well_formed(),
             "a free dimension is bounded by nothing"
         );
         let crossed = PriceBounds {
-            floor: PriceBounds::GENESIS.ceiling,
-            ceiling: PriceBounds::GENESIS.floor,
+            floor: widened().ceiling,
+            ceiling: widened().floor,
         };
         assert!(!crossed.well_formed());
     }
