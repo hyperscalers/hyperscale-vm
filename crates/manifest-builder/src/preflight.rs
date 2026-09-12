@@ -30,7 +30,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_types::{
     Address, CallTarget, DeclaredWork, EffectTarget, NetworkWord, Presence, PriceTable,
     PrincipalAddr, ResourceAddr, SchemeId, SubintentHash, SubstateKey, TermsRefusal, TextError,
-    admit_ceilings, gas_limit_total,
+    admit_ceilings, admit_event_bounds, gas_limit_total,
 };
 
 /// Why a transaction could not be preflighted.
@@ -42,6 +42,9 @@ pub enum PreflightError {
     /// A network word no address can be named under.
     #[error(transparent)]
     Network(#[from] TextError),
+    /// A signed term the chain would refuse the envelope for.
+    #[error(transparent)]
+    Terms(#[from] TermsRefusal),
 }
 
 /// Whose signature naming one node requires.
@@ -310,6 +313,15 @@ pub struct Report {
     /// The nullifier record of every bound subintent, empty where the
     /// tree binds none.
     pub subintents: Vec<SubintentRecord>,
+    /// What the methods this transaction's calls name may emit between
+    /// them, in bytes.
+    ///
+    /// Read off each call's own method, summed and held under the cap
+    /// the chain holds it under — a manifest whose calls sum past it is
+    /// refused here as it would be at derivation. Retained bytes like
+    /// the writes beside them, so a quote that left it out would name a
+    /// ceiling the chain then prices past.
+    pub event_bytes: u64,
     /// Every address the report names, in this network's text form.
     pub named: BTreeMap<Address, String>,
 }
@@ -392,7 +404,7 @@ impl Report {
             read_bytes: self.read_bytes().saturating_add(artifact_bytes),
             write_bytes,
             footprint: self.footprint(),
-            retention: write_bytes,
+            retention: write_bytes.saturating_add(self.event_bytes),
         }
         .saturating_add(signatures)
     }
@@ -518,7 +530,13 @@ pub fn preflight_tree(
     let identity = tree.hash(hasher);
     let admitted = admit_tree(tree, composer, identity, chain, hasher)?;
     let routing = route_tree(&admitted, shards);
-    report(admitted.admitted, routing, admitted.subintents, network)
+    report(
+        admitted.admitted,
+        routing,
+        admitted.subintents,
+        chain,
+        network,
+    )
 }
 
 /// Assemble the report.
@@ -526,8 +544,25 @@ fn report(
     admitted: Admitted,
     routing: Routing,
     subintents: Vec<SubintentRecord>,
+    chain: &dyn ChainRecords,
     network: &str,
 ) -> Result<Report, PreflightError> {
+    // What each call's own method may emit, on the rule the chain
+    // applies: a method that states nothing may emit nothing, and the
+    // sum is what retention prices. A package this node has not seen
+    // contributes nothing rather than guessing — the same call would
+    // not have admitted above.
+    let per_call: Vec<u32> = routing
+        .calls
+        .iter()
+        .map(|call| {
+            chain
+                .package(call.package)
+                .and_then(|package| package.methods.get(&call.export).map(|m| m.event_bytes))
+                .unwrap_or(0)
+        })
+        .collect();
+    let event_bytes = admit_event_bounds(&per_call)?;
     let footprints = routing
         .per_shard
         .iter()
@@ -590,6 +625,7 @@ fn report(
         footprints,
         authority,
         subintents,
+        event_bytes,
         named,
     })
 }

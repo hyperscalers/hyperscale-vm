@@ -151,7 +151,15 @@ fn a_report_is_what_the_chain_derives() {
             + 500,
         "reads are the declaration's bytes plus the artifacts"
     );
-    assert_eq!(work.retention, work.write_bytes + signature.retention);
+    assert_eq!(
+        work.retention,
+        work.write_bytes + signature.retention + report.event_bytes,
+        "retention keeps the writes, the auth material and what the calls may emit"
+    );
+    assert!(
+        report.event_bytes > 0,
+        "the fixture calls a method that emits, or this proves nothing"
+    );
     let twice = report.work(
         &[4_000, 3_000],
         &[SchemeId::ED25519, SchemeId::ED25519],
