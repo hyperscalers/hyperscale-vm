@@ -38,11 +38,12 @@ pub const MAX_EVENT_PAYLOAD_BYTES: usize = 4096;
 /// The event bytes one transaction may emit between all its events.
 ///
 /// A price bound, not only a wire one: events are receipt content every
-/// validator retains, so a manifest naming a package with an event
-/// table enters this figure whole into its declared retention, and the
-/// kernel holds the transaction to it at emit. Without it a node could
-/// put a mebibyte into its receipt for a million fuel and no cap would
-/// see it.
+/// validator retains, so what a manifest's calls declare between them
+/// enters its retention and a derivation refuses a manifest declaring
+/// past this. The kernel holds the transaction to it at emit beside
+/// each frame's own bound, so a batch entry nothing derived is bounded
+/// too. Without it a node could put a mebibyte into its receipt for a
+/// million fuel and no cap would see it.
 pub const MAX_EVENT_BYTES_PER_TX: usize = 64 * 1024;
 
 const _: () = assert!(

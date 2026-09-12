@@ -638,6 +638,7 @@ impl KernelSession {
             invocation: None,
             events: Vec::new(),
             node_events: NodeEvents::default(),
+            events_carried: 0,
             supply: SupplyDelta::default(),
             escrow: EscrowDelta::default(),
             crossings: BTreeMap::new(),

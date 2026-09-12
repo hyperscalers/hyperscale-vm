@@ -51,7 +51,9 @@ use hyperscale_vm_types::{
 // The emission caps and the event record are the shared vocabulary: the
 // same constants bound the kernel's emission here and the wire's decode in
 // the consensus workspace, so the two cannot drift.
-use hyperscale_vm_types::{Event, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX};
+use hyperscale_vm_types::{
+    Event, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
+};
 pub use materialize::{Capability, Interval, MaterializeError, Settlement};
 use ranges::Ranges;
 pub use ranges::SCAN_SEEK_BYTES;
@@ -123,9 +125,10 @@ pub struct FeeBurn {
 
 /// What the node now running may emit, and what it has emitted.
 ///
-/// A budget per frame rather than per transaction: the bound is the
-/// called method's own declaration, so two nodes of one manifest never
-/// share one.
+/// A budget per frame: the bound is the called method's own
+/// declaration, so two nodes of one manifest never share one. The
+/// transaction's own total is held beside it, since what a receipt may
+/// carry is one figure whatever its frames declared.
 #[derive(Clone, Copy, Debug, Default)]
 struct NodeEvents {
     /// The bound the node's method declared.
@@ -181,6 +184,17 @@ pub struct KernelSession {
     /// as the frame opens, so a method that declares nothing may emit
     /// nothing.
     node_events: NodeEvents,
+    /// Bytes this transaction has emitted across every frame, held to
+    /// [`MAX_EVENT_BYTES_PER_TX`].
+    ///
+    /// The per-frame bounds are what the declaration priced; this is
+    /// what a receipt may carry however many frames spend theirs. The
+    /// two are the same figure for a manifest whose calls sum under the
+    /// cap, which is the only shape a derivation admits — so this binds
+    /// only where nothing derived the manifest, and binds there for the
+    /// reason the cap exists: events are receipt content every validator
+    /// retains.
+    events_carried: usize,
 
     /// What each capability's cell holds, by the same rep the capability
     /// table uses; `None` where the cell holds no value.
@@ -739,7 +753,15 @@ impl KernelSession {
         if carried > self.node_events.bound {
             return Err(SessionTrap::EventBytesExceeded(self.node_events.bound));
         }
+        // And the transaction's own total beside it, so the receipt is
+        // bounded by one figure whatever its frames declared between
+        // them.
+        let total = self.events_carried.saturating_add(payload.len());
+        if total > MAX_EVENT_BYTES_PER_TX {
+            return Err(SessionTrap::EventBytesExceeded(MAX_EVENT_BYTES_PER_TX));
+        }
         self.node_events.carried = carried;
+        self.events_carried = total;
         self.events.push(Event {
             emitter,
             event_type,

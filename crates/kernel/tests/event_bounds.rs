@@ -6,7 +6,9 @@
 //! crosses it. Per node, like the compute ceilings beside them: a
 //! method that emits states what one call into it may, so a node's
 //! slack is never another's to spend and a method that states nothing
-//! may emit nothing.
+//! may emit nothing. The transaction's own total is metered beside
+//! them, since what a receipt may carry is one figure however many
+//! frames declared their own.
 
 use std::sync::Arc;
 
@@ -16,7 +18,8 @@ use hyperscale_vm_kernel::{
     KernelSession, ManifestWalk, MemoryStore, Receipt, execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, EffectSet, MAX_EVENT_BYTES_PER_TX, Outcome, TxHash,
+    AbortReason, Address, AddressClass, EffectSet, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES,
+    Outcome, TxHash,
 };
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
@@ -124,6 +127,30 @@ fn a_nodes_bound_is_its_own_and_never_its_neighbours() {
     ));
     assert_eq!(
         run(2, 60, &[100, 50]).outcome,
+        Outcome::UserError {
+            reason: AbortReason::EventBytesExceeded
+        }
+    );
+}
+
+/// The frames' bounds do not add up past what a receipt may carry: a
+/// manifest whose nodes are each within their own figure still stops at
+/// the transaction's cap.
+///
+/// A derivation refuses such a manifest before it is signed, so what
+/// this pins is the kernel's own backstop — the bound that holds for a
+/// batch entry nothing derived.
+#[test]
+fn the_transactions_own_total_bounds_what_its_frames_declare() {
+    let page = MAX_EVENT_PAYLOAD_BYTES;
+    let whole = MAX_EVENT_BYTES_PER_TX / page;
+    let bounds = vec![u32::try_from(page).expect("a page fits u32"); whole + 1];
+    assert!(matches!(
+        run(whole, page, &bounds).outcome,
+        Outcome::Completed { .. }
+    ));
+    assert_eq!(
+        run(whole + 1, page, &bounds).outcome,
         Outcome::UserError {
             reason: AbortReason::EventBytesExceeded
         }
