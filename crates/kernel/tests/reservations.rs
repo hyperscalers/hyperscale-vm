@@ -103,7 +103,9 @@ fn session(held: u128, reserves: &[u128]) -> (KernelSession, u32) {
 }
 
 fn finish(session: KernelSession) -> (Outcome, Option<u128>, u128) {
-    let (receipt, store) = session.finish(vec![], 0).expect("the oracle stands");
+    let (receipt, store) = session
+        .finish(vec![], Vec::new())
+        .expect("the oracle stands");
     let settled = receipt
         .delta
         .settles
@@ -233,7 +235,9 @@ fn a_take_and_a_delta_spend_the_two_halves_of_one_cell() {
         .expect("into the sink it goes");
     let rest = session.cell_take(1, 0, 40).expect("the remainder is free");
     session.cell_put(2, 0, rest).expect("into the sink it goes");
-    let (receipt, store) = session.finish(vec![], 0).expect("the oracle stands");
+    let (receipt, store) = session
+        .finish(vec![], Vec::new())
+        .expect("the oracle stands");
     assert!(
         matches!(receipt.outcome, Outcome::Completed { .. }),
         "the two debits split the cell: {:?}",
@@ -311,7 +315,9 @@ fn a_transactions_own_reservation_floors_its_own_delta() {
     session
         .cell_put(2, 0, funds)
         .expect("into the sink it goes");
-    let (receipt, _) = session.finish(vec![], 0).expect("the oracle stands");
+    let (receipt, _) = session
+        .finish(vec![], Vec::new())
+        .expect("the oracle stands");
     assert!(
         matches!(
             receipt.outcome,

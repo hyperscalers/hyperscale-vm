@@ -142,17 +142,17 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
     } else {
         Outcome::Completed { answers: vec![] }
     };
-    let fuel = 10 + u64::from(tx_id.0.0[0]);
+    let spent = vec![10 + u64::from(tx_id.0.0[0])];
     match outcome {
         Outcome::Completed { answers } => RunResult::Completed {
             session,
             answers,
-            fuel,
+            spent,
         },
         outcome => RunResult::Aborted {
             session,
             outcome,
-            fuel,
+            spent,
         },
     }
 }
@@ -392,7 +392,7 @@ fn each_transaction_sees_its_own_clock() {
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
         answers: answered(session.clock_ms()),
-        fuel: u64::from(entry.tx.0.0[0]),
+        spent: vec![u64::from(entry.tx.0.0[0])],
         session,
     };
     let outcome = execute_batch(
@@ -445,7 +445,7 @@ fn each_transaction_sees_its_own_epoch() {
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
         answers: answered(session.epoch()),
-        fuel: u64::from(entry.tx.0.0[0]),
+        spent: vec![u64::from(entry.tx.0.0[0])],
         session,
     };
     let outcome = execute_batch(

@@ -214,12 +214,12 @@ fn main() -> Result<()> {
             let RunResult::Completed {
                 session,
                 answers,
-                fuel,
+                spent,
             } = walk.run(entry, session).expect("the engine is available")
             else {
                 panic!("the bench transfer completes");
             };
-            let (_receipt, threaded) = session.finish(answers, fuel).expect("oracle");
+            let (_receipt, threaded) = session.finish(answers, spent).expect("oracle");
             store = threaded;
         }
         println!(
@@ -302,7 +302,9 @@ fn main() -> Result<()> {
         )
         .expect("feasible");
         match walk.run(&entry, session).expect("the engine is available") {
-            RunResult::Completed { fuel, .. } | RunResult::Aborted { fuel, .. } => fuel,
+            RunResult::Completed { spent, .. } | RunResult::Aborted { spent, .. } => {
+                spent.iter().sum::<u64>()
+            }
         }
     };
     println!("\nfuel per transfer: {fuel_check} (the meter's schedule + boundary supplement)");

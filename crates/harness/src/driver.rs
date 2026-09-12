@@ -293,6 +293,7 @@ fn comparable(outcome: &BatchOutcome) -> Vec<Receipt> {
         .values()
         .map(|receipt| Receipt {
             fuel: 0,
+            fuel_by_node: Vec::new(),
             ..receipt.clone()
         })
         .collect()

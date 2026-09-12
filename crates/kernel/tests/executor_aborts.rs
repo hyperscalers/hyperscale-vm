@@ -123,7 +123,7 @@ fn scripted(sub: u128) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
         RunResult::Completed {
             session,
             answers: vec![],
-            fuel: FUEL,
+            spent: vec![FUEL],
         }
     }
 }
@@ -357,7 +357,7 @@ fn racing_nullifier_writers_commit_exactly_once() {
     let noop = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         session,
         answers: vec![],
-        fuel: FUEL,
+        spent: vec![FUEL],
     };
     let batch = vec![nullifier_tx(0x02), nullifier_tx(0x01)];
     let outcome = execute_batch(
@@ -466,13 +466,13 @@ fn an_abort_between_two_committers_does_not_unspend_the_subintent() {
                 outcome: Outcome::UserError {
                     reason: AbortReason::Unreachable,
                 },
-                fuel: FUEL,
+                spent: vec![FUEL],
             }
         } else {
             RunResult::Completed {
                 session,
                 answers: vec![],
-                fuel: FUEL,
+                spent: vec![FUEL],
             }
         }
     };
@@ -582,7 +582,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
     let noop = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         session,
         answers: vec![],
-        fuel: FUEL,
+        spent: vec![FUEL],
     };
     // A read is not the write the conflict relation needs.
     let undeclared = BatchTx {
@@ -627,7 +627,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
     let noop = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         session,
         answers: vec![],
-        fuel: FUEL,
+        spent: vec![FUEL],
     };
     let mismatched = BatchTx {
         tx: tx(0x01),
@@ -682,13 +682,13 @@ fn an_aborted_transaction_spends_no_nullifier() {
                 outcome: Outcome::UserError {
                     reason: AbortReason::Unreachable,
                 },
-                fuel: FUEL,
+                spent: vec![FUEL],
             }
         } else {
             RunResult::Completed {
                 session,
                 answers: vec![],
-                fuel: FUEL,
+                spent: vec![FUEL],
             }
         }
     };
@@ -741,7 +741,7 @@ fn a_poisoned_amount_cell_aborts_only_the_delta_that_declared_it() {
         RunResult::Completed {
             session,
             answers: vec![],
-            fuel: FUEL,
+            spent: vec![FUEL],
         }
     };
 
@@ -830,7 +830,7 @@ fn an_exclusive_debit_past_a_hold_loses_to_the_reserver() {
         RunResult::Completed {
             session,
             answers: vec![],
-            fuel: FUEL,
+            spent: vec![FUEL],
         }
     };
 
@@ -913,7 +913,7 @@ fn a_write_below_a_held_reservation_aborts_only_the_reserver() {
         RunResult::Completed {
             session,
             answers: vec![],
-            fuel: FUEL,
+            spent: vec![FUEL],
         }
     };
 
@@ -977,7 +977,7 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
         RunResult::Completed {
             session,
             answers: vec![],
-            fuel: FUEL,
+            spent: vec![FUEL],
         }
     };
 
@@ -1091,7 +1091,7 @@ fn a_transaction_that_lost_value_aborts_beside_one_that_did_not() {
         RunResult::Completed {
             session,
             answers: vec![],
-            fuel: FUEL,
+            spent: vec![FUEL],
         }
     };
 

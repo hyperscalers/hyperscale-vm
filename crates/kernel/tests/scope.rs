@@ -110,11 +110,11 @@ fn declared(effects: &[Effect], conditions: Vec<Condition>) -> Declaration {
 
 /// A guest that touches nothing and completes, so every verdict here is
 /// materialization's or settlement's own.
-const fn idle(_entry: &BatchTx, session: KernelSession) -> RunResult {
+fn idle(_entry: &BatchTx, session: KernelSession) -> RunResult {
     RunResult::Completed {
         session,
         answers: vec![],
-        fuel: FUEL,
+        spent: vec![FUEL],
     }
 }
 

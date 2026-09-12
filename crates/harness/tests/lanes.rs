@@ -119,6 +119,7 @@ fn swap(chain: Chain, floor: u128) -> (Receipt, [u128; 4]) {
 fn comparable(receipt: &Receipt) -> Receipt {
     Receipt {
         fuel: 0,
+        fuel_by_node: Vec::new(),
         ..receipt.clone()
     }
 }

@@ -503,7 +503,9 @@ fn a_denominated_edge_still_has_to_be_disposed_of() {
     assert_eq!(session.drop_bucket(funds), Ok(()));
     assert_eq!(session.bucket(funds).map(|held| held.quantity()), Ok(100));
 
-    let (receipt, _) = session.finish(vec![], 0).expect("the flip still receipts");
+    let (receipt, _) = session
+        .finish(vec![], Vec::new())
+        .expect("the flip still receipts");
     assert_eq!(
         receipt.outcome,
         Outcome::UserError {

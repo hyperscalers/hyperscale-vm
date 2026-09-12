@@ -698,9 +698,9 @@ pub fn execute_manifest(
         .run(&entry, session)
         .expect("every corpus package is registered with both engines");
     match run {
-        RunResult::Completed { session, fuel, .. } => {
+        RunResult::Completed { session, spent, .. } => {
             let (receipt, threaded) = session
-                .finish(vec![], fuel)
+                .finish(vec![], spent)
                 .expect("the oracle stands on every corpus receipt");
             Ok((
                 TxResult::Completed(Box::new(receipt)),

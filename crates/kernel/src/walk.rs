@@ -86,16 +86,17 @@ enum NodeFailure {
 type NodeSuccess = (KernelSession, Vec<u32>, Option<Vec<u8>>, u64);
 
 impl NodeFailure {
-    /// The walk's own answer to this failure, charged against what the
-    /// transaction had already spent.
-    fn into_result(self, spent: u64) -> Result<RunResult, Unavailable> {
+    /// The walk's own answer to this failure, appended to what the
+    /// nodes before it spent.
+    fn into_result(self, mut spent: Vec<u64>) -> Result<RunResult, Unavailable> {
         match self {
             Self::Abort(failure) => {
                 let (session, outcome, consumed) = *failure;
+                spent.push(consumed);
                 Ok(RunResult::Aborted {
                     session,
                     outcome,
-                    fuel: spent.saturating_add(consumed),
+                    spent,
                 })
             }
             Self::Unavailable(reason) => Err(Unavailable(reason)),
@@ -631,23 +632,27 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                         return Ok(RunResult::Aborted {
                             session,
                             outcome,
-                            fuel: 0,
+                            spent: Vec::new(),
                         });
                     }
                 }
                 return Ok(RunResult::Completed {
                     session,
                     answers: Vec::new(),
-                    fuel: 0,
+                    spent: Vec::new(),
                 });
             }
             Job::Manifest { calls, legs } => (calls, legs),
         };
         let mut outputs: Vec<Vec<Option<u32>>> = Vec::with_capacity(calls.len());
         let mut answers: Vec<Answer> = Vec::new();
-        // What the walk has consumed so far: the receipt's report, not a
-        // budget. Each node is metered against its own signed ceiling.
-        let mut fuel = 0u64;
+        // What each node consumed, in node order: the receipt's report,
+        // not a budget. Each node is metered against its own signed
+        // ceiling, so what a composer needs back is where the fuel went
+        // rather than the total, which is the fold. A node this member
+        // does not run spends nothing and still takes its place, so the
+        // vector is read by node index.
+        let mut spent: Vec<u64> = Vec::with_capacity(calls.len());
         for (index, call) in calls.iter().enumerate() {
             let node = u32::try_from(index).unwrap_or(u32::MAX);
             // A node another shard runs is not invoked here. What stands
@@ -660,9 +665,10 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                     Ok((returned, produced)) => {
                         session = returned;
                         outputs.push(produced);
+                        spent.push(0);
                         continue;
                     }
-                    Err(failure) => return failure.into_result(fuel),
+                    Err(failure) => return failure.into_result(spent),
                 }
             }
             // A node without a ceiling or an event bound is a batch
@@ -671,19 +677,19 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
             // composer's defect.
             let (Some(ceiling), Some(emits)) = (entry.ceiling(index), entry.event_bound(index))
             else {
-                return composition_defect(session, AbortReason::MissingCeiling).into_result(fuel);
+                return composition_defect(session, AbortReason::MissingCeiling).into_result(spent);
             };
             match self.invoke_node(node, call, &outputs, ceiling, emits, session) {
                 Ok((returned, produced, answered, consumed)) => {
                     session = returned;
                     session.leave_invocation();
-                    fuel = fuel.saturating_add(consumed);
+                    spent.push(consumed);
                     match departing(node, calls, legs, produced, session) {
                         Ok((returned, produced)) => {
                             session = returned;
                             outputs.push(produced);
                         }
-                        Err(failure) => return failure.into_result(fuel),
+                        Err(failure) => return failure.into_result(spent),
                     }
                     if let Some(value) = answered {
                         answers.push(Answer { node, value });
@@ -691,10 +697,11 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                 }
                 Err(NodeFailure::Abort(failure)) => {
                     let (returned, outcome, consumed) = *failure;
+                    spent.push(consumed);
                     return Ok(RunResult::Aborted {
                         session: returned,
                         outcome,
-                        fuel: fuel.saturating_add(consumed),
+                        spent,
                     });
                 }
                 Err(NodeFailure::Unavailable(reason)) => return Err(Unavailable(reason)),
@@ -703,7 +710,7 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
         Ok(RunResult::Completed {
             session,
             answers,
-            fuel,
+            spent,
         })
     }
 }

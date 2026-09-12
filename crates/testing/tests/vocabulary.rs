@@ -132,7 +132,7 @@ fn a_write_cell_reads_back_what_it_was_set_to() {
     });
 
     let (receipt, _) = session
-        .finish(vec![], 0)
+        .finish(vec![], Vec::new())
         .expect("nothing outside the declared set was touched");
     assert_eq!(
         receipt.delta.cells.get(&cell),
@@ -250,7 +250,7 @@ fn a_boolean_is_a_cell_the_vocabulary_admits() {
     assert!(!unwritten, "an unwritten leaf is false");
     assert!(after);
     let (receipt, _) = session
-        .finish(vec![], 0)
+        .finish(vec![], Vec::new())
         .expect("nothing outside the declared set was touched");
     assert_eq!(receipt.delta.cells.get(&flag), Some(&Some(vec![1])));
 }
@@ -295,7 +295,7 @@ fn an_interval_reads_and_writes_the_entries_it_covers() {
     assert_eq!(orders, [1, 2, 3].map(OrderKey::from_bits).to_vec());
     assert_eq!(second, 20);
     let (receipt, _) = session
-        .finish(vec![], 0)
+        .finish(vec![], Vec::new())
         .expect("nothing outside the declared set was touched");
     assert_eq!(receipt.delta.entries.len(), 1, "one entry was rewritten");
 }
@@ -318,7 +318,7 @@ fn an_interval_removes_the_entry_it_names() {
     assert_eq!(left, 2);
     assert_eq!(orders, [1, 3].map(OrderKey::from_bits).to_vec());
     let (receipt, _) = session
-        .finish(vec![], 0)
+        .finish(vec![], Vec::new())
         .expect("nothing outside the declared set was touched");
     assert_eq!(receipt.delta.entries.len(), 1);
     assert_eq!(
@@ -349,7 +349,7 @@ fn an_entry_writes_at_the_order_it_names() {
 
     assert_eq!(read, 1234);
     let (receipt, _) = session
-        .finish(vec![], 0)
+        .finish(vec![], Vec::new())
         .expect("nothing outside the declared set was touched");
     assert_eq!(receipt.delta.entries.len(), 1);
 }

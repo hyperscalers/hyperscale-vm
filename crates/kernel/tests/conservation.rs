@@ -83,7 +83,9 @@ mod through_the_session {
     }
 
     fn completed(session: KernelSession) -> SupplyDelta {
-        let (receipt, _) = session.finish(vec![], 0).expect("the oracle stands");
+        let (receipt, _) = session
+            .finish(vec![], Vec::new())
+            .expect("the oracle stands");
         receipt.supply
     }
 
@@ -141,7 +143,9 @@ mod through_the_session {
             resource: UNIT,
             amount: 21,
         }));
-        let (receipt, _) = session.finish(vec![], 0).expect("the oracle stands");
+        let (receipt, _) = session
+            .finish(vec![], Vec::new())
+            .expect("the oracle stands");
         assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
         assert_eq!(receipt.supply.burned(UNIT), 21);
         assert_eq!(receipt.supply.minted(UNIT), 0);
@@ -165,7 +169,9 @@ mod through_the_session {
             resource: UNIT,
             amount: 21,
         }));
-        let (receipt, _) = session.finish(vec![], 0).expect("the oracle stands");
+        let (receipt, _) = session
+            .finish(vec![], Vec::new())
+            .expect("the oracle stands");
         assert_eq!(
             receipt.outcome,
             Outcome::Infeasible {
@@ -224,7 +230,7 @@ mod through_the_session {
         let _ = minted;
 
         let (receipt, _) = session
-            .finish(vec![], 0)
+            .finish(vec![], Vec::new())
             .expect("the flip still produces a receipt");
         assert!(matches!(
             receipt.outcome,
@@ -249,7 +255,7 @@ mod through_the_session {
         session.delta_add(0, 0, 500).expect("the queue takes it");
 
         let (receipt, _) = session
-            .finish(vec![], 0)
+            .finish(vec![], Vec::new())
             .expect("the fold produces a receipt rather than failing the batch");
         assert_eq!(
             receipt.outcome,
@@ -295,7 +301,7 @@ mod through_the_session {
         )]);
 
         let (receipt, _) = session
-            .finish(vec![], 0)
+            .finish(vec![], Vec::new())
             .expect("the guard produces a receipt rather than failing the batch");
         assert_eq!(
             receipt.outcome,
@@ -315,7 +321,9 @@ mod through_the_session {
         let mut session = session_over(held);
         session.delta_sub(0, 0, 500).expect("the queue takes it");
 
-        let (receipt, _) = session.finish(vec![], 0).expect("a receipt either way");
+        let (receipt, _) = session
+            .finish(vec![], Vec::new())
+            .expect("a receipt either way");
         assert_eq!(
             receipt.outcome,
             Outcome::ProtocolError {
@@ -370,7 +378,9 @@ mod through_the_session {
             .delta_add(rep(cells[2]), 0, 1)
             .expect("and the unit that overflows the side");
 
-        let (receipt, _) = session.finish(vec![], 0).expect("a receipt either way");
+        let (receipt, _) = session
+            .finish(vec![], Vec::new())
+            .expect("a receipt either way");
         assert_eq!(
             receipt.outcome,
             Outcome::ProtocolError {
@@ -481,7 +491,9 @@ mod instances {
         session
             .range_put(0, 0, held, refiled)
             .expect("back it goes");
-        let (receipt, _) = session.finish(vec![], 0).expect("a receipt either way");
+        let (receipt, _) = session
+            .finish(vec![], Vec::new())
+            .expect("a receipt either way");
         receipt.outcome
     }
 

@@ -171,7 +171,7 @@ fn call_for(session: &KernelSession, shape: Shape) -> (&'static str, Vec<GuestAr
 /// How an ending reads as a run: the eight answer bytes complete the
 /// transaction with their figure, and anything else aborts in the class
 /// it ended in.
-fn run_result(session: KernelSession, ended: Invocation, fuel: u64) -> RunResult {
+fn run_result(session: KernelSession, ended: Invocation, spent: Vec<u64>) -> RunResult {
     let reason = match ended.result {
         Invoked::Produced {
             answer: Some(answer),
@@ -181,7 +181,7 @@ fn run_result(session: KernelSession, ended: Invocation, fuel: u64) -> RunResult
                 return RunResult::Completed {
                     session,
                     answers: answered(u64::from_le_bytes(bytes)),
-                    fuel,
+                    spent,
                 };
             }
             Err(_) => AbortReason::BadReturnShape,
@@ -194,7 +194,7 @@ fn run_result(session: KernelSession, ended: Invocation, fuel: u64) -> RunResult
     RunResult::Aborted {
         session,
         outcome: Outcome::UserError { reason },
-        fuel,
+        spent,
     }
 }
 
@@ -249,7 +249,7 @@ impl GuestRunner for BlessedRunner {
         .expect("instantiate");
         let ended = invoke_export(&mut store, &instance, export, &args, FUEL);
         let fuel = ended.fuel;
-        Ok(run_result(store.into_data().into_host(), ended, fuel))
+        Ok(run_result(store.into_data().into_host(), ended, vec![fuel]))
     }
 }
 
@@ -285,7 +285,7 @@ impl GuestRunner for RefRunner {
             .unwrap_or_else(|(_, error)| panic!("instantiate: {error}"));
         let ended = instance.invoke(export, &args);
         let fuel = ended.fuel;
-        Ok(run_result(instance.into_host(), ended, fuel))
+        Ok(run_result(instance.into_host(), ended, vec![fuel]))
     }
 }
 

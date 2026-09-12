@@ -334,17 +334,17 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
         } else {
             Outcome::Completed { answers: vec![] }
         };
-        let fuel = 3 + u64::from(id.0.0[0]);
+        let spent = vec![3 + u64::from(id.0.0[0])];
         match outcome {
             Outcome::Completed { answers } => RunResult::Completed {
                 session,
                 answers,
-                fuel,
+                spent,
             },
             outcome => RunResult::Aborted {
                 session,
                 outcome,
-                fuel,
+                spent,
             },
         }
     }
@@ -514,7 +514,7 @@ fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
         RunResult::Completed {
             session,
             answers: answered(observed),
-            fuel: 3 + u64::from(id.0.0[0]),
+            spent: vec![3 + u64::from(id.0.0[0])],
         }
     }
 }
@@ -568,7 +568,7 @@ fn outbound_runner(
         RunResult::Completed {
             session,
             answers: answered(observed),
-            fuel: 1,
+            spent: vec![1],
         }
     }
 }

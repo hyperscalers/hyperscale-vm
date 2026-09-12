@@ -167,13 +167,22 @@ pub struct Receipt {
     /// with the issued half is attest it, so the shard taking a crossing
     /// claims its own argument rather than a share of a sum.
     pub escrow: EscrowDelta,
-    /// Total fuel consumed: the meter's schedule plus the boundary
-    /// supplement, read off the module's own counter.
+    /// Fuel each manifest node consumed, in node order: the meter's
+    /// schedule plus the boundary supplement, read off the module's own
+    /// counter.
     ///
     /// Exact at every ending, a trap included, because a block is paid
     /// for whole before it runs and exhaustion spends the counter whole.
-    /// What a consumer prices is [`Work`](crate::Work), which is derived
-    /// beside the receipt rather than on it.
+    /// A report and not a price — the declaration is what a fee reads —
+    /// and per node because a composer signs a ceiling per node: what a
+    /// preview hands back is where the fuel went.
+    ///
+    /// A node this member did not run spends nothing and keeps its
+    /// place; an abort ends the vector at the node that failed.
+    pub fuel_by_node: Vec<u64>,
+    /// [`fuel_by_node`](Self::fuel_by_node) folded. Carried rather than
+    /// recomputed at each reader, and derived here so the two can never
+    /// be separate claims.
     pub fuel: u64,
 }
 
@@ -642,7 +651,7 @@ impl KernelSession {
     pub fn finish(
         mut self,
         answers: Vec<Answer>,
-        fuel: u64,
+        fuel_by_node: Vec<u64>,
     ) -> Result<(Receipt, OverlayStore), FinishError> {
         // Value first, because a transaction that lost some has nothing
         // else worth judging. A bucket still carrying anything here was
@@ -660,7 +669,7 @@ impl KernelSession {
                 Outcome::UserError {
                     reason: AbortReason::ValueDropped,
                 },
-                fuel,
+                fuel_by_node,
             ));
         }
         let denominations = self.denominations();
@@ -675,11 +684,11 @@ impl KernelSession {
         // is load-bearing, and the self-floor is intended.
         let movements = match self.judge_movements(&denominations)? {
             Phase::Produced(movements) => movements,
-            Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
+            Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel_by_node)),
         };
         let settles = match self.settle_reservations(&denominations)? {
             Phase::Produced(settles) => settles,
-            Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
+            Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel_by_node)),
         };
         // The fee, as the debit and the burn it is: a movement on the
         // payer's vault composing with whatever else reached it, and the
@@ -691,7 +700,7 @@ impl KernelSession {
         // price loses the transaction rather than a balance.
         let movements = match self.burn_fee(movements)? {
             Phase::Produced(movements) => movements,
-            Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel)),
+            Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel_by_node)),
         };
         // Committing spends every subintent: the nullifier cell records
         // the consuming transaction. The write goes into the same layer
@@ -752,7 +761,7 @@ impl KernelSession {
                     Outcome::ProtocolError {
                         reason: AbortReason::MalformedAmountCell,
                     },
-                    fuel,
+                    fuel_by_node,
                 ));
             }
             delta.cells.insert(key, Some(value));
@@ -763,7 +772,7 @@ impl KernelSession {
                 Outcome::ProtocolError {
                     reason: AbortReason::ValueNotConserved,
                 },
-                fuel,
+                fuel_by_node,
             ));
         }
         self.store.merge_active();
@@ -777,7 +786,8 @@ impl KernelSession {
                 // events alike — with its effects.
                 supply: self.supply,
                 escrow: self.escrow,
-                fuel,
+                fuel: fold_fuel(&fuel_by_node),
+                fuel_by_node,
             },
             self.store,
         ))
@@ -786,7 +796,11 @@ impl KernelSession {
 
 /// Abandon everything this transaction did and report the failure as its
 /// own rather than the batch's.
-fn abort_with(mut store: OverlayStore, outcome: Outcome, fuel: u64) -> (Receipt, OverlayStore) {
+fn abort_with(
+    mut store: OverlayStore,
+    outcome: Outcome,
+    fuel_by_node: Vec<u64>,
+) -> (Receipt, OverlayStore) {
     store.discard_active();
     (
         Receipt {
@@ -801,10 +815,19 @@ fn abort_with(mut store: OverlayStore, outcome: Outcome, fuel: u64) -> (Receipt,
             // which is what leaves the value claimable: nothing committed
             // says it left.
             escrow: EscrowDelta::default(),
-            fuel,
+            fuel: fold_fuel(&fuel_by_node),
+            fuel_by_node,
         },
         store,
     )
+}
+
+/// What a walk spent between its nodes. Saturating, so a figure that
+/// overran cannot read as a smaller one.
+fn fold_fuel(by_node: &[u64]) -> u64 {
+    by_node
+        .iter()
+        .fold(0u64, |total, node| total.saturating_add(*node))
 }
 
 /// The committed state change: the active layer against what the store
@@ -857,7 +880,7 @@ mod tests {
         session.enter_invocation(second, 1_024);
         session.emit(4, b"two".to_vec()).unwrap();
 
-        let (receipt, _) = session.finish(vec![], 0).unwrap();
+        let (receipt, _) = session.finish(vec![], Vec::new()).unwrap();
         assert_eq!(
             receipt.events,
             vec![
@@ -891,7 +914,7 @@ mod tests {
         session.emit(1, b"paid".to_vec()).unwrap();
         session.delta_sub(site, 0, 1).unwrap();
 
-        let (receipt, _) = session.finish(vec![], 7).unwrap();
+        let (receipt, _) = session.finish(vec![], vec![7]).unwrap();
         assert!(
             matches!(receipt.outcome, Outcome::Infeasible { .. }),
             "a debit past the floor is the transaction's own loss",
@@ -916,7 +939,7 @@ mod tests {
         let mut session = session_holding(store, &set);
 
         let funds = session.cell_take(0, 0, 40).expect("the cell covers it");
-        let (receipt, mut threaded) = session.finish(vec![], 7).expect("finishes");
+        let (receipt, mut threaded) = session.finish(vec![], vec![7]).expect("finishes");
         assert_eq!(
             receipt.outcome,
             Outcome::UserError {
@@ -953,7 +976,7 @@ mod tests {
         let split = session.bucket_take(funds, 40).expect("the whole of it");
         session.cell_put(0, 0, split).expect("the credit lands");
 
-        let (receipt, _) = session.finish(vec![], 7).expect("finishes");
+        let (receipt, _) = session.finish(vec![], vec![7]).expect("finishes");
         assert_eq!(receipt.outcome, Outcome::Completed { answers: vec![] });
     }
 

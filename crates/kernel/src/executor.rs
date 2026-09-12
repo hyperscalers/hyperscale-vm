@@ -413,8 +413,11 @@ pub enum RunResult {
         session: KernelSession,
         /// What each answering node handed back, in node order.
         answers: Vec<Answer>,
-        /// Fuel consumed: engine schedule plus boundary supplement.
-        fuel: u64,
+        /// Fuel each node consumed, in node order: engine schedule plus
+        /// boundary supplement. A node this member did not run spends
+        /// nothing and keeps its place, so the vector is read by index
+        /// and the total is its fold.
+        spent: Vec<u64>,
     },
     /// The guest failed with its outcome; the session comes back for the
     /// rollback and nothing of it commits.
@@ -423,8 +426,9 @@ pub enum RunResult {
         session: KernelSession,
         /// How the guest failed.
         outcome: Outcome,
-        /// Fuel consumed before the failure.
-        fuel: u64,
+        /// Fuel each node consumed, the failing one included and
+        /// nothing after it. [`Self::Completed`]'s terms otherwise.
+        spent: Vec<u64>,
     },
 }
 
@@ -829,14 +833,17 @@ impl From<MaterializeError> for Outcome {
     }
 }
 
-fn abort_receipt(outcome: Outcome, fuel: u64) -> Receipt {
+fn abort_receipt(outcome: Outcome, fuel_by_node: Vec<u64>) -> Receipt {
     Receipt {
         outcome,
         delta: StateDelta::default(),
         events: Vec::new(),
         supply: SupplyDelta::default(),
         escrow: EscrowDelta::default(),
-        fuel,
+        fuel: fuel_by_node
+            .iter()
+            .fold(0u64, |total, node| total.saturating_add(*node)),
+        fuel_by_node,
     }
 }
 
@@ -937,7 +944,7 @@ fn run_group<R: GuestRunner>(
             .into_iter()
             .find(|(key, _)| entry.applies.covers(key.owner) && store.cell(*key).is_some());
         if let Some((_, outcome)) = marked {
-            receipts.push((entry.tx, abort_receipt(outcome, 0)));
+            receipts.push((entry.tx, abort_receipt(outcome, Vec::new())));
             continue;
         }
         let before = store.clone();
@@ -959,7 +966,7 @@ fn run_group<R: GuestRunner>(
                     .with_fee(entry.fee)
             }
             Err(defect) => {
-                receipts.push((entry.tx, abort_receipt(defect.into(), 0)));
+                receipts.push((entry.tx, abort_receipt(defect.into(), Vec::new())));
                 store = before;
                 continue;
             }
@@ -975,11 +982,11 @@ fn run_group<R: GuestRunner>(
             RunResult::Completed {
                 session,
                 answers,
-                fuel,
+                spent,
             } => {
                 let (receipt, threaded) =
                     session
-                        .finish(answers, fuel)
+                        .finish(answers, spent)
                         .map_err(|source| BatchError::Finish {
                             tx: entry.tx,
                             source,
@@ -990,11 +997,11 @@ fn run_group<R: GuestRunner>(
             RunResult::Aborted {
                 session,
                 outcome,
-                fuel,
+                spent,
             } => {
                 // The guest failed: its partial writes never commit.
                 store = session.discard();
-                receipts.push((entry.tx, abort_receipt(outcome, fuel)));
+                receipts.push((entry.tx, abort_receipt(outcome, spent)));
             }
         }
     }
@@ -1023,7 +1030,7 @@ fn screen_reserve_targets<'batch>(
                     Outcome::UserError {
                         reason: error.into(),
                     },
-                    0,
+                    Vec::new(),
                 ),
             );
         } else {
@@ -1168,7 +1175,7 @@ pub fn execute_batch<R: GuestRunner>(
         if let Some((key, amount)) = refused {
             receipts.insert(
                 entry.tx,
-                abort_receipt(Outcome::Infeasible { key, amount }, 0),
+                abort_receipt(Outcome::Infeasible { key, amount }, Vec::new()),
             );
         } else {
             runnable.push(entry);
@@ -1310,7 +1317,9 @@ fn apply_receipts(
     for tx in order {
         let receipt = receipts.get(&tx).expect("walked from keys");
         let completed = matches!(receipt.outcome, Outcome::Completed { .. });
-        let fuel = receipt.fuel;
+        // The flip keeps what the walk reported: the transaction ran and
+        // spent it, and only its effects are discarded.
+        let spent = receipt.fuel_by_node.clone();
         // A group runs threaded, each member reading what the members
         // before it wrote — and those writes commit only if their
         // transaction still applies. A completion whose declaration
@@ -1344,7 +1353,7 @@ fn apply_receipts(
             None
         };
         if let Some(outcome) = flip {
-            receipts.insert(tx, abort_receipt(outcome, fuel));
+            receipts.insert(tx, abort_receipt(outcome, spent));
             if let (Some(&id), Some(entry)) = (group_of.get(&tx), entries.get(&tx)) {
                 discarded
                     .entry(id)

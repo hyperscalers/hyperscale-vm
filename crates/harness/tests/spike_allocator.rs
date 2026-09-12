@@ -242,7 +242,7 @@ fn one_transfer(
     let (receipt, _) = store
         .into_data()
         .into_host()
-        .finish(vec![], withdraw.fuel + deposit.fuel)
+        .finish(vec![], vec![withdraw.fuel, deposit.fuel])
         .expect("oracle clean");
     Ok(receipt)
 }

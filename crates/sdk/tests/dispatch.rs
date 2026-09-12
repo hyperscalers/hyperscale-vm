@@ -216,7 +216,7 @@ fn a_body_branches_on_the_verdict_it_was_handed() {
     );
     assert!(matches!(invoked, Invoked::Produced { ref edges, .. } if edges.is_empty()));
     session
-        .finish(vec![], 0)
+        .finish(vec![], Vec::new())
         .expect("nothing outside the declared set was touched");
 
     // Handed the other verdict, it reaches the other handle — and the
@@ -232,7 +232,7 @@ fn a_body_branches_on_the_verdict_it_was_handed() {
     );
     assert!(matches!(invoked, Invoked::Produced { ref edges, .. } if edges.is_empty()));
     session
-        .finish(vec![], 0)
+        .finish(vec![], Vec::new())
         .expect("nothing outside the declared set was touched");
 }
 
@@ -277,7 +277,7 @@ fn an_edge_the_body_credits_lands_in_the_declared_cell() {
 
     assert!(matches!(invoked, Invoked::Produced { ref edges, .. } if edges.is_empty()));
     let (receipt, _) = session
-        .finish(vec![], 0)
+        .finish(vec![], Vec::new())
         .expect("nothing outside the declared set was touched");
     // A commutative credit is a movement rather than an absolute: what
     // the receipt carries is what to add, not what the cell became.

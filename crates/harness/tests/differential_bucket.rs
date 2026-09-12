@@ -418,7 +418,9 @@ fn each_take_yields_the_value_it_debits() -> Result<()> {
 
     let (delta, host) = both(&fx, Take::Delta(30))?;
     assert_eq!(delta, Took::Value(30));
-    let (receipt, _) = host.finish(vec![], 0).expect("the oracle is clean");
+    let (receipt, _) = host
+        .finish(vec![], Vec::new())
+        .expect("the oracle is clean");
     assert_eq!(
         receipt.delta.movements.get(&fx.ledger).map(|m| m.debit),
         Some(30),
@@ -430,7 +432,9 @@ fn each_take_yields_the_value_it_debits() -> Result<()> {
     // the receipt states the change and not the total.
     let (vault, host) = both(&fx, Take::Vault(30))?;
     assert_eq!(vault, Took::Value(30));
-    let (receipt, _) = host.finish(vec![], 0).expect("the oracle is clean");
+    let (receipt, _) = host
+        .finish(vec![], Vec::new())
+        .expect("the oracle is clean");
     assert_eq!(
         receipt.delta.movements.get(&fx.vault).map(|m| m.debit),
         Some(30)
@@ -457,7 +461,9 @@ fn an_over_take_refuses_in_each_modes_own_terms() -> Result<()> {
     // leaves.
     let (delta, host) = both(&fx, Take::Delta(500))?;
     assert_eq!(delta, Took::Value(500));
-    let (receipt, _) = host.finish(vec![], 0).expect("the oracle is clean");
+    let (receipt, _) = host
+        .finish(vec![], Vec::new())
+        .expect("the oracle is clean");
     assert_eq!(
         receipt.outcome,
         Outcome::Infeasible {
@@ -502,7 +508,9 @@ fn settled(
 ) -> Credited {
     let funds_survive = host.bucket(funds).is_ok();
     let lost_floor = host.take_lost_floor();
-    let (receipt, _) = host.finish(vec![], 0).expect("the oracle is clean");
+    let (receipt, _) = host
+        .finish(vec![], Vec::new())
+        .expect("the oracle is clean");
     Credited {
         cell: receipt.delta.cells.get(&key).cloned().flatten(),
         credit: receipt.delta.movements.get(&key).map(|m| m.credit),
@@ -706,7 +714,9 @@ fn split_on_both(fx: &Fixture, held: u128, off: u64) -> Result<(u128, u128)> {
         }]);
         session.burn(came_off)?;
     }
-    let (receipt, _) = blessed.finish(vec![], 0).expect("the oracle is clean");
+    let (receipt, _) = blessed
+        .finish(vec![], Vec::new())
+        .expect("the oracle is clean");
     let left = receipt
         .delta
         .movements
@@ -971,7 +981,9 @@ fn closed_after_discarding(
 
     let (blessed, reference) = dual.finish()?;
     let closed = |session: KernelSession| {
-        let (receipt, _) = session.finish(vec![], 0).expect("the close receipts");
+        let (receipt, _) = session
+            .finish(vec![], Vec::new())
+            .expect("the close receipts");
         match receipt.outcome {
             Outcome::UserError { reason } => Some(reason),
             _ => None,

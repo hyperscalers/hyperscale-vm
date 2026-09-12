@@ -111,7 +111,7 @@ fn transfer_guest(_entry: &BatchTx, mut session: KernelSession) -> RunResult {
     RunResult::Completed {
         session,
         answers: vec![],
-        fuel: FUEL,
+        spent: vec![FUEL],
     }
 }
 
@@ -309,7 +309,7 @@ fn an_environment_reading_guest_derives_one_receipt_on_both_shards() {
     let reading_guest = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
         answers: answered(session.epoch()),
         session,
-        fuel: FUEL,
+        spent: vec![FUEL],
     };
 
     let mut payer_store = MemoryStore::new();
@@ -398,7 +398,7 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
         RunResult::Completed {
             session,
             answers,
-            fuel: FUEL,
+            spent: vec![FUEL],
         }
     }
 }
