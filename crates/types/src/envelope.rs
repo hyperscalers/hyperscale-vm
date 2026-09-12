@@ -22,7 +22,7 @@ use hyperscale_hbor::{EncodeError, Hash32, Hbor, HborSigned};
 
 use crate::address::PrincipalAddr;
 use crate::amount::Quanta;
-use crate::execution::MAX_MANIFEST_NODES;
+use crate::execution::{MAX_EVENT_BYTES_PER_TX, MAX_MANIFEST_NODES};
 use crate::scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId};
 use crate::work::DeclaredWork;
 
@@ -391,6 +391,36 @@ pub fn gas_limit_total(gas_limits: &[u64]) -> u64 {
         .fold(0u64, |total, ceiling| total.saturating_add(*ceiling))
 }
 
+/// The sum of per-node event bounds, saturating: what a manifest's
+/// calls may emit between them.
+#[must_use]
+pub fn event_bytes_total(event_bytes: &[u32]) -> u64 {
+    event_bytes
+        .iter()
+        .fold(0u64, |total, bytes| total.saturating_add(u64::from(*bytes)))
+}
+
+/// Whether the methods a manifest calls may emit what a transaction is
+/// allowed to emit at all: their bounds summing under
+/// [`MAX_EVENT_BYTES_PER_TX`].
+///
+/// The sum and not each figure: a method is held to its own bound at
+/// emit, so what this decides is whether the bounds a manifest gathers
+/// are ones a receipt can carry. Answered before the fee, since the
+/// declared retention prices the sum and a figure held to the cap would
+/// price less than the frames could spend.
+///
+/// # Errors
+///
+/// [`TermsRefusal::EventBytesSum`] when the sum is past the cap.
+pub fn admit_event_bounds(event_bytes: &[u32]) -> Result<u64, TermsRefusal> {
+    let total = event_bytes_total(event_bytes);
+    if total > MAX_EVENT_BYTES_PER_TX as u64 {
+        return Err(TermsRefusal::EventBytesSum { total });
+    }
+    Ok(total)
+}
+
 /// Whether `gas_limits` fits a manifest of `nodes` lowered nodes: one
 /// ceiling per node, and a sum under [`MAX_GAS_LIMIT`].
 ///
@@ -432,6 +462,12 @@ pub enum TermsRefusal {
         /// The signed figure.
         priority_bp: u32,
     },
+    /// The methods the manifest calls may emit more between them than
+    /// one transaction may emit at all.
+    EventBytesSum {
+        /// The sum over the manifest's calls, saturating.
+        total: u64,
+    },
 }
 
 impl fmt::Display for TermsRefusal {
@@ -449,6 +485,11 @@ impl fmt::Display for TermsRefusal {
                 f,
                 "the priority of {priority_bp} basis points is past the {MAX_PRIORITY_BP} the protocol admits"
             ),
+            Self::EventBytesSum { total } => write!(
+                f,
+                "the manifest's calls may emit {total} bytes between them, past the \
+                 {MAX_EVENT_BYTES_PER_TX} a transaction may emit"
+            ),
         }
     }
 }
@@ -460,8 +501,8 @@ mod tests {
     use hyperscale_hbor::{HborSigned, assert_canonical, to_vec};
 
     use super::{
-        MAX_GAS_LIMIT, MAX_PRIORITY_BP, NetworkId, PrincipalAddr, SubintentSig, TermsRefusal,
-        TransactionBody, TransactionEnvelope,
+        MAX_EVENT_BYTES_PER_TX, MAX_GAS_LIMIT, MAX_PRIORITY_BP, NetworkId, PrincipalAddr,
+        SubintentSig, TermsRefusal, TransactionBody, TransactionEnvelope, admit_event_bounds,
     };
     use crate::{DeclaredWork, SchemeId};
 
@@ -665,6 +706,26 @@ mod tests {
             envelope.admit_terms(2),
             Err(TermsRefusal::CeilingSum { total: u64::MAX })
         );
+    }
+
+    /// The event bounds are judged on their sum for the reason the
+    /// ceilings are: each frame is held to its own figure at emit, so
+    /// what decides admissibility is whether a receipt could carry what
+    /// the frames may spend between them.
+    #[test]
+    fn event_bounds_summing_past_the_cap_are_refused() {
+        let page = u32::try_from(MAX_EVENT_BYTES_PER_TX / 2).expect("half the cap fits u32");
+        assert_eq!(
+            admit_event_bounds(&[page, page]),
+            Ok(MAX_EVENT_BYTES_PER_TX as u64)
+        );
+        assert_eq!(
+            admit_event_bounds(&[page, page, 1]),
+            Err(TermsRefusal::EventBytesSum {
+                total: MAX_EVENT_BYTES_PER_TX as u64 + 1,
+            })
+        );
+        assert_eq!(admit_event_bounds(&[]), Ok(0));
     }
 
     #[test]
