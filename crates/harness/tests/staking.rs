@@ -854,6 +854,9 @@ fn vote_leaf(pool: impl Into<Address>) -> SubstateKey {
 
 /// The parameters a cast carries, in the order the guest lays them out.
 const SPLIT_BYTES: u64 = 9_000;
+/// Three quarters of a shard's caps, averaged, is the load a pool would
+/// have it split on.
+const SPLIT_FULLNESS: u64 = 7_500;
 const IMPOUND_EPOCHS: u64 = 30;
 /// An even band: the price rows stay where the reference table put them,
 /// which is what a vote that is not about price says.
@@ -863,6 +866,7 @@ const ACTIVATE_AT: u64 = 12;
 fn cast_payload() -> Vec<u8> {
     [
         SPLIT_BYTES,
+        SPLIT_FULLNESS,
         IMPOUND_EPOCHS,
         PRICE_BAND_BP,
         PRICE_BAND_BP,
@@ -880,6 +884,7 @@ fn cast_graph() -> ManifestGraph {
             pool().cast_param_vote(
                 b,
                 SPLIT_BYTES,
+                SPLIT_FULLNESS,
                 IMPOUND_EPOCHS,
                 PRICE_BAND_BP,
                 PRICE_BAND_BP,

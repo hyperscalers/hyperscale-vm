@@ -132,6 +132,10 @@ pub mod staking {
     #[record]
     struct ParamVote {
         split_bytes: u64,
+        /// The share of its block caps a shard may average, in basis
+        /// points, before it splits on load rather than on what it
+        /// holds. Past ten thousand is a pool voting the predicate off.
+        split_fullness: u64,
         impound_epochs: u64,
         /// How far each price row may travel from the reference table,
         /// in basis points: the low end of the band.
@@ -239,6 +243,7 @@ pub mod staking {
         pub fn cast_param_vote(
             &mut self,
             split_bytes: u64,
+            split_fullness: u64,
             impound_epochs: u64,
             price_floor_bp: u64,
             price_ceiling_bp: u64,
@@ -249,6 +254,7 @@ pub mod staking {
             // copy the pool itself can read back.
             let vote = ParamVote {
                 split_bytes,
+                split_fullness,
                 impound_epochs,
                 price_floor_bp,
                 price_ceiling_bp,

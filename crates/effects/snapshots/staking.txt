@@ -2,7 +2,7 @@ state
   the protocol's own — config, resource, instance
      16  pool — one leaf, holding u128, at most 16 bytes, denominated in config.staked_resource
      17  validators — a leaf per key, holding validator, at most 48 bytes
-     18  vote — one leaf, holding param-vote, at most 40 bytes
+     18  vote — one leaf, holding param-vote, at most 48 bytes
 config
       0  staked_resource
       1  founder
@@ -18,7 +18,7 @@ events
       5  param-vote-cast
       6  param-vote-cleared
 types
-  param-vote = { split_bytes: u64, impound_epochs: u64, price_floor_bp: u64, price_ceiling_bp: u64, activate_at: u64 }
+  param-vote = { split_bytes: u64, split_fullness: u64, impound_epochs: u64, price_floor_bp: u64, price_ceiling_bp: u64, activate_at: u64 }
   param-vote-cast = (param-vote)
   param-vote-cleared = ()
   staked = { amount: u128 }
@@ -28,12 +28,12 @@ types
   validator-registered = { validator_id: u64, pubkey: [u8; 48], possession_proof: [u8; 96] }
   validator-unjailed = { validator_id: u64 }
 
-cast-param-vote(u64, u64, u64, u64, u64) — infallible
-  emits    param-vote-cast — at most 40 bytes
+cast-param-vote(u64, u64, u64, u64, u64, u64) — infallible
+  emits    param-vote-cast — at most 48 bytes
   declares
       0  requires claim self-issued(non-fungible["owner-badge"])
       1  write self.vote
-  exports  handle for clause 1, arg0, arg1, arg2, arg3, arg4
+  exports  handle for clause 1, arg0, arg1, arg2, arg3, arg4, arg5
 
 clear-param-vote() — infallible
   emits    param-vote-cleared — at most 0 bytes

@@ -376,7 +376,7 @@ fn the_staking_wrappers_match_their_signatures() {
             pool.register_validator(b, 7, [0xAA; 48], [0xBB; 96])?;
             pool.deactivate_validator(b, 8)?;
             pool.unjail(b, 8)?;
-            pool.cast_param_vote(b, 9_000, 30, 10_000, 10_000, 12)?;
+            pool.cast_param_vote(b, 9_000, 7_500, 30, 10_000, 10_000, 12)?;
             pool.clear_param_vote(b)
         })
     });
