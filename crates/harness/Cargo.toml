@@ -24,6 +24,7 @@ wasmtime.workspace = true
 arbitrary.workspace = true
 hyperscale-vm-fixtures.workspace = true
 hyperscale-vm-manifest-builder.workspace = true
+hyperscale-vm-preview.workspace = true
 # The numeric vocabulary a configuration struct's fields are typed in.
 hyperscale-vm-sdk.workspace = true
 hyperscale-vm-stdlib.workspace = true

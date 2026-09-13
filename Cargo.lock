@@ -671,6 +671,7 @@ dependencies = [
  "hyperscale-vm-kernel",
  "hyperscale-vm-manifest-builder",
  "hyperscale-vm-meter",
+ "hyperscale-vm-preview",
  "hyperscale-vm-ref",
  "hyperscale-vm-runtime",
  "hyperscale-vm-sdk",
