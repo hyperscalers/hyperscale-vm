@@ -294,6 +294,30 @@ impl PriceBounds {
             && self.ceiling.retention >= self.floor.retention
     }
 
+    /// The basis points these bounds were opened at, if a band can
+    /// still state them.
+    ///
+    /// The inverse [`Self::band`] needs and does not otherwise have:
+    /// storage is ten rows and the vote is two figures, so a voter
+    /// moving some *other* governed parameter has to restate the band,
+    /// and without this there is nothing to restate it from — every
+    /// such vote would reset the price interval to whatever the caller
+    /// guessed.
+    ///
+    /// Read off the footprint row, which is the one that inverts
+    /// exactly: at a thousand fuel-equivalents it scales to `100 × bp`
+    /// for every `bp`, where compute at one loses the low digit. The
+    /// candidate is then reconstructed and compared whole, so bounds no
+    /// band could produce — a later per-row vote form's, or a retuned
+    /// reference table that breaks the exact row — answer `None` rather
+    /// than a figure that would move four rows to restate one.
+    #[must_use]
+    pub fn as_band(&self) -> Option<(u32, u32)> {
+        let floor_bp = band_of(self.floor)?;
+        let ceiling_bp = band_of(self.ceiling)?;
+        (Self::band(floor_bp, ceiling_bp) == *self).then_some((floor_bp, ceiling_bp))
+    }
+
     /// `table` with every row brought inside these bounds.
     ///
     /// Named for what it produces rather than `clamp`, which on an
@@ -352,6 +376,21 @@ const fn scaled(bp: u32) -> PriceTable {
         footprint: row(PriceTable::GENESIS.footprint, bp),
         retention: row(PriceTable::GENESIS.retention, bp),
     }
+}
+
+/// The basis points `table` reads as, taken off the footprint row.
+///
+/// Partial inverse of [`scaled`], which truncates per row: footprint is
+/// the row that survives it, since a thousand fuel-equivalents scale to
+/// exactly `100 × bp`. A candidate only — the caller reconstructs and
+/// compares, which is what makes a table no band produced answer with
+/// nothing.
+fn band_of(table: PriceTable) -> Option<u32> {
+    const PER_BP: u64 = PriceTable::GENESIS.footprint / BASIS_POINTS as u64;
+    if !table.footprint.is_multiple_of(PER_BP) {
+        return None;
+    }
+    u32::try_from(table.footprint / PER_BP).ok()
 }
 
 /// One row inside its own bounds. The ceiling wins a pair that crosses,
@@ -809,6 +848,49 @@ mod tests {
         assert!(
             !PriceBounds::band(BASIS_POINTS * 2, BASIS_POINTS).well_formed(),
             "a band whose ends cross names no level"
+        );
+    }
+
+    /// Every band states itself back, so a voter moving some other row
+    /// can restate the price interval instead of guessing at it.
+    ///
+    /// Over the figures that lose a digit on the way in as well as the
+    /// round ones: compute at a thousand scales to `bp / 10`, so 1,255
+    /// and 1,250 store the same compute row — and it is footprint, not
+    /// compute, that has to decide the reading for both to come back.
+    #[test]
+    fn a_band_states_itself_back() {
+        for bp in [1, 7, 1_250, 1_255, BASIS_POINTS, 79_999, BASIS_POINTS * 8] {
+            let bounds = PriceBounds::band(bp, bp * 2);
+            assert_eq!(
+                bounds.as_band(),
+                Some((bp, bp * 2)),
+                "a band at {bp} bp must read back as the figures that opened it"
+            );
+        }
+        assert_eq!(
+            PriceBounds::GENESIS.as_band(),
+            Some((BASIS_POINTS, BASIS_POINTS))
+        );
+    }
+
+    /// Bounds no band could have produced answer with nothing, rather
+    /// than with a figure that would move four rows to restate one.
+    #[test]
+    fn bounds_off_the_band_state_nothing_back() {
+        let mut uneven = PriceBounds::band(BASIS_POINTS, BASIS_POINTS);
+        uneven.ceiling.retention += 1;
+        assert_eq!(
+            uneven.as_band(),
+            None,
+            "a row moved off the band is not a band"
+        );
+        let mut unreadable = PriceBounds::GENESIS;
+        unreadable.floor.footprint += 1;
+        assert_eq!(
+            unreadable.as_band(),
+            None,
+            "a footprint row between two basis points names neither"
         );
     }
 
