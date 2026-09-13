@@ -296,15 +296,38 @@ pub const fn read_bytes(target: &EffectTarget, width: u32) -> u64 {
     leaves_read(target).saturating_mul(width as u64)
 }
 
-/// The bytes one declared effect lets a body write onto the store, at
-/// `width` per leaf: nothing for a read, and the written leaves' worth
-/// for every mode that moves or overwrites.
+/// What one written leaf costs before any of its bytes, in the byte
+/// terms the write dimension is denominated in.
+///
+/// A leaf write is not proportional to what it carries. The update
+/// reads the tree path down to the leaf, and those reads are most of
+/// what a write costs — measured, the tree hashing is a tenth of it and
+/// the value bytes barely register: sixty-four times the width costs
+/// 1.2 times the time. Without a floor, two transactions writing the
+/// same byte total differ by that factor in real cost and price alike,
+/// and a block's cap counts a quantity nothing spends.
+///
+/// The read side has said this since [`crate::writes::MAX_SLOT_WIDTH`]'s
+/// own plan: a seek walks the layers whether or not the interval holds
+/// anything, so an empty page is not free. This is the same statement
+/// on the other side of the store.
+///
+/// The figure is the per-leaf cost at the marginal byte rate, and like
+/// every weight it is a placeholder — the measurement brackets it
+/// between roughly 700 and 7,000 bytes depending on how much of the
+/// tree stays cached, and this is the middle of that. What it replaces
+/// is zero, which is the one value it is certainly not.
+pub const WRITE_LEAF_BYTES: u64 = 2_048;
+
+/// The bytes one declared effect lets a body write onto the store:
+/// nothing for a read, and for every mode that moves or overwrites, each
+/// written leaf at [`WRITE_LEAF_BYTES`] plus its own `width`.
 #[must_use]
 pub const fn write_bytes(target: &EffectTarget, mode: Mode, width: u32) -> u64 {
     match mode {
         Mode::Read => 0,
         Mode::Delta { .. } | Mode::Reserve { .. } | Mode::Write { .. } => {
-            leaves_written(target).saturating_mul(width as u64)
+            leaves_written(target).saturating_mul(WRITE_LEAF_BYTES.saturating_add(width as u64))
         }
     }
 }
@@ -313,7 +336,7 @@ pub const fn write_bytes(target: &EffectTarget, mode: Mode, width: u32) -> u64 {
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{Effect, EffectSet};
+    use super::{Effect, EffectSet, WRITE_LEAF_BYTES};
     use crate::address::{
         Address, AddressClass, CollectionId, EffectTarget, LocalKey, SubstateKey,
     };
@@ -527,14 +550,18 @@ mod tests {
         };
         assert_eq!(super::read_bytes(&range, 16), 8 * 16);
         assert_eq!(super::write_bytes(&range, Mode::Read, 16), 0);
+        // A read's leaves are the cap and its probe, at the width each.
+        // A write's are the cap alone, and each carries the per-leaf
+        // floor before its own bytes — the path reads the update pays
+        // for whatever the leaf holds.
         assert_eq!(
             super::write_bytes(&range, Mode::Write { moves: Moves::Both }, 16),
-            7 * 16
+            7 * (WRITE_LEAF_BYTES + 16)
         );
         assert_eq!(super::read_bytes(&target(1), 4096), 4096);
         assert_eq!(
             super::write_bytes(&target(1), Mode::Delta { moves: Moves::Both }, 16),
-            16
+            WRITE_LEAF_BYTES + 16
         );
 
         let mut set = EffectSet::new();
@@ -555,7 +582,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(set.read_bytes(), 8 * 16 + 4096);
-        assert_eq!(set.write_bytes(), 4096);
+        assert_eq!(set.write_bytes(), WRITE_LEAF_BYTES + 4096);
         // A target the set holds at no declared width is priced at the
         // cap, like everything else about it.
         let mut capped = EffectSet::new();

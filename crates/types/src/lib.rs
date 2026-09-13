@@ -37,7 +37,7 @@ pub use address::{
     SWEEP_BUCKET_BYTES, SWEEP_BUCKET_SHIFT, SubstateKey, SweepBucket, WrongClass,
 };
 pub use amount::{AMOUNT_CELL_BYTES, Quanta, amount_cell, encode_amount, read_amount};
-pub use effect::{Effect, EffectConflict, EffectSet, read_bytes, write_bytes};
+pub use effect::{Effect, EffectConflict, EffectSet, WRITE_LEAF_BYTES, read_bytes, write_bytes};
 pub use envelope::{
     ARTIFACT_GRACE_MS, CROSSING_GRACE_MS, MAX_ARTIFACT_BYTES, MAX_CALL_BYTES, MAX_ENVELOPE_BYTES,
     MAX_GAS_LIMIT, MAX_MESSAGE_LEN, MAX_PRIORITY_BP, MAX_SUBINTENTS, NetworkId, SubintentHash,
