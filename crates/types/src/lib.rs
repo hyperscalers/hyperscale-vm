@@ -38,7 +38,8 @@ pub use address::{
 };
 pub use amount::{AMOUNT_CELL_BYTES, Quanta, amount_cell, encode_amount, read_amount};
 pub use effect::{
-    Effect, EffectConflict, EffectSet, WRITE_LEAF_BYTES, read_bytes, retained_bytes, write_bytes,
+    ENTRY_LEAF_BYTES, Effect, EffectConflict, EffectSet, WRITE_LEAF_BYTES, leaf_bytes, read_bytes,
+    retained_bytes, write_bytes,
 };
 pub use envelope::{
     ARTIFACT_GRACE_MS, CROSSING_GRACE_MS, MAX_ARTIFACT_BYTES, MAX_CALL_BYTES, MAX_ENVELOPE_BYTES,

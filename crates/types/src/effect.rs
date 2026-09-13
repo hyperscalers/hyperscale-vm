@@ -344,6 +344,41 @@ const fn leaves_written(target: &EffectTarget) -> u64 {
     }
 }
 
+/// The bytes an entry leaf carries beside the value it holds: the
+/// collection and the order it commits under, and their framing.
+///
+/// An entry commits under a digest of its owner, collection and order,
+/// and the leaf carries the last two so the ordered index is derivable
+/// from the leaves alone. So a leaf is never its value alone, and a
+/// collection whose values are empty is not a collection that is free to
+/// walk — `width` is what a slot's *value* may hold and says nothing
+/// about the leaf around it.
+///
+/// An upper bound rather than the figure: the value's own length rides
+/// in front of it as a varint, so the framing is 33 bytes up to a
+/// 127-byte value, 34 up to 16,383 and 35 at
+/// [`MAX_SLOT_WIDTH`](crate::writes::MAX_SLOT_WIDTH). The widest, since
+/// a dimension that priced the narrowest would underprice every leaf
+/// above it. Pinned against the encoder by the outer's
+/// `an_entry_leaf_costs_what_the_dimension_prices_it`.
+pub const ENTRY_LEAF_BYTES: u64 = 35;
+
+/// The bytes one leaf under `target` holds: its value at `width`, and
+/// for an entry the collection and order it commits under.
+///
+/// The one place the shape of a leaf is stated, so the dimension that
+/// prices reading one, the dimension that prices keeping one, and the
+/// dimension that prices writing one cannot disagree about what one is.
+#[must_use]
+pub const fn leaf_bytes(target: &EffectTarget, width: u32) -> u64 {
+    match target {
+        EffectTarget::Point(_) => width as u64,
+        EffectTarget::Entry { .. } | EffectTarget::Range { .. } => {
+            ENTRY_LEAF_BYTES.saturating_add(width as u64)
+        }
+    }
+}
+
 /// The bytes one declared target lets a body read off the store, at
 /// `width` per leaf.
 ///
@@ -353,7 +388,7 @@ const fn leaves_written(target: &EffectTarget) -> u64 {
 /// disk's dimension, not a second charge for the copy.
 #[must_use]
 pub const fn read_bytes(target: &EffectTarget, width: u32) -> u64 {
-    leaves_read(target).saturating_mul(width as u64)
+    leaves_read(target).saturating_mul(leaf_bytes(target, width))
 }
 
 /// What one written leaf costs before any of its bytes, in the byte
@@ -386,9 +421,8 @@ pub const WRITE_LEAF_BYTES: u64 = 2_048;
 pub const fn write_bytes(target: &EffectTarget, mode: Mode, width: u32) -> u64 {
     match mode {
         Mode::Read => 0,
-        Mode::Delta { .. } | Mode::Reserve { .. } | Mode::Write { .. } => {
-            leaves_written(target).saturating_mul(WRITE_LEAF_BYTES.saturating_add(width as u64))
-        }
+        Mode::Delta { .. } | Mode::Reserve { .. } | Mode::Write { .. } => leaves_written(target)
+            .saturating_mul(WRITE_LEAF_BYTES.saturating_add(leaf_bytes(target, width))),
     }
 }
 
@@ -403,7 +437,7 @@ pub const fn retained_bytes(target: &EffectTarget, mode: Mode, width: u32) -> u6
     match mode {
         Mode::Read => 0,
         Mode::Delta { .. } | Mode::Reserve { .. } | Mode::Write { .. } => {
-            leaves_written(target).saturating_mul(width as u64)
+            leaves_written(target).saturating_mul(leaf_bytes(target, width))
         }
     }
 }
@@ -412,7 +446,7 @@ pub const fn retained_bytes(target: &EffectTarget, mode: Mode, width: u32) -> u6
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{Effect, EffectSet, WRITE_LEAF_BYTES};
+    use super::{ENTRY_LEAF_BYTES, Effect, EffectSet, WRITE_LEAF_BYTES, read_bytes};
     use crate::address::{
         Address, AddressClass, CollectionId, EffectTarget, LocalKey, SubstateKey,
     };
@@ -503,6 +537,37 @@ mod tests {
             0,
             "a target the set does not hold is written not at all"
         );
+    }
+
+    /// A collection whose values are empty is not free to walk.
+    ///
+    /// `width` bounds a slot's *value*; the leaf around it carries the
+    /// collection and order the entry commits under. A protocol slot
+    /// holding presence alone — an nf-vault — states a width of zero, and
+    /// reading a page of one is real work against a real tree.
+    #[test]
+    fn an_entry_leaf_is_never_its_value_alone() {
+        let range = EffectTarget::Range {
+            owner: Address::new([0x10; 31], AddressClass::Component),
+            collection: CollectionId([0xEE; 16]),
+            lo: 0,
+            hi: u128::MAX,
+            cap: 1_000,
+        };
+        assert_eq!(
+            read_bytes(&range, 0),
+            1_001 * ENTRY_LEAF_BYTES,
+            "a page of presence-only entries is priced by its leaves"
+        );
+        assert_eq!(
+            read_bytes(&range, 16),
+            1_001 * (ENTRY_LEAF_BYTES + 16),
+            "and a valued one by the leaf around the value too"
+        );
+
+        // A point cell is its value: there is no collection or order
+        // committed beside it, so there is nothing to add.
+        assert_eq!(read_bytes(&target(1), 16), 16);
     }
 
     /// A target's width is what it was stated at, folded by minimum: a
@@ -701,17 +766,18 @@ mod tests {
             hi: 100,
             cap: 7,
         };
-        assert_eq!(super::read_bytes(&range, 16), 8 * 16);
+        assert_eq!(read_bytes(&range, 16), 8 * (ENTRY_LEAF_BYTES + 16));
         assert_eq!(super::write_bytes(&range, Mode::Read, 16), 0);
-        // A read's leaves are the cap and its probe, at the width each.
-        // A write's are the cap alone, and each carries the per-leaf
-        // floor before its own bytes — the path reads the update pays
-        // for whatever the leaf holds.
+        // A read's leaves are the cap and its probe, at the leaf each —
+        // which for an entry is the collection and order it commits
+        // under, around the value. A write's are the cap alone, and each
+        // carries the per-leaf floor before the leaf's own bytes: the
+        // path reads the update pays for whatever the leaf holds.
         assert_eq!(
             super::write_bytes(&range, Mode::Write { moves: Moves::Both }, 16),
-            7 * (WRITE_LEAF_BYTES + 16)
+            7 * (WRITE_LEAF_BYTES + ENTRY_LEAF_BYTES + 16)
         );
-        assert_eq!(super::read_bytes(&target(1), 4096), 4096);
+        assert_eq!(read_bytes(&target(1), 4096), 4096);
         assert_eq!(
             super::write_bytes(&target(1), Mode::Delta { moves: Moves::Both }, 16),
             WRITE_LEAF_BYTES + 16
@@ -734,7 +800,7 @@ mod tests {
             4096,
         )
         .unwrap();
-        assert_eq!(set.read_bytes(), 8 * 16 + 4096);
+        assert_eq!(set.read_bytes(), 8 * (ENTRY_LEAF_BYTES + 16) + 4096);
         assert_eq!(set.write_bytes(), WRITE_LEAF_BYTES + 4096);
         // A target the set holds at no declared width is priced at the
         // cap, like everything else about it.
