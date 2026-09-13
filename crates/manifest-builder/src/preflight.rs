@@ -28,7 +28,7 @@ use hyperscale_vm_effects::{
     route_tree,
 };
 use hyperscale_vm_types::{
-    Address, CallTarget, DeclaredWork, EffectTarget, NetworkWord, Presence, PriceTable,
+    Address, CallTarget, DeclaredWork, EffectTarget, Mode, NetworkWord, Presence, PriceTable,
     PrincipalAddr, ResourceAddr, SchemeId, SubintentHash, SubstateKey, TermsRefusal, TextError,
     admit_ceilings, admit_event_bounds, gas_limit_total,
 };
@@ -348,6 +348,24 @@ pub struct IntentCost {
     /// retention that signature costs. Zero where the caller has not
     /// named a scheme for it yet.
     pub auth: DeclaredWork,
+    /// The most this intent's own nodes may move out, by resource.
+    ///
+    /// The reserves they declare, which is the whole of what its signer
+    /// agreed to risk by being composed: a reserve names its amount in
+    /// the declaration, so it is signed and a composition cannot raise
+    /// it. What the composition does with the value is the composer's;
+    /// the bound is the signer's.
+    pub exposure: BTreeMap<ResourceAddr, u128>,
+    /// Whether any of its nodes moves value out under a mode that
+    /// declares no amount, which makes [`exposure`](Self::exposure) a
+    /// floor rather than the bound.
+    ///
+    /// A delta's amount is dynamic and never part of a declaration, so
+    /// an intent carrying an outward one has signed no ceiling on what
+    /// leaves. Reported rather than folded in, because there is no
+    /// figure to fold: what a reader needs is that the number beside it
+    /// is not the answer.
+    pub unbounded_outflow: bool,
 }
 
 /// The per-intent breakdown beside what no one intent owns.
@@ -523,6 +541,37 @@ impl Report {
             *total = total.saturating_add(u64::from(*bound));
         }
 
+        // What each intent's own nodes declare they may move out. Off
+        // the frames rather than the routed set, because the set unions
+        // across intents and a reserve is exactly what must not be
+        // pooled: the figure is one signer's agreed risk.
+        let mut exposure: BTreeMap<SubintentHash, BTreeMap<ResourceAddr, u128>> = BTreeMap::new();
+        let mut unbounded: BTreeSet<SubintentHash> = BTreeSet::new();
+        for frame in &self.routing.frames {
+            let Some(origin) = origins.get(frame.node as usize) else {
+                continue;
+            };
+            for access in &frame.ordered {
+                let Some(resource) = access.holds else {
+                    continue;
+                };
+                match access.effect.mode {
+                    Mode::Reserve { amount } => {
+                        let total = exposure
+                            .entry(origin.intent)
+                            .or_default()
+                            .entry(resource)
+                            .or_default();
+                        *total = total.saturating_add(amount);
+                    }
+                    Mode::Delta { moves } | Mode::Write { moves } if moves.debits() => {
+                        unbounded.insert(origin.intent);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // A target every intent that reaches it, so a cell two of them
         // name is readable as the shared thing it is.
         let mut reached: BTreeMap<EffectTarget, BTreeSet<SubintentHash>> = BTreeMap::new();
@@ -580,6 +629,8 @@ impl Report {
                 // decided every signature yet, which is a quote before
                 // the envelope exists rather than a refusal.
                 auth: scheme.map_or(DeclaredWork::ZERO, DeclaredWork::signature),
+                exposure: exposure.get(&intent).cloned().unwrap_or_default(),
+                unbounded_outflow: unbounded.contains(&intent),
                 intent,
             })
             .collect();
