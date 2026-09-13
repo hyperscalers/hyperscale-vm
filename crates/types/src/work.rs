@@ -858,6 +858,13 @@ mod tests {
     /// round ones: compute at a thousand scales to `bp / 10`, so 1,255
     /// and 1,250 store the same compute row — and it is footprint, not
     /// compute, that has to decide the reading for both to come back.
+    ///
+    /// Representation and not policy, which is why the sweep starts at a
+    /// band no vote could cast: one basis point floors compute at
+    /// nothing, so `well_formed` refuses it and the governed parameters
+    /// never carry it. It is still a band, and a reading that could not
+    /// state it back would be answering a question about validity it was
+    /// not asked.
     #[test]
     fn a_band_states_itself_back() {
         for bp in [1, 7, 1_250, 1_255, BASIS_POINTS, 79_999, BASIS_POINTS * 8] {
