@@ -370,8 +370,10 @@ const fn clamp_row(level: u64, floor: u64, ceiling: u64) -> u64 {
 ///
 /// A ratio kept as a pair rather than divided, so the controller stays
 /// in integers: `used` is the sum of the declared shares the epoch's
-/// blocks reserved, `capacity` the per-block cap times the blocks that
-/// reserved anything.
+/// blocks reserved, `capacity` the per-block cap times every block they
+/// committed. Every block and not only the ones carrying something: a
+/// block that declared nothing is a block's worth of capacity nobody
+/// wanted, which is the reading an idle network should give.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Utilization {
     /// What the epoch's blocks declared in this dimension.
@@ -435,8 +437,12 @@ const fn stepped_row(prev: u64, utilization: Utilization) -> u64 {
     // so a figure that does is a defect rather than a reading, and the
     // controller answers it as full rather than as unbounded demand.
     let used = if used > capacity { capacity } else { used };
-    let numerator = (prev as u128).saturating_mul(7 * capacity + 2 * used);
-    let denominator = 8 * capacity;
+    let numerator = (prev as u128).saturating_mul(
+        capacity
+            .saturating_mul(7)
+            .saturating_add(used.saturating_mul(2)),
+    );
+    let denominator = capacity.saturating_mul(8);
     // Toward `prev`: a row moving up truncates, a row moving down takes
     // the ceiling, so neither direction drifts on the division alone.
     let next = if 2 * used >= capacity {
