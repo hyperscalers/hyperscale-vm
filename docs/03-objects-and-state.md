@@ -30,6 +30,8 @@ Acceptance test for the rule: a fungible transfer's provision carries the two ba
 
 **Deferred: the whole bond economy.** Everything in this section and the next is design, with no machinery behind it in either workspace — no bond is charged, no debt recorded, no refund paid. The design is kept here because state pricing constrains the substate layout and the accumulator vocabulary, and INV-VM-OBJ-2 stands in the register as the target it must meet when built.
 
+What the fee does price today is the **bytes a write moves**, not the state it leaves behind: `write_bytes` is a dimension of the declared vector ([04-execution-semantics.md](04-execution-semantics.md) §5), charged once for the work of writing. A bond is a different instrument on the same bytes — a deposit against how long they stay, returned when they go — and it is the dimension this section adds when it is built rather than a rate the write dimension could stand in for.
+
 Committed byte growth triggers shard splits; splits demand committees; committee demand moves the host's stake price. Unpriced state is therefore an attack on the validator supply, not a disk nuisance. The mechanism is a per-byte **bond**:
 
 - **Bond at write.** Every substate carries a bond, paid at creation at the fold-set per-byte rate and recorded with the substate — so bonds split and merge with the subtree by construction. No sweeps, no clocks, no expiry: accounting is O(write), never O(state). The liability is the bond's *time value*, not a payment stream.
