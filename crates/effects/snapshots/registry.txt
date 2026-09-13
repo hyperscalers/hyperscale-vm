@@ -14,4 +14,5 @@ check(u64, u128) — infallible
 drain(u128) — infallible
   declares
       0  write self.names over arg0..=u128::MAX, at most 8 entries
+  costs    clause 0 scales with its cap — read, write, footprint and retention
   exports  handle for clause 0

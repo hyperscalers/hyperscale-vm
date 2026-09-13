@@ -1081,6 +1081,7 @@ impl<'a> Names<'a> {
             for clause in effects {
                 self.clause(clause, &mut index, 4, out);
             }
+            scaling(effects, out);
         }
         for (edge, output) in outputs.iter().enumerate() {
             // What an edge carries, on the same word `takes` uses. The
@@ -1673,6 +1674,56 @@ fn signature_exprs(signature: &MethodSignature) -> Vec<&Expr> {
 
 /// One clause's own expressions — a loop's body is walked by the caller,
 /// which iterates the preorder.
+/// What a caller's arguments can do to a method's price, clause by
+/// clause.
+///
+/// The half of a cost a signature can state. A point or an entry is one
+/// leaf whoever calls it, so a method built out of those costs the same
+/// every time; a range is as many leaves as its cap and a `for-each` as
+/// many access sets as its list, so those are the clauses that decide
+/// what a call costs. The figure is not the signature's to give — a cap
+/// and a width are arguments, and the same method priced against two
+/// calls is two vectors — so this names the clause, what it scales
+/// with, and which dimensions move, and stops where the guessing would
+/// start.
+///
+/// Silent where nothing scales, which is the useful reading: a method
+/// with no line here cannot be made dearer by what it is passed.
+fn scaling(effects: &[Clause], out: &mut String) {
+    let mut rows: Vec<String> = Vec::new();
+    for (number, clause) in effects.iter().flat_map(Clause::effects).enumerate() {
+        let (with, writes) = match clause {
+            Clause::Effect {
+                target: TargetExpr::Range { .. },
+                mode,
+                ..
+            } => ("its cap", !matches!(mode, ModeExpr::Read)),
+            Clause::ForEach { body, .. } => (
+                "its list",
+                body.iter().flat_map(Clause::effects).any(|inner| {
+                    matches!(inner, Clause::Effect { mode, .. } if !matches!(mode, ModeExpr::Read))
+                }),
+            ),
+            _ => continue,
+        };
+        // Every mode reads, and an exclusion is declared per effect
+        // whatever the mode, so those two move for any scaling clause.
+        // A write moves the bytes written and the bytes every validator
+        // then retains, which is the same write counted where it lands
+        // and where it is kept.
+        let dimensions = if writes {
+            "read, write, footprint and retention"
+        } else {
+            "read and footprint"
+        };
+        rows.push(format!("clause {number} scales with {with} — {dimensions}"));
+    }
+    for (line, row) in rows.iter().enumerate() {
+        let label = if line == 0 { "  costs  " } else { "         " };
+        let _ = writeln!(out, "{label}  {row}");
+    }
+}
+
 fn clause_exprs<'a>(clause: &'a Clause, into: &mut Vec<&'a Expr>) {
     match clause {
         Clause::Effect {
@@ -2215,6 +2266,60 @@ mod tests {
     fn rendered(method: &str, signature: MethodSignature) -> String {
         let metadata = package(method, signature);
         explain_method(&metadata, method).expect("the method it was built around")
+    }
+
+    /// A range over `slot`, written or read, with a cap the caller
+    /// passes.
+    fn over_range(mode: ModeExpr) -> Clause {
+        Clause::Effect {
+            reach: None,
+            guard: None,
+            target: TargetExpr::Range {
+                owner: Expr::SelfAddr,
+                collection: SlotRef::Fixed(SlotId(0)),
+                material: Vec::new(),
+                lo: Expr::Arg(0),
+                hi: Expr::Arg(1),
+                cap: Expr::Arg(2),
+            },
+            mode,
+            denomination: None,
+        }
+    }
+
+    /// A method whose every access is one leaf says nothing about
+    /// scaling, and that silence is the reading: nothing a caller passes
+    /// can make it dearer.
+    #[test]
+    fn a_method_of_points_alone_names_no_cost_a_caller_can_move() {
+        let text = rendered("fixed", declaring(vec![read(Expr::SelfAddr)]));
+        assert!(
+            !text.contains("costs"),
+            "a point-only method named a scaling cost:\n{text}"
+        );
+    }
+
+    /// A range is as many leaves as its cap, so the clause that carries
+    /// it is named with the dimensions the cap moves — and a read moves
+    /// fewer of them than a write.
+    #[test]
+    fn a_range_names_the_clause_whose_cap_decides_the_price() {
+        let written = rendered(
+            "sweeps",
+            declaring(vec![over_range(ModeExpr::Write { moves: Moves::Both })]),
+        );
+        assert!(
+            written.contains(
+                "costs    clause 0 scales with its cap — read, write, footprint and retention"
+            ),
+            "a written range named the wrong dimensions:\n{written}"
+        );
+
+        let read_only = rendered("scans", declaring(vec![over_range(ModeExpr::Read)]));
+        assert!(
+            read_only.contains("costs    clause 0 scales with its cap — read and footprint"),
+            "a read range named a write it never makes:\n{read_only}"
+        );
     }
 
     #[test]
