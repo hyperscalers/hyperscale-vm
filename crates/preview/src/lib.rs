@@ -99,10 +99,16 @@ impl Slack {
     }
 
     /// `measured` with this margin over it, saturating.
+    ///
+    /// The margin widens into `u128` before it is added to, because
+    /// [`of`](Self::of) takes any `u32` and a margin near the top of one
+    /// would otherwise carry the sum away in the narrower type — leaving
+    /// a ceiling *below* what the run was measured to spend, which is the
+    /// one answer worse than refusing.
     #[must_use]
     pub const fn over(self, measured: u64) -> u64 {
         let raised =
-            (measured as u128) * ((BASIS_POINTS + self.0) as u128) / (BASIS_POINTS as u128);
+            (measured as u128) * (BASIS_POINTS as u128 + self.0 as u128) / (BASIS_POINTS as u128);
         if raised > u64::MAX as u128 {
             u64::MAX
         } else {

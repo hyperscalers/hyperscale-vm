@@ -142,3 +142,31 @@ fn an_aborted_run_reports_what_it_spent() {
     assert_eq!(report.spent, vec![700], "the node that failed and no more");
     assert_eq!(report.refusal, None, "a trap is the guest's, not a refusal");
 }
+
+/// A margin is a caller's figure, and the type takes any `u32`.
+///
+/// The arithmetic widens before it adds, so a margin near the top of a
+/// `u32` saturates at the ceiling rather than carrying the sum away in
+/// the narrower type — which would hand back a ceiling *below* the
+/// measurement, and a wallet signing that signs a transaction that traps
+/// on the run it was quoted for.
+#[test]
+fn a_margin_at_the_top_of_its_type_saturates_upward() {
+    assert_eq!(
+        Slack::NONE.over(1_000),
+        1_000,
+        "no margin is the measurement"
+    );
+    assert_eq!(Slack::GENEROUS.over(1_000), 1_250, "a quarter over");
+
+    let widest = Slack::of(u32::MAX).over(1_000);
+    assert!(
+        widest >= 1_000,
+        "a margin never lowers the ceiling below what was measured: {widest}"
+    );
+    assert_eq!(
+        Slack::of(u32::MAX).over(u64::MAX),
+        u64::MAX,
+        "and the top of the range saturates rather than wrapping"
+    );
+}
