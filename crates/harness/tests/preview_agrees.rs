@@ -9,11 +9,14 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{EnvelopeTree, IntentDecl, IntentHeader, ManifestGraph, ShardId};
+use hyperscale_vm_effects::{
+    EnvelopeTree, IntentDecl, IntentHeader, ManifestGraph, ShardId, TestHasher, admit_tree,
+    explain_refusal,
+};
 use hyperscale_vm_harness::driver::{test_hash, vault};
 use hyperscale_vm_kernel::{MemoryStore, OwnerSet};
 use hyperscale_vm_preview::{CellSource, Local, Slack, preview};
-use hyperscale_vm_types::{NetworkId, Outcome, encode_amount};
+use hyperscale_vm_types::{NetworkId, Outcome, UnmetCondition, encode_amount};
 use wasmtime::Result;
 
 mod common;
@@ -82,6 +85,49 @@ fn a_preview_spends_what_the_run_spends() -> Result<()> {
         report.movements,
         receipt.delta.owned(&whole).movements().collect::<Vec<_>>(),
         "and moves what the run moves"
+    );
+    Ok(())
+}
+
+/// A refused preview prints what the refusal prints anywhere else.
+///
+/// The text is the declaration's, not the outcome's: which node asked
+/// for what is a fact about the manifest, and a wallet reading a
+/// refusal wants the same sentence a corpus lane would print.
+#[test]
+fn a_refused_preview_prints_the_refusal() -> Result<()> {
+    let world = world();
+    let store = funded();
+    // Bob composing a transfer out of Alice's account: her own gate
+    // refuses the authorizing node, and the withdrawal never runs.
+    let tree = single_intent(authorized_transfer_by(BOB));
+    let identity = tree.hash(&TestHasher);
+    let admitted = admit_tree(&tree, BOB, identity, &world, &TestHasher).expect("it admits");
+    let entry = batch_entry(&world, &tree, BOB, env())?;
+
+    let source: Arc<dyn CellSource> = Arc::new(Local::at(store, ShardId(0), env().clock_ms));
+    let [blessed, _reference] = LANES.engine_backends();
+    let report = preview(
+        &entry,
+        Some(&admitted.admitted),
+        source,
+        blessed,
+        test_hash,
+        Slack::NONE,
+    );
+
+    let condition = UnmetCondition::Satisfies { node: 1 };
+    assert_eq!(
+        report.outcome,
+        Outcome::ConditionUnmet {
+            condition: condition.clone()
+        },
+        "the fixture refuses at the authorizing node"
+    );
+    assert_eq!(
+        report.refusal,
+        Some(explain_refusal(&admitted.admitted, &condition)),
+        "and prints what the refusal prints anywhere else"
     );
     Ok(())
 }
