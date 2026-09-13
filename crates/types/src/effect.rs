@@ -157,21 +157,39 @@ impl EffectSet {
             })
     }
 
-    /// The bytes the set lets a body write onto the store: each target's
-    /// [`write_bytes`] at the width the set holds for it.
+    /// The bytes the set lets a body write onto one target: the widest
+    /// of the modes declared on it, at the width the set holds for it.
+    ///
+    /// The widest and not the sum, because a leaf reached under several
+    /// modes is still one leaf, written once, and its update reads one
+    /// tree path. The same argument [`read_bytes`](Self::read_bytes)
+    /// makes for reads — one leaf read once serves every mode declared
+    /// on it — and it does not change on the other side of the store.
+    ///
+    /// Asked per target so a caller attributing the figure to whoever
+    /// owns the leaf gets the same rule the whole-set fold uses. Two
+    /// implementations of this would be two prices for one transaction,
+    /// and the one a wallet is quoted is the one it signs a ceiling
+    /// against.
+    #[must_use]
+    pub fn write_bytes_of(&self, target: &EffectTarget) -> u64 {
+        self.by_target.get(target).map_or(0, |declared| {
+            declared
+                .modes
+                .iter()
+                .map(|mode| write_bytes(target, *mode, declared.width))
+                .max()
+                .unwrap_or(0)
+        })
+    }
+
+    /// The bytes the set lets a body write onto the store:
+    /// [`write_bytes_of`](Self::write_bytes_of) over every target.
     #[must_use]
     pub fn write_bytes(&self) -> u64 {
-        self.by_target
-            .iter()
-            .fold(0u64, |total, (target, declared)| {
-                let widest = declared
-                    .modes
-                    .iter()
-                    .map(|mode| write_bytes(target, *mode, declared.width))
-                    .max()
-                    .unwrap_or(0);
-                total.saturating_add(widest)
-            })
+        self.by_target.keys().fold(0u64, |total, target| {
+            total.saturating_add(self.write_bytes_of(target))
+        })
     }
 
     /// Every effect in the set, in canonical (target, mode) order.
@@ -397,6 +415,46 @@ mod tests {
             set.targets().collect::<Vec<_>>(),
             vec![target(1), target(2)],
             "but two targets, in canonical order"
+        );
+    }
+
+    /// A leaf written under several modes is one leaf written.
+    ///
+    /// The figure a caller attributing bytes to an owner reads must be
+    /// the one the whole-set fold uses, or a wallet is quoted a price
+    /// the chain does not charge and signs a ceiling under it.
+    #[test]
+    fn a_target_written_under_two_modes_is_written_once() {
+        let mut set = EffectSet::new();
+        for mode in [
+            Mode::Reserve { amount: 100 },
+            Mode::Delta { moves: Moves::In },
+        ] {
+            set.insert_bounded(
+                Effect {
+                    target: target(1),
+                    mode,
+                },
+                16,
+            )
+            .unwrap();
+        }
+
+        let once = set.write_bytes_of(&target(1));
+        assert_eq!(
+            once,
+            WRITE_LEAF_BYTES + 16,
+            "one leaf at the floor and its own width, whatever reaches it"
+        );
+        assert_eq!(
+            set.write_bytes(),
+            once,
+            "and the whole-set fold is the per-target figure, not a sum over modes"
+        );
+        assert_eq!(
+            set.write_bytes_of(&target(2)),
+            0,
+            "a target the set does not hold is written not at all"
         );
     }
 
