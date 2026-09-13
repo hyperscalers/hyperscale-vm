@@ -229,9 +229,21 @@ const fn protocol_width(slot: SlotId) -> u32 {
 const AMOUNT_WIDTH: u32 = 16;
 const _: () = assert!(AMOUNT_WIDTH as usize == AMOUNT_CELL_BYTES);
 
-/// A stored rule's width: the widest byte argument a rule can arrive as.
-const RULE_WIDTH: u32 = 4096;
-const _: () = assert!(RULE_WIDTH as usize == MAX_VALUE_BYTES);
+/// The length a byte string at [`MAX_VALUE_BYTES`] encodes behind
+/// itself: two bytes of varint, the cap being past the one-byte range
+/// and inside the two.
+const VALUE_LENGTH_BYTES: usize = 2;
+
+/// A stored rule's width: the widest byte argument a rule can arrive as,
+/// and the length its cell writes in front of it.
+///
+/// The cell holds the rule's record and not its bare argument bytes — a
+/// byte string encodes behind its own length — so a width at the
+/// argument cap is two bytes short of the widest rule that cap admits,
+/// and the widest rule anyone can hand an account is the one it refuses.
+/// Held to the encoding by `a_rule_at_the_argument_cap_fits_its_cell`.
+const RULE_WIDTH: u32 = 4098;
+const _: () = assert!(RULE_WIDTH as usize == MAX_VALUE_BYTES + VALUE_LENGTH_BYTES);
 
 impl PackageMetadata {
     /// The width of every slot this package declares.
@@ -541,6 +553,32 @@ impl MetadataCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::RuleBytes;
+    use crate::vocabulary::AUTH;
+
+    /// The auth cell is wide enough for the widest rule anyone can hand
+    /// it, which is the only width worth stating.
+    ///
+    /// [`RULE_WIDTH`] is arithmetic over the argument cap and the length
+    /// a byte string encodes behind itself, and nothing in the type
+    /// system ties that arithmetic to what HBOR writes — so it is tied
+    /// here, the way the proposal's byte budget is. A rule at the cap
+    /// that does not fit is an account whose owner cannot replace its
+    /// own gate.
+    #[test]
+    fn a_rule_at_the_argument_cap_fits_its_cell() {
+        let widest = RuleBytes(vec![0xAB; MAX_VALUE_BYTES]).in_cell();
+        assert_eq!(
+            widest.len(),
+            RULE_WIDTH as usize,
+            "the width is the encoding, not the argument it carries"
+        );
+        assert_eq!(
+            protocol_width(AUTH),
+            RULE_WIDTH,
+            "and the auth cell is priced and bounded at it"
+        );
+    }
 
     #[test]
     fn publish_is_idempotent() {
