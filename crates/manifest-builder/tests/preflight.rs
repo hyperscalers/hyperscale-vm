@@ -345,6 +345,88 @@ fn a_composition_names_every_signer_it_needs() {
     assert_eq!(report.identity(), tree.hash(&TestHasher));
 }
 
+/// A root that declares no nodes of its own is still an intent, and the
+/// breakdown says so.
+///
+/// A composition can leave every call to its subintents — the root
+/// carries the sockets and nothing else — and such a root appears in no
+/// node's origin. Found by elimination it would vanish, and the
+/// breakdown would report one intent where the tree binds two, quietly
+/// dropping the composer who pays for all of it.
+#[test]
+fn a_root_that_calls_nothing_is_still_one_of_the_intents() {
+    let chain = world();
+    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let mut sub = env.subintent(BOB, TEST_HEADER);
+    let funds = account::withdraw(&mut sub, BOB, RES_X, 10).unwrap();
+    account::deposit(&mut sub, BOB, funds).unwrap();
+    env.seal(root).unwrap().none().unwrap();
+    env.seal(sub).unwrap().none().unwrap();
+    let tree = env.build().unwrap();
+
+    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let nodes = report.manifest().nodes.len();
+    let split = report.by_intent(&vec![1_000u64; nodes]).unwrap();
+
+    assert_eq!(split.intents.len(), 2, "the empty root and Bob's subintent");
+    assert_eq!(split.intents[0].intent, report.root_intent);
+    assert_eq!(split.intents[0].signer, ALICE);
+    assert_eq!(split.intents[0].nodes, 0, "the root calls nothing");
+    assert_eq!(split.intents[1].signer, BOB);
+    assert_eq!(
+        split.intents[1].exposure,
+        std::iter::once((RES_X, 10)).collect(),
+        "the withdrawal is Bob's, and so is the exposure"
+    );
+}
+
+/// An intent's exposure is what leaves cells its own signer holds, not
+/// everything its nodes touch.
+///
+/// A node's frame declares every cell the call reaches — a venue's
+/// reserve as readily as the caller's vault — so folding a frame whole
+/// would tell a signer they risk value that was never theirs. Here one
+/// intent reserves out of Alice's account and out of Bob's; only the
+/// first is Alice's to lose.
+#[test]
+fn an_intent_is_exposed_only_by_the_cells_its_signer_holds() {
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
+    let mine = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
+    // Bob's own sign-in, presented, since the builder answers a guarded
+    // call from the composer's account and this one is not theirs.
+    let bob = account::authorize(&mut b, BOB).unwrap();
+    let theirs = b
+        .call_presenting([bob], BOB, "withdraw", (RES_X, 30u128))
+        .unwrap()
+        .one()
+        .unwrap();
+    account::deposit(&mut b, ALICE, theirs).unwrap();
+    account::deposit(&mut b, BOB, mine).unwrap();
+    let graph = b.build().unwrap();
+
+    let report = preflight_tree(
+        &one_intent(&graph),
+        ALICE,
+        &chain,
+        &TestHasher,
+        &SHARDS,
+        NETWORK,
+    )
+    .unwrap();
+    let nodes = report.manifest().nodes.len();
+    let gas_limits = vec![1_000u64; nodes];
+    let split = report.by_intent(&gas_limits).unwrap();
+
+    assert_eq!(split.intents.len(), 1, "one intent, no subintents");
+    assert_eq!(split.intents[0].signer, ALICE);
+    assert_eq!(
+        split.intents[0].exposure,
+        std::iter::once((RES_X, 100)).collect(),
+        "the thirty out of Bob's account is Bob's to lose and not Alice's"
+    );
+}
+
 /// The per-intent breakdown says what each intent owns and names what
 /// no intent owns alone.
 ///

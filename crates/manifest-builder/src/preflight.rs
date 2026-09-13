@@ -304,6 +304,13 @@ pub struct Report {
     pub admitted: Admitted,
     /// The composer: the root intent's signer, and the one payer.
     pub composer: PrincipalAddr,
+    /// The root intent's own hash.
+    ///
+    /// Taken from the declaration rather than found as the one intent
+    /// the subintent records do not name: a root whose sockets carry the
+    /// whole composition declares no nodes of its own, and an intent
+    /// with no nodes appears in no origin to be found by.
+    pub root_intent: SubintentHash,
     /// The routing: per-shard declared effects, evaluated frames, the
     /// lowered call list, and the static call graph.
     pub routing: Routing,
@@ -443,9 +450,15 @@ impl Report {
     /// What this transaction would declare, signed at `gas_limits` under
     /// `schemes`, with `artifact_bytes` of package code behind its calls.
     ///
-    /// `schemes` names one entry per signature the envelope will bind —
-    /// the composer's and each bound subintent signer's — and
-    /// `artifact_bytes` the length of every distinct package the calls
+    /// `schemes` names one entry per signature the envelope will bind,
+    /// which is one per party in [`Self::signers`] and not one per
+    /// intent: a conjunction asks several parties for one node, so an
+    /// intent can need more than one and the two counts part company as
+    /// soon as one does. The chain counts the signatures the envelope
+    /// actually carries, so a short vector understates the quote rather
+    /// than the charge — a wallet that passes one scheme per intent
+    /// signs a ceiling admission then refuses. `artifact_bytes` is
+    /// the length of every distinct package the calls
     /// run, once each. Neither can be read off the graph and the chain
     /// records here: the ceilings and the schemes are the composer's own
     /// choices, and the records serve metadata rather than code, so all
@@ -540,16 +553,37 @@ impl Report {
         let compute = self.compute_by_intent(gas_limits)?;
         let origins = self.admitted.origins();
 
+        // Whose signature admits each intent.
+        let order: Vec<(SubintentHash, PrincipalAddr)> =
+            std::iter::once((self.root_intent, self.composer))
+                .chain(
+                    self.subintents
+                        .iter()
+                        .map(|record| (record.subintent, record.signer)),
+                )
+                .collect();
+        let owner_of: BTreeMap<SubintentHash, Address> = order
+            .iter()
+            .map(|(intent, signer)| (*intent, signer.address()))
+            .collect();
+
         let mut events: BTreeMap<SubintentHash, u64> = BTreeMap::new();
         for (origin, bound) in origins.iter().zip(&self.event_bytes_by_node) {
             let total = events.entry(origin.intent).or_default();
             *total = total.saturating_add(u64::from(*bound));
         }
 
-        // What each intent's own nodes declare they may move out. Off
-        // the frames rather than the routed set, because the set unions
-        // across intents and a reserve is exactly what must not be
-        // pooled: the figure is one signer's agreed risk.
+        // What each intent declares may leave cells its own signer owns.
+        //
+        // Off the frames rather than the routed set, because the set
+        // unions across intents and a reserve is exactly what must not
+        // be pooled: the figure is one signer's agreed risk.
+        //
+        // And scoped to the signer's own cells, because a node's frame
+        // declares every cell the call touches — a swap debits the
+        // venue's reserve, which is the venue's value moving and not the
+        // caller's. What a signer risks is what leaves an address they
+        // hold.
         let mut exposure: BTreeMap<SubintentHash, BTreeMap<ResourceAddr, u128>> = BTreeMap::new();
         let mut unbounded: BTreeSet<SubintentHash> = BTreeSet::new();
         for frame in &self.routing.frames {
@@ -560,6 +594,9 @@ impl Report {
                 let Some(resource) = access.holds else {
                     continue;
                 };
+                if owner_of.get(&origin.intent) != Some(&access.effect.target.owner()) {
+                    continue;
+                }
                 match access.effect.mode {
                     Mode::Reserve { amount } => {
                         let total = exposure
@@ -597,27 +634,8 @@ impl Report {
             .map(|(target, _)| target)
             .collect();
 
-        // The root is the one intent the tree's own subintent records do
-        // not name, which is also the order `schemes` is given in.
-        let bound: BTreeSet<SubintentHash> = self
-            .subintents
-            .iter()
-            .map(|record| record.subintent)
-            .collect();
-        let root = origins
-            .iter()
-            .map(|origin| origin.intent)
-            .find(|intent| !bound.contains(intent));
-        let order = root
-            .into_iter()
-            .map(|intent| (intent, self.composer))
-            .chain(
-                self.subintents
-                    .iter()
-                    .map(|record| (record.subintent, record.signer)),
-            );
-
         let intents = order
+            .into_iter()
             .map(|(intent, signer)| IntentCost {
                 nodes: u32::try_from(
                     origins
@@ -720,6 +738,7 @@ pub fn preflight_tree(
     report(
         admitted.admitted,
         composer,
+        tree.root.hash(hasher),
         routing,
         admitted.subintents,
         chain,
@@ -731,6 +750,7 @@ pub fn preflight_tree(
 fn report(
     admitted: Admitted,
     composer: PrincipalAddr,
+    root_intent: SubintentHash,
     routing: Routing,
     subintents: Vec<SubintentRecord>,
     chain: &dyn ChainRecords,
@@ -811,6 +831,7 @@ fn report(
         network: NetworkWord(network.to_owned()),
         admitted,
         composer,
+        root_intent,
         routing,
         footprints,
         authority,
