@@ -192,6 +192,37 @@ impl EffectSet {
         })
     }
 
+    /// The bytes the set leaves behind on one target: the widest of the
+    /// modes declared on it, carrying the leaf's own width and nothing
+    /// else.
+    ///
+    /// Not [`write_bytes_of`](Self::write_bytes_of), which carries
+    /// [`WRITE_LEAF_BYTES`] beside the width because an update reads the
+    /// tree path down to its leaf. Those reads are most of what a write
+    /// *costs* and none of what it *keeps* — they touch nothing after the
+    /// block. A dimension counting them would count a quantity nothing
+    /// retains.
+    #[must_use]
+    pub fn retained_bytes_of(&self, target: &EffectTarget) -> u64 {
+        self.by_target.get(target).map_or(0, |declared| {
+            declared
+                .modes
+                .iter()
+                .map(|mode| retained_bytes(target, *mode, declared.width))
+                .max()
+                .unwrap_or(0)
+        })
+    }
+
+    /// The bytes the set leaves behind on the store:
+    /// [`retained_bytes_of`](Self::retained_bytes_of) over every target.
+    #[must_use]
+    pub fn retained_bytes(&self) -> u64 {
+        self.by_target.keys().fold(0u64, |total, target| {
+            total.saturating_add(self.retained_bytes_of(target))
+        })
+    }
+
     /// Every effect in the set, in canonical (target, mode) order.
     pub fn iter(&self) -> impl Iterator<Item = Effect> + '_ {
         self.by_target.iter().flat_map(|(target, declared)| {
@@ -357,6 +388,22 @@ pub const fn write_bytes(target: &EffectTarget, mode: Mode, width: u32) -> u64 {
         Mode::Read => 0,
         Mode::Delta { .. } | Mode::Reserve { .. } | Mode::Write { .. } => {
             leaves_written(target).saturating_mul(WRITE_LEAF_BYTES.saturating_add(width as u64))
+        }
+    }
+}
+
+/// The bytes one declared effect leaves on the store: nothing for a
+/// read, and for every mode that moves or overwrites, each written leaf
+/// at its own `width`.
+///
+/// [`write_bytes`]'s quantity without [`WRITE_LEAF_BYTES`]: what lands
+/// and stays, rather than what putting it there costs.
+#[must_use]
+pub const fn retained_bytes(target: &EffectTarget, mode: Mode, width: u32) -> u64 {
+    match mode {
+        Mode::Read => 0,
+        Mode::Delta { .. } | Mode::Reserve { .. } | Mode::Write { .. } => {
+            leaves_written(target).saturating_mul(width as u64)
         }
     }
 }

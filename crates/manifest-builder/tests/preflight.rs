@@ -153,8 +153,17 @@ fn a_report_is_what_the_chain_derives() {
     );
     assert_eq!(
         work.retention,
-        work.write_bytes + signature.retention + report.event_bytes,
-        "retention keeps the writes, the auth material and what the calls may emit"
+        report.retained_bytes() + signature.retention + report.event_bytes,
+        "retention keeps what the writes leave behind, the auth material and \
+         what the calls may emit"
+    );
+    assert!(
+        report.retained_bytes() < work.write_bytes,
+        "and what a write leaves behind is not what it costs: the write \
+         dimension carries the tree path each update reads, which a validator \
+         retains none of. {} against {}",
+        report.retained_bytes(),
+        work.write_bytes
     );
     assert!(
         report.event_bytes > 0,

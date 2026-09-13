@@ -446,6 +446,16 @@ impl Report {
             .fold(0, |total, shard| total.saturating_add(shard.read_bytes()))
     }
 
+    /// The bytes the declaration leaves behind on the store, summed over
+    /// the participating shards: what retention keeps, as against what
+    /// [`write_bytes`](Self::write_bytes) costs to put there.
+    #[must_use]
+    pub fn retained_bytes(&self) -> u64 {
+        self.routing.per_shard.values().fold(0, |total, shard| {
+            total.saturating_add(shard.retained_bytes())
+        })
+    }
+
     /// The bytes the declaration lets execution write onto the store,
     /// summed over the participating shards.
     #[must_use]
@@ -485,13 +495,12 @@ impl Report {
         let signatures = schemes.iter().fold(DeclaredWork::ZERO, |total, scheme| {
             total.saturating_add(DeclaredWork::signature(*scheme))
         });
-        let write_bytes = self.write_bytes();
         DeclaredWork {
             compute: gas_limit_total(gas_limits),
             read_bytes: self.read_bytes().saturating_add(artifact_bytes),
-            write_bytes,
+            write_bytes: self.write_bytes(),
             footprint: self.footprint(),
-            retention: write_bytes.saturating_add(self.event_bytes),
+            retention: self.retained_bytes().saturating_add(self.event_bytes),
         }
         .saturating_add(signatures)
     }
