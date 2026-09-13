@@ -302,6 +302,8 @@ pub struct Report {
     /// The admitted form: the lowered manifest and the identity every
     /// fresh derivation — and every signature — binds to.
     pub admitted: Admitted,
+    /// The composer: the root intent's signer, and the one payer.
+    pub composer: PrincipalAddr,
     /// The routing: per-shard declared effects, evaluated frames, the
     /// lowered call list, and the static call graph.
     pub routing: Routing,
@@ -344,10 +346,17 @@ pub struct IntentCost {
     pub compute: u64,
     /// What its calls' own methods may emit between them.
     pub event_bytes: u64,
-    /// The one signature its signer binds, as the compute and the
-    /// retention that signature costs. Zero where the caller has not
-    /// named a scheme for it yet.
-    pub auth: DeclaredWork,
+    /// Whose signature admits it: the composer for the root, the
+    /// subintent's own signer otherwise.
+    ///
+    /// The signer and not the signature's cost. What a signature weighs
+    /// depends on its scheme, and an intent is not held to one — a
+    /// conjunction asks several parties for one node, so the signatures
+    /// an envelope binds are not one per intent and pairing them
+    /// positionally would put one intent's scheme against another's.
+    /// A caller that has chosen the schemes knows which belong to whom
+    /// and can price them with [`DeclaredWork::signature`].
+    pub signer: PrincipalAddr,
     /// The most this intent's own nodes may move out, by resource.
     ///
     /// The reserves they declare, which is the whole of what its signer
@@ -510,8 +519,8 @@ impl Report {
     /// What each signed intent contributes, in the dimensions that are
     /// its own, beside the cells no single intent owns.
     ///
-    /// The intents in the order `schemes` names them: the composer's
-    /// root first, then each bound subintent in envelope order.
+    /// The composer's root intent first, then each bound subintent in
+    /// envelope order.
     ///
     /// **Three dimensions are deliberately absent.** A declaration is a
     /// set keyed by target — two intents naming one cell are one access,
@@ -527,11 +536,7 @@ impl Report {
     /// # Errors
     ///
     /// As [`Self::compute`].
-    pub fn by_intent(
-        &self,
-        gas_limits: &[u64],
-        schemes: &[SchemeId],
-    ) -> Result<ByIntent, TermsRefusal> {
+    pub fn by_intent(&self, gas_limits: &[u64]) -> Result<ByIntent, TermsRefusal> {
         let compute = self.compute_by_intent(gas_limits)?;
         let origins = self.admitted.origins();
 
@@ -605,17 +610,15 @@ impl Report {
             .find(|intent| !bound.contains(intent));
         let order = root
             .into_iter()
-            .chain(self.subintents.iter().map(|record| record.subintent));
+            .map(|intent| (intent, self.composer))
+            .chain(
+                self.subintents
+                    .iter()
+                    .map(|record| (record.subintent, record.signer)),
+            );
 
         let intents = order
-            .zip(
-                schemes
-                    .iter()
-                    .copied()
-                    .map(Some)
-                    .chain(std::iter::repeat(None)),
-            )
-            .map(|(intent, scheme)| IntentCost {
+            .map(|(intent, signer)| IntentCost {
                 nodes: u32::try_from(
                     origins
                         .iter()
@@ -625,10 +628,7 @@ impl Report {
                 .unwrap_or(u32::MAX),
                 compute: compute.get(&intent).copied().unwrap_or(0),
                 event_bytes: events.get(&intent).copied().unwrap_or(0),
-                // A scheme short of the intents is a caller that has not
-                // decided every signature yet, which is a quote before
-                // the envelope exists rather than a refusal.
-                auth: scheme.map_or(DeclaredWork::ZERO, DeclaredWork::signature),
+                signer,
                 exposure: exposure.get(&intent).cloned().unwrap_or_default(),
                 unbounded_outflow: unbounded.contains(&intent),
                 intent,
@@ -719,6 +719,7 @@ pub fn preflight_tree(
     let routing = route_tree(&admitted, shards);
     report(
         admitted.admitted,
+        composer,
         routing,
         admitted.subintents,
         chain,
@@ -729,6 +730,7 @@ pub fn preflight_tree(
 /// Assemble the report.
 fn report(
     admitted: Admitted,
+    composer: PrincipalAddr,
     routing: Routing,
     subintents: Vec<SubintentRecord>,
     chain: &dyn ChainRecords,
@@ -808,6 +810,7 @@ fn report(
     Ok(Report {
         network: NetworkWord(network.to_owned()),
         admitted,
+        composer,
         routing,
         footprints,
         authority,

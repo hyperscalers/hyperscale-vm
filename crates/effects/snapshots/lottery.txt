@@ -59,5 +59,6 @@ settle(u64) — fallible
       2  read self.tickets over the whole order space, at most arg0 entries
       3  requires self.outcome is absent
       4  write self.outcome
-  costs    clause 2 scales with its cap — read and footprint
+  costs    clause 2's cap — read and footprint
+           clause 2's bounds — footprint
   exports  handle for clause 1, handle for clause 2, handle for clause 4

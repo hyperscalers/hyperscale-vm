@@ -380,9 +380,7 @@ fn a_shared_cell_is_named_rather_than_charged_to_either_intent() {
     let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
     let nodes = report.manifest().nodes.len();
     let gas_limits: Vec<u64> = (1..=nodes as u64).map(|node| node * 1_000).collect();
-    let schemes = [SchemeId::ED25519, SchemeId::ED25519];
-
-    let split = report.by_intent(&gas_limits, &schemes).unwrap();
+    let split = report.by_intent(&gas_limits).unwrap();
     assert_eq!(split.intents.len(), 2, "the root and one subintent");
 
     // The root leads, then the subintents in envelope order — the order
@@ -409,9 +407,11 @@ fn a_shared_cell_is_named_rather_than_charged_to_either_intent() {
         split.intents.iter().map(|cost| cost.nodes).sum::<u32>(),
         u32::try_from(nodes).unwrap(),
     );
-    for cost in &split.intents {
-        assert_eq!(cost.auth, DeclaredWork::signature(SchemeId::ED25519));
-    }
+    // Each intent names whose signature admits it — the composer's for
+    // the root, the subintent's own signer otherwise — rather than a
+    // weight from a vector nothing guarantees is one per intent.
+    assert_eq!(split.intents[0].signer, ALICE);
+    assert_eq!(split.intents[1].signer, BOB);
 
     // And the cells both intents reach are named, which is the whole
     // reason the bytes are not split.

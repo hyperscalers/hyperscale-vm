@@ -25,7 +25,7 @@ accrue(u128) — infallible
       0  for each of config.assets
         1  debit-only self.till[element]
         2  credit self.fees[element]
-  costs    clause 0 scales with its list — read, write, footprint and retention
+  costs    clause 0's list — read, write, footprint and retention
   exports  handle for clause 1, handle for clause 2, arg0
 
 charge(u64) — infallible
@@ -43,13 +43,14 @@ escrow(u128) — infallible
       0  for each of config.assets
         1  reserve arg0 self.till[element]
         2  credit self.fees[element]
-  costs    clause 0 scales with its list — read, write, footprint and retention
+  costs    clause 0's list — read, write, footprint and retention
   exports  handle for clause 1, handle for clause 2
 
 file(ids) — infallible
   declares
       0  write self.entries over the whole order space, at most 64 entries
-  costs    clause 0 scales with its cap — read, write, footprint and retention
+  costs    clause 0's cap — read, write, footprint and retention
+           clause 0's bounds — footprint
   exports  handle for clause 0, arg0
 
 fund(bucket) — infallible
@@ -68,7 +69,8 @@ instantiate() — infallible
 jot(u64, u64) — infallible
   declares
       0  write self.entries[arg0] over the whole order space, at most 8 entries
-  costs    clause 0 scales with its cap — read, write, footprint and retention
+  costs    clause 0's cap — read, write, footprint and retention
+           clause 0's bounds — footprint
   exports  handle for clause 0, arg1
 
 later(u64, u64) — infallible
@@ -79,7 +81,8 @@ later(u64, u64) — infallible
 ledgered(u64) — infallible, answers
   declares
       0  read self.ledger[arg0] over the whole order space, at most 8 entries
-  costs    clause 0 scales with its cap — read and footprint
+  costs    clause 0's cap — read and footprint
+           clause 0's bounds — footprint
   exports  handle for clause 0
 
 noted() — infallible, answers
@@ -91,7 +94,7 @@ owe-each() — infallible
   declares
       0  for each of config.windows
         1  write self.owed[element]
-  costs    clause 0 scales with its list — read, write, footprint and retention
+  costs    clause 0's list — read, write, footprint and retention
   exports  handle for clause 1, config.windows
 
 raise() — infallible, answers
@@ -110,8 +113,9 @@ restow(ids) — infallible
   declares
       0  for each of config.marks
         1  write self.stowage[element] over the whole order space, at most (len(arg0) + len(ids-of(edge(element × arg0)))) entries
-  costs    clause 0 scales with its list — read, write, footprint and retention
-           clause 1 scales with its cap — read, write, footprint and retention
+  costs    clause 0's list — read, write, footprint and retention
+           clause 1's cap — read, write, footprint and retention
+           clause 1's bounds — footprint
   exports  handle for clause 1, arg0
 
 scheduled(u64) — infallible
@@ -139,33 +143,36 @@ seated(nf-bucket) — infallible
 settle(u64) — infallible
   declares
       0  write self.entries over the whole order space, at most 64 entries
-  costs    clause 0 scales with its cap — read, write, footprint and retention
+  costs    clause 0's cap — read, write, footprint and retention
+           clause 0's bounds — footprint
   exports  handle for clause 0, arg0
 
 spread(u64) — infallible
   declares
       0  for each of config.sides
         1  write self.owed[element]
-  costs    clause 0 scales with its list — read, write, footprint and retention
+  costs    clause 0's list — read, write, footprint and retention
   exports  handle for clause 1, arg0
 
 spread-to(u64, address) — infallible
   declares
       0  for each of config.sides
         1  when element == arg1 → write self.owed[element]
-  costs    clause 0 scales with its list — read, write, footprint and retention
+  costs    clause 0's list — read, write, footprint and retention
   exports  handle for clause 1, arg0
 
 stash(u64) — infallible
   declares
       0  when arg0 == 1 → write self.entries over the whole order space, at most 64 entries
-  costs    clause 0 scales with its cap — read, write, footprint and retention
+  costs    clause 0's cap — read, write, footprint and retention
+           clause 0's bounds — footprint
   exports  handle for clause 0, whether clause 0 was declared
 
 stow(nf-bucket) — infallible
   declares
       0  file self.stowage[resource-of(arg0)] over the whole order space, at most len(ids-of(arg0)) entries
-  costs    clause 0 scales with its cap — read, write, footprint and retention
+  costs    clause 0's cap — read, write, footprint and retention
+           clause 0's bounds — footprint
   exports  handle for clause 0, edge arg0
 
 survey(nf-bucket) — infallible
@@ -174,7 +181,7 @@ survey(nf-bucket) — infallible
       0  for each of ids-of(arg0)
         1  read self.instance[self-issued(non-fungible["seat"]), element]
       2  write self.noted
-  costs    clause 0 scales with its list — read and footprint
+  costs    clause 0's list — read and footprint
   yields   edge 0 carrying resource-of(arg0) × ids-of(arg0)
   exports  handle for clause 1, handle for clause 2, edge arg0
 
@@ -183,14 +190,15 @@ surveyed() — infallible
       0  for each of config.assets
         1  read self.till[element]
       2  write self.noted
-  costs    clause 0 scales with its list — read and footprint
+  costs    clause 0's list — read and footprint
   exports  handle for clause 1, handle for clause 2
 
 sweep(resource-address) — infallible
   declares
       0  write self.entries over the whole order space, at most 64 entries
       1  read self.till[arg0]
-  costs    clause 0 scales with its cap — read, write, footprint and retention
+  costs    clause 0's cap — read, write, footprint and retention
+           clause 0's bounds — footprint
   exports  handle for clause 0, handle for clause 1
 
 take(resource-address, u128) — infallible
@@ -228,7 +236,7 @@ unseat(nf-bucket) — infallible
       0  for each of ids-of(arg0)
         1  requires self.instance[self-issued(non-fungible["seat"]), element] is present
         2  write self.instance[self-issued(non-fungible["seat"]), element]
-  costs    clause 0 scales with its list — read, write, footprint and retention
+  costs    clause 0's list — read, write, footprint and retention
   exports  handle for clause 2, edge arg0
 
 widest() — infallible
@@ -242,7 +250,9 @@ windowed(u64) — infallible
         1  read self.entries[element] over the whole order space, at most 8 entries
         2  write self.ledger[element] over the whole order space, at most 8 entries
       3  write self.noted
-  costs    clause 0 scales with its list — read, write, footprint and retention
-           clause 1 scales with its cap — read and footprint
-           clause 2 scales with its cap — read, write, footprint and retention
+  costs    clause 0's list — read, write, footprint and retention
+           clause 1's cap — read and footprint
+           clause 1's bounds — footprint
+           clause 2's cap — read, write, footprint and retention
+           clause 2's bounds — footprint
   exports  handles for clauses 1–3, arg0

@@ -1692,31 +1692,40 @@ fn signature_exprs(signature: &MethodSignature) -> Vec<&Expr> {
 fn scaling(effects: &[Clause], out: &mut String) {
     let mut rows: Vec<String> = Vec::new();
     for (number, clause) in effects.iter().flat_map(Clause::effects).enumerate() {
-        let (with, writes) = match clause {
+        // Every mode reads, and an exclusion is declared per effect
+        // whatever the mode, so those two move for anything that scales.
+        // A write moves the bytes written and the bytes every validator
+        // then retains, which is one write counted where it lands and
+        // where it is kept.
+        let dimensions = |writes: bool| {
+            if writes {
+                "read, write, footprint and retention"
+            } else {
+                "read and footprint"
+            }
+        };
+        match clause {
             Clause::Effect {
                 target: TargetExpr::Range { .. },
                 mode,
                 ..
-            } => ("its cap", !matches!(mode, ModeExpr::Read)),
-            Clause::ForEach { body, .. } => (
-                "its list",
-                body.iter().flat_map(Clause::effects).any(|inner| {
+            } => {
+                let writes = !matches!(mode, ModeExpr::Read);
+                rows.push(format!("clause {number}'s cap — {}", dimensions(writes)));
+                // The bounds are the caller's too, and they reach one
+                // dimension the cap does not reach alone: a range claims
+                // the order space it spans, so a wider interval excludes
+                // more of the lattice however few entries it touches.
+                rows.push(format!("clause {number}'s bounds — footprint"));
+            }
+            Clause::ForEach { body, .. } => {
+                let writes = body.iter().flat_map(Clause::effects).any(|inner| {
                     matches!(inner, Clause::Effect { mode, .. } if !matches!(mode, ModeExpr::Read))
-                }),
-            ),
-            _ => continue,
-        };
-        // Every mode reads, and an exclusion is declared per effect
-        // whatever the mode, so those two move for any scaling clause.
-        // A write moves the bytes written and the bytes every validator
-        // then retains, which is the same write counted where it lands
-        // and where it is kept.
-        let dimensions = if writes {
-            "read, write, footprint and retention"
-        } else {
-            "read and footprint"
-        };
-        rows.push(format!("clause {number} scales with {with} — {dimensions}"));
+                });
+                rows.push(format!("clause {number}'s list — {}", dimensions(writes)));
+            }
+            _ => {}
+        }
     }
     for (line, row) in rows.iter().enumerate() {
         let label = if line == 0 { "  costs  " } else { "         " };
@@ -2309,15 +2318,17 @@ mod tests {
             declaring(vec![over_range(ModeExpr::Write { moves: Moves::Both })]),
         );
         assert!(
-            written.contains(
-                "costs    clause 0 scales with its cap — read, write, footprint and retention"
-            ),
+            written.contains("costs    clause 0's cap — read, write, footprint and retention"),
             "a written range named the wrong dimensions:\n{written}"
+        );
+        assert!(
+            written.contains("clause 0's bounds — footprint"),
+            "the bounds move the footprint the cap alone does not:\n{written}"
         );
 
         let read_only = rendered("scans", declaring(vec![over_range(ModeExpr::Read)]));
         assert!(
-            read_only.contains("costs    clause 0 scales with its cap — read and footprint"),
+            read_only.contains("costs    clause 0's cap — read and footprint"),
             "a read range named a write it never makes:\n{read_only}"
         );
     }
