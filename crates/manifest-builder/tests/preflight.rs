@@ -345,6 +345,82 @@ fn a_composition_names_every_signer_it_needs() {
     assert_eq!(report.identity(), tree.hash(&TestHasher));
 }
 
+/// The per-intent breakdown says what each intent owns and names what
+/// no intent owns alone.
+///
+/// Both intents here move the same two vaults — the root withdraws from
+/// Alice and pays Bob, the subintent withdraws from Bob and pays Alice —
+/// so the cells they reach are shared. A breakdown that split those
+/// bytes would hand a composer two figures summing past what the chain
+/// charges, because the declaration is a set and the transaction pays
+/// for a shared cell once. So the shared cells are listed, and what each
+/// intent carries is what a node owns outright.
+#[test]
+fn a_shared_cell_is_named_rather_than_charged_to_either_intent() {
+    let chain = world();
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+
+    let taken = root.declare(RES_X, [Constraint::MinAmount(10)]);
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
+    let paid_alice = root.export(funds);
+    account::deposit(&mut root, BOB, taken).unwrap();
+
+    let mut sub = env.subintent(BOB, TEST_HEADER);
+    let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
+    let funds = account::withdraw(&mut sub, BOB, RES_X, 10).unwrap();
+    let paid_bob = sub.export(funds);
+    account::deposit(&mut sub, ALICE, taken).unwrap();
+
+    let wants_from_bob = env.seal(root).unwrap().one().unwrap();
+    let wants_from_alice = env.seal(sub).unwrap().one().unwrap();
+    env.bind(wants_from_bob, paid_bob).unwrap();
+    env.bind(wants_from_alice, paid_alice).unwrap();
+    let tree = env.build().unwrap();
+
+    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, &SHARDS, NETWORK).unwrap();
+    let nodes = report.manifest().nodes.len();
+    let gas_limits: Vec<u64> = (1..=nodes as u64).map(|node| node * 1_000).collect();
+    let schemes = [SchemeId::ED25519, SchemeId::ED25519];
+
+    let split = report.by_intent(&gas_limits, &schemes).unwrap();
+    assert_eq!(split.intents.len(), 2, "the root and one subintent");
+
+    // The root leads, then the subintents in envelope order — the order
+    // `schemes` is given in, so each intent is paired with its own
+    // signer's signature.
+    let sub_hash = report.subintents[0].subintent;
+    assert_ne!(split.intents[0].intent, sub_hash, "the root leads");
+    assert_eq!(split.intents[1].intent, sub_hash);
+
+    // What each intent owns outright sums to what the whole declares.
+    assert_eq!(
+        split.intents.iter().map(|cost| cost.compute).sum::<u64>(),
+        gas_limit_total(&gas_limits),
+    );
+    assert_eq!(
+        split
+            .intents
+            .iter()
+            .map(|cost| cost.event_bytes)
+            .sum::<u64>(),
+        report.event_bytes,
+    );
+    assert_eq!(
+        split.intents.iter().map(|cost| cost.nodes).sum::<u32>(),
+        u32::try_from(nodes).unwrap(),
+    );
+    for cost in &split.intents {
+        assert_eq!(cost.auth, DeclaredWork::signature(SchemeId::ED25519));
+    }
+
+    // And the cells both intents reach are named, which is the whole
+    // reason the bytes are not split.
+    assert!(
+        !split.shared.is_empty(),
+        "two intents moving one pair of vaults share cells"
+    );
+}
+
 /// The compute column indexes the lowered order, so a subintent's nodes
 /// sit where the bound tree put them; the column sums to the terms'
 /// total, and so does its fold per intent.

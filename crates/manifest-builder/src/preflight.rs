@@ -322,8 +322,46 @@ pub struct Report {
     /// the writes beside them, so a quote that left it out would name a
     /// ceiling the chain then prices past.
     pub event_bytes: u64,
+    /// What each call's own method may emit, in node order.
+    ///
+    /// The term [`event_bytes`](Self::event_bytes) is the sum of, kept
+    /// per node because a node belongs to exactly one intent — so this
+    /// is the one retention term an intent can be held to on its own.
+    pub event_bytes_by_node: Vec<u32>,
     /// Every address the report names, in this network's text form.
     pub named: BTreeMap<Address, String>,
+}
+
+/// What one signed intent contributes on its own, from
+/// [`Report::by_intent`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntentCost {
+    /// The intent this is about.
+    pub intent: SubintentHash,
+    /// How many of the flattened manifest's nodes are this intent's.
+    pub nodes: u32,
+    /// Its nodes' signed ceilings, summed.
+    pub compute: u64,
+    /// What its calls' own methods may emit between them.
+    pub event_bytes: u64,
+    /// The one signature its signer binds, as the compute and the
+    /// retention that signature costs. Zero where the caller has not
+    /// named a scheme for it yet.
+    pub auth: DeclaredWork,
+}
+
+/// The per-intent breakdown beside what no one intent owns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ByIntent {
+    /// One entry per signed intent: the root first, then each bound
+    /// subintent in envelope order.
+    pub intents: Vec<IntentCost>,
+    /// The cells more than one intent declares, ascending.
+    ///
+    /// Named rather than divided: the declaration is a set, so these are
+    /// paid for once by the transaction and belong to none of its
+    /// intents alone.
+    pub shared: Vec<EffectTarget>,
 }
 
 impl Report {
@@ -449,6 +487,104 @@ impl Report {
                 ceiling: *ceiling,
             })
             .collect())
+    }
+
+    /// What each signed intent contributes, in the dimensions that are
+    /// its own, beside the cells no single intent owns.
+    ///
+    /// The intents in the order `schemes` names them: the composer's
+    /// root first, then each bound subintent in envelope order.
+    ///
+    /// **Three dimensions are deliberately absent.** A declaration is a
+    /// set keyed by target — two intents naming one cell are one access,
+    /// which is what makes the transaction pay for it once — so the read
+    /// bytes, the write bytes and the footprint of a shared cell belong
+    /// to no intent in particular. Splitting them would give a composer
+    /// figures that do not sum to what the chain charges, which is worse
+    /// than giving none: the use for these is pricing a cut. What is
+    /// here is what a node owns outright — its ceiling and what its
+    /// method may emit — plus the one signature its signer binds. What
+    /// is shared is named in [`ByIntent::shared`] rather than divided.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::compute`].
+    pub fn by_intent(
+        &self,
+        gas_limits: &[u64],
+        schemes: &[SchemeId],
+    ) -> Result<ByIntent, TermsRefusal> {
+        let compute = self.compute_by_intent(gas_limits)?;
+        let origins = self.admitted.origins();
+
+        let mut events: BTreeMap<SubintentHash, u64> = BTreeMap::new();
+        for (origin, bound) in origins.iter().zip(&self.event_bytes_by_node) {
+            let total = events.entry(origin.intent).or_default();
+            *total = total.saturating_add(u64::from(*bound));
+        }
+
+        // A target every intent that reaches it, so a cell two of them
+        // name is readable as the shared thing it is.
+        let mut reached: BTreeMap<EffectTarget, BTreeSet<SubintentHash>> = BTreeMap::new();
+        for frame in &self.routing.frames {
+            let Some(origin) = origins.get(frame.node as usize) else {
+                continue;
+            };
+            for access in &frame.ordered {
+                reached
+                    .entry(access.effect.target)
+                    .or_default()
+                    .insert(origin.intent);
+            }
+        }
+        let shared = reached
+            .into_iter()
+            .filter(|(_, intents)| intents.len() > 1)
+            .map(|(target, _)| target)
+            .collect();
+
+        // The root is the one intent the tree's own subintent records do
+        // not name, which is also the order `schemes` is given in.
+        let bound: BTreeSet<SubintentHash> = self
+            .subintents
+            .iter()
+            .map(|record| record.subintent)
+            .collect();
+        let root = origins
+            .iter()
+            .map(|origin| origin.intent)
+            .find(|intent| !bound.contains(intent));
+        let order = root
+            .into_iter()
+            .chain(self.subintents.iter().map(|record| record.subintent));
+
+        let intents = order
+            .zip(
+                schemes
+                    .iter()
+                    .copied()
+                    .map(Some)
+                    .chain(std::iter::repeat(None)),
+            )
+            .map(|(intent, scheme)| IntentCost {
+                nodes: u32::try_from(
+                    origins
+                        .iter()
+                        .filter(|origin| origin.intent == intent)
+                        .count(),
+                )
+                .unwrap_or(u32::MAX),
+                compute: compute.get(&intent).copied().unwrap_or(0),
+                event_bytes: events.get(&intent).copied().unwrap_or(0),
+                // A scheme short of the intents is a caller that has not
+                // decided every signature yet, which is a quote before
+                // the envelope exists rather than a refusal.
+                auth: scheme.map_or(DeclaredWork::ZERO, DeclaredWork::signature),
+                intent,
+            })
+            .collect();
+
+        Ok(ByIntent { intents, shared })
     }
 
     /// The compute column folded per intent: what each signed intent's
@@ -626,6 +762,7 @@ fn report(
         authority,
         subintents,
         event_bytes,
+        event_bytes_by_node: per_call,
         named,
     })
 }
