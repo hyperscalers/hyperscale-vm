@@ -184,6 +184,17 @@ impl EffectSet {
         })
     }
 
+    /// Every target the set names, once, in canonical order.
+    ///
+    /// What [`iter`](Self::iter) flattens away. A caller asking what a
+    /// declaration *reaches* — which cells to fetch, which shard holds
+    /// them — wants the target and not the modes on it, and taking that
+    /// off the flattened view visits a target once per mode: a cell
+    /// declared read and written is two asks for one leaf.
+    pub fn targets(&self) -> impl Iterator<Item = EffectTarget> + '_ {
+        self.by_target.keys().copied()
+    }
+
     /// The number of (target, mode) pairs.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -350,6 +361,43 @@ mod tests {
             owner: Address::new([0x10; 31], AddressClass::Component),
             local: LocalKey([byte; 16]),
         })
+    }
+
+    /// One target reached under several modes is one target. The
+    /// flattened view names it once per mode, which is the right reading
+    /// for a price and the wrong one for a fetch.
+    #[test]
+    fn a_target_is_named_once_however_many_modes_reach_it() {
+        let mut set = EffectSet::new();
+        for mode in [
+            Mode::Read,
+            Mode::Reserve { amount: 7 },
+            Mode::Write { moves: Moves::Out },
+        ] {
+            set.insert_bounded(
+                Effect {
+                    target: target(1),
+                    mode,
+                },
+                40,
+            )
+            .unwrap();
+        }
+        set.insert_bounded(
+            Effect {
+                target: target(2),
+                mode: Mode::Read,
+            },
+            40,
+        )
+        .unwrap();
+
+        assert_eq!(set.iter().count(), 4, "four (target, mode) pairs");
+        assert_eq!(
+            set.targets().collect::<Vec<_>>(),
+            vec![target(1), target(2)],
+            "but two targets, in canonical order"
+        );
     }
 
     /// A target's width is what it was stated at, folded by minimum: a
