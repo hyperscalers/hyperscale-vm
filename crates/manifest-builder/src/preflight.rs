@@ -372,15 +372,24 @@ pub struct IntentCost {
     /// it. What the composition does with the value is the composer's;
     /// the bound is the signer's.
     pub exposure: BTreeMap<ResourceAddr, u128>,
-    /// Whether any of its nodes moves value out under a mode that
-    /// declares no amount, which makes [`exposure`](Self::exposure) a
-    /// floor rather than the bound.
+    /// Whether any of its nodes moves value out of one of the signer's
+    /// own cells under a mode that declares no amount, which makes
+    /// [`exposure`](Self::exposure) a floor rather than the bound.
     ///
     /// A delta's amount is dynamic and never part of a declaration, so
     /// an intent carrying an outward one has signed no ceiling on what
     /// leaves. Reported rather than folded in, because there is no
     /// figure to fold: what a reader needs is that the number beside it
     /// is not the answer.
+    ///
+    /// **Nothing reaches it today**, and no test pins it true. A
+    /// signer's cells are their account's, the account package is what
+    /// serves every principal, and its only outward movement is a
+    /// reserve — so every shape the stdlib can build makes `exposure`
+    /// the whole bound. It is here because that is a fact about one
+    /// package's methods and not a structural one: an account method
+    /// that debited a vault by a dynamic amount would make the figure
+    /// beside it a floor, and silence would be the wrong answer.
     pub unbounded_outflow: bool,
 }
 
