@@ -442,6 +442,7 @@ fn departing(
     legs: &LegPlan,
     produced: Vec<u32>,
     mut session: KernelSession,
+    consumed: u64,
 ) -> Result<(KernelSession, Vec<Option<u32>>), NodeFailure> {
     let mut kept = Vec::with_capacity(produced.len());
     // The producing frame's handles, which is where the cell a crossing
@@ -482,7 +483,7 @@ fn departing(
                         reason: other.into(),
                     },
                 };
-                return Err(fail(session, outcome, 0));
+                return Err(fail(session, outcome, consumed));
             }
         }
     }
@@ -651,7 +652,9 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
         // ceiling, so what a composer needs back is where the fuel went
         // rather than the total, which is the fold. A node this member
         // does not run spends nothing and still takes its place, so the
-        // vector is read by node index.
+        // vector is read by node index — one figure per node attempted,
+        // whichever arm ends it, since a composer maps ceilings onto it
+        // one for one.
         let mut spent: Vec<u64> = Vec::with_capacity(calls.len());
         for (index, call) in calls.iter().enumerate() {
             let node = u32::try_from(index).unwrap_or(u32::MAX);
@@ -683,12 +686,15 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                 Ok((returned, produced, answered, consumed)) => {
                     session = returned;
                     session.leave_invocation();
-                    spent.push(consumed);
-                    match departing(node, calls, legs, produced, session) {
+                    match departing(node, calls, legs, produced, session, consumed) {
                         Ok((returned, produced)) => {
                             session = returned;
+                            spent.push(consumed);
                             outputs.push(produced);
                         }
+                        // The node ran and then its departure refused, so
+                        // what it spent is reported by the failure that
+                        // ends it — once, as on every other arm.
                         Err(failure) => return failure.into_result(spent),
                     }
                     if let Some(value) = answered {

@@ -1195,6 +1195,21 @@ fn two_crossings_at_one_cell_are_refused() {
         "a refused execution writes no crossing"
     );
     assert!(receipt.delta.movements.is_empty(), "and moves no value");
+    // The batch is one node, and it ran before its departure refused —
+    // so the report holds one figure. A departure that refuses after the
+    // node was already reported would leave the vector a place longer
+    // than the manifest, and a composer reads it by node index.
+    assert_eq!(
+        receipt.fuel_by_node.len(),
+        1,
+        "one node, one figure: {:?}",
+        receipt.fuel_by_node
+    );
+    assert_eq!(
+        receipt.fuel_by_node.iter().sum::<u64>(),
+        receipt.fuel,
+        "and the total is what the per-node figures fold to"
+    );
 }
 
 /// A reclaim reads its record and nothing else, so a record that is not
