@@ -484,7 +484,7 @@ const fn stepped_row(prev: u64, utilization: Utilization) -> u64 {
     let denominator = capacity.saturating_mul(8);
     // Toward `prev`: a row moving up truncates, a row moving down takes
     // the ceiling, so neither direction drifts on the division alone.
-    let next = if 2 * used >= capacity {
+    let next = if used.saturating_mul(2) >= capacity {
         numerator / denominator
     } else {
         numerator.div_ceil(denominator)
