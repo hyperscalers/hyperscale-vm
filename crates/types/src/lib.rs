@@ -42,10 +42,10 @@ pub use effect::{
     leaf_bytes, read_bytes, retained_bytes, write_bytes, written_leaf,
 };
 pub use envelope::{
-    ARTIFACT_GRACE_MS, CROSSING_GRACE_MS, MAX_ARTIFACT_BYTES, MAX_CALL_BYTES, MAX_ENVELOPE_BYTES,
-    MAX_GAS_LIMIT, MAX_MESSAGE_LEN, MAX_PRIORITY_BP, MAX_SUBINTENTS, NetworkId, SubintentHash,
-    SubintentSig, TermsRefusal, TransactionBody, TransactionEnvelope, TxHash, admit_ceilings,
-    admit_event_bounds, event_bytes_total, gas_limit_total,
+    ARTIFACT_GRACE_MS, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, MAX_ARTIFACT_BYTES, MAX_CALL_BYTES,
+    MAX_ENVELOPE_BYTES, MAX_GAS_LIMIT, MAX_MESSAGE_LEN, MAX_PRIORITY_BP, MAX_SUBINTENTS, NetworkId,
+    SubintentHash, SubintentSig, TermsRefusal, TransactionBody, TransactionEnvelope, TxHash,
+    admit_ceilings, admit_event_bounds, event_bytes_total, gas_limit_total,
 };
 pub use execution::{
     ABSENT_REP, AbortReason, Answer, EVENT_FRAME_BYTES, Event, MAX_ANSWER_BYTES,

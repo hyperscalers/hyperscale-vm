@@ -29,9 +29,9 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{Hbor, from_slice, to_vec};
 pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
-    ARTIFACT_GRACE_MS, Address, CROSSING_GRACE_MS, Effect, EffectTarget, LegShape,
-    MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr, SubintentHash,
-    SubstateKey, SweepBucket, TxHash,
+    ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, Effect, EffectTarget,
+    LegShape, MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr,
+    SubintentHash, SubstateKey, SweepBucket, TxHash,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -673,13 +673,14 @@ impl Marked {
     ///
     /// The one place the families' lives are stated, so a writer cannot
     /// give a cell a life its family does not have — the same discipline
-    /// [`Marker::key`] enforces on the key, one level up. One family is
-    /// the exception and it says so here rather than at each site that
-    /// writes it.
+    /// [`Marker::key`] enforces on the key, one level up. A grace each,
+    /// because each answers a different reader over a different span,
+    /// and the argument for every one of them is at its own constant.
     #[must_use]
     pub const fn expiry_ms(self, validity_end_ms: u64) -> u64 {
         validity_end_ms.saturating_add(match self {
-            Self::Spent(_) | Self::Committed => ARTIFACT_GRACE_MS,
+            Self::Spent(_) => ARTIFACT_GRACE_MS,
+            Self::Committed => COMMITTED_GRACE_MS,
             Self::Claimed { .. } => CROSSING_GRACE_MS,
         })
     }

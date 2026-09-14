@@ -68,16 +68,32 @@ const _: () = assert!(
 /// How long a transaction-derived artifact outlives the signed window it
 /// was derived from, in milliseconds.
 ///
-/// The default every family takes but one. A subintent stops being
-/// admissible at its `validity_end_ms`, so the last transaction that
-/// could have bound it is admitted before then and has terminated
-/// everywhere a bounded stretch later; a shard's committed cell answers
-/// one question whose window closes on the same terms. Past that the
-/// cell answers nobody, and no reshape reads either across a cut — both
-/// are state, and state migrates with its owner's prefix at every split
+/// A subintent stops being admissible at its `validity_end_ms`, so the
+/// last transaction that could have bound it is admitted before then and
+/// has terminated everywhere a bounded stretch later. Past that the
+/// nullifier answers nobody, and no reshape reads it across a cut — it
+/// is state, and state migrates with its owner's prefix at every split
 /// and merge. The workspace asserts this figure against the bound every
 /// other transaction-derived artifact is retained by.
 pub const ARTIFACT_GRACE_MS: u64 = 144_000;
+
+/// How long a shard's committed cell for a transaction outlives that
+/// transaction's signed window, in milliseconds.
+///
+/// A committed cell is retracted by the refusal of the member that wrote
+/// it, and what reads the retraction is another chain's probe. Two
+/// spans, because two things have to happen in them and neither is the
+/// other's: one for the refusal, which a core may reach anywhere inside
+/// the range its abandonment is admissible in, and one more for a leg to
+/// read the absence it leaves. A single span makes a refusal at the end
+/// of the first unreadable, which strands every crossing that fed it.
+///
+/// The cell is swept exactly where the window an absence of it answers
+/// in closes. Shorter and a swept cell reads as a shard that never
+/// committed, which is a licence to take back a crossing its core may
+/// have taken. The workspace asserts the two spellings against each
+/// other.
+pub const COMMITTED_GRACE_MS: u64 = 264_000;
 
 /// How long an escrow record and the claim it is decided against outlive
 /// the producing intent's signed window, in milliseconds.

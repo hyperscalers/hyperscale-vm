@@ -17,9 +17,9 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    ARTIFACT_GRACE_MS, Address, CROSSING_GRACE_MS, CallTarget, Effect, EffectTarget,
-    MAX_SUBINTENTS, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT,
-    SweepBucket, TxHash,
+    ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, CallTarget, Effect,
+    EffectTarget, MAX_SUBINTENTS, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr,
+    SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
 };
 use proptest::prelude::{any, proptest};
 
@@ -674,8 +674,13 @@ fn a_marker_takes_the_life_its_family_has_and_no_other() {
 
     assert_eq!(spent.expiry_ms, VALIDITY_END_MS + ARTIFACT_GRACE_MS);
     assert_eq!(
-        committed.expiry_ms, spent.expiry_ms,
-        "a nullifier and a committed cell answer on their own chain and take one grace",
+        committed.expiry_ms,
+        VALIDITY_END_MS + COMMITTED_GRACE_MS,
+        "a committed cell outlives a nullifier: a refusal retracts it anywhere          inside one span, and reading the absence that leaves takes another",
+    );
+    assert!(
+        committed.expiry_ms > spent.expiry_ms,
+        "and the two graces are not one figure",
     );
     assert_eq!(claimed.expiry_ms, VALIDITY_END_MS + CROSSING_GRACE_MS);
     assert!(
