@@ -430,10 +430,12 @@ impl PriceTable {
     /// half-full point standing still. The quarter and the half are
     /// placeholders like the weights.
     ///
-    /// Rounding goes toward `prev`, so a row at rest cannot ratchet on
-    /// integer division alone, and a dimension whose epoch had no
-    /// capacity at all — no shard reserved anything — holds where it is
-    /// rather than reading as idle.
+    /// Rounding goes away from `prev`, so a row the eighth would move by
+    /// less than a whole unit still moves and no row is a fixed point
+    /// against its own reading. The half-full point divides exactly, so
+    /// a row at rest cannot ratchet on integer division alone, and a
+    /// dimension whose epoch had no capacity at all — no shard reserved
+    /// anything — holds where it is rather than reading as idle.
     #[must_use]
     pub const fn stepped(&self, utilization: &FiveWay, bounds: &PriceBounds) -> Self {
         bounds.inside(Self {
@@ -482,12 +484,18 @@ const fn stepped_row(prev: u64, utilization: Utilization) -> u64 {
             .saturating_add(used.saturating_mul(2)),
     );
     let denominator = capacity.saturating_mul(8);
-    // Toward `prev`: a row moving up truncates, a row moving down takes
-    // the ceiling, so neither direction drifts on the division alone.
+    // Away from `prev`: a row moving up takes the ceiling and a row
+    // moving down truncates, so a move the eighth rounds to under a
+    // whole unit still lands. Rounding toward `prev` instead freezes
+    // every row at or below seven in both directions — `9v/8` and
+    // `7v/8` both round back to `v` there — so a band whose floor
+    // reaches that low pins its row at the floor whatever the network
+    // declares. The half-full point divides exactly, so a row at rest
+    // still cannot ratchet on the division alone.
     let next = if used.saturating_mul(2) >= capacity {
-        numerator / denominator
-    } else {
         numerator.div_ceil(denominator)
+    } else {
+        numerator / denominator
     };
     // A row is bounded far below this, so the pin is unreachable — but
     // the arithmetic above widens to `u128` and a narrowing cast that
@@ -741,9 +749,9 @@ mod tests {
         assert_eq!(half.compute, 800, "the half-full point stands still");
     }
 
-    /// A row at rest stays at rest however many epochs pass: rounding
-    /// toward the previous level is what keeps integer division from
-    /// walking a price on its own.
+    /// A row at rest stays at rest however many epochs pass: the
+    /// half-full point divides exactly, so there is no rounding for
+    /// integer division to walk a price on.
     #[test]
     fn a_row_at_the_target_does_not_drift() {
         let bounds = widened();
@@ -763,6 +771,47 @@ mod tests {
             level = level.stepped(&reading, &bounds);
         }
         assert_eq!(level, PriceTable::GENESIS);
+    }
+
+    /// No row is a fixed point against its own reading, however low the
+    /// band a vote opened reaches.
+    ///
+    /// An eighth of a row under eight rounds to nothing, so rounding
+    /// toward the previous level made every row at or below seven a
+    /// fixed point in both directions. A floor is a basis-point scale of
+    /// the reference table and compute is the smallest row there is, so
+    /// a floor voted at 50 bp lands inside that range and `well_formed`
+    /// accepts it — and the row would then sit at its floor forever, at
+    /// any saturation, until another vote moved it.
+    #[test]
+    fn a_row_at_the_bottom_of_a_band_still_rises() {
+        let bounds = PriceBounds::band(50, 80_000);
+        assert!(bounds.well_formed(), "a floor this low is votable");
+        assert!(
+            bounds.floor.compute <= 7,
+            "and lands where an eighth rounds to nothing: {}",
+            bounds.floor.compute
+        );
+
+        let saturated = FiveWay {
+            compute: Utilization {
+                used: 1,
+                capacity: 1,
+            },
+            ..FiveWay::default()
+        };
+        let mut level = PriceTable {
+            compute: bounds.floor.compute,
+            ..PriceTable::GENESIS
+        };
+        for _ in 0..64 {
+            level = level.stepped(&saturated, &bounds);
+        }
+        assert!(
+            level.compute > bounds.floor.compute,
+            "a saturated network lifts the row off its floor, and it sat at {}",
+            level.compute
+        );
     }
 
     /// A row walks to its bound and stops there, whichever way it is
