@@ -373,10 +373,20 @@ pub const ENTRY_LEAF_BYTES: u64 = 35;
 pub const fn leaf_bytes(target: &EffectTarget, width: u32) -> u64 {
     match target {
         EffectTarget::Point(_) => width as u64,
-        EffectTarget::Entry { .. } | EffectTarget::Range { .. } => {
-            ENTRY_LEAF_BYTES.saturating_add(width as u64)
-        }
+        EffectTarget::Entry { .. } | EffectTarget::Range { .. } => entry_leaf_bytes(width),
     }
+}
+
+/// The bytes one entry leaf holds: its value at `width`, and the
+/// collection and order it commits under.
+///
+/// Split out of [`leaf_bytes`] for the caller that holds a width and no
+/// target — the kernel's walk floor, pricing an interval it has already
+/// resolved — so the fuel a scan costs and the bytes it reads are one
+/// shape rather than two.
+#[must_use]
+pub const fn entry_leaf_bytes(width: u32) -> u64 {
+    ENTRY_LEAF_BYTES.saturating_add(width as u64)
 }
 
 /// The bytes one declared target lets a body read off the store, at

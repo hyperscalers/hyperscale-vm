@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{SCAN_SEEK_ENTRIES, distinct_ids};
-use hyperscale_vm_types::{AMOUNT_CELL_BYTES, Address, CollectionId};
+use hyperscale_vm_types::{AMOUNT_CELL_BYTES, Address, CollectionId, entry_leaf_bytes};
 
 use super::{Held, Interval, KernelSession, Op, SessionTrap};
 use crate::store::WorkingStore;
@@ -109,24 +109,29 @@ impl KernelSession {
 
     /// What a walk over `cap` entries of `[lo, hi]` costs, in the
     /// boundary-byte terms the fuel schedule prices: the seek floor, and
-    /// one entry more than the cap admits at the slot's width — the one
-    /// more being the coverage probe and the presence seek a full page
-    /// wants. A cap of zero or an inverted span takes no walk at all —
-    /// the store answers empty without touching a layer — so those owe
-    /// nothing.
+    /// one leaf more than the cap admits — the one more being the
+    /// coverage probe and the presence seek a full page wants. A cap of
+    /// zero or an inverted span takes no walk at all — the store answers
+    /// empty without touching a layer — so those owe nothing.
     ///
-    /// The whole price, paid before the store is asked: every byte an
-    /// entry can hold is inside the width the slot declared, so nothing
-    /// the walk lifts is unpaid and nothing is charged after the fact.
+    /// A leaf and not its value: an entry carries the collection and
+    /// order it commits under around whatever the slot declared, which
+    /// is what [`entry_leaf_bytes`] states and what the read dimension
+    /// charges. Priced at the width alone, a presence-only collection
+    /// sits at width zero and a page of any size costs the seek and
+    /// nothing else — so the one bound on an unauthenticated run would
+    /// not see it.
+    ///
+    /// The whole price, paid before the store is asked, so nothing the
+    /// walk lifts is charged after the fact.
     const fn walk_floor(lo: u128, hi: u128, cap: u32, width: u32) -> usize {
         if cap == 0 || lo > hi {
             0
         } else {
-            SCAN_SEEK_BYTES.saturating_add(
-                (cap as usize)
-                    .saturating_add(1)
-                    .saturating_mul(width as usize),
-            )
+            #[allow(clippy::cast_possible_truncation)] // a leaf is bounded far below usize
+            let per_leaf = entry_leaf_bytes(width) as usize;
+            SCAN_SEEK_BYTES
+                .saturating_add((cap as usize).saturating_add(1).saturating_mul(per_leaf))
         }
     }
 
@@ -583,7 +588,13 @@ mod tests {
     use super::super::fixtures::{
         RESOURCE, declared, env, hash, holding, session_holding, session_over, tx,
     };
-    use super::{Held, KernelSession, Op, SCAN_SEEK_BYTES, SessionTrap};
+    use super::{Held, KernelSession, Op, SCAN_SEEK_BYTES, SessionTrap, entry_leaf_bytes};
+
+    /// One entry leaf at `width`, in the units the floors are counted
+    /// in.
+    fn leaf(width: u32) -> usize {
+        usize::try_from(entry_leaf_bytes(width)).expect("a leaf fits a pointer")
+    }
     use crate::oracle::undeclared_accesses;
     use crate::overlay::OverlayStore;
     use crate::store::MemoryStore;
@@ -776,7 +787,7 @@ mod tests {
         }]);
         let mut session = session_over(store, &set);
 
-        let page = SCAN_SEEK_BYTES + 5 * MAX_SLOT_WIDTH as usize;
+        let page = SCAN_SEEK_BYTES + 5 * leaf(MAX_SLOT_WIDTH);
         assert_eq!(session.scan_floor(0, 0), Ok(page));
         assert_eq!(session.range_count(0, 0), Ok(4));
         // A memoized page is not scanned twice, so it owes no second walk.
@@ -1134,9 +1145,59 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &at_cap(1));
         assert_eq!(
             session.scan_floor(0, 0),
-            Ok(SCAN_SEEK_BYTES + 2 * MAX_SLOT_WIDTH as usize)
+            Ok(SCAN_SEEK_BYTES + 2 * leaf(MAX_SLOT_WIDTH))
         );
         session.range_count(0, 0).unwrap();
+    }
+
+    /// A page of a presence-only collection is priced by its leaves,
+    /// not by the nothing its values hold.
+    ///
+    /// A slot's width bounds its *value*, and a collection carrying
+    /// presence alone declares zero — the protocol's own non-fungible
+    /// vault among them. Priced at the width, such a page costs the
+    /// seek and nothing else however wide the cap, so a million entries
+    /// came to 64 fuel against a ceiling of 32,000,000 while four
+    /// entries of a widest slot came to 81,984. The compute ceiling is
+    /// the only bound on the window a run gets, so it is the one
+    /// dimension that has to see the walk.
+    #[test]
+    fn a_page_of_a_presence_only_collection_is_priced_by_its_leaves() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let at = |cap, width| {
+            let mut set = EffectSet::new();
+            set.insert_bounded(
+                Effect {
+                    target: EffectTarget::Range {
+                        owner,
+                        collection: CollectionId([4; 16]),
+                        lo: 0,
+                        hi: u128::MAX,
+                        cap,
+                    },
+                    mode: Mode::Read,
+                },
+                width,
+            )
+            .unwrap();
+            set
+        };
+
+        let presence = at(1_000_000, 0);
+        let mut session = session_over(MemoryStore::new(), &presence);
+        let page = session.scan_floor(0, 0).unwrap();
+        assert_eq!(
+            page,
+            SCAN_SEEK_BYTES + 1_000_001 * leaf(0),
+            "every leaf the cap admits carries its framing"
+        );
+
+        let widest = at(4, MAX_SLOT_WIDTH);
+        let mut small = session_over(MemoryStore::new(), &widest);
+        assert!(
+            small.scan_floor(0, 0).unwrap() < page,
+            "and four entries of the widest slot stay the cheaper ask"
+        );
     }
 
     /// The floor is what the declaration bought — the seek, and every
@@ -1167,7 +1228,7 @@ mod tests {
             10,
         )
         .unwrap();
-        let floor = SCAN_SEEK_BYTES + 5 * 10;
+        let floor = SCAN_SEEK_BYTES + 5 * leaf(10);
 
         let mut full = session_over(store, &set);
         assert_eq!(full.scan_floor(0, 0), Ok(floor));
