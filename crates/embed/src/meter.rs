@@ -113,6 +113,21 @@ fn charge_scan_floor<P: HostAccess + FuelSink>(
     charge(port, floor)
 }
 
+/// Charges the probes the instance call about to be made would take,
+/// before it is made.
+///
+/// The two instance calls read no page: they ask the store for each id
+/// at its own key, so what they owe is a seek and a leaf per key rather
+/// than a walk over the declared interval. Charged here for the reason
+/// the walk floor is — the store is not touched until the budget has
+/// covered what touching it will cost.
+fn charge_probes<P: HostAccess + FuelSink>(port: &mut P, floor: usize) -> Result<(), MeterError> {
+    if floor == 0 {
+        return Ok(());
+    }
+    charge(port, floor)
+}
+
 /// `state.site_len`.
 ///
 /// Nothing crosses the boundary but the count itself, which every host
@@ -210,7 +225,8 @@ pub fn site_instance_take<P: HostAccess + FuelSink>(
     ids: &[u64],
 ) -> Result<u32, MeterError> {
     charge(port, ids.len() * 8)?;
-    charge_scan_floor(port, site, element)?;
+    let floor = refused(port.host().take_floor(site, element, ids.len()))?;
+    charge_probes(port, floor)?;
     refused(port.host().site_instance_take(site, element, ids))
 }
 
@@ -224,7 +240,8 @@ pub fn site_instance_put<P: HostAccess + FuelSink>(
     value: Vec<u8>,
 ) -> Result<(), MeterError> {
     charge(port, value.len())?;
-    charge_scan_floor(port, site, element)?;
+    let floor = refused(port.host().put_floor(site, element, funds))?;
+    charge_probes(port, floor)?;
     refused(port.host().site_instance_put(site, element, funds, value))
 }
 

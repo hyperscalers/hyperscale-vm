@@ -208,6 +208,29 @@ pub trait KernelHost: Send {
     /// A deterministic refusal.
     fn scan_floor(&mut self, site: u32, element: u32) -> Result<usize, AbortReason>;
 
+    /// What taking `keys` instances costs, in the same terms: a seek and
+    /// a leaf per key.
+    ///
+    /// Asked before an instance take rather than [`Self::scan_floor`],
+    /// because a take reads no page — it asks the store for each id at
+    /// its own key, so a page already held pays for none of it and a
+    /// walk over the declared interval is neither the count nor the cost
+    /// of what it does.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn take_floor(&mut self, site: u32, element: u32, keys: usize) -> Result<usize, AbortReason>;
+
+    /// What filing the bucket at `funds` costs, on [`Self::take_floor`]'s
+    /// terms: one probe per instance it carries, each asked for at its
+    /// own key before it lands.
+    ///
+    /// # Errors
+    ///
+    /// A deterministic refusal.
+    fn put_floor(&mut self, site: u32, element: u32, funds: u32) -> Result<usize, AbortReason>;
+
     /// Entries currently in the interval, bounded by the declared cap.
     ///
     /// # Errors

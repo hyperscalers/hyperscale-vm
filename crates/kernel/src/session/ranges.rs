@@ -130,6 +130,56 @@ impl KernelSession {
         }
     }
 
+    /// What probing `keys` keys of a slot `width` bytes wide costs, in
+    /// the same boundary-byte terms [`Self::walk_floor`] is in: each
+    /// probe seeks the layers and may lift one leaf.
+    ///
+    /// Charged per key rather than per page, because a probe is asked at
+    /// the instance's own key and reads no page — so a walk floor stands
+    /// in for neither the count nor the cost of a run of them.
+    const fn probe_floor(keys: usize, width: u32) -> usize {
+        keys.saturating_mul(SCAN_SEEK_BYTES.saturating_add(width as usize))
+    }
+
+    /// What taking `keys` instances out of the interval behind `rep`
+    /// costs, for the fuel holder to charge ahead of the call.
+    ///
+    /// Unlike [`Self::scan_floor`] this is never nothing for a page
+    /// already held: a take probes each id at its own key, so a
+    /// materialized page pays for none of what it asks the store.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`] resolving the interval raises.
+    pub fn take_floor(
+        &mut self,
+        site: u32,
+        element: u32,
+        keys: usize,
+    ) -> Result<usize, SessionTrap> {
+        let interval = self.taking_interval(site, element)?;
+        Ok(Self::probe_floor(keys, interval.width))
+    }
+
+    /// What filing the bucket at `funds` into the interval behind `rep`
+    /// costs, on [`Self::take_floor`]'s terms: one probe per instance it
+    /// carries, since each is asked for at its own key before it lands.
+    ///
+    /// A bucket holding no instances probes nothing — the call refuses it
+    /// on its own terms, and a floor is not where that is decided.
+    ///
+    /// # Errors
+    ///
+    /// Any [`SessionTrap`] resolving the interval raises.
+    pub fn put_floor(&mut self, site: u32, element: u32, funds: u32) -> Result<usize, SessionTrap> {
+        let interval = self.filing_interval(site, element)?;
+        let keys = match self.bucket(funds) {
+            Ok(Held::Instances(ids)) => ids.len(),
+            _ => 0,
+        };
+        Ok(Self::probe_floor(keys, interval.width))
+    }
+
     /// Read a run of entries.
     ///
     /// Charges nothing: the floor of the interval a run reads under was
@@ -819,6 +869,54 @@ mod tests {
         // refuses is the collision and not the filing.
         let fresh = session.open_bucket(Held::Instances([500].into()), RESOURCE);
         assert_eq!(session.range_put(0, 0, fresh, &[1]), Ok(()));
+    }
+
+    /// A take pays per key, and a page already held pays for none of it.
+    ///
+    /// The two instance calls are the only ones that ask the store at an
+    /// entry's own key rather than through the page, so the walk floor
+    /// answers for neither how many seeks they take nor whether any are
+    /// owed: a body that counted the page first would otherwise take
+    /// every instance the cap admits for nothing.
+    #[test]
+    fn an_instance_call_pays_per_key_whatever_page_is_held() {
+        let owner = Address::new([9; 31], AddressClass::Component);
+        let collection = CollectionId([4; 16]);
+        let mut store = MemoryStore::new();
+        for order in 0..100u128 {
+            store.entry_write(owner, collection, order, vec![1; 10]);
+        }
+        let set = declared(&[Effect {
+            target: EffectTarget::Range {
+                owner,
+                collection,
+                lo: 0,
+                hi: u128::MAX,
+                cap: 4,
+            },
+            mode: Mode::Write { moves: Moves::Both },
+        }]);
+        let mut session = session_holding(store, &set);
+
+        let one = SCAN_SEEK_BYTES + MAX_SLOT_WIDTH as usize;
+        assert_eq!(session.take_floor(0, 0, 3), Ok(3 * one), "a seek a key");
+        assert_eq!(session.take_floor(0, 0, 0), Ok(0), "naming none asks none");
+
+        // Materializing the page is what used to zero the figure, since
+        // `scan_floor` answers for a page and this does not.
+        assert!(session.scan_floor(0, 0).unwrap() > 0);
+        assert_eq!(session.range_count(0, 0), Ok(4));
+        assert_eq!(session.scan_floor(0, 0), Ok(0), "the page is held");
+        assert_eq!(
+            session.take_floor(0, 0, 3),
+            Ok(3 * one),
+            "and the take still probes each of its keys"
+        );
+
+        // A filing pays for the instances its bucket carries, not for
+        // the interval it files into.
+        let carried = session.open_bucket(Held::Instances([500, 501].into()), RESOURCE);
+        assert_eq!(session.put_floor(0, 0, carried), Ok(2 * one));
     }
 
     #[test]

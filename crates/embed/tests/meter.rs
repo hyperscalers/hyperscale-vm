@@ -117,6 +117,19 @@ impl KernelHost for StubHost {
         let floor = std::mem::take(&mut self.scan_floor);
         self.op("scan-floor", floor)
     }
+    fn take_floor(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _keys: usize,
+    ) -> Result<usize, AbortReason> {
+        let floor = std::mem::take(&mut self.scan_floor);
+        self.op("take-floor", floor)
+    }
+    fn put_floor(&mut self, _site: u32, _element: u32, _funds: u32) -> Result<usize, AbortReason> {
+        let floor = std::mem::take(&mut self.scan_floor);
+        self.op("put-floor", floor)
+    }
     fn site_count(&mut self, _site: u32, _element: u32) -> Result<u32, AbortReason> {
         self.op("site_count", 2)
     }
@@ -322,14 +335,14 @@ fn every_function_charges_its_pinned_sequence() {
             |p| {
                 let _ = meter::site_instance_take(p, 0, 0, &[1, 2, 3]);
             },
-            vec![Charge(24), Host("scan-floor"), Host("site_instance_take")],
+            vec![Charge(24), Host("take-floor"), Host("site_instance_take")],
         ),
         (
             "site_instance_put",
             |p| {
                 let _ = meter::site_instance_put(p, 0, 0, 1, vec![0; 5]);
             },
-            vec![Charge(5), Host("scan-floor"), Host("site_instance_put")],
+            vec![Charge(5), Host("put-floor"), Host("site_instance_put")],
         ),
         (
             "bucket_take",

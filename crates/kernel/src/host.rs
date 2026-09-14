@@ -101,6 +101,12 @@ impl KernelHost for KernelSession {
     fn scan_floor(&mut self, site: u32, element: u32) -> Result<usize, AbortReason> {
         refused(Self::scan_floor(self, site, element))
     }
+    fn take_floor(&mut self, site: u32, element: u32, keys: usize) -> Result<usize, AbortReason> {
+        refused(Self::take_floor(self, site, element, keys))
+    }
+    fn put_floor(&mut self, site: u32, element: u32, funds: u32) -> Result<usize, AbortReason> {
+        refused(Self::put_floor(self, site, element, funds))
+    }
     fn site_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
         refused(Self::range_count(self, site, element))
     }

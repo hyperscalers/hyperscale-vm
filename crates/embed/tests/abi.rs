@@ -119,6 +119,17 @@ impl KernelHost for Recorder {
     fn scan_floor(&mut self, _site: u32, _element: u32) -> Result<usize, AbortReason> {
         Ok(0)
     }
+    fn take_floor(
+        &mut self,
+        _site: u32,
+        _element: u32,
+        _keys: usize,
+    ) -> Result<usize, AbortReason> {
+        Ok(0)
+    }
+    fn put_floor(&mut self, _site: u32, _element: u32, _funds: u32) -> Result<usize, AbortReason> {
+        Ok(0)
+    }
     fn site_count(&mut self, site: u32, element: u32) -> Result<u32, AbortReason> {
         self.op(format!("site_count({site},{element})"), 3)
     }
