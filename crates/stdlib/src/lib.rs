@@ -101,8 +101,8 @@ pub fn protocol_artifacts() -> Vec<&'static [u8]> {
     vec![account_artifact(), staking_artifact()]
 }
 
-/// A genesis flash of `artifacts`: each as a committed cell, under the
-/// same content address a publish would place it at.
+/// A genesis flash of `artifacts`: each as a committed cell, at the same
+/// key a publish would place it at.
 ///
 /// Genesis is then the package cache's cold start in the literal sense —
 /// the same projection of committed state every later block extends,
@@ -115,7 +115,7 @@ pub fn package_writes(hasher: &dyn Hasher, artifacts: &[&[u8]]) -> StateWrites {
     let mut writes = StateWrites::default();
     for artifact in artifacts {
         let package = package_hash(hasher, artifact);
-        let cell = package_key(hasher, genesis_publisher(hasher), package);
+        let cell = package_key(hasher, package);
         writes.cells.insert(cell, Some((*artifact).to_vec()));
     }
     writes
@@ -123,7 +123,7 @@ pub fn package_writes(hasher: &dyn Hasher, artifacts: &[&[u8]]) -> StateWrites {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{TestHasher, extract_metadata};
+    use hyperscale_vm_effects::{TestHasher, extract_metadata, package_address};
 
     use super::*;
 
@@ -135,12 +135,9 @@ mod tests {
             (account_artifact(), account::metadata()),
             (staking_artifact(), staking::metadata()),
         ] {
-            let cell = package_key(
-                &TestHasher,
-                genesis_publisher(&TestHasher),
-                package_hash(&TestHasher, artifact),
-            );
-            assert_eq!(cell.owner, genesis_publisher(&TestHasher));
+            let package = package_hash(&TestHasher, artifact);
+            let cell = package_key(&TestHasher, package);
+            assert_eq!(cell.owner, package_address(&TestHasher, package));
             let value = writes
                 .cells
                 .get(&cell)

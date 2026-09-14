@@ -20,7 +20,7 @@ use crate::publish::{
     CheckedMetadata, CheckedSignature, MetadataError, SignatureError, check_signature, seals,
 };
 use crate::signature::MethodSignature;
-use crate::types::{MAX_VALUE_BYTES, SlotId, child_key};
+use crate::types::{MAX_VALUE_BYTES, SlotId, child_key, package_address};
 
 /// A published package's identity: the hash of its artifact, which covers
 /// the metadata section, so metadata is immutable with the package.
@@ -46,18 +46,17 @@ pub const PACKAGE_SLOT: SlotId = SlotId(0xFFFE);
 
 const _: () = assert!(PACKAGE_SLOT.0 >= KERNEL_SLOT_BASE);
 
-/// Where `publisher`'s copy of the package addressed by `package` lives.
+/// Where the package addressed by `package` lives.
 ///
-/// Keyed by content address under the publisher, so republishing the
-/// same artifact is the same cell — which is what makes publishing
-/// idempotent rather than a conflict.
+/// Under the package's own address, which is a function of the very
+/// bytes the cell holds and of nothing else. So one artifact is one cell
+/// network-wide however many publishers offer it — publishing is
+/// idempotent rather than a conflict — and a request naming a package
+/// names its key, with no index between the two. The shard owning that
+/// prefix is the one obliged to keep it.
 #[must_use]
-pub fn package_key(
-    hasher: &dyn Hasher,
-    publisher: impl Into<Address>,
-    package: PackageHash,
-) -> SubstateKey {
-    child_key(hasher, publisher, PACKAGE_SLOT, &[package.0.0.to_vec()])
+pub fn package_key(hasher: &dyn Hasher, package: PackageHash) -> SubstateKey {
+    child_key(hasher, package_address(hasher, package), PACKAGE_SLOT, &[])
 }
 
 /// Why a record was refused at the cache door.
