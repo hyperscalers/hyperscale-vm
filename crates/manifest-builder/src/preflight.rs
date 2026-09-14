@@ -789,7 +789,7 @@ fn report(
                 .unwrap_or(0)
         })
         .collect();
-    let event_bytes = admit_event_bounds(&per_call)?;
+    let event_bytes = admit_event_bounds(&per_call, per_call.len())?;
     let footprints = routing
         .per_shard
         .iter()

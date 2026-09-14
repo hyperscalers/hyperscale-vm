@@ -412,8 +412,21 @@ pub fn event_bytes_total(event_bytes: &[u32]) -> u64 {
 ///
 /// # Errors
 ///
-/// [`TermsRefusal::EventBytesSum`] when the sum is past the cap.
-pub fn admit_event_bounds(event_bytes: &[u32]) -> Result<u64, TermsRefusal> {
+/// [`TermsRefusal::EventBytesArity`] when the count is not the
+/// manifest's, [`TermsRefusal::EventBytesSum`] when the sum is past the
+/// cap.
+pub fn admit_event_bounds(event_bytes: &[u32], nodes: usize) -> Result<u64, TermsRefusal> {
+    // One bound per node, the rule the ceilings answer to. Without it a
+    // manifest may arrive with none at all, and an empty vector is the
+    // one reading `event_bound` answers with the whole wire cap rather
+    // than refusing — so a derivation that skipped this would hand every
+    // node 64 KiB the declaration priced at nothing.
+    if event_bytes.len() != nodes {
+        return Err(TermsRefusal::EventBytesArity {
+            nodes,
+            bounds: event_bytes.len(),
+        });
+    }
     let total = event_bytes_total(event_bytes);
     if total > MAX_EVENT_BYTES_PER_TX as u64 {
         return Err(TermsRefusal::EventBytesSum { total });
@@ -445,6 +458,13 @@ pub fn admit_ceilings(gas_limits: &[u64], nodes: usize) -> Result<(), TermsRefus
 /// A signed term the derivation refuses an envelope for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TermsRefusal {
+    /// The event bounds do not index the lowered manifest one to one.
+    EventBytesArity {
+        /// Nodes the manifest lowered to.
+        nodes: usize,
+        /// Bounds the derivation reached.
+        bounds: usize,
+    },
     /// The ceilings do not index the lowered manifest one to one.
     CeilingArity {
         /// The manifest's node count.
@@ -473,6 +493,10 @@ pub enum TermsRefusal {
 impl fmt::Display for TermsRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EventBytesArity { nodes, bounds } => write!(
+                f,
+                "the envelope carries {bounds} event bounds against {nodes} manifest nodes"
+            ),
             Self::CeilingArity { nodes, ceilings } => write!(
                 f,
                 "the envelope signs {ceilings} compute ceilings against {nodes} manifest nodes"
@@ -716,16 +740,35 @@ mod tests {
     fn event_bounds_summing_past_the_cap_are_refused() {
         let page = u32::try_from(MAX_EVENT_BYTES_PER_TX / 2).expect("half the cap fits u32");
         assert_eq!(
-            admit_event_bounds(&[page, page]),
+            admit_event_bounds(&[page, page], 2),
             Ok(MAX_EVENT_BYTES_PER_TX as u64)
         );
         assert_eq!(
-            admit_event_bounds(&[page, page, 1]),
+            admit_event_bounds(&[page, page, 1], 3),
             Err(TermsRefusal::EventBytesSum {
                 total: MAX_EVENT_BYTES_PER_TX as u64 + 1,
             })
         );
-        assert_eq!(admit_event_bounds(&[]), Ok(0));
+        assert_eq!(admit_event_bounds(&[], 0), Ok(0));
+
+        // And one bound per node, the rule the ceilings answer to: a
+        // manifest arriving with none reaches `event_bound`'s empty
+        // reading, which is the whole wire cap at a declared price of
+        // nothing.
+        assert_eq!(
+            admit_event_bounds(&[], 2),
+            Err(TermsRefusal::EventBytesArity {
+                nodes: 2,
+                bounds: 0
+            })
+        );
+        assert_eq!(
+            admit_event_bounds(&[page], 2),
+            Err(TermsRefusal::EventBytesArity {
+                nodes: 2,
+                bounds: 1
+            })
+        );
     }
 
     #[test]
