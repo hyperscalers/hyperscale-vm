@@ -414,15 +414,32 @@ pub const fn read_bytes(target: &EffectTarget, width: u32) -> u64 {
 /// is zero, which is the one value it is certainly not.
 pub const WRITE_LEAF_BYTES: u64 = 2_048;
 
+/// What writing one leaf holding `leaf` bytes costs, in the byte terms
+/// the write dimension is denominated in: the leaf's own bytes over
+/// [`WRITE_LEAF_BYTES`].
+///
+/// The one place the write dimension states what a leaf costs, so a
+/// caller pricing a leaf the kernel does not declare — a crossing
+/// record, a claim, the cell a shard writes to say it committed —
+/// reaches the same figure as the declaration does for a leaf it holds.
+/// Stated apart from [`write_bytes`] because those cells have no
+/// [`EffectTarget`] and no [`Mode`]: they are leaves the chain writes,
+/// not accesses a body declared.
+#[must_use]
+pub const fn written_leaf(leaf: u64) -> u64 {
+    WRITE_LEAF_BYTES.saturating_add(leaf)
+}
+
 /// The bytes one declared effect lets a body write onto the store:
 /// nothing for a read, and for every mode that moves or overwrites, each
-/// written leaf at [`WRITE_LEAF_BYTES`] plus its own `width`.
+/// leaf it reaches at [`written_leaf`].
 #[must_use]
 pub const fn write_bytes(target: &EffectTarget, mode: Mode, width: u32) -> u64 {
     match mode {
         Mode::Read => 0,
-        Mode::Delta { .. } | Mode::Reserve { .. } | Mode::Write { .. } => leaves_written(target)
-            .saturating_mul(WRITE_LEAF_BYTES.saturating_add(leaf_bytes(target, width))),
+        Mode::Delta { .. } | Mode::Reserve { .. } | Mode::Write { .. } => {
+            leaves_written(target).saturating_mul(written_leaf(leaf_bytes(target, width)))
+        }
     }
 }
 
