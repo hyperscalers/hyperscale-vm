@@ -228,7 +228,7 @@ fn fixture(plan: &Plan) -> Option<Fx> {
         });
     }
     for effect in effects {
-        declared.insert(effect).ok()?;
+        declared.insert_at_cap(effect).ok()?;
     }
 
     Some(Fx {
@@ -466,10 +466,10 @@ fuzz_target!(|data: &[u8]| {
         })
         .unwrap_or_default();
     let (blessed_receipt, _) = blessed_host
-        .finish(answers.clone(), blessed_fuel)
+        .finish(answers.clone(), vec![blessed_fuel])
         .expect("oracle clean on the blessed side");
     let (ref_receipt, _) = ref_host
-        .finish(answers, ref_fuel)
+        .finish(answers, vec![ref_fuel])
         .expect("oracle clean on the reference side");
     assert_eq!(blessed_receipt, ref_receipt, "receipts diverged");
 });
