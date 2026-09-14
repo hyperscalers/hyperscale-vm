@@ -1056,6 +1056,14 @@ fn screen_batch(batch: &[BatchTx]) -> Result<(), BatchError> {
         // the struct literally could pair them wrongly, and the
         // consequence would be a transaction routed against one
         // declaration and handed capabilities for another.
+        //
+        // The targets and the modes, and not the widths: a width belongs
+        // to a target rather than to an access, so `ordered` carries
+        // none and the one fed in here is read off the set being
+        // compared. Both sides derive from the same signed envelope on
+        // the same node, so there is nowhere for a width to differ —
+        // but the comparison does not establish that, and reading it as
+        // if it did is the mistake to avoid.
         let mut folded = EffectSet::new();
         for access in &entry.declaration.ordered {
             let width = entry.declaration.set.width_of(&access.effect.target);
