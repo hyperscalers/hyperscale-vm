@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Declaration, DeclaredAccess, Hash32, Hasher, IssuanceGrant, Issued, Marked, Marker,
-    ResourceKind, SlotId, SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
+    PackageHash, ResourceKind, SlotId, SubintentHash, SubintentRecord, TestHasher, child_key,
+    nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, Job, KernelSession,
@@ -1008,13 +1009,16 @@ fn movement_totals_past_the_cell_width_abort_only_their_own_transaction() {
     assert_eq!(amount_at(&outcome.store, vault), 0);
 }
 
+/// The package [`Downed`] reports it could not run.
+const DOWNED_PACKAGE: PackageHash = PackageHash(Hash32([0x7Au8; 32]));
+
 /// An engine with nothing behind it: every invocation finds the
 /// environment wanting.
 struct Downed;
 
 impl GuestRunner for Downed {
     fn run(&self, _entry: &BatchTx, _session: KernelSession) -> Result<RunResult, Unavailable> {
-        Err(Unavailable(AbortReason::CodeUnavailable))
+        Err(Unavailable(DOWNED_PACKAGE, AbortReason::CodeUnavailable))
     }
 }
 
@@ -1033,7 +1037,8 @@ fn an_unavailable_engine_refuses_the_batch() {
 
     // Machine-local failure is not a verdict: no receipt exists to price
     // it, and the batch refuses rather than letting this node attest
-    // something its peers would not reproduce.
+    // something its peers would not reproduce. It names the package, so
+    // the embedder recovering the environment knows what to acquire.
     let refused = execute_batch(
         Arc::new(store),
         &batch,
@@ -1046,6 +1051,7 @@ fn an_unavailable_engine_refuses_the_batch() {
         refused,
         BatchError::Unavailable {
             tx: hash,
+            package: DOWNED_PACKAGE,
             reason: AbortReason::CodeUnavailable,
         } if hash == tx(0x01)
     ));

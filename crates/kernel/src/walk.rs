@@ -78,7 +78,9 @@ enum NodeFailure {
     Abort(Box<(KernelSession, Outcome, u64)>),
     /// The environment could not run the node — no verdict exists, and
     /// the walk refuses the batch rather than pricing the transaction.
-    Unavailable(AbortReason),
+    /// Names the package whose code the environment wanted, which is the
+    /// one thing an embedder can act on.
+    Unavailable(PackageHash, AbortReason),
 }
 
 /// A node's invocation succeeded: the session, the edges it produced,
@@ -99,7 +101,7 @@ impl NodeFailure {
                     spent,
                 })
             }
-            Self::Unavailable(reason) => Err(Unavailable(reason)),
+            Self::Unavailable(package, reason) => Err(Unavailable(package, reason)),
         }
     }
 }
@@ -343,7 +345,7 @@ fn settled(node: u32, call: &NodeCall, invoked: InvokeResult) -> Result<NodeSucc
         // before it runs, and exhaustion spends the counter whole, so a
         // node that ran out reports its allowance on either engine.
         Invoked::Aborted(reason) => Err(fail(session, Outcome::UserError { reason }, invoked.fuel)),
-        Invoked::Unavailable(reason) => Err(NodeFailure::Unavailable(reason)),
+        Invoked::Unavailable(reason) => Err(NodeFailure::Unavailable(call.package, reason)),
     }
 }
 
@@ -710,7 +712,9 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                         spent,
                     });
                 }
-                Err(NodeFailure::Unavailable(reason)) => return Err(Unavailable(reason)),
+                Err(NodeFailure::Unavailable(package, reason)) => {
+                    return Err(Unavailable(package, reason));
+                }
             }
         }
         Ok(RunResult::Completed {

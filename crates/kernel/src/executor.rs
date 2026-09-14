@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread;
 
-use hyperscale_vm_effects::{Declaration, NodeCall, SubintentRecord};
+use hyperscale_vm_effects::{Declaration, NodeCall, PackageHash, SubintentRecord};
 use hyperscale_vm_types::{
     AbortReason, Address, Answer, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget,
     MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
@@ -432,11 +432,13 @@ pub enum RunResult {
     },
 }
 
-/// The environment could not run a guest: code not resolvable, an
-/// instance the engine failed to set up. Carries the nearest class for
+/// The environment could not run a guest.
+///
+/// Code not resolvable, or an instance the engine failed to set up.
+/// Names the package the environment wanted and the nearest class for
 /// diagnostics — it reaches no receipt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Unavailable(pub AbortReason);
+pub struct Unavailable(pub PackageHash, pub AbortReason);
 
 /// How the executor schedules groups. The choice cannot influence any
 /// receipt or the final store — that is the schedule-invariance property
@@ -459,10 +461,13 @@ pub enum BatchError {
     /// instance the engine failed to set up. Machine-local where every
     /// outcome is deterministic: the batch produces no receipts, and the
     /// embedder recovers the environment rather than attesting anything.
-    #[error("transaction {tx:?} found the engine unavailable: {reason:?}")]
+    #[error("transaction {tx:?} found the engine unavailable for {package:?}: {reason:?}")]
     Unavailable {
         /// The transaction whose invocation found the environment wanting.
         tx: TxHash,
+        /// The package whose code the environment wanted — what an
+        /// embedder recovering it has to act on.
+        package: PackageHash,
         /// The diagnostic class the backend reported.
         reason: AbortReason,
     },
@@ -971,13 +976,13 @@ fn run_group<R: GuestRunner>(
                 continue;
             }
         };
-        let result =
-            runner
-                .run(entry, session)
-                .map_err(|Unavailable(reason)| BatchError::Unavailable {
-                    tx: entry.tx,
-                    reason,
-                })?;
+        let result = runner
+            .run(entry, session)
+            .map_err(|Unavailable(package, reason)| BatchError::Unavailable {
+                tx: entry.tx,
+                package,
+                reason,
+            })?;
         match result {
             RunResult::Completed {
                 session,
