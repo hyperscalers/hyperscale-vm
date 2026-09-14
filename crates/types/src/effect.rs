@@ -85,6 +85,29 @@ impl EffectSet {
     /// [`EffectConflict`] where the fold has no answer: a reserve total
     /// past `u128`.
     pub fn insert_bounded(&mut self, effect: Effect, width: u32) -> Result<bool, EffectConflict> {
+        // The one fold that can fail, answered before the set is
+        // touched: an arm returning `Err` has to leave the set as it
+        // found it, or "whether the set moved" is a question about a set
+        // the caller already lost.
+        let folded = match effect.mode {
+            Mode::Reserve { amount } => self
+                .by_target
+                .get(&effect.target)
+                .and_then(|declared| {
+                    declared.modes.iter().find_map(|mode| match mode {
+                        Mode::Reserve { amount } => Some(*amount),
+                        _ => None,
+                    })
+                })
+                .map(|prior| {
+                    prior
+                        .checked_add(amount)
+                        .map(|total| (prior, total))
+                        .ok_or(EffectConflict::ReserveOverflow)
+                })
+                .transpose()?,
+            _ => None,
+        };
         let declared = self
             .by_target
             .entry(effect.target)
@@ -95,21 +118,12 @@ impl EffectSet {
         let narrowed = width < declared.width;
         declared.width = declared.width.min(width);
         let modes = &mut declared.modes;
-        if let Mode::Reserve { amount } = effect.mode {
-            let existing = modes.iter().find_map(|mode| match mode {
-                Mode::Reserve { amount } => Some(*amount),
-                _ => None,
-            });
-            if let Some(prior) = existing {
-                let total = prior
-                    .checked_add(amount)
-                    .ok_or(EffectConflict::ReserveOverflow)?;
-                modes.remove(&Mode::Reserve { amount: prior });
-                modes.insert(Mode::Reserve { amount: total });
-                // The set changed even though it holds no new effect:
-                // what the reserver may take rose by this one's amount.
-                return Ok(true);
-            }
+        if let Some((prior, total)) = folded {
+            modes.remove(&Mode::Reserve { amount: prior });
+            modes.insert(Mode::Reserve { amount: total });
+            // The set changed even though it holds no new effect:
+            // what the reserver may take rose by this one's amount.
+            return Ok(true);
         }
         Ok(modes.insert(effect.mode) || narrowed)
     }
