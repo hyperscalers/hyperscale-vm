@@ -370,11 +370,10 @@ const fn leaves_written(target: &EffectTarget) -> u64 {
 ///
 /// An upper bound rather than the figure: the value's own length rides
 /// in front of it as a varint, so the framing is 33 bytes up to a
-/// 127-byte value, 34 up to 16,383 and 35 at
-/// [`MAX_SLOT_WIDTH`](crate::writes::MAX_SLOT_WIDTH). The widest, since
-/// a dimension that priced the narrowest would underprice every leaf
-/// above it. Pinned against the encoder by the outer's
-/// `an_entry_leaf_costs_what_the_dimension_prices_it`.
+/// 127-byte value, 34 up to 16,383 and 35 at [`MAX_SLOT_WIDTH`]. The
+/// widest, since a dimension that priced the narrowest would
+/// underprice every leaf above it. Pinned against the encoder by the
+/// outer's `an_entry_leaf_costs_what_the_dimension_prices_it`.
 pub const ENTRY_LEAF_BYTES: u64 = 35;
 
 /// The bytes one leaf under `target` holds: its value at `width`, and

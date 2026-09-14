@@ -155,8 +155,7 @@ pub struct SlotShape {
     ///
     /// Derived from the element's shape where the shape is closed, and
     /// declared beside the field otherwise; zero is no width at all,
-    /// which the publish gate refuses. Held to
-    /// [`MAX_SLOT_WIDTH`](hyperscale_vm_types::MAX_SLOT_WIDTH), and
+    /// which the publish gate refuses. Held to [`MAX_SLOT_WIDTH`], and
     /// what turns a declared entry cap into a declared byte count.
     pub width: u32,
     /// The resource a declared vault holds, where the field's
