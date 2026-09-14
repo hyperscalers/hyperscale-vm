@@ -90,11 +90,15 @@ pub mod account {
         ///
         /// A rule reaches the account as an argument, and an argument's
         /// bytes are capped at four kibibytes; the cell is sized to
-        /// hold any rule that can be handed to it.
-        #[width(4096)]
+        /// hold any rule that can be handed to it. The record and not
+        /// the bare bytes: a byte string sits behind its own length, and
+        /// an absent rule behind a tag, so the width is the argument cap
+        /// and three bytes — sized at the cap alone, the widest rule an
+        /// account can be handed is the one it refuses.
+        #[width(4099)]
         recovery: Cell<Option<RuleBytes>>,
         /// Who may enact one before its delay runs out.
-        #[width(4096)]
+        #[width(4099)]
         confirmation: Cell<Option<RuleBytes>>,
         /// The replacement waiting, where one is: three rules at the
         /// argument cap, their lengths, and two words.

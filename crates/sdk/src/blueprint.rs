@@ -14,6 +14,7 @@ use hyperscale_vm_effects::{
     Expr, LeafForm, MAX_EFFECTS_PER_SIGNATURE, MAX_SHAPE_DEPTH, MethodSignature, PackageMetadata,
     ParamType, SlotId, SlotKind, SlotShape,
 };
+use hyperscale_vm_types::EVENT_FRAME_BYTES;
 
 use crate::state::LeafShape;
 use crate::trace::Trace;
@@ -123,7 +124,9 @@ impl Blueprint {
                     panic!("`{event}` has no widest encoding — an event encodes infallibly")
                 });
             indices.push(u32::try_from(index).expect("an event table under the index cap"));
-            bytes = bytes.saturating_add(most);
+            // The framing beside the payload, matching what the publish
+            // gate derives and what the kernel meters at emit.
+            bytes = bytes.saturating_add(EVENT_FRAME_BYTES).saturating_add(most);
         }
         indices.sort_unstable();
         (

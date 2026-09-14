@@ -18,8 +18,8 @@ use hyperscale_vm_kernel::{
     KernelSession, ManifestWalk, MemoryStore, Receipt, execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, EffectSet, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES,
-    Outcome, TxHash,
+    AbortReason, Address, AddressClass, EVENT_FRAME_BYTES, EffectSet, MAX_EVENT_BYTES_PER_TX,
+    MAX_EVENT_PAYLOAD_BYTES, Outcome, TxHash,
 };
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
@@ -97,9 +97,15 @@ fn emitting(calls: usize, bytes: usize, events: usize, bounds: &[u32]) -> Receip
     outcome.receipts[&tx].clone()
 }
 
+/// A bound is a bound on what the receipt keeps, so it covers the
+/// framing an event carries beside its payload.
+fn bound_for(payload: usize) -> u32 {
+    u32::try_from(payload + EVENT_FRAME_BYTES).expect("a bound fits u32")
+}
+
 #[test]
 fn events_up_to_the_declared_bound_are_carried() {
-    let receipt = run(1, 100, &[100]);
+    let receipt = run(1, 100, &[bound_for(100)]);
     assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
     assert_eq!(receipt.events.len(), 1);
     assert_eq!(receipt.events[0].payload.len(), 100);
@@ -107,7 +113,7 @@ fn events_up_to_the_declared_bound_are_carried() {
 
 #[test]
 fn an_emit_past_the_declared_bound_aborts_the_transaction() {
-    let receipt = run(1, 101, &[100]);
+    let receipt = run(1, 101, &[bound_for(100)]);
     assert_eq!(
         receipt.outcome,
         Outcome::UserError {
@@ -143,8 +149,11 @@ fn a_nodes_bound_is_its_own_and_never_its_neighbours() {
 #[test]
 fn the_transactions_own_total_bounds_what_its_frames_declare() {
     let page = MAX_EVENT_PAYLOAD_BYTES;
-    let whole = MAX_EVENT_BYTES_PER_TX / page;
-    let bounds = vec![u32::try_from(page).expect("a page fits u32"); whole + 1];
+    // A page and the framing kept around it, which is what the receipt
+    // carries and so what the transaction's own total counts.
+    let kept = page + EVENT_FRAME_BYTES;
+    let whole = MAX_EVENT_BYTES_PER_TX / kept;
+    let bounds = vec![u32::try_from(kept).expect("a page fits u32"); whole + 1];
     assert!(matches!(
         run(whole, page, &bounds).outcome,
         Outcome::Completed { .. }

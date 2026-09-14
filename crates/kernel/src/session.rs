@@ -52,7 +52,8 @@ use hyperscale_vm_types::{
 // same constants bound the kernel's emission here and the wire's decode in
 // the consensus workspace, so the two cannot drift.
 use hyperscale_vm_types::{
-    Event, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
+    EVENT_FRAME_BYTES, Event, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
+    MAX_EVENTS_PER_TX,
 };
 pub use materialize::{Capability, Interval, MaterializeError, Settlement};
 use ranges::Ranges;
@@ -749,14 +750,20 @@ impl KernelSession {
         // declares what one call into it may emit, the declaration enters
         // that figure into its retention, and what the receipt may carry
         // is what was paid for.
-        let carried = self.node_events.carried.saturating_add(payload.len());
+        //
+        // The framing counts against it beside the payload, because the
+        // receipt carries both to every validator: an event is never its
+        // payload alone, and a bound over payloads alone would gossip
+        // the emitter and the index of every event for nothing.
+        let kept = EVENT_FRAME_BYTES.saturating_add(payload.len());
+        let carried = self.node_events.carried.saturating_add(kept);
         if carried > self.node_events.bound {
             return Err(SessionTrap::EventBytesExceeded(self.node_events.bound));
         }
         // And the transaction's own total beside it, so the receipt is
         // bounded by one figure whatever its frames declared between
         // them.
-        let total = self.events_carried.saturating_add(payload.len());
+        let total = self.events_carried.saturating_add(kept);
         if total > MAX_EVENT_BYTES_PER_TX {
             return Err(SessionTrap::EventBytesExceeded(MAX_EVENT_BYTES_PER_TX));
         }
@@ -790,9 +797,9 @@ mod tests {
     use std::sync::Arc;
 
     use hyperscale_vm_types::{
-        ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, Effect, EffectTarget,
-        MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
-        MAX_SLOT_WIDTH, Mode, Moves, encode_amount,
+        ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, EVENT_FRAME_BYTES, Effect,
+        EffectTarget, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
+        MAX_EVENTS_PER_TX, MAX_SLOT_WIDTH, Mode, Moves, encode_amount,
     };
 
     use super::fixtures::{declared, env, key, session_holding, session_over, tx};
@@ -1016,7 +1023,10 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
         assert_eq!(session.emit(0, Vec::new()), Err(SessionTrap::NoInvocation));
 
-        session.enter_invocation(Address::new([7; 31], AddressClass::Component), 1_024);
+        session.enter_invocation(
+            Address::new([7; 31], AddressClass::Component),
+            MAX_EVENT_BYTES_PER_TX,
+        );
         assert_eq!(
             session.emit(MAX_EVENT_TYPES, Vec::new()),
             Err(SessionTrap::EventTypeOutOfRange(MAX_EVENT_TYPES)),
@@ -1048,29 +1058,39 @@ mod tests {
         let emitter = Address::new([7; 31], AddressClass::Component);
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
         session.enter_invocation(emitter, MAX_EVENT_BYTES_PER_TX);
-        let full = MAX_EVENT_BYTES_PER_TX / MAX_EVENT_PAYLOAD_BYTES;
+        let kept = MAX_EVENT_PAYLOAD_BYTES + EVENT_FRAME_BYTES;
+        let full = MAX_EVENT_BYTES_PER_TX / kept;
         for _ in 0..full {
             session.emit(0, vec![0u8; MAX_EVENT_PAYLOAD_BYTES]).unwrap();
         }
+        // What is left is under a whole page but over a bare frame, so
+        // the payload that fits is the remainder less the framing.
+        let left = MAX_EVENT_BYTES_PER_TX - full * kept;
         assert_eq!(
-            session.emit(0, vec![0u8; 1]),
+            session.emit(0, vec![0u8; left]),
             Err(SessionTrap::EventBytesExceeded(MAX_EVENT_BYTES_PER_TX))
         );
-        // An empty payload adds no bytes and still fits under the count.
-        session.emit(0, Vec::new()).unwrap();
+        // An empty payload still costs its framing, which is the whole
+        // point: a receipt keeps the emitter and the index either way.
+        session
+            .emit(0, vec![0u8; left - EVENT_FRAME_BYTES])
+            .unwrap();
 
         // A declared bound binds below the cap, and the next frame's own
         // figure is what it spends.
+        let bound = 100 + 2 * EVENT_FRAME_BYTES;
         let mut bounded = session_over(MemoryStore::new(), &declared(&[]));
-        bounded.enter_invocation(emitter, 100);
+        bounded.enter_invocation(emitter, bound);
         bounded.emit(0, vec![0u8; 60]).unwrap();
         bounded.emit(0, vec![0u8; 40]).unwrap();
         assert_eq!(
             bounded.emit(0, vec![0u8; 1]),
-            Err(SessionTrap::EventBytesExceeded(100))
+            Err(SessionTrap::EventBytesExceeded(bound))
         );
-        bounded.enter_invocation(emitter, 100);
-        bounded.emit(0, vec![0u8; 100]).unwrap();
+        bounded.enter_invocation(emitter, bound);
+        bounded
+            .emit(0, vec![0u8; bound - EVENT_FRAME_BYTES])
+            .unwrap();
     }
 
     /// A written value past the cell cap traps at production. The guard

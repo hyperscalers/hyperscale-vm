@@ -35,6 +35,26 @@ pub const MAX_EVENTS_PER_TX: usize = 256;
 /// the retention rate, and this bounds what one decode allocates.
 pub const MAX_EVENT_PAYLOAD_BYTES: usize = 4096;
 
+/// What one event costs before its payload, in the bytes it puts on
+/// every validator's link.
+///
+/// An event is never its payload alone: the emitter's address and the
+/// index into its package's event table cross beside it, and the
+/// payload's own length rides in front of them. Counted at emit so the
+/// bound a method declares bounds what a receipt actually carries,
+/// which is what the retention rate prices — a figure over payloads
+/// alone gossips the framing of two hundred and fifty-six empty events
+/// to the whole network for nothing.
+///
+/// An upper bound rather than the figure: the payload's length rides in
+/// front of it as a varint, so the framing is 37 bytes up to a 127-byte
+/// payload and 38 at [`MAX_EVENT_PAYLOAD_BYTES`]. The widest, since a
+/// figure that priced the narrowest would underprice every event above
+/// it.
+///
+/// Pinned against the encoder by `an_event_frame_costs_what_it_encodes`.
+pub const EVENT_FRAME_BYTES: usize = 38;
+
 /// The event bytes one transaction may emit between all its events.
 ///
 /// A price bound, not only a wire one: events are receipt content every
@@ -703,11 +723,39 @@ mod tests {
     use hyperscale_hbor::{DecodeError, Hash32, assert_canonical, from_slice, to_vec};
 
     use super::{
-        AbortReason, Address, Answer, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome, SubstateKey, TxHash,
-        UnmetCondition,
+        AbortReason, Address, Answer, EVENT_FRAME_BYTES, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome,
+        SubstateKey, TxHash, UnmetCondition,
     };
     use crate::address::{AddressClass, EffectTarget, LocalKey};
     use crate::mode::Presence;
+
+    /// An event costs its framing before it costs a byte of payload.
+    ///
+    /// [`EVENT_FRAME_BYTES`] is what the retention dimension charges per
+    /// event, so it has to cover what the encoder actually writes around
+    /// one — under it and a receipt keeps bytes nobody paid for.
+    #[test]
+    fn an_event_frame_costs_what_it_encodes() {
+        let empty = Event {
+            emitter: Address::new([7; 31], AddressClass::Component),
+            event_type: 3,
+            payload: Vec::new(),
+        };
+        let widest = Event {
+            payload: vec![0xAB; MAX_EVENT_PAYLOAD_BYTES],
+            emitter: empty.emitter,
+            event_type: empty.event_type,
+        };
+        assert_eq!(
+            to_vec(&widest).unwrap().len() - MAX_EVENT_PAYLOAD_BYTES,
+            EVENT_FRAME_BYTES,
+            "the widest framing is the one the dimension prices"
+        );
+        assert!(
+            to_vec(&empty).unwrap().len() <= EVENT_FRAME_BYTES,
+            "and no narrower event costs more than it"
+        );
+    }
 
     /// Every abort class's wire byte, pinned one by one.
     ///

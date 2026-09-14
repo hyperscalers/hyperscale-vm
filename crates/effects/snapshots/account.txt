@@ -2,8 +2,8 @@ state
   the protocol's own — vault, auth, nf-vault
      16  refused — a leaf per key, holding [u8; 1], at most 1 bytes
      17  quarantine — a leaf per key, holding u128, at most 16 bytes
-     18  recovery — one leaf, holding [u8], at most 4096 bytes
-     19  confirmation — one leaf, holding [u8], at most 4096 bytes
+     18  recovery — one leaf, holding [u8], at most 4099 bytes
+     19  confirmation — one leaf, holding [u8], at most 4099 bytes
      20  pending — one leaf, holding pending, at most 12352 bytes
      21  delay_ms — one leaf, holding u64, at most 8 bytes
 events
@@ -52,7 +52,7 @@ confirm() — infallible
   exports  handles for clauses 0–4
 
 deposit(bucket) — total
-  emits    deposited — at most 16 bytes
+  emits    deposited — at most 54 bytes
   declares
       0  read self.refused[resource-of(arg0)]
       1  credit self.quarantine[resource-of(arg0)]
@@ -131,7 +131,7 @@ sweep(resource-address, u128) — infallible
   exports  handle for clause 1
 
 withdraw(resource-address, u128) — infallible
-  emits    withdrawn — at most 16 bytes
+  emits    withdrawn — at most 54 bytes
   declares
       0  requires claim self
       1  reserve arg1 self.vault[arg0]

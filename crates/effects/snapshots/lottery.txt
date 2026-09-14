@@ -21,14 +21,14 @@ types
   settled = (outcome)
 
 close() — infallible
-  emits    closed — at most 0 bytes
+  emits    closed — at most 38 bytes
   declares
       0  requires self.round is absent
       1  write self.round
   exports  handle for clause 1
 
 enter(address, bucket) — infallible
-  emits    entered — at most 32 bytes
+  emits    entered — at most 70 bytes
   declares
       0  requires self.round is absent
       1  read self.round
@@ -43,7 +43,7 @@ instantiate() — infallible
   exports  handle for clause 1, self.record
 
 reopen() — fallible
-  emits    closed — at most 0 bytes
+  emits    closed — at most 38 bytes
   declares
       0  requires self.outcome is absent
       1  read self.outcome
@@ -52,7 +52,7 @@ reopen() — fallible
   exports  handle for clause 1, handle for clause 3
 
 settle(u64) — fallible
-  emits    settled — at most 65 bytes
+  emits    settled — at most 103 bytes
   declares
       0  requires self.round is present
       1  write self.round

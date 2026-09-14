@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{Resolution, ShapeFault};
 use hyperscale_vm_types::{
-    MAX_ERROR_CODES, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_TYPES, MAX_SLOT_WIDTH,
+    EVENT_FRAME_BYTES, MAX_ERROR_CODES, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_TYPES, MAX_SLOT_WIDTH,
 };
 
 use super::bounds::{PlacedBounds, check_signature_bounds};
@@ -279,6 +279,10 @@ fn check_event_bounds(metadata: &PackageMetadata) -> Result<(), MetadataError> {
         // already holds. The author names the events; the bytes are
         // derived, and a declaration that disagrees is refused on the
         // terms a slot's width is.
+        //
+        // Each event's framing counts beside its payload, because the
+        // receipt carries both: the figure bounds what crosses, which is
+        // what the retention rate prices.
         let mut derived = 0usize;
         for index in &signature.emits {
             let event = &metadata.events[*index as usize];
@@ -298,7 +302,9 @@ fn check_event_bounds(metadata: &PackageMetadata) -> Result<(), MetadataError> {
                 .ok_or_else(|| MetadataError::EventShapeOpen {
                     name: event.clone(),
                 })?;
-            derived = derived.saturating_add(most);
+            derived = derived
+                .saturating_add(EVENT_FRAME_BYTES)
+                .saturating_add(most);
         }
         if derived > MAX_EVENT_BYTES_PER_TX {
             return Err(MetadataError::EventBytesTooHigh(derived));
@@ -586,6 +592,12 @@ mod tests {
         }
     }
 
+    /// The framing one event costs, in the units a signature states it
+    /// in.
+    fn frame_bytes() -> u32 {
+        u32::try_from(EVENT_FRAME_BYTES).expect("a frame fits u32")
+    }
+
     /// One method emitting the package's first event at `bytes`, so a
     /// package declaring events has one that may emit them.
     fn emitting(bytes: u32) -> BTreeMap<String, MethodSignature> {
@@ -675,7 +687,7 @@ mod tests {
         // it is bounded at nothing too.
         let named = |types: ShapeTable| PackageMetadata {
             events: vec!["moved".into()],
-            methods: emitting(0),
+            methods: emitting(frame_bytes()),
             types,
             ..PackageMetadata::default()
         };
@@ -699,7 +711,7 @@ mod tests {
     fn one_name_at_two_event_indices_is_refused() {
         let metadata = PackageMetadata {
             events: vec!["moved".into(), "moved".into()],
-            methods: emitting(8),
+            methods: emitting(frame_bytes() + 8),
             types: one("moved", TypeShape::U64),
             ..PackageMetadata::default()
         };

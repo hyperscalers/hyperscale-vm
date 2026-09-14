@@ -69,8 +69,8 @@ mod tests {
     use hyperscale_vm_fixtures::{amm, book};
     use hyperscale_vm_stdlib::account;
     use hyperscale_vm_types::{
-        Address, AddressClass, LocalKey, MAX_ERROR_CODES, MAX_EVENT_TYPES, Moves, ResourceAddr,
-        SubstateKey,
+        Address, AddressClass, EVENT_FRAME_BYTES, LocalKey, MAX_ERROR_CODES, MAX_EVENT_TYPES,
+        Moves, ResourceAddr, SubstateKey,
     };
 
     use super::*;
@@ -172,6 +172,12 @@ mod tests {
     /// expression form, each target form, each mode, a guarded clause
     /// and the binding that reads its verdict, a nested for-each body, a
     /// call site, and a deep literal.
+    /// The framing one event costs, in the units a signature states it
+    /// in.
+    fn frame_bytes() -> u32 {
+        u32::try_from(EVENT_FRAME_BYTES).expect("a frame fits u32")
+    }
+
     #[allow(clippy::too_many_lines)] // one arm per shape the vocabulary admits
     fn every_authored_shape() -> MethodSignature {
         MethodSignature {
@@ -294,12 +300,14 @@ mod tests {
             .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
             .collect();
         // A declared event has a method that may emit it; the empty
-        // shape encodes to nothing, so the bound is nothing.
-        metadata
+        // shape encodes to nothing, so the bound is the framing the
+        // receipt keeps around each of the two.
+        let method = metadata
             .methods
             .get_mut("m")
-            .expect("the method under test")
-            .emits = vec![0, 1];
+            .expect("the method under test");
+        method.emits = vec![0, 1];
+        method.event_bytes = 2 * frame_bytes();
 
         let bytes = encode_metadata(&metadata).expect("encodes");
         assert_eq!(decode_metadata(&bytes).expect("decodes"), metadata);
@@ -516,6 +524,7 @@ mod tests {
                     "moves".to_owned(),
                     MethodSignature {
                         emits: vec![0],
+                        event_bytes: frame_bytes(),
                         ..MethodSignature::default()
                     },
                 ))

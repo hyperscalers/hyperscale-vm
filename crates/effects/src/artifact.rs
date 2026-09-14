@@ -259,7 +259,13 @@ fn read_uleb128(bytes: &[u8], pos: &mut usize) -> Result<usize, ArtifactError> {
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::{ShapeField, TypeShape, to_vec_with_depth};
-    use hyperscale_vm_types::Moves;
+    use hyperscale_vm_types::{EVENT_FRAME_BYTES, Moves};
+
+    /// The framing one event costs, in the units a signature states it
+    /// in.
+    fn frame_bytes() -> u32 {
+        u32::try_from(EVENT_FRAME_BYTES).expect("a frame fits u32")
+    }
 
     use super::{
         ArtifactError, CUSTOM_SECTION_ID, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata,
@@ -355,9 +361,10 @@ mod tests {
             "transfer".to_owned(),
             MethodSignature {
                 emits: vec![0],
-                // What the shape below encodes to, which the door
-                // derives again on the way back out.
-                event_bytes: 16,
+                // What the shape below encodes to and the framing kept
+                // around it, which the door derives again on the way
+                // back out.
+                event_bytes: frame_bytes() + 16,
                 ..MethodSignature::default()
             },
         );
