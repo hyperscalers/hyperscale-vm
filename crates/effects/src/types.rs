@@ -11,19 +11,28 @@ use crate::hash::{Hash32, Hasher};
 use crate::metadata::PackageHash;
 use crate::resource::{ResourceGrants, ResourceKind};
 
-/// A shard identity, as resolved from an address prefix.
+/// A shard identity, as resolved from an address prefix: a trie leaf
+/// flattened to its heap index `(1 << depth) | path`.
 ///
-/// Opaque here: this crate reads it only as a routing key, and what it
-/// means belongs to whoever implements [`ShardResolver`](crate::route::ShardResolver).
+/// Flattened rather than held as `(depth, path)` so that it is a scalar,
+/// which is what lets [`Star`](crate::star::Star) be generic over the id
+/// it places: the consensus workspace maps a star's ids into its own
+/// `ShardId` once, at the seam, and works in its own vocabulary
+/// thereafter. Two declarations and one cast, against a shard type
+/// threaded through every placement API here.
 ///
-/// Wide enough for a trie leaf, which is what the embedder's shards are.
-/// A leaf identified by `(depth, path)` flattens to the heap index
-/// `(1 << depth) | path`, and a depth bound of 63 puts that at the top of
-/// `u64`. Narrower would not merely truncate: two leaves at different
+/// A `u64` because a depth bound of 63 puts the heap index at the top of
+/// one. Narrower would not merely truncate: two leaves at different
 /// depths would collide on one id, and a shard would silently be credited
 /// with another's effects. A cap on the number of *live* shards does not
 /// bound their depth — an unbalanced trie reaches past a narrow id with
 /// far fewer leaves than the cap allows.
+///
+/// What this crate does *not* decide is which leaf an address lands on:
+/// that is [`ShardResolver`](crate::ShardResolver)'s, and the
+/// kernel names no shard at all — a [`LegShape`](crate::LegShape)
+/// carries none, because which shard a target resolves to is the one
+/// part a reshape moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ShardId(pub u64);
 

@@ -170,7 +170,7 @@ proptest! {
     }
 
     /// The price is a function of the declaration, not of the order it
-    /// was assembled in — the same purity `route()` has, for the same
+    /// was assembled in — the same purity admission has, for the same
     /// reason: every node has to reach the identical number.
     #[test]
     fn the_price_is_a_function_of_the_set(effects in vec(arb_effect(), 0..12)) {

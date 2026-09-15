@@ -9,8 +9,9 @@
 //! arguments, creation-fixed instance configuration, and a hasher, and
 //! nothing else.
 //!
-//! [`route()`] folds signature evaluation over a manifest's nodes and returns
-//! the transaction's routing: per-shard effect sets and the obligations.
+//! Admission folds signature evaluation over a manifest's nodes, so an
+//! [`Admitted`] carries the transaction's whole declaration — the folded
+//! effect set and the clause order — beside its lowered calls.
 //!
 //! The crate is isolated: protocol hashing binds through the [`Hasher`]
 //! seam, shard topology through [`ShardResolver`], and nothing here touches

@@ -52,7 +52,8 @@ impl ShardResolver for PrefixShardResolver {
 /// One frame's contribution to the transaction's declaration.
 ///
 /// A frame is one manifest node's signature evaluation. Frames appear in
-/// [`Routing::frames`] in node order, which is the order the kernel
+/// [`Admitted::frames`](crate::Admitted::frames) in node order, which is
+/// the order the kernel
 /// materializes capabilities in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrameDeclaration {
