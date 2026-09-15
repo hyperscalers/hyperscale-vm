@@ -165,6 +165,11 @@ pub struct Movement {
     /// cannot be found short of a price they were never executed
     /// against, and halting the shard over one is a denial of service
     /// anyone who can strand a transaction could mount.
+    ///
+    /// Zero on every movement a kernel records, and read by nothing
+    /// inside one: judging, holds and the delta fold weigh the judged
+    /// sides alone. A total here is the embedder's, and settlement is
+    /// the only place it lands.
     pub unjudged_debit: u128,
 }
 
@@ -249,13 +254,16 @@ impl Movement {
     ///
     /// The judged sides net before they touch `before`, so a movement whose
     /// credit and debit both land on one cell cannot overflow on a net that
-    /// fits: only a genuine debit past the balance returns `None`. This
-    /// matches the execution-side fold in `fold_deltas`, which the settled
-    /// value must agree with.
+    /// fits: only a genuine debit past the balance returns `None`. The
+    /// settled value must agree with the execution-side fold in
+    /// `fold_deltas`, and does wherever that fold lands one: it credits
+    /// before it debits, so a net that fits over a credit that does not is
+    /// the one case it refuses and settlement, which cannot error, nets.
     ///
     /// [`Self::unjudged_debit`] applies last and saturates at zero, so a
     /// short payer pays what they have. It runs after the judged sides
-    /// because the judged ones are the ones an engine proved fit.
+    /// because the judged ones are the ones an engine proved fit, and the
+    /// fold never weighs one at all.
     #[must_use]
     pub const fn apply(self, before: u128) -> Option<u128> {
         let judged = if self.credit >= self.debit {
