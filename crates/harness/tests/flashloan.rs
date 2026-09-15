@@ -139,22 +139,21 @@ fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) ->
 
 /// One intent, presenting the obligation's record — which a composer
 /// must, since a `Restricted` address says its rules bind a movement.
-fn intent(graph: ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree {
-        root: IntentDecl {
+fn intent(account: PrincipalAddr, graph: ManifestGraph) -> EnvelopeTree {
+    let mut tree = EnvelopeTree::of_one(
+        account,
+        IntentDecl {
             header: TEST_HEADER,
             graph,
             sockets: Vec::new(),
         },
-        root_bindings: Vec::new(),
-        subintents: Vec::new(),
-        instances: Vec::new(),
-        resources: vec![debt_record()],
-    }
+    );
+    tree.resources = vec![debt_record()];
+    tree
 }
 
-fn batch_entry(world: &Records, tree: &EnvelopeTree, composer: PrincipalAddr) -> Result<BatchTx> {
-    common::world::batch_entry(world, tree, composer, env())
+fn batch_entry(world: &Records, tree: &EnvelopeTree) -> Result<BatchTx> {
+    common::world::batch_entry(world, tree, env())
 }
 
 static LANES: LazyLock<Lanes> = LazyLock::new(|| {
@@ -179,7 +178,7 @@ fn a_repaid_loan_commits_on_both_runtimes() -> Result<()> {
         let funds = account::withdraw(b, ALICE, TOKEN, 100)?;
         pool().repay(b, funds, debt)
     });
-    let entry = batch_entry(&world, &intent(borrowed), ALICE)?;
+    let entry = batch_entry(&world, &intent(ALICE, borrowed))?;
     let (outcome, end) = run_both(&funded_store(), std::slice::from_ref(&entry));
     assert!(
         matches!(
@@ -218,8 +217,8 @@ fn a_loan_nobody_repaid_is_refused_before_it_routes() {
             evidence: std::collections::BTreeSet::default(),
         }],
     };
-    let tree = intent(unrepaid);
-    let refusal = admit_tree(&tree, ALICE, tree.hash(&TestHasher), &world(), &TestHasher)
+    let tree = intent(ALICE, unrepaid);
+    let refusal = admit_tree(&tree, tree.hash(&TestHasher), &world(), &TestHasher)
         .expect_err("a loan nobody repaid is an output nobody consumed");
     assert!(
         matches!(refusal, AdmissionError::UnconsumedOutput { .. }),
@@ -240,8 +239,8 @@ fn the_obligation_cannot_be_routed_into_a_vault() {
         account::deposit(b, ALICE, loan)?;
         account::deposit(b, ALICE, debt)
     });
-    let tree = intent(parked);
-    let refusal = admit_tree(&tree, ALICE, tree.hash(&TestHasher), &world(), &TestHasher)
+    let tree = intent(ALICE, parked);
+    let refusal = admit_tree(&tree, tree.hash(&TestHasher), &world(), &TestHasher)
         .expect_err("no vault may hold the obligation");
     // The rendered sentence, per direction, is resource_grants' pin;
     // the variant is what this composition adds.
@@ -264,14 +263,8 @@ fn the_obligation_cannot_be_routed_into_a_vault() {
     assert_eq!(debt().address().class(), AddressClass::Restricted);
     let mut withheld = tree;
     withheld.resources = Vec::new();
-    let refusal = admit_tree(
-        &withheld,
-        ALICE,
-        withheld.hash(&TestHasher),
-        &world(),
-        &TestHasher,
-    )
-    .expect_err("a restricted resource moved with no record is refused");
+    let refusal = admit_tree(&withheld, withheld.hash(&TestHasher), &world(), &TestHasher)
+        .expect_err("a restricted resource moved with no record is refused");
     assert!(
         matches!(refusal, AdmissionError::RecordWithheld { resource, .. } if resource == debt()),
         "a withheld record is refused for being withheld, not judged: {refusal:?}",
@@ -297,7 +290,7 @@ fn a_repayment_that_falls_short_declines_on_an_arm_of_the_method() -> Result<()>
         let funds = account::withdraw(b, ALICE, TOKEN, 60)?;
         pool().repay(b, funds, debt)
     });
-    let entry = batch_entry(&world, &intent(short), ALICE)?;
+    let entry = batch_entry(&world, &intent(ALICE, short))?;
     let (outcome, end) = run_both(&funded_store(), std::slice::from_ref(&entry));
     let Outcome::Declined { code, .. } = outcome.receipts[&entry.tx].outcome else {
         panic!(

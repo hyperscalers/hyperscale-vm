@@ -59,8 +59,8 @@ fn world() -> Records {
     account_world()
 }
 
-fn batch_entry(tree: &EnvelopeTree, composer: PrincipalAddr) -> Result<BatchTx> {
-    common::world::batch_entry(&world(), tree, composer, env())
+fn batch_entry(tree: &EnvelopeTree) -> Result<BatchTx> {
+    common::world::batch_entry(&world(), tree, env())
 }
 
 static LANES: LazyLock<Lanes> = LazyLock::new(account_lanes);
@@ -132,7 +132,7 @@ fn governed_store(entry: RuleBytes, carries: bool) -> MemoryStore {
 fn a_credential_governs_a_withdrawal_no_package_declared() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
 
-    let carried = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let carried = batch_entry(&governed_tree(entry.clone())?)?;
     let (outcome, end) = run(
         &governed_store(entry.clone(), true),
         std::slice::from_ref(&carried),
@@ -147,7 +147,7 @@ fn a_credential_governs_a_withdrawal_no_package_declared() -> Result<()> {
     assert_eq!(amount_of(&end, vault(HOLDER, governed(entry.clone()))), 100);
 
     // The same transaction, the same package, one leaf absent.
-    let bare = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let bare = batch_entry(&governed_tree(entry.clone())?)?;
     let (outcome, end) = run(
         &governed_store(entry.clone(), false),
         std::slice::from_ref(&bare),
@@ -185,7 +185,7 @@ fn an_unpresented_record_refuses_at_admission() -> Result<()> {
     env.seal(root).context("the root grants")?.none()?;
     let tree = env.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
-    let refusal = admit_tree(&tree, HOLDER, identity, &chain, &TestHasher)
+    let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
         .expect_err("an unpresented record leaves the entries unresolvable");
     assert!(
         matches!(refusal, AdmissionError::RecordWithheld { .. }),
@@ -220,7 +220,7 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     env.seal(root).context("the root grants")?.none()?;
     let tree = env.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
-    let refusal = admit_tree(&tree, HOLDER, identity, &chain, &TestHasher)
+    let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
         .expect_err("a forged record registers a different resource");
     assert!(
         matches!(refusal, AdmissionError::RecordWithheld { .. }),
@@ -236,7 +236,7 @@ fn a_forbidden_movement_refuses_at_admission() -> Result<()> {
     let tree = governed_tree(sealed(&never()))?;
     let identity = tree.hash(&TestHasher);
     let chain = world();
-    let refusal = admit_tree(&tree, HOLDER, identity, &chain, &TestHasher)
+    let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
         .expect_err("a movement the entry forbids is refused");
     let said = refusal.to_string();
     assert!(
@@ -260,7 +260,7 @@ fn a_resource_no_vault_may_hold_refuses_at_admission() -> Result<()> {
     let tree = admitted_tree(sealed(&never()), STRANGER)?;
     let identity = tree.hash(&TestHasher);
     let chain = world();
-    let refusal = admit_tree(&tree, HOLDER, identity, &chain, &TestHasher)
+    let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
         .expect_err("a credit the entry forbids is refused");
     let said = refusal.to_string();
     assert!(
@@ -294,7 +294,7 @@ fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
     env.seal(root).context("the root grants")?.none()?;
     let tree = env.build().context("the tree builds")?;
 
-    let sent = batch_entry(&tree, HOLDER)?;
+    let sent = batch_entry(&tree)?;
     let (outcome, end) = run(
         &governed_store(entry.clone(), true),
         std::slice::from_ref(&sent),
@@ -347,7 +347,7 @@ fn instanced_store(entry: RuleBytes, carries: bool) -> MemoryStore {
 fn a_non_fungible_credential_governs_a_withdrawal_the_same_way() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::AnyInstance));
 
-    let carried = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let carried = batch_entry(&governed_tree(entry.clone())?)?;
     let (outcome, end) = run(
         &instanced_store(entry.clone(), true),
         std::slice::from_ref(&carried),
@@ -363,7 +363,7 @@ fn a_non_fungible_credential_governs_a_withdrawal_the_same_way() -> Result<()> {
     assert_eq!(amount_of(&end, vault(HOLDER, governed(entry.clone()))), 100);
 
     // The same transaction, the same package, the collection empty.
-    let bare = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let bare = batch_entry(&governed_tree(entry.clone())?)?;
     let (outcome, end) = run(
         &instanced_store(entry.clone(), false),
         std::slice::from_ref(&bare),
@@ -402,7 +402,7 @@ fn a_non_fungible_credential_governs_a_withdrawal_the_same_way() -> Result<()> {
 fn a_credential_naming_an_instance_admits_its_holder_alone() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Instance(CREDENTIAL_ID)));
 
-    let named = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let named = batch_entry(&governed_tree(entry.clone())?)?;
     let (outcome, _) = run(
         &instanced_store(entry.clone(), true),
         std::slice::from_ref(&named),
@@ -425,7 +425,7 @@ fn a_credential_naming_an_instance_admits_its_holder_alone() -> Result<()> {
         u128::from(CREDENTIAL_ID + 1),
         Vec::new(),
     );
-    let other = batch_entry(&governed_tree(entry.clone())?, HOLDER)?;
+    let other = batch_entry(&governed_tree(entry.clone())?)?;
     let (outcome, end) = run(&store, std::slice::from_ref(&other));
     assert!(
         !matches!(
@@ -489,7 +489,7 @@ fn a_deposit_credential_governs_who_may_be_credited() -> Result<()> {
     let mut store = MemoryStore::new();
     seed_vault(&mut store, HOLDER, asset, 100);
     seed_vault(&mut store, STRANGER, BADGE, 1);
-    let sent = batch_entry(&admitted_tree(entry.clone(), STRANGER)?, HOLDER)?;
+    let sent = batch_entry(&admitted_tree(entry.clone(), STRANGER)?)?;
     let (outcome, end) = run(&store, std::slice::from_ref(&sent));
     assert!(
         matches!(
@@ -504,7 +504,7 @@ fn a_deposit_credential_governs_who_may_be_credited() -> Result<()> {
     // And is not.
     let mut store = MemoryStore::new();
     seed_vault(&mut store, HOLDER, asset, 100);
-    let refused = batch_entry(&admitted_tree(entry, STRANGER)?, HOLDER)?;
+    let refused = batch_entry(&admitted_tree(entry, STRANGER)?)?;
     let (outcome, end) = run(&store, std::slice::from_ref(&refused));
     assert_eq!(
         outcome.receipts[&refused.tx].outcome,

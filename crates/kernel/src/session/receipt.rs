@@ -497,7 +497,7 @@ impl KernelSession {
         Marker {
             tx: self.tx,
             expiry_ms: record.expiry_ms,
-            marks: Marked::Spent(record.subintent),
+            marks: Marked::Spent(record.intent),
         }
         .to_bytes()
     }

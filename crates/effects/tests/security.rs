@@ -25,8 +25,8 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::{
     AdmissionError, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode,
-    Hash32, InstanceMeta, IntentDecl, IntentHeader, Issuance, JudgedLeaf, ManifestGraph, Records,
-    ResourceMeta, Rule, TestHasher, Value, admit_tree, granting_issued_resource,
+    Hash32, InstanceMeta, Intent, IntentDecl, IntentHeader, Issuance, JudgedLeaf, ManifestGraph,
+    Records, ResourceMeta, Rule, TestHasher, Value, admit_tree, granting_issued_resource,
     holdings_collection,
 };
 use hyperscale_vm_fixtures::security;
@@ -134,43 +134,45 @@ fn transfer(resource: ResourceAddr) -> EnvelopeTree {
 /// The same transfer, landing under `recipient`.
 fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> EnvelopeTree {
     EnvelopeTree {
-        root: IntentDecl {
-            header: TEST_HEADER,
-            graph: ManifestGraph {
-                nodes: vec![
-                    GraphNode {
-                        target: ALICE.into(),
-                        method: "authorize".into(),
-                        args: Vec::new(),
-                        evidence: BTreeSet::from([EvidenceRef::IntentSignature]),
-                    },
-                    GraphNode {
-                        target: ALICE.into(),
-                        method: "withdraw".into(),
-                        args: vec![
-                            GraphArg::Literal(Value::Address(resource.address())),
-                            GraphArg::Literal(Value::U128(40)),
-                        ],
-                        evidence: BTreeSet::from([EvidenceRef::Node(0)]),
-                    },
-                    GraphNode {
-                        target: recipient.into(),
-                        method: "deposit".into(),
-                        args: vec![GraphArg::Edge {
-                            edge: EdgeRef {
-                                producer: 1,
-                                output: 0,
-                            },
-                            constraints: Vec::new(),
-                        }],
-                        evidence: BTreeSet::default(),
-                    },
-                ],
+        intents: vec![Intent {
+            decl: IntentDecl {
+                header: TEST_HEADER,
+                graph: ManifestGraph {
+                    nodes: vec![
+                        GraphNode {
+                            target: ALICE.into(),
+                            method: "authorize".into(),
+                            args: Vec::new(),
+                            evidence: BTreeSet::from([EvidenceRef::IntentSignature]),
+                        },
+                        GraphNode {
+                            target: ALICE.into(),
+                            method: "withdraw".into(),
+                            args: vec![
+                                GraphArg::Literal(Value::Address(resource.address())),
+                                GraphArg::Literal(Value::U128(40)),
+                            ],
+                            evidence: BTreeSet::from([EvidenceRef::Node(0)]),
+                        },
+                        GraphNode {
+                            target: recipient.into(),
+                            method: "deposit".into(),
+                            args: vec![GraphArg::Edge {
+                                edge: EdgeRef {
+                                    producer: 1,
+                                    output: 0,
+                                },
+                                constraints: Vec::new(),
+                            }],
+                            evidence: BTreeSet::default(),
+                        },
+                    ],
+                },
+                sockets: Vec::new(),
             },
-            sockets: Vec::new(),
-        },
-        root_bindings: Vec::new(),
-        subintents: Vec::new(),
+            account: ALICE,
+            bindings: Vec::new(),
+        }],
         instances: Vec::new(),
         resources: Vec::new(),
     }
@@ -226,8 +228,8 @@ fn an_authored_rule_governs_a_holder_the_package_never_named() {
 
     let mut env = transfer(share);
     env.resources = vec![record(issuer, b"share")];
-    let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
-        .expect("the transfer admits");
+    let admitted =
+        admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the transfer admits");
     let declaration = admitted.admitted.declaration();
 
     let held = credential(ALICE, registered);
@@ -281,8 +283,8 @@ fn each_side_of_a_transfer_answers_for_its_own_register_entry() {
 
     let mut env = transfer_to(share, BOB);
     env.resources = vec![record(issuer, b"share")];
-    let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
-        .expect("the transfer admits");
+    let admitted =
+        admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the transfer admits");
     let conditions: Vec<_> = admitted
         .admitted
         .declaration()
@@ -307,7 +309,7 @@ fn each_side_of_a_transfer_answers_for_its_own_register_entry() {
 fn the_unrestricted_class_is_asked_nothing() {
     let (chain, issuer) = issuer();
     let env = transfer(issued(issuer, b"bearer"));
-    let admitted = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
+    let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
         .expect("the transfer admits with no record presented at all");
     assert!(
         !admitted
@@ -331,7 +333,7 @@ fn the_register_entry_is_soulbound() {
 
     let mut env = transfer(issued(issuer, b"registered"));
     env.resources = vec![record(issuer, b"registered")];
-    let refusal = admit_tree(&env, ALICE, env.hash(&TestHasher), &chain, &TestHasher)
+    let refusal = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
         .expect_err("no holder may debit their own register entry");
     // The sentence itself — "grants Withdraw to nobody", per direction —
     // is resource_grants' pin; what this adds is that the macro-derived

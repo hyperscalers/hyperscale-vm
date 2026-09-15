@@ -9,7 +9,7 @@
 use hyperscale_hbor::Hbor;
 
 use crate::address::Address;
-use crate::envelope::SubintentHash;
+use crate::envelope::IntentHash;
 
 /// Where a manifest node sits in the star.
 ///
@@ -82,7 +82,7 @@ pub struct LegShape {
     /// With `local`, what an escrow cell is keyed by: content one signer
     /// signed and a position inside it only that signer can move. The
     /// manifest index is the composer's interleave and is not this.
-    pub intent: SubintentHash,
+    pub intent: IntentHash,
     /// The node's index within its own intent's graph.
     pub local: u32,
     /// When the cells this node's crossings write stop being owed: its

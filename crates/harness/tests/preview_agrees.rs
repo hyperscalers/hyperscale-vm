@@ -15,7 +15,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_harness::driver::{test_hash, vault};
 use hyperscale_vm_kernel::{MemoryStore, OwnerSet, Substates};
 use hyperscale_vm_preview::{Slack, preview};
-use hyperscale_vm_types::{NetworkId, Outcome, UnmetCondition, encode_amount};
+use hyperscale_vm_types::{NetworkId, Outcome, PrincipalAddr, UnmetCondition, encode_amount};
 use wasmtime::Result;
 
 mod common;
@@ -30,18 +30,15 @@ const HEADER: IntentHeader = IntentHeader {
     discriminator: 0,
 };
 
-const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree {
-        root: IntentDecl {
+fn single_intent(account: PrincipalAddr, graph: ManifestGraph) -> EnvelopeTree {
+    EnvelopeTree::of_one(
+        account,
+        IntentDecl {
             header: HEADER,
             graph,
             sockets: Vec::new(),
         },
-        root_bindings: Vec::new(),
-        subintents: Vec::new(),
-        instances: Vec::new(),
-        resources: Vec::new(),
-    }
+    )
 }
 
 /// Alice funded, every genesis component sealed.
@@ -55,12 +52,12 @@ fn funded() -> MemoryStore {
 fn a_preview_spends_what_the_run_spends() -> Result<()> {
     let world = world();
     let store = funded();
-    let tree = single_intent(transfer_graph());
+    let tree = single_intent(ALICE, transfer_graph());
 
     // What the chain would do with it.
     let (outcome, _end) =
-        run_both_tree(&world, &store, &tree, ALICE).expect("the fixture transfer admits");
-    let entry = batch_entry(&world, &tree, ALICE, env())?;
+        run_both_tree(&world, &store, &tree).expect("the fixture transfer admits");
+    let entry = batch_entry(&world, &tree, env())?;
     let receipt = &outcome.receipts[&entry.tx];
     assert!(
         matches!(receipt.outcome, Outcome::Completed { .. }),
@@ -99,10 +96,10 @@ fn a_refused_preview_prints_the_refusal() -> Result<()> {
     let store = funded();
     // Bob composing a transfer out of Alice's account: her own gate
     // refuses the authorizing node, and the withdrawal never runs.
-    let tree = single_intent(authorized_transfer_by(BOB));
+    let tree = single_intent(BOB, authorized_transfer_by(BOB));
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(&tree, BOB, identity, &world, &TestHasher).expect("it admits");
-    let entry = batch_entry(&world, &tree, BOB, env())?;
+    let admitted = admit_tree(&tree, identity, &world, &TestHasher).expect("it admits");
+    let entry = batch_entry(&world, &tree, env())?;
 
     let source: Arc<dyn Substates> = Arc::new(store);
     let [blessed, _reference] = LANES.engine_backends();

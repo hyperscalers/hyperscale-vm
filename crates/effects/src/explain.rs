@@ -515,26 +515,20 @@ pub fn explain_admission(
 /// that consumes its socket, whichever intent wrote it — so the walk is
 /// re-run here over the tree rather than guessed from concatenation.
 /// The intents themselves are the tree's own: the root, then the
-/// subintents in declaration order.
+/// intents in declaration order.
 #[must_use]
 pub fn explain_admission_tree(
     tree: &EnvelopeTree,
     records: &dyn ChainRecords,
     refusal: &AdmissionError,
 ) -> String {
-    let mut views = Vec::with_capacity(1 + tree.subintents.len());
-    views.push(IntentView::for_ordering(
-        &tree.root.graph,
-        &tree.root.sockets,
-        &tree.root_bindings,
-    ));
-    for subintent in &tree.subintents {
-        views.push(IntentView::for_ordering(
-            &subintent.decl.graph,
-            &subintent.decl.sockets,
-            &subintent.bindings,
-        ));
-    }
+    let views: Vec<IntentView<'_>> = tree
+        .intents
+        .iter()
+        .map(|intent| {
+            IntentView::for_ordering(&intent.decl.graph, &intent.decl.sockets, &intent.bindings)
+        })
+        .collect();
     let total: usize = views.iter().map(|view| view.graph.nodes.len()).sum();
     // A tree the interleave cannot order has no flattened numbering to
     // resolve against, and its refusal says so on its own.

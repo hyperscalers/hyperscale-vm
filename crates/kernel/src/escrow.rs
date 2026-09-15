@@ -452,7 +452,7 @@ pub enum PlanFault {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{Hash32, SubintentHash, TestHasher};
+    use hyperscale_vm_effects::{Hash32, IntentHash, TestHasher};
     use hyperscale_vm_types::ResourceAddr;
 
     use super::{
@@ -468,7 +468,7 @@ mod tests {
         CrossingSite::record(
             &TestHasher,
             resource(tag),
-            SubintentHash(Hash32([tag; 32])),
+            IntentHash(Hash32([tag; 32])),
             0,
             0,
             1_000,

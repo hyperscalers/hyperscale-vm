@@ -35,8 +35,8 @@ pub(crate) use compose::{IntentView, check_instance_value_depth, check_value_dep
 use compose::{bind_edge, check_bindings};
 pub use error::{AdmissionError, Placed};
 use hyperscale_vm_types::{
-    Address, CallTarget, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Presence, PrincipalAddr,
-    ResourceAddr, SubintentHash,
+    Address, CallTarget, Effect, EffectTarget, IntentHash, MAX_MANIFEST_NODES, Mode, Presence,
+    PrincipalAddr, ResourceAddr,
 };
 pub use inject::{Asks, Injected};
 use inject::{
@@ -108,7 +108,7 @@ pub struct Admitted {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodeOrigin {
     /// The signed intent this node belongs to.
-    pub intent: SubintentHash,
+    pub intent: IntentHash,
     /// Its index within that intent's own graph.
     pub local: u32,
     /// When the cells this node's crossings write stop being owed: its
@@ -134,7 +134,7 @@ impl NodeOrigin {
     /// The origin of a node at `local` in `intent`, calling `signature`.
     #[must_use]
     pub(crate) fn of(
-        intent: SubintentHash,
+        intent: IntentHash,
         local: u32,
         expiry_ms: u64,
         signature: &MethodSignature,
@@ -155,7 +155,7 @@ impl NodeOrigin {
     #[must_use]
     pub(crate) const fn unsigned(local: u32) -> Self {
         Self {
-            intent: SubintentHash(Hash32([0; 32])),
+            intent: IntentHash(Hash32([0; 32])),
             local,
             expiry_ms: 0,
             reservation_shaped: false,
@@ -361,7 +361,7 @@ pub fn admit_presenting(
             signer: Some(composer),
             // A bare graph is signed whole by its composer, so what its
             // signer signed is the graph itself.
-            identity: SubintentHash(identity.0),
+            identity: IntentHash(identity.0),
             // And it names no window, which is the offer that stands
             // forever — the same figure a header with no end derives.
             expiry_ms: u64::MAX,

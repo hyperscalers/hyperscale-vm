@@ -30,27 +30,23 @@ const HEADER: IntentHeader = IntentHeader {
     discriminator: 0,
 };
 
-const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree {
-        root: IntentDecl {
+fn single_intent(account: PrincipalAddr, graph: ManifestGraph) -> EnvelopeTree {
+    EnvelopeTree::of_one(
+        account,
+        IntentDecl {
             header: HEADER,
             graph,
             sockets: Vec::new(),
         },
-        root_bindings: Vec::new(),
-        subintents: Vec::new(),
-        instances: Vec::new(),
-        resources: Vec::new(),
-    }
+    )
 }
 
 /// Run `graph` composed by `signer` over `store`, and report what each
 /// node spent.
 fn spent(store: &MemoryStore, graph: ManifestGraph, signer: PrincipalAddr) -> Vec<u64> {
     let world = world();
-    let tree = single_intent(graph);
-    let (outcome, _end) =
-        run_both_tree(&world, store, &tree, signer).expect("every shape here admits");
+    let tree = single_intent(signer, graph);
+    let (outcome, _end) = run_both_tree(&world, store, &tree).expect("every shape here admits");
     let receipt = outcome
         .receipts
         .values()

@@ -27,12 +27,12 @@
 use std::collections::BTreeSet;
 
 use hyperscale_hbor::{Hbor, from_slice, to_vec};
-pub use hyperscale_vm_types::MAX_SUBINTENTS;
 use hyperscale_vm_types::{
     ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, Effect, EffectTarget,
-    LegShape, MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr,
-    SubintentHash, SubstateKey, SweepBucket, TxHash,
+    IntentHash, LegShape, MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr,
+    SubstateKey, SweepBucket, TxHash,
 };
+pub use hyperscale_vm_types::{MAX_INTENTS, MAX_SUBINTENTS};
 
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
@@ -230,7 +230,7 @@ impl IntentDecl {
     /// [`Value::canonical_bytes`](crate::types::Value::canonical_bytes)
     /// requires of the literals the graph hash feeds on.
     #[must_use]
-    pub fn hash(&self, hasher: &dyn Hasher) -> SubintentHash {
+    pub fn hash(&self, hasher: &dyn Hasher) -> IntentHash {
         let Self {
             header,
             graph,
@@ -244,7 +244,7 @@ impl IntentDecl {
             parts.push(to_vec(socket).expect("a socket is shallow"));
         }
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
-        SubintentHash(hasher.hash(DOMAIN_SUBINTENT, &refs))
+        IntentHash(hasher.hash(DOMAIN_SUBINTENT, &refs))
     }
 }
 
@@ -291,34 +291,36 @@ impl Binding {
     }
 }
 
-/// A subintent bound into an envelope.
+/// One intent bound into an envelope.
 ///
-/// Carries the signed declaration, the signer's account prefix, and one
-/// binding per socket. The bindings are the composer's choice and are
-/// covered by the envelope identity, never by the subintent's own hash.
+/// Carries the signed declaration, the account the intent acts as, and
+/// one binding per socket. The bindings are the composer's choice and
+/// are covered by the envelope identity, never by the declaration's own
+/// hash — which is what lets one declaration be offered into many
+/// compositions and is why each carries a nullifier under its account.
+///
+/// The composition's own intent is one of these and is the first;
+/// what separates it is which signature attests it, which is the
+/// envelope's business rather than the tree's.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-pub struct Subintent {
-    /// What the subintent's signer signed.
+pub struct Intent {
+    /// What this intent's account signed.
     pub decl: IntentDecl,
-    /// The signer's account prefix — the owner of the nullifier.
-    pub signer: PrincipalAddr,
+    /// The account this intent acts as — the owner of its nullifier.
+    pub account: PrincipalAddr,
     /// The composition's binding for each socket.
     #[hbor(max = MAX_SOCKETS)]
     pub bindings: Vec<Binding>,
 }
 
-/// The bound envelope tree admission runs over: the composer's root
-/// intent plus every bound subintent.
+/// The bound envelope tree admission runs over: every intent the
+/// composition carries, the composer's own first.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct EnvelopeTree {
-    /// The composer's own intent.
-    pub root: IntentDecl,
-    /// The composition's binding for each root socket.
-    #[hbor(max = MAX_SOCKETS)]
-    pub root_bindings: Vec<Binding>,
-    /// The bound subintents, in envelope order.
-    #[hbor(max = MAX_SUBINTENTS)]
-    pub subintents: Vec<Subintent>,
+    /// The intents, in envelope order. Never empty: a call body is at
+    /// least the composition's own intent.
+    #[hbor(max = MAX_INTENTS)]
+    pub intents: Vec<Intent>,
     /// The creation-fixed records of the component targets the tree
     /// names beyond what the genesis registry serves — each registered,
     /// at derivation, at exactly the address it derives.
@@ -340,16 +342,32 @@ pub struct EnvelopeTree {
 }
 
 impl EnvelopeTree {
-    /// How many nodes the tree lowers to: the root's and every bound
-    /// subintent's, which is the count of compute ceilings an envelope
-    /// around it signs.
+    /// A composition of one intent: a graph its own account signs, with
+    /// nothing offered into it.
+    ///
+    /// The shape every transaction that composes with nobody has, which
+    /// is most of them.
+    #[must_use]
+    pub fn of_one(account: PrincipalAddr, decl: IntentDecl) -> Self {
+        Self {
+            intents: vec![Intent {
+                decl,
+                account,
+                bindings: Vec::new(),
+            }],
+            instances: Vec::new(),
+            resources: Vec::new(),
+        }
+    }
+
+    /// How many nodes the tree lowers to, over every intent it carries
+    /// — the count of compute ceilings an envelope around it signs.
     #[must_use]
     pub fn node_count(&self) -> usize {
-        self.subintents
+        self.intents
             .iter()
-            .fold(self.root.graph.nodes.len(), |total, subintent| {
-                total + subintent.decl.graph.nodes.len()
-            })
+            .map(|intent| intent.decl.graph.nodes.len())
+            .sum()
     }
 
     /// The tree's own identity — the fallback for callers that sign
@@ -364,13 +382,11 @@ impl EnvelopeTree {
     /// requires of the literals the graph hashes feed on.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> ManifestHash {
-        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(3 + 3 * self.subintents.len());
-        parts.push(self.root.hash(hasher).0.0.to_vec());
-        parts.push(to_vec(&self.root_bindings).expect("bindings are flat"));
-        for subintent in &self.subintents {
-            parts.push(subintent.decl.hash(hasher).0.0.to_vec());
-            parts.push(subintent.signer.to_bytes().to_vec());
-            parts.push(to_vec(&subintent.bindings).expect("bindings are flat"));
+        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(2 + 3 * self.intents.len());
+        for intent in &self.intents {
+            parts.push(intent.decl.hash(hasher).0.0.to_vec());
+            parts.push(intent.account.to_bytes().to_vec());
+            parts.push(to_vec(&intent.bindings).expect("bindings are flat"));
         }
         // What the tree's calls resolve against is part of what was
         // composed, so two trees differing only here are two identities.
@@ -400,7 +416,7 @@ impl EnvelopeTree {
 pub fn nullifier_key(
     hasher: &dyn Hasher,
     signer: impl Into<Address>,
-    subintent: SubintentHash,
+    subintent: IntentHash,
     expiry_ms: u64,
 ) -> SubstateKey {
     bucketed_child_key(
@@ -473,7 +489,7 @@ pub fn committed_tx_key(
 pub fn escrow_record_key(
     hasher: &dyn Hasher,
     owner: impl Into<Address>,
-    intent: SubintentHash,
+    intent: IntentHash,
     local: u32,
     output: u32,
 ) -> SubstateKey {
@@ -501,7 +517,7 @@ pub fn escrow_record_key(
 pub fn escrow_claim_key(
     hasher: &dyn Hasher,
     owner: impl Into<Address>,
-    intent: SubintentHash,
+    intent: IntentHash,
     local: u32,
     output: u32,
     expiry_ms: u64,
@@ -521,7 +537,7 @@ fn escrow_key(
     hasher: &dyn Hasher,
     owner: impl Into<Address>,
     slot: SlotId,
-    intent: SubintentHash,
+    intent: IntentHash,
     local: u32,
     output: u32,
     expiry_ms: u64,
@@ -576,7 +592,7 @@ pub struct CrossingCell {
     /// How much of it.
     pub amount: u128,
     /// The signed intent the producing node belongs to.
-    pub intent: SubintentHash,
+    pub intent: IntentHash,
     /// That node's index within its own intent.
     pub local: u32,
     /// Which of its outputs the edge carried.
@@ -648,7 +664,7 @@ pub enum Marked {
     /// A subintent was spent, under its signer's prefix
     /// ([`nullifier_key`]): what makes a committed subintent once-only,
     /// and what a signer writes to cancel one.
-    Spent(SubintentHash),
+    Spent(IntentHash),
     /// The shard committed the transaction, under the shard's own owner
     /// ([`committed_tx_key`]): what a leg proves absent to show its core
     /// never included the transaction.
@@ -658,7 +674,7 @@ pub enum Marked {
     /// claim and the producer's reclaim happen.
     Claimed {
         /// The signed intent the producing node belongs to.
-        intent: SubintentHash,
+        intent: IntentHash,
         /// That node's index within its own intent.
         local: u32,
         /// Which of its outputs the edge carried.
@@ -754,7 +770,7 @@ impl Marker {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CrossingSite {
     key: SubstateKey,
-    intent: SubintentHash,
+    intent: IntentHash,
     local: u32,
     output: u32,
     expiry_ms: u64,
@@ -767,7 +783,7 @@ impl CrossingSite {
     pub fn record(
         hasher: &dyn Hasher,
         owner: impl Into<Address>,
-        intent: SubintentHash,
+        intent: IntentHash,
         local: u32,
         output: u32,
         expiry_ms: u64,
@@ -837,7 +853,7 @@ impl CrossingSite {
     pub fn claim(
         hasher: &dyn Hasher,
         owner: impl Into<Address>,
-        intent: SubintentHash,
+        intent: IntentHash,
         local: u32,
         output: u32,
         expiry_ms: u64,
@@ -945,10 +961,10 @@ pub const fn crossing_expiry_ms(header: &IntentHeader) -> u64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IntentRecord {
     /// The signed declaration's hash.
-    pub subintent: SubintentHash,
-    /// The signer's account prefix.
-    pub signer: PrincipalAddr,
-    /// The canonical nullifier key under the signer.
+    pub intent: IntentHash,
+    /// The account the intent acts as.
+    pub account: PrincipalAddr,
+    /// The canonical nullifier key under that account.
     pub nullifier: SubstateKey,
     /// When the nullifier stops being owed — the intent's own window
     /// end plus the grace. Carried beside the key because the cell's
@@ -962,25 +978,8 @@ pub struct IntentRecord {
 pub struct AdmittedTree {
     /// The lowered manifest and the identity rooting fresh derivations.
     pub admitted: Admitted,
-    /// The root intent's record.
-    ///
-    /// Apart from the rest because the envelope's subintent signatures
-    /// are verified by zipping them against the subintents' hashes, and
-    /// the root's signature is the envelope's own.
-    pub root: IntentRecord,
-    /// One record per bound subintent, in envelope order.
-    pub subintents: Vec<IntentRecord>,
-}
-
-impl AdmittedTree {
-    /// Every intent's record, the root's first.
-    ///
-    /// What the nullifier writes are drawn from: one declaration is
-    /// executed once whichever intent carries it, so the root is held
-    /// to the rule its subintents are.
-    pub fn records(&self) -> impl Iterator<Item = &IntentRecord> {
-        std::iter::once(&self.root).chain(&self.subintents)
-    }
+    /// One record per intent, in envelope order.
+    pub intents: Vec<IntentRecord>,
 }
 
 /// The tree's canonical bytes — what an envelope's body carries.
@@ -1018,19 +1017,11 @@ pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
 /// it excludes.
 pub fn admit_tree(
     tree: &EnvelopeTree,
-    composer: PrincipalAddr,
     identity: ManifestHash,
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<AdmittedTree, AdmissionError> {
-    admit_tree_with_authority(
-        tree,
-        composer,
-        identity,
-        chain,
-        hasher,
-        TargetAuthority::Required,
-    )
+    admit_tree_with_authority(tree, identity, chain, hasher, TargetAuthority::Required)
 }
 
 /// [`admit_tree`] with the target-authority rule made optional.
@@ -1049,79 +1040,56 @@ pub fn admit_tree(
 /// As [`admit_tree`].
 pub fn admit_tree_with_authority(
     tree: &EnvelopeTree,
-    composer: PrincipalAddr,
     identity: ManifestHash,
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
     authority: TargetAuthority,
 ) -> Result<AdmittedTree, AdmissionError> {
-    if tree.subintents.len() > MAX_SUBINTENTS {
-        return Err(AdmissionError::TooManySubintents);
+    if tree.intents.len() > MAX_INTENTS {
+        return Err(AdmissionError::TooManyIntents);
     }
-    // Ahead of every subintent hash, for the reason `admit` checks ahead
-    // of the graph hash.
-    check_value_depth(&tree.root.graph)?;
-    for subintent in &tree.subintents {
-        check_value_depth(&subintent.decl.graph)?;
+    // Ahead of every declaration hash, for the reason `admit` checks
+    // ahead of the graph hash.
+    for intent in &tree.intents {
+        check_value_depth(&intent.decl.graph)?;
     }
     check_instance_value_depth(&tree.instances)?;
-    let mut records = Vec::with_capacity(tree.subintents.len());
-    // The declaration hash alone, and the root among them. It is what
-    // names every escrow record and claim the tree derives, and it
-    // carries no signer — so two intents that hash alike derive one key
-    // for two edges, the receipt attests both crossings against it, and
-    // the second disposal reads a cell the first deleted.
-    let root_hash = tree.root.hash(hasher);
-    let mut seen = BTreeSet::from([root_hash]);
-    for (index, subintent) in tree.subintents.iter().enumerate() {
-        let hash = subintent.decl.hash(hasher);
+    // The declaration hash alone. It is what names every escrow record
+    // and claim the tree derives, and it carries no account — so two
+    // intents that hash alike derive one key for two edges, the receipt
+    // attests both crossings against it, and the second disposal reads a
+    // cell the first deleted.
+    let mut seen = BTreeSet::new();
+    let mut records = Vec::with_capacity(tree.intents.len());
+    for (index, intent) in tree.intents.iter().enumerate() {
+        let hash = intent.decl.hash(hasher);
         if !seen.insert(hash) {
-            return Err(AdmissionError::DuplicateSubintent {
-                index: u32::try_from(index).expect("bounded by MAX_SUBINTENTS"),
+            return Err(AdmissionError::DuplicateIntent {
+                index: u32::try_from(index).expect("bounded by MAX_INTENTS"),
             });
         }
-        let expiry_ms = nullifier_expiry_ms(&subintent.decl.header);
+        let expiry_ms = nullifier_expiry_ms(&intent.decl.header);
         records.push(IntentRecord {
-            subintent: hash,
-            signer: subintent.signer,
-            nullifier: nullifier_key(hasher, subintent.signer, hash, expiry_ms),
+            intent: hash,
+            account: intent.account,
+            nullifier: nullifier_key(hasher, intent.account, hash, expiry_ms),
             expiry_ms,
         });
     }
 
-    // The root is nullified on the same terms, under the composer who
-    // signed it. Its declaration is an offer like any other: two
-    // envelopes carrying it inside one window are one execution, and
-    // without this the second is held only by the escrow records its
-    // nodes happen to write — which a transaction that runs whole
-    // writes none of.
-    let root_expiry_ms = nullifier_expiry_ms(&tree.root.header);
-    let root = IntentRecord {
-        subintent: root_hash,
-        signer: composer,
-        nullifier: nullifier_key(hasher, composer, root_hash, root_expiry_ms),
-        expiry_ms: root_expiry_ms,
-    };
-
-    let mut views = Vec::with_capacity(1 + tree.subintents.len());
-    views.push(IntentView {
-        graph: &tree.root.graph,
-        sockets: &tree.root.sockets,
-        bindings: &tree.root_bindings,
-        signer: Some(composer),
-        identity: root_hash,
-        expiry_ms: crossing_expiry_ms(&tree.root.header),
-    });
-    for (subintent, record) in tree.subintents.iter().zip(&records) {
-        views.push(IntentView {
-            graph: &subintent.decl.graph,
-            sockets: &subintent.decl.sockets,
-            bindings: &subintent.bindings,
-            signer: Some(subintent.signer),
-            identity: record.subintent,
-            expiry_ms: crossing_expiry_ms(&subintent.decl.header),
-        });
-    }
+    let views: Vec<IntentView<'_>> = tree
+        .intents
+        .iter()
+        .zip(&records)
+        .map(|(intent, record)| IntentView {
+            graph: &intent.decl.graph,
+            sockets: &intent.decl.sockets,
+            bindings: &intent.bindings,
+            signer: Some(intent.account),
+            identity: record.intent,
+            expiry_ms: crossing_expiry_ms(&intent.decl.header),
+        })
+        .collect();
     // The envelope's own records, layered behind what the chain already
     // answers for. Each stands for the seal of the component it derives
     // and for nothing else — `Admission` holds every node targeting one to
@@ -1151,7 +1119,7 @@ pub fn admit_tree_with_authority(
     // these, so they belong to no frame — but they are the once-only
     // execution guarantee, so they are folded into the declaration here
     // rather than by a later pass.
-    for record in std::iter::once(&root).chain(&records) {
+    for record in &records {
         admitted.push_kernel_effect(Effect {
             target: EffectTarget::Point(record.nullifier),
             mode: Mode::Write { moves: Moves::Both },
@@ -1159,7 +1127,6 @@ pub fn admit_tree_with_authority(
     }
     Ok(AdmittedTree {
         admitted,
-        root,
-        subintents: records,
+        intents: records,
     })
 }

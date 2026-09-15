@@ -680,8 +680,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_types::{
-        AddressClass, CallTarget, MAX_CROSSINGS_PER_TX, Moves, ResourceAddr, SubintentHash,
-        ValueEdge,
+        AddressClass, CallTarget, IntentHash, MAX_CROSSINGS_PER_TX, Moves, ResourceAddr, ValueEdge,
     };
 
     use super::{Address, LegRole, LegShape, NodeOrigin, Star, assemble, classify_roles, star_at};
@@ -779,7 +778,7 @@ mod tests {
                 .collect(),
             presents: Vec::new(),
             declares: vec![target],
-            intent: SubintentHash(Hash32([7; 32])),
+            intent: IntentHash(Hash32([7; 32])),
             local,
             expiry_ms: 1_000,
         }

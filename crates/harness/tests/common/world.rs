@@ -99,14 +99,9 @@ pub fn account_lanes() -> Lanes {
 
 /// One admitted, routed batch entry over `world`, under the null
 /// resolver's single shard.
-pub fn batch_entry(
-    world: &Records,
-    tree: &EnvelopeTree,
-    composer: PrincipalAddr,
-    env: EnvInputs,
-) -> Result<BatchTx> {
+pub fn batch_entry(world: &Records, tree: &EnvelopeTree, env: EnvInputs) -> Result<BatchTx> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(tree, composer, identity, world, &TestHasher).context("admission")?;
+    let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
     let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
     ensure!(routing.len() == 1, "the null resolver routes to one shard");
     Ok(BatchTx::new(
@@ -868,17 +863,16 @@ pub fn run_both_tree(
     world: &Records,
     store: &MemoryStore,
     tree: &EnvelopeTree,
-    composer: PrincipalAddr,
 ) -> Result<(BatchOutcome, MemoryStore), AdmissionError> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(tree, composer, identity, world, &TestHasher)?;
+    let admitted = admit_tree(tree, identity, world, &TestHasher)?;
     let entry = BatchTx::new(
         TxHash(identity.0),
         admitted.admitted.declaration().clone(),
         env(),
     )
     .with_calls(admitted.admitted.calls().to_vec())
-    .with_nullifiers(admitted.records().copied().collect());
+    .with_nullifiers(admitted.intents.clone());
     Ok(run_lanes(&LANES, store, &[entry]))
 }
 

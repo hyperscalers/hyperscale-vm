@@ -125,13 +125,13 @@ fn traded() -> EnvelopeTree {
 /// its runner walks.
 fn routed(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, AdmittedTree)> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(tree, ALICE, identity, world, &TestHasher).context("admission")?;
+    let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
     let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
     ensure!(routing.len() == 1, "the null resolver routes to one shard");
     let declaration = admitted.admitted.declaration().clone();
     let entry = BatchTx::new(TxHash(identity.0), declaration, env())
         .with_calls(admitted.admitted.calls().to_vec())
-        .with_nullifiers(admitted.records().copied().collect());
+        .with_nullifiers(admitted.intents.clone());
     Ok((entry, admitted))
 }
 
@@ -280,9 +280,9 @@ fn the_table_spans_both_signers() -> Result<()> {
         "one declaration carries both signers' cells"
     );
     assert_eq!(
-        admitted.subintents.len(),
-        1,
-        "the tree bound one subintent under its own signature"
+        admitted.intents.len(),
+        2,
+        "the composition's own intent and the one offered into it"
     );
 
     // Every node of either intent indexes the same table, so a rep is

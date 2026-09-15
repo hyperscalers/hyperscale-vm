@@ -35,8 +35,8 @@ use std::ops::{Deref, DerefMut};
 
 use hyperscale_vm_effects::{
     Binding, ChainRecords, Claim, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, GraphArg, Hasher,
-    InstanceMeta, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph,
-    ResourceMeta, Socket, Subintent,
+    InstanceMeta, Intent, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph,
+    ResourceMeta, Socket,
 };
 use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
@@ -166,7 +166,7 @@ pub enum EnvelopeError {
     },
     /// More subintents than an envelope may bind.
     #[error("envelope binds more than {MAX_SUBINTENTS} subintents")]
-    TooManySubintents,
+    TooManyIntents,
     /// A presented instance record whose configuration nests past what
     /// the vocabulary encodes — the bound admission holds it to, met at
     /// build so the tree can be hashed before any gate sees it.
@@ -465,10 +465,12 @@ pub struct EnvelopeBuilder<'a> {
     chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
     id: u64,
-    /// The signer of each subintent, in envelope order; the root has none.
+    /// The account the composition's own intent acts as.
+    composer: PrincipalAddr,
+    /// The account each further intent acts as, in envelope order.
     signers: Vec<PrincipalAddr>,
-    /// Sealed declarations by slot — `0` is the root — `None` until the
-    /// intent is sealed.
+    /// Sealed declarations by slot — `0` is the composer's — `None`
+    /// until the intent is sealed.
     intents: Vec<Option<IntentDecl>>,
     /// The bound source of each socket, by intent and
     /// position.
@@ -497,6 +499,7 @@ impl<'a> EnvelopeBuilder<'a> {
             chain,
             hasher,
             id,
+            composer: signer,
             signers: Vec::new(),
             intents: vec![None],
             bindings: BTreeMap::new(),
@@ -744,14 +747,14 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// [`EnvelopeError::UnsealedIntent`] for an intent still under
     /// construction; [`EnvelopeError::UnfilledSocket`] for a socket the
-    /// composition left open; [`EnvelopeError::TooManySubintents`].
+    /// composition left open; [`EnvelopeError::TooManyIntents`].
     ///
     /// # Panics
     ///
     /// Past a `u32` of intents, which [`MAX_SUBINTENTS`] excludes above.
     pub fn build(self) -> Result<EnvelopeTree, EnvelopeError> {
         if self.signers.len() > MAX_SUBINTENTS {
-            return Err(EnvelopeError::TooManySubintents);
+            return Err(EnvelopeError::TooManyIntents);
         }
         // Graph literals meet this bound at the call that binds them;
         // presented records are registered whole, so their configuration
@@ -785,25 +788,21 @@ impl<'a> EnvelopeBuilder<'a> {
             decls.push(decl);
             wired.push(bindings);
         }
-        let mut decls = decls.into_iter();
-        let mut wired = wired.into_iter();
-        let root = decls.next().expect("the root slot always exists");
-        let root_bindings = wired.next().expect("the root slot always exists");
-        let subintents = self
-            .signers
-            .into_iter()
+        // The composer's own account leads, so the accounts line up
+        // with the declarations one for one and the tree carries no slot
+        // whose account is implied from outside it.
+        let accounts = std::iter::once(self.composer).chain(self.signers);
+        let intents = accounts
             .zip(decls)
             .zip(wired)
-            .map(|((signer, decl), bindings)| Subintent {
+            .map(|((account, decl), bindings)| Intent {
                 decl,
-                signer,
+                account,
                 bindings,
             })
             .collect();
         Ok(EnvelopeTree {
-            root,
-            root_bindings,
-            subintents,
+            intents,
             instances: self.instances,
             resources: self.grants,
         })

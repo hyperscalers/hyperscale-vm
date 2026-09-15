@@ -553,13 +553,13 @@ fn an_approved_trade_settles_through_a_venue_holding_no_credential() {
     let signed = request.hash(&TestHasher);
     let tree = approved_composition(request).expect("the registrar composes the approval");
     assert_eq!(
-        tree.subintents[0].decl.hash(&TestHasher),
+        tree.intents[1].decl.hash(&TestHasher),
         signed,
         "nothing the composition did moved what the buyer signed",
     );
 
     let (outcome, end) =
-        run_both_tree(&world, &approval_store(), &tree, REGISTRAR).expect("the approval admits");
+        run_both_tree(&world, &approval_store(), &tree).expect("the approval admits");
     let tx = TxHash(tree.hash(&TestHasher).0);
     assert!(
         matches!(outcome.receipts[&tx].outcome, Outcome::Completed { .. }),

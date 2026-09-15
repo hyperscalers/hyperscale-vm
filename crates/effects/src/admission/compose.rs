@@ -7,7 +7,7 @@
 //! names, and the bounds an envelope's own inputs have to clear before
 //! any of it runs.
 
-use hyperscale_vm_types::{PrincipalAddr, ResourceAddr, SubintentHash};
+use hyperscale_vm_types::{IntentHash, PrincipalAddr, ResourceAddr};
 
 use super::{AdmissionError, MAX_SOCKETS};
 use crate::envelope::{Binding, Socket};
@@ -177,7 +177,7 @@ pub struct IntentView<'a> {
     /// node's signer chose. A transaction hash covers a whole
     /// composition the composer assembles, which is material a party
     /// other than the cell's owner can grind.
-    pub(crate) identity: SubintentHash,
+    pub(crate) identity: IntentHash,
     /// When what this intent's signature brought into being stops being
     /// owed: the window its own signer signed plus the artifact grace,
     /// on [`intent_expiry_ms`](crate::intent_expiry_ms)'s terms. The
@@ -204,7 +204,7 @@ impl<'a> IntentView<'a> {
             sockets,
             bindings,
             signer: None,
-            identity: SubintentHash(Hash32([0; 32])),
+            identity: IntentHash(Hash32([0; 32])),
             expiry_ms: 0,
         }
     }

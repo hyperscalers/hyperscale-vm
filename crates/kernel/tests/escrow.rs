@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
-    CallArg, CrossingCell, CrossingSite, Declaration, EdgeContent, Hash32, Hasher, Marker,
-    NodeCall, PackageHash, SlotId, SubintentHash, TestHasher, child_key,
+    CallArg, CrossingCell, CrossingSite, Declaration, EdgeContent, Hash32, Hasher, IntentHash,
+    Marker, NodeCall, PackageHash, SlotId, TestHasher, child_key,
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
@@ -55,8 +55,8 @@ fn cell(byte: u8) -> SubstateKey {
     child_key(&TestHasher, owner(byte), SlotId(1), &[])
 }
 
-const fn intent() -> SubintentHash {
-    SubintentHash(Hash32([0x5A; 32]))
+const fn intent() -> IntentHash {
+    IntentHash(Hash32([0x5A; 32]))
 }
 
 fn record_site() -> CrossingSite {

@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, IntentRecord, IssuanceGrant, Issued, Marked, Marker, ResourceKind,
-    SlotId, SubintentHash, TestHasher, child_key, nullifier_key,
+    Declaration, Hash32, Hasher, IntentHash, IntentRecord, IssuanceGrant, Issued, Marked, Marker,
+    ResourceKind, SlotId, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, Job, KernelSession, LegPlan, MemoryStore,
@@ -196,7 +196,7 @@ fn a_covered_transfer_derives_one_receipt_on_both_shards() {
 }
 
 /// The subintent these tests commit.
-const SUBINTENT: SubintentHash = SubintentHash(Hash32([0x99; 32]));
+const SUBINTENT: IntentHash = IntentHash(Hash32([0x99; 32]));
 
 /// The subintent's nullifier, under a signer the payer's shard owns.
 fn signed_nullifier() -> SubstateKey {
@@ -534,10 +534,10 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
 
 /// The record a spend carries: the subintent, its signer's cell, and
 /// when the record stops being owed.
-const fn nullifier_record(subintent: SubintentHash, nullifier: SubstateKey) -> IntentRecord {
+const fn nullifier_record(intent: IntentHash, nullifier: SubstateKey) -> IntentRecord {
     IntentRecord {
-        subintent,
-        signer: PrincipalAddr::new([PAYER_BYTE; 31]),
+        intent,
+        account: PrincipalAddr::new([PAYER_BYTE; 31]),
         nullifier,
         expiry_ms: TEST_EXPIRY_MS,
     }

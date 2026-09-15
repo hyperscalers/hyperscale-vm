@@ -14,7 +14,7 @@
 //! accept the result.
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, Hasher, IntentDecl, IntentHeader, PackageHash, Records, TestHasher,
+    EnvelopeTree, Hasher, Intent, IntentDecl, IntentHeader, PackageHash, Records, TestHasher,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap, wrap_publish};
@@ -123,13 +123,15 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
     let graph = builder.build().expect("every output is consumed");
 
     let tree = EnvelopeTree {
-        root: IntentDecl {
-            header: HEADER,
-            graph,
-            sockets: Vec::new(),
-        },
-        root_bindings: Vec::new(),
-        subintents: Vec::new(),
+        intents: vec![Intent {
+            decl: IntentDecl {
+                header: HEADER,
+                graph,
+                sockets: Vec::new(),
+            },
+            account: ALICE,
+            bindings: Vec::new(),
+        }],
         instances: Vec::new(),
         resources: Vec::new(),
     };
@@ -160,13 +162,15 @@ fn the_signature_covers_what_the_envelope_says() {
     let funds = account::withdraw(&mut builder, ALICE, RES, 100).expect("an account withdraws");
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");
     let tree = EnvelopeTree {
-        root: IntentDecl {
-            header: HEADER,
-            graph: builder.build().expect("every output is consumed"),
-            sockets: Vec::new(),
-        },
-        root_bindings: Vec::new(),
-        subintents: Vec::new(),
+        intents: vec![Intent {
+            decl: IntentDecl {
+                header: HEADER,
+                graph: builder.build().expect("every output is consumed"),
+                sockets: Vec::new(),
+            },
+            account: ALICE,
+            bindings: Vec::new(),
+        }],
         instances: Vec::new(),
         resources: Vec::new(),
     };

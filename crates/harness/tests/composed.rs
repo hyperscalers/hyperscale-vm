@@ -86,13 +86,9 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
 
 /// Admit and route one envelope into its batch entry, plus the manifest
 /// its runner walks.
-fn batch_entry(
-    world: &Records,
-    tree: &EnvelopeTree,
-    composer: PrincipalAddr,
-) -> Result<(BatchTx, AdmittedTree)> {
+fn batch_entry(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, AdmittedTree)> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(tree, composer, identity, world, &TestHasher).context("admission")?;
+    let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
     let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming
@@ -105,7 +101,7 @@ fn batch_entry(
     let declaration = admitted.admitted.declaration().clone();
     let entry = BatchTx::new(TxHash(identity.0), declaration, env())
         .with_calls(admitted.admitted.calls().to_vec())
-        .with_nullifiers(admitted.records().copied().collect());
+        .with_nullifiers(admitted.intents.clone());
     Ok((entry, admitted))
 }
 
@@ -135,8 +131,8 @@ fn seeded_store() -> MemoryStore {
 fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     let world = world();
     let tree = composed_tree(ALICE, 100);
-    let (entry, admitted) = batch_entry(&world, &tree, ALICE)?;
-    let record = admitted.subintents[0];
+    let (entry, admitted) = batch_entry(&world, &tree)?;
+    let record = admitted.intents[1];
     let nullifier = record.nullifier;
 
     let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&entry));
@@ -154,7 +150,7 @@ fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     let spend = Marker {
         tx: entry.tx,
         expiry_ms: record.expiry_ms,
-        marks: Marked::Spent(record.subintent),
+        marks: Marked::Spent(record.intent),
     }
     .to_bytes();
     assert_eq!(cells(&end).get(&nullifier), Some(&spend));
@@ -170,11 +166,11 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     // Two composers carry the same signed subintent: same nullifier,
     // one conflict group, canonical order picks the winner.
     let world = world();
-    let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100), ALICE)?;
-    let (carol_entry, carol_admitted) = batch_entry(&world, &composed_tree(CAROL, 120), CAROL)?;
+    let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100))?;
+    let (carol_entry, carol_admitted) = batch_entry(&world, &composed_tree(CAROL, 120))?;
     assert_eq!(
-        alice_admitted.subintents[0].nullifier,
-        carol_admitted.subintents[0].nullifier
+        alice_admitted.intents[1].nullifier,
+        carol_admitted.intents[1].nullifier
     );
     let alice_wins = alice_entry.tx < carol_entry.tx;
     let batch = vec![alice_entry.clone(), carol_entry.clone()];
@@ -198,7 +194,7 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     assert_eq!(
         outcome.receipts[&loser.tx].outcome,
         Outcome::NullifierSpent {
-            key: alice_admitted.subintents[0].nullifier,
+            key: alice_admitted.intents[1].nullifier,
         }
     );
 
@@ -214,14 +210,14 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     // The subintent leg settled exactly once.
     assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 20);
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), pay);
-    let record = alice_admitted.subintents[0];
+    let record = alice_admitted.intents[1];
     assert_eq!(
         cells(&end).get(&record.nullifier),
         Some(
             &Marker {
                 tx: winner.tx,
                 expiry_ms: record.expiry_ms,
-                marks: Marked::Spent(record.subintent),
+                marks: Marked::Spent(record.intent),
             }
             .to_bytes()
         )
@@ -232,9 +228,9 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
 #[test]
 fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     let world = world();
-    let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100), ALICE)?;
-    let (carol_entry, _) = batch_entry(&world, &composed_tree(CAROL, 120), CAROL)?;
-    let nullifier = alice_admitted.subintents[0].nullifier;
+    let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100))?;
+    let (carol_entry, _) = batch_entry(&world, &composed_tree(CAROL, 120))?;
+    let nullifier = alice_admitted.intents[1].nullifier;
 
     let (_, committed) = run_both(&seeded_store(), std::slice::from_ref(&alice_entry));
 
@@ -260,7 +256,7 @@ fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
 #[test]
 fn a_transaction_that_spends_its_gas_limit_aborts_on_both_runtimes() -> Result<()> {
     let world = world();
-    let (entry, _) = batch_entry(&world, &composed_tree(ALICE, 100), ALICE)?;
+    let (entry, _) = batch_entry(&world, &composed_tree(ALICE, 100))?;
 
     // Enough to enter the guest and not enough to leave it, at every
     // node. The figure is between the two and moves with the code: below

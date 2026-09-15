@@ -210,13 +210,16 @@ fn unstake_graph(amount: u128) -> ManifestGraph {
 #[test]
 fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
     let world = world();
-    let tree = single_intent(graph(|b| {
-        let funds = account::withdraw(b, ALICE, unit(), 40)?;
-        let units = pool().stake(b, funds)?;
-        account::deposit(b, ALICE, units)
-    }));
+    let tree = single_intent(
+        ALICE,
+        graph(|b| {
+            let funds = account::withdraw(b, ALICE, unit(), 40)?;
+            let units = pool().stake(b, funds)?;
+            account::deposit(b, ALICE, units)
+        }),
+    );
     let identity = tree.hash(&TestHasher);
-    let refused = admit_tree(&tree, ALICE, identity, &world, &TestHasher)
+    let refused = admit_tree(&tree, identity, &world, &TestHasher)
         .expect_err("the pool takes its staked resource and this pays units");
 
     assert!(
@@ -234,12 +237,15 @@ fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
 #[test]
 fn an_unstake_in_the_wrong_resource_is_refused_at_admission() {
     let world = world();
-    let tree = single_intent(graph(|b| {
-        let funds = account::withdraw(b, ALICE, TOKEN, 40)?;
-        pool().unstake(b, funds)
-    }));
+    let tree = single_intent(
+        ALICE,
+        graph(|b| {
+            let funds = account::withdraw(b, ALICE, TOKEN, 40)?;
+            pool().unstake(b, funds)
+        }),
+    );
     let identity = tree.hash(&TestHasher);
-    let refused = admit_tree(&tree, ALICE, identity, &world, &TestHasher)
+    let refused = admit_tree(&tree, identity, &world, &TestHasher)
         .expect_err("the pool takes back its stake units and this hands it the staked resource");
 
     assert!(
@@ -255,9 +261,9 @@ fn an_unstake_in_the_wrong_resource_is_refused_at_admission() {
 #[test]
 fn a_delegation_in_the_pools_own_resource_admits() -> Result<()> {
     let world = world();
-    let tree = single_intent(stake_graph(40));
+    let tree = single_intent(ALICE, stake_graph(40));
     let identity = tree.hash(&TestHasher);
-    admit_tree(&tree, ALICE, identity, &world, &TestHasher)
+    admit_tree(&tree, identity, &world, &TestHasher)
         .context("the pool's own resource is what it asks for")?;
     Ok(())
 }
@@ -292,24 +298,21 @@ fn register_graph(validator: u64) -> ManifestGraph {
     })
 }
 
-const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree {
-        root: IntentDecl {
+fn single_intent(account: PrincipalAddr, graph: ManifestGraph) -> EnvelopeTree {
+    EnvelopeTree::of_one(
+        account,
+        IntentDecl {
             header: TEST_HEADER,
             graph,
             sockets: Vec::new(),
         },
-        root_bindings: Vec::new(),
-        subintents: Vec::new(),
-        instances: Vec::new(),
-        resources: Vec::new(),
-    }
+    )
 }
 
 /// Admit and route one envelope into its batch entry.
-fn batch_entry(world: &Records, tree: &EnvelopeTree, composer: PrincipalAddr) -> Result<BatchTx> {
+fn batch_entry(world: &Records, tree: &EnvelopeTree) -> Result<BatchTx> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(tree, composer, identity, world, &TestHasher).context("admission")?;
+    let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
     let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
     ensure!(routing.len() == 1, "the null resolver routes to one shard");
     let declaration = admitted.admitted.declaration().clone();
@@ -349,7 +352,7 @@ fn run_both(store: &MemoryStore, batch: &[BatchTx]) -> (BatchOutcome, MemoryStor
 #[test]
 fn a_delegation_to_an_unsealed_pool_is_refused_where_the_leaf_lives() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(stake_graph(100)), ALICE)?;
+    let entry = batch_entry(&world, &single_intent(ALICE, stake_graph(100)))?;
 
     let mut store = MemoryStore::new();
     store.write(
@@ -384,7 +387,7 @@ fn a_delegation_to_an_unsealed_pool_is_refused_where_the_leaf_lives() -> Result<
 #[test]
 fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(stake_graph(100)), ALICE)?;
+    let entry = batch_entry(&world, &single_intent(ALICE, stake_graph(100)))?;
 
     let (outcome, end) = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry));
     let receipt = &outcome.receipts[&entry.tx];
@@ -414,7 +417,7 @@ fn a_delegation_lands_in_the_pool_and_returns_units() -> Result<()> {
 #[test]
 fn returned_units_are_destroyed_and_the_pool_says_what_it_owes() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(unstake_graph(40)), ALICE)?;
+    let entry = batch_entry(&world, &single_intent(ALICE, unstake_graph(40)))?;
 
     let (outcome, end) = run_both(&seeded_store(0, 100), std::slice::from_ref(&entry));
     let receipt = &outcome.receipts[&entry.tx];
@@ -450,7 +453,7 @@ fn the_emitter_names_the_pool_and_the_guest_cannot() -> Result<()> {
     // names a pool — so a second instance of this same package emits facts
     // about itself and can never emit one about this pool.
     let world = world();
-    let entry = batch_entry(&world, &single_intent(stake_graph(10)), ALICE)?;
+    let entry = batch_entry(&world, &single_intent(ALICE, stake_graph(10)))?;
     let (outcome, _) = run_both(&seeded_store(150, 0), std::slice::from_ref(&entry));
 
     let events = &outcome.receipts[&entry.tx].events;
@@ -483,7 +486,7 @@ fn the_emitter_names_the_pool_and_the_guest_cannot() -> Result<()> {
 #[test]
 fn an_event_decodes_from_metadata_alone() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
+    let entry = batch_entry(&world, &single_intent(OPERATOR, register_graph(VALIDATOR)))?;
     let (outcome, _) = run_both(&operator_store(), std::slice::from_ref(&entry));
     let raw = outcome.receipts[&entry.tx]
         .events
@@ -522,7 +525,7 @@ fn an_event_decodes_from_metadata_alone() -> Result<()> {
 #[test]
 fn a_state_cell_decodes_from_its_slot_alone() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
+    let entry = batch_entry(&world, &single_intent(OPERATOR, register_graph(VALIDATOR)))?;
     let (_, end) = run_both(&operator_store(), std::slice::from_ref(&entry));
 
     let metadata = staking::metadata();
@@ -592,7 +595,7 @@ fn registered_bytes() -> Vec<u8> {
 #[test]
 fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
+    let entry = batch_entry(&world, &single_intent(OPERATOR, register_graph(VALIDATOR)))?;
     let (outcome, end) = run_both(&operator_store(), std::slice::from_ref(&entry));
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
@@ -617,7 +620,7 @@ fn a_registration_records_the_validator_and_reports_it() -> Result<()> {
 #[test]
 fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
+    let entry = batch_entry(&world, &single_intent(OPERATOR, register_graph(VALIDATOR)))?;
 
     // The leaf already holds a key, which is the state a first
     // registration leaves behind.
@@ -688,7 +691,7 @@ fn a_pool_brings_itself_up_and_reaches_its_operator_surface() -> Result<()> {
     let world = world();
     let store = MemoryStore::new();
 
-    let brought_up = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
+    let brought_up = batch_entry(&world, &single_intent(OPERATOR, bring_up_graph()))?;
     let (outcome, after) = run_both(&store, std::slice::from_ref(&brought_up));
     assert!(
         matches!(
@@ -727,7 +730,7 @@ fn a_pool_brings_itself_up_and_reaches_its_operator_surface() -> Result<()> {
 
     // And the surface is open: the founder registers a validator with
     // the badge the bring-up minted.
-    let register = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
+    let register = batch_entry(&world, &single_intent(OPERATOR, register_graph(VALIDATOR)))?;
     let (outcome, end) = run_both(&after, std::slice::from_ref(&register));
     assert!(matches!(
         outcome.receipts[&register.tx].outcome,
@@ -746,10 +749,10 @@ fn a_pool_brings_itself_up_and_reaches_its_operator_surface() -> Result<()> {
 fn a_second_bring_up_is_refused_where_the_seal_lives() -> Result<()> {
     let world = world();
     let store = MemoryStore::new();
-    let brought_up = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
+    let brought_up = batch_entry(&world, &single_intent(OPERATOR, bring_up_graph()))?;
     let (_, after) = run_both(&store, std::slice::from_ref(&brought_up));
 
-    let again = batch_entry(&world, &single_intent(bring_up_graph()), OPERATOR)?;
+    let again = batch_entry(&world, &single_intent(OPERATOR, bring_up_graph()))?;
     let (outcome, _) = run_both(&after, std::slice::from_ref(&again));
     assert!(
         matches!(
@@ -775,7 +778,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
     let world = world();
     for method in ["deactivate-validator", "unjail"] {
         let graph = operator_graph(method, VALIDATOR);
-        let entry = batch_entry(&world, &single_intent(graph), OPERATOR)?;
+        let entry = batch_entry(&world, &single_intent(OPERATOR, graph))?;
         let (outcome, _) = run_both(&operator_store(), std::slice::from_ref(&entry));
         assert!(
             !matches!(
@@ -796,7 +799,7 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
 
     for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
         let graph = operator_graph(method, VALIDATOR);
-        let entry = batch_entry(&world, &single_intent(graph), OPERATOR)?;
+        let entry = batch_entry(&world, &single_intent(OPERATOR, graph))?;
         let (outcome, end) = run_both(&store, std::slice::from_ref(&entry));
         assert!(matches!(
             outcome.receipts[&entry.tx].outcome,
@@ -824,11 +827,10 @@ fn two_validators_registrations_touch_different_leaves() -> Result<()> {
     // Per validator rather than per pool, so two operator actions on two
     // validators commute rather than taking turns.
     let world = world();
-    let first = batch_entry(&world, &single_intent(register_graph(VALIDATOR)), OPERATOR)?;
+    let first = batch_entry(&world, &single_intent(OPERATOR, register_graph(VALIDATOR)))?;
     let second = batch_entry(
         &world,
-        &single_intent(register_graph(VALIDATOR + 1)),
-        OPERATOR,
+        &single_intent(OPERATOR, register_graph(VALIDATOR + 1)),
     )?;
     let (outcome, end) = run_both(&operator_store(), &[first.clone(), second.clone()]);
 
@@ -895,7 +897,7 @@ fn cast_graph() -> ManifestGraph {
 #[test]
 fn a_cast_vote_is_held_on_the_pools_own_leaf_and_reported() -> Result<()> {
     let world = world();
-    let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
+    let entry = batch_entry(&world, &single_intent(OPERATOR, cast_graph()))?;
     let (outcome, end) = run_both(&operator_store(), std::slice::from_ref(&entry));
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
@@ -919,7 +921,7 @@ fn clearing_a_vote_empties_the_leaf_and_reports_nothing_else() -> Result<()> {
         let operator = account::present_instance(b, OPERATOR, badge(), BADGE_ID)?;
         b.presenting(operator, |b| pool().clear_param_vote(b))
     });
-    let entry = batch_entry(&world, &single_intent(cleared), OPERATOR)?;
+    let entry = batch_entry(&world, &single_intent(OPERATOR, cleared))?;
     let (outcome, end) = run_both(&store, std::slice::from_ref(&entry));
     assert!(matches!(
         outcome.receipts[&entry.tx].outcome,
@@ -944,7 +946,7 @@ fn a_second_cast_replaces_the_first() -> Result<()> {
     let mut store = operator_store();
     store.write(vote_leaf(pool()), vec![0xAA; 24]);
 
-    let entry = batch_entry(&world, &single_intent(cast_graph()), OPERATOR)?;
+    let entry = batch_entry(&world, &single_intent(OPERATOR, cast_graph()))?;
     let (_, end) = run_both(&store, std::slice::from_ref(&entry));
     assert_eq!(cells(&end).get(&vote_leaf(pool())), Some(&cast_payload()));
     Ok(())

@@ -85,18 +85,15 @@ const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
 
 /// The degenerate tree a plain transaction is: one intent under the test
 /// header, no sockets, nothing bound.
-fn one_intent(graph: &ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree {
-        root: IntentDecl {
+fn one_intent(account: PrincipalAddr, graph: &ManifestGraph) -> EnvelopeTree {
+    EnvelopeTree::of_one(
+        account,
+        IntentDecl {
             header: TEST_HEADER,
             graph: graph.clone(),
             sockets: Vec::new(),
         },
-        root_bindings: Vec::new(),
-        subintents: Vec::new(),
-        instances: Vec::new(),
-        resources: Vec::new(),
-    }
+    )
 }
 
 #[test]
@@ -106,14 +103,14 @@ fn a_report_is_what_the_chain_derives() {
     let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
-    let tree = one_intent(&graph);
+    let tree = one_intent(ALICE, &graph);
 
-    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
 
     // Nothing new is computed here, so everything must equal the direct
     // call it composes.
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(&tree, ALICE, identity, &chain, &TestHasher).unwrap();
+    let admitted = admit_tree(&tree, identity, &chain, &TestHasher).unwrap();
     assert_eq!(report.identity(), identity);
     assert_eq!(report.manifest(), admitted.admitted.manifest());
     assert_eq!(report.admitted, admitted.admitted);
@@ -200,7 +197,7 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
     let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight_tree(&one_intent(&graph), ALICE, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&one_intent(ALICE, &graph), &chain, &TestHasher, NETWORK).unwrap();
 
     // Spending is the sender's; being paid is nobody's to refuse, so a
     // transfer composes under one signature — presented once, at the
@@ -221,7 +218,7 @@ fn the_operator_surface_is_the_badge_holders_custody() {
     b.presenting(operator, |b| pool().unjail(b, 42)).unwrap();
     let graph = b.build().unwrap();
     let report =
-        preflight_tree(&one_intent(&graph), OPERATOR, &chain, &TestHasher, NETWORK).unwrap();
+        preflight_tree(&one_intent(OPERATOR, &graph), &chain, &TestHasher, NETWORK).unwrap();
 
     // A pool is owned by nobody, so its operator surface admits whoever
     // presents the pool's own badge: custody at the presentation, and
@@ -254,7 +251,7 @@ fn every_address_the_report_names_is_named_for_the_network() {
     let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
-    let report = preflight_tree(&one_intent(&graph), ALICE, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&one_intent(ALICE, &graph), &chain, &TestHasher, NETWORK).unwrap();
 
     for (address, text) in &report.named {
         assert_eq!(*text, address.to_text(NETWORK).unwrap());
@@ -266,7 +263,7 @@ fn every_address_the_report_names_is_named_for_the_network() {
     );
     // A report on one network says nothing about another.
     let elsewhere =
-        preflight_tree(&one_intent(&graph), ALICE, &chain, &TestHasher, "testnet").unwrap();
+        preflight_tree(&one_intent(ALICE, &graph), &chain, &TestHasher, "testnet").unwrap();
     assert_ne!(elsewhere.named, report.named);
 }
 
@@ -278,11 +275,11 @@ fn a_network_word_the_encoding_refuses_fails_once() {
     account::deposit(&mut b, BOB, funds).unwrap();
     let graph = b.build().unwrap();
     assert!(matches!(
-        preflight_tree(&one_intent(&graph), ALICE, &chain, &TestHasher, "Main Net"),
+        preflight_tree(&one_intent(ALICE, &graph), &chain, &TestHasher, "Main Net"),
         Err(PreflightError::Network(TextError::InvalidCharacter(_)))
     ));
     assert!(matches!(
-        preflight_tree(&one_intent(&graph), ALICE, &chain, &TestHasher, ""),
+        preflight_tree(&one_intent(ALICE, &graph), &chain, &TestHasher, ""),
         Err(PreflightError::Network(TextError::IncompletePrefix))
     ));
 }
@@ -309,12 +306,12 @@ fn a_composition_names_every_signer_it_needs() {
     env.bind(wants_x, paid_x).unwrap();
     let tree = env.build().unwrap();
 
-    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     // Both withdrawals name their own account, and the subintent's signer
     // signs its declaration; here the two sets coincide.
     assert_eq!(report.signers(), [ALICE, BOB].into_iter().collect());
-    assert_eq!(report.subintents.len(), 1);
-    assert_eq!(report.subintents[0].signer, BOB);
+    assert_eq!(report.intents.len(), 2);
+    assert_eq!(report.intents[1].account, BOB);
     // The nullifier the composition would spend, named before signing.
     assert_eq!(report.identity(), tree.hash(&TestHasher));
 }
@@ -338,12 +335,12 @@ fn a_root_that_calls_nothing_is_still_one_of_the_intents() {
     env.seal(sub).unwrap().none().unwrap();
     let tree = env.build().unwrap();
 
-    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let nodes = report.manifest().nodes.len();
     let split = report.by_intent(&vec![1_000u64; nodes]).unwrap();
 
     assert_eq!(split.intents.len(), 2, "the empty root and Bob's subintent");
-    assert_eq!(split.intents[0].intent, report.root_intent);
+    assert_eq!(split.intents[0].intent, report.intents[0].intent);
     assert_eq!(split.intents[0].signer, ALICE);
     assert_eq!(split.intents[0].nodes, 0, "the root calls nothing");
     assert_eq!(split.intents[1].signer, BOB);
@@ -379,7 +376,7 @@ fn an_intent_is_exposed_only_by_the_cells_its_signer_holds() {
     account::deposit(&mut b, BOB, mine).unwrap();
     let graph = b.build().unwrap();
 
-    let report = preflight_tree(&one_intent(&graph), ALICE, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&one_intent(ALICE, &graph), &chain, &TestHasher, NETWORK).unwrap();
     let nodes = report.manifest().nodes.len();
     let gas_limits = vec![1_000u64; nodes];
     let split = report.by_intent(&gas_limits).unwrap();
@@ -425,7 +422,7 @@ fn a_shared_cell_is_named_rather_than_charged_to_either_intent() {
     env.bind(wants_from_alice, paid_alice).unwrap();
     let tree = env.build().unwrap();
 
-    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let nodes = report.manifest().nodes.len();
     let gas_limits: Vec<u64> = (1..=nodes as u64).map(|node| node * 1_000).collect();
     let split = report.by_intent(&gas_limits).unwrap();
@@ -434,7 +431,7 @@ fn a_shared_cell_is_named_rather_than_charged_to_either_intent() {
     // The root leads, then the subintents in envelope order — the order
     // `schemes` is given in, so each intent is paired with its own
     // signer's signature.
-    let sub_hash = report.subintents[0].subintent;
+    let sub_hash = report.intents[1].intent;
     assert_ne!(split.intents[0].intent, sub_hash, "the root leads");
     assert_eq!(split.intents[1].intent, sub_hash);
 
@@ -512,7 +509,7 @@ fn the_compute_column_sums_to_the_terms_and_splits_per_intent() {
     env.bind(wants_x, paid_x).unwrap();
     let tree = env.build().unwrap();
 
-    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let nodes = report.manifest().nodes.len();
     assert_eq!(nodes, tree.node_count());
     let gas_limits: Vec<u64> = (1..=nodes as u64).map(|node| node * 1_000).collect();
@@ -535,13 +532,13 @@ fn the_compute_column_sums_to_the_terms_and_splits_per_intent() {
     // The subintent's nodes are the ones whose intent is the bound
     // declaration's hash; their ceilings are the positions the lowered
     // order gave them, not a contiguous run at either end.
-    let sub_hash = report.subintents[0].subintent;
+    let sub_hash = report.intents[1].intent;
     let sub_nodes: Vec<u32> = column
         .iter()
         .filter(|row| row.intent == sub_hash)
         .map(|row| row.node)
         .collect();
-    assert_eq!(sub_nodes.len(), tree.subintents[0].decl.graph.nodes.len());
+    assert_eq!(sub_nodes.len(), tree.intents[1].decl.graph.nodes.len());
     assert!(
         sub_nodes.iter().any(|node| *node > 0),
         "the interleave puts a subintent node after a root node"
@@ -639,7 +636,7 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     env.register_resource(either_note_meta());
     let tree = env.build().unwrap();
 
-    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let withdrawing = report
         .authority
         .iter()
@@ -761,7 +758,7 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
     env.register_resource(ticket_meta());
     let tree = env.build().unwrap();
 
-    let report = preflight_tree(&tree, ALICE, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let withdrawing = report
         .authority
         .iter()
@@ -804,7 +801,7 @@ fn a_conjunction_reports_what_each_branch_asks() {
     env.register_resource(note_meta());
     let tree = env.build().unwrap();
 
-    let report = preflight_tree(&tree, DESK, &chain, &TestHasher, NETWORK).unwrap();
+    let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
 
     let withdrawing = report
         .authority

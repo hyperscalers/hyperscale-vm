@@ -435,7 +435,7 @@ impl KernelSession {
 mod tests {
     use std::collections::BTreeSet;
 
-    use hyperscale_vm_effects::{CrossingSite, Hash32, SubintentHash, TestHasher};
+    use hyperscale_vm_effects::{CrossingSite, Hash32, IntentHash, TestHasher};
     use hyperscale_vm_types::{Address, AddressClass, ResourceAddr};
 
     use super::super::fixtures::{declared, session_over};
@@ -450,7 +450,7 @@ mod tests {
         CrossingSite::record(
             &TestHasher,
             Address::new([0xA1; 31], AddressClass::Component),
-            SubintentHash(Hash32([0x5A; 32])),
+            IntentHash(Hash32([0x5A; 32])),
             0,
             0,
             1_000,
@@ -463,7 +463,7 @@ mod tests {
             consumer_claim: CrossingSite::claim(
                 &TestHasher,
                 Address::new([0xB2; 31], AddressClass::Component),
-                SubintentHash(Hash32([0x5A; 32])),
+                IntentHash(Hash32([0x5A; 32])),
                 0,
                 0,
                 1_000,

@@ -50,7 +50,7 @@ fn world() -> Records {
 fn admits(tree: &EnvelopeTree) {
     let chain = world();
     let identity = tree.hash(&TestHasher);
-    admit_tree(tree, ALICE, identity, &chain, &TestHasher).expect("a composed envelope admits");
+    admit_tree(tree, identity, &chain, &TestHasher).expect("a composed envelope admits");
 }
 
 /// The two-sided trade: each signer withdraws what they pay, exports it,
@@ -81,12 +81,12 @@ fn swap(pay_x: u128, pay_y: u128) -> Result<EnvelopeTree, EnvelopeError> {
 #[test]
 fn a_composed_swap_admits() {
     let tree = swap(100, 10).unwrap();
-    assert_eq!(tree.subintents.len(), 1);
-    assert_eq!(tree.subintents[0].signer, BOB);
+    assert_eq!(tree.intents.len(), 2);
+    assert_eq!(tree.intents[1].account, BOB);
     // The wiring the author never wrote: each side's socket names the other
     // intent's exported edge.
-    assert_eq!(tree.root_bindings[0].intent(), 1);
-    assert_eq!(tree.subintents[0].bindings[0].intent(), 0);
+    assert_eq!(tree.intents[0].bindings[0].intent(), 1);
+    assert_eq!(tree.intents[1].bindings[0].intent(), 0);
     admits(&tree);
 }
 
@@ -116,9 +116,9 @@ fn a_presented_declaration_is_carried_verbatim() {
     env.bind(wants, paid).unwrap();
     let tree = env.build().unwrap();
 
-    assert_eq!(tree.subintents[0].decl.hash(&TestHasher), signed);
-    assert_eq!(tree.subintents[0].signer, BOB);
-    assert_eq!(tree.subintents[0].bindings[0].intent(), 0);
+    assert_eq!(tree.intents[1].decl.hash(&TestHasher), signed);
+    assert_eq!(tree.intents[1].account, BOB);
+    assert_eq!(tree.intents[1].bindings[0].intent(), 0);
     admits(&tree);
 }
 
@@ -563,12 +563,12 @@ fn a_declared_hole_carries_a_proof_across_an_intent_boundary() {
     let tree = approved(request).expect("the desk composes the approval");
 
     assert_eq!(
-        tree.subintents[0].decl.hash(&TestHasher),
+        tree.intents[1].decl.hash(&TestHasher),
         signed,
         "nothing the composition did moved what the holder signed",
     );
     let chain = world();
-    let admitted = admit_tree(&tree, DESK, tree.hash(&TestHasher), &chain, &TestHasher)
+    let admitted = admit_tree(&tree, tree.hash(&TestHasher), &chain, &TestHasher)
         .expect("the approval satisfies the note's own entry");
     // The withdrawing node carries both claims: the holder's own, and
     // the desk's — which reached it from another intent entirely.
@@ -602,7 +602,7 @@ fn a_hole_bound_to_the_wrong_claim_is_refused() {
     let tree = approved(request).expect("the composition still builds");
     let chain = world();
     assert_eq!(
-        admit_tree(&tree, DESK, tree.hash(&TestHasher), &chain, &TestHasher),
+        admit_tree(&tree, tree.hash(&TestHasher), &chain, &TestHasher),
         Err(AdmissionError::SocketClaimMismatch {
             intent: 1,
             node: 1,

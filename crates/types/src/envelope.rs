@@ -117,6 +117,13 @@ pub const CROSSING_GRACE_MS: u64 = 1_500_000;
 /// per scheme, by [`DeclaredWork::signature`].
 pub const MAX_SUBINTENTS: usize = 32;
 
+/// The bound on intents one envelope's tree may carry.
+///
+/// One more than the signatures it carries for them: the composition's
+/// own intent is attested by the envelope's signature rather than by one
+/// of those, so the two bounds differ by exactly that intent.
+pub const MAX_INTENTS: usize = MAX_SUBINTENTS + 1;
+
 /// The most compute one envelope may sign for, in fuel, summed over its
 /// per-node ceilings.
 ///
@@ -136,15 +143,15 @@ pub const MAX_GAS_LIMIT: u64 = 32_000_000;
 /// figure past this buys nothing the ceiling does not already.
 pub const MAX_PRIORITY_BP: u32 = 100_000;
 
-/// A signed subintent's identity: the hash of its declaration.
+/// An intent's identity: the hash of its declaration.
 ///
 /// What a nullifier spends and what an escrow cell is keyed by. Defined
 /// beside [`TxHash`] because the two are the protocol's two signed
 /// identities, and the one this names is the one a composer who is not
-/// the signer cannot move.
+/// the intent's own account cannot move.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
-pub struct SubintentHash(pub Hash32);
+pub struct IntentHash(pub Hash32);
 
 /// A transaction's identity: the protocol hash of its envelope's signing
 /// bytes.

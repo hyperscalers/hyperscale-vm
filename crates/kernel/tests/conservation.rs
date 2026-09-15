@@ -8,7 +8,7 @@
 //! would pin nothing about which resource went to which side.
 
 use hyperscale_vm_effects::{
-    Hash32, IntentRecord, ResourceKind, SlotId, SubintentHash, TestHasher, Value, child_key,
+    Hash32, IntentHash, IntentRecord, ResourceKind, SlotId, TestHasher, Value, child_key,
 };
 
 /// Any expiry; these tests never reach one.
@@ -296,7 +296,7 @@ mod through_the_session {
         )
         .expect("one denominated write cell materializes")
         .with_nullifiers(vec![super::nullifier_record(
-            super::SubintentHash(Hash32([9; 32])),
+            super::IntentHash(Hash32([9; 32])),
             key,
         )]);
 
@@ -510,10 +510,10 @@ mod instances {
 
 /// The record a spend carries: the subintent, its signer's cell, and
 /// when the record stops being owed.
-const fn nullifier_record(subintent: SubintentHash, nullifier: SubstateKey) -> IntentRecord {
+const fn nullifier_record(intent: IntentHash, nullifier: SubstateKey) -> IntentRecord {
     IntentRecord {
-        subintent,
-        signer: PrincipalAddr::new([1; 31]),
+        intent,
+        account: PrincipalAddr::new([1; 31]),
         nullifier,
         expiry_ms: TEST_EXPIRY_MS,
     }

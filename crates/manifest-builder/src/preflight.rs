@@ -27,8 +27,8 @@ use hyperscale_vm_effects::{
     Manifest, ManifestHash, Rule, admit_tree, footprint,
 };
 use hyperscale_vm_types::{
-    Address, CallTarget, DeclaredWork, EffectTarget, Mode, NetworkWord, Presence, PriceTable,
-    PrincipalAddr, ResourceAddr, SchemeId, SubintentHash, SubstateKey, TermsRefusal, TextError,
+    Address, CallTarget, DeclaredWork, EffectTarget, IntentHash, Mode, NetworkWord, Presence,
+    PriceTable, PrincipalAddr, ResourceAddr, SchemeId, SubstateKey, TermsRefusal, TextError,
     admit_ceilings, admit_event_bounds, gas_limit_total,
 };
 
@@ -288,7 +288,7 @@ pub struct NodeCompute {
     /// The manifest node, in the order the walk meters them.
     pub node: u32,
     /// The signed intent the node came from.
-    pub intent: SubintentHash,
+    pub intent: IntentHash,
     /// The ceiling the composer would sign for it, in fuel.
     pub ceiling: u64,
 }
@@ -301,20 +301,15 @@ pub struct Report {
     /// The admitted form: the lowered manifest and the identity every
     /// fresh derivation — and every signature — binds to.
     pub admitted: Admitted,
-    /// The composer: the root intent's signer, and the one payer.
-    pub(crate) composer: PrincipalAddr,
-    /// The root intent's own hash.
-    ///
-    /// Taken from the declaration rather than found as the one intent
-    /// the subintent records do not name: a root whose sockets carry the
-    /// whole composition declares no nodes of its own, and an intent
-    /// with no nodes appears in no origin to be found by.
-    pub root_intent: SubintentHash,
     /// What naming each node requires of a signature, in node order.
     pub authority: Vec<Required>,
-    /// The nullifier record of every bound subintent, empty where the
-    /// tree binds none.
-    pub subintents: Vec<IntentRecord>,
+    /// The record of every intent the tree carries, in envelope order —
+    /// the composition's own first, and never empty.
+    ///
+    /// Taken from the declarations rather than found among the origins:
+    /// an intent whose sockets carry the whole composition declares no
+    /// nodes of its own, and appears in no origin to be found by.
+    pub intents: Vec<IntentRecord>,
     /// What the methods this transaction's calls name may emit between
     /// them, in bytes.
     ///
@@ -339,7 +334,7 @@ pub struct Report {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntentCost {
     /// The intent this is about.
-    pub intent: SubintentHash,
+    pub intent: IntentHash,
     /// How many of the flattened manifest's nodes are this intent's.
     pub nodes: u32,
     /// Its nodes' signed ceilings, summed.
@@ -549,21 +544,18 @@ impl Report {
         let compute = self.compute_by_intent(gas_limits)?;
         let origins = self.admitted.origins();
 
-        // Whose signature admits each intent.
-        let order: Vec<(SubintentHash, PrincipalAddr)> =
-            std::iter::once((self.root_intent, self.composer))
-                .chain(
-                    self.subintents
-                        .iter()
-                        .map(|record| (record.subintent, record.signer)),
-                )
-                .collect();
-        let owner_of: BTreeMap<SubintentHash, Address> = order
+        // Which account admits each intent.
+        let order: Vec<(IntentHash, PrincipalAddr)> = self
+            .intents
             .iter()
-            .map(|(intent, signer)| (*intent, signer.address()))
+            .map(|record| (record.intent, record.account))
+            .collect();
+        let owner_of: BTreeMap<IntentHash, Address> = order
+            .iter()
+            .map(|(intent, account)| (*intent, account.address()))
             .collect();
 
-        let mut events: BTreeMap<SubintentHash, u64> = BTreeMap::new();
+        let mut events: BTreeMap<IntentHash, u64> = BTreeMap::new();
         for (origin, bound) in origins.iter().zip(&self.event_bytes_by_node) {
             let total = events.entry(origin.intent).or_default();
             *total = total.saturating_add(u64::from(*bound));
@@ -580,8 +572,8 @@ impl Report {
         // venue's reserve, which is the venue's value moving and not the
         // caller's. What a signer risks is what leaves an address they
         // hold.
-        let mut exposure: BTreeMap<SubintentHash, BTreeMap<ResourceAddr, u128>> = BTreeMap::new();
-        let mut unbounded: BTreeSet<SubintentHash> = BTreeSet::new();
+        let mut exposure: BTreeMap<IntentHash, BTreeMap<ResourceAddr, u128>> = BTreeMap::new();
+        let mut unbounded: BTreeSet<IntentHash> = BTreeSet::new();
         for frame in self.admitted.frames() {
             let Some(origin) = origins.get(frame.node as usize) else {
                 continue;
@@ -612,7 +604,7 @@ impl Report {
 
         // A target every intent that reaches it, so a cell two of them
         // name is readable as the shared thing it is.
-        let mut reached: BTreeMap<EffectTarget, BTreeSet<SubintentHash>> = BTreeMap::new();
+        let mut reached: BTreeMap<EffectTarget, BTreeSet<IntentHash>> = BTreeMap::new();
         for frame in self.admitted.frames() {
             let Some(origin) = origins.get(frame.node as usize) else {
                 continue;
@@ -661,7 +653,7 @@ impl Report {
     pub fn compute_by_intent(
         &self,
         gas_limits: &[u64],
-    ) -> Result<BTreeMap<SubintentHash, u64>, TermsRefusal> {
+    ) -> Result<BTreeMap<IntentHash, u64>, TermsRefusal> {
         let mut by_intent = BTreeMap::new();
         for row in self.compute(gas_limits)? {
             let total: &mut u64 = by_intent.entry(row.intent).or_default();
@@ -682,7 +674,7 @@ impl Report {
     #[must_use]
     pub fn signers(&self) -> BTreeSet<PrincipalAddr> {
         let mut signers: BTreeSet<PrincipalAddr> =
-            self.subintents.iter().map(|record| record.signer).collect();
+            self.intents.iter().map(|record| record.account).collect();
         for required in &self.authority {
             required
                 .authority
@@ -722,29 +714,19 @@ impl Report {
 /// can be named under.
 pub fn preflight_tree(
     tree: &EnvelopeTree,
-    composer: PrincipalAddr,
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
     network: &str,
 ) -> Result<Report, PreflightError> {
     let identity = tree.hash(hasher);
-    let admitted = admit_tree(tree, composer, identity, chain, hasher)?;
-    report(
-        admitted.admitted,
-        composer,
-        tree.root.hash(hasher),
-        admitted.subintents,
-        chain,
-        network,
-    )
+    let admitted = admit_tree(tree, identity, chain, hasher)?;
+    report(admitted.admitted, admitted.intents, chain, network)
 }
 
 /// Assemble the report.
 fn report(
     admitted: Admitted,
-    composer: PrincipalAddr,
-    root_intent: SubintentHash,
-    subintents: Vec<IntentRecord>,
+    intents: Vec<IntentRecord>,
     chain: &dyn ChainRecords,
     network: &str,
 ) -> Result<Report, PreflightError> {
@@ -806,7 +788,7 @@ fn report(
         .iter()
         .map(|required| required.target)
         .chain(authority_names)
-        .chain(subintents.iter().map(|record| record.signer.address()));
+        .chain(intents.iter().map(|record| record.account.address()));
     for address in addresses {
         if let Entry::Vacant(slot) = named.entry(address) {
             slot.insert(address.to_text(network)?);
@@ -816,10 +798,8 @@ fn report(
     Ok(Report {
         network: NetworkWord(network.to_owned()),
         admitted,
-        composer,
-        root_intent,
         authority,
-        subintents,
+        intents,
         event_bytes,
         event_bytes_by_node: per_call,
         named,

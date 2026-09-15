@@ -121,17 +121,17 @@ pub enum AdmissionError {
     /// More nodes than an index can address.
     #[error("graph has more nodes than admission can address")]
     TooManyNodes,
-    /// More subintents than an envelope may bind.
-    #[error("envelope binds more subintents than admission accepts")]
-    TooManySubintents,
+    /// More intents than an envelope may carry.
+    #[error("envelope carries more intents than admission accepts")]
+    TooManyIntents,
     /// Two intents of one envelope declaring the same thing.
     ///
     /// The declaration hash is what names every escrow record and claim
-    /// the tree derives, and it carries no signer — so two intents that
+    /// the tree derives, and it carries no account — so two intents that
     /// hash alike name one key for two edges, and the second crossing's
     /// value is nobody's to take back.
     #[error("intent {index} declares what an earlier one already did")]
-    DuplicateSubintent {
+    DuplicateIntent {
         /// The offending subintent's index.
         index: u32,
     },
@@ -786,8 +786,8 @@ impl AdmissionError {
             // A budget, a shape, or a whole composition: nowhere to send
             // a reader that the sentence does not already say.
             Self::TooManyNodes { .. }
-            | Self::TooManySubintents { .. }
-            | Self::DuplicateSubintent { .. }
+            | Self::TooManyIntents { .. }
+            | Self::DuplicateIntent { .. }
             | Self::CyclicSockets { .. }
             | Self::Resolve(..)
             | Self::TableOverflow { .. }
