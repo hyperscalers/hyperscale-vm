@@ -15,20 +15,8 @@ pub const SEED_BYTES: usize = 32;
 /// epoch's seed exists yet.
 pub const SEAL_MATURITY_EPOCHS: u64 = 2;
 
-/// What the environment answers about one epoch's seed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Seeded {
-    /// The seed, from a roll a draw may settle on.
-    Ready([u8; SEED_BYTES]),
-    /// The epoch is ahead of what the host has folded. Ask again later.
-    Pending,
-    /// Behind the window the host keeps, or rolled by a fallback nobody
-    /// should settle value on. Both mean the same thing to a caller:
-    /// this seal will never open, so seal again.
-    Expired,
-}
-
-/// What a sealed cell answers when asked for its draw.
+/// What a draw answers — of a window asked for an epoch's seed, and of a
+/// sealed cell asked for the word it matures into.
 ///
 /// Three answers rather than an option, because a caller does three
 /// different things with them: wait, seal again, or draw. Collapsing the
@@ -36,11 +24,13 @@ pub enum Seeded {
 /// open, or abandoning one that is merely early.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Drawn {
-    /// The epoch the seal matures into is not folded yet.
+    /// Ahead of what the host has folded. Ask again later.
     Pending,
-    /// The word the seal committed to.
+    /// The value: a window answers the epoch's seed, a sealed cell the
+    /// word that seed and the cell's own key derive.
     Ready([u8; SEED_BYTES]),
-    /// The seal will never open.
+    /// Behind the window the host keeps, or rolled by a fallback nobody
+    /// should settle value on. Either way this seal will never open.
     Expired,
 }
 
@@ -84,13 +74,13 @@ impl SeedWindow {
 
     /// The seed at `epoch`, or which way it falls outside.
     #[must_use]
-    pub fn at(&self, epoch: u64) -> Seeded {
+    pub fn at(&self, epoch: u64) -> Drawn {
         if let Some(seed) = self.usable.as_ref().and_then(|held| held.get(&epoch)) {
-            return Seeded::Ready(*seed);
+            return Drawn::Ready(*seed);
         }
         match self.newest {
-            Some(newest) if epoch <= newest => Seeded::Expired,
-            _ => Seeded::Pending,
+            Some(newest) if epoch <= newest => Drawn::Expired,
+            _ => Drawn::Pending,
         }
     }
 }
@@ -105,7 +95,7 @@ mod tests {
 
     #[test]
     fn a_usable_epoch_answers_its_seed() {
-        assert_eq!(window().at(4), Seeded::Ready([0x11; 32]));
+        assert_eq!(window().at(4), Drawn::Ready([0x11; 32]));
     }
 
     /// The three answers are three because a caller does three different
@@ -115,13 +105,13 @@ mod tests {
     /// absence of a seed alone.
     #[test]
     fn a_gap_below_the_frontier_is_not_a_gap_above_it() {
-        assert_eq!(window().at(5), Seeded::Expired);
-        assert_eq!(window().at(8), Seeded::Pending);
-        assert_eq!(window().at(7), Seeded::Expired);
+        assert_eq!(window().at(5), Drawn::Expired);
+        assert_eq!(window().at(8), Drawn::Pending);
+        assert_eq!(window().at(7), Drawn::Expired);
     }
 
     #[test]
     fn an_unfolded_window_is_ahead_of_everything() {
-        assert_eq!(SeedWindow::unfolded().at(0), Seeded::Pending);
+        assert_eq!(SeedWindow::unfolded().at(0), Drawn::Pending);
     }
 }

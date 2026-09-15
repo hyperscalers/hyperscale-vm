@@ -7,7 +7,7 @@
 //! it — nothing about the attempt that opens it enters, so two attempts
 //! at one seal answer alike and abandoning one buys nothing.
 
-use hyperscale_vm_types::{Drawn, LEAF_KEY_BYTES, SEAL_MATURITY_EPOCHS, SEED_BYTES, Seeded};
+use hyperscale_vm_types::{Drawn, LEAF_KEY_BYTES, SEAL_MATURITY_EPOCHS, SEED_BYTES};
 
 use super::{KernelSession, Op, SessionTrap};
 use crate::store::WorkingStore as _;
@@ -82,7 +82,7 @@ impl KernelSession {
         if let Some(held) = self.store.read(key)?
             && !matches!(
                 self.matured_seed(sealed_epoch(site, &held)?),
-                Seeded::Expired
+                Drawn::Expired
             )
         {
             return Err(SessionTrap::SealStanding(site));
@@ -113,9 +113,7 @@ impl KernelSession {
         let held = self.store.read(key)?.unwrap_or_default();
         let epoch = sealed_epoch(site, &held)?;
         Ok(match self.matured_seed(epoch) {
-            Seeded::Pending => Drawn::Pending,
-            Seeded::Expired => Drawn::Expired,
-            Seeded::Ready(seed) => {
+            Drawn::Ready(seed) => {
                 let mut preimage =
                     Vec::with_capacity(DOMAIN_SEALED_DRAW.len() + SEED_BYTES + LEAF_KEY_BYTES);
                 preimage.extend_from_slice(DOMAIN_SEALED_DRAW);
@@ -123,17 +121,24 @@ impl KernelSession {
                 preimage.extend_from_slice(&key.to_bytes());
                 Drawn::Ready((self.hash_fn)(&preimage))
             }
+            // Waiting and never are the seal's answers as much as the
+            // window's; only `Ready` needs the cell's own key put through it.
+            unopened => unopened,
         })
     }
 
-    /// The seed a seal written in `epoch` matures into.
+    /// The seed a seal written in `epoch` matures into — the window's
+    /// raw answer, before the cell's key derives a word from it. Private
+    /// because those are the same type: the derivation is
+    /// [`Self::open_seal`], thirty lines down, and nothing else may
+    /// hand out a `Ready` that has not been through it.
     ///
     /// The offset is the whole of the maturity rule: what a seal
     /// commits to is a value that did not exist when it was written, and
     /// [`SEAL_MATURITY_EPOCHS`] is how far past the writing that
     /// becomes true.
     #[must_use]
-    pub fn matured_seed(&self, epoch: u64) -> Seeded {
+    fn matured_seed(&self, epoch: u64) -> Drawn {
         self.env
             .seeds
             .at(epoch.saturating_add(SEAL_MATURITY_EPOCHS))
@@ -144,7 +149,7 @@ impl KernelSession {
 mod tests {
     use hyperscale_vm_types::{
         Drawn, Effect, EffectSet, EffectTarget, Mode, Moves, SEAL_MATURITY_EPOCHS, SEED_BYTES,
-        SeedWindow, Seeded, SubstateKey,
+        SeedWindow, SubstateKey,
     };
 
     use super::super::fixtures::{declared, env, key, session_for, session_under, tx};
@@ -166,20 +171,20 @@ mod tests {
             EnvInputs { seeds, ..env() },
         );
 
-        assert_eq!(session.matured_seed(6), Seeded::Ready([0x22; 32]));
+        assert_eq!(session.matured_seed(6), Drawn::Ready([0x22; 32]));
         assert_eq!(
             session.matured_seed(4),
-            Seeded::Ready([0x11; 32]),
+            Drawn::Ready([0x11; 32]),
             "a seal reads the epoch it named, not the newest one folded"
         );
         assert_eq!(
             session.matured_seed(5),
-            Seeded::Expired,
+            Drawn::Expired,
             "an epoch the host folded and will not stand behind is gone"
         );
         assert_eq!(
             session.matured_seed(7),
-            Seeded::Pending,
+            Drawn::Pending,
             "a seal whose epoch has not been folded is a wait"
         );
     }

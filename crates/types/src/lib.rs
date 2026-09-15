@@ -59,7 +59,7 @@ pub use mode::{ConflictClass, Mode, ModeKind, Moves, Presence, compatible};
 pub use scheme::{
     AccountSigner, MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId, SchemeSpec, SchemeVerifier,
 };
-pub use seeds::{Drawn, SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow, Seeded};
+pub use seeds::{Drawn, SEAL_MATURITY_EPOCHS, SEED_BYTES, SeedWindow};
 pub use work::{
     BASIS_POINTS, DeclaredWork, FiveWay, PRICE_RESOLUTION, PriceBounds, PriceTable, Utilization,
     VERIFY_WEIGHT, WORK_PER_QUANTUM, signature_bytes, signature_compute,
