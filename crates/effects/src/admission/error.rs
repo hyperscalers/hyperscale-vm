@@ -659,19 +659,19 @@ pub enum AdmissionError {
 pub struct Placed {
     /// The intent, where the refusal is stated in one intent's own
     /// numbering. `None` means the node below is the flattened one.
-    pub intent: Option<u32>,
+    pub(crate) intent: Option<u32>,
     /// The node the refusal is about.
-    pub node: Option<u32>,
+    pub(crate) node: Option<u32>,
     /// The argument position, where the refusal is about one argument.
     /// Always a position in the call's own argument list — an ABI
     /// binding's position is [`abi`](Self::abi), a different list.
-    pub param: Option<u32>,
+    pub(crate) param: Option<u32>,
     /// The effect clause, in a preorder walk of the method's effects.
-    pub clause: Option<u32>,
+    pub(crate) clause: Option<u32>,
     /// The ABI binding position, where the refusal is about one binding.
     /// A different list from the arguments: handles and guards come
     /// first, so an index into one names nothing in the other.
-    pub abi: Option<u32>,
+    pub(crate) abi: Option<u32>,
 }
 
 impl AdmissionError {
@@ -682,7 +682,7 @@ impl AdmissionError {
     /// refusal can arrive somewhere a reader cannot be sent.
     #[must_use]
     #[allow(clippy::too_many_lines)] // one total dispatch over every refusal variant
-    pub const fn at(&self) -> Placed {
+    pub(crate) const fn at(&self) -> Placed {
         match self {
             // Flattened, and about the node as a whole.
             Self::MovementForbidden { node, .. }

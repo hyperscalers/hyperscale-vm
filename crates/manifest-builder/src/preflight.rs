@@ -187,7 +187,7 @@ pub struct Required {
     /// The node's index in the flattened manifest.
     pub node: u32,
     /// The instance the method runs on.
-    pub target: Address,
+    pub(crate) target: Address,
     /// The method named.
     pub method: String,
     /// Whose authority naming it requires.
@@ -297,12 +297,12 @@ pub struct NodeCompute {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
     /// The network the text forms in [`named`](Self::named) are read on.
-    pub network: NetworkWord,
+    pub(crate) network: NetworkWord,
     /// The admitted form: the lowered manifest and the identity every
     /// fresh derivation — and every signature — binds to.
     pub admitted: Admitted,
     /// The composer: the root intent's signer, and the one payer.
-    pub composer: PrincipalAddr,
+    pub(crate) composer: PrincipalAddr,
     /// The root intent's own hash.
     ///
     /// Taken from the declaration rather than found as the one intent
@@ -329,7 +329,7 @@ pub struct Report {
     /// The term [`event_bytes`](Self::event_bytes) is the sum of, kept
     /// per node because a node belongs to exactly one intent — so this
     /// is the one retention term an intent can be held to on its own.
-    pub event_bytes_by_node: Vec<u32>,
+    pub(crate) event_bytes_by_node: Vec<u32>,
     /// Every address the report names, in this network's text form.
     pub named: BTreeMap<Address, String>,
 }
@@ -426,7 +426,7 @@ impl Report {
     /// disk's dimension of the vector, before the artifacts the calls
     /// instantiate.
     #[must_use]
-    pub fn read_bytes(&self) -> u64 {
+    pub(crate) fn read_bytes(&self) -> u64 {
         self.admitted.declaration().set.read_bytes()
     }
 
@@ -440,7 +440,7 @@ impl Report {
 
     /// The bytes the declaration lets execution write onto the store.
     #[must_use]
-    pub fn write_bytes(&self) -> u64 {
+    pub(crate) fn write_bytes(&self) -> u64 {
         self.admitted.declaration().set.write_bytes()
     }
 

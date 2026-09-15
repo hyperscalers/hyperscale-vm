@@ -104,7 +104,7 @@ impl Trap {
     /// On [`Trap::StepBudgetExhausted`], which is a harness valve rather
     /// than an execution verdict and reaches no receipt.
     #[must_use]
-    pub const fn abort_reason(self) -> AbortReason {
+    pub(crate) const fn abort_reason(self) -> AbortReason {
         match self {
             Self::Unreachable => AbortReason::Unreachable,
             Self::IntegerDivisionByZero => AbortReason::IntegerDivideByZero,

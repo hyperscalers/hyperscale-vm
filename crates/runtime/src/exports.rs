@@ -41,13 +41,13 @@ pub struct ModuleExport {
 /// exports.
 pub(crate) struct ModuleScan {
     /// Function types by type index.
-    pub types: Vec<FuncType>,
+    pub(crate) types: Vec<FuncType>,
     /// Every import, in declaration order.
-    pub imports: Vec<(String, String, TypeRef)>,
+    pub(crate) imports: Vec<(String, String, TypeRef)>,
     /// The type index of every function, imports first.
-    pub funcs: Vec<u32>,
+    pub(crate) funcs: Vec<u32>,
     /// Every export, in declaration order.
-    pub exports: Vec<(String, ExternalKind, u32)>,
+    pub(crate) exports: Vec<(String, ExternalKind, u32)>,
 }
 
 impl ModuleScan {

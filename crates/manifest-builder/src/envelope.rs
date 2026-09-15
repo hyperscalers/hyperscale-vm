@@ -271,7 +271,7 @@ pub struct BindRefusal {
     /// The socket, still open.
     pub socket: OpenSocket,
     /// The offering, still unrouted.
-    pub offered: Offered,
+    pub(crate) offered: Offered,
     /// Why the wiring was refused.
     pub cause: EnvelopeError,
 }

@@ -19,11 +19,11 @@ use crate::native::Dispatch;
 /// package once and each chain takes the half it uses.
 pub struct Package {
     /// The traced declaration.
-    pub metadata: PackageMetadata,
+    pub(crate) metadata: PackageMetadata,
     /// Where the code is, where this test can reach it.
-    pub code: Code,
+    pub(crate) code: Code,
     /// The bodies, callable without an engine.
-    pub dispatch: Dispatch,
+    pub(crate) dispatch: Dispatch,
 }
 
 /// Where a package's code comes from, as the test naming it can see.

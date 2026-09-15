@@ -333,7 +333,7 @@ impl<'a> Resolution<'a> {
     /// # Errors
     ///
     /// [`ShapeFault`], as [`readable`](Self::readable).
-    pub fn min_encoded_len(
+    pub(crate) fn min_encoded_len(
         &mut self,
         shape: &TypeShape,
         budget: usize,

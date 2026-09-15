@@ -63,7 +63,7 @@ pub enum CallError {
 impl CallError {
     /// This failure as the protocol's abort class.
     #[must_use]
-    pub const fn abort_reason(&self) -> AbortReason {
+    pub(crate) const fn abort_reason(&self) -> AbortReason {
         match self {
             Self::ExportMissing(_) => AbortReason::ExportMissing,
             Self::BadReturnShape { .. } => AbortReason::BadReturnShape,

@@ -94,7 +94,7 @@ impl ParamType {
 
     /// The edge kind this parameter accepts, if it is an edge at all.
     #[must_use]
-    pub const fn edge_kind(self) -> Option<ResourceKind> {
+    pub(crate) const fn edge_kind(self) -> Option<ResourceKind> {
         match self {
             Self::Bucket => Some(ResourceKind::Fungible),
             Self::NfBucket => Some(ResourceKind::NonFungible),
@@ -504,7 +504,7 @@ impl MethodSignature {
     /// origin cannot take both of back, and a reserve beside a burn
     /// commits the burn before any verdict.
     #[must_use]
-    pub fn is_reservation_shaped(&self) -> bool {
+    pub(crate) fn is_reservation_shaped(&self) -> bool {
         if !self.issues.is_empty() || !self.destroys.is_empty() || self.outputs.len() != 1 {
             return false;
         }
@@ -534,7 +534,7 @@ impl MethodSignature {
     /// [`ModeExpr::Read`], so this reads as no writes rather than only as
     /// no value movement.
     #[must_use]
-    pub fn commits_nothing(&self) -> bool {
+    pub(crate) fn commits_nothing(&self) -> bool {
         self.outputs.is_empty()
             && self.issues.is_empty()
             && self.destroys.is_empty()
@@ -557,7 +557,7 @@ impl MethodSignature {
     /// consumes are the other refusal ahead of the body, and they are the
     /// manifest's rather than the signature's.
     #[must_use]
-    pub fn is_unrefusable(&self) -> bool {
+    pub(crate) fn is_unrefusable(&self) -> bool {
         self.totality.is_total() && !self.requires_evidence()
     }
 

@@ -90,7 +90,7 @@ impl ModuleFacts {
 ///
 /// [`ProfileError::Structural`] for a frame past the per-function bound, a
 /// cyclic call graph, or a chain that does not fit either budget.
-pub fn check_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
+pub(crate) fn check_stack_bounds(bytes: &[u8]) -> Result<(), ProfileError> {
     let facts = collect(bytes)?;
     for (local, func) in facts.funcs.iter().enumerate() {
         if func.slots > profile::MAX_SLOTS_PER_FRAME {

@@ -47,7 +47,7 @@ impl Shape {
     /// The core type the parameter crosses as: a `u64` as itself, and
     /// everything else — an index, a flag, or a register's length — as
     /// a `u32`.
-    pub fn core(&self) -> TokenStream {
+    pub(crate) fn core(&self) -> TokenStream {
         match self {
             Self::Scalar => quote!(u64),
             Self::Handle

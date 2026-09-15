@@ -32,7 +32,7 @@ pub const BADGE: &[u8] = b"badge";
 /// deriving it through the granting-nothing form would name an address
 /// nothing is ever minted at.
 #[must_use]
-pub fn badge_grants() -> GrantsExpr {
+pub(crate) fn badge_grants() -> GrantsExpr {
     let mut grants = GrantsExpr::new();
     for behaviour in [GrantedBehaviour::Mint, GrantedBehaviour::Burn] {
         grants.set(behaviour, GrantRuleExpr::Require(GrantSubject::SelfAddr));

@@ -56,7 +56,7 @@ pub enum Shape {
 
 impl Shape {
     /// The shape of `gate`, as a caller sees it.
-    pub const fn of(gate: &Gate) -> Self {
+    pub(crate) const fn of(gate: &Gate) -> Self {
         match gate {
             Gate::Public => Self::Public,
             Gate::Guarded { .. } => Self::Guarded,
@@ -120,22 +120,22 @@ pub fn check_names(params: &[syn::Ident], shape: Shape, serves: Serves) -> syn::
 /// What one method contributes to the calling surface.
 pub struct Method {
     /// The wrapper's own name, which is the method's Rust name.
-    pub rust: syn::Ident,
+    pub(crate) rust: syn::Ident,
     /// The name the export publishes under.
-    pub published: String,
+    pub(crate) published: String,
     /// The method's parameters, in order.
-    pub params: Vec<(String, syn::Type)>,
+    pub(crate) params: Vec<(String, syn::Type)>,
     /// The gate, as the calling side needs it.
-    pub shape: Shape,
+    pub(crate) shape: Shape,
     /// How many value edges the method produces.
-    pub outputs: usize,
+    pub(crate) outputs: usize,
     /// What the method answers with beside them, where it answers.
     ///
     /// The Rust type its own signature names, so a caller reading the
     /// answer back off a receipt names neither the type nor the node.
-    pub answers: Option<syn::Type>,
+    pub(crate) answers: Option<syn::Type>,
     /// The method's own documentation, carried onto the wrapper.
-    pub docs: Vec<syn::Attribute>,
+    pub(crate) docs: Vec<syn::Attribute>,
 }
 
 /// A path into the SDK's client surface.
@@ -445,22 +445,22 @@ fn issued(resources: &[Resource], config: Option<&syn::Ident>) -> Vec<TokenStrea
 /// would be restating an order that means nothing.
 pub struct Surface<'a> {
     /// The state struct's name, which the handle takes.
-    pub handle: &'a syn::Ident,
+    pub(crate) handle: &'a syn::Ident,
     /// The configuration struct, where the package has one.
-    pub config: Option<&'a syn::Ident>,
+    pub(crate) config: Option<&'a syn::Ident>,
     /// Its fields, in the order that fixes their slots.
-    pub config_fields: &'a [(String, syn::Type)],
+    pub(crate) config_fields: &'a [(String, syn::Type)],
     /// Each state field's slot, for the constants a consumer keys by.
-    pub fields: &'a BTreeMap<String, u16>,
+    pub(crate) fields: &'a BTreeMap<String, u16>,
     /// Which addresses the package's instances sit at.
-    pub serves: Serves,
+    pub(crate) serves: Serves,
     /// The methods to wrap.
-    pub methods: &'a [&'a Method],
+    pub(crate) methods: &'a [&'a Method],
     /// The resources the package issues.
-    pub resources: &'a [Resource],
+    pub(crate) resources: &'a [Resource],
     /// The declared vaults holding configured resources: field name,
     /// slot, and the configuration slot naming the resource.
-    pub vaults: &'a [(String, u16, u32)],
+    pub(crate) vaults: &'a [(String, u16, u32)],
 }
 
 /// One marker type per issued resource: the mark as a type, tied to the

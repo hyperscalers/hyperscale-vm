@@ -30,9 +30,9 @@ use crate::types::{MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, value_with
 #[error("{site}: {cause}")]
 pub struct PlacedBounds {
     /// Where the walk was.
-    pub site: SignatureSite,
+    pub(crate) site: SignatureSite,
     /// The bound it crossed.
-    pub cause: SignatureBoundsError,
+    pub(crate) cause: SignatureBoundsError,
 }
 
 /// Where in a signature a bounds walk is: which of the lists it judges,

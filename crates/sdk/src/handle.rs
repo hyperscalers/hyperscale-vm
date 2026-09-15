@@ -16,9 +16,9 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Handle {
     /// The site's position in the session's site table.
-    pub site: u32,
+    pub(crate) site: u32,
     /// Which element of it this access names.
-    pub element: u32,
+    pub(crate) element: u32,
 }
 
 impl Handle {

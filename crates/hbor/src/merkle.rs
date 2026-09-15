@@ -50,13 +50,13 @@ use crate::hash::{Hash32, Hasher};
 use crate::{EncodeError, HborEncode, to_vec};
 
 /// Domain for leaf hashes.
-pub const DOMAIN_LEAF: &[u8] = b"hbor-merkle-leaf-v1";
+pub(crate) const DOMAIN_LEAF: &[u8] = b"hbor-merkle-leaf-v1";
 /// Domain for internal node hashes.
-pub const DOMAIN_NODE: &[u8] = b"hbor-merkle-node-v1";
+pub(crate) const DOMAIN_NODE: &[u8] = b"hbor-merkle-node-v1";
 /// Domain for the padding hash on an odd level.
-pub const DOMAIN_PAD: &[u8] = b"hbor-merkle-pad-v1";
+pub(crate) const DOMAIN_PAD: &[u8] = b"hbor-merkle-pad-v1";
 /// Domain for the root, which mixes in the leaf count.
-pub const DOMAIN_ROOT: &[u8] = b"hbor-merkle-root-v1";
+pub(crate) const DOMAIN_ROOT: &[u8] = b"hbor-merkle-root-v1";
 
 /// A type whose identity is a tree over its own fields.
 ///
@@ -127,7 +127,7 @@ pub fn sequence_chunks<T: HborEncode>(elements: &[T]) -> Result<Vec<Vec<u8>>, En
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Proof {
     /// Which leaf this proves.
-    pub index: usize,
+    pub(crate) index: usize,
     /// How many leaves the tree had.
     pub leaf_count: usize,
     /// The sibling hash at each level, from the leaf upward.

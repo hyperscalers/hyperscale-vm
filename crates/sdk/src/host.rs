@@ -164,7 +164,7 @@ fn settled<T>(answer: Result<T, AbortReason>) -> T {
 /// reservation. Generated code never builds that call; a hand-written
 /// body that does has declared one thing and reached for another.
 #[must_use]
-pub fn cell_get(handle: Handle) -> Vec<u8> {
+pub(crate) fn cell_get(handle: Handle) -> Vec<u8> {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_get(site, element)))
 }
@@ -180,7 +180,7 @@ pub fn cell_get(handle: Handle) -> Vec<u8> {
 /// On a handle that holds no value cell — a balance is what both value
 /// modes answer, and nothing else does.
 #[must_use]
-pub fn cell_balance(handle: Handle) -> u128 {
+pub(crate) fn cell_balance(handle: Handle) -> u128 {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_balance(site, element)))
 }
@@ -190,7 +190,7 @@ pub fn cell_balance(handle: Handle) -> u128 {
 /// # Panics
 ///
 /// On a handle that holds no exclusive write.
-pub fn cell_set(handle: Handle, value: &[u8]) {
+pub(crate) fn cell_set(handle: Handle, value: &[u8]) {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_set(site, element, value.to_vec())));
 }
@@ -201,7 +201,7 @@ pub fn cell_set(handle: Handle, value: &[u8]) {
 ///
 /// On a handle that holds no exclusive write, which the declaration a
 /// seal is written through rules out.
-pub fn cell_seal(handle: Handle) {
+pub(crate) fn cell_seal(handle: Handle) {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_seal(site, element)));
 }
@@ -213,7 +213,7 @@ pub fn cell_seal(handle: Handle) {
 /// On a handle that holds no exclusive write, which the declaration a
 /// seal is read through rules out.
 #[must_use]
-pub fn cell_open_seal(handle: Handle) -> Drawn {
+pub(crate) fn cell_open_seal(handle: Handle) -> Drawn {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_open_seal(site, element)))
 }
@@ -223,7 +223,7 @@ pub fn cell_open_seal(handle: Handle) -> Drawn {
 /// # Panics
 ///
 /// On a handle that holds no exclusive write.
-pub fn cell_clear(handle: Handle) {
+pub(crate) fn cell_clear(handle: Handle) {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_clear(site, element)));
 }
@@ -233,7 +233,7 @@ pub fn cell_clear(handle: Handle) {
 /// # Panics
 ///
 /// On a handle whose mode moves no value.
-pub fn cell_put(handle: Handle, funds: u32) {
+pub(crate) fn cell_put(handle: Handle, funds: u32) {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_put(site, element, funds)));
 }
@@ -244,7 +244,7 @@ pub fn cell_put(handle: Handle, funds: u32) {
 ///
 /// On a handle whose mode moves no value.
 #[must_use]
-pub fn cell_take(handle: Handle, value: u128) -> u32 {
+pub(crate) fn cell_take(handle: Handle, value: u128) -> u32 {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_take(site, element, value)))
 }
@@ -256,26 +256,26 @@ pub fn cell_take(handle: Handle, value: u128) -> u32 {
 /// On a handle that holds no reservation, and on a second take of one:
 /// the declaration buys one bucket per capability, not per site.
 #[must_use]
-pub fn reserve_take(handle: Handle) -> u32 {
+pub(crate) fn reserve_take(handle: Handle) -> u32 {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_reserve_take(site, element)))
 }
 
 /// Issue `value` of the resource the grant at `grant` names.
 #[must_use]
-pub fn mint(grant: u32, value: u128) -> u32 {
+pub(crate) fn mint(grant: u32, value: u128) -> u32 {
     settled(kernel(|k| k.mint(grant, value)))
 }
 
 /// Create the named instances of the resource the grant at `grant`
 /// names.
 #[must_use]
-pub fn mint_instances(grant: u32, ids: &[u64]) -> u32 {
+pub(crate) fn mint_instances(grant: u32, ids: &[u64]) -> u32 {
     settled(kernel(|k| k.mint_instances(grant, ids)))
 }
 
 /// Destroy what the bucket at `funds` carries, against the grant at `rep`.
-pub fn burn(funds: u32) {
+pub(crate) fn burn(funds: u32) {
     settled(kernel(|k| k.burn(funds)));
 }
 
@@ -305,7 +305,7 @@ const fn narrowed(value: math::U256) -> Wide {
 /// On a zero divisor and on a result past the amount width — the same
 /// refusals the boundary raises, in the shape a host body raises them.
 #[must_use]
-pub fn mul_div(a: Wide, b: Wide, c: Wide, rounding: Rounding) -> Wide {
+pub(crate) fn mul_div(a: Wide, b: Wide, c: Wide, rounding: Rounding) -> Wide {
     narrowed(
         math::mul_div(widened(a), widened(b), widened(c), rounding)
             .expect("a well-formed wide multiplication"),
@@ -324,7 +324,7 @@ pub fn geometric_mean(a: Wide, b: Wide) -> Wide {
 ///
 /// On a zero denominator and where the product does not fit reduced.
 #[must_use]
-pub fn fraction_compose(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> (Wide, Wide) {
+pub(crate) fn fraction_compose(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> (Wide, Wide) {
     let (num, den) = math::fraction_compose(widened(an), widened(ad), widened(bn), widened(bd))
         .expect("a well-formed fraction composition");
     (narrowed(num), narrowed(den))
@@ -336,7 +336,7 @@ pub fn fraction_compose(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> (Wide, Wide) 
 ///
 /// On a zero denominator.
 #[must_use]
-pub fn fraction_cmp(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> core::cmp::Ordering {
+pub(crate) fn fraction_cmp(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> core::cmp::Ordering {
     math::fraction_cmp(widened(an), widened(ad), widened(bn), widened(bd))
         .expect("a well-formed fraction comparison")
 }
@@ -347,30 +347,30 @@ pub fn fraction_cmp(an: Wide, ad: Wide, bn: Wide, bd: Wide) -> core::cmp::Orderi
 ///
 /// Where any intermediate leaves the wide width.
 #[must_use]
-pub fn fixed_pow(base: Wide, exp: u32, rounding: Rounding) -> Wide {
+pub(crate) fn fixed_pow(base: Wide, exp: u32, rounding: Rounding) -> Wide {
     narrowed(math::fixed_pow(widened(base), exp, rounding).expect("a well-formed exponentiation"))
 }
 
 /// Split `value` off a bucket, as a bucket.
 #[must_use]
-pub fn bucket_take(rep: u32, value: u128) -> u32 {
+pub(crate) fn bucket_take(rep: u32, value: u128) -> u32 {
     settled(kernel(|k| k.bucket_take(rep, value)))
 }
 
 /// Split `num/den` off a bucket, as a bucket.
 #[must_use]
-pub fn bucket_split(rep: u32, num: Wide, den: Wide) -> u32 {
+pub(crate) fn bucket_split(rep: u32, num: Wide, den: Wide) -> u32 {
     settled(kernel(|k| k.bucket_split(rep, widened(num), widened(den))))
 }
 
 /// Merge one bucket into another, consuming it.
-pub fn bucket_put(rep: u32, other: u32) {
+pub(crate) fn bucket_put(rep: u32, other: u32) {
     settled(kernel(|k| k.bucket_put(rep, other)));
 }
 
 /// What a bucket carries.
 #[must_use]
-pub fn bucket_amount(rep: u32) -> u128 {
+pub(crate) fn bucket_amount(rep: u32) -> u128 {
     settled(kernel(|k| k.bucket_amount(rep)))
 }
 
@@ -380,7 +380,7 @@ pub fn bucket_amount(rep: u32) -> u128 {
 ///
 /// On a handle that is not an interval.
 #[must_use]
-pub fn entry_count(handle: Handle) -> u32 {
+pub(crate) fn entry_count(handle: Handle) -> u32 {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_count(site, element)))
 }
@@ -391,7 +391,7 @@ pub fn entry_count(handle: Handle) -> u32 {
 ///
 /// On a handle that is not an interval.
 #[must_use]
-pub fn entry_covered(handle: Handle) -> bool {
+pub(crate) fn entry_covered(handle: Handle) -> bool {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_covered(site, element)))
 }
@@ -402,7 +402,7 @@ pub fn entry_covered(handle: Handle) -> bool {
 ///
 /// On a handle that is not an interval.
 #[must_use]
-pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
+pub(crate) fn entry_order(handle: Handle, index: u32) -> OrderKey {
     let Handle { site, element } = handle;
     // The kernel orders by the packed integer and knows nothing of what
     // was packed into it, so the type is put back on at this seam.
@@ -415,14 +415,14 @@ pub fn entry_order(handle: Handle, index: u32) -> OrderKey {
 ///
 /// On a handle that is not an interval.
 #[must_use]
-pub fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
+pub(crate) fn entry_get(handle: Handle, index: u32) -> Vec<u8> {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_entry(site, element, index)))
 }
 
 /// The value of the entry at `order`, or empty where there is none.
 #[must_use]
-pub fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {
+pub(crate) fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {
     (0..entry_count(handle))
         .find(|&index| entry_order(handle, index) == order)
         .map_or_else(Vec::new, |index| entry_get(handle, index))
@@ -433,7 +433,7 @@ pub fn entry_at(handle: Handle, order: OrderKey) -> Vec<u8> {
 /// # Panics
 ///
 /// On a handle that holds no exclusive write over the interval.
-pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
+pub(crate) fn entry_set(handle: Handle, index: u32, value: &[u8]) {
     let Handle { site, element } = handle;
     settled(kernel(|k| {
         k.site_entry_set(site, element, index, value.to_vec())
@@ -445,7 +445,7 @@ pub fn entry_set(handle: Handle, index: u32, value: &[u8]) {
 /// # Panics
 ///
 /// On a handle that holds no exclusive write over the interval.
-pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
+pub(crate) fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
     let Handle { site, element } = handle;
     settled(kernel(|k| {
         k.site_insert(site, element, order.bits(), value.to_vec())
@@ -458,7 +458,7 @@ pub fn entry_insert(handle: Handle, order: OrderKey, value: &[u8]) {
 ///
 /// On a handle whose interval files no instances — an interval that
 /// gave up the inbound direction answers the movement it kept.
-pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
+pub(crate) fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
     let Handle { site, element } = handle;
     settled(kernel(|k| {
         k.site_instance_put(site, element, funds, value.to_vec())
@@ -471,7 +471,7 @@ pub fn entry_put(handle: Handle, funds: u32, value: &[u8]) {
 ///
 /// On a handle whose interval takes no instances, on the same terms.
 #[must_use]
-pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
+pub(crate) fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_instance_take(site, element, ids)))
 }
@@ -481,20 +481,20 @@ pub fn entry_take(handle: Handle, ids: &[u64]) -> u32 {
 /// # Panics
 ///
 /// On a handle that holds no exclusive write over the interval.
-pub fn entry_remove(handle: Handle, index: u32) {
+pub(crate) fn entry_remove(handle: Handle, index: u32) {
     let Handle { site, element } = handle;
     settled(kernel(|k| k.site_remove(site, element, index)));
 }
 
 /// The transaction clock, in milliseconds.
 #[must_use]
-pub fn clock_ms() -> u64 {
+pub(crate) fn clock_ms() -> u64 {
     kernel(|k| k.clock_ms())
 }
 
 /// The protocol hash function.
 #[must_use]
-pub fn hash(data: &[u8]) -> Vec<u8> {
+pub(crate) fn hash(data: &[u8]) -> Vec<u8> {
     kernel(|k| k.hash(data)).to_vec()
 }
 
@@ -556,13 +556,13 @@ pub fn handle(args: &[GuestArg<'_>], at: usize) -> u32 {
 
 /// How many elements the site covers.
 #[must_use]
-pub fn site_len(site: u32) -> u32 {
+pub(crate) fn site_len(site: u32) -> u32 {
     settled(kernel(|k| k.site_len(site)))
 }
 
 /// Whether the site declared anything for the element at `element`.
 #[must_use]
-pub fn site_declared(site: u32, element: u32) -> bool {
+pub(crate) fn site_declared(site: u32, element: u32) -> bool {
     settled(kernel(|k| k.site_declared(site, element)))
 }
 

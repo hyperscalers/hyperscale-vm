@@ -168,7 +168,7 @@ impl Term {
     /// being walked and an export's arguments are evaluated outside
     /// every loop, so a term mentioning one has no value at the boundary
     /// however it is wrapped.
-    pub fn reads_element(&self) -> bool {
+    pub(crate) fn reads_element(&self) -> bool {
         match self {
             Self::Binding(_) => true,
             Self::LitU64(_)
@@ -216,7 +216,7 @@ impl Term {
     /// against: `!` over an integer is a bitwise complement and `if` over
     /// anything but a judgment is control flow, so the recognition asks
     /// the term rather than the syntax.
-    pub const fn is_judgment(&self) -> bool {
+    pub(crate) const fn is_judgment(&self) -> bool {
         matches!(
             self,
             Self::Not(_)
@@ -235,7 +235,7 @@ impl Term {
     /// positions that do need a kind — a range bound, a reserve amount —
     /// cast at the use site.
     #[allow(clippy::too_many_lines)] // one arm per Term variant
-    pub fn emit(&self) -> TokenStream {
+    pub(crate) fn emit(&self) -> TokenStream {
         // The two casts the lowering makes that are not `Opaque`: a
         // condition is a judgment, and a table is a sequence.
         let flag = |term: &Self| {
@@ -421,7 +421,7 @@ pub enum SlotRef {
 
 impl SlotRef {
     /// The slot where the declaration wrote one down.
-    pub const fn fixed(&self) -> Option<u16> {
+    pub(crate) const fn fixed(&self) -> Option<u16> {
         match self {
             Self::Fixed(slot) => Some(*slot),
             Self::Reached(_) => None,
@@ -429,7 +429,7 @@ impl SlotRef {
     }
 
     /// Lower to the argument the tracer's key derivations take.
-    pub fn emit(&self) -> TokenStream {
+    pub(crate) fn emit(&self) -> TokenStream {
         match self {
             Self::Fixed(slot) => quote!(::hyperscale_vm_sdk::SlotId(#slot)),
             Self::Reached(term) => {
@@ -518,7 +518,7 @@ impl Op {
     /// Beside [`Op::from_method`] rather than derived from it, because a
     /// name maps to an operation and not the other way round — several
     /// spell one operation, and which ones is the vocabulary's own fact.
-    pub const VOCABULARY: &'static [&'static str] = &[
+    pub(crate) const VOCABULARY: &'static [&'static str] = &[
         "get",
         "count",
         "covered",
@@ -549,7 +549,7 @@ impl Op {
     ];
 
     /// The operation a method name implies, if it is one of the vocabulary.
-    pub fn from_method(name: &str) -> Option<Self> {
+    pub(crate) fn from_method(name: &str) -> Option<Self> {
         match name {
             "get" | "count" | "covered" | "entry" | "order" | "balance" | "pick" | "picked" => {
                 Some(Self::Get)

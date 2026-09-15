@@ -53,7 +53,7 @@ impl<T> Conclusion<T> {
     ///
     /// Where a transaction wrote several answering calls, this is the
     /// tuple of their handles, and [`Conclusion::answer_at`] reads each.
-    pub const fn written(&self) -> &T {
+    pub(crate) const fn written(&self) -> &T {
         &self.written
     }
 
@@ -75,7 +75,7 @@ impl<T> Conclusion<T> {
     /// lost, not a defect it committed, which is why it reads as a value
     /// rather than as a failure.
     #[must_use]
-    pub const fn declined(&self) -> Option<u32> {
+    pub(crate) const fn declined(&self) -> Option<u32> {
         match self.receipt.outcome {
             Outcome::Declined { code, .. } => Some(code),
             _ => None,
@@ -140,7 +140,7 @@ impl<T> Conclusion<T> {
     /// a value is not an edge and a manifest has nowhere else to put one.
     /// Empty where nothing the transaction called returns a value.
     #[must_use]
-    pub fn answers(&self) -> &[Answer] {
+    pub(crate) fn answers(&self) -> &[Answer] {
         match &self.receipt.outcome {
             Outcome::Completed { answers } => answers,
             _ => &[],
@@ -158,7 +158,7 @@ impl<T> Conclusion<T> {
     ///
     /// If no node at that position answered, or its bytes are not a `T`.
     #[must_use]
-    pub fn answer_at<A: HborDecode>(&self, handle: Answered<A>) -> A {
+    pub(crate) fn answer_at<A: HborDecode>(&self, handle: Answered<A>) -> A {
         let answer = self
             .answers()
             .iter()

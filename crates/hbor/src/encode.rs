@@ -68,7 +68,7 @@ impl<'a> Fixed<'a> {
     /// The caller reads it once; a buffer sized from the type's own
     /// bound can never set it.
     #[must_use]
-    pub fn written(&self) -> Option<usize> {
+    pub(crate) fn written(&self) -> Option<usize> {
         (!self.overflowed).then_some(self.at)
     }
 }
@@ -135,7 +135,7 @@ impl<S: Sink> Encoder<S> {
     }
 
     /// The sink, back.
-    pub fn finish(self) -> S {
+    pub(crate) fn finish(self) -> S {
         self.out
     }
 
@@ -161,7 +161,7 @@ impl<S: Sink> Encoder<S> {
     /// # Errors
     ///
     /// [`EncodeError::LengthTooLarge`] past [`varint::MAX_LENGTH`].
-    pub fn write_len(&mut self, len: usize) -> Result<(), EncodeError> {
+    pub(crate) fn write_len(&mut self, len: usize) -> Result<(), EncodeError> {
         let (bytes, written) = varint::encode(len)?;
         if let Some(field) = bytes.get(..written) {
             self.write_fixed(field);

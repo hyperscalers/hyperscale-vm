@@ -28,7 +28,7 @@ use hyperscale_vm_types::{AbortReason, Address, Outcome, SubstateKey, encode_amo
 /// resolved by the package its lowered call names, decoded from the
 /// same committed bytes the blessed lane compiled.
 #[derive(Default)]
-pub struct Reference {
+pub(crate) struct Reference {
     modules: BTreeMap<PackageHash, RefModule>,
 }
 
@@ -40,7 +40,7 @@ impl Reference {
     ///
     /// Panics if the bytes are not admitted or do not decode — a
     /// fixture defect, not a runtime condition.
-    pub fn seed(&mut self, package: PackageHash, module: &[u8]) {
+    pub(crate) fn seed(&mut self, package: PackageHash, module: &[u8]) {
         let admitted = admit(module).expect("a seeded package is admitted");
         self.modules.insert(
             package,

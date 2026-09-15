@@ -30,22 +30,22 @@ pub const MAX_LOCALS_PER_FUNCTION: usize = 512;
 pub const MAX_BLOCKS_PER_FUNCTION: usize = 10_000;
 
 /// Maximum structured control-flow entries summed over a core module.
-pub const MAX_BLOCKS_PER_MODULE: usize = 100_000;
+pub(crate) const MAX_BLOCKS_PER_MODULE: usize = 100_000;
 
 /// Maximum linear memories per core module.
-pub const MAX_MEMORIES_PER_MODULE: usize = 1;
+pub(crate) const MAX_MEMORIES_PER_MODULE: usize = 1;
 
 /// Maximum linear memory size in 64 KiB pages; a memory must declare a
 /// maximum, and it must not exceed this.
-pub const MAX_MEMORY_PAGES: u64 = 256;
+pub(crate) const MAX_MEMORY_PAGES: u64 = 256;
 
 /// Maximum tables per core module — one, matching the executable spec's
 /// hard single-table decode limit.
-pub const MAX_TABLES_PER_MODULE: usize = 1;
+pub(crate) const MAX_TABLES_PER_MODULE: usize = 1;
 
 /// Maximum elements in one table; a table must declare a maximum, and it must
 /// not exceed this.
-pub const MAX_TABLE_ELEMENTS: u64 = 10_000;
+pub(crate) const MAX_TABLE_ELEMENTS: u64 = 10_000;
 
 /// Maximum globals per core module.
 pub const MAX_GLOBALS_PER_MODULE: usize = 1_000;
@@ -69,7 +69,8 @@ pub const STACK_FRAME_OVERHEAD_BYTES: usize = 256;
 
 /// Maximum value slots one frame may need: parameters, declared locals,
 /// and the deepest operand stack together.
-pub const MAX_SLOTS_PER_FRAME: usize = MAX_PARAMS_PER_FUNCTION + MAX_LOCALS_PER_FUNCTION + 256;
+pub(crate) const MAX_SLOTS_PER_FRAME: usize =
+    MAX_PARAMS_PER_FUNCTION + MAX_LOCALS_PER_FUNCTION + 256;
 
 /// Native stack reserved for the host frames at either end of a guest
 /// call chain: the kernel's call into the export, and the import a leaf
@@ -101,4 +102,4 @@ pub const MAX_CALL_CHAIN_FRAMES: usize = 256;
 
 /// The prefix every kernel import module carries: `kernel/state`,
 /// `kernel/env`, and so on.
-pub const KERNEL_IMPORT_PREFIX: &str = "kernel/";
+pub(crate) const KERNEL_IMPORT_PREFIX: &str = "kernel/";

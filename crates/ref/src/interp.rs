@@ -82,17 +82,17 @@ pub(crate) enum FuncAddr {
 
 /// One linear memory.
 pub(crate) struct Memory {
-    pub data: Vec<u8>,
-    pub max_pages: u64,
+    pub(crate) data: Vec<u8>,
+    pub(crate) max_pages: u64,
 }
 
 /// One table entry: the callee plus its declared type for signature checks.
 #[derive(Clone, Copy)]
 pub(crate) struct TableEntry {
-    pub addr: FuncAddr,
+    pub(crate) addr: FuncAddr,
     /// Owning module index and type index, for structural comparison.
     pub module: u32,
-    pub ty: u32,
+    pub(crate) ty: u32,
 }
 
 /// Per-instance state.
@@ -100,24 +100,24 @@ pub(crate) struct InstanceData {
     /// Index into the module list.
     pub module: u32,
     /// The full function index space: imports resolved, then local functions.
-    pub funcs: Vec<FuncAddr>,
+    pub(crate) funcs: Vec<FuncAddr>,
     /// Store memory index, if the module declares or imports one.
-    pub memory: Option<u32>,
+    pub(crate) memory: Option<u32>,
     /// Store table index, if any.
-    pub table: Option<u32>,
+    pub(crate) table: Option<u32>,
     /// Global values.
-    pub globals: Vec<Value>,
+    pub(crate) globals: Vec<Value>,
 }
 
 /// Mutable execution state shared by all instances of one instantiation.
 #[derive(Default)]
 pub(crate) struct Store {
-    pub memories: Vec<Memory>,
-    pub tables: Vec<Vec<Option<TableEntry>>>,
-    pub instances: Vec<InstanceData>,
-    pub depth: usize,
+    pub(crate) memories: Vec<Memory>,
+    pub(crate) tables: Vec<Vec<Option<TableEntry>>>,
+    pub(crate) instances: Vec<InstanceData>,
+    pub(crate) depth: usize,
     /// Optional instruction budget; `None` is unbounded.
-    pub steps_remaining: Option<u64>,
+    pub(crate) steps_remaining: Option<u64>,
 }
 
 impl Store {

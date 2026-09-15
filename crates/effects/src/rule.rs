@@ -170,7 +170,7 @@ impl Judged {
     /// What separates a feasibility fact from a verdict a caller could
     /// already have committed past.
     #[must_use]
-    pub const fn before_any_leg(self) -> bool {
+    pub(crate) const fn before_any_leg(self) -> bool {
         !matches!(self, Self::InTheLeg)
     }
 }
@@ -436,7 +436,7 @@ impl<L: Leaf> Rule<L> {
     /// by anyone or by no one — and admission decides those as cheaply
     /// as anything else does.
     #[must_use]
-    pub fn judged(&self) -> Judged {
+    pub(crate) fn judged(&self) -> Judged {
         let mut state = false;
         let mut evidence = false;
         for leaf in self.leaves() {
@@ -611,7 +611,10 @@ impl<L> Rule<L> {
     ///
     /// Whatever `map` refuses: a leaf that does not evaluate, or one
     /// whose value names no claim.
-    pub fn map_leaves<T, E>(&self, map: &mut impl FnMut(&L) -> Result<T, E>) -> Result<Rule<T>, E> {
+    pub(crate) fn map_leaves<T, E>(
+        &self,
+        map: &mut impl FnMut(&L) -> Result<T, E>,
+    ) -> Result<Rule<T>, E> {
         Ok(match self {
             Self::Require(leaf) => Rule::Require(map(leaf)?),
             Self::CountOf { count, rules } => Rule::CountOf {
@@ -694,7 +697,7 @@ impl StoredRule {
     ///
     /// [`DecodeError`] on trailing bytes, a non-canonical form, a rule
     /// past either cap, or a degenerate threshold.
-    pub fn from_slice(bytes: &[u8]) -> Result<Self, DecodeError> {
+    pub(crate) fn from_slice(bytes: &[u8]) -> Result<Self, DecodeError> {
         from_slice_with_depth(bytes, MAX_RULE_WIRE_DEPTH)
     }
 }

@@ -29,7 +29,7 @@ use crate::lower::Lowered;
 /// One method's generated export.
 pub struct Method {
     /// The `extern "C"` function under the published name.
-    pub function: TokenStream,
+    pub(crate) function: TokenStream,
 }
 
 /// The Rust name a kebab-cased export is defined under.

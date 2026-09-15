@@ -216,14 +216,14 @@ pub fn granted_behaviour(path: &syn::Path) -> syn::Result<GrantedBehaviour> {
 pub struct Grants {
     /// The rules its address commits, as the expression that builds
     /// them.
-    pub rendered: TokenStream2,
+    pub(crate) rendered: TokenStream2,
     /// Whether those rules name configuration, which decides whether the
     /// address is derivable from a handle alone.
-    pub reads_config: bool,
+    pub(crate) reads_config: bool,
     /// The behaviours it states a rule for. What the lowering holds an
     /// operation on the mark to: a resource grants what it says it
     /// grants, and nothing else.
-    pub behaviours: Vec<GrantedBehaviour>,
+    pub(crate) behaviours: Vec<GrantedBehaviour>,
 }
 
 impl Grants {
@@ -304,10 +304,10 @@ pub type DeclaredResource<'a> = (
 /// [`Option`] because a mark whose rules name a badge is not nameable:
 /// the chain one address folds is one link long.
 pub struct Nameable<'a> {
-    pub ident: &'a syn::Ident,
-    pub kind: ResourceKind,
+    pub(crate) ident: &'a syn::Ident,
+    pub(crate) kind: ResourceKind,
     /// The mark's own grants, where the mark is nameable at all.
-    pub rules: Option<Grants>,
+    pub(crate) rules: Option<Grants>,
 }
 
 /// Whether a granted set names a badge anywhere in it, which is what
@@ -545,26 +545,26 @@ pub fn granted_claim(
 #[derive(Clone)]
 pub struct Resource {
     /// The struct's own name, which is what a body and a gate call it.
-    pub name: String,
+    pub(crate) name: String,
     /// The material separating it from the package's other resources.
-    pub mark: Vec<u8>,
+    pub(crate) mark: Vec<u8>,
     /// The kind its attribute states.
-    pub kind: ResourceKind,
+    pub(crate) kind: ResourceKind,
     /// The display quantization its record carries. Meaningless on a
     /// non-fungible mark, where it is never read.
-    pub display_digits: u8,
+    pub(crate) display_digits: u8,
     /// The supply the component comes up holding, where its attribute
     /// states one: a quantity for a fungible mark, an instance id for a
     /// non-fungible one — the same split the mint itself takes.
-    pub initial: Option<syn::LitInt>,
+    pub(crate) initial: Option<syn::LitInt>,
     /// What its attribute grants. Rendered once here because three sites
     /// emit it — a gate naming the resource, a term over it, and the
     /// grant that mints it — and an address they disagreed about would
     /// be three resources.
-    pub grants: Grants,
+    pub(crate) grants: Grants,
     /// Whether the struct has fields, which is what makes it an
     /// instance's data schema and not only a bare mark.
-    pub schema: bool,
+    pub(crate) schema: bool,
 }
 
 /// The display quantization a fungible resource carries where its
@@ -585,10 +585,10 @@ pub const DEFAULT_DISPLAY_DIGITS: u8 = 18;
 /// need the kind, and the record `instantiate` writes needs the display
 /// width. The attribute is the one place all three read from.
 pub struct ResourceAttr {
-    pub kind: ResourceKind,
-    pub display_digits: u8,
-    pub initial: Option<syn::LitInt>,
-    pub grants: Option<syn::MetaList>,
+    pub(crate) kind: ResourceKind,
+    pub(crate) display_digits: u8,
+    pub(crate) initial: Option<syn::LitInt>,
+    pub(crate) grants: Option<syn::MetaList>,
 }
 
 pub fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {

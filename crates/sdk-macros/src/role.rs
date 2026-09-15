@@ -31,7 +31,7 @@ pub enum Role {
 
 impl Role {
     /// The gate the declaration and the call surface are emitted under.
-    pub fn reading(self) -> TokenStream {
+    pub(crate) fn reading(self) -> TokenStream {
         match self {
             Self::Reader => quote!(),
             Self::Publisher => quote!(#[cfg(not(target_arch = "wasm32"))]),
@@ -39,7 +39,7 @@ impl Role {
     }
 
     /// Whether the executing half is emitted at all.
-    pub fn publishes(self) -> bool {
+    pub(crate) fn publishes(self) -> bool {
         self == Self::Publisher
     }
 }

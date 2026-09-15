@@ -133,7 +133,7 @@ impl GraphNode {
     /// what they share is exactly this: a socket makes the node depend
     /// on whatever the composition bound it to. Ordering and use
     /// counting both ask it, so it is asked in one place.
-    pub fn sockets(&self) -> impl Iterator<Item = u32> + '_ {
+    pub(crate) fn sockets(&self) -> impl Iterator<Item = u32> + '_ {
         let args = self.args.iter().filter_map(|arg| match arg {
             GraphArg::Socket(socket) => Some(*socket),
             GraphArg::Literal(_) | GraphArg::Edge { .. } => None,

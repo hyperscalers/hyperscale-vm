@@ -100,7 +100,7 @@ impl Blessed {
     ///
     /// Panics if the crate does not build, or on anything [`Self::seed`]
     /// panics on.
-    pub fn build(&mut self, package: PackageHash, at: &Package) {
+    pub(crate) fn build(&mut self, package: PackageHash, at: &Package) {
         if let Some(entry) = COMPILED
             .lock()
             .expect("no cache user panics mid-insert")

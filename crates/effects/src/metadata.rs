@@ -185,7 +185,7 @@ impl SlotWidths {
     /// declared, or what the protocol's own band holds there, or the cap
     /// for a slot neither knows.
     #[must_use]
-    pub fn width_of(&self, slot: SlotId) -> u32 {
+    pub(crate) fn width_of(&self, slot: SlotId) -> u32 {
         self.0
             .get(&slot)
             .copied()
@@ -246,7 +246,7 @@ const _: () = assert!(RULE_WIDTH as usize == MAX_VALUE_BYTES + VALUE_LENGTH_BYTE
 impl PackageMetadata {
     /// The width of every slot this package declares.
     #[must_use]
-    pub fn slot_widths(&self) -> SlotWidths {
+    pub(crate) fn slot_widths(&self) -> SlotWidths {
         SlotWidths(
             self.state
                 .iter()

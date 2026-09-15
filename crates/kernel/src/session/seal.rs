@@ -64,7 +64,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn seal(&mut self, site: u32, element: u32) -> Result<(), SessionTrap> {
+    pub(crate) fn seal(&mut self, site: u32, element: u32) -> Result<(), SessionTrap> {
         let key = self.acting_key(site, element, Op::Seal)?;
         // A leaf already under a seal takes another only where the
         // standing one will never open. A matured seed is public, and so
@@ -108,7 +108,7 @@ impl KernelSession {
     ///
     /// Any [`SessionTrap`], including [`SessionTrap::NotASeal`] for a
     /// leaf a guest wrote its own bytes over.
-    pub fn open_seal(&mut self, site: u32, element: u32) -> Result<Drawn, SessionTrap> {
+    pub(crate) fn open_seal(&mut self, site: u32, element: u32) -> Result<Drawn, SessionTrap> {
         let key = self.acting_key(site, element, Op::OpenSeal)?;
         let held = self.store.read(key)?.unwrap_or_default();
         let epoch = sealed_epoch(site, &held)?;

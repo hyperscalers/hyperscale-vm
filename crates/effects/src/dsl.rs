@@ -415,7 +415,7 @@ impl Expr {
     /// costs exactly one arm here and cannot bury a subterm from one walk
     /// while showing it to another. Only evaluation keeps its own full
     /// match, because what it does with each position is semantic.
-    pub fn children(&self) -> impl Iterator<Item = &Self> {
+    pub(crate) fn children(&self) -> impl Iterator<Item = &Self> {
         let mut children: Vec<&Self> = Vec::new();
         match self {
             Self::Literal(_)
@@ -492,7 +492,7 @@ impl Expr {
     /// Whether this node itself is a caller-supplied input, before any
     /// subterm is asked.
     #[must_use]
-    pub const fn is_input_leaf(&self) -> bool {
+    pub(crate) const fn is_input_leaf(&self) -> bool {
         matches!(self, Self::Arg(_) | Self::Binding(_))
     }
 
@@ -502,7 +502,7 @@ impl Expr {
     /// identity that caller can always present, so a method gated on one
     /// reads as guarded and admits everyone.
     #[must_use]
-    pub fn reads_call_inputs(&self) -> bool {
+    pub(crate) fn reads_call_inputs(&self) -> bool {
         self.is_input_leaf() || self.children().any(Self::reads_call_inputs)
     }
 }
@@ -601,7 +601,7 @@ pub enum TargetExpr {
 
 impl TargetExpr {
     /// Every expression this target is built from.
-    pub fn parts(&self) -> impl Iterator<Item = &Expr> {
+    pub(crate) fn parts(&self) -> impl Iterator<Item = &Expr> {
         let mut parts: Vec<&Expr> = Vec::new();
         match self {
             Self::Point(key) => parts.push(key),
@@ -637,7 +637,7 @@ impl TargetExpr {
 
     /// Whether resolving this target reads anything the caller supplies.
     #[must_use]
-    pub fn reads_call_inputs(&self) -> bool {
+    pub(crate) fn reads_call_inputs(&self) -> bool {
         self.parts().any(Expr::reads_call_inputs)
     }
 }
@@ -977,7 +977,7 @@ impl PresentedGrants {
 
     /// The granted rules of `resource`, where its record was presented.
     #[must_use]
-    pub fn rules(&self, resource: ResourceAddr) -> Option<&ResourceGrants> {
+    pub(crate) fn rules(&self, resource: ResourceAddr) -> Option<&ResourceGrants> {
         self.0.get(&resource)
     }
 }
@@ -1102,9 +1102,9 @@ pub struct DeclaredAccess {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reach {
     /// The authority the reach is made under.
-    pub behaviour: GrantedBehaviour,
+    pub(crate) behaviour: GrantedBehaviour,
     /// The resource whose entry for it admits the reach.
-    pub resource: ResourceAddr,
+    pub(crate) resource: ResourceAddr,
 }
 
 /// An evaluated condition, and the frame that states it.
@@ -1294,7 +1294,7 @@ impl Declaration {
     /// is past its body — both of which the publish gate has already
     /// refused, so reaching one here is a defect rather than a package.
     #[must_use]
-    pub fn elements(&self, clause: u32, site: u32) -> Option<&[Option<u32>]> {
+    pub(crate) fn elements(&self, clause: u32, site: u32) -> Option<&[Option<u32>]> {
         self.expansions
             .get(&clause)?
             .get(usize::try_from(site).ok()?)
@@ -1771,7 +1771,7 @@ fn eval_reach(
 /// a child of any slot, so there is nothing for the vocabulary to be
 /// about.
 #[must_use]
-pub fn slot_of(target: &TargetExpr) -> Option<(&SlotRef, &[Expr])> {
+pub(crate) fn slot_of(target: &TargetExpr) -> Option<(&SlotRef, &[Expr])> {
     match target {
         TargetExpr::Point(Expr::ChildKey { slot, material, .. }) => Some((slot, material)),
         TargetExpr::Point(_) => None,

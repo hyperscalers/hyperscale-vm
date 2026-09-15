@@ -39,11 +39,11 @@ pub enum Carries {
 /// the body to read it.
 pub struct Binding {
     /// What the parameter carries across the boundary.
-    pub param: Shape,
+    pub(crate) param: Shape,
     /// The identifier the parameter arrives under.
-    pub ident: syn::Ident,
+    pub(crate) ident: syn::Ident,
     /// What it carries.
-    pub carries: Carries,
+    pub(crate) carries: Carries,
 }
 
 /// How the guest reads the value carrying `need`.

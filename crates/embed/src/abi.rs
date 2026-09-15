@@ -76,7 +76,7 @@ pub const ROUNDING_UP: u32 = 1;
 /// `ordering`: the first is smaller.
 pub const ORDERING_LESS: u32 = 0;
 /// `ordering`: the two are equal.
-pub const ORDERING_EQUAL: u32 = 1;
+pub(crate) const ORDERING_EQUAL: u32 = 1;
 /// `ordering`: the first is larger.
 pub const ORDERING_GREATER: u32 = 2;
 

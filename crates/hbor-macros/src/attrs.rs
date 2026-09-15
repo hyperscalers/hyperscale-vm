@@ -10,18 +10,18 @@ use syn::{
 pub struct TypeAttrs {
     /// Encode as the single field, charging no nesting level for the
     /// wrapper.
-    pub transparent: bool,
+    pub(crate) transparent: bool,
     /// A predicate run on the decoded value before it escapes the decoder.
-    pub validate: Option<Path>,
+    pub(crate) validate: Option<Path>,
     /// What this type's signatures are for. Its presence is what asks for a
     /// preimage at all.
-    pub signing_domain: Option<LitStr>,
+    pub(crate) signing_domain: Option<LitStr>,
     /// Session state the preimage mixes in ahead of the signed fields —
     /// held by signer and verifier alike, and never on the wire.
-    pub signing_context: Option<Type>,
+    pub(crate) signing_context: Option<Type>,
     /// What this type's merkle roots are for. Required by `HborMerkle`;
     /// inert under `Hbor` alone, which cannot know its sibling derive.
-    pub merkle_domain: Option<LitStr>,
+    pub(crate) merkle_domain: Option<LitStr>,
     /// Claim that this type's encoding cannot fail.
     ///
     /// Asked for rather than inferred, because the shape a field is
@@ -29,14 +29,14 @@ pub struct TypeAttrs {
     /// `Vec` reads as opaque here. Asking makes the emitted impl bound
     /// every field, so a field that carries a length is a compile error
     /// naming it rather than a claim nothing checks.
-    pub infallible: bool,
+    pub(crate) infallible: bool,
     /// Where the emitted impls find the codec.
     ///
     /// Defaults to `::hyperscale_hbor`, which is right for every crate
     /// that depends on it directly. A crate reaching the codec through a
     /// re-export names that path instead — which is how a contract guest,
     /// whose only dependency is the SDK, hosts a derive at all.
-    pub crate_path: Path,
+    pub(crate) crate_path: Path,
 }
 
 impl Default for TypeAttrs {
@@ -61,7 +61,7 @@ pub struct VariantAttrs {
     /// A literal, not a constant expression: the emitter compares
     /// discriminants across variants to reject a collision, and a named
     /// constant would make that check silently unavailable.
-    pub discriminant: Option<u8>,
+    pub(crate) discriminant: Option<u8>,
 }
 
 /// What `#[hbor(...)]` says about a field.
@@ -70,14 +70,14 @@ pub struct FieldAttrs {
     /// The largest length this field may carry, as any `usize` constant
     /// expression. Protocol caps are named constants, so a literal-only
     /// attribute would force the number to be written twice.
-    pub max: Option<Expr>,
+    pub(crate) max: Option<Expr>,
     /// Held out of the signing preimage. The field still rides the wire —
     /// a signature and the key that verifies it are transmitted, they just
     /// cannot be part of what they cover.
-    pub unsigned: bool,
+    pub(crate) unsigned: bool,
     /// Not on the wire at all: encode writes nothing, decode fills
     /// `Default::default()`. For in-memory caches riding a wire type.
-    pub skip: bool,
+    pub(crate) skip: bool,
 }
 
 /// The collection shape of a field's type, as written.
@@ -108,7 +108,7 @@ impl TypeAttrs {
     /// # Errors
     ///
     /// On an unknown key or a malformed value.
-    pub fn parse(attrs: &[Attribute]) -> Result<Self> {
+    pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut out = Self::default();
         for attr in attrs.iter().filter(|a| a.path().is_ident("hbor")) {
             attr.parse_nested_meta(|meta| {
@@ -157,7 +157,7 @@ impl VariantAttrs {
     /// # Errors
     ///
     /// On an unknown key, or a discriminant outside a byte.
-    pub fn parse(attrs: &[Attribute]) -> Result<Self> {
+    pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut out = Self::default();
         for attr in attrs.iter().filter(|a| a.path().is_ident("hbor")) {
             attr.parse_nested_meta(|meta| {
@@ -178,7 +178,7 @@ impl FieldAttrs {
     /// # Errors
     ///
     /// On an unknown key.
-    pub fn parse(attrs: &[Attribute]) -> Result<Self> {
+    pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut out = Self::default();
         for attr in attrs.iter().filter(|a| a.path().is_ident("hbor")) {
             attr.parse_nested_meta(|meta| {

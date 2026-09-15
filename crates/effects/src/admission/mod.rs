@@ -121,19 +121,19 @@ pub struct NodeOrigin {
     pub expiry_ms: u64,
     /// Whether the method's only movement is one reserve of its own
     /// ([`MethodSignature::is_reservation_shaped`]).
-    pub reservation_shaped: bool,
+    pub(crate) reservation_shaped: bool,
     /// Whether the method commits nothing at all
     /// ([`MethodSignature::commits_nothing`]).
-    pub commits_nothing: bool,
+    pub(crate) commits_nothing: bool,
     /// Whether nothing about a call can refuse ahead of its body, edge
     /// bounds aside ([`MethodSignature::is_unrefusable`]).
-    pub unrefusable: bool,
+    pub(crate) unrefusable: bool,
 }
 
 impl NodeOrigin {
     /// The origin of a node at `local` in `intent`, calling `signature`.
     #[must_use]
-    pub fn of(
+    pub(crate) fn of(
         intent: SubintentHash,
         local: u32,
         expiry_ms: u64,
@@ -153,7 +153,7 @@ impl NodeOrigin {
     /// admitted: unsigned, and calling a method nothing is known about,
     /// which the classifier reads as core — the safe direction.
     #[must_use]
-    pub const fn unsigned(local: u32) -> Self {
+    pub(crate) const fn unsigned(local: u32) -> Self {
         Self {
             intent: SubintentHash(Hash32([0; 32])),
             local,
@@ -249,7 +249,7 @@ impl Admitted {
     /// per-node question, and the union declaration has already forgotten
     /// which node asked for what.
     #[must_use]
-    pub fn declares(&self) -> Vec<Vec<Address>> {
+    pub(crate) fn declares(&self) -> Vec<Vec<Address>> {
         self.frames
             .iter()
             .map(|frame| {
@@ -277,7 +277,7 @@ impl Admitted {
     /// reaches at materialization lands on a caller that already
     /// committed.
     #[must_use]
-    pub fn answered_at_admission(&self) -> Vec<bool> {
+    pub(crate) fn answered_at_admission(&self) -> Vec<bool> {
         let mut answered: Vec<bool> = self
             .calls
             .iter()

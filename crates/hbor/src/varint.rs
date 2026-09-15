@@ -32,7 +32,7 @@ pub fn write(buf: &mut Vec<u8>, value: usize) -> Result<(), EncodeError> {
 /// # Errors
 ///
 /// [`EncodeError::LengthTooLarge`] when `value` exceeds [`MAX_LENGTH`].
-pub fn encode(value: usize) -> Result<([u8; 4], usize), EncodeError> {
+pub(crate) fn encode(value: usize) -> Result<([u8; 4], usize), EncodeError> {
     if value > MAX_LENGTH {
         return Err(EncodeError::LengthTooLarge {
             actual: value,

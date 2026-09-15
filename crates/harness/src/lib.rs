@@ -14,7 +14,7 @@
 /// test thread runs out well before the counter does. An overflow there
 /// aborts the process instead of producing the verdict the lane exists to
 /// compare, so the lanes size their stack rather than inherit one.
-pub const DEEP_STACK_BYTES: usize = 256 * 1024 * 1024;
+pub(crate) const DEEP_STACK_BYTES: usize = 256 * 1024 * 1024;
 
 /// Runs `body` on a thread with [`DEEP_STACK_BYTES`] of stack, carrying its
 /// panic rather than replacing it.

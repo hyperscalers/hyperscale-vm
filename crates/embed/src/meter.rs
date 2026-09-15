@@ -32,7 +32,7 @@ use hyperscale_vm_types::{AbortReason, Drawn, SEED_BYTES};
 use crate::KernelHost;
 
 /// Fuel charged per byte crossing the boundary.
-pub const FUEL_PER_BOUNDARY_BYTE: u64 = 1;
+pub(crate) const FUEL_PER_BOUNDARY_BYTE: u64 = 1;
 
 /// What an amount costs at the boundary.
 ///

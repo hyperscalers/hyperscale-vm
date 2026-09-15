@@ -175,7 +175,7 @@ impl BatchTx {
     /// where bounds are bound and this node has none, on
     /// [`Self::ceiling`]'s terms.
     #[must_use]
-    pub fn event_bound(&self, node: usize) -> Option<usize> {
+    pub(crate) fn event_bound(&self, node: usize) -> Option<usize> {
         if self.event_bytes.is_empty() {
             return Some(MAX_EVENT_BYTES_PER_TX);
         }
@@ -240,7 +240,7 @@ impl BatchTx {
     /// call list, which the walk refuses as its composer's defect rather
     /// than metering the node at nothing and pricing the sender for it.
     #[must_use]
-    pub fn ceiling(&self, node: usize) -> Option<u64> {
+    pub(crate) fn ceiling(&self, node: usize) -> Option<u64> {
         if self.gas_limits.is_empty() {
             return Some(u64::MAX);
         }
@@ -272,7 +272,7 @@ impl BatchTx {
     /// edges write. A settlement creates none — it reads records and
     /// deletes them.
     #[must_use]
-    pub fn record_cells(&self) -> Vec<SubstateKey> {
+    pub(crate) fn record_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.records().collect(),
             Job::Records(_) => Vec::new(),
@@ -283,7 +283,7 @@ impl BatchTx {
     /// deletes, whether it retires the record or takes it back. A
     /// manifest disposes of none — it issues them.
     #[must_use]
-    pub fn disposed_records(&self) -> Vec<SubstateKey> {
+    pub(crate) fn disposed_records(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { .. } => Vec::new(),
             Job::Records(disposals) => disposals.iter().map(|disposal| disposal.record).collect(),
@@ -293,7 +293,7 @@ impl BatchTx {
     /// Every claim cell this execution creates: the arrivals it takes,
     /// and the crossings a settlement takes back.
     #[must_use]
-    pub fn claim_cells(&self) -> Vec<SubstateKey> {
+    pub(crate) fn claim_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.claims().collect(),
             Job::Records(disposals) => disposals

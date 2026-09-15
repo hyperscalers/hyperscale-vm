@@ -94,12 +94,12 @@ impl<K: Ord, V> DeltaMap<K, V> {
     }
 
     /// Record a change, replacing any at the same key.
-    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+    pub(crate) fn insert(&mut self, key: K, value: V) -> Option<V> {
         self.entries.insert(key, value)
     }
 
     /// Drop the changes `keep` refuses.
-    pub fn retain(&mut self, keep: impl FnMut(&K, &mut V) -> bool) {
+    pub(crate) fn retain(&mut self, keep: impl FnMut(&K, &mut V) -> bool) {
         self.entries.retain(keep);
     }
 

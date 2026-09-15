@@ -39,7 +39,7 @@ pub fn remaining(store: impl AsContextMut, counter: &Global) -> u64 {
 ///
 /// Panics if the counter refuses the write, which the meter's mutable
 /// `i64` never does.
-pub fn set(store: impl AsContextMut, counter: &Global, value: u64) {
+pub(crate) fn set(store: impl AsContextMut, counter: &Global, value: u64) {
     counter
         .set(store, Val::I64(value.cast_signed()))
         .expect("the meter's counter is mutable");

@@ -144,7 +144,7 @@ pub struct SchemeSpec {
     /// terms as those weights — measured against real implementations
     /// rather than chosen here, and a scheme whose verifier is slower
     /// than its entry claims is underpriced rather than unsound.
-    pub verify_weight: u64,
+    pub(crate) verify_weight: u64,
 }
 
 impl SchemeSpec {

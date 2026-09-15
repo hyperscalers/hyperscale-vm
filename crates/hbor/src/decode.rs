@@ -34,13 +34,13 @@ impl<'a> Decoder<'a> {
 
     /// Bytes not yet consumed.
     #[must_use]
-    pub const fn remaining(&self) -> usize {
+    pub(crate) const fn remaining(&self) -> usize {
         self.input.len() - self.cursor
     }
 
     /// How many bytes have been read.
     #[must_use]
-    pub const fn position(&self) -> usize {
+    pub(crate) const fn position(&self) -> usize {
         self.cursor
     }
 
@@ -49,7 +49,7 @@ impl<'a> Decoder<'a> {
     /// encoding, exactly, since nothing outside a value's bytes
     /// describes it.
     #[must_use]
-    pub fn consumed(&self, start: usize) -> &'a [u8] {
+    pub(crate) fn consumed(&self, start: usize) -> &'a [u8] {
         &self.input[start..self.cursor]
     }
 
@@ -145,7 +145,7 @@ impl<'a> Decoder<'a> {
     /// ever holding a reservation larger than itself; an accepted sequence
     /// grows to its real size through ordinary doubling.
     #[must_use]
-    pub fn reserve_hint<T>(&self, claimed: usize) -> usize {
+    pub(crate) fn reserve_hint<T>(&self, claimed: usize) -> usize {
         claimed.min(self.remaining() / size_of::<T>().max(1))
     }
 
@@ -190,7 +190,7 @@ impl<'a> Decoder<'a> {
     /// [`DecodeError::TrailingBytes`] when bytes follow the value. Trailing
     /// bytes would give one value two encodings, so they are a rejection
     /// rather than a value the caller may ignore.
-    pub const fn finish(&self) -> Result<(), DecodeError> {
+    pub(crate) const fn finish(&self) -> Result<(), DecodeError> {
         if self.remaining() > 0 {
             return Err(DecodeError::TrailingBytes {
                 remaining: self.remaining(),

@@ -425,7 +425,7 @@ pub const fn lit_u128(value: u128) -> Sym<U128> {
 /// routing-time rejection — where the contract is already published and
 /// every call fails — to a build failure.
 #[must_use]
-pub fn expr_depth(expr: &Expr) -> usize {
+pub(crate) fn expr_depth(expr: &Expr) -> usize {
     let sub = match expr {
         Expr::Literal(_)
         | Expr::Arg(_)

@@ -239,7 +239,7 @@ targets = [\"wasm32-unknown-unknown\"]
 /// authors, which is what a scaffolded crate is for: it earns the
 /// executing module beside the declaration every consumer reads.
 #[must_use]
-pub fn sdk_dependency(dir: &Path) -> String {
+pub(crate) fn sdk_dependency(dir: &Path) -> String {
     publisher(&crate_dependency(dir, "sdk", "\"0.1\""))
 }
 
@@ -260,7 +260,7 @@ fn publisher(dependency: &str) -> String {
 /// written for both: an author who has to turn on the second engine is
 /// an author whose first run proves half of what it says it does.
 #[must_use]
-pub fn testing_dependency(dir: &Path) -> String {
+pub(crate) fn testing_dependency(dir: &Path) -> String {
     crate_dependency(dir, "testing", "\"0.1\"")
 }
 

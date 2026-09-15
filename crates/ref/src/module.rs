@@ -18,7 +18,7 @@ pub struct FuncType {
     /// Parameter types.
     pub params: Vec<Ty>,
     /// Result types.
-    pub results: Vec<Ty>,
+    pub(crate) results: Vec<Ty>,
 }
 
 /// A value type.
@@ -49,45 +49,45 @@ const fn ty(vt: ValType) -> Result<Ty, DecodeError> {
 
 /// One decoded function.
 #[derive(Debug)]
-pub struct Func {
+pub(crate) struct Func {
     /// Type index.
-    pub ty: u32,
+    pub(crate) ty: u32,
     /// Declared locals (excluding parameters).
-    pub locals: Vec<Ty>,
+    pub(crate) locals: Vec<Ty>,
     /// The instruction sequence, continuations resolved.
-    pub ops: Vec<Op>,
+    pub(crate) ops: Vec<Op>,
 }
 
 /// A global definition.
 #[derive(Debug)]
-pub struct Global {
+pub(crate) struct Global {
     /// Initial value.
-    pub init: Value,
+    pub(crate) init: Value,
 }
 
 /// An active element or data segment offset plus payload.
 #[derive(Debug)]
-pub struct Segment<T> {
+pub(crate) struct Segment<T> {
     /// Offset into the table or memory.
-    pub offset: u32,
+    pub(crate) offset: u32,
     /// Segment payload.
-    pub items: T,
+    pub(crate) items: T,
 }
 
 /// One imported item.
 #[derive(Debug)]
-pub struct CoreImport {
+pub(crate) struct CoreImport {
     /// Import module name.
     pub module: String,
     /// Import field name.
-    pub name: String,
+    pub(crate) name: String,
     /// Item kind.
-    pub kind: CoreImportKind,
+    pub(crate) kind: CoreImportKind,
 }
 
 /// The kind of an imported item.
 #[derive(Debug, Clone, Copy)]
-pub enum CoreImportKind {
+pub(crate) enum CoreImportKind {
     /// A function with its type index.
     Func(u32),
     /// A linear memory.
@@ -98,15 +98,15 @@ pub enum CoreImportKind {
 
 /// The module's import section.
 #[derive(Debug, Default)]
-pub struct CoreImports {
+pub(crate) struct CoreImports {
     /// Imports in declaration order.
-    pub entries: Vec<CoreImport>,
+    pub(crate) entries: Vec<CoreImport>,
 }
 
 impl CoreImports {
     /// Number of imported functions (they occupy the low function indices).
     #[must_use]
-    pub fn func_count(&self) -> usize {
+    pub(crate) fn func_count(&self) -> usize {
         self.entries
             .iter()
             .filter(|i| matches!(i.kind, CoreImportKind::Func(_)))
@@ -118,30 +118,30 @@ impl CoreImports {
 #[derive(Debug, Default)]
 pub struct RefModule {
     /// Imports.
-    pub imports: CoreImports,
+    pub(crate) imports: CoreImports,
     /// Function types.
-    pub types: Vec<FuncType>,
+    pub(crate) types: Vec<FuncType>,
     /// Functions.
-    pub funcs: Vec<Func>,
+    pub(crate) funcs: Vec<Func>,
     /// Linear memory (initial pages, max pages), if declared.
-    pub memory: Option<(u64, u64)>,
+    pub(crate) memory: Option<(u64, u64)>,
     /// Globals.
-    pub globals: Vec<Global>,
+    pub(crate) globals: Vec<Global>,
     /// Table 0 (initial, max), if declared.
-    pub table: Option<(u64, u64)>,
+    pub(crate) table: Option<(u64, u64)>,
     /// Active element segments for table 0.
-    pub elements: Vec<Segment<Vec<u32>>>,
+    pub(crate) elements: Vec<Segment<Vec<u32>>>,
     /// Active data segments.
-    pub datas: Vec<Segment<Vec<u8>>>,
+    pub(crate) datas: Vec<Segment<Vec<u8>>>,
     /// Function exports by name.
     pub exports: HashMap<String, u32>,
     /// Global exports by name, which is how the meter's counter is
     /// reached from outside.
-    pub global_exports: HashMap<String, u32>,
+    pub(crate) global_exports: HashMap<String, u32>,
     /// Memory export names (a module has at most one memory).
-    pub memory_exports: Vec<String>,
+    pub(crate) memory_exports: Vec<String>,
     /// Table export names (a module has at most one table).
-    pub table_exports: Vec<String>,
+    pub(crate) table_exports: Vec<String>,
 }
 
 impl RefModule {
@@ -256,7 +256,7 @@ impl RefModule {
 
     /// The type index of a function by its global index (imports first).
     #[must_use]
-    pub fn func_type_index(&self, func: u32) -> u32 {
+    pub(crate) fn func_type_index(&self, func: u32) -> u32 {
         let imported = self.imports.func_count();
         if (func as usize) < imported {
             let mut seen = 0usize;

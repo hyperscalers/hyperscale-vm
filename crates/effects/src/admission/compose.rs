@@ -164,12 +164,12 @@ fn check_constraints(
 
 /// One intent as the shared admission checker consumes it.
 pub struct IntentView<'a> {
-    pub graph: &'a ManifestGraph,
-    pub sockets: &'a [Socket],
-    pub bindings: &'a [Binding],
+    pub(crate) graph: &'a ManifestGraph,
+    pub(crate) sockets: &'a [Socket],
+    pub(crate) bindings: &'a [Binding],
     /// Whose signature this intent carries, and so whose identity its
     /// proof names. A bare graph is unsigned and produces none.
-    pub signer: Option<PrincipalAddr>,
+    pub(crate) signer: Option<PrincipalAddr>,
     /// What this intent's own signer signed: the declaration's hash for
     /// an intent of a tree, and the graph's own for a bare one.
     ///
@@ -177,7 +177,7 @@ pub struct IntentView<'a> {
     /// node's signer chose. A transaction hash covers a whole
     /// composition the composer assembles, which is material a party
     /// other than the cell's owner can grind.
-    pub identity: SubintentHash,
+    pub(crate) identity: SubintentHash,
     /// When what this intent's signature brought into being stops being
     /// owed: the window its own signer signed plus the artifact grace,
     /// on [`intent_expiry_ms`](crate::intent_expiry_ms)'s terms. The

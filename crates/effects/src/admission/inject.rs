@@ -97,11 +97,11 @@ fn injected_entry(
 pub struct Injected {
     /// What must hold, resolved: every holding a key under the party the
     /// question is about.
-    pub rule: Rule<JudgedLeaf>,
+    pub(crate) rule: Rule<JudgedLeaf>,
     /// What was asked, before resolving hashed the subject away.
-    pub asks: Asks,
+    pub(crate) asks: Asks,
     /// The resource whose entry demands it.
-    pub resource: ResourceAddr,
+    pub(crate) resource: ResourceAddr,
     /// Which of that resource's entries.
     pub behaviour: GrantedBehaviour,
 }

@@ -122,7 +122,10 @@ fn delta_totals(ops: &[DeltaOp]) -> Result<(u128, u128), ModeError> {
 /// # Errors
 ///
 /// [`ModeError::DeltaOverflow`] if either total leaves `u128`.
-pub fn total_movement(ops: &[DeltaOp], resource: ResourceAddr) -> Result<Movement, ModeError> {
+pub(crate) fn total_movement(
+    ops: &[DeltaOp],
+    resource: ResourceAddr,
+) -> Result<Movement, ModeError> {
     let (credit, debit) = delta_totals(ops)?;
     Ok(Movement {
         resource,
@@ -145,7 +148,7 @@ pub enum Feasibility {
 impl Feasibility {
     /// Whether the verdict is [`Feasibility::Feasible`].
     #[must_use]
-    pub const fn is_feasible(self) -> bool {
+    pub(crate) const fn is_feasible(self) -> bool {
         matches!(self, Self::Feasible)
     }
 }

@@ -1112,7 +1112,7 @@ impl<'a> TypedBuilder<'a> {
     /// A bucket carrying constraints, or one made by a different builder,
     /// does not panic: it poisons the builder and the refusal is handed
     /// back when the graph builds, as [`GraphBuilder::export`] documents.
-    pub fn export(&mut self, bucket: Bucket) -> EdgeRef {
+    pub(crate) fn export(&mut self, bucket: Bucket) -> EdgeRef {
         self.graph.export(bucket)
     }
 

@@ -32,7 +32,7 @@ impl Bounds {
     /// bound is a refusal that runs before the callee's body, so a leg
     /// carrying one could refuse what the core was told could not.
     #[must_use]
-    pub const fn admit_anything(&self) -> bool {
+    pub(crate) const fn admit_anything(&self) -> bool {
         self.min.is_none() && self.max.is_none()
     }
 

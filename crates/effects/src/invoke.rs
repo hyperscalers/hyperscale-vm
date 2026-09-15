@@ -28,7 +28,7 @@ use crate::types::{EdgeContent, MAX_IDS_PER_EDGE};
 impl ResourceKind {
     /// The cell shape a projection's content crosses the boundary as.
     #[must_use]
-    pub const fn of(content: &EdgeContent) -> Self {
+    pub(crate) const fn of(content: &EdgeContent) -> Self {
         match content {
             EdgeContent::Fungible => Self::Fungible,
             EdgeContent::NonFungible { .. } => Self::NonFungible,

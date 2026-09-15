@@ -74,21 +74,21 @@ pub enum FieldKind {
 #[derive(Clone, Debug)]
 pub struct Field {
     /// The slot the field's children sit under.
-    pub slot: u16,
+    pub(crate) slot: u16,
     /// What shape of state it is.
-    pub kind: FieldKind,
+    pub(crate) kind: FieldKind,
     /// The value each leaf holds, which is what a guest accessor decodes
     /// into.
-    pub element: Option<syn::Type>,
+    pub(crate) element: Option<syn::Type>,
     /// The resource this field's leaves hold, where the field states one.
     ///
     /// A `Keyed<Vault>` is denominated by whatever key a body names, so
     /// it carries none; a `Cell<Vault>` has no key to be denominated by
     /// and states it here.
-    pub denomination: Option<syn::Expr>,
+    pub(crate) denomination: Option<syn::Expr>,
     /// The most bytes one leaf may hold, where the field states it
     /// under `#[width(..)]`; a closed element derives its own.
-    pub width: Option<u32>,
+    pub(crate) width: Option<u32>,
 }
 
 /// One target a body opened a handle on.
@@ -159,28 +159,28 @@ pub enum Target {
 #[derive(Clone, Debug)]
 pub struct Site {
     /// What the handle is on.
-    pub target: Target,
+    pub(crate) target: Target,
     /// The operations, in order; the mode is their fold.
-    pub ops: Vec<(Op, Option<Term>)>,
+    pub(crate) ops: Vec<(Op, Option<Term>)>,
     /// The value each leaf under this handle holds.
-    pub element: Option<syn::Type>,
+    pub(crate) element: Option<syn::Type>,
     /// The resource the leaves under this handle hold, where they hold
     /// value at all.
     ///
     /// What a credit through this handle has to carry and what a debit
     /// through it produces — one fact, read from the declaration rather
     /// than guessed from the shape of a key.
-    pub denomination: Option<Term>,
+    pub(crate) denomination: Option<Term>,
     /// How many `for-each` binders enclosed the access that opened this
     /// site; zero for a clause the method declares directly.
     ///
     /// What decides whether the site the export takes is one element
     /// wide or as wide as the loop's expansion — and, where it is a
     /// loop's, which loop's index its elements are named by.
-    pub binder: usize,
+    pub(crate) binder: usize,
     /// The behaviour this site's access reaches a foreign prefix under,
     /// where it reaches one.
-    pub reach: Option<GrantedBehaviour>,
+    pub(crate) reach: Option<GrantedBehaviour>,
     /// The condition this site's clause is declared under, or `None` for
     /// a clause declared always.
     ///
@@ -189,7 +189,7 @@ pub struct Site {
     /// the declaration owes is the condition that holds at every one of
     /// those places. Where they do not agree there is no such condition
     /// but the trivial one, which is what `None` says.
-    pub guard: Option<Term>,
+    pub(crate) guard: Option<Term>,
     /// The cap derived from the moves performed through a capless
     /// interval: the counts of the ids each take names and the
     /// instances each filed edge carries, summed. Guarded moves sum
@@ -199,7 +199,7 @@ pub struct Site {
     /// Held beside the target rather than written into it, because the
     /// target is the site's identity — two opens of one capless interval
     /// must stay one site whether or not a move has landed yet.
-    pub moved: Option<Term>,
+    pub(crate) moved: Option<Term>,
 }
 
 impl Site {
@@ -210,7 +210,7 @@ impl Site {
     /// emission itself rather than of a second fold over the same
     /// operations: what a site declares is one lattice, and a copy of it
     /// here would be a copy to keep in step.
-    pub fn declares(&self) -> bool {
+    pub(crate) fn declares(&self) -> bool {
         crate::emit::mode(self).is_some()
     }
 }
@@ -342,44 +342,44 @@ pub enum Code {
 #[derive(Clone, Debug, Default)]
 pub struct Lowered {
     /// Every handle site, in the order the body opened them.
-    pub sites: Vec<Site>,
+    pub(crate) sites: Vec<Site>,
     /// The clause tree over those sites.
-    pub nodes: Vec<Node>,
+    pub(crate) nodes: Vec<Node>,
     /// The resources of the value edges the method produces.
-    pub outputs: Vec<Term>,
+    pub(crate) outputs: Vec<Term>,
     /// The resource each consumed edge is fixed to, by parameter.
     ///
     /// Sparse, because a position is fixed only where the body credits it
     /// to a cell keyed by something other than the edge's own resource.
-    pub denominations: BTreeMap<u32, Term>,
+    pub(crate) denominations: BTreeMap<u32, Term>,
     /// The sites whose handles the export takes.
     ///
     /// Ordered by site, which is declaration order: the ABI binding rides
     /// beside the clause it names, so the export's parameter order has to
     /// be the clauses' rather than the order the body first reached for
     /// one — a nested access would otherwise number them apart.
-    pub handles: BTreeSet<usize>,
+    pub(crate) handles: BTreeSet<usize>,
     /// The sites a `for-each` body declared, whose width is the
     /// instance's rather than the signature's.
     ///
     /// A subset of [`Lowered::handles`], because a looped site is a
     /// handle parameter like any other — what differs is how many
     /// elements it covers and how the binding names it.
-    pub looped: BTreeSet<usize>,
+    pub(crate) looped: BTreeSet<usize>,
     /// The values the export takes, in the order the body needs them.
-    pub values: Vec<Need>,
+    pub(crate) values: Vec<Need>,
     /// How many fresh ids the body draws.
-    pub fresh: usize,
+    pub(crate) fresh: usize,
     /// The branches whose verdict the export takes, in the order they
     /// were declared, each saying which arm's clause its flag names.
-    pub flags: Vec<Polarity>,
+    pub(crate) flags: Vec<Polarity>,
     /// The bucket parameters the body destroys, in the order it reaches
     /// them.
     ///
     /// Separate from `issues` because the resource is separate: an
     /// issuance derives one this instance owns, and this names one a
     /// caller chose.
-    pub destroys: Vec<u32>,
+    pub(crate) destroys: Vec<u32>,
     /// Every resource the body issues — its kind, its mark and which way
     /// the body moves it — in the order the walk first reached each.
     ///
@@ -391,9 +391,9 @@ pub struct Lowered {
     /// The direction is the body's own fact: a burn has no output
     /// projection to read one from, and a frame asked the entry it never
     /// uses would be held to an authority it does not exercise.
-    pub issues: Vec<(ResourceKind, Vec<u8>, Issued)>,
+    pub(crate) issues: Vec<(ResourceKind, Vec<u8>, Issued)>,
     /// The rewritten statements, executing against materialized handles.
-    pub body: TokenStream,
+    pub(crate) body: TokenStream,
     /// The value edges the body ends with, each as the expression that
     /// produced it.
     ///
@@ -401,7 +401,7 @@ pub struct Lowered {
     /// hands the kernel back the handle it owns, a host the table
     /// position it holds — which is the one place the two tails differ,
     /// and the reason this is the edges rather than the tail.
-    pub edges: Vec<TokenStream>,
+    pub(crate) edges: Vec<TokenStream>,
     /// The value the body ends with beside its edges, as the expression
     /// that computed it.
     ///
@@ -409,7 +409,7 @@ pub struct Lowered {
     /// edges, and a value has no shape a later node could take. Both
     /// halves compose it the same way, so unlike the edges this is the
     /// expression itself.
-    pub answer: Option<TokenStream>,
+    pub(crate) answer: Option<TokenStream>,
     /// Which element of the tail the answer came from.
     ///
     /// The signature's own tuple position, so a caller's wrapper can
@@ -417,9 +417,9 @@ pub struct Lowered {
     /// time — the walk already decided which element was an edge and
     /// which was the value, and re-deciding it syntactically is the
     /// classification that drifts.
-    pub answer_at: usize,
+    pub(crate) answer_at: usize,
     /// Whether the method yields a value at all.
-    pub returns: bool,
+    pub(crate) returns: bool,
 }
 
 /// What a method's tail hands back.
@@ -448,7 +448,7 @@ pub enum Yields {
 
 impl Yields {
     /// Read off a method's declared return type.
-    pub fn of(output: &syn::ReturnType) -> Self {
+    pub(crate) fn of(output: &syn::ReturnType) -> Self {
         let syn::ReturnType::Type(_, ty) = output else {
             return Self::Nothing;
         };
@@ -492,7 +492,7 @@ impl Lowered {
     /// check holds a rewrite to reading what it rewrites, and the
     /// emission rides the body's clause rather than declaring the read
     /// beside it.
-    pub fn point_site(&self, slot: u16) -> Option<&Site> {
+    pub(crate) fn point_site(&self, slot: u16) -> Option<&Site> {
         self.sites.iter().find(|site| {
             matches!(
                 &site.target,
@@ -1031,7 +1031,7 @@ impl<'a> Lowerer<'a> {
     /// The tail expression is evaluated in return position, where a
     /// produced bucket — or a tuple of them — becomes the method's declared
     /// outputs.
-    pub fn run(mut self, block: &syn::Block) -> Result<Lowered, Vec<syn::Error>> {
+    pub(crate) fn run(mut self, block: &syn::Block) -> Result<Lowered, Vec<syn::Error>> {
         // Which cells the body touches from more than one place is
         // settled before anything is declared, because a guard is a fact
         // about the cell and the walk that declares meets each cell's

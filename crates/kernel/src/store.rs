@@ -81,7 +81,7 @@ pub enum Fault {
 impl StoreError {
     /// This refusal, classified.
     #[must_use]
-    pub const fn fault(&self) -> Fault {
+    pub(crate) const fn fault(&self) -> Fault {
         match self {
             Self::Mode(ModeError::CellUnderflow | ModeError::CellOverflow)
             | Self::HeldExceedsCommitted(_) => Fault::Floor,
@@ -107,9 +107,9 @@ impl From<StoreError> for AbortReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Access {
     /// The touched target.
-    pub target: EffectTarget,
+    pub(crate) target: EffectTarget,
     /// The mode the operation belongs to.
-    pub kind: ModeKind,
+    pub(crate) kind: ModeKind,
 }
 
 /// The mutable state surface a transaction executes against — working
@@ -197,11 +197,11 @@ pub trait WorkingStore {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AppliedDelta {
     /// The folded cell.
-    pub key: SubstateKey,
+    pub(crate) key: SubstateKey,
     /// The committed amount before the fold.
-    pub before: u128,
+    pub(crate) before: u128,
     /// The committed amount after the fold.
-    pub after: u128,
+    pub(crate) after: u128,
 }
 
 /// Substate content: point cells and ordered-collection entries, nothing
@@ -349,7 +349,7 @@ impl MemoryStore {
 
     /// The reservation amount `tx` holds on `key`, if any.
     #[must_use]
-    pub fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
+    pub(crate) fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
         self.held
             .get(&key)
             .and_then(|holds| holds.get(&tx))

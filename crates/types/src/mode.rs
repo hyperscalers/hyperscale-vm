@@ -224,7 +224,7 @@ impl ConflictClass {
     /// one of them speaks for both and conflict stays read off the
     /// lattice rather than tabulated again beside it.
     #[must_use]
-    pub const fn representative(self) -> ModeKind {
+    pub(crate) const fn representative(self) -> ModeKind {
         match self {
             Self::Read => ModeKind::Read,
             Self::Movement => ModeKind::Delta,

@@ -418,7 +418,7 @@ impl CheckedMetadata {
     ///
     /// [`MetadataError`]; verdicts are deterministic and identical on
     /// every node.
-    pub fn judge(metadata: PackageMetadata) -> Result<Self, MetadataError> {
+    pub(crate) fn judge(metadata: PackageMetadata) -> Result<Self, MetadataError> {
         check_table_caps(&metadata)?;
         check_table_agreement(&metadata)?;
         Ok(Self { metadata })

@@ -115,7 +115,7 @@ impl Claim {
 
     /// The address the claim is about.
     #[must_use]
-    pub const fn address(&self) -> Address {
+    pub(crate) const fn address(&self) -> Address {
         self.subject
     }
 }

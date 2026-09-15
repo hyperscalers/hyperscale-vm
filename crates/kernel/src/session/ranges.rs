@@ -217,7 +217,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`] resolving the interval raises.
-    pub fn scan_floor(&mut self, site: u32, element: u32) -> Result<usize, SessionTrap> {
+    pub(crate) fn scan_floor(&self, site: u32, element: u32) -> Result<usize, SessionTrap> {
         if self.ranges.scans.contains_key(&(site, element)) {
             return Ok(0);
         }
@@ -333,7 +333,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn range_covered(&mut self, site: u32, element: u32) -> Result<bool, SessionTrap> {
+    pub(crate) fn range_covered(&mut self, site: u32, element: u32) -> Result<bool, SessionTrap> {
         self.scan(site, element)?;
         let interval = self.interval(site, element)?;
         let page = &self.ranges.scans[&(site, element)];
@@ -370,7 +370,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn range_order(
+    pub(crate) fn range_order(
         &mut self,
         site: u32,
         element: u32,
@@ -400,7 +400,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn range_set(
+    pub(crate) fn range_set(
         &mut self,
         site: u32,
         element: u32,
@@ -1184,7 +1184,7 @@ mod tests {
         };
 
         let presence = at(1_000_000, 0);
-        let mut session = session_over(MemoryStore::new(), &presence);
+        let session = session_over(MemoryStore::new(), &presence);
         let page = session.scan_floor(0, 0).unwrap();
         assert_eq!(
             page,
@@ -1193,7 +1193,7 @@ mod tests {
         );
 
         let widest = at(4, MAX_SLOT_WIDTH);
-        let mut small = session_over(MemoryStore::new(), &widest);
+        let small = session_over(MemoryStore::new(), &widest);
         assert!(
             small.scan_floor(0, 0).unwrap() < page,
             "and four entries of the widest slot stay the cheaper ask"

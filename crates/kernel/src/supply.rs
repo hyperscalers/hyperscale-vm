@@ -82,7 +82,7 @@ impl SupplyDelta {
     /// and is still one resource, so the two key sets are merged rather
     /// than chained — a caller folding per resource would otherwise
     /// count such a resource's halves twice.
-    pub fn resources(&self) -> impl Iterator<Item = ResourceAddr> + '_ {
+    pub(crate) fn resources(&self) -> impl Iterator<Item = ResourceAddr> + '_ {
         let mut moved: BTreeSet<ResourceAddr> = self.minted.keys().copied().collect();
         moved.extend(self.burned.keys().copied());
         moved.into_iter()
@@ -93,7 +93,7 @@ impl SupplyDelta {
     /// # Errors
     ///
     /// [`ModeError::SupplyOutOfBounds`] on overflow.
-    pub fn mint(&mut self, resource: ResourceAddr, amount: u128) -> Result<(), ModeError> {
+    pub(crate) fn mint(&mut self, resource: ResourceAddr, amount: u128) -> Result<(), ModeError> {
         Self::add(&mut self.minted, resource, amount)
     }
 
@@ -102,7 +102,7 @@ impl SupplyDelta {
     /// # Errors
     ///
     /// [`ModeError::SupplyOutOfBounds`] on overflow.
-    pub fn burn(&mut self, resource: ResourceAddr, amount: u128) -> Result<(), ModeError> {
+    pub(crate) fn burn(&mut self, resource: ResourceAddr, amount: u128) -> Result<(), ModeError> {
         Self::add(&mut self.burned, resource, amount)
     }
 

@@ -54,7 +54,7 @@ impl Held {
     /// Whether it carries nothing, which is what lets its slot go when a
     /// guest lets the handle go.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.quantity() == 0
     }
 }
@@ -393,7 +393,7 @@ impl KernelSession {
     ///
     /// [`SessionTrap::WrongEdgeKind`] for a bucket carrying instances:
     /// what a movement moves is an amount, and a named thing is not one.
-    pub fn bucket_amount(&self, rep: u32) -> Result<u128, SessionTrap> {
+    pub(crate) fn bucket_amount(&self, rep: u32) -> Result<u128, SessionTrap> {
         self.buckets.amount(rep)
     }
 

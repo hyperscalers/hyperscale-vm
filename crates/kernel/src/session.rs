@@ -279,7 +279,7 @@ pub struct KernelSession {
 impl KernelSession {
     /// Scope the session to the executing shard's keys; see [`OwnerSet`].
     #[must_use]
-    pub fn with_applies(mut self, applies: OwnerSet) -> Self {
+    pub(crate) fn with_applies(mut self, applies: OwnerSet) -> Self {
         self.applies = applies;
         self
     }
@@ -484,7 +484,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// [`SessionTrap::UnknownHandle`] on a rep no site occupies.
-    pub fn site_len(&self, rep: u32) -> Result<u32, SessionTrap> {
+    pub(crate) fn site_len(&self, rep: u32) -> Result<u32, SessionTrap> {
         Ok(u32::try_from(self.site(rep)?.len()).unwrap_or(u32::MAX))
     }
 
@@ -493,7 +493,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`].
-    pub fn site_declared(&self, rep: u32, index: u32) -> Result<bool, SessionTrap> {
+    pub(crate) fn site_declared(&self, rep: u32, index: u32) -> Result<bool, SessionTrap> {
         Ok(self.entry(rep, index)?.is_some())
     }
 
@@ -522,7 +522,7 @@ impl KernelSession {
     /// # Errors
     ///
     /// Any [`SessionTrap`] the store raises.
-    pub fn declared_cell(&mut self, key: SubstateKey) -> Result<Vec<u8>, SessionTrap> {
+    pub(crate) fn declared_cell(&mut self, key: SubstateKey) -> Result<Vec<u8>, SessionTrap> {
         Ok(self.store.read(key)?.unwrap_or_default())
     }
 
@@ -689,7 +689,7 @@ impl KernelSession {
 
     /// The protocol hash function.
     #[must_use]
-    pub fn hash(&self, data: &[u8]) -> [u8; 32] {
+    pub(crate) fn hash(&self, data: &[u8]) -> [u8; 32] {
         (self.hash_fn)(data)
     }
 
@@ -718,7 +718,7 @@ impl KernelSession {
     /// Leave the current invocation. An emission outside one is a runner
     /// defect and traps rather than guessing an emitter; both tables are
     /// the kernel's to resolve whole again, for the work between frames.
-    pub fn leave_invocation(&mut self) {
+    pub(crate) fn leave_invocation(&mut self) {
         self.invocation = None;
         self.issuance.clear();
         self.reach.leave();
@@ -780,7 +780,7 @@ impl KernelSession {
     /// Abandon the session: the transaction's layer is dropped and the
     /// store returns as the session found it.
     #[must_use]
-    pub fn discard(mut self) -> OverlayStore {
+    pub(crate) fn discard(mut self) -> OverlayStore {
         self.store.discard_active();
         self.store
     }
