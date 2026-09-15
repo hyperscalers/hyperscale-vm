@@ -80,19 +80,15 @@ pub const ARTIFACT_GRACE_MS: u64 = 144_000;
 /// How long a shard's committed cell for a transaction outlives that
 /// transaction's signed window, in milliseconds.
 ///
-/// A committed cell is retracted by the refusal of the member that wrote
-/// it, and what reads the retraction is another chain's probe. Two
-/// spans, because two things have to happen in them and neither is the
-/// other's: one for the refusal, which a core may reach anywhere inside
-/// the range its abandonment is admissible in, and one more for a leg to
-/// read the absence it leaves. A single span makes a refusal at the end
-/// of the first unreadable, which strands every crossing that fed it.
-///
-/// The cell is swept exactly where the window an absence of it answers
-/// in closes. Shorter and a swept cell reads as a shard that never
-/// committed, which is a licence to take back a crossing its core may
-/// have taken. The workspace asserts the two spellings against each
-/// other.
+/// The one family the VM never writes: a chain writes a committed cell
+/// for every transaction its block carries, and another chain's probe
+/// reads the absence a refusal leaves. So the span is that chain's to
+/// fix, and what is held here is the figure it fixed — swept exactly
+/// where the window an absence of it answers in closes. Shorter and a
+/// swept cell reads as a shard that never committed, which is a licence
+/// to take back a crossing its core may have taken. The workspace
+/// asserts the two spellings against each other, and carries the
+/// argument for the span beside the window.
 pub const COMMITTED_GRACE_MS: u64 = 264_000;
 
 /// How long an escrow record and the claim it is decided against outlive
