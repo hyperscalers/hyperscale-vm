@@ -878,7 +878,7 @@ pub fn run_both_tree(
         env(),
     )
     .with_calls(admitted.admitted.calls().to_vec())
-    .with_nullifiers(admitted.subintents);
+    .with_nullifiers(admitted.records().copied().collect());
     Ok(run_lanes(&LANES, store, &[entry]))
 }
 

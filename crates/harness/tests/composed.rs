@@ -105,7 +105,7 @@ fn batch_entry(
     let declaration = admitted.admitted.declaration().clone();
     let entry = BatchTx::new(TxHash(identity.0), declaration, env())
         .with_calls(admitted.admitted.calls().to_vec())
-        .with_nullifiers(admitted.subintents.clone());
+        .with_nullifiers(admitted.records().copied().collect());
     Ok((entry, admitted))
 }
 

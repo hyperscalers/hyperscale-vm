@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread;
 
-use hyperscale_vm_effects::{Declaration, NodeCall, PackageHash, SubintentRecord};
+use hyperscale_vm_effects::{Declaration, IntentRecord, NodeCall, PackageHash};
 use hyperscale_vm_types::{
     AbortReason, Address, Answer, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget,
     MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
@@ -85,7 +85,7 @@ pub struct BatchTx {
     /// where the spent check sees the winner's write. An existing cell
     /// at any of them aborts the transaction before it runs; completing
     /// writes them all — once-only by creation conflict.
-    pub nullifiers: Vec<SubintentRecord>,
+    pub nullifiers: Vec<IntentRecord>,
     /// The price this execution burns from its payer's vault, stated by
     /// the shard holding that vault; `None` elsewhere, and where this
     /// shard already charged it.
@@ -307,7 +307,7 @@ impl BatchTx {
     /// Bind the subintents this transaction commits. Each key must also be
     /// declared as an exclusive write.
     #[must_use]
-    pub fn with_nullifiers(mut self, nullifiers: Vec<SubintentRecord>) -> Self {
+    pub fn with_nullifiers(mut self, nullifiers: Vec<IntentRecord>) -> Self {
         self.nullifiers = nullifiers;
         self
     }

@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, IssuanceGrant, Issued, Marked, Marker, ResourceKind, SlotId,
-    SubintentHash, SubintentRecord, TestHasher, child_key, nullifier_key,
+    Declaration, Hash32, Hasher, IntentRecord, IssuanceGrant, Issued, Marked, Marker, ResourceKind,
+    SlotId, SubintentHash, TestHasher, child_key, nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchTx, Capability, EnvInputs, ExecutionMode, Job, KernelSession, LegPlan, MemoryStore,
@@ -534,8 +534,8 @@ fn only_the_owning_shard_judges_an_uncovered_reserve() {
 
 /// The record a spend carries: the subintent, its signer's cell, and
 /// when the record stops being owed.
-const fn nullifier_record(subintent: SubintentHash, nullifier: SubstateKey) -> SubintentRecord {
-    SubintentRecord {
+const fn nullifier_record(subintent: SubintentHash, nullifier: SubstateKey) -> IntentRecord {
+    IntentRecord {
         subintent,
         signer: PrincipalAddr::new([PAYER_BYTE; 31]),
         nullifier,

@@ -44,7 +44,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use buckets::Buckets;
 pub use buckets::Held;
 pub use grants::{Op, grants};
-use hyperscale_vm_effects::{IssuanceGrant, SubintentRecord};
+use hyperscale_vm_effects::{IntentRecord, IssuanceGrant};
 use hyperscale_vm_types::{
     ABSENT_REP, Address, EffectSet, EffectTarget, ResourceAddr, SeedWindow, SubstateKey, TxHash,
 };
@@ -157,7 +157,7 @@ pub struct KernelSession {
     /// Held here rather than written by the caller because spending is
     /// part of committing: the write belongs in the layer the rest of
     /// the transaction wrote into, so it merges or discards with it.
-    nullifiers: Vec<SubintentRecord>,
+    nullifiers: Vec<IntentRecord>,
     /// The price this execution burns from its payer's vault, where the
     /// executing shard holds that vault. `None` where it does not, or
     /// where another execution of this shard's already charged it.
@@ -286,7 +286,7 @@ impl KernelSession {
 
     /// The subintent cells a commit spends.
     #[must_use]
-    pub fn with_nullifiers(mut self, nullifiers: Vec<SubintentRecord>) -> Self {
+    pub fn with_nullifiers(mut self, nullifiers: Vec<IntentRecord>) -> Self {
         self.nullifiers = nullifiers;
         self
     }

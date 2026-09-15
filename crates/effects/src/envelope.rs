@@ -940,30 +940,47 @@ pub const fn crossing_expiry_ms(header: &IntentHeader) -> u64 {
     header.validity_end_ms.saturating_add(CROSSING_GRACE_MS)
 }
 
-/// One admitted subintent: its signed identity, its signer, and the
+/// One admitted intent: its signed identity, its signer, and the
 /// nullifier key whose creation write makes it once-only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SubintentRecord {
+pub struct IntentRecord {
     /// The signed declaration's hash.
     pub subintent: SubintentHash,
     /// The signer's account prefix.
     pub signer: PrincipalAddr,
     /// The canonical nullifier key under the signer.
     pub nullifier: SubstateKey,
-    /// When the nullifier stops being owed — the subintent's own window
+    /// When the nullifier stops being owed — the intent's own window
     /// end plus the grace. Carried beside the key because the cell's
     /// value states it and the key derives from it.
     pub expiry_ms: u64,
 }
 
 /// An admitted envelope tree: the flattened routing manifest with its
-/// identity, plus the nullifier record of every bound subintent.
+/// identity, plus the nullifier record of every intent it carries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdmittedTree {
     /// The lowered manifest and the identity rooting fresh derivations.
     pub admitted: Admitted,
+    /// The root intent's record.
+    ///
+    /// Apart from the rest because the envelope's subintent signatures
+    /// are verified by zipping them against the subintents' hashes, and
+    /// the root's signature is the envelope's own.
+    pub root: IntentRecord,
     /// One record per bound subintent, in envelope order.
-    pub subintents: Vec<SubintentRecord>,
+    pub subintents: Vec<IntentRecord>,
+}
+
+impl AdmittedTree {
+    /// Every intent's record, the root's first.
+    ///
+    /// What the nullifier writes are drawn from: one declaration is
+    /// executed once whichever intent carries it, so the root is held
+    /// to the rule its subintents are.
+    pub fn records(&self) -> impl Iterator<Item = &IntentRecord> {
+        std::iter::once(&self.root).chain(&self.subintents)
+    }
 }
 
 /// The tree's canonical bytes — what an envelope's body carries.
@@ -1054,7 +1071,8 @@ pub fn admit_tree_with_authority(
     // carries no signer — so two intents that hash alike derive one key
     // for two edges, the receipt attests both crossings against it, and
     // the second disposal reads a cell the first deleted.
-    let mut seen = BTreeSet::from([tree.root.hash(hasher)]);
+    let root_hash = tree.root.hash(hasher);
+    let mut seen = BTreeSet::from([root_hash]);
     for (index, subintent) in tree.subintents.iter().enumerate() {
         let hash = subintent.decl.hash(hasher);
         if !seen.insert(hash) {
@@ -1063,7 +1081,7 @@ pub fn admit_tree_with_authority(
             });
         }
         let expiry_ms = nullifier_expiry_ms(&subintent.decl.header);
-        records.push(SubintentRecord {
+        records.push(IntentRecord {
             subintent: hash,
             signer: subintent.signer,
             nullifier: nullifier_key(hasher, subintent.signer, hash, expiry_ms),
@@ -1071,13 +1089,27 @@ pub fn admit_tree_with_authority(
         });
     }
 
+    // The root is nullified on the same terms, under the composer who
+    // signed it. Its declaration is an offer like any other: two
+    // envelopes carrying it inside one window are one execution, and
+    // without this the second is held only by the escrow records its
+    // nodes happen to write — which a transaction that runs whole
+    // writes none of.
+    let root_expiry_ms = nullifier_expiry_ms(&tree.root.header);
+    let root = IntentRecord {
+        subintent: root_hash,
+        signer: composer,
+        nullifier: nullifier_key(hasher, composer, root_hash, root_expiry_ms),
+        expiry_ms: root_expiry_ms,
+    };
+
     let mut views = Vec::with_capacity(1 + tree.subintents.len());
     views.push(IntentView {
         graph: &tree.root.graph,
         sockets: &tree.root.sockets,
         bindings: &tree.root_bindings,
         signer: Some(composer),
-        identity: tree.root.hash(hasher),
+        identity: root_hash,
         expiry_ms: crossing_expiry_ms(&tree.root.header),
     });
     for (subintent, record) in tree.subintents.iter().zip(&records) {
@@ -1115,11 +1147,11 @@ pub fn admit_tree_with_authority(
         hasher,
         authority,
     )?;
-    // One exclusive nullifier creation per bound subintent. No signature
-    // declared these, so they belong to no frame — but they are the
-    // once-only execution guarantee, so they are folded into the
-    // declaration here rather than by a later pass.
-    for record in &records {
+    // One exclusive nullifier creation per intent. No signature declared
+    // these, so they belong to no frame — but they are the once-only
+    // execution guarantee, so they are folded into the declaration here
+    // rather than by a later pass.
+    for record in std::iter::once(&root).chain(&records) {
         admitted.push_kernel_effect(Effect {
             target: EffectTarget::Point(record.nullifier),
             mode: Mode::Write { moves: Moves::Both },
@@ -1127,6 +1159,7 @@ pub fn admit_tree_with_authority(
     }
     Ok(AdmittedTree {
         admitted,
+        root,
         subintents: records,
     })
 }

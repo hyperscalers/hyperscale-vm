@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{Marked, Marker, SubintentRecord};
+use hyperscale_vm_effects::{IntentRecord, Marked, Marker};
 use hyperscale_vm_types::{
     AbortReason, Address, Answer, CollectionId, EntryKey, Event, Movement, Outcome, ResourceAddr,
     SubstateKey,
@@ -493,7 +493,7 @@ impl KernelSession {
     /// the transaction that consumed it, and when the record stops being
     /// owed. Self-describing, and keyed by what it says — the cell's own
     /// key re-derives from the subintent and the expiry.
-    fn spend_record(&self, record: &SubintentRecord) -> Vec<u8> {
+    fn spend_record(&self, record: &IntentRecord) -> Vec<u8> {
         Marker {
             tx: self.tx,
             expiry_ms: record.expiry_ms,

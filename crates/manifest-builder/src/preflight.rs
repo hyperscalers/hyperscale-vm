@@ -23,8 +23,8 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, ChainRecords, Claim, EnvelopeTree, Hasher, JudgedLeaf, Manifest,
-    ManifestHash, Rule, SubintentRecord, admit_tree, footprint,
+    AdmissionError, Admitted, ChainRecords, Claim, EnvelopeTree, Hasher, IntentRecord, JudgedLeaf,
+    Manifest, ManifestHash, Rule, admit_tree, footprint,
 };
 use hyperscale_vm_types::{
     Address, CallTarget, DeclaredWork, EffectTarget, Mode, NetworkWord, Presence, PriceTable,
@@ -314,7 +314,7 @@ pub struct Report {
     pub authority: Vec<Required>,
     /// The nullifier record of every bound subintent, empty where the
     /// tree binds none.
-    pub subintents: Vec<SubintentRecord>,
+    pub subintents: Vec<IntentRecord>,
     /// What the methods this transaction's calls name may emit between
     /// them, in bytes.
     ///
@@ -744,7 +744,7 @@ fn report(
     admitted: Admitted,
     composer: PrincipalAddr,
     root_intent: SubintentHash,
-    subintents: Vec<SubintentRecord>,
+    subintents: Vec<IntentRecord>,
     chain: &dyn ChainRecords,
     network: &str,
 ) -> Result<Report, PreflightError> {
