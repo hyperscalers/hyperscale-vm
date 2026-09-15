@@ -10,12 +10,11 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, IntentDecl, IntentHeader, ManifestGraph, ShardId, TestHasher, admit_tree,
-    explain_refusal,
+    EnvelopeTree, IntentDecl, IntentHeader, ManifestGraph, TestHasher, admit_tree, explain_refusal,
 };
 use hyperscale_vm_harness::driver::{test_hash, vault};
-use hyperscale_vm_kernel::{MemoryStore, OwnerSet};
-use hyperscale_vm_preview::{CellSource, Local, Slack, preview};
+use hyperscale_vm_kernel::{MemoryStore, OwnerSet, Substates};
+use hyperscale_vm_preview::{Slack, preview};
 use hyperscale_vm_types::{NetworkId, Outcome, UnmetCondition, encode_amount};
 use wasmtime::Result;
 
@@ -71,7 +70,7 @@ fn a_preview_spends_what_the_run_spends() -> Result<()> {
 
     // What a wallet would be shown, over the same state through the
     // source seam.
-    let source: Arc<dyn CellSource> = Arc::new(Local::at(store, ShardId(0), env().clock_ms));
+    let source: Arc<dyn Substates> = Arc::new(store);
     let [blessed, _reference] = LANES.engine_backends();
     let report = preview(&entry, None, source, blessed, test_hash, Slack::NONE);
 
@@ -105,7 +104,7 @@ fn a_refused_preview_prints_the_refusal() -> Result<()> {
     let admitted = admit_tree(&tree, BOB, identity, &world, &TestHasher).expect("it admits");
     let entry = batch_entry(&world, &tree, BOB, env())?;
 
-    let source: Arc<dyn CellSource> = Arc::new(Local::at(store, ShardId(0), env().clock_ms));
+    let source: Arc<dyn Substates> = Arc::new(store);
     let [blessed, _reference] = LANES.engine_backends();
     let report = preview(
         &entry,

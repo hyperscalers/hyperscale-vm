@@ -6,13 +6,12 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, NodeCall, PackageHash, ShardId, TestHasher,
-};
+use hyperscale_vm_effects::{Declaration, Hash32, Hasher, NodeCall, PackageHash, TestHasher};
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession, MemoryStore,
+    Substates,
 };
-use hyperscale_vm_preview::{CellSource, Local, Slack, preview};
+use hyperscale_vm_preview::{Slack, preview};
 use hyperscale_vm_types::{AbortReason, Address, AddressClass, EffectSet, Outcome, TxHash};
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
@@ -68,12 +67,11 @@ fn entry(calls: usize) -> BatchTx {
     .with_calls(vec![call(); calls])
 }
 
-fn source() -> Arc<dyn CellSource> {
-    Arc::new(Local::at(MemoryStore::new(), ShardId(0), 1_000))
+fn source() -> Arc<dyn Substates> {
+    Arc::new(MemoryStore::new())
 }
 
-/// The report says what each node spent, what ceiling would cover it,
-/// and the anchor it read at.
+/// The report says what each node spent and what ceiling would cover it.
 #[test]
 fn a_report_names_the_fuel_and_the_ceiling_per_node() {
     let report = preview(
@@ -95,8 +93,6 @@ fn a_report_names_the_fuel_and_the_ceiling_per_node() {
         "a quarter of room over what each node measured"
     );
     assert_eq!(report.compute(), 2_500, "and the envelope's compute term");
-    assert_eq!(report.anchors.len(), 1);
-    assert_eq!(report.anchors[0].clock_ms, 1_000);
 }
 
 /// No slack is the measurement itself, which is what a lane pinning a

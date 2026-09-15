@@ -26,7 +26,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Admitted, ShardId, explain_refusal};
+use hyperscale_vm_effects::{Admitted, explain_refusal};
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, ExecutionMode, GuestBackend, ManifestWalk, OwnerSet, Substates,
     execute_batch,
@@ -35,43 +35,6 @@ use hyperscale_vm_types::{
     Address, BASIS_POINTS, CollectionId, Event, Movement, Outcome, SubstateKey, TxHash,
     UnmetCondition,
 };
-
-/// Where a preview reads the state a transaction declares.
-///
-/// The declared keys and ranges, each answered at whatever anchor the
-/// shard holding them is at. A node serving one of these serves nothing
-/// it does not already serve for provisioning: the same cells, at a
-/// committed height, bounded by the same declaration the fee priced.
-pub trait CellSource: Send + Sync {
-    /// The committed value of `key`, or `None` where the cell holds
-    /// nothing at this source's anchor.
-    fn cell(&self, key: SubstateKey) -> Option<Vec<u8>>;
-
-    /// Committed entries of `collection` under `owner` within `[lo,
-    /// hi]`, ascending by order key, at most `limit` of them.
-    fn entries_in_range(
-        &self,
-        owner: Address,
-        collection: CollectionId,
-        lo: u128,
-        hi: u128,
-        limit: usize,
-    ) -> Vec<(u128, Vec<u8>)>;
-
-    /// What each shard answered at. Carried into the report, because a
-    /// preview is a statement about state at a moment and the reader has
-    /// to know which one.
-    fn anchors(&self) -> Vec<Anchor>;
-}
-
-/// One shard's answer time: the clock the cells it served were read at.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Anchor {
-    /// The shard that answered.
-    pub shard: ShardId,
-    /// The transaction clock its state was read at, in milliseconds.
-    pub clock_ms: u64,
-}
 
 /// How much room a filled ceiling leaves over what the preview measured.
 ///
@@ -148,8 +111,6 @@ pub struct Report {
     /// [`Self::spent`] under the [`Slack`] the caller named. What a
     /// composer signs.
     pub ceilings: Vec<u64>,
-    /// What each shard's state was read at.
-    pub anchors: Vec<Anchor>,
 }
 
 impl Report {
@@ -186,12 +147,11 @@ impl Report {
 pub fn preview(
     entry: &BatchTx,
     admitted: Option<&Admitted>,
-    source: Arc<dyn CellSource>,
+    source: Arc<dyn Substates>,
     backend: &dyn GuestBackend,
     hash: fn(&[u8]) -> [u8; 32],
     slack: Slack,
 ) -> Report {
-    let anchors = source.anchors();
     let outcome = execute_batch(
         Arc::new(Optimistic { source }) as Arc<dyn Baseline>,
         std::slice::from_ref(entry),
@@ -213,7 +173,6 @@ pub fn preview(
             events: Vec::new(),
             spent: Vec::new(),
             ceilings: Vec::new(),
-            anchors,
         };
     };
     let Some(receipt) = outcome.receipts.get(&entry.tx) else {
@@ -227,7 +186,6 @@ pub fn preview(
             events: Vec::new(),
             spent: Vec::new(),
             ceilings: Vec::new(),
-            anchors,
         };
     };
     let whole = OwnerSet::whole();
@@ -244,7 +202,6 @@ pub fn preview(
             .collect(),
         spent: receipt.fuel_by_node.clone(),
         outcome: receipt.outcome.clone(),
-        anchors,
     }
 }
 
@@ -260,22 +217,19 @@ fn refusal_text(admitted: Option<&Admitted>, outcome: &Outcome) -> Option<String
     }
 }
 
-/// A [`CellSource`] read as committed state with nothing reserved over
-/// it.
+/// A committed read with nothing reserved over it.
 ///
 /// The optimism the module doc names, in one place: a preview holds no
 /// other transaction's reservations because it can see none, so every
 /// cell reads as free. What that costs is the lost race it cannot
 /// predict, which is the trade a preview is.
 struct Optimistic {
-    source: Arc<dyn CellSource>,
+    source: Arc<dyn Substates>,
 }
 
 impl std::fmt::Debug for Optimistic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Optimistic")
-            .field("anchors", &self.source.anchors())
-            .finish()
+        f.debug_struct("Optimistic").finish_non_exhaustive()
     }
 }
 
@@ -306,48 +260,3 @@ impl Baseline for Optimistic {
 /// An [`UnmetCondition`] re-exported for callers matching on a report's
 /// outcome without depending on the effects crate directly.
 pub type Unmet = UnmetCondition;
-
-/// A [`CellSource`] over state already in hand, at one anchor.
-///
-/// What a test previews against, and what a caller holding a whole world
-/// already — a wallet with a snapshot, a fixture — hands the library
-/// instead of a query. The shard is nominal: everything answers from the
-/// one store.
-#[derive(Debug)]
-pub struct Local<S> {
-    store: S,
-    anchor: Anchor,
-}
-
-impl<S: Substates> Local<S> {
-    /// Answer from `store`, reporting `shard` read at `clock_ms`.
-    #[must_use]
-    pub const fn at(store: S, shard: ShardId, clock_ms: u64) -> Self {
-        Self {
-            store,
-            anchor: Anchor { shard, clock_ms },
-        }
-    }
-}
-
-impl<S: Substates + std::fmt::Debug> CellSource for Local<S> {
-    fn cell(&self, key: SubstateKey) -> Option<Vec<u8>> {
-        self.store.cell(key)
-    }
-
-    fn entries_in_range(
-        &self,
-        owner: Address,
-        collection: CollectionId,
-        lo: u128,
-        hi: u128,
-        limit: usize,
-    ) -> Vec<(u128, Vec<u8>)> {
-        self.store
-            .entries_in_range(owner, collection, lo, hi, limit)
-    }
-
-    fn anchors(&self) -> Vec<Anchor> {
-        vec![self.anchor]
-    }
-}
