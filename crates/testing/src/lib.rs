@@ -59,9 +59,9 @@ pub use hyperscale_vm_effects::{
     package_slot,
 };
 use hyperscale_vm_effects::{
-    CallArg, ChainRecords, Hash32, Hasher, InstanceMeta, NodeCall, PackageHash,
-    PrefixShardResolver, PresentedGrants, Records, Value, admit_presenting, child_key,
-    collection_id, declaration_hash, explain_refusal, holdings_collection, issued_record, route,
+    CallArg, ChainRecords, Hash32, Hasher, InstanceMeta, NodeCall, PackageHash, PresentedGrants,
+    Records, Value, admit_presenting, child_key, collection_id, declaration_hash, explain_refusal,
+    holdings_collection, issued_record,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, ManifestWalk, MemoryStore, Substates, decode_amount,
@@ -742,13 +742,12 @@ impl Chain {
             &PresentedGrants::from_presented(&TestHasher, &records),
             &TestHasher,
         )?;
-        let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
-        let declaration = routing.declaration().clone();
+        let declaration = admitted.declaration().clone();
 
         self.sequence += 1;
         let tx = TxHash(salt(self.sequence));
         let entry = BatchTx::new(tx, declaration, EnvInputs::unsealed(self.clock_ms))
-            .with_calls(routing.calls);
+            .with_calls(admitted.calls().to_vec());
 
         // Execution replaces the chain's store, so it moves out rather
         // than being copied and dropped. Two owned copies are still

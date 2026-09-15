@@ -7,12 +7,10 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_types::{Address, Effect, EffectSet};
+use hyperscale_vm_types::{Address, EffectSet};
 
 use crate::admission::Admitted;
-use crate::dsl::{Declaration, DeclaredAccess};
-use crate::envelope::MARKER_CELL_BYTES;
-use crate::invoke::NodeCall;
+use crate::dsl::DeclaredAccess;
 use crate::types::ShardId;
 
 /// Resolves an owner prefix to the shard holding it.
@@ -51,27 +49,6 @@ impl ShardResolver for PrefixShardResolver {
     }
 }
 
-/// A routed transaction: what admission, scheduling, provisioning, and fee
-/// estimation consume.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Routing {
-    /// The declared effect set of every participating shard.
-    pub per_shard: BTreeMap<ShardId, EffectSet>,
-    /// Every evaluated frame's declaration, in preorder.
-    pub frames: Vec<FrameDeclaration>,
-    /// One lowered invocation per manifest node, in node order: the
-    /// export to call and where each of its ABI arguments comes from.
-    ///
-    /// Shard-invariant, like the capability table the handle positions
-    /// index into: every participant of a cross-shard transaction lowers
-    /// the identical call list, and locality scopes what is *applied*
-    /// rather than what is invoked.
-    pub calls: Vec<NodeCall>,
-    /// The transaction's whole declaration, built as the fold runs;
-    /// reached through [`Routing::declaration`].
-    declaration: Declaration,
-}
-
 /// One frame's contribution to the transaction's declaration.
 ///
 /// A frame is one manifest node's signature evaluation. Frames appear in
@@ -90,101 +67,44 @@ pub struct FrameDeclaration {
     pub ordered: Vec<DeclaredAccess>,
 }
 
-impl Routing {
-    /// The participating shards, ascending.
-    pub fn shards(&self) -> impl Iterator<Item = ShardId> + '_ {
-        self.per_shard.keys().copied()
-    }
-
-    /// The transaction's whole declaration, both views, straight from
-    /// the fold.
-    ///
-    /// `ordered` is every frame's clauses concatenated in preorder — the
-    /// order capability materialization builds its table in, and therefore
-    /// the order a guest's handle parameters are in. It is deliberately not
-    /// filtered by shard: the table is shard-invariant so that every
-    /// participant of a cross-shard transaction agrees on which rep is
-    /// which, and locality scopes what is *applied* rather than what is
-    /// materialized. A fold whose reservations overflow the set is an
-    /// [`AdmissionError::Conflict`] before anything routes, so a routing
-    /// that exists has a declaration.
-    ///
-    /// [`AdmissionError::Conflict`]: crate::AdmissionError::Conflict
-    #[must_use]
-    pub const fn declaration(&self) -> &Declaration {
-        &self.declaration
-    }
-
-    /// Append an effect no signature declared: the kernel synthesizes it
-    /// from the envelope rather than from a method body — today, the
-    /// nullifier write of every subintent the transaction commits.
-    ///
-    /// Lands after every frame's clauses, so a frame's handle slice
-    /// keeps the position its signature gives it however many subintents
-    /// the envelope carries. Carries no resource of its own: nothing
-    /// about it is a package's declaration.
-    pub(crate) fn push_kernel_effect(&mut self, shard: ShardId, effect: Effect) {
-        self.per_shard
-            .entry(shard)
-            .or_default()
-            .insert_bounded(effect, MARKER_CELL_BYTES)
-            .expect("only reserve amounts fold, and this is a write");
-        self.declaration
-            .set
-            .insert_bounded(effect, MARKER_CELL_BYTES)
-            .expect("only reserve amounts fold, and this is a write");
-        self.declaration.ordered.push(DeclaredAccess {
-            reach: None,
-            effect,
-            holds: None,
-            clause: None,
-        });
-    }
-}
-
-/// Route an admitted transaction: project its evaluated declaration
-/// onto the shard topology.
+/// Project a declaration onto a shard topology: each target's accesses
+/// grouped under the shard its owner resolves to.
 ///
-/// Everything else a routing carries — the frames, the lowered calls,
-/// the union declaration — was computed by admission's single walk and
-/// rides the [`Admitted`]; what this adds is the per-shard split, which
-/// is the one thing that depends on where prefixes live. Re-routing
-/// under a new epoch topology is this projection again and nothing more.
+/// Nothing in the protocol asks this. A participant re-filters the whole
+/// effect set through its own `OwnerSet` rather than being handed a
+/// slice, and which shards a transaction *touches* is answered by the
+/// star classifier, which places manifest nodes rather than effects. It
+/// is here for the tests that exercise sharded shapes under a resolver
+/// with bits to spare.
 ///
 /// # Panics
 ///
 /// Never: a target's every access lands on the one shard its owner
-/// resolves to, so each shard's fold reaches exactly the sums and meets
-/// the union declaration already folded without conflict.
+/// resolves to, so each shard's fold reaches exactly the sums the union
+/// declaration already folded without conflict.
 #[must_use]
-pub fn route(admitted: &Admitted, shards: &dyn ShardResolver) -> Routing {
+pub fn per_shard(admitted: &Admitted, shards: &dyn ShardResolver) -> BTreeMap<ShardId, EffectSet> {
     let declaration = admitted.declaration();
-    let mut per_shard: BTreeMap<ShardId, EffectSet> = BTreeMap::new();
+    let mut out: BTreeMap<ShardId, EffectSet> = BTreeMap::new();
     for access in &declaration.ordered {
-        per_shard
-            .entry(shards.shard_of(access.effect.target.owner()))
+        out.entry(shards.shard_of(access.effect.target.owner()))
             .or_default()
             .insert_from(access.effect, &declaration.set)
             .expect("the union declaration folded these effects");
     }
-    Routing {
-        per_shard,
-        frames: admitted.frames().to_vec(),
-        calls: admitted.calls().to_vec(),
-        declaration: declaration.clone(),
-    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use hyperscale_vm_types::{
         Address, AddressClass, CallTarget, Effect, EffectConflict, EffectSet, EffectTarget,
         MAX_MANIFEST_NODES, Mode, Moves, PrincipalAddr,
     };
 
-    use super::{PrefixShardResolver, Routing, ShardResolver, route};
+    use super::{Admitted, PrefixShardResolver, ShardResolver, per_shard};
     use crate::admission::{AdmissionError, admit};
     use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
     use crate::graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
@@ -228,11 +148,14 @@ mod tests {
         }
     }
 
-    /// Admit and route in one step, for the graphs these tests are not
-    /// about refusing.
-    fn routed(graph: &ManifestGraph, chain: &dyn ChainRecords) -> Routing {
-        let admitted = admit(graph, alice(), chain, &TestHasher).expect("admits");
-        route(&admitted, &resolver())
+    /// Admit, for the graphs these tests are not about refusing.
+    fn routed(graph: &ManifestGraph, chain: &dyn ChainRecords) -> Admitted {
+        admit(graph, alice(), chain, &TestHasher).expect("admits")
+    }
+
+    /// The corpus resolver's projection of an admitted declaration.
+    fn sets(admitted: &Admitted) -> BTreeMap<ShardId, EffectSet> {
+        per_shard(admitted, &resolver())
     }
 
     fn point(owner: impl Into<Address>, slot: SlotId) -> EffectTarget {
@@ -255,14 +178,14 @@ mod tests {
                 node(instance_of("payee"), "recv", vec![edge(0, 0)]),
             ],
         };
-        let routing = routed(&graph, &chain);
+        let admitted = routed(&graph, &chain);
 
         // Node order: one frame each, which is the order
         // `KernelSession::materialize` builds its capability table in, so
         // it is the order a generated guest's handle parameters are in.
         assert_eq!(
-            routing
-                .frames
+            admitted
+                .frames()
                 .iter()
                 .map(|frame| frame.node)
                 .collect::<Vec<_>>(),
@@ -273,9 +196,9 @@ mod tests {
         // placed on a shard and folds back to exactly that union — the
         // property a consumer building a kernel batch depends on, and the
         // one `execute_batch` rechecks before running anything.
-        let declaration = routing.declaration().clone();
+        let declaration = admitted.declaration().clone();
         let mut union = EffectSet::new();
-        for set in routing.per_shard.values() {
+        for set in sets(&admitted).values() {
             for effect in set.iter() {
                 union
                     .insert_bounded(effect, set.width_of(&effect.target))
@@ -396,11 +319,12 @@ mod tests {
         let graph = ManifestGraph {
             nodes: vec![node(instance_of("oracle"), "peek", vec![])],
         };
-        let routing = routed(&graph, &chain);
+        let admitted = routed(&graph, &chain);
         // A read declares its target like any other mode; whether the
         // target is actually there is the kernel's to refuse, since only
         // the store knows.
-        let declared = routing.per_shard.values().next().unwrap();
+        let projected = sets(&admitted);
+        let declared = projected.values().next().unwrap();
         assert_eq!(own_effects(declared, instance_of("oracle")), 2);
         for slot in [package_slot(0), package_slot(1)] {
             assert!(declared.contains(&Effect {
@@ -427,8 +351,7 @@ mod tests {
                     .map(|_| node(instance_of("wide"), "m", vec![]))
                     .collect(),
             };
-            admit(&graph, alice(), &chain, &TestHasher)
-                .map(|admitted| route(&admitted, &resolver()))
+            admit(&graph, alice(), &chain, &TestHasher).map(|admitted| sets(&admitted))
         };
 
         // A size well inside the cap, and the cap itself.
@@ -644,18 +567,18 @@ mod tests {
         // loop uncallable exactly when the condition does not hold.
         let spread = vec![Value::U64(1), Value::U64(2)];
         let (chain, graph) = guarded_spreading_world(spread.clone(), false);
-        let routing = routed(&graph, &chain);
+        let admitted = routed(&graph, &chain);
         assert_eq!(
-            routing.calls[0].args,
+            admitted.calls()[0].args,
             vec![CallArg::Site {
                 entries: Vec::new(),
             }]
         );
 
         let (chain, graph) = guarded_spreading_world(spread, true);
-        let routing = routed(&graph, &chain);
+        let admitted = routed(&graph, &chain);
         assert_eq!(
-            routing.calls[0].args,
+            admitted.calls()[0].args,
             vec![CallArg::Site {
                 entries: vec![Some(0), Some(1)],
             }]
@@ -671,12 +594,12 @@ mod tests {
             let spread: Vec<Value> = (0..width).map(Value::U64).collect();
             let (chain, graph) =
                 spreading_world(spread, vec![AbiParam::Handle { clause: 1, site: 0 }]);
-            let routing = routed(&graph, &chain);
-            let CallArg::Site { ref entries } = routing.calls[0].args[0] else {
+            let admitted = routed(&graph, &chain);
+            let CallArg::Site { ref entries } = admitted.calls()[0].args[0] else {
                 panic!("a handle argument");
             };
             let rep = entries[0].expect("the clause was declared");
-            let declaration = routing.declaration().clone();
+            let declaration = admitted.declaration().clone();
             assert_eq!(u64::from(rep), width);
             assert_eq!(
                 declaration.ordered[usize::try_from(rep).unwrap()]
@@ -733,17 +656,17 @@ mod tests {
         // The precision half: a method that writes one of two cells
         // declares, locks and routes to exactly the one it will write.
         let (chain, graph) = guarded_world(Value::U64(1), Value::U64(2), Vec::new());
-        let routing = routed(&graph, &chain);
+        let admitted = routed(&graph, &chain);
         assert_eq!(
             own_effects(
-                &routing.declaration().clone().set,
+                &admitted.declaration().clone().set,
                 graph.nodes[0].target.address()
             ),
             0,
             "a guarded-out clause is out of the declared set"
         );
         assert_eq!(
-            routing.shards().count(),
+            sets(&admitted).len(),
             1,
             "and the one shard routed to is the target's own, which the \
              instantiation fence makes a participant of every call"
@@ -751,10 +674,10 @@ mod tests {
 
         // The same signature over a configuration its guard holds for.
         let (chain, graph) = guarded_world(Value::U64(1), Value::U64(1), Vec::new());
-        let routing = routed(&graph, &chain);
+        let admitted = routed(&graph, &chain);
         assert_eq!(
             own_effects(
-                &routing.declaration().clone().set,
+                &admitted.declaration().clone().set,
                 graph.nodes[0].target.address()
             ),
             1
@@ -769,9 +692,9 @@ mod tests {
         // last thing to know, beside the verdict that says so.
         let abi = vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Guard(0)];
         let (chain, graph) = guarded_world(Value::U64(1), Value::U64(2), abi.clone());
-        let routing = routed(&graph, &chain);
+        let admitted = routed(&graph, &chain);
         assert_eq!(
-            routing.calls[0].args,
+            admitted.calls()[0].args,
             vec![
                 CallArg::Site {
                     entries: vec![None]
@@ -781,12 +704,12 @@ mod tests {
         );
 
         let (chain, graph) = guarded_world(Value::U64(1), Value::U64(1), abi);
-        let routing = routed(&graph, &chain);
+        let admitted = routed(&graph, &chain);
         assert!(matches!(
-            routing.calls[0].args[0],
+            admitted.calls()[0].args[0],
             CallArg::Site { ref entries } if entries == &[Some(0)]
         ));
-        assert_eq!(routing.calls[0].args[1], CallArg::Bool(true));
+        assert_eq!(admitted.calls()[0].args[1], CallArg::Bool(true));
     }
 
     #[test]
@@ -835,8 +758,8 @@ mod tests {
                 salt: Hash32([22; 32]),
             },
         );
-        let routing = routed(&one_node(target), &chain);
-        let declaration = routing.declaration().clone();
+        let admitted = routed(&one_node(target), &chain);
+        let declaration = admitted.declaration().clone();
         assert_eq!(
             own_effects(&declaration.set, target),
             1,
@@ -914,8 +837,8 @@ mod tests {
             Box::new(Expr::Config(0)),
         ));
         let (chain, graph) = spreading_world(spread, vec![judgment]);
-        let routing = admit(&graph, alice(), &chain, &TestHasher).expect("the judgment binds");
-        assert_eq!(routing.calls()[0].args[0], CallArg::Bool(true));
+        let admitted = admit(&graph, alice(), &chain, &TestHasher).expect("the judgment binds");
+        assert_eq!(admitted.calls()[0].args[0], CallArg::Bool(true));
     }
 
     #[test]
@@ -958,12 +881,12 @@ mod tests {
                 node(instance_of("nf"), "take", vec![edge(0, 0)]),
             ],
         };
-        let routing = routed(&graph, &chain);
+        let admitted = routed(&graph, &chain);
         assert_eq!(
-            routing.calls[0].outputs,
+            admitted.calls()[0].outputs,
             vec![EdgeContent::NonFungible { ids: vec![3, 9] }]
         );
-        let edge = &routing.calls[1].edges[0];
+        let edge = &admitted.calls()[1].edges[0];
         assert_eq!((edge.source, edge.output), (0, 0));
     }
 
@@ -1016,9 +939,9 @@ mod tests {
                 ),
             ],
         };
-        let routing = routed(&graph, &chain);
+        let admitted = routed(&graph, &chain);
         assert_eq!(
-            routing.calls[1].args[0],
+            admitted.calls()[1].args[0],
             CallArg::Bucket {
                 source: 0,
                 output: 1
@@ -1026,7 +949,7 @@ mod tests {
             "a bucket argument carries the producer's output slot, not just the producer"
         );
         assert_eq!(
-            routing.calls[1].edges[1].bounds,
+            admitted.calls()[1].edges[1].bounds,
             Bounds {
                 min: Some(7),
                 max: None,
@@ -1091,8 +1014,8 @@ mod tests {
         // bucket in its own ABI — and the signer's bound is owed a check
         // all the same, at the node where the edge resolves.
         let (chain, graph) = forwarding_world();
-        let routing = routed(&graph, &chain);
-        let call = &routing.calls[1];
+        let admitted = routed(&graph, &chain);
+        let call = &admitted.calls()[1];
         assert!(
             !call
                 .args

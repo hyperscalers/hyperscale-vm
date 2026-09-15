@@ -14,8 +14,8 @@
 //! hand.
 
 use hyperscale_vm_effects::{
-    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, PrefixShardResolver, Records,
-    TestHasher, Value, admit, route,
+    Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
+    admit,
 };
 use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{GraphBuilder, TypedBuilder};
@@ -133,8 +133,7 @@ proptest! {
         let again = admit(&graph, ACCOUNTS[0], &world(), &TestHasher).expect("admits again");
         prop_assert!(again.identity() == admitted.identity());
         prop_assert!(again.manifest() == admitted.manifest());
-        let shards = PrefixShardResolver { bits: 2 };
-        prop_assert!(route(&admitted, &shards) == route(&again, &shards));
+        prop_assert!(again == admitted);
     }
 
     #[test]

@@ -13,8 +13,8 @@ use std::time::Instant;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, ManifestGraph, NodeCall, PackageHash, PrefixShardResolver,
-    Records, TestHasher, Value, admit, child_key, route,
+    Declaration, Hash32, Hasher, ManifestGraph, NodeCall, PackageHash, Records, TestHasher, Value,
+    admit, child_key,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
@@ -102,10 +102,9 @@ struct Routed {
 fn routed(world: &Records, from: PrincipalAddr) -> Result<Routed> {
     let graph = transfer_graph(world, from);
     let admitted = admit(&graph, from, world, &TestHasher)?;
-    let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
     Ok(Routed {
-        declaration: routing.declaration().clone(),
-        calls: routing.calls,
+        declaration: admitted.declaration().clone(),
+        calls: admitted.calls().to_vec(),
     })
 }
 
@@ -168,12 +167,11 @@ fn main() -> Result<()> {
     let bench = Bench::build()?;
     println!("single-core transfer baseline (blessed engine, account guest)\n");
 
-    // Section 1: the static pipeline — admission + routing per transfer,
-    // what every node derives at gossip. Metadata-cache-hot, as designed.
+    // Section 1: the static pipeline — admission per transfer, what every
+    // node derives at gossip. Metadata-cache-hot, as designed.
     {
         let count = 2_000u32;
         let chain = world(count);
-        let resolver = PrefixShardResolver { bits: 0 };
         // Built up front: the timed section is what a node derives from a
         // graph it received, and construction happened at a wallet.
         let graphs: Vec<ManifestGraph> = (0..count)
@@ -182,15 +180,15 @@ fn main() -> Result<()> {
         // Warmup.
         for (index, graph) in graphs.iter().enumerate().take(200) {
             let admitted = admit(graph, sender(u32::try_from(index)?), &chain, &TestHasher)?;
-            std::hint::black_box(route(&admitted, &resolver));
+            std::hint::black_box(admitted);
         }
         let start = Instant::now();
         for (index, graph) in graphs.iter().enumerate() {
             let admitted = admit(graph, sender(u32::try_from(index)?), &chain, &TestHasher)?;
-            std::hint::black_box(route(&admitted, &resolver));
+            std::hint::black_box(admitted);
         }
         println!(
-            "admit + route                      {}",
+            "admit                              {}",
             per_tx(start.elapsed(), count)
         );
     }

@@ -21,7 +21,7 @@ use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
     AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader,
     ManifestGraph, PackageHash, PrefixShardResolver, Records, ResourceRecord, TestHasher, Value,
-    admit_tree, child_key, holdings_collection, instance_data_key, resource_record_key, route_tree,
+    admit_tree, child_key, holdings_collection, instance_data_key, per_shard, resource_record_key,
 };
 use hyperscale_vm_harness::driver::{
     Lanes, amount_of, cells, declared_vault, run_lanes, seed_vault, vault,
@@ -310,13 +310,11 @@ const fn single_intent(graph: ManifestGraph) -> EnvelopeTree {
 fn batch_entry(world: &Records, tree: &EnvelopeTree, composer: PrincipalAddr) -> Result<BatchTx> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, composer, identity, world, &TestHasher).context("admission")?;
-    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
-    ensure!(
-        routing.per_shard.len() == 1,
-        "the null resolver routes to one shard"
-    );
-    let declaration = routing.declaration().clone();
-    Ok(BatchTx::new(TxHash(identity.0), declaration, env()).with_calls(routing.calls))
+    let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
+    ensure!(routing.len() == 1, "the null resolver routes to one shard");
+    let declaration = admitted.admitted.declaration().clone();
+    Ok(BatchTx::new(TxHash(identity.0), declaration, env())
+        .with_calls(admitted.admitted.calls().to_vec()))
 }
 
 fn seeded_store(token: u128, units: u128) -> MemoryStore {

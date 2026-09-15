@@ -48,7 +48,7 @@ use crate::dsl::{
     Condition, Declaration, DeclaredAccess, EvalBudget, EvalInputs, PresentedGrants,
     evaluate_declaration, evaluate_expr,
 };
-use crate::envelope::{Binding, Socket};
+use crate::envelope::{Binding, MARKER_CELL_BYTES, Socket};
 use crate::graph::{EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::{InstanceMeta, ResolveError};
@@ -210,6 +210,30 @@ impl Admitted {
     #[must_use]
     pub const fn declaration(&self) -> &Declaration {
         &self.declaration
+    }
+
+    /// Declare an effect no signature asked for.
+    ///
+    /// The kernel's own writes: today the exclusive nullifier creation
+    /// that makes a bound subintent executable once. It belongs to no
+    /// frame, so it carries no clause and no reach, and it lands in the
+    /// declaration admission already folded rather than in a second pass
+    /// a caller could skip.
+    ///
+    /// # Panics
+    ///
+    /// Never: only reserve amounts fold, and these are writes.
+    pub(crate) fn push_kernel_effect(&mut self, effect: Effect) {
+        self.declaration
+            .set
+            .insert_bounded(effect, MARKER_CELL_BYTES)
+            .expect("only reserve amounts fold, and this is a write");
+        self.declaration.ordered.push(DeclaredAccess {
+            reach: None,
+            effect,
+            holds: None,
+            clause: None,
+        });
     }
 
     /// Which signed intent each node came from, in node order.

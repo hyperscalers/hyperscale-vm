@@ -8,10 +8,12 @@ use std::collections::BTreeSet;
 use hyperscale_vm_effects::{
     Clause, Expr, GraphNode, Hash32, InstanceMeta, ManifestGraph, MethodSignature, ModeExpr,
     PackageHash, PackageMetadata, PrefixShardResolver, Records, ShardResolver, SlotId, SlotRef,
-    TargetExpr, TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local, route,
+    TargetExpr, TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local,
 };
 use hyperscale_vm_kernel::MemoryStore;
-use hyperscale_vm_types::{Effect, EffectTarget, Mode, Moves, PrincipalAddr, SubstateKey};
+use hyperscale_vm_types::{
+    Effect, EffectSet, EffectTarget, Mode, Moves, PrincipalAddr, SubstateKey,
+};
 
 /// A package whose one method creates one object and inserts one
 /// collection entry at a fresh sequence.
@@ -98,10 +100,23 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     };
     let admitted = admit(&graph, COMPOSER, &chain, &TestHasher).expect("admits");
     let identity = admitted.identity();
-    let routing = route(&admitted, &PrefixShardResolver { bits: 8 });
-    // Asked of the resolver rather than restated: the claim is about the
-    // creator's shard holding the key, not about what it is called.
-    let declared = &routing.per_shard[&PrefixShardResolver { bits: 8 }.shard_of(creator.address())];
+    // The creator's shard's share of the declaration, grouped the way a
+    // resolver places it: every access whose target's owner resolves
+    // there. Asked of the resolver rather than restated — the claim is
+    // about the creator's shard holding the key, not what it is called.
+    let shards = PrefixShardResolver { bits: 8 };
+    let creator_shard = shards.shard_of(creator.address());
+    let whole = admitted.declaration();
+    let declared = whole
+        .ordered
+        .iter()
+        .fold(EffectSet::default(), |mut set, access| {
+            if shards.shard_of(access.effect.target.owner()) == creator_shard {
+                set.insert_from(access.effect, &whole.set)
+                    .expect("the union declaration folded these effects");
+            }
+            set
+        });
 
     // The kernel executes node 1: a creation there derives from the same
     // transaction identity, node index, and frame.

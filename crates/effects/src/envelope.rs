@@ -47,7 +47,6 @@ use crate::instance::InstanceMeta;
 use crate::manifest::ManifestHash;
 use crate::records::{ChainRecords, Composed};
 use crate::resource::ResourceMeta;
-use crate::route::{Routing, ShardResolver, route};
 use crate::types::{SlotId, bucketed_child_key, child_key};
 
 /// The kernel-reserved role of subintent nullifier substates under a
@@ -1107,7 +1106,7 @@ pub fn admit_tree_with_authority(
         .map(|meta| meta.address(hasher).address())
         .collect();
     let grants = PresentedGrants::from_presented(hasher, &tree.resources);
-    let admitted = admit_intents(
+    let mut admitted = admit_intents(
         &views,
         identity,
         &resolvable,
@@ -1116,33 +1115,18 @@ pub fn admit_tree_with_authority(
         hasher,
         authority,
     )?;
+    // One exclusive nullifier creation per bound subintent. No signature
+    // declared these, so they belong to no frame — but they are the
+    // once-only execution guarantee, so they are folded into the
+    // declaration here rather than by a later pass.
+    for record in &records {
+        admitted.push_kernel_effect(Effect {
+            target: EffectTarget::Point(record.nullifier),
+            mode: Mode::Write { moves: Moves::Both },
+        });
+    }
     Ok(AdmittedTree {
         admitted,
         subintents: records,
     })
-}
-
-/// Route an admitted tree.
-///
-/// The flattened manifest's routing plus one exclusive nullifier
-/// creation write per subintent at its signer's shard — the same union
-/// effect set admission, scheduling, and execution all derive.
-///
-/// # Panics
-///
-/// Never: the only fallible insert folds reserve amounts, and a nullifier
-/// is declared as an exclusive write.
-#[must_use]
-pub fn route_tree(tree: &AdmittedTree, shards: &dyn ShardResolver) -> Routing {
-    let mut routing = route(&tree.admitted, shards);
-    for record in &tree.subintents {
-        let shard = shards.shard_of(record.signer.address());
-        let effect = Effect {
-            target: EffectTarget::Point(record.nullifier),
-            mode: Mode::Write { moves: Moves::Both },
-        };
-        // No signature declared this, so it belongs to no frame.
-        routing.push_kernel_effect(shard, effect);
-    }
-    routing
 }

@@ -83,8 +83,8 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
 #[test]
 fn fill_provisions_the_interval_and_the_fence() {
     let world = world();
-    let routing = sharded_routing(&world, &fill_graph());
-    let book_set = &routing.per_shard[&shard_of(book())];
+    let routing = sharded_sets(&world, &fill_graph());
+    let book_set = &routing[&shard_of(book())];
     // The write interval and the fence's leaf are the provisioned
     // targets: the escrow legs are deltas and carry nothing.
     assert_eq!(

@@ -14,7 +14,8 @@ use common::{
 };
 use hyperscale_vm_effects::{
     AdmissionError, Composed, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
-    ManifestGraph, Records, ResolveError, TestHasher, Value, admit, collection_id, fresh_id, route,
+    ManifestGraph, Records, ResolveError, TestHasher, Value, admit, collection_id, fresh_id,
+    per_shard,
 };
 use hyperscale_vm_types::{Address, Effect, EffectTarget, Mode, Moves};
 
@@ -70,7 +71,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
         ],
     };
     let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver());
+    let routing = per_shard(&admitted, &resolver());
 
     let expected = BTreeMap::from([
         (
@@ -104,7 +105,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
             ]),
         ),
     ]);
-    assert_eq!(shapes(&routing.per_shard), shapes(&expected));
+    assert_eq!(shapes(&routing), shapes(&expected));
 }
 
 #[test]
@@ -142,7 +143,7 @@ fn swap_writes_both_reserves_and_reads_the_config() {
         ],
     };
     let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver());
+    let routing = per_shard(&admitted, &resolver());
 
     let expected = BTreeMap::from([
         (
@@ -188,7 +189,7 @@ fn swap_writes_both_reserves_and_reads_the_config() {
             ]),
         ),
     ]);
-    assert_eq!(shapes(&routing.per_shard), shapes(&expected));
+    assert_eq!(shapes(&routing), shapes(&expected));
 }
 
 #[test]
@@ -220,7 +221,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
         ],
     };
     let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver());
+    let routing = per_shard(&admitted, &resolver());
 
     let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0);
     // Grouped rather than listed per shard, because which shard an
@@ -256,7 +257,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
         .into_iter()
         .map(|(shard, effects)| (shard, effect_set(&effects)))
         .collect();
-    assert_eq!(shapes(&routing.per_shard), shapes(&expected));
+    assert_eq!(shapes(&routing), shapes(&expected));
 }
 
 #[test]
@@ -307,7 +308,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
         ],
     };
     let admitted = admit(&graph, BOB, &chain, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver());
+    let routing = per_shard(&admitted, &resolver());
 
     let expected = BTreeMap::from([
         (
@@ -377,7 +378,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
             ]),
         ),
     ]);
-    assert_eq!(shapes(&routing.per_shard), shapes(&expected));
+    assert_eq!(shapes(&routing), shapes(&expected));
 }
 
 #[test]
@@ -414,8 +415,8 @@ fn a_declared_superset_evaluates_without_error() {
         ],
     };
     let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver());
-    let set = &routing.per_shard[&shard_of(alice)];
+    let routing = per_shard(&admitted, &resolver());
+    let set = &routing[&shard_of(alice)];
     // The exact effect and the never-touched superset both routed; three
     // more are the deposit that consumes the withdrawal — where it may
     // land, where else it may land, and the flag that picks — and the
@@ -486,9 +487,9 @@ fn a_presented_record_is_the_whole_of_instantiation() {
     // routing a pre-registered world derives.
     let certified = Composed::new(&bare, &[common::pool_meta()], &TestHasher);
     let admitted = admit(&graph, ALICE, &certified, &TestHasher).expect("admits");
-    let routing = route(&admitted, &resolver());
+    let routing = per_shard(&admitted, &resolver());
 
     let reference = admit(&graph, ALICE, &registered, &TestHasher).expect("admits");
-    let reference = route(&reference, &resolver());
-    assert_eq!(routing.per_shard, reference.per_shard);
+    let reference = per_shard(&reference, &resolver());
+    assert_eq!(routing, reference);
 }

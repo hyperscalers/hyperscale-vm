@@ -10,7 +10,7 @@ use common::{ALICE, account, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
     EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32,
     InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash, PresentedGrants, Records, SlotId,
-    SlotRef, SlotWidths, TestHasher, Value, admit, evaluate_expr, route,
+    SlotRef, SlotWidths, TestHasher, Value, admit, evaluate_expr, per_shard,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, PrincipalAddr,
@@ -183,16 +183,16 @@ proptest! {
             ],
         };
         let admitted = admit(&graph, sender, &chain, &TestHasher).unwrap();
-        let first = route(&admitted, &resolver());
-        let second = route(&admitted, &resolver());
+        let first = per_shard(&admitted, &resolver());
+        let second = per_shard(&admitted, &resolver());
         assert_eq!(first, second);
 
-        let sender_set = &first.per_shard[&shard_of(sender)];
+        let sender_set = &first[&shard_of(sender)];
         assert!(sender_set.contains(&Effect {
             target: EffectTarget::Point(vault(sender, resource)),
             mode: Mode::Reserve { amount },
         }));
-        let recipient_set = &first.per_shard[&shard_of(recipient)];
+        let recipient_set = &first[&shard_of(recipient)];
         assert!(recipient_set.contains(&Effect {
             target: EffectTarget::Point(vault(recipient, resource)),
             mode: Mode::Delta { moves: Moves::In },
@@ -201,7 +201,7 @@ proptest! {
         // are locked reads: content-addressed, resolved locally, and
         // adding no participant — so whichever shard the resource lands
         // on, only the two accounts' shards route.
-        let participants: BTreeSet<_> = first.per_shard.keys().copied().collect();
+        let participants: BTreeSet<_> = first.keys().copied().collect();
         let accounts: BTreeSet<_> = [shard_of(sender), shard_of(recipient)].into();
         assert_eq!(participants, accounts);
     }
@@ -248,11 +248,11 @@ proptest! {
             ],
         };
         let admitted = admit(&graph, ALICE, &chain, &TestHasher).unwrap();
-        let first = route(&admitted, &resolver());
-        let second = route(&admitted, &resolver());
+        let first = per_shard(&admitted, &resolver());
+        let second = per_shard(&admitted, &resolver());
         assert_eq!(first, second);
-        assert_eq!(first.frames.len(), 3, "one frame per manifest node");
-        assert!(first.per_shard[&shard_of(recipient)].contains(&Effect {
+        assert_eq!(admitted.frames().len(), 3, "one frame per manifest node");
+        assert!(first[&shard_of(recipient)].contains(&Effect {
             target: EffectTarget::Point(vault(recipient, resource)),
             mode: Mode::Delta { moves: Moves::In },
         }));

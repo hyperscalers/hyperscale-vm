@@ -219,7 +219,7 @@ fn a_missed_edge_bound_aborts_identically_on_both_runtimes() {
 #[test]
 fn transfer_profile_and_provision_shape_are_exact() {
     let world = world();
-    let routing = sharded_routing(&world, &transfer_graph());
+    let routing = sharded_sets(&world, &transfer_graph());
 
     // The walkthrough's profile: the sign-in's rule-cell read and one
     // reservation at the sender, the vault and claims deltas at the
@@ -244,7 +244,7 @@ fn transfer_profile_and_provision_shape_are_exact() {
             ]),
         ),
     ]);
-    assert_eq!(shapes(&routing.per_shard), shapes(&expected));
+    assert_eq!(shapes(&routing), shapes(&expected));
 
     // The acceptance test, executable: the balance movement stays
     // commutative on both sides — both credits and one reservation, and
@@ -254,11 +254,11 @@ fn transfer_profile_and_provision_shape_are_exact() {
     // the counterpart; and the recipient's own flag, which is what lets
     // a deposit pick a destination without ever refusing one.
     assert_eq!(
-        routing.per_shard[&shard_of(ALICE)].provision_targets(),
+        routing[&shard_of(ALICE)].provision_targets(),
         std::iter::once(EffectTarget::Point(auth(ALICE))).collect()
     );
     assert_eq!(
-        routing.per_shard[&shard_of(BOB)].provision_targets(),
+        routing[&shard_of(BOB)].provision_targets(),
         std::iter::once(EffectTarget::Point(refused(BOB, RES_X))).collect()
     );
 }

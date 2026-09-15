@@ -15,7 +15,7 @@ use hyperscale_vm_effects::{
     MAX_VALUE_DEPTH, ManifestGraph, MethodSignature, ModeExpr, PackageMetadata, ParamType,
     PresentedGrants, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes,
     RuleExpr, RuleLeaf, SlotRef, StoredRule, TargetExpr, TestHasher, Totality, Value, admit,
-    admit_presenting, child_key, explain_admission, fresh_id, holdings_entry, route,
+    admit_presenting, child_key, explain_admission, fresh_id, holdings_entry, per_shard,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, Presence,
@@ -157,8 +157,8 @@ fn a_well_formed_graph_lowers_and_routes() {
     let admitted = admit(&valid_graph(), ALICE, &chain, &TestHasher).expect("admits");
 
     // The lowered edges carry their static resource types.
-    let routing = route(&admitted, &resolver());
-    let alice_set = &routing.per_shard[&shard_of(ALICE)];
+    let routing = per_shard(&admitted, &resolver());
+    let alice_set = &routing[&shard_of(ALICE)];
     assert!(alice_set.contains(&Effect {
         target: EffectTarget::Point(vault(ALICE, RES_X)),
         mode: Mode::Reserve { amount: 100 },
@@ -170,7 +170,7 @@ fn a_well_formed_graph_lowers_and_routes() {
         target: EffectTarget::Point(vault(ALICE, RES_X)),
         mode: Mode::Delta { moves: Moves::In },
     }));
-    let bob_set = &routing.per_shard[&shard_of(BOB)];
+    let bob_set = &routing[&shard_of(BOB)];
     assert!(bob_set.contains(&Effect {
         target: EffectTarget::Point(vault(BOB, RES_X)),
         mode: Mode::Delta { moves: Moves::In },
@@ -310,7 +310,7 @@ fn a_proven_claim_resolves_to_its_producers_target() {
         vec![Rule::Require(JudgedLeaf::Claim(Claim::of_subject(ALICE)))]
     );
 
-    let _ = route(&admitted, &resolver());
+    let _ = per_shard(&admitted, &resolver());
 }
 
 /// A custodian fixture: an authorizing method proving whatever identity

@@ -5,9 +5,12 @@
 //! client-side reads of one signed form. Run it with
 //! `cargo run -p hyperscale-vm-manifest-builder --example render`.
 
+use std::collections::BTreeSet;
+
 use hyperscale_vm_effects::{
     EnvelopeTree, Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader, ManifestGraph,
-    PackageHash, PrefixShardResolver, Records, ResourceKind, TestHasher, Value, issued_resource,
+    PackageHash, PrefixShardResolver, Records, ResourceKind, ShardId, ShardResolver, TestHasher,
+    Value, issued_resource,
 };
 use hyperscale_vm_fixtures::{amm, payouts};
 use hyperscale_vm_manifest_builder::{
@@ -220,7 +223,7 @@ fn summarise(graph: &ManifestGraph, chain: &Records) {
         instances: Vec::new(),
         resources: Vec::new(),
     };
-    let report = preflight_tree(&tree, ALICE, chain, &TestHasher, &SHARDS, NETWORK)
+    let report = preflight_tree(&tree, ALICE, chain, &TestHasher, NETWORK)
         .expect("the graph admits and routes");
     let names = vocabulary();
     let signers: Vec<String> = report
@@ -232,13 +235,22 @@ fn summarise(graph: &ManifestGraph, chain: &Records) {
                 .map_or_else(|| signer.address().to_text(NETWORK).unwrap(), str::to_owned)
         })
         .collect();
-    let shards: Vec<String> = report.shards().map(|shard| shard.0.to_string()).collect();
+    // Where the declaration's effects land, grouped by each target's
+    // owner — the resolver's own question, asked of the whole set.
+    let touched: BTreeSet<ShardId> = report
+        .admitted
+        .declaration()
+        .ordered
+        .iter()
+        .map(|access| SHARDS.shard_of(access.effect.target.owner()))
+        .collect();
+    let shards: Vec<String> = touched.iter().map(|shard| shard.0.to_string()).collect();
     println!("   signers    {}", signers.join(", "));
     println!("   shards     {}", shards.join(", "));
     println!(
         "   footprint  {} over {} shard(s)",
         report.footprint(),
-        report.footprints.len()
+        touched.len()
     );
     let gas_limits = vec![NODE_CEILING; report.manifest().nodes.len()];
     let work = report.work(&gas_limits, &[SchemeId::ED25519], 0);

@@ -66,7 +66,6 @@ pub use envelope::{
     MARKER_CELL_BYTES, MAX_SUBINTENTS, Marked, Marker, NULLIFIER_SLOT, Socket, Subintent,
     SubintentRecord, admit_tree, admit_tree_with_authority, committed_tx_key, crossing_expiry_ms,
     encode_tree, escrow_claim_key, escrow_record_key, nullifier_expiry_ms, nullifier_key,
-    route_tree,
 };
 pub use explain::{
     address_text, claim_text, explain, explain_admission, explain_admission_tree, explain_method,
@@ -109,7 +108,7 @@ pub use resource::{
     granting_issued_resource, holdings_collection, holdings_entry, holdings_range,
     instance_data_key, issued_resource, protocol_resource, resource_record_key,
 };
-pub use route::{FrameDeclaration, PrefixShardResolver, Routing, ShardResolver, route};
+pub use route::{FrameDeclaration, PrefixShardResolver, ShardResolver, per_shard};
 pub use rule::{
     GrantRuleExpr, GrantSubject, Holding, Judged, Leaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
     MAX_RULE_LEAVES, MAX_RULE_WIRE_DEPTH, NOBODY_BYTES, Rule, RuleExpr, RuleLeaf, SealedLeaf,

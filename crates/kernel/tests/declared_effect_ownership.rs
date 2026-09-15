@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Clause, Declaration, Expr, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, ManifestGraph,
-    MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, PrefixShardResolver,
-    Records, SlotId, SlotRef, TargetExpr, TestHasher, Totality, Value, admit, child_key, route,
+    MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, Records, SlotId, SlotRef,
+    TargetExpr, TestHasher, Totality, Value, admit, child_key,
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_types::{
@@ -118,8 +118,7 @@ fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
     let Ok(admitted) = admit(&graph, ATTACKER, &chain, &TestHasher) else {
         return; // Refused before routing: the gap is closed at admission.
     };
-    let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
-    let declaration = routing.declaration().clone();
+    let declaration = admitted.declaration().clone();
 
     // The victim's balance, committed before the attacker's transaction
     // exists.
@@ -164,8 +163,7 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
     let Ok(admitted) = admit(&graph, ATTACKER, &chain, &TestHasher) else {
         return;
     };
-    let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
-    let declaration = routing.declaration().clone();
+    let declaration = admitted.declaration().clone();
 
     let mut base = MemoryStore::new();
     base.write(vault_of(VICTIM), encode_amount(10_000).to_vec());

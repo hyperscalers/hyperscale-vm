@@ -30,7 +30,7 @@
 
 use hyperscale_vm_effects::{
     AdmittedTree, CallArg, Constraint, EnvelopeTree, Hasher, IntentHeader, PackageHash,
-    PrefixShardResolver, Records, TestHasher, admit_tree, route_tree,
+    PrefixShardResolver, Records, TestHasher, admit_tree, per_shard,
 };
 use hyperscale_vm_embed::abi::{ABI, EVENTS, MEMORY, STATE};
 use hyperscale_vm_harness::driver::{Lanes, run_lanes, seed_vault};
@@ -126,14 +126,11 @@ fn traded() -> EnvelopeTree {
 fn routed(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, AdmittedTree)> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, ALICE, identity, world, &TestHasher).context("admission")?;
-    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
-    ensure!(
-        routing.per_shard.len() == 1,
-        "the null resolver routes to one shard"
-    );
-    let declaration = routing.declaration().clone();
+    let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
+    ensure!(routing.len() == 1, "the null resolver routes to one shard");
+    let declaration = admitted.admitted.declaration().clone();
     let entry = BatchTx::new(TxHash(identity.0), declaration, env())
-        .with_calls(routing.calls)
+        .with_calls(admitted.admitted.calls().to_vec())
         .with_nullifiers(admitted.subintents.clone());
     Ok((entry, admitted))
 }

@@ -117,9 +117,9 @@ fn swap_store() -> MemoryStore {
 #[test]
 fn swap_profile_and_provision_shape_are_exact() {
     let world = world();
-    let routing = sharded_routing(&world, &swap_graph(300));
+    let routing = sharded_sets(&world, &swap_graph(300));
 
-    let pool_set = &routing.per_shard[&shard_of(pool())];
+    let pool_set = &routing[&shard_of(pool())];
     assert_eq!(
         shape(pool_set),
         shape(&set(&[
@@ -147,7 +147,7 @@ fn swap_profile_and_provision_shape_are_exact() {
     // stays commutative, which is what the credits say and what the
     // reads beside them do not change.
     assert_eq!(
-        routing.per_shard[&shard_of(ALICE)].provision_targets(),
+        routing[&shard_of(ALICE)].provision_targets(),
         [
             EffectTarget::Point(auth(ALICE)),
             EffectTarget::Point(refused(ALICE, RES_Y)),

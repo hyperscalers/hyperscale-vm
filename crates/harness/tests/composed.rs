@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
     AdmittedTree, Constraint, EnvelopeTree, Hasher, IntentHeader, Marked, Marker, PackageHash,
-    PrefixShardResolver, Records, TestHasher, admit_tree, route_tree,
+    PrefixShardResolver, Records, TestHasher, admit_tree, per_shard,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
@@ -93,21 +93,18 @@ fn batch_entry(
 ) -> Result<(BatchTx, AdmittedTree)> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, composer, identity, world, &TestHasher).context("admission")?;
-    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
+    let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming
     // an id the resolver is free to choose.
-    ensure!(
-        routing.per_shard.len() == 1,
-        "the null resolver routes to one shard"
-    );
+    ensure!(routing.len() == 1, "the null resolver routes to one shard");
     // The whole declaration, both views, straight from the fold: the
     // clause order is what a handle's rep indexes into, so taking the
     // folded set's order instead would hand the guest a table the
     // lowered calls were not resolved against.
-    let declaration = routing.declaration().clone();
+    let declaration = admitted.admitted.declaration().clone();
     let entry = BatchTx::new(TxHash(identity.0), declaration, env())
-        .with_calls(routing.calls)
+        .with_calls(admitted.admitted.calls().to_vec())
         .with_nullifiers(admitted.subintents.clone());
     Ok((entry, admitted))
 }

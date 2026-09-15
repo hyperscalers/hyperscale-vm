@@ -24,8 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, Claim, EnvelopeTree, Hasher, JudgedLeaf, Manifest,
-    ManifestHash, Routing, Rule, ShardId, ShardResolver, SubintentRecord, admit_tree, footprint,
-    route_tree,
+    ManifestHash, Rule, SubintentRecord, admit_tree, footprint,
 };
 use hyperscale_vm_types::{
     Address, CallTarget, DeclaredWork, EffectTarget, Mode, NetworkWord, Presence, PriceTable,
@@ -311,12 +310,6 @@ pub struct Report {
     /// whole composition declares no nodes of its own, and an intent
     /// with no nodes appears in no origin to be found by.
     pub root_intent: SubintentHash,
-    /// The routing: per-shard declared effects, evaluated frames, the
-    /// lowered call list, and the static call graph.
-    pub routing: Routing,
-    /// What each participating shard's declaration costs on the footprint
-    /// schedule.
-    pub footprints: BTreeMap<ShardId, u64>,
     /// What naming each node requires of a signature, in node order.
     pub authority: Vec<Required>,
     /// The nullifier record of every bound subintent, empty where the
@@ -420,50 +413,35 @@ impl Report {
         self.admitted.identity()
     }
 
-    /// The shards this transaction touches.
-    pub fn shards(&self) -> impl Iterator<Item = ShardId> + '_ {
-        self.footprints.keys().copied()
-    }
-
-    /// The whole declared footprint: the sum over participating shards,
-    /// because the reservation is taken once against all of it rather than
-    /// per shard.
+    /// The whole declared footprint. The reservation is taken once
+    /// against all of it, and a target's accesses all resolve to one
+    /// shard, so the figure is the declaration's own rather than a sum
+    /// over a partition of it.
     #[must_use]
     pub fn footprint(&self) -> u64 {
-        self.footprints
-            .values()
-            .fold(0, |total, shard| total.saturating_add(*shard))
+        footprint(&self.admitted.declaration().set)
     }
 
-    /// The bytes the declaration lets execution read off the store,
-    /// summed over the participating shards: the disk's dimension of the
-    /// vector, before the artifacts the calls instantiate.
+    /// The bytes the declaration lets execution read off the store: the
+    /// disk's dimension of the vector, before the artifacts the calls
+    /// instantiate.
     #[must_use]
     pub fn read_bytes(&self) -> u64 {
-        self.routing
-            .per_shard
-            .values()
-            .fold(0, |total, shard| total.saturating_add(shard.read_bytes()))
+        self.admitted.declaration().set.read_bytes()
     }
 
-    /// The bytes the declaration leaves behind on the store, summed over
-    /// the participating shards: what retention keeps, as against what
-    /// [`write_bytes`](Self::write_bytes) costs to put there.
+    /// The bytes the declaration leaves behind on the store: what
+    /// retention keeps, as against what [`write_bytes`](Self::write_bytes)
+    /// costs to put there.
     #[must_use]
     pub fn retained_bytes(&self) -> u64 {
-        self.routing.per_shard.values().fold(0, |total, shard| {
-            total.saturating_add(shard.retained_bytes())
-        })
+        self.admitted.declaration().set.retained_bytes()
     }
 
-    /// The bytes the declaration lets execution write onto the store,
-    /// summed over the participating shards.
+    /// The bytes the declaration lets execution write onto the store.
     #[must_use]
     pub fn write_bytes(&self) -> u64 {
-        self.routing
-            .per_shard
-            .values()
-            .fold(0, |total, shard| total.saturating_add(shard.write_bytes()))
+        self.admitted.declaration().set.write_bytes()
     }
 
     /// What this transaction would declare, signed at `gas_limits` under
@@ -604,7 +582,7 @@ impl Report {
         // hold.
         let mut exposure: BTreeMap<SubintentHash, BTreeMap<ResourceAddr, u128>> = BTreeMap::new();
         let mut unbounded: BTreeSet<SubintentHash> = BTreeSet::new();
-        for frame in &self.routing.frames {
+        for frame in self.admitted.frames() {
             let Some(origin) = origins.get(frame.node as usize) else {
                 continue;
             };
@@ -635,7 +613,7 @@ impl Report {
         // A target every intent that reaches it, so a cell two of them
         // name is readable as the shared thing it is.
         let mut reached: BTreeMap<EffectTarget, BTreeSet<SubintentHash>> = BTreeMap::new();
-        for frame in &self.routing.frames {
+        for frame in self.admitted.frames() {
             let Some(origin) = origins.get(frame.node as usize) else {
                 continue;
             };
@@ -747,17 +725,14 @@ pub fn preflight_tree(
     composer: PrincipalAddr,
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
-    shards: &dyn ShardResolver,
     network: &str,
 ) -> Result<Report, PreflightError> {
     let identity = tree.hash(hasher);
     let admitted = admit_tree(tree, composer, identity, chain, hasher)?;
-    let routing = route_tree(&admitted, shards);
     report(
         admitted.admitted,
         composer,
         tree.root.hash(hasher),
-        routing,
         admitted.subintents,
         chain,
         network,
@@ -769,7 +744,6 @@ fn report(
     admitted: Admitted,
     composer: PrincipalAddr,
     root_intent: SubintentHash,
-    routing: Routing,
     subintents: Vec<SubintentRecord>,
     chain: &dyn ChainRecords,
     network: &str,
@@ -779,8 +753,8 @@ fn report(
     // sum is what retention prices. A package this node has not seen
     // contributes nothing rather than guessing — the same call would
     // not have admitted above.
-    let per_call: Vec<u32> = routing
-        .calls
+    let per_call: Vec<u32> = admitted
+        .calls()
         .iter()
         .map(|call| {
             chain
@@ -790,12 +764,6 @@ fn report(
         })
         .collect();
     let event_bytes = admit_event_bounds(&per_call, per_call.len())?;
-    let footprints = routing
-        .per_shard
-        .iter()
-        .map(|(shard, declared)| (*shard, footprint(declared)))
-        .collect();
-
     // The authority gate admission resolved for each node, read back
     // rather than re-derived: the report answers with the verdict
     // execution will judge, over the node's real bound inputs.
@@ -850,8 +818,6 @@ fn report(
         admitted,
         composer,
         root_intent,
-        routing,
-        footprints,
         authority,
         subintents,
         event_bytes,

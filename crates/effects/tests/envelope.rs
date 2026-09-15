@@ -12,7 +12,7 @@ use hyperscale_vm_effects::{
     ManifestGraph, ManifestHash, Marked, Marker, NULLIFIER_SLOT, NodeInput, PackageHash,
     PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket, Subintent, SubintentHash,
     TestHasher, Value, admit, admit_tree, bucketed_child_key, child_key, escrow_claim_key,
-    escrow_record_key, explain_admission_tree, nullifier_key, route_tree,
+    escrow_record_key, explain_admission_tree, nullifier_key, per_shard,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -308,7 +308,7 @@ fn a_composed_tree_flattens_deterministically() {
 fn routing_carries_the_nullifier_creation_write() {
     let tree = composed_tree(100);
     let admitted = admit_composed(&tree).unwrap();
-    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 8 });
+    let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 8 });
     let record = admitted.subintents[0];
     // Asked of the resolver rather than restated: the claim is that the
     // write lands at the signer's shard and nowhere else, not what those
@@ -317,12 +317,12 @@ fn routing_carries_the_nullifier_creation_write() {
     let signer = resolver.shard_of(record.signer.address());
     let root = resolver.shard_of(ALICE.address());
     assert_ne!(signer, root);
-    assert!(routing.per_shard[&signer].contains(&Effect {
+    assert!(routing[&signer].contains(&Effect {
         target: EffectTarget::Point(record.nullifier),
         mode: Mode::Write { moves: Moves::Both },
     }));
     // The root's shard carries no nullifier write.
-    assert!(!routing.per_shard[&root].iter().any(|effect| {
+    assert!(!routing[&root].iter().any(|effect| {
         matches!(effect.target, EffectTarget::Point(key) if key == record.nullifier)
     }));
 }

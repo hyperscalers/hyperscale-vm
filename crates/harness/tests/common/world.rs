@@ -8,9 +8,9 @@ use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Claim, EnvelopeTree, EvidenceRef, Hash32, Hasher, InstanceMeta,
     LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants,
-    Records, Routing, RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule, TestHasher,
-    Value, admit_presenting, admit_tree, child_key, collection_id, holdings_collection, legs_of,
-    package_slot, route, route_tree, star_at,
+    Records, RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule, TestHasher, Value,
+    admit_presenting, admit_tree, child_key, collection_id, holdings_collection, legs_of,
+    package_slot, per_shard, star_at,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
 use hyperscale_vm_harness::driver::{Lanes, declared_vault, run_lanes, test_hash, vault};
@@ -107,15 +107,14 @@ pub fn batch_entry(
 ) -> Result<BatchTx> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, composer, identity, world, &TestHasher).context("admission")?;
-    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
-    ensure!(
-        routing.per_shard.len() == 1,
-        "the null resolver routes to one shard"
-    );
-    Ok(
-        BatchTx::new(TxHash(identity.0), routing.declaration().clone(), env)
-            .with_calls(routing.calls),
+    let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
+    ensure!(routing.len() == 1, "the null resolver routes to one shard");
+    Ok(BatchTx::new(
+        TxHash(identity.0),
+        admitted.admitted.declaration().clone(),
+        env,
     )
+    .with_calls(admitted.admitted.calls().to_vec()))
 }
 
 /// The account's own quarantine vault for a resource — its second
@@ -660,17 +659,14 @@ pub fn execute_manifest(
         }
         Err(source) => return Err(WasmtimeError::new(source).context("admission")),
     };
-    let routing = route(&admitted, &PrefixShardResolver { bits: 0 });
+    let routing = per_shard(&admitted, &PrefixShardResolver { bits: 0 });
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming
     // an id the resolver is free to choose.
-    ensure!(
-        routing.per_shard.len() == 1,
-        "the null resolver routes to one shard"
-    );
-    let declaration = routing.declaration().clone();
-    let entry =
-        BatchTx::new(tx, declaration, EnvInputs { clock_ms, ..env() }).with_calls(routing.calls);
+    ensure!(routing.len() == 1, "the null resolver routes to one shard");
+    let declaration = admitted.declaration().clone();
+    let entry = BatchTx::new(tx, declaration, EnvInputs { clock_ms, ..env() })
+        .with_calls(admitted.calls().to_vec());
 
     let before = store.clone();
     // A presence requirement and a reservation are both judged here,
@@ -770,27 +766,38 @@ pub fn admit_here(
     admit_presenting(graph, signer, world, &grants, &TestHasher)
 }
 
-pub fn sharded_routing(world: &Records, graph: &ManifestGraph) -> Routing {
+pub fn sharded_routing(world: &Records, graph: &ManifestGraph) -> Admitted {
     let admitted = admit_here(graph, composer(graph), world).expect("admits");
-    let first = route(&admitted, &PrefixShardResolver { bits: 8 });
-    let second = route(&admitted, &PrefixShardResolver { bits: 8 });
-    assert_eq!(first, second, "route is a function over the corpus");
-    first
+    let first = per_shard(&admitted, &PrefixShardResolver { bits: 8 });
+    let second = per_shard(&admitted, &PrefixShardResolver { bits: 8 });
+    assert_eq!(
+        first, second,
+        "the projection is a function over the corpus"
+    );
+    admitted
+}
+
+/// The corpus placement's per-shard projection of a graph's declaration.
+pub fn sharded_sets(world: &Records, graph: &ManifestGraph) -> BTreeMap<ShardId, EffectSet> {
+    per_shard(
+        &sharded_routing(world, graph),
+        &PrefixShardResolver { bits: 8 },
+    )
 }
 
 /// A stable rendering of everything a routing carries — the pre-image the
 /// fingerprint digests, and the witness a drift is discharged against: the
 /// encoded role sets, calls, frames, and folded declaration in full.
-pub fn routing_rendering(routing: &Routing) -> String {
+pub fn routing_rendering(admitted: &Admitted) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
-    for (shard, set) in &routing.per_shard {
+    for (shard, set) in per_shard(admitted, &PrefixShardResolver { bits: 8 }) {
         let effects: Vec<_> = set.iter().collect();
         let _ = writeln!(out, "shard {shard:?}: {effects:?}");
     }
-    let _ = writeln!(out, "calls: {:?}", routing.calls);
-    let _ = writeln!(out, "frames: {:?}", routing.frames);
-    let declaration = routing.declaration();
+    let _ = writeln!(out, "calls: {:?}", admitted.calls());
+    let _ = writeln!(out, "frames: {:?}", admitted.frames());
+    let declaration = admitted.declaration();
     let folded: Vec<_> = declaration.set.iter().collect();
     let _ = writeln!(out, "set: {folded:?}");
     let _ = writeln!(out, "ordered: {:?}", declaration.ordered);
@@ -799,9 +806,9 @@ pub fn routing_rendering(routing: &Routing) -> String {
 
 /// The rendering digested, so the pin is one line per pattern rather than
 /// pages of debug output.
-pub fn routing_fingerprint(routing: &Routing) -> String {
+pub fn routing_fingerprint(admitted: &Admitted) -> String {
     use std::fmt::Write as _;
-    let rendering = routing_rendering(routing);
+    let rendering = routing_rendering(admitted);
     let digest = TestHasher.hash(b"routing-vector", &[rendering.as_bytes()]);
     digest.0.iter().fold(String::new(), |mut hex, byte| {
         let _ = write!(hex, "{byte:02x}");
@@ -865,10 +872,13 @@ pub fn run_both_tree(
 ) -> Result<(BatchOutcome, MemoryStore), AdmissionError> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, composer, identity, world, &TestHasher)?;
-    let routing = route_tree(&admitted, &PrefixShardResolver { bits: 0 });
-    let entry = BatchTx::new(TxHash(identity.0), routing.declaration().clone(), env())
-        .with_calls(routing.calls)
-        .with_nullifiers(admitted.subintents);
+    let entry = BatchTx::new(
+        TxHash(identity.0),
+        admitted.admitted.declaration().clone(),
+        env(),
+    )
+    .with_calls(admitted.admitted.calls().to_vec())
+    .with_nullifiers(admitted.subintents);
     Ok(run_lanes(&LANES, store, &[entry]))
 }
 

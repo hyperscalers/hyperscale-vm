@@ -238,11 +238,9 @@ fn the_same_settlement_at_two_caps_is_priced_apart() {
     let world = world();
     let declared = |cap: u64| {
         let graph = graph_in(&world, |b| lottery_addr().settle(b, cap));
-        sharded_routing(&world, &graph)
-            .per_shard
-            .values()
-            .map(footprint)
-            .sum::<u64>()
+        // Summing the projection reaches the declaration's own figure:
+        // a target's accesses all land on the shard its owner resolves to.
+        footprint(&sharded_routing(&world, &graph).declaration().set)
     };
     let (page, larger) = (declared(64), declared(640));
     assert_eq!(larger - page, DEPTH_UNITS * (640 - 64));
