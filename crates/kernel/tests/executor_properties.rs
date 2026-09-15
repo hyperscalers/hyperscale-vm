@@ -368,6 +368,7 @@ fn own_movements(entry: &BatchTx) -> BTreeMap<SubstateKey, Movement> {
                     resource: RESOURCE,
                     credit: seed % 40,
                     debit: seed % 17,
+                    unjudged_debit: 0,
                 },
             )),
             _ => None,

@@ -455,6 +455,7 @@ fn a_remote_debit_never_reaches_the_next_receipt() {
             resource: RESOURCE,
             credit: 0,
             debit: 100,
+            unjudged_debit: 0,
         })
     );
     // ...and the reader records nothing at all.

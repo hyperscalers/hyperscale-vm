@@ -128,6 +128,7 @@ pub fn total_movement(ops: &[DeltaOp], resource: ResourceAddr) -> Result<Movemen
         resource,
         credit,
         debit,
+        unjudged_debit: 0,
     })
 }
 

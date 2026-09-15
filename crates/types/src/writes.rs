@@ -153,8 +153,19 @@ pub struct Movement {
     pub resource: ResourceAddr,
     /// Total credited.
     pub credit: u128,
-    /// Total debited.
+    /// Total debited against a balance an engine checked. Past what the
+    /// cell holds this is a receipt disagreeing with the state it lands
+    /// on, and settlement refuses it.
     pub debit: u128,
+    /// Total debited that no engine ever judged — the fee floor an
+    /// abandoned or infeasible transaction still owes, built from the
+    /// charge rather than read off a result.
+    ///
+    /// It applies after [`Self::debit`] and takes what is there: a payer
+    /// cannot be found short of a price they were never executed
+    /// against, and halting the shard over one is a denial of service
+    /// anyone who can strand a transaction could mount.
+    pub unjudged_debit: u128,
 }
 
 impl Movement {
@@ -168,6 +179,7 @@ impl Movement {
             resource,
             credit: 0,
             debit: 0,
+            unjudged_debit: 0,
         }
     }
 
@@ -178,6 +190,21 @@ impl Movement {
             resource,
             credit: 0,
             debit: amount,
+            unjudged_debit: 0,
+        }
+    }
+
+    /// A debit of `amount` that no engine judged against a balance.
+    ///
+    /// See [`Self::unjudged_debit`]: it takes what the cell holds rather
+    /// than refusing past it.
+    #[must_use]
+    pub const fn unjudged(resource: ResourceAddr, amount: u128) -> Self {
+        Self {
+            resource,
+            credit: 0,
+            debit: 0,
+            unjudged_debit: amount,
         }
     }
 
@@ -210,23 +237,35 @@ impl Movement {
                 .debit
                 .checked_add(next.debit)
                 .ok_or(Compose::Overflow)?,
+            unjudged_debit: self
+                .unjudged_debit
+                .checked_add(next.unjudged_debit)
+                .ok_or(Compose::Overflow)?,
         })
     }
 
-    /// `before` with this movement applied, or `None` if the debit runs
-    /// past what the cell holds.
+    /// `before` with this movement applied, or `None` if the judged debit
+    /// runs past what the cell holds.
     ///
-    /// The two sides net before they touch `before`, so a movement whose
+    /// The judged sides net before they touch `before`, so a movement whose
     /// credit and debit both land on one cell cannot overflow on a net that
     /// fits: only a genuine debit past the balance returns `None`. This
     /// matches the execution-side fold in `fold_deltas`, which the settled
     /// value must agree with.
+    ///
+    /// [`Self::unjudged_debit`] applies last and saturates at zero, so a
+    /// short payer pays what they have. It runs after the judged sides
+    /// because the judged ones are the ones an engine proved fit.
     #[must_use]
     pub const fn apply(self, before: u128) -> Option<u128> {
-        if self.credit >= self.debit {
+        let judged = if self.credit >= self.debit {
             before.checked_add(self.credit - self.debit)
         } else {
             before.checked_sub(self.debit - self.credit)
+        };
+        match judged {
+            Some(after) => Some(after.saturating_sub(self.unjudged_debit)),
+            None => None,
         }
     }
 }
@@ -572,6 +611,61 @@ mod tests {
         });
     }
 
+    /// A judged debit past the balance is a receipt disagreeing with the
+    /// state it lands on, and settlement refuses it. An unjudged one is a
+    /// price nothing ever executed the payer against, so it takes what is
+    /// there instead of halting the shard.
+    #[test]
+    fn an_unjudged_debit_takes_what_is_there_and_a_judged_one_refuses() {
+        let vault = key(1, 1);
+        let held = amount_cell(100).map(|cell| cell.to_vec());
+        let resolve = |m: Movement| {
+            let mut writes = StateWrites::default();
+            writes.movements.insert(vault, m);
+            writes.resolve(&mut |_| held.clone())
+        };
+
+        let over = resolve(Movement::debit(RESOURCE, 250))
+            .expect_err("a judged debit past the balance is refused");
+        assert_eq!(over.held, 100);
+        assert_eq!(over.debit, 250);
+
+        let settled = resolve(Movement::unjudged(RESOURCE, 250))
+            .expect("an unjudged debit takes what is there");
+        assert_eq!(settled.cells()[&vault], None, "a drained cell is removed");
+
+        // Under the balance it is an ordinary debit.
+        let settled = resolve(Movement::unjudged(RESOURCE, 40)).expect("it fits");
+        assert_eq!(
+            settled.cells()[&vault],
+            amount_cell(60).map(|cell| cell.to_vec())
+        );
+    }
+
+    /// The judged sides settle first, so an unjudged floor riding on the
+    /// same cell can never turn a judged debit that fits into one that
+    /// does not — it only consumes what the judged sides leave.
+    #[test]
+    fn an_unjudged_debit_applies_after_the_judged_sides() {
+        let vault = key(1, 1);
+        let held = amount_cell(100).map(|cell| cell.to_vec());
+        let mut writes = StateWrites::default();
+        writes.movements.insert(
+            vault,
+            Movement {
+                resource: RESOURCE,
+                credit: 500,
+                debit: 550,
+                unjudged_debit: 80,
+            },
+        );
+        // 100 + 500 - 550 = 50 judged, then the floor takes all 50 it can.
+        let settled = writes
+            .resolve(&mut |_| held.clone())
+            .expect("the judged sides fit");
+        assert_eq!(settled.cells()[&vault], None);
+    }
+
     /// Two movements on one cell compose whichever order they resolve
     /// in — the property absolutes do not have, and the reason a receipt
     /// carries movements at all.
@@ -586,6 +680,7 @@ mod tests {
                     resource: RESOURCE,
                     credit: 0,
                     debit: amount,
+                    unjudged_debit: 0,
                 },
             );
             writes
@@ -658,11 +753,13 @@ mod tests {
                 resource: RESOURCE,
                 credit: 2,
                 debit: 0,
+                unjudged_debit: 0,
             }),
             Ok(Movement {
                 resource: RESOURCE,
                 credit: 2,
-                debit: 1
+                debit: 1,
+                unjudged_debit: 0,
             })
         );
     }
@@ -679,6 +776,7 @@ mod tests {
                 resource: RESOURCE,
                 credit: 0,
                 debit: 500,
+                unjudged_debit: 0,
             },
         );
         let resolved = writes
@@ -702,6 +800,7 @@ mod tests {
                 resource: RESOURCE,
                 credit: 50,
                 debit: 0,
+                unjudged_debit: 0,
             },
         );
         let resolved = writes
@@ -725,6 +824,7 @@ mod tests {
             resource: RESOURCE,
             credit: 100,
             debit: 100,
+            unjudged_debit: 0,
         };
         assert_eq!(pass_through.apply(near_max), Some(near_max));
 
@@ -733,6 +833,7 @@ mod tests {
             resource: RESOURCE,
             credit: 10,
             debit: 20,
+            unjudged_debit: 0,
         };
         assert_eq!(overdraw.apply(5), None);
 

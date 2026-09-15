@@ -260,6 +260,7 @@ fn the_batch_semantics_are_exact() {
             resource: RESOURCE,
             credit: 40,
             debit: 0,
+            unjudged_debit: 0,
         }
     );
     assert_eq!(

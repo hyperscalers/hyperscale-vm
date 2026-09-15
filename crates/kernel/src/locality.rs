@@ -282,6 +282,7 @@ mod tests {
                     resource: RESOURCE,
                     credit: 30,
                     debit: 10,
+                    unjudged_debit: 0,
                 },
             ),
             (
@@ -290,6 +291,7 @@ mod tests {
                     resource: RESOURCE,
                     credit: 0,
                     debit: 40,
+                    unjudged_debit: 0,
                 },
             ),
             (
@@ -298,6 +300,7 @@ mod tests {
                     resource: RESOURCE,
                     credit: 5,
                     debit: 0,
+                    unjudged_debit: 0,
                 },
             ),
         ];
@@ -360,6 +363,7 @@ mod tests {
                 resource: RESOURCE,
                 credit: 0,
                 debit: 30,
+                unjudged_debit: 0,
             },
         );
         let projected = delta
@@ -395,6 +399,7 @@ mod tests {
                 resource: RESOURCE,
                 credit: 0,
                 debit: u128::MAX,
+                unjudged_debit: 0,
             },
         );
         delta.settles.insert(vault, Movement::debit(RESOURCE, 1));
@@ -414,6 +419,7 @@ mod tests {
                 resource: RESOURCE,
                 credit: 0,
                 debit: 20,
+                unjudged_debit: 0,
             },
         );
         let writes = delta
@@ -472,6 +478,7 @@ mod tests {
                     resource: RESOURCE,
                     credit: 5,
                     debit: 0,
+                    unjudged_debit: 0,
                 },
             );
         }
