@@ -131,38 +131,6 @@ impl Authority {
         }
     }
 
-    /// The signatures satisfying this authority certainly requires, into
-    /// `out`.
-    ///
-    /// A conjunction needs every branch, so each contributes; a
-    /// threshold below its width leaves the choice with the holder and
-    /// contributes none. A rule-judged branch contributes the target's
-    /// own key — the identity that satisfies the rule while nothing is
-    /// stored.
-    fn certain_signers(&self, out: &mut BTreeSet<PrincipalAddr>) {
-        match self {
-            Self::Signature(principal) => {
-                out.insert(*principal);
-            }
-            Self::Threshold { count, branches } if usize::from(*count) == branches.len() => {
-                for branch in branches {
-                    branch.certain_signers(out);
-                }
-            }
-            // A stored rule names its accounts in state, which no report
-            // reads. The target's own address governs it only while
-            // nothing is stored, so naming it here would be a guess, and
-            // this set holds none.
-            Self::Anyone
-            | Self::StoredRule
-            | Self::TargetHasNoKey
-            | Self::ProvenInTransaction
-            | Self::Held
-            | Self::Badge { .. }
-            | Self::Threshold { .. } => {}
-        }
-    }
-
     /// Every address this authority names, into `out` — what
     /// [`Report::named`] renders, however deep in a threshold it sits.
     fn names(&self, out: &mut Vec<Address>) {
@@ -666,24 +634,18 @@ impl Report {
         Ok(by_intent)
     }
 
-    /// Every account the transaction certainly needs an intent for: the
-    /// account each intent already acts as, plus every account a node's
-    /// declared access names outright. Exact, because nothing here is
-    /// guessed — a stored rule names its accounts in state, which no
-    /// report reads, so it contributes nothing rather than its target's
-    /// own address. A threshold below its width leaves the choice with
-    /// the holder, so only a conjunction's branches contribute.
+    /// Every account the transaction needs an intent for: the account
+    /// each intent acts as, and nothing else. Exact, because it is the
+    /// tree's own list — a principal claim reaches a gate only from the
+    /// signature of an intent acting as that account or from a grant of
+    /// one, so every account a gate is answered by is already here, and
+    /// a stored rule names its accounts in state, which no report reads.
     ///
     /// Accounts, not keys: which keys attest an intent is the account's
     /// own rule to state, and its shard judges that at materialization.
     #[must_use]
     pub fn signers(&self) -> BTreeSet<PrincipalAddr> {
-        let mut signers: BTreeSet<PrincipalAddr> =
-            self.intents.iter().map(|record| record.account).collect();
-        for required in &self.authority {
-            required.authority.certain_signers(&mut signers);
-        }
-        signers
+        self.intents.iter().map(|record| record.account).collect()
     }
 
     /// The nodes whose access no signature can satisfy. A transaction

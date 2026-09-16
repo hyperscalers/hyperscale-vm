@@ -613,6 +613,29 @@ fn either_note_meta() -> ResourceMeta {
     }
 }
 
+/// A guardian composing a call gated on another account's stored rule:
+/// the report names the rule as one it cannot read, and the signers are
+/// the guardian alone — it never claims the guardian's signature answers
+/// a rule only the chain holds.
+#[test]
+fn a_stored_rule_on_another_account_is_reported_unread() {
+    let chain = world();
+    let graph = TypedBuilder::compose(&chain, &TestHasher, BOB, |b| {
+        account::freeze(b, ALICE)?;
+        Ok(())
+    })
+    .unwrap();
+    let report = preflight_tree(&one_intent(BOB, &graph), &chain, &TestHasher, NETWORK).unwrap();
+    let freezing = report
+        .authority
+        .iter()
+        .find(|required| required.method == "freeze")
+        .expect("the freeze is gated");
+    assert_eq!(freezing.authority, Authority::StoredRule);
+    assert_eq!(report.signers(), BTreeSet::from([BOB]));
+    assert_eq!(report.unsatisfiable().count(), 0);
+}
+
 /// A disjunctive threshold reports every branch and commits to none:
 /// which branch a holder satisfies is theirs to choose, so neither
 /// branch signer is one the transaction certainly needs.
